@@ -217,10 +217,20 @@ pub(crate) fn copy_tree(from: &Path, to: &Path) -> io::Result<()> {
     if super::witness::inside(to, from)? {
         return Err(io::Error::other(format!("{} lies within {}", to.display(), from.display())));
     }
+    // Every directory made for the copy, and the one it was made in, reach
+    // the disk as well as what is in them.
+    let to = &std::path::absolute(to)?;
+    let mut made: Vec<PathBuf> = Vec::new();
+    let mut place = Some(to.as_path());
+    while let Some(here) = place {
+        if fastctx_platform::disk::exists(here)? {
+            made.push(here.to_path_buf());
+            break;
+        }
+        made.push(here.to_path_buf());
+        place = here.parent();
+    }
     fastctx_platform::ensure_private_dir(to)?;
-    // The place made for the copy is on the disk as well as what is in it.
-    let mut made: Vec<PathBuf> = to.parent().filter(|parent| !parent.as_os_str().is_empty()).map(Path::to_path_buf).into_iter().collect();
-    made.push(to.to_path_buf());
     let mut pending: Vec<(PathBuf, PathBuf)> = vec![(from.to_path_buf(), to.to_path_buf())];
     while let Some((source, target)) = pending.pop() {
         for entry in fastctx_platform::disk::read_dir(&source)? {

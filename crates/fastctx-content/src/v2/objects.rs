@@ -85,11 +85,25 @@ pub(crate) fn release_in(db: &Connection, leases: &[Lease]) -> fastctx_storage::
     Ok(())
 }
 
-/// A new life of `hash`, preparing: past every life it had, collected or not.
+/// A life no object here ever had: lives are numbered across every object
+/// and never given again (§4.3 I5), so whatever deletes an old life's bytes,
+/// however late, never meets a new life's.
+pub(super) fn next_life(db: &Connection) -> fastctx_storage::Result<i64> {
+    let last: Option<i64> = db.prepare_cached("SELECT value FROM stamps WHERE name = 'life'")?.query_row([], |row| row.get(0)).optional()?;
+    let next = match last {
+        Some(last) => last + 1,
+        // Past every life numbered before lives were counted.
+        None => db.prepare_cached("SELECT COALESCE(MAX(life), 0) + 1 FROM objects")?.query_row([], |row| row.get(0))?,
+    };
+    db.prepare_cached("INSERT INTO stamps (name, value) VALUES ('life', ?1) ON CONFLICT (name) DO UPDATE SET value = excluded.value")?
+        .execute([next])?;
+    Ok(next)
+}
+
+/// A new life of `hash`, preparing: past every life any object had,
+/// collected or not.
 fn new_life(db: &Connection, object: ObjectRef, chunk: u64) -> fastctx_storage::Result<i64> {
-    let life: i64 = db
-        .prepare_cached("SELECT COALESCE(MAX(life), 0) + 1 FROM objects WHERE hash = ?1")?
-        .query_row([&object.hash[..]], |row| row.get(0))?;
+    let life = next_life(db)?;
     db.prepare_cached(
         "INSERT INTO objects (hash, life, size, state, placed, unreferenced, chunk) VALUES (?1, ?2, ?3, 0, ?4, NULL, ?5)",
     )?

@@ -5,7 +5,7 @@
 //! (§2.4), advances the stream and lets go of the leases they used.
 //! A true source's commit waits for the disk; a projection's does not (§3).
 
-use super::Library;
+use super::{Entry, Library};
 use super::frame::{Header, KindRecord, Signer, seal};
 use super::items::{Applying, apply, floors_passed};
 use super::objects::{Lease, present, release_in};
@@ -62,19 +62,34 @@ fn stream_of(db: &Connection, scope: i64, name: &str) -> fastctx_storage::Result
     Ok((db.last_insert_rowid(), 0, 0, [0; 32]))
 }
 
+/// A kind's rule, judging each record against its item as it stands in the
+/// transaction that commits it (`Writer`).
+pub(super) type Judge = Box<dyn Fn(Option<&Entry>, &KindRecord) -> std::result::Result<(), String> + Send>;
+
 impl Library {
-    /// Commits `commit` as the stream's ordering device, signing each frame
-    /// with `signer`.
-    pub fn commit(&self, commit: Commit, signer: Arc<dyn Signer>) -> Result<Committed> {
-        self.commit_then(commit, signer, |_, _| Ok(()))
+    /// Commits `commit` unjudged, for the drills alone: everything else
+    /// commits through a `Writer`, which judges each record, or is the
+    /// library's own recommit.
+    #[cfg(any(test, feature = "drill"))]
+    #[doc(hidden)]
+    pub fn raw_commit(&self, commit: Commit, signer: Arc<dyn Signer>) -> Result<Committed> {
+        self.commit_then(commit, signer, None, |_, _| Ok(()))
     }
 
-    /// Commits as `commit` does, with `then` done in the same transaction
-    /// once the records are in.
+    /// Commits as `commit` does, each record judged by `judge` against its
+    /// item as it stands in the same transaction, the records before it in
+    /// the commit applied (§11).
+    pub(super) fn commit_judged(&self, commit: Commit, signer: Arc<dyn Signer>, judge: Judge) -> Result<Committed> {
+        self.commit_then(commit, signer, Some(judge), |_, _| Ok(()))
+    }
+
+    /// Commits as `commit` does, judged by `judge` if given, with `then` done
+    /// in the same transaction once the records are in.
     pub(super) fn commit_then(
         &self,
         commit: Commit,
         signer: Arc<dyn Signer>,
+        judge: Option<Judge>,
         then: impl FnOnce(&Connection, u64) -> fastctx_storage::Result<()> + Send + 'static,
     ) -> Result<Committed> {
         for record in &commit.records {
@@ -107,6 +122,18 @@ impl Library {
                 }
             }
             let (stream, epoch, next, mut head) = stream_of(db, scope, &commit.stream)?;
+            if let Some(judge) = &judge {
+                let mut earlier: std::collections::BTreeMap<Vec<u8>, Option<Entry>> = std::collections::BTreeMap::new();
+                for (offset, record) in commit.records.iter().enumerate() {
+                    let item = &record.record.item;
+                    let prior = match earlier.remove(item) {
+                        Some(prior) => prior,
+                        None => super::hub::before(db, stream, holding, item)?,
+                    };
+                    judge(prior.as_ref(), record).map_err(invalid)?;
+                    earlier.insert(item.clone(), super::hub::after(record, next + offset as u64));
+                }
+            }
             if let Some((op, _)) = &commit.op
                 && super::ops::seen(db, op)?
             {

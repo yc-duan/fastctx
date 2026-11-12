@@ -446,9 +446,6 @@ pub struct Store {
     pub(crate) witness: Option<Arc<crate::assets::Witness>>,
     /// The bodies' members, kept as the directory has them at each save.
     pub(crate) bodies: Option<Arc<crate::assets::bodies::Bodies>>,
-    /// Set while a save puts waiting shares in force: that save alone moves
-    /// no waiting share to a new revision.
-    pub(crate) keep_revisions: bool,
     pub(crate) published: Option<Arc<arc_swap::ArcSwap<Snapshot>>>,
     pub(crate) post: Option<Arc<crate::post::Post>>,
     previous: Option<Arc<Snapshot>>,
@@ -718,7 +715,6 @@ impl Store {
             },
             witness: None,
             bodies: None,
-            keep_revisions: false,
             published: None,
             post: None,
             previous: None,
@@ -1055,10 +1051,11 @@ impl Store {
     /// Commits settings and their audit records together, including a batch
     /// of arrangements. Neither durable baseline advances on failure.
     /// Bodies' members as the directory about to be saved has them, where an
-    /// edit of its accounts or machines may have changed them (design §6.2).
+    /// edit may have changed them (design §6.2): only a whole save may, an
+    /// account's or a machine's own edit keeping who it is and may do.
     fn body_changes(&self, edit: &BookEdit) -> io::Result<Vec<(String, String)>> {
         match &self.bodies {
-            Some(bodies) if edit.is_full() || edit.list("accounts").0 || edit.list("members").0 => bodies.changes(&self.book.directory),
+            Some(bodies) if edit.is_full() => bodies.changes(&self.book.directory),
             _ => Ok(Vec::new()),
         }
     }
@@ -1066,9 +1063,6 @@ impl Store {
     /// New shares waiting, and those whose basis this directory no longer
     /// has, wait at a revision of this save (design §6.3).
     fn renew_shares(&mut self) -> io::Result<()> {
-        if self.keep_revisions {
-            return Ok(());
-        }
         // This save takes the chain's next number.
         let seq = self.metadata.shelf.0.read_now(crate::assets::chain::latest).map_err(io::Error::other)?.map_or(0, |(seq, _)| seq) + 1;
         if crate::shares::renew(&mut self.book.directory, seq) {

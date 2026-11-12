@@ -25,11 +25,18 @@ const ROOM: usize = 128 << 20;
 const DEVICE_ROOM: usize = 8 << 20;
 
 enum Body {
-    /// Room for a staged body, its bytes not here yet.
+    /// Room for a staged body, its data connection not here yet.
     Coming,
+    /// A staged body coming on its data connection now: it waits on no
+    /// clock, the connection's own pulse bounds it.
+    Receiving,
     Staged(Arc<Vec<u8>>),
-    /// The bodies a reply of frames sends apart, in order.
+    /// The bodies a reply of frames sends apart, in order, their data
+    /// connection not here yet.
     Going(Vec<Vec<u8>>),
+    /// Bodies going on their data connection now: still counted in the room
+    /// until it ends.
+    Sending,
 }
 
 struct Waiting {
@@ -48,7 +55,7 @@ pub(crate) struct Apart {
 impl Apart {
     fn reserve(&self, ticket: u64, key: [u8; 32], bytes: usize, body: Body) -> Result<(), String> {
         let mut waiting = self.waiting.lock().expect("bodies apart");
-        waiting.retain(|_, kept| kept.at.elapsed() < WAITS);
+        waiting.retain(|_, kept| matches!(kept.body, Body::Receiving | Body::Sending) || kept.at.elapsed() < WAITS);
         let total: usize = waiting.values().map(|kept| kept.bytes).sum();
         let device: usize = waiting.values().filter(|kept| kept.key == key).map(|kept| kept.bytes).sum();
         if total + bytes > ROOM || device + bytes > DEVICE_ROOM {
@@ -58,10 +65,30 @@ impl Apart {
         Ok(())
     }
 
-    pub(super) fn staged(&self, ticket: u64, key: &[u8; 32], bytes: Vec<u8>) -> Result<(), String> {
+    /// The staged body under `ticket` is coming now.
+    fn receiving(&self, ticket: u64, key: &[u8; 32]) -> Result<(), String> {
         let mut waiting = self.waiting.lock().expect("bodies apart");
         match waiting.get_mut(&ticket) {
             Some(kept) if kept.key == *key && matches!(kept.body, Body::Coming) => {
+                kept.body = Body::Receiving;
+                Ok(())
+            }
+            _ => Err("the room for the body went".into()),
+        }
+    }
+
+    /// Lets the room under `ticket` go, whatever it held.
+    fn forget(&self, ticket: u64, key: &[u8; 32]) {
+        let mut waiting = self.waiting.lock().expect("bodies apart");
+        if waiting.get(&ticket).is_some_and(|kept| kept.key == *key) {
+            waiting.remove(&ticket);
+        }
+    }
+
+    pub(super) fn staged(&self, ticket: u64, key: &[u8; 32], bytes: Vec<u8>) -> Result<(), String> {
+        let mut waiting = self.waiting.lock().expect("bodies apart");
+        match waiting.get_mut(&ticket) {
+            Some(kept) if kept.key == *key && matches!(kept.body, Body::Coming | Body::Receiving) => {
                 kept.body = Body::Staged(Arc::new(bytes));
                 kept.at = Instant::now();
                 Ok(())
@@ -80,6 +107,17 @@ impl Apart {
         }
     }
 
+    /// The staged body under `ticket` waits on: its frame waits for objects.
+    pub(crate) fn touch(&self, ticket: u64, key: &[u8; 32]) {
+        let mut waiting = self.waiting.lock().expect("bodies apart");
+        if let Some(kept) = waiting.get_mut(&ticket)
+            && kept.key == *key
+            && matches!(kept.body, Body::Staged(_))
+        {
+            kept.at = Instant::now();
+        }
+    }
+
     /// Lets the staged body under `ticket` go: its frame is settled.
     pub(crate) fn release(&self, ticket: u64, key: &[u8; 32]) {
         let mut waiting = self.waiting.lock().expect("bodies apart");
@@ -88,15 +126,18 @@ impl Apart {
         }
     }
 
+    /// The bodies kept under `ticket`, to go now: they stay counted in the
+    /// room until they went (`forget`).
     pub(super) fn going(&self, ticket: u64, key: &[u8; 32]) -> Option<Vec<Vec<u8>>> {
         let mut waiting = self.waiting.lock().expect("bodies apart");
-        match waiting.remove(&ticket) {
-            Some(Waiting { key: given, body: Body::Going(bodies), .. }) if given == *key => Some(bodies),
-            Some(other) => {
-                waiting.insert(ticket, other);
-                None
+        match waiting.get_mut(&ticket) {
+            Some(kept) if kept.key == *key && matches!(kept.body, Body::Going(_)) => {
+                match std::mem::replace(&mut kept.body, Body::Sending) {
+                    Body::Going(bodies) => Some(bodies),
+                    _ => None,
+                }
             }
-            None => None,
+            _ => None,
         }
     }
 }
@@ -119,11 +160,14 @@ pub(super) fn send_later(apart: &Apart, ticket: u64, key: &[u8; 32], bodies: Vec
 /// whether the hub kept it.
 pub(super) async fn receive(hub: &Arc<Hub>, mut socket: Socket, me: &MachineName, key: &[u8; 32], ticket: u64, size: u64) -> Result<(), String> {
     let pulse = crate::pulse_of(&socket);
+    let apart = &hub.assets.objects.apart;
     let kept: Result<(), String> = async {
+        apart.receiving(ticket, key)?;
         let mut body = Vec::with_capacity(size as usize);
         let mut expected = 0;
         while (body.len() as u64) < size {
-            let (index, bytes) = objects::chunk(&mut socket, &pulse).await?;
+            // No chunk longer than what is still to come.
+            let (index, bytes) = objects::chunk_at_most(&mut socket, &pulse, size - body.len() as u64).await?;
             if index != expected {
                 return Err("a body's chunks come in order".into());
             }
@@ -133,9 +177,12 @@ pub(super) async fn receive(hub: &Arc<Hub>, mut socket: Socket, me: &MachineName
         if body.len() as u64 != size {
             return Err("the body came longer than it was staged as".into());
         }
-        hub.assets.objects.apart.staged(ticket, key, body)
+        apart.staged(ticket, key, body)
     }
     .await;
+    if kept.is_err() {
+        apart.forget(ticket, key);
+    }
     let (sink, _) = socket.split();
     let writer = Writer::new(sink, pulse, fastctx_net::data::ReceiptWork::default());
     let word = match &kept {
@@ -152,6 +199,14 @@ pub(super) async fn receive(hub: &Arc<Hub>, mut socket: Socket, me: &MachineName
 /// waits for the member's word that it has them all.
 pub(super) async fn send(hub: &Arc<Hub>, socket: Socket, key: &[u8; 32], ticket: u64) -> Result<(), String> {
     let bodies = hub.assets.objects.apart.going(ticket, key).ok_or("the bodies under that ticket went")?;
+    // Counted in the room until they went, however that ends.
+    struct Gone<'a>(&'a Apart, u64, [u8; 32]);
+    impl Drop for Gone<'_> {
+        fn drop(&mut self) {
+            self.0.forget(self.1, &self.2);
+        }
+    }
+    let _gone = Gone(&hub.assets.objects.apart, ticket, *key);
     let pulse = crate::pulse_of(&socket);
     let (mut sink, mut stream) = socket.split();
     let (body_sent, sent) = tokio::sync::oneshot::channel();

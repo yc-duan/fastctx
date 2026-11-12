@@ -43,16 +43,30 @@ struct Pinned {
     lineage: Vec<fastctx_types::assets::Rotation>,
 }
 
-/// `lineage` with each of `rotations` it lacks; whether it grew.
+/// Rotations kept of a hub's lineage, the latest; and how many of them an
+/// open session carries: a hub put back to before that many rotations brings
+/// back a keyring export.
+const LINEAGE_KEPT: usize = 256;
+const LINEAGE_SENT: usize = 64;
+
+/// `lineage` with each of `rotations` it lacks, the latest `LINEAGE_KEPT`
+/// kept; whether it changed.
 fn grow(lineage: &mut Vec<fastctx_types::assets::Rotation>, rotations: &[fastctx_types::assets::Rotation]) -> bool {
-    let before = lineage.len();
+    let before = lineage.clone();
     for rotation in rotations {
         if !lineage.contains(rotation) {
             lineage.push(rotation.clone());
         }
     }
-    lineage.len() != before
+    if lineage.len() > LINEAGE_KEPT {
+        lineage.drain(..lineage.len() - LINEAGE_KEPT);
+    }
+    *lineage != before
 }
+
+/// Each object a hub did not give, when it last did not and how many times
+/// in a row.
+pub(crate) type Unreached = HashMap<(HubId, [u8; 32]), (std::time::Instant, u32)>;
 
 pub(crate) struct Assets {
     pub(crate) library: Library,
@@ -69,7 +83,7 @@ pub(crate) struct Assets {
     pub(crate) current: Mutex<HashMap<HubId, (u64, PublicKey)>>,
     /// Objects wanted that no hub gave lately, and when it last did not:
     /// asked again only after a while, so others are not held up.
-    pub(crate) unreached: Mutex<HashMap<(HubId, [u8; 32]), std::time::Instant>>,
+    pub(crate) unreached: Mutex<Unreached>,
     /// The holding revision this machine last told each hub it cleared at.
     pub(crate) cleared: Mutex<HashMap<HubId, (u64, Vec<String>)>>,
 }
@@ -157,7 +171,9 @@ impl Assets {
 
     /// The rotations that lead to the key pinned for `hub`, as it gave them.
     pub(crate) fn lineage(&self, hub: &HubId) -> Vec<fastctx_types::assets::Rotation> {
-        self.hubs.lock().expect("hubs").get(hub.as_str()).map(|pinned| pinned.lineage.clone()).unwrap_or_default()
+        let hubs = self.hubs.lock().expect("hubs");
+        let Some(pinned) = hubs.get(hub.as_str()) else { return Vec::new() };
+        pinned.lineage[pinned.lineage.len().saturating_sub(LINEAGE_SENT)..].to_vec()
     }
 
     /// The service key pinned for `hub`, if one is.

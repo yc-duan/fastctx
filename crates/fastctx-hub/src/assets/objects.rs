@@ -63,8 +63,8 @@ enum Ticket {
     Get { machine: MachineName, key: [u8; 32], scope: Scope, object: ObjectRef, from: u64, at: Instant },
     /// A frame body staged apart (`apart`).
     Stage { machine: MachineName, key: [u8; 32], scope: Scope, size: u64, at: Instant },
-    /// The bodies a reply of frames sends apart.
-    Bodies { machine: MachineName, key: [u8; 32], scope: Scope, at: Instant },
+    /// The bodies of `stream`'s frames a reply sends apart.
+    Bodies { machine: MachineName, key: [u8; 32], scope: Scope, stream: String, at: Instant },
 }
 
 impl Ticket {
@@ -110,11 +110,11 @@ impl Objects {
         Ok(number)
     }
 
-    /// The objects among `hashes` the device whose key is `key` proved it
-    /// holds lately.
-    pub(crate) fn proven(&self, key: &[u8; 32], hashes: &[[u8; 32]]) -> Vec<[u8; 32]> {
+    /// Every object the device whose key is `key` proved it holds lately.
+    pub(crate) fn proven_all(&self, key: &[u8; 32]) -> Vec<[u8; 32]> {
+        let now = Instant::now();
         let proofs = self.proofs.lock().expect("proofs");
-        hashes.iter().copied().filter(|hash| proofs.get(&(*key, *hash)).is_some_and(|until| Instant::now() < *until)).collect()
+        proofs.iter().filter(|((given, _), until)| given == key && now < **until).map(|((_, hash), _)| *hash).collect()
     }
 
     fn proved(&self, key: &[u8; 32], object: &ObjectRef) {
@@ -202,8 +202,15 @@ pub(crate) fn stage(assets: &Assets, machine: &MachineName, key: &PublicKey, sco
 }
 
 /// A ticket for `bodies`, in order, of a reply of frames to `machine`.
-pub(crate) fn send_apart(assets: &Assets, machine: &MachineName, key: &PublicKey, scope: Scope, bodies: Vec<Vec<u8>>) -> Result<u64, String> {
-    let ticket = assets.objects.ticket(Ticket::Bodies { machine: machine.clone(), key: *key.as_bytes(), scope, at: Instant::now() })?;
+pub(crate) fn send_apart(
+    assets: &Assets,
+    machine: &MachineName,
+    key: &PublicKey,
+    scope: Scope,
+    stream: &str,
+    bodies: Vec<Vec<u8>>,
+) -> Result<u64, String> {
+    let ticket = assets.objects.ticket(Ticket::Bodies { machine: machine.clone(), key: *key.as_bytes(), scope, stream: stream.to_string(), at: Instant::now() })?;
     if let Err(why) = super::apart::send_later(&assets.objects.apart, ticket, key.as_bytes(), bodies) {
         assets.objects.tickets.lock().expect("tickets").remove(&ticket);
         return Err(why);
@@ -247,7 +254,7 @@ pub(crate) fn get(
 /// Whether `me`, whose key is `key`, may go on with an object of `scope` —
 /// a get's `object` — by the directory as it stands now. Call on a thread
 /// that may block.
-fn allowed(hub: &Hub, me: &MachineName, key: &PublicKey, scope: &Scope, object: Option<&ObjectRef>) -> Result<(), String> {
+fn allowed(hub: &Hub, me: &MachineName, key: &PublicKey, scope: &Scope, object: Option<&ObjectRef>, stream: Option<&str>) -> Result<(), String> {
     if let Some(why) = hub.assets.sealed() {
         return Err(format!("every asset is sealed: {why}"));
     }
@@ -264,13 +271,30 @@ fn allowed(hub: &Hub, me: &MachineName, key: &PublicKey, scope: &Scope, object: 
         let library = scopes::library(&hub.assets, &fresh)?;
         reachable(&directory, me, &fresh, &library, object)?;
     }
+    if let Some(stream) = stream
+        && !scopes::holds(&directory, me, &fresh, stream)
+    {
+        return Err(format!("{me} holds {stream} of the scope no more"));
+    }
     Ok(())
 }
 
 /// `allowed`, off the async threads.
 async fn still(hub: &Arc<Hub>, me: &MachineName, key: &PublicKey, scope: &Scope, object: Option<&ObjectRef>) -> Result<(), String> {
-    let (hub, me, key, scope, object) = (hub.clone(), me.clone(), *key, scope.clone(), object.copied());
-    fastctx_platform::task::spawn_blocking(move || allowed(&hub, &me, &key, &scope, object.as_ref()))
+    still_holding(hub, me, key, scope, object, None).await
+}
+
+/// `still`, of `stream` too when one is named.
+async fn still_holding(
+    hub: &Arc<Hub>,
+    me: &MachineName,
+    key: &PublicKey,
+    scope: &Scope,
+    object: Option<&ObjectRef>,
+    stream: Option<&str>,
+) -> Result<(), String> {
+    let (hub, me, key, scope, object, stream) = (hub.clone(), me.clone(), *key, scope.clone(), object.copied(), stream.map(str::to_string));
+    fastctx_platform::task::spawn_blocking(move || allowed(&hub, &me, &key, &scope, object.as_ref(), stream.as_deref()))
         .await
         .map_err(|error| error.to_string())?
 }
@@ -296,7 +320,11 @@ pub(crate) async fn serve(hub: Arc<Hub>, mut socket: Socket, binding: [u8; 32], 
         Ticket::Get { object, .. } => Some(*object),
         _ => None,
     };
-    if let Err(why) = still(&hub, &me, &key, &scope, object.as_ref()).await {
+    let stream = match &ticket {
+        Ticket::Bodies { stream, .. } => Some(stream.clone()),
+        _ => None,
+    };
+    if let Err(why) = still_holding(&hub, &me, &key, &scope, object.as_ref(), stream.as_deref()).await {
         refuse(&mut socket, Refusal::Broken { reason: why }).await;
         return;
     }
@@ -362,9 +390,18 @@ pub(super) async fn chunk<S>(stream: &mut S, pulse: &Pulse) -> Result<(u64, Vec<
 where
     S: futures_util::Stream<Item = Result<WsMessage, tokio_tungstenite::tungstenite::Error>> + Unpin,
 {
+    chunk_at_most(stream, pulse, CHUNK_BYTES).await
+}
+
+/// The next chunk the member sends, refused before its bytes come when it
+/// says it is longer than `most`.
+pub(super) async fn chunk_at_most<S>(stream: &mut S, pulse: &Pulse, most: u64) -> Result<(u64, Vec<u8>), String>
+where
+    S: futures_util::Stream<Item = Result<WsMessage, tokio_tungstenite::tungstenite::Error>> + Unpin,
+{
     let head: ChunkHead = serde_json::from_str(&word(stream, pulse).await?).map_err(|error| error.to_string())?;
-    if head.size > CHUNK_BYTES {
-        return Err("a chunk is at most 1 MiB".into());
+    if head.size > CHUNK_BYTES.min(most) {
+        return Err(format!("a chunk here is at most {} bytes", CHUNK_BYTES.min(most)));
     }
     Ok((head.index, bytes(stream, pulse, head.size).await?))
 }

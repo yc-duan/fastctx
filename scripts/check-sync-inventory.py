@@ -93,12 +93,15 @@ def check(registry):
             raise ValueError(f"invalid asset table: {record}")
         asset_tables.add((table, owner))
     created = set()
-    for path in (ROOT / "crates").rglob("*.rs"):
+    # A table however its name is quoted, in Rust and in the SQL it loads.
+    creating = re.compile(r"CREATE\s+(?:TEMP\s+|TEMPORARY\s+)?TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:\\?[\"`\[])?([A-Za-z_][A-Za-z0-9_]*)", re.I)
+    for path in sorted((ROOT / "crates").rglob("*.rs")) + sorted((ROOT / "crates").rglob("*.sql")):
         name = path.as_posix()
         if "/src/" not in name or "/fastctx-sync/" in name or any(x in path.name for x in ("test", "drill")):
             continue
         owner = path.relative_to(ROOT).as_posix()
-        for table in re.findall(r"CREATE\s+(?:TABLE|TEMP\s+TABLE)\s+(?:IF\s+NOT\s+EXISTS\s+)?([a-z_][a-z0-9_]*)", path.read_text(encoding="utf-8"), re.I):
+        for table in creating.findall(path.read_text(encoding="utf-8")):
+            table = table.lower()
             if "/fastctx-content/" in name:
                 if (table, owner) not in asset_tables:
                     raise ValueError(f"unregistered asset table {table}: {owner}")

@@ -78,6 +78,19 @@ impl Bodies {
         let _ = self.hub.set(Arc::downgrade(hub));
     }
 
+    /// `work` done with the directory as it is, under its writer, so no save
+    /// comes between what `work` judged by it and what it did; without a
+    /// hub (the drills), with `directory`. Call on a thread that may block.
+    pub(crate) fn under_directory<T>(&self, directory: &Directory, work: impl FnOnce(&Directory) -> T) -> T {
+        match self.hub.get().and_then(Weak::upgrade) {
+            Some(hub) => {
+                let editing = hub.edit_store();
+                work(&editing.book.directory)
+            }
+            None => work(directory),
+        }
+    }
+
     /// `body` of `machine` owns scopes from now: its members are kept, as
     /// the directory has them under its writer; without a hub (the drills),
     /// as `directory` has them.

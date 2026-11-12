@@ -62,6 +62,8 @@ tokio-tungstenite = { version = "0.30.0", default-features = false, features = [
 tokio-util = { version = "0.7", features = ["io"] }
 
 [dev-dependencies]
+# The drills commit records unjudged.
+fastctx-content = { path = "../fastctx-content", features = ["drill"] }
 fastctx-client = { path = "../fastctx-client" }
 fastctx-hosts = { path = "../fastctx-hosts" }
 fastctx-install = { path = "../fastctx-install" }

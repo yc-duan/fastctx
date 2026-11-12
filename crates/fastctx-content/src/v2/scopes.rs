@@ -108,16 +108,7 @@ impl Library {
     /// recorded in one transaction; readers see none of it from then on.
     pub fn revoke(&self, key: &str) -> Result<()> {
         let key = key.to_string();
-        Ok(self.database().write_now_at(Priority::Control, 128, move |db| {
-            let Some((id, _, Some(holding))) = held(db, &key)? else { return Ok(()) };
-            db.prepare_cached("UPDATE scopes SET state = 'disabled', holding = NULL WHERE id = ?1")?.execute([id])?;
-            db.prepare_cached("DELETE FROM wanted_in WHERE scope = ?1")?.execute([id])?;
-            db.prepare_cached("UPDATE holdings SET ended = ?3 WHERE scope = ?1 AND holding = ?2")?
-                .execute(params![id, holding, now()])?;
-            db.prepare_cached("INSERT OR IGNORE INTO purges (scope, holding, phase, position) VALUES (?1, ?2, 'rows', NULL)")?
-                .execute(params![id, holding])?;
-            Ok(())
-        })?)
+        Ok(self.database().write_now_at(Priority::Control, 128, move |db| revoke_in(db, &key))?)
     }
 
     /// One pass of every purge: an ended period's frames, references and
@@ -220,4 +211,16 @@ impl Library {
             Ok(purged)
         })?)
     }
+}
+
+/// `Library::revoke` in the transaction `db` is in.
+pub(super) fn revoke_in(db: &fastctx_storage::rusqlite::Connection, key: &str) -> fastctx_storage::Result<()> {
+    let Some((id, _, Some(holding))) = held(db, key)? else { return Ok(()) };
+    db.prepare_cached("UPDATE scopes SET state = 'disabled', holding = NULL WHERE id = ?1")?.execute([id])?;
+    db.prepare_cached("DELETE FROM wanted_in WHERE scope = ?1")?.execute([id])?;
+    db.prepare_cached("UPDATE holdings SET ended = ?3 WHERE scope = ?1 AND holding = ?2")?
+        .execute(params![id, holding, now()])?;
+    db.prepare_cached("INSERT OR IGNORE INTO purges (scope, holding, phase, position) VALUES (?1, ?2, 'rows', NULL)")?
+        .execute(params![id, holding])?;
+    Ok(())
 }

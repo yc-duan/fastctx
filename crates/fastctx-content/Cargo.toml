@@ -12,6 +12,10 @@ publish = false
 name = "content_drill"
 harness = false
 
+[features]
+# The library's raw commit, for the drills alone.
+drill = []
+
 [dependencies]
 fastctx-platform = { path = "../fastctx-platform" }
 fastctx-storage = { path = "../fastctx-storage" }

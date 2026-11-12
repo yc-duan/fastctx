@@ -136,6 +136,7 @@ impl Library {
                 )?
                 .execute(params![stream_id, sequence, head])?;
                 pruned.floor = sequence as u64;
+                tidy_wanted(db, scope_id, holding)?;
             } else {
                 pruned.floor = db
                     .prepare_cached("SELECT floor FROM retention WHERE stream = ?1")?
@@ -160,34 +161,60 @@ impl Library {
                 .query_row(params![scope_id, stream], |row| row.get(0))
                 .optional()?
                 .ok_or_else(|| invalid("no such stream"))?;
-            // Where a frame ends, or a gap the hub signed that follows it.
-            let head: Option<Vec<u8>> = match through {
-                None => None,
-                Some(through) => Some(
-                    super::succession::held_end(db, stream_id, holding, through)?
-                        .ok_or_else(|| invalid("nothing held ends at that sequence"))?
-                        .to_vec(),
-                ),
-            };
-            let keep = through.map_or(-1, |through| through as i64);
-            for table in ["frame_objects", "frames"] {
-                db.prepare_cached(&format!("DELETE FROM {table} WHERE stream = ?1 AND holding = ?2 AND first > ?3"))?
-                    .execute(params![stream_id, holding, keep])?;
-            }
-            match &head {
-                Some(head) => {
-                    db.prepare_cached("UPDATE cursors SET sequence = ?3, head = ?4 WHERE stream = ?1 AND holding = ?2")?
-                        .execute(params![stream_id, holding, keep, head])?;
-                }
-                // Back to the empty start: the period has no frame of it.
-                None => {
-                    db.prepare_cached("DELETE FROM cursors WHERE stream = ?1 AND holding = ?2")?
-                        .execute(params![stream_id, holding])?;
-                }
-            }
-            db.prepare_cached("UPDATE streams SET next = ?2, head = ?3 WHERE id = ?1")?
-                .execute(params![stream_id, keep + 1, head])?;
-            super::rejected::rebuild(db, Applying { scope: scope_id, stream: stream_id, holding })
+            truncate_in(db, scope_id, holding, stream_id, through)
         })?)
     }
+}
+
+/// The rows of `scope`'s wanted objects that nothing of its holding period
+/// `holding` refers to any more, gone: what it no longer wants costs its
+/// lookups nothing (`Library::wanted_of`).
+pub(super) fn tidy_wanted(db: &fastctx_storage::rusqlite::Connection, scope: i64, holding: i64) -> fastctx_storage::Result<()> {
+    db.prepare_cached(
+        "DELETE FROM wanted_in WHERE scope = ?1
+           AND NOT EXISTS (SELECT 1 FROM object_refs r WHERE r.hash = wanted_in.hash AND r.scope = ?1 AND r.holding = ?2 AND r.count > 0)
+           AND NOT EXISTS (SELECT 1 FROM frame_objects f JOIN streams t ON t.id = f.stream
+                           WHERE f.hash = wanted_in.hash AND t.scope = ?1 AND f.holding = ?2)",
+    )?
+    .execute(fastctx_storage::rusqlite::params![scope, holding])?;
+    Ok(())
+}
+
+/// `Library::truncate` in the transaction `db` is in.
+pub(super) fn truncate_in(
+    db: &fastctx_storage::rusqlite::Connection,
+    scope_id: i64,
+    holding: i64,
+    stream_id: i64,
+    through: Option<u64>,
+) -> fastctx_storage::Result<()> {
+    // Where a frame ends, or a gap the hub signed that follows it.
+    let head: Option<Vec<u8>> = match through {
+        None => None,
+        Some(through) => Some(
+            super::succession::held_end(db, stream_id, holding, through)?
+                .ok_or_else(|| invalid("nothing held ends at that sequence"))?
+                .to_vec(),
+        ),
+    };
+    let keep = through.map_or(-1, |through| through as i64);
+    for table in ["frame_objects", "frames"] {
+        db.prepare_cached(&format!("DELETE FROM {table} WHERE stream = ?1 AND holding = ?2 AND first > ?3"))?
+            .execute(params![stream_id, holding, keep])?;
+    }
+    match &head {
+        Some(head) => {
+            db.prepare_cached("UPDATE cursors SET sequence = ?3, head = ?4 WHERE stream = ?1 AND holding = ?2")?
+                .execute(params![stream_id, holding, keep, head])?;
+        }
+        // Back to the empty start: the period has no frame of it.
+        None => {
+            db.prepare_cached("DELETE FROM cursors WHERE stream = ?1 AND holding = ?2")?
+                .execute(params![stream_id, holding])?;
+        }
+    }
+    db.prepare_cached("UPDATE streams SET next = ?2, head = ?3 WHERE id = ?1")?
+        .execute(params![stream_id, keep + 1, head])?;
+    super::rejected::rebuild(db, Applying { scope: scope_id, stream: stream_id, holding })?;
+    tidy_wanted(db, scope_id, holding)
 }

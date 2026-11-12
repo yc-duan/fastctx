@@ -79,6 +79,9 @@ pub(crate) struct Owners {
     /// The hub's incarnation, stamped on every library it makes.
     incarnation: Vec<u8>,
     slots: Mutex<HashMap<Owner, Arc<Slot>>>,
+    /// Owners whose library is being deleted: none is opened, under the same
+    /// lock a deletion checks it is held by no one.
+    fenced: Mutex<std::collections::HashSet<Owner>>,
 }
 
 /// What a library keeps its hub's incarnation under.
@@ -86,7 +89,7 @@ const STAMP: &str = "hub";
 
 impl Owners {
     pub(crate) fn new(root: PathBuf, incarnation: Vec<u8>) -> Self {
-        Self { root, incarnation, slots: Mutex::new(HashMap::new()) }
+        Self { root, incarnation, slots: Mutex::new(HashMap::new()), fenced: Mutex::new(std::collections::HashSet::new()) }
     }
 
     /// The library of `owner`, opened or made at need, or why it may not be
@@ -100,6 +103,9 @@ impl Owners {
     ) -> io::Result<Result<Library, String>> {
         let slot = {
             let mut slots = self.slots.lock().expect("owner libraries");
+            if self.fenced.lock().expect("fenced owners").contains(owner) {
+                return Err(io::Error::other(format!("the library of {} is being deleted", owner.key())));
+            }
             if !slots.contains_key(owner) && slots.len() >= OPEN_AT_ONCE {
                 // The least recently used that nobody holds goes: one still
                 // held, or still opening, stays, lest the same directory be
@@ -141,7 +147,10 @@ impl Owners {
     /// holds it, opens it or is about to. Call on a thread that may block.
     pub(crate) fn delete(&self, owner: &Owner) -> io::Result<()> {
         {
+            // Fenced first, under the lock every opening takes: none opens
+            // it from now until `deleted`.
             let mut slots = self.slots.lock().expect("owner libraries");
+            self.fenced.lock().expect("fenced owners").insert(owner.clone());
             if slots.get(owner).is_some_and(|slot| !idle(slot)) {
                 return Err(io::Error::other(format!("the library of {} is in use", owner.key())));
             }
@@ -151,6 +160,12 @@ impl Owners {
             Err(error) if error.kind() != io::ErrorKind::NotFound => Err(error),
             _ => Ok(()),
         }
+    }
+
+    /// The deletion of `owner`'s library is done: a library made for it from
+    /// now is a new one.
+    pub(crate) fn deleted(&self, owner: &Owner) {
+        self.fenced.lock().expect("fenced owners").remove(owner);
     }
 
     /// Closes the libraries left idle past `IDLE` that nobody holds, and,

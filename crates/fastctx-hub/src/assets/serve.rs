@@ -236,7 +236,7 @@ pub(crate) fn ask(
             let kept = gated(assets, directory, machine, &scope)?;
             super::objects::stage(assets, machine, key, kept, size)
         }
-        Request::Take { scope, frame, proven, staged } => {
+        Request::Take { scope, frame, proven: _, staged } => {
             let kept = gated(assets, directory, machine, &scope)?;
             // A body too large for the control connection was staged apart
             // under its ticket (§7.1), and stays there while the frame
@@ -245,7 +245,21 @@ pub(crate) fn ask(
                 if !frame.body.0.is_empty() {
                     return Err("a frame staged apart comes without its body".into());
                 }
-                let body = assets.objects.apart.body(staged, key.as_bytes())?;
+                let body = match assets.objects.apart.body(staged, key.as_bytes()) {
+                    Ok(body) => body,
+                    // Settled already, its body let go: the same frame asked
+                    // again hears what the hub said of it.
+                    Err(why) => {
+                        let library = scopes::library(assets, &kept)?;
+                        let word = library
+                            .answer(&scope, &frame.header.0, &frame.signature.0, &DeviceKeys, assets.signer().as_ref())
+                            .map_err(|error| error.to_string())?;
+                        return match word {
+                            Some(word) => Ok(Reply::Received { received: received(word) }),
+                            None => Err(why),
+                        };
+                    }
+                };
                 if body.len() as u64 != frame.apart {
                     return Err("the body staged under that ticket is not the frame's".into());
                 }
@@ -257,10 +271,10 @@ pub(crate) fn ask(
             };
             let library = scopes::library(assets, &kept)?;
             let period = library.holding(&scope).map_err(|error| error.to_string())?.ok_or("the scope is not held here")?;
-            let proven: Vec<[u8; 32]> = proven.iter().map(|hash| array(hash, "a proven object's hash")).collect::<Result<_, _>>()?;
             // Only what this device sent every byte of lately, under its key
-            // (§6.5).
-            let proven = assets.objects.proven(key.as_bytes(), &proven);
+            // (§6.5): every such proof, whether the request names it again or
+            // not.
+            let proven = assets.objects.proven_all(key.as_bytes());
             // An object the device reaches through a stream of the scope it
             // holds needs no proof; through the scope alone it does.
             let readable = |object: &ObjectRef| {
@@ -274,8 +288,12 @@ pub(crate) fn ask(
             let word = library
                 .take(&scope, raw, &DeviceKeys, &taking, kinds(), assets.signer())
                 .map_err(|error| error.to_string())?;
-            if staged != 0 && !matches!(word, Received::Missing(_) | Received::Prove(_)) {
-                assets.objects.apart.release(staged, key.as_bytes());
+            if staged != 0 {
+                if matches!(word, Received::Missing(_) | Received::Prove(_)) {
+                    assets.objects.apart.touch(staged, key.as_bytes());
+                } else {
+                    assets.objects.apart.release(staged, key.as_bytes());
+                }
             }
             if matches!(word, Received::Applied { .. } | Received::Parked { .. } | Received::Rejected { .. }) {
                 assets.changed(kept.owner.clone(), &scope);
@@ -348,7 +366,7 @@ pub(crate) fn ask(
             let ticket = if apart.is_empty() {
                 0
             } else {
-                match super::objects::send_apart(assets, machine, key, kept, apart) {
+                match super::objects::send_apart(assets, machine, key, kept, &stream, apart) {
                     Ok(ticket) => ticket,
                     Err(why) => {
                         // No room for the bodies now: the frames before the
@@ -456,6 +474,15 @@ fn open(
             return Ok(Reply::Sealed { why });
         }
         if keys.is_next(&pinned) {
+            // Only a machine that heard the hub speak under it shows it was
+            // put in use: the next key's public half was given out with its
+            // rotation before.
+            let spoken = seen.as_ref().is_some_and(|seen| {
+                fastctx_net::sign::heard_word(&PublicKey::from_bytes(pinned), &seen.statement.0, &seen.word.0).is_some()
+            });
+            if !spoken {
+                return Err("this machine pinned the keyring's next service key, which the hub never spoke under".into());
+            }
             let why = format!(
                 "{machine} pinned the keyring's next service key ({}): the rotation was put in use after this keyring was exported; \
                  put it in use with `fastctx hub rotate-key`, then reopen",

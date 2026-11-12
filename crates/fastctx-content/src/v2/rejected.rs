@@ -144,80 +144,7 @@ impl Library {
             else {
                 return Ok(0);
             };
-            let key = holder(stream_id, first);
-            let epoch: i64 = db.prepare_cached("SELECT epoch FROM streams WHERE id = ?1")?.query_row([stream_id], |row| row.get(0))?;
-            let mut position = 0u64;
-            // A few frames at a time: the run after a rejected frame can be
-            // long when its producer was away.
-            let mut after = first as i64 - 1;
-            loop {
-                let frames: Vec<(i64, Vec<u8>, Vec<u8>)> = {
-                    let mut statement = db.prepare_cached(
-                        "SELECT first, header, body FROM frames WHERE stream = ?1 AND holding = ?2 AND first > ?3 ORDER BY first LIMIT ?4",
-                    )?;
-                    let rows = statement.query_map(params![stream_id, holding, after, FRAMES_AT_ONCE], |row| {
-                        Ok((row.get(0)?, row.get(1)?, row.get(2)?))
-                    })?;
-                    rows.collect::<std::result::Result<_, _>>()?
-                };
-                if frames.is_empty() {
-                    break;
-                }
-                for (start, header, body) in frames {
-                    let header = Header::decode(&header).map_err(invalid)?;
-                    for (offset, record) in open(&header, &body).map_err(invalid)?.into_iter().enumerate() {
-                        let revision = header.first + offset as u64;
-                        let op = super::ops::op_at(db, scope_id, &stream, revision)?;
-                        // A record committed again keeps its place in the
-                        // order; one written since is placed after all.
-                        let kept: Option<i64> = db
-                            .prepare_cached("SELECT seq FROM resubmit_order WHERE stream = ?1 AND holding = ?2 AND revision = ?3")?
-                            .query_row(params![stream_id, holding, revision as i64], |row| row.get(0))
-                            .optional()?;
-                        db.prepare_cached(
-                            "INSERT INTO resubmits (stream, rejected, position, holding, epoch, seq, record, op) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-                        )?
-                        .execute(params![stream_id, first as i64, position as i64, holding, epoch, kept.unwrap_or(0), encode(&record), op])?;
-                        if kept.is_none() {
-                            db.prepare_cached("UPDATE resubmits SET seq = id WHERE id = last_insert_rowid()")?.execute([])?;
-                        }
-                        if let State::Is { objects, .. } = &record.record.state {
-                            for object in objects {
-                                db.prepare_cached(
-                                    "INSERT OR IGNORE INTO object_holds (kind, holder, hash, proven) VALUES ('resubmit', ?1, ?2, 0)",
-                                )?
-                                .execute(params![key, &object.hash[..]])?;
-                            }
-                        }
-                        position += 1;
-                    }
-                    after = start;
-                }
-            }
-            for table in ["frame_objects", "frames"] {
-                db.prepare_cached(&format!("DELETE FROM {table} WHERE stream = ?1 AND holding = ?2 AND first >= ?3"))?
-                    .execute(params![stream_id, holding, first as i64])?;
-            }
-            db.prepare_cached("DELETE FROM resubmit_order WHERE stream = ?1 AND holding = ?2 AND revision >= ?3")?
-                .execute(params![stream_id, holding, first as i64])?;
-            db.prepare_cached("UPDATE streams SET rejected_at = ?2, rejected_epoch = epoch WHERE id = ?1")?
-                .execute(params![stream_id, first as i64])?;
-            // The waiting records carry their operations; the places they
-            // stood at are someone else's once the stream goes on.
-            db.prepare_cached("DELETE FROM op_records WHERE scope = ?1 AND stream = ?2 AND revision >= ?3")?
-                .execute(params![scope_id, stream, first as i64])?;
-            let before: Option<Vec<u8>> = db
-                .prepare_cached("SELECT head FROM frames WHERE stream = ?1 AND holding = ?2 ORDER BY first DESC LIMIT 1")?
-                .query_row(params![stream_id, holding], |row| row.get(0))
-                .optional()?;
-            db.prepare_cached("UPDATE streams SET next = ?2, head = ?3 WHERE id = ?1")?
-                .execute(params![stream_id, first as i64, before])?;
-            db.prepare_cached("UPDATE cursors SET sequence = ?3, head = ?4 WHERE stream = ?1 AND holding = ?2")?
-                .execute(params![stream_id, holding, first as i64 - 1, before])?;
-            db.prepare_cached("UPDATE outbox SET uploaded = MIN(uploaded, ?2) WHERE stream = ?1")?
-                .execute(params![stream_id, first as i64])?;
-            rebuild(db, Applying { scope: scope_id, stream: stream_id, holding })?;
-            Ok(position as usize)
+            rejected_in(db, scope_id, holding, stream_id, &stream, first)
         })?)
     }
 
@@ -321,6 +248,8 @@ impl Library {
                 holding,
             },
             signer,
+            // Judged when first committed; the hub judges each again.
+            None,
             move |db, landed| {
                 let (scope_id, stream_id): (i64, i64) = db
                     .prepare_cached(
@@ -486,4 +415,91 @@ fn release_holds(db: &Connection, stream: i64) -> fastctx_storage::Result<()> {
         }
     }
     Ok(())
+}
+
+/// `Library::rejected` in the transaction `db` is in: the frames of
+/// `stream` from `first` out of it, their records kept to commit again. How
+/// many records were kept.
+pub(super) fn rejected_in(
+    db: &Connection,
+    scope_id: i64,
+    holding: i64,
+    stream_id: i64,
+    stream: &str,
+    first: u64,
+) -> fastctx_storage::Result<usize> {
+    let key = holder(stream_id, first);
+    let epoch: i64 = db.prepare_cached("SELECT epoch FROM streams WHERE id = ?1")?.query_row([stream_id], |row| row.get(0))?;
+    let mut position = 0u64;
+    // A few frames at a time: the run after a rejected frame can be
+    // long when its producer was away.
+    let mut after = first as i64 - 1;
+    loop {
+        let frames: Vec<(i64, Vec<u8>, Vec<u8>)> = {
+            let mut statement = db.prepare_cached(
+                "SELECT first, header, body FROM frames WHERE stream = ?1 AND holding = ?2 AND first > ?3 ORDER BY first LIMIT ?4",
+            )?;
+            let rows = statement.query_map(params![stream_id, holding, after, FRAMES_AT_ONCE], |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+            })?;
+            rows.collect::<std::result::Result<_, _>>()?
+        };
+        if frames.is_empty() {
+            break;
+        }
+        for (start, header, body) in frames {
+            let header = Header::decode(&header).map_err(invalid)?;
+            for (offset, record) in open(&header, &body).map_err(invalid)?.into_iter().enumerate() {
+                let revision = header.first + offset as u64;
+                let op = super::ops::op_at(db, scope_id, stream, revision)?;
+                // A record committed again keeps its place in the
+                // order; one written since is placed after all.
+                let kept: Option<i64> = db
+                    .prepare_cached("SELECT seq FROM resubmit_order WHERE stream = ?1 AND holding = ?2 AND revision = ?3")?
+                    .query_row(params![stream_id, holding, revision as i64], |row| row.get(0))
+                    .optional()?;
+                db.prepare_cached(
+                    "INSERT INTO resubmits (stream, rejected, position, holding, epoch, seq, record, op) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                )?
+                .execute(params![stream_id, first as i64, position as i64, holding, epoch, kept.unwrap_or(0), encode(&record), op])?;
+                if kept.is_none() {
+                    db.prepare_cached("UPDATE resubmits SET seq = id WHERE id = last_insert_rowid()")?.execute([])?;
+                }
+                if let State::Is { objects, .. } = &record.record.state {
+                    for object in objects {
+                        db.prepare_cached(
+                            "INSERT OR IGNORE INTO object_holds (kind, holder, hash, proven) VALUES ('resubmit', ?1, ?2, 0)",
+                        )?
+                        .execute(params![key, &object.hash[..]])?;
+                    }
+                }
+                position += 1;
+            }
+            after = start;
+        }
+    }
+    for table in ["frame_objects", "frames"] {
+        db.prepare_cached(&format!("DELETE FROM {table} WHERE stream = ?1 AND holding = ?2 AND first >= ?3"))?
+            .execute(params![stream_id, holding, first as i64])?;
+    }
+    db.prepare_cached("DELETE FROM resubmit_order WHERE stream = ?1 AND holding = ?2 AND revision >= ?3")?
+        .execute(params![stream_id, holding, first as i64])?;
+    db.prepare_cached("UPDATE streams SET rejected_at = ?2, rejected_epoch = epoch WHERE id = ?1")?
+        .execute(params![stream_id, first as i64])?;
+    // The waiting records carry their operations; the places they
+    // stood at are someone else's once the stream goes on.
+    db.prepare_cached("DELETE FROM op_records WHERE scope = ?1 AND stream = ?2 AND revision >= ?3")?
+        .execute(params![scope_id, stream, first as i64])?;
+    let before: Option<Vec<u8>> = db
+        .prepare_cached("SELECT head FROM frames WHERE stream = ?1 AND holding = ?2 ORDER BY first DESC LIMIT 1")?
+        .query_row(params![stream_id, holding], |row| row.get(0))
+        .optional()?;
+    db.prepare_cached("UPDATE streams SET next = ?2, head = ?3 WHERE id = ?1")?
+        .execute(params![stream_id, first as i64, before])?;
+    db.prepare_cached("UPDATE cursors SET sequence = ?3, head = ?4 WHERE stream = ?1 AND holding = ?2")?
+        .execute(params![stream_id, holding, first as i64 - 1, before])?;
+    db.prepare_cached("UPDATE outbox SET uploaded = MIN(uploaded, ?2) WHERE stream = ?1")?
+        .execute(params![stream_id, first as i64])?;
+    rebuild(db, Applying { scope: scope_id, stream: stream_id, holding })?;
+    Ok(position as usize)
 }

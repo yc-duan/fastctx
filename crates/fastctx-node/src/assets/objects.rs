@@ -90,10 +90,16 @@ pub(super) async fn fetch(assets: &Assets, hub: &fastctx_types::access::HubId, l
         Ok(mine) => mine,
         Err(why) => return vec![format!("listing the hub's scopes: {why}")],
     };
+    // One a hub did not give waits before it is asked again, longer each
+    // time it was not: those that keep failing come round seldom, and never
+    // fill the place of those not yet asked.
     let waiting: std::collections::HashSet<[u8; 32]> = {
-        let mut unreached = assets.unreached.lock().expect("unreached");
-        unreached.retain(|_, at| at.elapsed() < ASK_AGAIN);
-        unreached.keys().filter(|(of, _)| of == hub).map(|(_, hash)| *hash).collect()
+        let unreached = assets.unreached.lock().expect("unreached");
+        unreached
+            .iter()
+            .filter(|((of, _), (at, failed))| of == hub && at.elapsed() < ASK_AGAIN * 2u32.pow((*failed).min(6)))
+            .map(|((_, hash), _)| *hash)
+            .collect()
     };
     // Those asked of the hub lately and not given are passed over before
     // any are counted: they never fill the place of those not yet asked.
@@ -110,13 +116,17 @@ pub(super) async fn fetch(assets: &Assets, hub: &fastctx_types::access::HubId, l
         let Some(scope) = scope.filter(|scope| mine.contains(scope)) else { continue };
         match fetch_one(library, link, &scope, object).await {
             Ok(()) => {
+                assets.unreached.lock().expect("unreached").remove(&(hub.clone(), object.hash));
                 let hash = object.hash;
                 if let Err(why) = blocking(library, move |library| library.unwant(&hash)).await {
                     failed.push(format!("the object {}: {why}", hex(&object.hash)));
                 }
             }
             Err(why) => {
-                assets.unreached.lock().expect("unreached").insert((hub.clone(), object.hash), Instant::now());
+                let mut unreached = assets.unreached.lock().expect("unreached");
+                let times = unreached.get(&(hub.clone(), object.hash)).map_or(0, |(_, times)| times + 1);
+                unreached.insert((hub.clone(), object.hash), (Instant::now(), times));
+                drop(unreached);
                 failed.push(format!("fetching the object {} of {scope}: {why}", hex(&object.hash)));
             }
         }

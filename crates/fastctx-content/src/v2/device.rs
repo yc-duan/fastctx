@@ -13,7 +13,7 @@ use fastctx_storage::rusqlite::{OptionalExtension, params};
 
 /// The streams of a scope whose last frame in `holding` is `device`'s, with
 /// where each reaches next.
-fn own(
+pub(super) fn own(
     db: &fastctx_storage::rusqlite::Connection,
     scope: i64,
     holding: i64,

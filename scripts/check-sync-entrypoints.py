@@ -67,13 +67,26 @@ ASSET_OPENING = re.compile(
 )
 
 
+# A name made of pieces, an asset library's part among them.
+ASSET_PIECES = re.compile(r"concat!\s*\([^)]*\"asset", re.S)
+# The asset library's type under another name.
+LIBRARY_ALIAS = re.compile(r"\bLibrary\s+as\s+[A-Za-z_]\w*")
+
+
 def check_assets(path, source):
-    for literal, owner in ASSET_FILE_NAMES.items():
-        if literal in source and path != owner and not path.startswith("crates/fastctx-content/"):
-            raise ValueError(f"an asset library file named outside its module: {path}")
-    if path.startswith("crates/fastctx-content/") or "fastctx_content" not in source:
+    if path.startswith("crates/fastctx-content/"):
         return
-    if ASSET_OPENING.search(wire.code(source)) and path not in ASSET_OPENERS:
+    for literal, owner in ASSET_FILE_NAMES.items():
+        if literal in source and path != owner:
+            raise ValueError(f"an asset library file named outside its module: {path}")
+    if ASSET_PIECES.search(source):
+        raise ValueError(f"an asset library file name made of pieces: {path}")
+    if "fastctx_content" not in source:
+        return
+    code = wire.code(source)
+    if LIBRARY_ALIAS.search(code):
+        raise ValueError(f"the asset library under another name: {path}")
+    if ASSET_OPENING.search(code) and path not in ASSET_OPENERS:
         raise ValueError(f"unregistered asset library opener: {path}")
 
 

@@ -26,49 +26,39 @@ pub(crate) const UNSET: u64 = 0;
 /// acting and the projects — not whether a machine is there, nor any
 /// revision itself. A save that changes none of it moves no revision on.
 pub(crate) fn basis(directory: &Directory) -> String {
-    let mut hasher = Sha256::new();
-    let mut field = |text: &str| {
-        hasher.update((text.len() as u64).to_le_bytes());
-        hasher.update(text.as_bytes());
-    };
+    // Each entry as one line, the lines sorted: the same directory in
+    // another order is the same basis.
+    let mut lines: Vec<String> = Vec::new();
     for member in &directory.members {
-        field("member");
-        field(member.name.as_str());
-        for was in &member.was {
-            field(was.as_str());
-        }
-        field(&crate::assets::witness::hex(member.key.as_bytes()));
-        field(&format!("{:?}", member.kind));
-        for login in &member.logins {
-            field(login.as_str());
-        }
-        field(member.home.as_ref().map_or("", |home| home.as_str()));
-        field(if member.managed { "managed" } else { "" });
+        let mut was: Vec<&str> = member.was.iter().map(|name| name.as_str()).collect();
+        was.sort_unstable();
+        let mut logins: Vec<&str> = member.logins.iter().map(|login| login.as_str()).collect();
+        logins.sort_unstable();
+        lines.push(
+            serde_json::json!(["member", member.name.as_str(), was, crate::assets::witness::hex(member.key.as_bytes()), format!("{:?}", member.kind), logins, member.home.as_ref().map(|home| home.as_str()), member.managed])
+                .to_string(),
+        );
     }
     for account in &directory.accounts {
-        field("account");
-        field(account.name.as_str());
-        field(&format!("{:?}", account.level));
-        field(if account.locked { "locked" } else { "" });
-        field(&account.opened.as_millisecond().to_string());
+        lines.push(serde_json::json!(["account", account.name.as_str(), format!("{:?}", account.level), account.locked, account.opened.as_millisecond()]).to_string());
     }
     for share in &directory.shares {
-        field("share");
-        field(share.machine.as_str());
-        field(share.account.as_str());
-        field(if share.active() { "in force" } else { "waiting" });
+        lines.push(serde_json::json!(["share", share.machine.as_str(), share.account.as_str(), share.active()]).to_string());
     }
     for assist in &directory.assists {
-        field("assist");
-        field(&serde_json::to_string(&**assist).unwrap_or_default());
+        lines.push(serde_json::json!(["assist", &**assist]).to_string());
     }
     for acting in &directory.acting {
-        field("acting");
-        field(&serde_json::to_string(&**acting).unwrap_or_default());
+        lines.push(serde_json::json!(["acting", &**acting]).to_string());
     }
     for project in &directory.projects {
-        field("project");
-        field(&serde_json::to_string(&**project).unwrap_or_default());
+        lines.push(serde_json::json!(["project", &**project]).to_string());
+    }
+    lines.sort_unstable();
+    let mut hasher = Sha256::new();
+    for line in &lines {
+        hasher.update((line.len() as u64).to_le_bytes());
+        hasher.update(line.as_bytes());
     }
     crate::assets::witness::hex(&hasher.finalize()[..16])
 }
@@ -159,11 +149,9 @@ pub(crate) fn cleared(hub: &Hub, machine: &MachineName, key: &PublicKey, revisio
                 .map_err(|error| error.to_string())?;
         }
         store.book_edit = crate::store::BookEdit::Full;
-        // This very save puts them in force: it moves no revision on.
-        store.keep_revisions = true;
-        let saved = store.save_book().map_err(|error| error.to_string());
-        store.keep_revisions = false;
-        saved
+        // This very save puts them in force; any other machine's share whose
+        // basis that moves waits at a new revision, told with this change.
+        store.save_book().map_err(|error| error.to_string())
     })();
     if let Err(error) = result {
         store.book = before;

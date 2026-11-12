@@ -18,6 +18,9 @@ STORAGE_USERS = {
     "fastctx-sync", "fastctx-content", "fastctx-hub", "fastctx-node", "fastctx-net", "fastctx-jobs",
 }
 CONTENT_USERS = {"fastctx-hub", "fastctx-node"}
+# Who may open SQLite itself, past the storage layer: none other may make a
+# connection of its own to any database, an asset library's among them.
+RUSQLITE_USERS = {"fastctx-storage", "fastctx-gui"}
 
 
 def sections(manifest):
@@ -62,6 +65,8 @@ def check():
                 raise ValueError(f"unlisted storage user: {package}")
             if dependency == "fastctx-content" and package not in CONTENT_USERS:
                 raise ValueError(f"unlisted asset library user: {package}")
+            if dependency in {"rusqlite", "libsqlite3-sys"} and package not in RUSQLITE_USERS:
+                raise ValueError(f"unlisted direct SQLite user: {package}")
     print("sync dependencies: types/platform/storage/engine direction preserved; storage and asset library users listed")
 
 

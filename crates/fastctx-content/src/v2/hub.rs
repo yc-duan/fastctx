@@ -47,6 +47,12 @@ const DRAIN_AT_ONCE: usize = 16;
 /// device that ordered it, whichever call brought the frame to its turn.
 pub trait Authorizer: Send + Sync {
     fn authorize(&self, frame: &Header, record: &KindRecord, before: Option<&Entry>) -> std::result::Result<(), String>;
+
+    /// Whether records of `kind` at `schema` are known here: one that is not
+    /// is kept in its frame, out of the index, until it is (§2.3).
+    fn knows(&self, _kind: u16, _schema: u16) -> bool {
+        true
+    }
 }
 
 /// Signs the hub's word on a frame with its service key (§6.1); the signer
@@ -216,7 +222,7 @@ fn seen(db: &Connection, table: &str, stream: i64, holding: i64, item: &[u8]) ->
 /// The item as the applied prefix of this period has it: its row in the
 /// index, or, where a revision floor of an earlier period still hides it,
 /// the state the prefix gave it (`prefix_items`), whichever is later.
-fn before(db: &Connection, stream: i64, holding: i64, item: &[u8]) -> fastctx_storage::Result<Option<Entry>> {
+pub(super) fn before(db: &Connection, stream: i64, holding: i64, item: &[u8]) -> fastctx_storage::Result<Option<Entry>> {
     let indexed = seen(db, "items", stream, holding, item)?;
     let hidden = seen(db, "prefix_items", stream, holding, item)?;
     let latest = match (indexed, hidden) {
@@ -277,7 +283,7 @@ fn hidden_by_floor(db: &Connection, at: Applying, revision: u64, record: &KindRe
 }
 
 /// The item as `record`, at `revision`, leaves it.
-fn after(record: &KindRecord, revision: u64) -> Option<Entry> {
+pub(super) fn after(record: &KindRecord, revision: u64) -> Option<Entry> {
     match &record.record.state {
         State::Is { body, objects } => Some(Entry {
             item: record.record.item.clone(),
@@ -420,6 +426,9 @@ fn apply_frame(
     // frame leave it: they come in order, each a revision of its own.
     let mut earlier: BTreeMap<&[u8], Option<Entry>> = BTreeMap::new();
     for (offset, record) in records.iter().enumerate() {
+        if !authorizer.knows(record.kind, record.schema) {
+            continue;
+        }
         let item = record.record.item.as_slice();
         let prior = match earlier.remove(item) {
             Some(prior) => prior,
@@ -453,6 +462,13 @@ fn apply_frame(
     }
     let applying = Applying { scope, stream: at.stream, holding };
     for (offset, record) in records.iter().enumerate() {
+        if !authorizer.knows(record.kind, record.schema) {
+            // Kept in its frame, out of the index, until this hub knows its
+            // kind (§2.3).
+            db.prepare_cached("INSERT OR IGNORE INTO pending_schema (stream, kind, schema, epoch, first) VALUES (?1, ?2, ?3, ?4, ?5)")?
+                .execute(params![at.stream, record.kind, record.schema, header.epoch as i64, header.first as i64])?;
+            continue;
+        }
         hidden_by_floor(db, applying, header.first + offset as u64, record)?;
         apply(db, applying, header.first + offset as u64, record)?;
     }

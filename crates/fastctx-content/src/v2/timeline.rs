@@ -6,7 +6,7 @@
 //! what is shown in its place after `OVERSIZED`, the whole event its one
 //! object.
 
-use super::kind::{Actor, Deletion, Holding, Kind};
+use super::kind::{Actor, Deletion, Holding, Import, Kind};
 use super::{Entry, KindRecord};
 use crate::State;
 
@@ -44,6 +44,8 @@ impl Kind for Timeline {
     const ROLES: &'static [&'static str] = &["event"];
     const RETENTION: Option<u64> = None;
     const DELETION: Deletion = Deletion::Tombstone;
+    /// Made again from the history its producer reads.
+    const IMPORT: Import = Import::Remade;
     type Value = Vec<u8>;
 
     fn encode(value: &Vec<u8>) -> Vec<u8> {
@@ -67,5 +69,9 @@ impl Kind for Timeline {
                 _ => Err("an oversized event refers to its one object".into()),
             },
         }
+    }
+
+    fn subscription(scope: &str, _stream: &str) -> String {
+        format!("timeline:{scope}")
     }
 }

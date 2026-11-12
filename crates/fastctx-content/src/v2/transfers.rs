@@ -284,9 +284,7 @@ impl Transfer {
                 Some(_) => return Err(invalid("an object of that hash is here with another length")),
                 None => {}
             }
-            let life: i64 = db
-                .prepare_cached("SELECT COALESCE(MAX(life), 0) + 1 FROM objects WHERE hash = ?1")?
-                .query_row([&object.hash[..]], |row| row.get(0))?;
+            let life = super::objects::next_life(db)?;
             db.prepare_cached(
                 "INSERT INTO objects (hash, life, size, state, placed, unreferenced, chunk) VALUES (?1, ?2, ?3, 0, ?4, NULL, ?5)",
             )?

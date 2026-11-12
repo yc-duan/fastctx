@@ -70,10 +70,10 @@ pub(crate) fn pushed(node: &Arc<Node>, hub: &HubId, push: wire::Push) {
         wire::Push::Moved { .. } | wire::Push::Fact { .. } => wake(node, hub),
         wire::Push::Revoked { scope } => {
             let Some(assets) = node.assets.as_ref() else { return };
-            let (library, log) = (assets.library.clone(), node.log.clone());
+            let (library, log, device) = (assets.library.clone(), node.log.clone(), assets.device());
             fastctx_platform::task::spawn(async move {
                 let key = scope.clone();
-                if let Err(error) = blocking(&library, move |library| library.revoke(&key)).await {
+                if let Err(error) = blocking(&library, move |library| library.revoke_keeping(&key, &device)).await {
                     log.line(format_args!("ending what this machine held of {scope}: {error}"));
                 }
             });
@@ -147,7 +147,8 @@ pub(super) async fn ask(assets: &Assets, link: &Arc<Link>, request: Request) -> 
     match link.assets(request).await? {
         Reply::Revoked { scope } => {
             let key = scope.clone();
-            blocking(&assets.library, move |library| library.revoke(&key)).await?;
+            let device = assets.device();
+            blocking(&assets.library, move |library| library.revoke_keeping(&key, &device)).await?;
             Err(format!("{REVOKED}{scope}"))
         }
         reply => Ok(reply),
@@ -181,6 +182,9 @@ async fn pass(node: &Arc<Node>, hub: &HubId, link: &Arc<Link>) -> Result<(), Str
     let waited = waiting_revision(link);
     let key = open(assets, hub, link, session).await?;
     let mut failed = describe(assets, hub, link, &key).await.err();
+    // Shared whole on another network, this machine takes nothing of this
+    // one: what it begins goes up, nothing comes down to its disk.
+    let isolated = shared_elsewhere(node, hub);
     // This hub's scopes alone: another hub's go to no other.
     let scopes: Vec<(String, i64)> = blocking(library, |library| library.live_scopes())
         .await?
@@ -195,6 +199,14 @@ async fn pass(node: &Arc<Node>, hub: &HubId, link: &Arc<Link>) -> Result<(), Str
         // Each step goes on whatever the one before met; a revoked scope
         // goes no further.
         let uploaded = upload(assets, hub, link, &key, session, scope).await;
+        if isolated.is_some() {
+            if let Err(why) = uploaded
+                && !why.starts_with(REVOKED)
+            {
+                failed.get_or_insert(format!("{scope}: {why}"));
+            }
+            continue;
+        }
         let pulled = match &uploaded {
             Err(why) if why.starts_with(REVOKED) => Err(why.clone()),
             _ => pull(assets, hub, link, &key, session, scope, *holding).await,
@@ -227,10 +239,28 @@ async fn pass(node: &Arc<Node>, hub: &HubId, link: &Arc<Link>) -> Result<(), Str
     {
         failed = Some(why);
     }
+    if let Some(other) = isolated {
+        node.log.line(format_args!("assets with {hub}: this machine is shared whole on {other}; nothing of {hub}'s comes to it"));
+        return failed.map_or(Ok(()), Err);
+    }
     for failed in super::objects::fetch(assets, hub, link).await {
         node.log.line(format_args!("assets with {hub}: {failed}; asked again later"));
     }
     failed.map_or(Ok(()), Err)
+}
+
+/// Another network this machine is shared whole on, a share waiting or in
+/// force: one such network's holders may read the whole disk.
+fn shared_elsewhere(node: &Node, hub: &HubId) -> Option<HubId> {
+    node.links().iter().find_map(|link| {
+        let other = link.membership().id;
+        if other == *hub {
+            return None;
+        }
+        let view = link.view();
+        let me = view.directory.canonical(&link.name()).clone();
+        view.directory.shares.iter().any(|share| share.machine == me).then_some(other)
+    })
 }
 
 /// Shares of this machine waiting for it to clear (design §6.3): once a
@@ -277,7 +307,8 @@ async fn cleared(node: &Arc<Node>, assets: &Assets, hub: &HubId, link: &Arc<Link
     // Every object nothing that stays refers to goes, whatever kept it
     // back: half-made transfers, a deletion that failed, the grace. One a
     // live lease alone keeps goes at a later pass.
-    if !blocking(library, |library| library.clear_unrooted()).await? {
+    if let Some(left) = blocking(library, |library| library.clear_unrooted()).await? {
+        node.log.line(format_args!("whole access to this machine through {hub} waits: {left}"));
         return Ok(());
     }
     // Said only if, after all that, still nothing of another network's is
@@ -645,18 +676,9 @@ async fn pull(
     // A stream this machine may hold no more goes from here (§2.3); of its
     // own, what the hub has not taken is kept first, to commit again, never
     // dropped with the rest.
-    let (scope_text, device) = (scope.to_string(), assets.device());
-    let unsent: std::collections::BTreeMap<String, u64> =
-        blocking(library, move |library| library.uploads(&scope_text, &device)).await?.into_iter().collect();
     for stream in withheld.into_iter().filter(|stream| local.get(stream).is_some_and(|at| *at > 0)) {
-        if let Some(&from) = unsent.get(&stream)
-            && local.get(&stream).is_some_and(|at| *at > from)
-        {
-            let (scope_text, stream_text) = (scope.to_string(), stream.clone());
-            blocking(library, move |library| library.rejected(&scope_text, &stream_text, from)).await?;
-        }
-        let scope_text = scope.to_string();
-        blocking(library, move |library| library.truncate(&scope_text, &stream, None)).await?;
+        let (scope_text, device) = (scope.to_string(), assets.device());
+        blocking(library, move |library| library.withhold(&scope_text, &stream, &device)).await?;
     }
     // The streams the hub lags on: given back here, not checked against it.
     let mut ahead = std::collections::BTreeSet::new();

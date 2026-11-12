@@ -206,34 +206,46 @@ impl Assets {
     }
 
     /// Judges `owner` and, unread long enough, begins its deletion; whether
-    /// it began.
+    /// it began. Its scopes are judged a page at a time; the deletion begins
+    /// under the directory's writer, judged again by the directory as it is
+    /// then, and only while the owner holds the very scopes judged.
     fn sweep_owner(&self, directory: &fastctx_net::directory_index::Indexed<'_>, owner: &str, now: i64) -> io::Result<bool> {
-        let key = owner.to_string();
-        let keys: Vec<String> = self
-            .control
-            .read_now(move |c| {
-                let mut statement = c.prepare_cached("SELECT key FROM asset_scopes WHERE owner = ?1 ORDER BY key")?;
-                let rows = statement.query_map([&key], |row| row.get(0))?;
-                Ok(rows.collect::<std::result::Result<_, _>>()?)
-            })
-            .map_err(io::Error::other)?;
-        let mut anyone = false;
-        for key in &keys {
-            let read = match scopes::scope(self, key) {
-                Ok(Some(scope)) => scopes::anyone_reads(directory, &scope),
-                Ok(None) => Ok(false),
-                Err(why) => Err(io::Error::other(why)),
-            };
-            match read {
-                Ok(false) => {}
-                Ok(true) => {
-                    anyone = true;
-                    break;
+        let read = |directory: &fastctx_net::directory_index::Indexed<'_>| -> io::Result<Option<(bool, [u8; 32])>> {
+            let (mut digest, mut after, mut anyone) = (Sha256::new(), String::new(), false);
+            loop {
+                let (key, from) = (owner.to_string(), after.clone());
+                let page: Vec<String> = self
+                    .control
+                    .read_now(move |c| {
+                        let mut statement =
+                            c.prepare_cached("SELECT key FROM asset_scopes WHERE owner = ?1 AND key > ?2 ORDER BY key LIMIT 4096")?;
+                        let rows = statement.query_map(fastctx_storage::rusqlite::params![key, from], |row| row.get(0))?;
+                        Ok(rows.collect::<std::result::Result<_, _>>()?)
+                    })
+                    .map_err(io::Error::other)?;
+                let Some(last) = page.last() else { break };
+                after = last.clone();
+                for key in &page {
+                    digest.update((key.len() as u64).to_le_bytes());
+                    digest.update(key.as_bytes());
+                    if anyone {
+                        continue;
+                    }
+                    let judged = match scopes::scope(self, key) {
+                        Ok(Some(scope)) => scopes::anyone_reads(directory, &scope),
+                        Ok(None) => Ok(false),
+                        Err(why) => Err(io::Error::other(why)),
+                    };
+                    match judged {
+                        Ok(read) => anyone |= read,
+                        // Not known now: judged again at a later sweep.
+                        Err(_) => return Ok(None),
+                    }
                 }
-                // Not known now: judged again at a later sweep.
-                Err(_) => return Ok(false),
             }
-        }
+            Ok(Some((anyone, digest.finalize().into())))
+        };
+        let Some((anyone, _)) = read(directory)? else { return Ok(false) };
         let key = owner.to_string();
         if anyone {
             self.control
@@ -257,27 +269,43 @@ impl Assets {
         }
         let Some(found) = Owner::from_key(owner) else { return Ok(false) };
         let digest: [u8; 32] = Sha256::digest(owner.as_bytes()).into();
-        let (key, body) = (owner.to_string(), match &found {
+        let body = match &found {
             Owner::Body(id) => Some(id.clone()),
             _ => None,
-        });
-        let begun = self
-            .control
-            .write_now(1024, move |c| {
-                // A scope described into it since it was judged keeps it.
-                let mut statement = c.prepare_cached("SELECT key FROM asset_scopes WHERE owner = ?1 ORDER BY key")?;
-                let still: Vec<String> = statement.query_map([&key], |row| row.get(0))?.collect::<std::result::Result<_, _>>()?;
-                if still != keys {
-                    return Ok(None);
-                }
-                c.prepare_cached("INSERT OR IGNORE INTO asset_deleting (owner) VALUES (?1)")?.execute([&key])?;
-                c.prepare_cached("DELETE FROM asset_unread WHERE owner = ?1")?.execute([&key])?;
-                if let Some(body) = &body {
-                    c.prepare_cached("DELETE FROM asset_bodies WHERE id = ?1")?.execute([body])?;
-                }
-                chain::append(c, "owner-deleted", &digest).map(Some)
-            })
-            .map_err(io::Error::other)?;
+        };
+        let begun = self.bodies.under_directory(directory.all, |current| -> io::Result<Option<(u64, [u8; 32])>> {
+            // The directory as it is now: a project given back, an account
+            // restored, may read it again.
+            let index = fastctx_net::directory_index::Index::new(current);
+            let Some((anyone, judged)) = read(&fastctx_net::directory_index::Indexed::new(current, &index))? else { return Ok(None) };
+            if anyone {
+                return Ok(None);
+            }
+            let key = owner.to_string();
+            self.control
+                .write_now(1024, move |c| {
+                    // A scope described into it since it was judged keeps it.
+                    let mut statement = c.prepare_cached("SELECT key FROM asset_scopes WHERE owner = ?1 ORDER BY key")?;
+                    let mut rows = statement.query([&key])?;
+                    let mut still = Sha256::new();
+                    while let Some(row) = rows.next()? {
+                        let scope: String = row.get(0)?;
+                        still.update((scope.len() as u64).to_le_bytes());
+                        still.update(scope.as_bytes());
+                    }
+                    drop(rows);
+                    if <[u8; 32]>::from(still.finalize()) != judged {
+                        return Ok(None);
+                    }
+                    c.prepare_cached("INSERT OR IGNORE INTO asset_deleting (owner) VALUES (?1)")?.execute([&key])?;
+                    c.prepare_cached("DELETE FROM asset_unread WHERE owner = ?1")?.execute([&key])?;
+                    if let Some(body) = &body {
+                        c.prepare_cached("DELETE FROM asset_bodies WHERE id = ?1")?.execute([body])?;
+                    }
+                    chain::append(c, "owner-deleted", &digest).map(Some)
+                })
+                .map_err(io::Error::other)
+        })?;
         let Some((seq, head)) = begun else { return Ok(false) };
         self.witness.advanced(seq, &head)?;
         Ok(true)
@@ -314,10 +342,15 @@ impl Assets {
                         let mut removed = c
                             .prepare_cached("DELETE FROM asset_scopes WHERE key IN (SELECT key FROM asset_scopes WHERE owner = ?1 LIMIT 4096)")?
                             .execute([&batch])?;
-                        for table in ["hub_checkpoints", "hub_epoch_facts", "hub_gap_facts"] {
+                        // A batch of rows at a time, by each table's own key.
+                        for (table, key) in [
+                            ("hub_checkpoints", "owner, scope"),
+                            ("hub_epoch_facts", "owner, scope, stream, epoch"),
+                            ("hub_gap_facts", "owner, scope, stream, epoch, from_sequence"),
+                        ] {
                             removed += c
                                 .prepare_cached(&format!(
-                                    "DELETE FROM {table} WHERE owner = ?1 AND scope IN (SELECT DISTINCT scope FROM {table} WHERE owner = ?1 LIMIT 1024)"
+                                    "DELETE FROM {table} WHERE ({key}) IN (SELECT {key} FROM {table} WHERE owner = ?1 LIMIT 4096)"
                                 ))?
                                 .execute([&batch])?;
                         }
@@ -335,6 +368,7 @@ impl Assets {
                         Ok(())
                     })
                     .map_err(io::Error::other)?;
+                self.owners.deleted(&owner);
             }
         }
         Ok(())
