@@ -16,8 +16,9 @@ use std::time::{Duration, Instant};
 
 /// Objects fetched in one pass.
 const FETCHED_AT_ONCE: usize = 64;
-/// How long an object no hub gave waits before it is asked for again.
-const ASK_AGAIN: Duration = Duration::from_secs(600);
+/// How long an object a hub did not give waits before it is asked of that
+/// hub again.
+const ASK_AGAIN: Duration = Duration::from_secs(60);
 
 fn chunks(size: u64) -> u64 {
     size.div_ceil(CHUNK_BYTES).max(1)
@@ -75,12 +76,17 @@ pub(super) async fn put(library: &Library, link: &Arc<Link>, scope: &str, object
 
 /// Fetches what the records taken refer to and this machine has not; what
 /// did not come, and why.
-pub(super) async fn fetch(assets: &Assets, link: &Arc<Link>) -> Vec<String> {
+pub(super) async fn fetch(assets: &Assets, hub: &fastctx_types::access::HubId, link: &Arc<Link>) -> Vec<String> {
     let library = &assets.library;
+    // What this hub described alone is asked of it.
+    let mine = match super::session::hub_scopes(library, hub).await {
+        Ok(mine) => mine,
+        Err(why) => return vec![format!("listing the hub's scopes: {why}")],
+    };
     let waiting: std::collections::HashSet<[u8; 32]> = {
         let mut unreached = assets.unreached.lock().expect("unreached");
         unreached.retain(|_, at| at.elapsed() < ASK_AGAIN);
-        unreached.keys().copied().collect()
+        unreached.keys().filter(|(of, _)| of == hub).map(|(_, hash)| *hash).collect()
     };
     let limit = FETCHED_AT_ONCE + waiting.len();
     let wanted = match blocking(library, move |library| library.wanted(limit)).await {
@@ -89,8 +95,9 @@ pub(super) async fn fetch(assets: &Assets, link: &Arc<Link>) -> Vec<String> {
     };
     let mut failed = Vec::new();
     for (scope, object) in wanted.into_iter().filter(|(_, object)| !waiting.contains(&object.hash)).take(FETCHED_AT_ONCE) {
-        // Only a scope names where an object is read.
-        let Some(scope) = scope else { continue };
+        // Only a scope names where an object is read, and only its hub is
+        // asked.
+        let Some(scope) = scope.filter(|scope| mine.contains(scope)) else { continue };
         match fetch_one(library, link, &scope, object).await {
             Ok(()) => {
                 let hash = object.hash;
@@ -99,7 +106,7 @@ pub(super) async fn fetch(assets: &Assets, link: &Arc<Link>) -> Vec<String> {
                 }
             }
             Err(why) => {
-                assets.unreached.lock().expect("unreached").insert(object.hash, Instant::now());
+                assets.unreached.lock().expect("unreached").insert((hub.clone(), object.hash), Instant::now());
                 failed.push(format!("fetching the object {} of {scope}: {why}", hex(&object.hash)));
             }
         }
@@ -117,11 +124,12 @@ async fn fetch_one(library: &Library, link: &Arc<Link>, scope: &str, object: Obj
         };
         let mut incoming = link.get_object(ticket).await?;
         let (_, bytes) = incoming.chunk().await?;
+        incoming.done().await?;
         let lease = blocking(library, move |library| library.put(&mut bytes.as_slice(), &holder, LEASE)).await?;
         if lease.object != object {
             return Err("the bytes given do not hash to the object".into());
         }
-        return incoming.done().await;
+        return Ok(());
     }
     // Takes up a fetch broken off, from the first chunk not here.
     let mut transfer = blocking(library, move |library| library.under_way(object)).await?;
@@ -159,10 +167,13 @@ async fn fetch_one(library: &Library, link: &Arc<Link>, scope: &str, object: Obj
                 .map_err(|error| error.to_string())?,
         );
     }
+    // Every byte is here and written: the hub hears so before the whole is
+    // read through again here, however long that takes.
+    incoming.done().await?;
     let finishing = transfer.take().expect("a transfer");
     fastctx_platform::task::spawn_blocking(move || finishing.finish(&holder, LEASE))
         .await
         .map_err(|error| error.to_string())?
         .map_err(|error| error.to_string())?;
-    incoming.done().await
+    Ok(())
 }

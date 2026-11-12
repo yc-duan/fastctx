@@ -32,6 +32,10 @@ CREATE TABLE IF NOT EXISTS streams (
     next INTEGER NOT NULL DEFAULT 0,
     head BLOB,
     complete_through INTEGER,
+    -- Where the hub last rejected the stream and in which epoch: until the
+    -- stream is in a later epoch, what waits needs a new one first.
+    rejected_at INTEGER,
+    rejected_epoch INTEGER,
     UNIQUE (scope, name)
 );
 CREATE TABLE IF NOT EXISTS epochs (
@@ -316,9 +320,19 @@ CREATE TABLE IF NOT EXISTS resubmits (
     holding INTEGER NOT NULL,
     -- The epoch the stream was in when the hub rejected the run.
     epoch INTEGER NOT NULL,
+    -- The record's place in the order it was first written in, kept when
+    -- it is committed again and rejected again.
+    seq INTEGER NOT NULL DEFAULT 0,
     record BLOB NOT NULL,
     op TEXT
 );
+-- Where a record committed again landed, with its place in that order.
+CREATE TABLE IF NOT EXISTS resubmit_order (
+    stream INTEGER NOT NULL,
+    revision INTEGER NOT NULL,
+    seq INTEGER NOT NULL,
+    PRIMARY KEY (stream, revision)
+) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS resubmits_by_run ON resubmits (stream, rejected);
 CREATE TABLE IF NOT EXISTS object_holds (
     kind TEXT NOT NULL CHECK (kind IN ('resubmit', 'refused', 'evidence')),

@@ -33,6 +33,8 @@ pub struct Resubmit {
     /// The holding period it was rejected in: it is committed again only in
     /// that period.
     pub holding: i64,
+    /// Its place in the order the records were first written in.
+    pub seq: i64,
     pub record: KindRecord,
     pub op: Option<String>,
 }
@@ -164,11 +166,21 @@ impl Library {
                 for (start, header, body) in frames {
                     let header = Header::decode(&header).map_err(invalid)?;
                     for (offset, record) in open(&header, &body).map_err(invalid)?.into_iter().enumerate() {
-                        let op = super::ops::op_at(db, scope_id, &stream, header.first + offset as u64)?;
+                        let revision = header.first + offset as u64;
+                        let op = super::ops::op_at(db, scope_id, &stream, revision)?;
+                        // A record committed again keeps its place in the
+                        // order; one written since is placed after all.
+                        let kept: Option<i64> = db
+                            .prepare_cached("SELECT seq FROM resubmit_order WHERE stream = ?1 AND revision = ?2")?
+                            .query_row(params![stream_id, revision as i64], |row| row.get(0))
+                            .optional()?;
                         db.prepare_cached(
-                            "INSERT INTO resubmits (stream, rejected, position, holding, epoch, record, op) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                            "INSERT INTO resubmits (stream, rejected, position, holding, epoch, seq, record, op) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
                         )?
-                        .execute(params![stream_id, first as i64, position as i64, holding, epoch, encode(&record), op])?;
+                        .execute(params![stream_id, first as i64, position as i64, holding, epoch, kept.unwrap_or(0), encode(&record), op])?;
+                        if kept.is_none() {
+                            db.prepare_cached("UPDATE resubmits SET seq = id WHERE id = last_insert_rowid()")?.execute([])?;
+                        }
                         if let State::Is { objects, .. } = &record.record.state {
                             for object in objects {
                                 db.prepare_cached(
@@ -186,6 +198,10 @@ impl Library {
                 db.prepare_cached(&format!("DELETE FROM {table} WHERE stream = ?1 AND holding = ?2 AND first >= ?3"))?
                     .execute(params![stream_id, holding, first as i64])?;
             }
+            db.prepare_cached("DELETE FROM resubmit_order WHERE stream = ?1 AND revision >= ?2")?
+                .execute(params![stream_id, first as i64])?;
+            db.prepare_cached("UPDATE streams SET rejected_at = ?2, rejected_epoch = epoch WHERE id = ?1")?
+                .execute(params![stream_id, first as i64])?;
             // The waiting records carry their operations; the places they
             // stood at are someone else's once the stream goes on.
             db.prepare_cached("DELETE FROM op_records WHERE scope = ?1 AND stream = ?2 AND revision >= ?3")?
@@ -214,10 +230,9 @@ impl Library {
         Ok(self.database().read_now(move |db| {
             let Some((scope_id, _, Some(holding))) = held(db, &scope)? else { return Ok(Vec::new()) };
             let mut statement = db.prepare_cached(
-                "SELECT s.name, r.rejected, s.epoch > r.epoch FROM resubmits r JOIN streams s ON s.id = r.stream
-                 WHERE s.scope = ?1 AND r.holding = ?2
-                 AND r.id = (SELECT MAX(id) FROM resubmits q WHERE q.stream = r.stream AND q.holding = r.holding)
-                 ORDER BY s.name",
+                "SELECT s.name, COALESCE(s.rejected_at, MIN(r.rejected)), s.epoch > COALESCE(s.rejected_epoch, -1)
+                 FROM resubmits r JOIN streams s ON s.id = r.stream
+                 WHERE s.scope = ?1 AND r.holding = ?2 GROUP BY s.id ORDER BY s.name",
             )?;
             let rows = statement.query_map(params![scope_id, holding], |row| {
                 Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)? as u64, row.get::<_, bool>(2)?))
@@ -232,8 +247,8 @@ impl Library {
         let (scope, stream) = (scope.to_string(), stream.to_string());
         Ok(self.database().read_now(move |db| {
             let mut statement = db.prepare_cached(
-                "SELECT r.id, r.rejected, r.position, r.holding, r.record, r.op FROM resubmits r JOIN streams s ON s.id = r.stream
-                 JOIN scopes c ON c.id = s.scope WHERE c.key = ?1 AND s.name = ?2 ORDER BY r.id LIMIT ?3",
+                "SELECT r.id, r.rejected, r.position, r.holding, r.seq, r.record, r.op FROM resubmits r JOIN streams s ON s.id = r.stream
+                 JOIN scopes c ON c.id = s.scope WHERE c.key = ?1 AND s.name = ?2 ORDER BY r.seq, r.id LIMIT ?3",
             )?;
             let rows = statement.query_map(params![scope, stream, limit as i64], |row| {
                 Ok((
@@ -241,18 +256,20 @@ impl Library {
                     row.get::<_, i64>(1)?,
                     row.get::<_, i64>(2)?,
                     row.get::<_, i64>(3)?,
-                    row.get::<_, Vec<u8>>(4)?,
-                    row.get::<_, Option<String>>(5)?,
+                    row.get::<_, i64>(4)?,
+                    row.get::<_, Vec<u8>>(5)?,
+                    row.get::<_, Option<String>>(6)?,
                 ))
             })?;
             let mut resubmits = Vec::new();
             for row in rows {
-                let (id, rejected, position, holding, record, op) = row?;
+                let (id, rejected, position, holding, seq, record, op) = row?;
                 resubmits.push(Resubmit {
                     id,
                     rejected: rejected as u64,
                     position: position as u64,
                     holding,
+                    seq,
                     record: decode(&record).map_err(invalid)?,
                     op,
                 });
@@ -324,6 +341,8 @@ impl Library {
                         db.prepare_cached("INSERT OR REPLACE INTO op_records (scope, stream, revision, op) VALUES (?1, ?2, ?3, ?4)")?
                             .execute(params![scope_id, stream_name, (landed + index as u64) as i64, op])?;
                     }
+                    db.prepare_cached("INSERT OR REPLACE INTO resubmit_order (stream, revision, seq) VALUES (?1, ?2, ?3)")?
+                        .execute(params![stream_id, (landed + index as u64) as i64, resubmit.seq])?;
                 }
                 release_holds(db, stream_id)?;
                 Ok(())
@@ -436,6 +455,8 @@ pub(super) fn end_resubmits(db: &Connection, scope: i64, holding: i64) -> fastct
     for stream in streams {
         release_holds(db, stream)?;
     }
+    // The places records landed at again are the period's alone.
+    db.prepare_cached("DELETE FROM resubmit_order WHERE stream IN (SELECT id FROM streams WHERE scope = ?1)")?.execute([scope])?;
     Ok(ended)
 }
 

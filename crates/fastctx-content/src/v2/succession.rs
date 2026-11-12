@@ -97,6 +97,7 @@ pub(super) fn may_import(db: &Connection, stream: i64, header: &Header) -> fastc
 /// that follows what it holds.
 pub(super) fn held_end(db: &Connection, stream: i64, holding: i64, end: u64) -> fastctx_storage::Result<Option<[u8; 32]>> {
     // The gaps ending at `end` and back before it, to a frame or the start.
+    let known: i64 = db.prepare_cached("SELECT COUNT(*) FROM known_gaps WHERE stream = ?1")?.query_row([stream], |row| row.get(0))?;
     let mut gaps = Vec::new();
     let mut at = end;
     let mut value = loop {
@@ -109,7 +110,7 @@ pub(super) fn held_end(db: &Connection, stream: i64, holding: i64, end: u64) -> 
         if from == 0 {
             break [0; 32];
         }
-        if gaps.len() > 1024 {
+        if gaps.len() as i64 > known {
             return Ok(None);
         }
         at = from - 1;

@@ -209,7 +209,7 @@ async fn pass(node: &Arc<Node>, hub: &HubId, link: &Arc<Link>) -> Result<(), Str
     {
         failed = Some(why);
     }
-    for failed in super::objects::fetch(assets, link).await {
+    for failed in super::objects::fetch(assets, hub, link).await {
         node.log.line(format_args!("assets with {hub}: {failed}; asked again later"));
     }
     failed.map_or(Ok(()), Err)
@@ -247,15 +247,28 @@ async fn cleared(node: &Arc<Node>, assets: &Assets, hub: &HubId, link: &Arc<Link
     Ok(())
 }
 
+/// The scopes `hub` described here.
+pub(super) async fn hub_scopes(library: &Library, hub: &HubId) -> Result<std::collections::BTreeSet<String>, String> {
+    let hub = hub.as_str().to_string();
+    Ok(blocking(library, |library| library.live_scopes())
+        .await?
+        .into_iter()
+        .filter(|(_, descriptor, _)| serde_json::from_slice::<wire::Descriptor>(descriptor).is_ok_and(|descriptor| descriptor.hub == hub))
+        .map(|(scope, _, _)| scope)
+        .collect())
+}
+
 /// Opens a session: what this machine saw of the hub's history goes first.
 async fn open(assets: &Assets, hub: &HubId, link: &Arc<Link>, session: u64) -> Result<PublicKey, String> {
     let library = &assets.library;
+    let mine = hub_scopes(library, hub).await?;
     let mut reported = Vec::new();
     let mut after = None;
     loop {
         let mark = after.clone();
         let page = blocking(library, move |library| library.unwitnessed(mark.as_ref(), REPORTED_AT_ONCE)).await?;
-        reported.extend(page.receipts);
+        // Another hub's receipts go to no other.
+        reported.extend(page.receipts.into_iter().filter(|(scope, _)| mine.contains(scope)));
         match page.next {
             Some(next) => after = Some(next),
             None => break,
@@ -350,7 +363,10 @@ async fn upload(assets: &Assets, hub: &HubId, link: &Arc<Link>, key: &PublicKey,
     }
     let device = assets.device();
     let key_text = scope.to_string();
+    // A stream that fails holds up none after it; the scope reports the first.
+    let mut failed: Option<String> = None;
     for (stream, from) in blocking(library, move |library| library.uploads(&key_text, &device)).await? {
+        let done: Result<(), String> = async {
         let mut from = from;
         loop {
             let (scope_text, stream_text) = (scope.to_string(), stream.clone());
@@ -414,8 +430,17 @@ async fn upload(assets: &Assets, hub: &HubId, link: &Arc<Link>, key: &PublicKey,
                 from = header.first + u64::from(header.count);
             }
         }
+        Ok(())
+        }
+        .await;
+        if let Err(why) = done {
+            if why.starts_with(REVOKED) {
+                return Err(why);
+            }
+            failed.get_or_insert(format!("{stream}: {why}"));
+        }
     }
-    Ok(())
+    failed.map_or(Ok(()), Err)
 }
 
 /// Keeps the hub's word on a frame, when it is the pinned key's.
@@ -531,10 +556,12 @@ async fn pull(assets: &Assets, hub: &HubId, link: &Arc<Link>, key: &PublicKey, s
             resupply(assets, link, scope, stream, hub_at).await?;
         }
     }
+    let mut failed: Option<String> = None;
     for wire::StreamAt { stream, next } in streams {
+        let done: Result<(), String> = async {
         let mut at = local.get(&stream).copied().unwrap_or(0);
         if at >= next {
-            continue;
+            return Ok(());
         }
         let Reply::Succession { epochs, gaps } =
             ask(assets, link, Request::Succession { scope: scope.to_string(), stream: stream.clone() }).await?
@@ -582,8 +609,17 @@ async fn pull(assets: &Assets, hub: &HubId, link: &Arc<Link>, key: &PublicKey, s
                 }
             }
         }
+        Ok(())
+        }
+        .await;
+        if let Err(why) = done {
+            if why.starts_with(REVOKED) {
+                return Err(why);
+            }
+            failed.get_or_insert(format!("{stream}: {why}"));
+        }
     }
-    Ok(())
+    failed.map_or(Ok(()), Err)
 }
 
 /// Gives the hub again the frames of the replica `stream` of `scope` from
@@ -624,14 +660,7 @@ async fn resupply(assets: &Assets, link: &Arc<Link>, scope: &str, stream: &str, 
 async fn cursors(assets: &Assets, link: &Arc<Link>, scope: &str, holding: i64) -> Result<(), String> {
     let library = &assets.library;
     let (scope_text, device) = (scope.to_string(), assets.device());
-    let own: std::collections::BTreeSet<String> =
-        blocking(library, move |library| library.own_streams(&scope_text, &device)).await?.into_iter().collect();
-    let scope_text = scope.to_string();
-    let standing: Vec<(String, u64, [u8; 32])> = blocking(library, move |library| library.standing(&scope_text))
-        .await?
-        .into_iter()
-        .filter(|(stream, _, _)| !own.contains(stream))
-        .collect();
+    let standing = blocking(library, move |library| library.replica_standing(&scope_text, &device)).await?;
     if standing.is_empty() {
         return Ok(());
     }

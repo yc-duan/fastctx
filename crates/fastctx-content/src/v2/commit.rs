@@ -174,6 +174,8 @@ impl Library {
             // stands there no more: only this commit's own land here.
             db.prepare_cached("DELETE FROM op_records WHERE scope = ?1 AND stream = ?2 AND revision >= ?3 AND revision < ?4")?
                 .execute(params![scope, commit.stream, next as i64, first as i64])?;
+            db.prepare_cached("DELETE FROM resubmit_order WHERE stream = ?1 AND revision >= ?2 AND revision < ?3")?
+                .execute(params![stream, next as i64, first as i64])?;
             then(db, next)?;
             if let Some((op, words)) = &commit.op {
                 super::ops::landed(db, op, scope, &commit.stream, next, first - next, *words)?;
