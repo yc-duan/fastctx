@@ -13,7 +13,7 @@ use fastctx_content::v2::{
 };
 use fastctx_content::ObjectRef;
 use fastctx_net::directory_index::Indexed;
-use fastctx_net::sign::{Domain, PublicKey, Signature, heard_word};
+use fastctx_net::sign::{Domain, PublicKey, Signature};
 use fastctx_storage::rusqlite::{OptionalExtension, params};
 use fastctx_types::MachineName;
 use fastctx_types::assets::{self as wire, Bytes, Reply, Request};
@@ -125,6 +125,10 @@ pub(crate) fn ask(
     request: Request,
 ) -> Result<Reply, String> {
     if let Some(why) = assets.sealed() {
+        // What a machine brings while sealed goes into the recovery's report.
+        if let Request::Open { seen, reported, .. } = &request {
+            assets.brought(machine, seen.as_ref().map_or(0, |seen| seen.seq), reported.len());
+        }
         return Ok(Reply::Sealed { why });
     }
     // A scope this machine reads no more is answered so, whatever was asked
@@ -137,7 +141,7 @@ pub(crate) fn ask(
         return Ok(Reply::Revoked { scope: key.to_string() });
     }
     match request {
-        Request::Open { version, seen, reported } => open(assets, directory, machine, version, seen, reported),
+        Request::Open { version, seen, reported, pinned } => open(assets, directory, machine, version, seen, reported, pinned),
         Request::Describe { scope, readers, classes } => {
             Ok(Reply::Described { descriptor: scopes::describe(assets, directory, machine, &scope, readers, classes)? })
         }
@@ -282,22 +286,43 @@ fn open(
     version: u32,
     seen: Option<wire::Seen>,
     reported: Vec<wire::Reported>,
+    pinned: Option<Bytes>,
 ) -> Result<Reply, String> {
     if version != wire::VERSION {
         return Err(format!("asset sync {version} is not this hub's {}", wire::VERSION));
     }
     assets.speaks(machine).map_err(|error| error.to_string())?;
+    if let Some(pinned) = &pinned {
+        let pinned = array(pinned, "a pinned key")?;
+        if !assets.keys().holds(&pinned) {
+            let why = format!(
+                "{machine} pinned a service key of the hub's ({}) its keyring lacks: the keyring was put back to before a rotation; \
+                 bring back a keyring export that holds it",
+                super::witness::hex(&pinned[..8])
+            );
+            assets.seal(&why);
+            return Ok(Reply::Sealed { why });
+        }
+    }
     let public = assets.public();
     let (seq, head) = assets.witness.current();
+    // What is of a history put aside when the hub recovered is handled:
+    // the machine is told so, not taken for a new rollback.
+    let mut closed = false;
     if let Some(seen) = seen {
         let seen_head = array(&seen.head, "a chain head")?;
-        // Only a head the hub's own word carried counts.
-        if heard_word(&public, &seen.statement.0, &seen.word.0) == Some((seen.seq, seen_head)) {
+        // Only a head the hub's own word carried counts, under any key of
+        // its keyring.
+        if assets.keys().heard(&seen.statement.0, &seen.word.0) == Some((seen.seq, seen_head)) {
             let kept = assets.control.read_now(move |c| chain::head_at(c, seen.seq)).map_err(|error| error.to_string())?;
             if kept != Some(seen_head) {
-                let why = format!("{machine} saw the hub's history at {} that the hub does not hold", seen.seq);
-                assets.seal(&why);
-                return Ok(Reply::Sealed { why });
+                if assets.closed_head(seen.seq).map_err(|error| error.to_string())? {
+                    closed = true;
+                } else {
+                    let why = format!("{machine} saw the hub's history at {} that the hub does not hold", seen.seq);
+                    assets.seal(&why);
+                    return Ok(Reply::Sealed { why });
+                }
             }
         }
     }
@@ -321,11 +346,15 @@ fn open(
                 (parked_statement(&frame, *sequence, &accumulated), head)
             }
         };
-        if heard_word(&public, &statement, &receipt.word.0).is_none() {
+        if assets.keys().heard(&statement, &receipt.word.0).is_none() {
             continue;
         }
         let library = scopes::library(assets, &scope)?;
         if !library.holds(&wanted).map_err(|error| error.to_string())? {
+            if assets.closed_receipt(&wanted).map_err(|error| error.to_string())? {
+                closed = true;
+                continue;
+            }
             let why = format!("{machine} holds the hub's receipt of {} that the hub's history no longer holds", receipt.scope);
             assets.seal(&why);
             return Ok(Reply::Sealed { why });
@@ -334,7 +363,21 @@ fn open(
             checkpointed.push(checkpoint);
         }
     }
-    Ok(Reply::Ready { key: public.as_bytes().to_vec().into(), clock: jiff::Timestamp::now().as_millisecond(), seq, head: head.into(), checkpointed })
+    let rotations = assets
+        .keys()
+        .rotations()
+        .iter()
+        .map(|rotation| wire::Rotation { old: rotation.old.into(), new: rotation.new.into(), word: rotation.signature.clone().into() })
+        .collect();
+    Ok(Reply::Ready {
+        key: public.as_bytes().to_vec().into(),
+        clock: jiff::Timestamp::now().as_millisecond(),
+        seq,
+        head: head.into(),
+        checkpointed,
+        rotations,
+        closed,
+    })
 }
 
 /// The hub's word that a checkpoint covers `head` of `scope`, if one does:

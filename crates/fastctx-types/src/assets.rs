@@ -218,6 +218,10 @@ pub enum Request {
         seen: Option<Seen>,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         reported: Vec<Reported>,
+        /// The service key this machine pinned for the hub: a hub whose
+        /// keyring lacks it was put back to before a rotation (§17).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pinned: Option<Bytes>,
     },
     /// The hub's word on a frame, from its signed header, if it has one
     /// (§6.5, step 1).
@@ -268,6 +272,15 @@ pub enum Request {
     /// see, at its holding revision `revision` (§6.3), under its key
     /// (`cleared_statement`).
     Cleared { revision: u64, proof: Bytes },
+}
+
+/// The old service key's word that the new one follows it (§6.1),
+/// over `fastctx-hub-key-rotation/1 ‖ old ‖ new`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Rotation {
+    pub old: Bytes,
+    pub new: Bytes,
+    pub word: Bytes,
 }
 
 /// What a machine signs saying it cleared at a holding revision (§6.3).
@@ -403,6 +416,15 @@ pub enum Reply {
         head: Bytes,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         checkpointed: Vec<Checkpoint>,
+        /// Each rotation of the hub's service key, the old key's word on the
+        /// new (§6.1): a machine follows them from the key it pinned.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        rotations: Vec<Rotation>,
+        /// What the machine saw or was given is of a history the hub put
+        /// aside when it recovered (§17): it forgets that history's head and
+        /// receipts, and gives back what the hub lacks.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        closed: bool,
     },
     /// The hub was put back and keeps every asset sealed until recovery
     /// ends (§17).

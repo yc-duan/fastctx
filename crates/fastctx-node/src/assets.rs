@@ -128,6 +128,56 @@ impl Assets {
         }
     }
 
+    /// The service key pinned for `hub`, if one is.
+    pub(crate) fn pinned(&self, hub: &HubId) -> Option<Bytes> {
+        self.hubs.lock().expect("hubs").get(hub.as_str()).map(|pinned| pinned.key.clone())
+    }
+
+    /// The hub's service key as pinned, pinning `offered` the first time, or
+    /// following the hub's signed rotations from the key pinned to it (design
+    /// §6.1). An error where no rotation leads from the one pinned.
+    pub(crate) fn pin_following(&self, hub: &HubId, offered: &Bytes, rotations: &[fastctx_types::assets::Rotation]) -> Result<PublicKey, String> {
+        let offered_key: [u8; 32] = offered.array().ok_or("a service key is 32 bytes")?;
+        let pinned = self.hubs.lock().expect("hubs").get(hub.as_str()).and_then(|pinned| pinned.key.array());
+        let Some(mut at) = pinned else { return self.pin(hub, offered) };
+        if at == offered_key {
+            return Ok(PublicKey::from_bytes(at));
+        }
+        for _ in 0..=rotations.len() {
+            let Some(next) = rotations.iter().find_map(|rotation| {
+                let (old, new) = (rotation.old.array()?, rotation.new.array()?);
+                (old == at && rotated(&old, &new, &rotation.word.0)).then_some(new)
+            }) else {
+                break;
+            };
+            at = next;
+            if at == offered_key {
+                let mut hubs = self.hubs.lock().expect("hubs");
+                let mut next_hubs = hubs.clone();
+                if let Some(pinned) = next_hubs.get_mut(hub.as_str()) {
+                    pinned.key = offered_key.into();
+                }
+                self.save(&next_hubs).map_err(|error| error.to_string())?;
+                *hubs = next_hubs;
+                return Ok(PublicKey::from_bytes(offered_key));
+            }
+        }
+        Err(format!("the hub {hub} offers another service key than the one this machine pinned, and no rotation it signed leads to it"))
+    }
+
+    /// The hub put the history this machine saw aside when it recovered
+    /// (design §17): the head it saw is forgotten.
+    pub(crate) fn forget_seen(&self, hub: &HubId) -> io::Result<()> {
+        let mut hubs = self.hubs.lock().expect("hubs");
+        let mut next = hubs.clone();
+        if let Some(pinned) = next.get_mut(hub.as_str()) {
+            pinned.seen = None;
+        }
+        self.save(&next)?;
+        *hubs = next;
+        Ok(())
+    }
+
     /// The latest chain head the hub's word carried here.
     pub(crate) fn seen(&self, hub: &HubId) -> Option<Seen> {
         self.hubs.lock().expect("hubs").get(hub.as_str()).and_then(|pinned| pinned.seen.clone())
@@ -154,6 +204,17 @@ impl Assets {
         *hubs = next;
         true
     }
+}
+
+/// Whether `word` is the old service key's signature that `new` follows it.
+fn rotated(old: &[u8; 32], new: &[u8; 32], word: &[u8]) -> bool {
+    let Ok(signature) = <[u8; 64]>::try_from(word) else { return false };
+    let mut statement = b"fastctx-hub-key-rotation/1".to_vec();
+    statement.extend_from_slice(old);
+    statement.extend_from_slice(new);
+    PublicKey::from_bytes(*old)
+        .verify(Domain::SyncHubKeyRotation, &statement, &fastctx_net::sign::Signature::from_bytes(signature))
+        .is_ok()
 }
 
 /// This machine as the device that orders its streams.

@@ -166,6 +166,37 @@ impl Library {
         })?)
     }
 
+    /// The hub put the history these receipts of `scope` are of aside when
+    /// it recovered (§17): none waits to be reported any more. How many.
+    pub fn void_receipts(&self, scope: &str) -> Result<usize> {
+        let scope = scope.to_string();
+        Ok(self.database().write_relaxed_now_at(Priority::Normal, 128, move |db| {
+            let Some((scope_id, _, _)) = held(db, &scope)? else { return Ok(0) };
+            let voided = db
+                .prepare_cached(
+                    "UPDATE hub_receipts SET checkpointed = 1 WHERE checkpointed = 0 AND stream IN (SELECT id FROM streams WHERE scope = ?1)",
+                )?
+                .execute([scope_id])?;
+            db.prepare_cached("DELETE FROM hub_receipt_sessions WHERE stream IN (SELECT id FROM streams WHERE scope = ?1)")?
+                .execute([scope_id])?;
+            Ok(voided)
+        })?)
+    }
+
+    /// Uploading `stream` of `scope` goes on from no later than `to`: the hub
+    /// holds no more of it (it recovered to before, §17).
+    pub fn rewind_uploads(&self, scope: &str, stream: &str, to: u64) -> Result<()> {
+        let (scope, stream) = (scope.to_string(), stream.to_string());
+        Ok(self.database().write_relaxed_now_at(Priority::Normal, 128, move |db| {
+            let Some((scope_id, _, _)) = held(db, &scope)? else { return Ok(()) };
+            db.prepare_cached(
+                "UPDATE outbox SET uploaded = MIN(uploaded, ?3) WHERE stream = (SELECT id FROM streams WHERE scope = ?1 AND name = ?2)",
+            )?
+            .execute(params![scope_id, stream, to as i64])?;
+            Ok(())
+        })?)
+    }
+
     /// The hub checked these receipts, reported when `session` opened: a
     /// checkpoint's word in that session may take them off. How many.
     pub fn vouched(&self, session: u64, receipts: Vec<(String, Receipt)>) -> Result<usize> {

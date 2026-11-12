@@ -19,6 +19,22 @@ CREATE TABLE IF NOT EXISTS hub_checkpoints (
     PRIMARY KEY (owner, scope, seq)
 ) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS asset_machines (machine TEXT PRIMARY KEY) WITHOUT ROWID;
+-- A history put aside when the hub recovered (design §17): heads after
+-- `fork` up to `top` that are not the chain's are of it.
+CREATE TABLE IF NOT EXISTS closed_branches (
+    id INTEGER PRIMARY KEY, fork INTEGER NOT NULL, top INTEGER NOT NULL, head BLOB NOT NULL, at INTEGER NOT NULL
+);
+-- Where each scope stood when a branch was put aside: a receipt past it the
+-- library does not hold is of that branch.
+CREATE TABLE IF NOT EXISTS closed_scopes (
+    branch INTEGER NOT NULL, scope TEXT NOT NULL, change INTEGER NOT NULL, parked INTEGER NOT NULL,
+    PRIMARY KEY (branch, scope)
+) WITHOUT ROWID;
+-- What machines brought while every asset was sealed, for the report.
+CREATE TABLE IF NOT EXISTS recovery_seen (
+    machine TEXT NOT NULL, seq INTEGER NOT NULL, receipts INTEGER NOT NULL, at INTEGER NOT NULL,
+    PRIMARY KEY (machine)
+) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS hub_epoch_facts (
     owner TEXT NOT NULL, scope TEXT NOT NULL, stream TEXT NOT NULL, epoch INTEGER NOT NULL, digest BLOB NOT NULL,
     seq INTEGER NOT NULL,

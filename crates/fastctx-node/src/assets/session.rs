@@ -280,14 +280,25 @@ async fn open(assets: &Assets, hub: &HubId, link: &Arc<Link>, session: u64) -> R
             })
         })
         .collect();
-    let reply = link.assets(Request::Open { version: VERSION, seen: assets.seen(hub), reported: wired }).await?;
-    let (offered, checkpointed) = match reply {
-        Reply::Ready { key, checkpointed, .. } => (key, checkpointed),
+    let request = Request::Open { version: VERSION, seen: assets.seen(hub), reported: wired, pinned: assets.pinned(hub) };
+    let (offered, checkpointed, rotations, closed) = match link.assets(request).await? {
+        Reply::Ready { key, checkpointed, rotations, closed, .. } => (key, checkpointed, rotations, closed),
         Reply::Sealed { why } => return Err(format!("the hub keeps every asset sealed: {why}")),
         _ => return Err("the hub did not open the session".into()),
     };
-    let key = assets.pin(hub, &offered)?;
-    blocking(library, move |library| library.vouched(session, reported)).await?;
+    let key = assets.pin_following(hub, &offered, &rotations)?;
+    if closed {
+        // The hub set the history this machine saw aside when it recovered:
+        // its head is forgotten and its receipts wait no more; what the hub
+        // lacks is given back as each scope is gone through (`pull`).
+        assets.forget_seen(hub).map_err(|error| error.to_string())?;
+        let scopes: std::collections::BTreeSet<String> = reported.iter().map(|(scope, _)| scope.clone()).collect();
+        for scope in scopes {
+            blocking(library, move |library| library.void_receipts(&scope)).await?;
+        }
+    } else {
+        blocking(library, move |library| library.vouched(session, reported)).await?;
+    }
     assets.current.lock().expect("sessions").insert(hub.clone(), (session, key));
     for checkpoint in checkpointed {
         let head = array(&checkpoint.head, "a checkpoint's head")?;
@@ -499,6 +510,27 @@ async fn pull(assets: &Assets, hub: &HubId, link: &Arc<Link>, key: &PublicKey, s
     let scope_text = scope.to_string();
     let local: std::collections::BTreeMap<String, u64> =
         blocking(library, move |library| library.streams(&scope_text)).await?.into_iter().collect();
+    // What the hub lacks that this machine has — the hub recovered to
+    // before it (design §17) — goes back: its own streams' uploading goes on
+    // from where the hub is, a replica's frames are given again.
+    let theirs: std::collections::BTreeMap<String, u64> = streams.iter().map(|at| (at.stream.clone(), at.next)).collect();
+    let (scope_text, device) = (scope.to_string(), assets.device());
+    let own: std::collections::BTreeSet<String> =
+        blocking(library, move |library| library.own_streams(&scope_text, &device)).await?.into_iter().collect();
+    for (stream, at) in &local {
+        let hub_at = theirs.get(stream).copied();
+        if own.contains(stream) {
+            let hub_at = hub_at.unwrap_or(0);
+            if *at > hub_at {
+                let (scope_text, stream_text) = (scope.to_string(), stream.clone());
+                blocking(library, move |library| library.rewind_uploads(&scope_text, &stream_text, hub_at)).await?;
+            }
+        } else if let Some(hub_at) = hub_at
+            && *at > hub_at
+        {
+            resupply(assets, link, scope, stream, hub_at).await?;
+        }
+    }
     for wire::StreamAt { stream, next } in streams {
         let mut at = local.get(&stream).copied().unwrap_or(0);
         if at >= next {
@@ -552,6 +584,37 @@ async fn pull(assets: &Assets, hub: &HubId, link: &Arc<Link>, key: &PublicKey, s
         }
     }
     Ok(())
+}
+
+/// Gives the hub again the frames of the replica `stream` of `scope` from
+/// `from`, as they came from it before it recovered (design §17): each is
+/// its producer's, signed, and the hub takes what still follows.
+async fn resupply(assets: &Assets, link: &Arc<Link>, scope: &str, stream: &str, mut from: u64) -> Result<(), String> {
+    let library = &assets.library;
+    loop {
+        let (scope_text, stream_text) = (scope.to_string(), stream.to_string());
+        let frames = blocking(library, move |library| library.export(&scope_text, &stream_text, from, FRAMES_AT_ONCE)).await?;
+        if frames.is_empty() {
+            return Ok(());
+        }
+        for frame in frames {
+            let header = Header::decode(&frame.header).map_err(|error| error.to_string())?;
+            let frame = wire::Frame { header: frame.header.into(), signature: frame.signature.into(), body: frame.body.into() };
+            let Reply::Received { received } = ask(assets, link, Request::Take { scope: scope.to_string(), frame, proven: Vec::new() }).await? else {
+                return Err("the hub did not take a frame given back".into());
+            };
+            match received {
+                wire::Received::Applied { .. } | wire::Received::Parked { .. } => from = header.first + u64::from(header.count),
+                wire::Received::Gap { from: wanted, .. } if wanted > from => {
+                    from = wanted;
+                    break;
+                }
+                // What the hub will not take of a replica's is not this
+                // machine's to settle: the stream's producer settles it.
+                _ => return Ok(()),
+            }
+        }
+    }
 }
 
 /// Where each stream of `scope` stands, checked with the hub; a replica's

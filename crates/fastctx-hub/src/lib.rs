@@ -25,6 +25,7 @@
 
 mod account_records;
 mod assets;
+pub use assets::recovery;
 mod afoot;
 mod assists;
 mod catalog;

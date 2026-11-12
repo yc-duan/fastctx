@@ -169,6 +169,20 @@ impl Witness {
         self.frozen.store(true, Ordering::SeqCst);
     }
 
+    /// The hub recovered and put its old history aside (design §17): the
+    /// file holds the chain head as it is now, older or not.
+    pub(crate) fn reset(&self, seq: u64, head: &[u8; 32]) -> io::Result<()> {
+        let mut kept = self.kept.lock().expect("witness");
+        let next = Kept { seq, head: hex(head) };
+        if let Some(parent) = self.path.parent() {
+            fastctx_platform::ensure_private_dir(parent)?;
+        }
+        let bytes = serde_json::to_vec_pretty(&next).map_err(io::Error::other)?;
+        fastctx_platform::publish(&self.path, &bytes, Permissions::Private)?;
+        *kept = next;
+        Ok(())
+    }
+
     /// The chain reached (`seq`, `head`): written and on the disk before it
     /// returns. An older head than the file's is left out.
     pub(crate) fn advanced(&self, seq: u64, head: &[u8; 32]) -> io::Result<()> {

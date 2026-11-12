@@ -6,6 +6,7 @@
 
 pub(crate) mod chain;
 mod keys;
+pub mod recovery;
 pub(crate) mod objects;
 mod owners;
 mod scopes;
@@ -68,7 +69,7 @@ pub(crate) struct Assets {
     keys: Arc<keys::Keys>,
     pub(crate) owners: owners::Owners,
     pub(crate) witness: Arc<Witness>,
-    control: Database,
+    pub(crate) control: Database,
     /// Why every asset is sealed, when the hub found it was put back
     /// (design §17): nothing is read or taken until recovery ends.
     sealed: Mutex<Option<String>>,
@@ -182,7 +183,7 @@ impl Assets {
     }
 
     /// The latest head each scope of `owner` was checkpointed at.
-    fn checkpointed(&self, owner: &Owner) -> io::Result<BTreeMap<String, Head>> {
+    pub(crate) fn checkpointed(&self, owner: &Owner) -> io::Result<BTreeMap<String, Head>> {
         let key = owner.key();
         self.control
             .read_now(move |c| {
@@ -239,6 +240,54 @@ impl Assets {
             }
         }
         Ok(None)
+    }
+
+    pub(crate) fn keys(&self) -> &keys::Keys {
+        &self.keys
+    }
+
+    /// Whether a chain head at `seq` that is not the chain's is of a history
+    /// put aside when the hub recovered (design §17).
+    pub(crate) fn closed_head(&self, seq: u64) -> io::Result<bool> {
+        self.control
+            .read_now(move |c| {
+                Ok(c.prepare_cached("SELECT 1 FROM closed_branches WHERE fork < ?1 AND top >= ?1 LIMIT 1")?
+                    .query_row([seq as i64], |_| Ok(()))
+                    .optional()?
+                    .is_some())
+            })
+            .map_err(io::Error::other)
+    }
+
+    /// Whether a receipt naming `head`, which the library does not hold, is of
+    /// a history put aside when the hub recovered: past where its scope stood
+    /// then.
+    pub(crate) fn closed_receipt(&self, head: &Head) -> io::Result<bool> {
+        let (scope, change, parked) = (head.scope.clone(), head.change as i64, head.parked as i64);
+        self.control
+            .read_now(move |c| {
+                Ok(c.prepare_cached(
+                    "SELECT 1 FROM closed_scopes WHERE scope = ?1 AND ((?2 > 0 AND ?2 > change) OR (?3 > 0 AND ?3 > parked)) LIMIT 1",
+                )?
+                .query_row(fastctx_storage::rusqlite::params![scope, change, parked], |_| Ok(()))
+                .optional()?
+                .is_some())
+            })
+            .map_err(io::Error::other)
+    }
+
+    /// What `machine` brought while every asset was sealed: kept for the
+    /// recovery's report (design §17).
+    pub(crate) fn brought(&self, machine: &fastctx_types::MachineName, seq: u64, receipts: usize) {
+        let (name, at) = (machine.to_string(), jiff::Timestamp::now().as_millisecond());
+        let _ = self.control.write_now(256, move |c| {
+            c.prepare_cached(
+                "INSERT INTO recovery_seen (machine, seq, receipts, at) VALUES (?1, ?2, ?3, ?4)
+                 ON CONFLICT (machine) DO UPDATE SET seq = MAX(seq, excluded.seq), receipts = MAX(receipts, excluded.receipts), at = excluded.at",
+            )?
+            .execute(fastctx_storage::rusqlite::params![name, seq as i64, receipts as i64, at])?;
+            Ok(())
+        });
     }
 
     /// `machine` opened an asset session: it speaks this asset sync, and so

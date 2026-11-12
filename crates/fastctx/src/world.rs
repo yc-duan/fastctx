@@ -350,6 +350,35 @@ pub enum HubCommand {
         #[arg(long, value_parser = crate::paths::parser())]
         dir: Option<std::path::PathBuf>,
     },
+    /// Copy the hub kept in --dir to --to, marked as a backup: a hub started
+    /// from it keeps every asset sealed until its administrator reopens it.
+    /// The hub must not be running.
+    Backup {
+        /// Where the backup goes: a directory that holds nothing yet.
+        #[arg(long, value_parser = crate::paths::parser())]
+        to: std::path::PathBuf,
+        #[arg(long, value_parser = crate::paths::parser())]
+        dir: Option<std::path::PathBuf>,
+    },
+    /// Rotate the hub's service key: the next key is made, signed by the one
+    /// in use, and the keyring with it is exported to --export; once you
+    /// confirm the export is kept safe, the next key is put in use. The hub
+    /// must not be running.
+    RotateKey {
+        /// Where the keyring goes: a directory that holds nothing yet.
+        #[arg(long, value_parser = crate::paths::parser())]
+        export: std::path::PathBuf,
+        #[arg(long, value_parser = crate::paths::parser())]
+        dir: Option<std::path::PathBuf>,
+    },
+    /// Reopen a hub that keeps every asset sealed because it was put back
+    /// from a backup or an older copy: what is known of it is shown, and once
+    /// you confirm, the history it was put back from is set aside and its
+    /// assets open. The hub must not be running.
+    Reopen {
+        #[arg(long, value_parser = crate::paths::parser())]
+        dir: Option<std::path::PathBuf>,
+    },
     /// The hub's name, id, addresses and certificate pin.
     Show {
         #[arg(long, value_parser = crate::paths::parser())]
@@ -899,6 +928,35 @@ pub fn hub(command: HubCommand) -> anyhow::Result<()> {
                 third.display()
             );
         }
+        HubCommand::Backup { to, dir: chosen } => {
+            let marker = fastctx_hub::recovery::backup(&dir(chosen), &to)?;
+            println!("the hub {} is backed up to {}, at its history {}", marker.hub, to.display(), marker.seq);
+        }
+        HubCommand::RotateKey { export, dir: chosen } => {
+            let dir = dir(chosen);
+            let next = fastctx_hub::recovery::rotate_prepare(&dir, &export)?;
+            println!("the next service key {next} is made; the keyring with it is exported to {}", export.display());
+            if !crate::world::confirm("Keep that export somewhere safe, then type yes to put the next key in use: ")? {
+                anyhow::bail!("the next key is not in use; run this again to put it in use");
+            }
+            let (old, new) = fastctx_hub::recovery::rotate_finish(&dir)?;
+            println!("the service key {new} is in use; {old} is retired and still counts for what it signed");
+        }
+        HubCommand::Reopen { dir: chosen } => {
+            let dir = dir(chosen);
+            let Some(lines) = fastctx_hub::recovery::report(&dir)? else {
+                println!("the hub's assets are not sealed: there is nothing to reopen");
+                return Ok(());
+            };
+            for line in &lines {
+                println!("{line}");
+            }
+            if !crate::world::confirm("Reopen the hub's assets as they are now? Type yes to set the history above aside: ")? {
+                anyhow::bail!("the hub stays sealed");
+            }
+            let kept = fastctx_hub::recovery::reopen(&dir)?;
+            println!("the hub's assets are open again, {kept} scopes as they are now; start the hub");
+        }
         HubCommand::Show { dir: chosen } => {
             let (hub, pin) = fastctx_hub::describe(&dir(chosen))?;
             let public = hub.public.iter().map(ToString::to_string).collect::<Vec<_>>().join(", ");
@@ -1413,4 +1471,14 @@ fn render_accounts(reply: &AccountsReply, now: Timestamp) -> String {
 /// World keep different clocks and zones, and a reader may know none of them.
 fn age(at: Timestamp, now: Timestamp) -> String {
     fastctx_hands::told::duration(now.as_second().saturating_sub(at.as_second()).max(0) as u64)
+}
+
+/// Asks `question` on the terminal; whether the answer was yes.
+pub fn confirm(question: &str) -> anyhow::Result<bool> {
+    use std::io::Write as _;
+    print!("{question}");
+    std::io::stdout().flush()?;
+    let mut answer = String::new();
+    std::io::stdin().read_line(&mut answer)?;
+    Ok(answer.trim().eq_ignore_ascii_case("yes"))
 }
