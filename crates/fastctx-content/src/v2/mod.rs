@@ -7,11 +7,18 @@
 //! asset moves over (§15), in files of its own.
 
 mod collect;
+mod commit;
+mod frame;
+mod items;
 mod objects;
 mod schema;
+mod scopes;
 mod transfers;
 
 pub use collect::{Collected, Started};
+pub use commit::{Commit, Committed};
+pub use frame::{FORMAT, Header, KindRecord, Signer, open};
+pub use scopes::Purged;
 pub use objects::{CHUNK_BYTES, LEASE, Lease, READ_BYTES, ROW_BYTES};
 pub use transfers::Transfer;
 
