@@ -225,6 +225,9 @@ fn reopen_in(dir: &Path, store: &Store, assets: &Assets) -> anyhow::Result<usize
             Err(why) => anyhow::bail!("{why}: take it out of {} before the hub reopens", dir.join("assets").display()),
         };
         let _ = scopes;
+        // Its change numbers may now be below what devices saw: a new
+        // generation tells them to ask from nothing (design §28.1).
+        library.renew_generation().map_err(|error| anyhow::anyhow!("{error}"))?;
         for head in assets.checkpointed(&owner)?.values() {
             if !library.holds(head).map_err(|error| anyhow::anyhow!("{error}"))? {
                 forgotten_checkpoints.push((key.clone(), head.scope.clone()));

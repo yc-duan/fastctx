@@ -79,7 +79,7 @@ export interface AgentLoginsOptions {
   pick: (() => Promise<string | null>) | null;
   /** A machine's folders, walked by its node, where its picker is out of
    *  reach. */
-  folders(machine: string, path: string | null): Promise<Folders>;
+  folders(machine: string, path: string | null, cursor?: string | null): Promise<Folders>;
   preview(machine: string, agent: Agent, dir: string, into: boolean, takeBack: boolean, workbench?: boolean): Promise<ChangePreview>;
   /** `expected`: the fingerprint of the change the user was shown;
    *  `workbench`: the workbench opened or closed in the login with it. */
@@ -172,7 +172,7 @@ export class AgentLoginsPage implements Page {
       scan: (machine, stop) => options.scan(as(machine), stop),
       add: (machine, agent, dir) => options.add(as(machine), agent, dir),
       folder: (machine, dir, change) => options.folder(as(machine), dir, change),
-      folders: (machine, path) => options.folders(as(machine), path),
+      folders: (machine, path, cursor) => options.folders(as(machine), path, cursor),
       preview: (machine, agent, dir, into, takeBack, workbench) => options.preview(as(machine), agent, dir, into, takeBack, workbench),
       change: (machine, agent, dir, into, raise, takeBack, expected, workbench) => options.change(as(machine), agent, dir, into, raise, takeBack, expected, workbench),
       limits: (machine, agent, dir) => options.limits(as(machine), agent, dir),
@@ -197,6 +197,7 @@ export class AgentLoginsPage implements Page {
     this.sheet = new AgentChangeSheet(options.changeWords, {
       preview: (target) => this.calls.preview(target.machine, this.agent, target.dir, target.into, !!target.takeBack, target.workbench),
       change: (target, raise, expected) => this.calls.change(target.machine, this.agent, target.dir, target.into, raise, !!target.takeBack, expected, target.workbench),
+      written: (target) => as(target.machine),
       benched: (open) => options.benched(open),
       progress: async (target) => {
         const record = await this.calls.read(target.machine);
@@ -808,7 +809,7 @@ export class AgentLoginsPage implements Page {
    *  the machine's folders walked by its node anywhere else. */
   private chooseFolder(machine: string): void {
     const here = this.shown(this.options.store.world.peek())?.here ?? false;
-    const walk = () => this.choosing.open({ machine, folders: (path) => this.calls.folders(machine, path), chosen: (dir) => void this.choose(machine, dir) });
+    const walk = () => this.choosing.open({ machine, folders: (path, cursor) => this.calls.folders(machine, path, cursor), chosen: (dir) => void this.choose(machine, dir) });
     const pick = this.options.pick;
     if (!here || !pick) {
       walk();

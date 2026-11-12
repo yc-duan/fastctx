@@ -101,6 +101,7 @@ impl Library {
         let sealed = seal(&commit.records).map_err(Error::Invalid)?;
         let bytes = sealed.iter().map(|frame| frame.body.len() + 256).sum::<usize>() + commit.records.len() * 64;
         let durable = commit.durable;
+        let scope_key = commit.scope.clone();
         let write = move |db: &Connection| -> fastctx_storage::Result<Committed> {
             let Some((scope, state, Some(holding))) = held(db, &commit.scope)? else {
                 return Err(invalid("the scope is not held here"));
@@ -214,10 +215,14 @@ impl Library {
             }
             Ok(Committed { first: next, count: first - next, frames: sealed.len(), head, duplicate: false })
         };
-        Ok(if durable {
+        let committed = if durable {
             self.database().write_now_at(Priority::Normal, bytes, write)?
         } else {
             self.database().write_relaxed_now_at(Priority::Normal, bytes, write)?
-        })
+        };
+        if !committed.duplicate {
+            self.0.committed.lock().unwrap_or_else(std::sync::PoisonError::into_inner).insert(scope_key);
+        }
+        Ok(committed)
     }
 }

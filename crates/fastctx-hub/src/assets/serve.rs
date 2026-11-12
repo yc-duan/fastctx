@@ -21,6 +21,8 @@ use std::sync::Arc;
 
 /// Frames given in one answer at most.
 const FRAMES_AT_ONCE: u32 = 64;
+/// Streams one page of what changed in an owner library looks at.
+const CHANGES_AT_ONCE: usize = 512;
 /// Bytes of frames given in one answer at most.
 const FRAME_BYTES_AT_ONCE: usize = 4 << 20;
 
@@ -193,7 +195,15 @@ fn put_back(
     machine: &MachineName,
     seen: Option<&wire::Seen>,
     reported: &[wire::Reported],
+    pinned: Option<&Bytes>,
+    lineage: &[wire::Rotation],
 ) -> Result<Option<String>, String> {
+    // A pinned key that shows the keyring was put back counts as an
+    // ordinary open finds it (AJ02); one nothing of the keyring leads to
+    // shows nothing here.
+    if let Ok(Some(why)) = keyring_behind(assets, machine, seen, pinned, lineage) {
+        return Ok(Some(why));
+    }
     if let Some((seq, head)) = seen.and_then(|seen| heard_seen(assets, seen)) {
         let kept = assets.control.read_now(move |c| chain::head_at(c, seq)).map_err(|error| error.to_string())?;
         if kept != Some(head) && !assets.closed_head(seq, &head).map_err(|error| error.to_string())? {
@@ -219,10 +229,61 @@ fn put_back(
     Ok(None)
 }
 
+/// What the key `machine` pinned for the hub shows of the hub's keyring
+/// (design §17): a key the keyring's own signed rotations lead to that it
+/// lacks, or its next key the hub was heard speaking under, means the
+/// keyring was put back to before a rotation. Why, if so. A pinned key no
+/// rotation of the keyring leads to is refused.
+fn keyring_behind(
+    assets: &Assets,
+    machine: &MachineName,
+    seen: Option<&wire::Seen>,
+    pinned: Option<&Bytes>,
+    lineage: &[wire::Rotation],
+) -> Result<Option<String>, String> {
+    let Some(pinned) = pinned else { return Ok(None) };
+    let pinned = array(pinned, "a pinned key")?;
+    let keys = assets.keys();
+    if !keys.holds(&pinned) {
+        // Only a key the keyring's own signed rotations lead to counts: a
+        // key a machine made, signing for itself, shows nothing.
+        let lineage: Vec<_> = lineage.iter().map(|rotation| (rotation.old.0.clone(), rotation.new.0.clone(), rotation.word.0.clone())).collect();
+        if !keys.descends(&pinned, &lineage) {
+            return Err("this machine pinned a service key no rotation of this hub's keyring leads to".into());
+        }
+        return Ok(Some(format!(
+            "{machine} pinned a service key of the hub's ({}) its keyring lacks: the keyring was put back to before a rotation; \
+             bring back a keyring export that holds it",
+            super::witness::hex(&pinned[..8])
+        )));
+    }
+    if keys.is_next(&pinned) {
+        // Only a machine that heard the hub speak under it shows it was put
+        // in use: the next key's public half was given out with its
+        // rotation before.
+        let spoken = seen.is_some_and(|seen| {
+            fastctx_net::sign::heard_word(&PublicKey::from_bytes(pinned), &seen.statement.0, &seen.word.0).is_some()
+        });
+        if !spoken {
+            return Err("this machine pinned the keyring's next service key, which the hub never spoke under".into());
+        }
+        return Ok(Some(format!(
+            "{machine} pinned the keyring's next service key ({}): the rotation was put in use after this keyring was exported; \
+             put it in use with `fastctx hub rotate-key`, then reopen",
+            super::witness::hex(&pinned[..8])
+        )));
+    }
+    Ok(None)
+}
+
 /// The scope a request is of, if it is of one already described.
 pub(crate) fn scope_of(request: &Request) -> Option<&str> {
     match request {
-        Request::Open { .. } | Request::Describe { .. } | Request::Cleared { .. } | Request::Holdings { .. } => None,
+        Request::Open { .. }
+        | Request::Describe { .. }
+        | Request::Cleared { .. }
+        | Request::Holdings { .. }
+        | Request::Changes { .. } => None,
         Request::Answer { scope, .. }
         | Request::Take { scope, .. }
         | Request::Stage { scope, .. }
@@ -250,15 +311,17 @@ pub(crate) fn ask(
     if let Some(why) = assets.sealed() {
         // What a machine brings while sealed, as far as the hub's word stands
         // behind it, is kept for the recovery.
-        if let Request::Open { seen, reported, .. } = &request {
+        if let Request::Open { seen, reported, pinned, lineage, .. } = &request {
             let heard = seen.as_ref().and_then(|seen| heard_seen(assets, seen));
             let receipts = reported.iter().filter_map(|receipt| receipt_head(receipt).ok()).filter(|(statement, _, word)| assets.keys().heard(statement, word).is_some()).map(|(_, head, _)| head).collect();
             assets.brought(machine, heard, receipts);
-            // Sealed only as it started, the hub that is shown it was put
-            // back seals for its recovery instead: the super administrator
-            // can no longer open it as an ordinary start.
-            if assets.sealed_at_start()
-                && let Some(found) = put_back(assets, directory, machine, seen.as_ref(), reported)?
+            // Sealed only as it started when the machine came, the hub that
+            // is shown it was put back seals for its recovery instead: the
+            // super administrator can no longer open it as an ordinary
+            // start. Opened meanwhile, it is sealed all the same: what the
+            // machine brought stands either way (AJ01).
+            if Assets::is_start_seal(&why)
+                && let Some(found) = put_back(assets, directory, machine, seen.as_ref(), reported, pinned.as_ref(), lineage)?
             {
                 assets.seal(&found);
                 return Ok(Reply::Sealed { why: found });
@@ -399,7 +462,7 @@ pub(crate) fn ask(
                     .into_iter()
                     .find(|(name, _)| name == &stream)
                     .map_or(0, |(_, next)| next);
-                assets.moved(&scope, &stream, next, machine);
+                assets.moved(&kept.owner, &scope, &stream, next, machine);
             }
             Ok(Reply::Received { received: received(word) })
         }
@@ -473,6 +536,35 @@ pub(crate) fn ask(
                 }
             };
             Ok(Reply::Frames { frames, ticket })
+        }
+        Request::Changes { owner, after, before, class, limit } => {
+            // Only a library that is there is opened: asking never makes one.
+            let Some(owned) = super::owners::Owner::from_key(&owner) else { return Err(format!("{owner} is not an owner's library")) };
+            if !assets.has_library(&owned) {
+                return Ok(Reply::Changes { generation: String::new(), streams: Vec::new(), top: 0, top_at: 0, through: after, more: false });
+            }
+            let library = assets.library(&owned).map_err(|error| error.to_string())?;
+            let page = library.changes(class, after, before, (limit as usize).clamp(1, CHANGES_AT_ONCE)).map_err(|error| error.to_string())?;
+            assets.follows(&owned, machine);
+            // Each row through the read gate: one this machine may not hold
+            // is stepped past, the page's place going on all the same.
+            let mut streams = Vec::new();
+            for row in page.rows {
+                let Some(scope) = scopes::scope(assets, &row.scope)? else { continue };
+                if !scopes::readable(directory, machine, &scope) || !scopes::holds(directory, machine, &scope, &row.stream) {
+                    continue;
+                }
+                streams.push(wire::ChangedStream {
+                    scope: row.scope,
+                    stream: row.stream,
+                    next: row.next,
+                    head: row.head.into(),
+                    bytes: row.bytes,
+                    remade: row.remade,
+                    at: row.at,
+                });
+            }
+            Ok(Reply::Changes { generation: page.generation, streams, top: page.top, top_at: page.top_at, through: page.through, more: page.more })
         }
         Request::Streams { scope } => {
             let kept = gated(assets, directory, machine, &scope)?;
@@ -585,42 +677,9 @@ fn open(
         return Err(format!("asset sync {version} is not this hub's {}", wire::VERSION));
     }
     assets.speaks(key).map_err(|error| error.to_string())?;
-    if let Some(pinned) = &pinned {
-        let pinned = array(pinned, "a pinned key")?;
-        let keys = assets.keys();
-        if !keys.holds(&pinned) {
-            // Only a key the keyring's own signed rotations lead to counts: a
-            // key a machine made, signing for itself, shows nothing.
-            let lineage: Vec<_> = lineage.iter().map(|rotation| (rotation.old.0.clone(), rotation.new.0.clone(), rotation.word.0.clone())).collect();
-            if !keys.descends(&pinned, &lineage) {
-                return Err("this machine pinned a service key no rotation of this hub's keyring leads to".into());
-            }
-            let why = format!(
-                "{machine} pinned a service key of the hub's ({}) its keyring lacks: the keyring was put back to before a rotation; \
-                 bring back a keyring export that holds it",
-                super::witness::hex(&pinned[..8])
-            );
-            assets.seal(&why);
-            return Ok(Reply::Sealed { why });
-        }
-        if keys.is_next(&pinned) {
-            // Only a machine that heard the hub speak under it shows it was
-            // put in use: the next key's public half was given out with its
-            // rotation before.
-            let spoken = seen.as_ref().is_some_and(|seen| {
-                fastctx_net::sign::heard_word(&PublicKey::from_bytes(pinned), &seen.statement.0, &seen.word.0).is_some()
-            });
-            if !spoken {
-                return Err("this machine pinned the keyring's next service key, which the hub never spoke under".into());
-            }
-            let why = format!(
-                "{machine} pinned the keyring's next service key ({}): the rotation was put in use after this keyring was exported; \
-                 put it in use with `fastctx hub rotate-key`, then reopen",
-                super::witness::hex(&pinned[..8])
-            );
-            assets.seal(&why);
-            return Ok(Reply::Sealed { why });
-        }
+    if let Some(why) = keyring_behind(assets, machine, seen.as_ref(), pinned.as_ref(), &lineage)? {
+        assets.seal(&why);
+        return Ok(Reply::Sealed { why });
     }
     let public = assets.public();
     let (seq, head) = assets.witness.current();

@@ -103,6 +103,10 @@ pub(crate) struct Assets {
     pub(crate) networks: Mutex<HashMap<HubId, fastctx_content::v2::Network>>,
     /// What brings the upkeep round (`upkeep`).
     pub(crate) upkeep: Arc<Notify>,
+    /// When each hub's scopes were last looked at whole (`session`).
+    pub(crate) looked: Mutex<HashMap<HubId, std::time::Instant>>,
+    /// The scopes committed to here whose upload has not gone through yet.
+    pub(crate) uploads: Mutex<std::collections::BTreeSet<String>>,
 }
 
 /// How far a hub's scopes this machine may hold were listed.
@@ -160,6 +164,8 @@ impl Assets {
             takeovers: Mutex::new(std::collections::BTreeSet::new()),
             networks: Mutex::new(HashMap::new()),
             upkeep: Arc::new(Notify::new()),
+            looked: Mutex::new(HashMap::new()),
+            uploads: Mutex::new(std::collections::BTreeSet::new()),
         })
     }
 

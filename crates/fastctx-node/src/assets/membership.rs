@@ -21,12 +21,21 @@ pub(crate) fn network(node: &Node, hub: &HubId) -> Option<Network> {
 }
 
 /// This machine is on `hub`'s network from now on, what an earlier term
-/// left held revoked first. Call holding `world::memberships`.
-pub(crate) async fn joined(node: &Arc<Node>, hub: &HubId) -> Result<Option<Network>, String> {
+/// left held revoked first; `anew`, as a login admits it again, under a new
+/// term whatever the library had (AJ04). Call holding `world::memberships`.
+pub(crate) async fn joined(node: &Arc<Node>, hub: &HubId, anew: bool) -> Result<Option<Network>, String> {
     let Some(assets) = node.assets.as_ref() else { return Ok(None) };
     let (theirs, device) = (hub.as_str().to_string(), assets.device());
-    let network = blocking(&assets.library, move |library| library.join(&theirs, &device)).await?;
+    let network = blocking(&assets.library, move |library| library.join(&theirs, &device, anew)).await?;
     assets.networks.lock().expect("networks").insert(hub.clone(), network.clone());
+    if anew {
+        // A new term is looked at whole from the first, and the timelines
+        // made here are written into it again.
+        assets.looked.lock().expect("looked").remove(hub);
+        assets.forget_listing(hub);
+        crate::timeline::joined_anew(node);
+    }
+    super::upkeep::wake(node);
     Ok(Some(network))
 }
 
@@ -36,6 +45,8 @@ pub(crate) async fn joined(node: &Arc<Node>, hub: &HubId) -> Result<Option<Netwo
 pub(crate) async fn left(node: &Arc<Node>, hub: &HubId) {
     let Some(assets) = node.assets.as_ref() else { return };
     assets.networks.lock().expect("networks").remove(hub);
+    // Joined again, its scopes are looked at whole from the first.
+    assets.looked.lock().expect("looked").remove(hub);
     assets.forget_listing(hub);
     let (theirs, device) = (hub.as_str().to_string(), assets.device());
     match blocking(&assets.library, move |library| library.leave(&theirs, &device)).await {
@@ -60,7 +71,7 @@ pub(super) async fn of_link(node: &Arc<Node>, hub: &HubId, link: &Arc<Link>) -> 
     if !standing {
         return Ok(None);
     }
-    joined(node, hub).await
+    joined(node, hub, false).await
 }
 
 /// At start, before any link: the library on the networks of the
@@ -78,7 +89,7 @@ pub(crate) fn settle(node: &Node, kept: &[HubId]) -> Result<(), String> {
         }
     }
     for hub in kept {
-        let network = library.join(hub.as_str(), &device).map_err(|error| error.to_string())?;
+        let network = library.join(hub.as_str(), &device, false).map_err(|error| error.to_string())?;
         assets.networks.lock().expect("networks").insert(hub.clone(), network);
     }
     Ok(())

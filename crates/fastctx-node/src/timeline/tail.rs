@@ -41,7 +41,7 @@ const UNREAD_TRIES: u32 = 20;
 /// The form of what is kept beside the timeline: one of an earlier form is
 /// read whole again — of form 2, a seam might be kept with no record ids
 /// before it (EE06).
-const FORM: u32 = 3;
+const FORM: u32 = 4;
 /// The checks of whole histories (§10): the kind of job, within how long
 /// of a change past a long prefix one runs, how often each history is
 /// checked at least, and the share of a core they take at most.
@@ -94,6 +94,10 @@ struct Following {
     form: u32,
     /// The version of the history it was brought to (`held_history::version`).
     version: String,
+    /// The holding period of the conversation's scope it was brought to in:
+    /// held anew since, it is brought again whole (GG02).
+    #[serde(default)]
+    holding: Option<i64>,
     /// The session whose record is followed, and where it is read through.
     session: Option<String>,
     seam: Seam,
@@ -318,6 +322,15 @@ pub(super) async fn produce(node: &Arc<Node>, resident: &ResidentId, whole: bool
         .map_err(failure)?;
         kept.and_then(|bytes| serde_json::from_slice::<Following>(&bytes).ok()).filter(|state| state.form == FORM).unwrap_or_default()
     };
+    // Held anew since — the network left and joined again, the scope
+    // revoked and given again — what was made here is of another holding
+    // period, whose past may be gone with it: it is made again whole, the
+    // history unchanged or not (GG02).
+    let holding = {
+        let (asking, scope) = (library.clone(), placed.scope.clone());
+        fastctx_platform::task::blocking(move || asking.holding(&scope)).await.map_err(failure)?
+    };
+    let (state, whole) = if state.holding.is_some() && state.holding != holding { (Following::default(), true) } else { (state, whole) };
     let version = crate::held_history::version(node, resident).await?;
     if state.version == version && !whole {
         // Unchanged: when it was last checked still stands (DD10).
@@ -507,12 +520,15 @@ pub(super) async fn produce(node: &Arc<Node>, resident: &ResidentId, whole: bool
             if whole {
                 reset(&library, &name, producing.clone()).await?;
             }
+            // Read on from where it stood, it is written only in the holding
+            // period it stood in.
+            let expected = if whole { None } else { state.holding };
             let wrote = {
                 let (writing, signer, whose, placed, held) = (library.clone(), signer.clone(), resident.clone(), placed, producing.clone());
                 fastctx_platform::task::blocking(move || {
                     let _held = held;
                     let span = if whole { Span::Whole } else { Span::From { since, before: &before, floor } };
-                    assets::write(&writing, signer, &whose, &placed, &history, span, &again)
+                    assets::write(&writing, signer, &whose, &placed, &history, span, &again, expected)
                 })
                 .await?
             };
@@ -535,6 +551,7 @@ pub(super) async fn produce(node: &Arc<Node>, resident: &ResidentId, whole: bool
                         form: FORM,
                         // Brought again until the record holds what was kept.
                         version: if unread { String::new() } else { version },
+                        holding: Some(wrote.holding),
                         session: Some(session),
                         seam: *seam,
                         window: open,
@@ -556,6 +573,7 @@ pub(super) async fn produce(node: &Arc<Node>, resident: &ResidentId, whole: bool
                     let next = Following {
                         form: FORM,
                         version,
+                        holding: Some(wrote.holding),
                         window: open,
                         told,
                         floor: settled_floor,
@@ -586,7 +604,7 @@ pub(super) async fn produce(node: &Arc<Node>, resident: &ResidentId, whole: bool
                 fastctx_platform::task::blocking(move || {
                     let _held = held;
                     let span = if unread { Span::Kept } else { Span::Whole };
-                    assets::write(&writing, signer, &whose, &placed, &history, span, &Default::default())
+                    assets::write(&writing, signer, &whose, &placed, &history, span, &Default::default(), None)
                 })
                 .await?
             };
@@ -594,6 +612,7 @@ pub(super) async fn produce(node: &Arc<Node>, resident: &ResidentId, whole: bool
             let following = Following {
                 form: FORM,
                 version: if unread { String::new() } else { version },
+                holding: Some(wrote.holding),
                 floor,
                 verified: if unread { state.verified } else { Some(Timestamp::now()) },
                 runs: runs.clone(),

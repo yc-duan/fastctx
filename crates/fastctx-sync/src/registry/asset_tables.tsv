@@ -14,6 +14,8 @@ stamps	crates/fastctx-content/src/v2/schema.rs
 scopes	crates/fastctx-content/src/v2/schema.rs
 holdings	crates/fastctx-content/src/v2/schema.rs
 networks	crates/fastctx-content/src/v2/schema.rs
+feeds	crates/fastctx-content/src/v2/schema.rs
+stream_changes	crates/fastctx-content/src/v2/schema.rs
 streams	crates/fastctx-content/src/v2/schema.rs
 epochs	crates/fastctx-content/src/v2/schema.rs
 known_epochs	crates/fastctx-content/src/v2/schema.rs

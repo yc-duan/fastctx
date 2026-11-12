@@ -85,11 +85,6 @@ pub(super) async fn put(library: &Library, link: &Arc<Link>, scope: &str, object
 /// did not come, and why.
 pub(super) async fn fetch(assets: &Assets, hub: &fastctx_types::access::HubId, link: &Arc<Link>) -> Vec<String> {
     let library = &assets.library;
-    // What this hub described alone is asked of it.
-    let mine = match super::session::hub_scopes(library, hub).await {
-        Ok(mine) => mine,
-        Err(why) => return vec![format!("listing the hub's scopes: {why}")],
-    };
     // One a hub did not give waits before it is asked again, longer each
     // time it was not: those that keep failing come round seldom, and never
     // fill the place of those not yet asked.
@@ -103,17 +98,16 @@ pub(super) async fn fetch(assets: &Assets, hub: &fastctx_types::access::HubId, l
     };
     // Those asked of the hub lately and not given are passed over before
     // any are counted: they never fill the place of those not yet asked.
-    let scopes: Vec<String> = mine.iter().cloned().collect();
+    // What this hub's network's scopes want alone is asked of it, in one
+    // look however many scopes it has.
     let skipped: Vec<[u8; 32]> = waiting.iter().copied().collect();
-    let wanted = match blocking(library, move |library| library.wanted_of(&scopes, FETCHED_AT_ONCE, &skipped)).await {
-        Ok(wanted) => wanted.into_iter().map(|(scope, object)| (Some(scope), object)).collect::<Vec<_>>(),
+    let theirs = hub.as_str().to_string();
+    let wanted = match blocking(library, move |library| library.wanted_of_hub(&theirs, FETCHED_AT_ONCE, &skipped)).await {
+        Ok(wanted) => wanted,
         Err(why) => return vec![format!("listing the objects wanted: {why}")],
     };
     let mut failed = Vec::new();
     for (scope, object) in wanted {
-        // Only a scope names where an object is read, and only its hub is
-        // asked.
-        let Some(scope) = scope.filter(|scope| mine.contains(scope)) else { continue };
         match fetch_one(library, link, &scope, object).await {
             Ok(()) => {
                 assets.unreached.lock().expect("unreached").remove(&(hub.clone(), object.hash));

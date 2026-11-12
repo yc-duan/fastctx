@@ -7,6 +7,14 @@
 //! comes back after its bytes were collected is a new life, with a file of
 //! its own, which no earlier collector can touch (§4.3 I5).
 
+/// The layout of the tables this build makes (`layout.rs`): changed with
+/// every change to them until the layout is settled (plan 3-3).
+pub(crate) const LAYOUT: &str = "2026-11-12.1";
+
+/// Made before anything else as the library opens (`layout.rs`): where its
+/// layout is stamped. Nothing is written when it is there already.
+pub(crate) const PRELUDE: &str = "CREATE TABLE IF NOT EXISTS stamps (name TEXT PRIMARY KEY, value BLOB NOT NULL) WITHOUT ROWID;";
+
 pub(crate) const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS stamps (name TEXT PRIMARY KEY, value BLOB NOT NULL) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS scopes (
@@ -18,7 +26,11 @@ CREATE TABLE IF NOT EXISTS scopes (
     -- The hub whose network the scope belongs to, on a device (empty in a
     -- hub's own libraries), and whether a hub's descriptor ever installed it.
     hub TEXT NOT NULL DEFAULT '',
-    described INTEGER NOT NULL DEFAULT 0 CHECK (described IN (0, 1))
+    described INTEGER NOT NULL DEFAULT 0 CHECK (described IN (0, 1)),
+    -- The holding period every stream of the scope was last pulled whole
+    -- in, on a device: until it is the current one, the scope is asked
+    -- after by itself, not by the change numbers alone (design §28.1).
+    pulled INTEGER
 );
 CREATE INDEX IF NOT EXISTS scopes_of_hub ON scopes (hub) WHERE holding IS NOT NULL;
 CREATE TABLE IF NOT EXISTS holdings (
@@ -28,6 +40,16 @@ CREATE TABLE IF NOT EXISTS holdings (
     ended INTEGER,
     acl_revision INTEGER NOT NULL,
     PRIMARY KEY (scope, holding)
+) WITHOUT ROWID;
+-- Where a device stands in each owner library of each hub: the library's
+-- generation and the change number it caught up to (changes.rs).
+CREATE TABLE IF NOT EXISTS feeds (
+    hub TEXT NOT NULL,
+    owner TEXT NOT NULL,
+    generation TEXT NOT NULL,
+    change INTEGER NOT NULL,
+    at INTEGER NOT NULL,
+    PRIMARY KEY (hub, owner)
 ) WITHOUT ROWID;
 -- The networks a device holds scopes of: whether it is on each, and the
 -- term it is on it under (networks.rs).
@@ -432,6 +454,20 @@ CREATE TABLE IF NOT EXISTS object_bytes (
 /// every value is kept for good, so a parked receipt can always be
 /// checked), the frames refused, and where each device stands.
 pub(crate) const HUB_SCHEMA: &str = "
+-- Each stream's latest change under the library's own change number, one
+-- row a stream: what a device asks after where it stands (changes.rs).
+CREATE TABLE IF NOT EXISTS stream_changes (
+    stream INTEGER PRIMARY KEY,
+    change INTEGER NOT NULL,
+    class INTEGER NOT NULL,
+    next INTEGER NOT NULL,
+    head BLOB NOT NULL,
+    bytes INTEGER NOT NULL,
+    remade INTEGER NOT NULL DEFAULT 0,
+    at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS stream_changes_by_change ON stream_changes (change);
+CREATE INDEX IF NOT EXISTS stream_changes_by_class ON stream_changes (class, change);
 CREATE TABLE IF NOT EXISTS change_log (
     scope INTEGER NOT NULL,
     change INTEGER NOT NULL,

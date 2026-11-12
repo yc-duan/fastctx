@@ -130,7 +130,7 @@ export interface NewTalkOptions {
    *  with null every machine reached. */
   agents(machine: string | null): Promise<WorldAgents>;
   /** The folders in a folder of a machine, for pointing it at some. */
-  folders(machine: string, path: string | null): Promise<Folders>;
+  folders(machine: string, path: string | null, cursor?: string | null): Promise<Folders>;
   begin(begun: Begun): Promise<Address>;
   /** The conversation began: its page opens, with the first words as they
    *  were shown here. */

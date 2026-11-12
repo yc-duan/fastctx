@@ -33,12 +33,15 @@ export interface Folders {
   parent: string | null;
   home: string;
   folders: Folder[];
+  /** Where reading on gives the folders after these, in a large folder. */
+  next_cursor?: string | null;
+  truncated?: boolean;
 }
 
 /** The folders in a folder of `machine`; with no `path`, its home and
- *  disks. */
-export function folders(machine: MachineName, path: string | null): Promise<Folders> {
-  return invoke<Folders>("folders", { machineName: machine, path });
+ *  disks; from `cursor`, those after a listing that said there are more. */
+export function folders(machine: MachineName, path: string | null, cursor: string | null = null): Promise<Folders> {
+  return invoke<Folders>("folders", { machineName: machine, path, cursor });
 }
 
 export const noFocus = (): Focus => ({ machines: [] });

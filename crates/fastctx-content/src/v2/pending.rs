@@ -58,6 +58,7 @@ impl Library {
     /// place since, takes its records with it. How many went in. Call on a
     /// thread that may block.
     pub fn reconsider(&self, kinds: Arc<dyn Authorizer>, judge: bool) -> Result<usize> {
+        let hub = self.0.hub;
         let (mut applied, mut after) = (0usize, (-1i64, -1i64, -1i64, Vec::new()));
         // The items with a record still out, by stream and period, as the
         // pass finds them.
@@ -121,7 +122,7 @@ impl Library {
                                     Fate::Stood
                                 }
                             };
-                            done += if judge {
+                            let went = if judge {
                                 let mut pass = super::judged::Blocked::Pass(&mut passing);
                                 super::judged::frame(db, at, &header, &records, kinds.as_ref(), &mut history, &mut pass, fate)?
                             } else {
@@ -136,6 +137,14 @@ impl Library {
                                     .execute(params![stream, epoch, first, &head[..]])?;
                                 went
                             };
+                            // In a hub's library, records indexed now are a
+                            // change devices ask after, the head as it was
+                            // (§28.1): a device holding only a window takes
+                            // it again.
+                            if hub && went > 0 {
+                                super::changes::moved(db, stream, 0, true)?;
+                            }
+                            done += went;
                         }
                     }
                     let mut forget = db.prepare_cached(

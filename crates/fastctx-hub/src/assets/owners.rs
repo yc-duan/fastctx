@@ -95,6 +95,12 @@ impl Owners {
         Self { root, incarnation, slots: Mutex::new(HashMap::new()), fenced: Mutex::new(std::collections::HashSet::new()) }
     }
 
+    /// Whether `owner` has a library on this hub's disk: one asked after by
+    /// a device is opened only then, never made.
+    pub(crate) fn exists(&self, owner: &Owner) -> bool {
+        fastctx_platform::disk::is_dir(self.root.join(owner.directory()))
+    }
+
     /// The library of `owner`, opened or made at need, or why it may not be
     /// served: it bears another hub's incarnation, or `check` finds it older
     /// than the hub's record of it. A library is checked once, as it opens.

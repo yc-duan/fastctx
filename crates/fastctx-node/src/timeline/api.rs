@@ -91,7 +91,7 @@ pub(crate) async fn here(node: &Arc<Node>, request: TimelineAsk) -> Result<Timel
         return Err(Failure::refused(crate::speech::OWN_SESSION));
     }
     if matches!(&request, TimelineAsk::Moved { .. } | TimelineAsk::Page { from: TimelineFrom::Latest, .. }) {
-        super::wanted(node, request.resident());
+        super::wanted_content(node, request.resident());
     }
     match request {
         TimelineAsk::Moved { resident, after } => {

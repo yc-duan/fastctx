@@ -1413,17 +1413,15 @@ async fn stop_coming(
     // a stop reads a bounded part of the inbox however much waits in it.
     let coming = fastctx_platform::task::spawn_blocking(move || {
         let mut coming = Vec::new();
-        // Counted as looked at, words or what only rides with the next turn:
-        // a long run of the latter is not read to its end either.
-        let mut looked = 0;
+        // Words past however many notices that only ride with the next turn
+        // are still found: a stop that missed them would let them start.
         crate::inbox::pages(&reading, |page| {
-            looked += page.len();
             coming.extend(
                 page.into_iter()
                     .filter(|pending| pending.delivery.notice.along().is_none())
                     .map(|pending| pending.delivery.id),
             );
-            Ok(if coming.len() >= COMING_MOST || looked >= COMING_MOST {
+            Ok(if coming.len() >= COMING_MOST {
                 coming.truncate(COMING_MOST);
                 std::ops::ControlFlow::Break(())
             } else {

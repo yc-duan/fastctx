@@ -139,6 +139,56 @@ impl Library {
         })?)
     }
 
+    /// Up to `limit` objects this machine wants and does not hold that a
+    /// record or frame of a scope of `hub`'s network refers to in its
+    /// current holding period, as `wanted_of` gives them for those scopes,
+    /// in one look however many scopes there are.
+    pub fn wanted_of_hub(&self, hub: &str, limit: usize, skipped: &[[u8; 32]]) -> Result<Vec<(String, crate::record::ObjectRef)>> {
+        let hub = hub.to_string();
+        let skipped: std::collections::HashSet<[u8; 32]> = skipped.iter().copied().collect();
+        let enough = limit + skipped.len();
+        Ok(self.database().read_now(move |db| {
+            let mut statement = db.prepare_cached(
+                "SELECT w.hash, w.size, MIN(s.key) FROM scopes s
+                 JOIN wanted_in i ON i.scope = s.id
+                 JOIN wanted w ON w.hash = i.hash
+                 WHERE s.hub = ?1 AND s.holding IS NOT NULL
+                   AND (EXISTS (SELECT 1 FROM object_refs r
+                                WHERE r.hash = i.hash AND r.scope = s.id AND r.holding = s.holding AND r.count > 0)
+                        OR EXISTS (SELECT 1 FROM frame_objects f JOIN streams t ON t.id = f.stream
+                                   WHERE f.hash = i.hash AND t.scope = s.id AND f.holding = s.holding))
+                   AND NOT EXISTS (SELECT 1 FROM objects o WHERE o.hash = i.hash AND +o.state = 1)
+                 GROUP BY w.hash ORDER BY MAX(w.priority) DESC, w.hash LIMIT ?2",
+            )?;
+            let rows = statement.query_map(params![hub, enough as i64], |row| {
+                Ok((row.get::<_, Vec<u8>>(0)?, row.get::<_, i64>(1)?, row.get::<_, String>(2)?))
+            })?;
+            let mut wanted = Vec::new();
+            for row in rows {
+                let (hash, size, scope) = row?;
+                let hash: [u8; 32] = hash.try_into().map_err(|_| invalid("a malformed hash"))?;
+                if skipped.contains(&hash) {
+                    continue;
+                }
+                wanted.push((scope, crate::record::ObjectRef { hash, size: size as u64 }));
+                if wanted.len() == limit {
+                    break;
+                }
+            }
+            Ok(wanted)
+        })?)
+    }
+
+    /// The scopes a hub of `hub`'s network described here, held now or not.
+    pub fn described_of(&self, hub: &str) -> Result<Vec<String>> {
+        let hub = hub.to_string();
+        Ok(self.database().read_now(move |db| {
+            let mut statement = db.prepare_cached("SELECT key FROM scopes WHERE hub = ?1 AND described = 1 ORDER BY key")?;
+            let rows = statement.query_map([&hub], |row| row.get(0))?;
+            Ok(rows.collect::<std::result::Result<_, _>>()?)
+        })?)
+    }
+
     /// The scopes this device holds under a hub's descriptor, each with its
     /// descriptor and current holding period.
     pub fn live_scopes(&self) -> Result<Vec<(String, Vec<u8>, i64)>> {

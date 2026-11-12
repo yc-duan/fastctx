@@ -565,6 +565,9 @@ fn apply_frame(
     .execute(params![at.stream, holding, end as i64 - 1, &head[..]])?;
     db.prepare_cached("UPDATE streams SET next = ?2, head = ?3, complete_through = ?4 WHERE id = ?1")?
         .execute(params![at.stream, end as i64, &head[..], end as i64 - 1])?;
+    // What devices ask after where they stand moves with it (§28.1).
+    let bytes = frame.header.len() + frame.signature.len() + frame.body.len();
+    super::changes::moved(db, at.stream, bytes as u64, false)?;
     at.next = end;
     at.head = head;
     super::handover::advance(db, at)?;

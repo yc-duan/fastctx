@@ -118,6 +118,8 @@ pub(super) struct Wrote {
     pub(super) written: usize,
     pub(super) gone: usize,
     pub(super) items: Vec<(Vec<u8>, jiff::Timestamp, u64)>,
+    /// The holding period of the scope it was written in.
+    pub(super) holding: i64,
 }
 
 /// Where a timeline's window begins: the whole timeline, or the events from
@@ -136,7 +138,9 @@ pub(super) enum Span<'a> {
 /// new and changed items written, those of the window gone from it removed.
 /// An event of the history from before the window (the session's title,
 /// the note of what could not be read) keeps the place it has. Call on a
-/// thread that may block.
+/// thread that may block. `expected`, the holding period the window was read
+/// on from, if it was: the scope held anew since, nothing is written (GG02).
+#[allow(clippy::too_many_arguments)]
 pub(super) fn write(
     library: &Library,
     signer: Arc<dyn fastctx_content::v2::Signer>,
@@ -145,13 +149,21 @@ pub(super) fn write(
     history: &[SessionEvent],
     span: Span<'_>,
     again: &HashSet<Vec<u8>>,
+    expected: Option<i64>,
 ) -> Result<Wrote, Failure> {
     let _writing = Writing::take(resident);
     // Begun under the term the machine was on the network when it was
     // placed: after leaving it, nothing is begun again.
-    if library.holding(&placed.scope).map_err(failure)?.is_none() {
-        let proposal = serde_json::to_vec(&placed.proposal).map_err(failure)?;
-        library.propose_on(&placed.network, &placed.scope, proposal).map_err(failure)?;
+    let holding = match library.holding(&placed.scope).map_err(failure)? {
+        Some(holding) => holding,
+        None => {
+            let proposal = serde_json::to_vec(&placed.proposal).map_err(failure)?;
+            library.propose_on(&placed.network, &placed.scope, proposal).map_err(failure)?;
+            library.holding(&placed.scope).map_err(failure)?.ok_or_else(|| failure("the timeline's scope is not held here"))?
+        }
+    };
+    if expected.is_some_and(|expected| expected != holding) {
+        return Err(failure("the timeline's scope was held anew since it was read; it is made again whole"));
     }
     let identities = super::names::identities(history);
     let (since, floor) = match &span {
@@ -209,7 +221,9 @@ pub(super) fn write(
             .filter_map(|(identity, _)| had.get_key_value(identity))
             .collect(),
     };
-    let writer = Writer::<Timeline>::new(library, &placed.scope, Timeline::STREAM).map_err(failure)?;
+    // Every commit in the period it was read for: held anew meanwhile, the
+    // rest is refused, not written into the new one.
+    let writer = Writer::<Timeline>::new(library, &placed.scope, Timeline::STREAM).map_err(failure)?.in_holding(holding);
     let mut pending = Pending { writer: &writer, signer, writes: Vec::new(), leases: Vec::new(), bytes: 0 };
     let gone = gone_items.len();
     for (identity, entry) in gone_items {
@@ -246,7 +260,7 @@ pub(super) fn write(
     }
     pending.flush()?;
     let items = window.iter().map(|&index| (identities[index].clone(), history[index].at, keys[index])).collect();
-    Ok(Wrote { written, gone, items })
+    Ok(Wrote { written, gone, items, holding })
 }
 
 /// An event as its record holds it: itself, or when it is too large for a

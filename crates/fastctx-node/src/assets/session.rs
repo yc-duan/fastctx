@@ -23,8 +23,18 @@ use fastctx_types::assets::{self as wire, Bytes, Readers, Reply, Request, Stream
 use std::sync::Arc;
 use std::time::Duration;
 
-/// How often a driver looks again when nothing woke it.
-const AGAIN: Duration = Duration::from_secs(5);
+/// How often a driver looks again when nothing woke it: what changed on the
+/// hub is pushed, what is committed here wakes it, so this only catches a
+/// push lost on the way (design §28.1).
+const AGAIN: Duration = Duration::from_secs(30);
+/// How often every scope of a hub is looked at whole — every stream asked,
+/// every cursor checked — when nothing called for it sooner (design §28.1).
+const LOOK_WHOLE: Duration = Duration::from_secs(24 * 60 * 60);
+/// Streams asked after in one page of what changed.
+const CHANGES_AT_ONCE: u32 = 256;
+/// The classes of streams, in the order they are caught up in after being
+/// away: small state first (design §28.1).
+const CLASSES: [u8; 4] = [0, 1, 2, 3];
 /// Frames uploaded or taken at once.
 const FRAMES_AT_ONCE: usize = 16;
 /// Receipts reported in one page.
@@ -93,15 +103,18 @@ pub(crate) fn pushed(node: &Arc<Node>, hub: &HubId, push: wire::Push) {
             let Some(assets) = node.assets.as_ref() else { return };
             let Some((session, key)) = assets.current.lock().expect("sessions").get(hub).copied() else { return };
             let Some(head) = checkpoint.head.array() else { return };
-            let statement = checkpoint_statement(&checkpoint.scope, checkpoint.change, checkpoint.parked, checkpoint.seq, &head);
+            let statement =
+                checkpoint_statement(&checkpoint.scope, checkpoint.change, checkpoint.parked, checkpoint.seq, &head);
             if !assets.heard(hub, &key, &statement, &checkpoint.word.0) {
                 return;
             }
             let (library, log) = (assets.library.clone(), node.log.clone());
             fastctx_platform::task::spawn(async move {
                 let scope = checkpoint.scope.clone();
-                if let Err(error) =
-                    blocking(&library, move |library| library.checkpointed(&checkpoint.scope, checkpoint.change, checkpoint.parked, session)).await
+                if let Err(error) = blocking(&library, move |library| {
+                    library.checkpointed(&checkpoint.scope, checkpoint.change, checkpoint.parked, session)
+                })
+                .await
                 {
                     log.line(format_args!("taking in a checkpoint of {scope}: {error}"));
                 }
@@ -119,7 +132,9 @@ async fn run(node: std::sync::Weak<Node>, hub: HubId, wake: Arc<tokio::sync::Not
         // A network left, or a place the hub ended, ends the driver; one
         // joined again starts it anew.
         let network = match node.link_of(&hub) {
-            Some(link) => super::membership::of_link(&node, &hub, &link).await.map(|network| network.map(|network| (link, network))),
+            Some(link) => super::membership::of_link(&node, &hub, &link)
+                .await
+                .map(|network| network.map(|network| (link, network))),
             None => Ok(None),
         };
         let failed = match network {
@@ -129,7 +144,9 @@ async fn run(node: std::sync::Weak<Node>, hub: HubId, wake: Arc<tokio::sync::Not
                 }
                 return;
             }
-            Ok(Some((link, network))) if link.view().asset_sync == VERSION => pass(&node, &hub, &link, &network).await.err(),
+            Ok(Some((link, network))) if link.view().asset_sync == VERSION => {
+                pass(&node, &hub, &link, &network).await.err()
+            }
             Ok(Some(_)) => None,
             Err(why) => Some(format!("joining the network's assets here: {why}")),
         };
@@ -211,28 +228,83 @@ async fn pass(node: &Arc<Node>, hub: &HubId, link: &Arc<Link>, network: &Network
     // Shared whole on another network, this machine takes nothing of this
     // one: what it begins goes up, nothing comes down to its disk.
     let isolated = shared_elsewhere(node, hub);
-    if isolated.is_none()
-        && let Err(why) = discover(assets, hub, link, &key, network).await
-    {
-        failed.get_or_insert(format!("listing what this machine may hold: {why}"));
+    let mut listed = None;
+    if isolated.is_none() {
+        match discover(assets, hub, link, &key, network).await {
+            Ok(whole) => listed = whole,
+            Err(why) => {
+                failed.get_or_insert(format!("listing what this machine may hold: {why}"));
+            }
+        }
     }
     // This hub's scopes alone: another hub's go to no other.
-    let scopes: Vec<(String, i64)> = blocking(library, |library| library.live_scopes())
-        .await?
-        .into_iter()
-        .filter(|(_, descriptor, _)| {
-            serde_json::from_slice::<wire::Descriptor>(descriptor).is_ok_and(|descriptor| descriptor.hub == hub.as_str())
-        })
-        .map(|(scope, _, holding)| (scope, holding))
-        .collect();
+    let theirs = hub.as_str().to_string();
+    let held = blocking(library, move |library| library.live_scopes_of(&theirs)).await?;
+    // Not pulled whole in its holding period yet — installed, held anew,
+    // described otherwise, or its pull cut short — a scope is looked at by
+    // itself until it is: no change number after this machine's need show
+    // its streams' past (design §28.1, E01).
+    let theirs = hub.as_str().to_string();
+    let unpulled = blocking(library, move |library| library.unpulled_of(&theirs)).await?;
+    // Every scope is looked at whole when the driver begins, a day after
+    // it last was, after the hub was put back, and while a share of this
+    // machine waits for it to clear; otherwise only those that call for it
+    // are, and what changed on the hub is asked after (design §28.1).
+    let whole =
+        waited.is_some() || assets.looked.lock().expect("looked").get(hub).is_none_or(|at| at.elapsed() >= LOOK_WHOLE);
+    let pending = uploads_of(assets, hub).await?;
+    let taken_over: std::collections::BTreeSet<String> =
+        assets.takeovers.lock().expect("takeovers").iter().map(|(scope, _)| scope.clone()).collect();
+    let stood: std::collections::BTreeSet<String> = {
+        let theirs = hub.as_str().to_string();
+        blocking(library, move |library| library.feed_owners(&theirs)).await?.into_iter().collect()
+    };
+    let mut owners = stood.clone();
+    let mut scopes = Vec::new();
+    for (scope, descriptor, holding) in held {
+        let fresh = unpulled.contains(&scope);
+        if (whole || fresh)
+            && let Ok(read) = serde_json::from_slice::<wire::Descriptor>(&descriptor)
+        {
+            owners.insert(read.owner);
+        }
+        // Held, yet not among all a whole listing says this machine may
+        // hold: asked after by itself, the hub says whether it may hold it
+        // still — access taken away shows so, and nowhere else (§28.1).
+        let unlisted = listed.as_ref().is_some_and(|listed: &std::collections::BTreeSet<String>| !listed.contains(&scope));
+        if whole || fresh || unlisted || pending.contains(&scope) || taken_over.contains(&scope) {
+            scopes.push((scope, holding, fresh));
+        }
+    }
+    // Where each owner library stands as a whole look begins, or as the
+    // first scopes of one are looked at: what changes after it is asked
+    // after from then on.
+    let fresh: std::collections::BTreeSet<String> =
+        if whole { owners.clone() } else { owners.difference(&stood).cloned().collect() };
+    let marks = if isolated.is_none() && !fresh.is_empty() { tops(assets, link, &fresh).await.ok() } else { None };
     // A scope that fails holds up none after it; the pass reports the first.
-    for (scope, holding) in &scopes {
+    for (scope, holding, first) in &scopes {
         // Each step goes on whatever the one before met; a revoked scope
         // goes no further.
         let uploaded = upload(assets, hub, link, &key, session, scope).await;
+        if uploaded.is_ok() {
+            assets.uploads.lock().expect("uploads").remove(scope);
+        }
         let pulled = match &uploaded {
             Err(why) if why.starts_with(REVOKED) => Err(why.clone()),
             _ => pull(assets, hub, link, &key, session, scope, *holding, isolated.is_some()).await,
+        };
+        // What the hub lacks of this machine's own streams, found as they
+        // were pulled — the hub put back (§17) — goes up again this very
+        // pass, from where the hub is.
+        let uploaded = if uploaded.is_ok() && assets.uploads.lock().expect("uploads").contains(scope) {
+            let again = upload(assets, hub, link, &key, session, scope).await;
+            if again.is_ok() {
+                assets.uploads.lock().expect("uploads").remove(scope);
+            }
+            again
+        } else {
+            uploaded
         };
         // Isolated, what the hub lacks of what is here still goes back to it
         // (AA04); nothing comes down.
@@ -261,6 +333,14 @@ async fn pass(node: &Arc<Node>, hub: &HubId, link: &Arc<Link>, network: &Network
             (Ok((_, None)), Ok(())) => super::takeover::run(assets, hub, link, &key, scope).await,
             (_, checked) => checked,
         };
+        // Every stream pulled and checked: the scope is pulled whole in its
+        // holding period, and the change numbers carry it from now on.
+        if *first && matches!(&pulled, Ok((_, None))) && checked.is_ok() {
+            let (scope, holding) = (scope.clone(), *holding);
+            if let Err(why) = blocking(library, move |library| library.pulled(&scope, holding)).await {
+                failed.get_or_insert(why);
+            }
+        }
         let pulled = pulled.and_then(|(_, failed)| failed.map_or(Ok(()), Err));
         for done in [uploaded, pulled, checked] {
             if let Err(why) = done
@@ -270,11 +350,30 @@ async fn pass(node: &Arc<Node>, hub: &HubId, link: &Arc<Link>, network: &Network
             }
         }
     }
+    if whole {
+        assets.looked.lock().expect("looked").insert(hub.clone(), std::time::Instant::now());
+    }
+    // Looked at without a failure, each library stands where it stood as
+    // the look began.
+    if failed.is_none() {
+        for (owner, generation, top, at) in marks.unwrap_or_default() {
+            let theirs = hub.as_str().to_string();
+            blocking(library, move |library| library.fed(&theirs, &owner, &generation, top, at)).await?;
+        }
+    }
+    if !whole && isolated.is_none() {
+        for owner in &stood {
+            if let Err(why) = feed(assets, hub, link, &key, owner).await {
+                failed.get_or_insert(format!("what changed in {owner}: {why}"));
+            }
+        }
+    }
     // What ended holding periods left goes a pass at a time.
     if let Err(why) = blocking(library, |library| library.purge()).await {
         failed.get_or_insert(format!("purging what ended: {why}"));
     }
     if failed.is_none()
+        && whole
         && let Some(revision) = waited
         && waiting_revision(link) == Some(revision)
         && let Err(why) = cleared(node, assets, hub, link, revision).await
@@ -282,7 +381,9 @@ async fn pass(node: &Arc<Node>, hub: &HubId, link: &Arc<Link>, network: &Network
         failed = Some(why);
     }
     if let Some(other) = isolated {
-        node.log.line(format_args!("assets with {hub}: this machine is shared whole on {other}; nothing of {hub}'s comes to it"));
+        node.log.line(format_args!(
+            "assets with {hub}: this machine is shared whole on {other}; nothing of {hub}'s comes to it"
+        ));
         return failed.map_or(Ok(()), Err);
     }
     for failed in super::objects::fetch(assets, hub, link).await {
@@ -310,14 +411,25 @@ pub(crate) fn shared_elsewhere(node: &Node, hub: &HubId) -> Option<HubId> {
 /// the hub as it judges with the waiting shares — and the records it may
 /// no longer keep are pruned, it says so under its key, at the holding
 /// revision the shares wait at.
-async fn cleared(node: &Arc<Node>, assets: &Assets, hub: &HubId, link: &Arc<Link>, revision: u64) -> Result<(), String> {
+async fn cleared(
+    node: &Arc<Node>,
+    assets: &Assets,
+    hub: &HubId,
+    link: &Arc<Link>,
+    revision: u64,
+) -> Result<(), String> {
     let me = link.name();
     let view = link.view();
     let me = view.directory.canonical(&me).clone();
     // What was said is the revision and who waited at it: a new share at a
     // revision said before is said again.
-    let waiting: Vec<String> =
-        view.directory.shares.iter().filter(|share| share.machine == me && share.pending.is_some()).map(|share| share.account.to_string()).collect();
+    let waiting: Vec<String> = view
+        .directory
+        .shares
+        .iter()
+        .filter(|share| share.machine == me && share.pending.is_some())
+        .map(|share| share.account.to_string())
+        .collect();
     let said = (revision, waiting);
     if assets.cleared.lock().expect("cleared").get(hub) == Some(&said) {
         return Ok(());
@@ -377,7 +489,8 @@ async fn elsewhere(assets: &Assets, hub: &HubId) -> Result<Option<String>, Strin
     }
     let library = &assets.library;
     for (scope, descriptor) in blocking(library, |library| library.described_scopes()).await? {
-        let theirs = serde_json::from_slice::<wire::Descriptor>(&descriptor).map_or(true, |descriptor| descriptor.hub != hub.as_str());
+        let theirs = serde_json::from_slice::<wire::Descriptor>(&descriptor)
+            .map_or(true, |descriptor| descriptor.hub != hub.as_str());
         let held = {
             let scope = scope.clone();
             blocking(library, move |library| library.holding(&scope)).await?.is_some()
@@ -398,15 +511,162 @@ async fn elsewhere(assets: &Assets, hub: &HubId) -> Result<Option<String>, Strin
     Ok(None)
 }
 
-/// The scopes `hub` described here.
+/// The scopes `hub` described here, held now or not.
 pub(super) async fn hub_scopes(library: &Library, hub: &HubId) -> Result<std::collections::BTreeSet<String>, String> {
     let hub = hub.as_str().to_string();
-    Ok(blocking(library, |library| library.described_scopes())
-        .await?
-        .into_iter()
-        .filter(|(_, descriptor)| serde_json::from_slice::<wire::Descriptor>(descriptor).is_ok_and(|descriptor| descriptor.hub == hub))
-        .map(|(scope, _)| scope)
-        .collect())
+    Ok(blocking(library, move |library| library.described_of(&hub)).await?.into_iter().collect())
+}
+
+/// The scopes of `hub` with something of this machine's own committed and
+/// perhaps not uploaded yet: those the library says were committed to since
+/// they were last taken, and those an upload of did not finish.
+async fn uploads_of(assets: &Assets, hub: &HubId) -> Result<std::collections::BTreeSet<String>, String> {
+    let library = &assets.library;
+    let committed = library.committed();
+    let pending: Vec<String> = {
+        let mut uploads = assets.uploads.lock().expect("uploads");
+        uploads.extend(committed);
+        uploads.iter().cloned().collect()
+    };
+    let mut theirs = std::collections::BTreeSet::new();
+    for scope in pending {
+        let key = scope.clone();
+        match blocking(library, move |library| library.hub_of(&key)).await? {
+            Some(of) if of == hub.as_str() => {
+                theirs.insert(scope);
+            }
+            Some(_) => {}
+            // Held no more: nothing of it goes up.
+            None => {
+                assets.uploads.lock().expect("uploads").remove(&scope);
+            }
+        }
+    }
+    Ok(theirs)
+}
+
+/// Where each of `owners`' libraries stands now: its generation, its latest
+/// change and when that was.
+async fn tops(
+    assets: &Assets,
+    link: &Arc<Link>,
+    owners: &std::collections::BTreeSet<String>,
+) -> Result<Vec<(String, String, u64, i64)>, String> {
+    let mut marks = Vec::new();
+    for owner in owners {
+        let request = Request::Changes { owner: owner.clone(), after: 0, before: None, class: None, limit: 1 };
+        let Reply::Changes { generation, top, top_at, .. } = ask(assets, link, request).await? else {
+            return Err("the hub did not say where its library stands".into());
+        };
+        marks.push((owner.clone(), generation, top, top_at));
+    }
+    Ok(marks)
+}
+
+/// Catches up what changed in `owner`'s library of `hub` since this
+/// machine last stood in it (design §28.1): newest first, a page at a time,
+/// and by the classes of streams, small state first, when there is more
+/// than a page; where it stands moves only once all of it is caught up.
+async fn feed(assets: &Assets, hub: &HubId, link: &Arc<Link>, key: &PublicKey, owner: &str) -> Result<(), String> {
+    let library = &assets.library;
+    let stood = {
+        let (theirs, owner) = (hub.as_str().to_string(), owner.to_string());
+        blocking(library, move |library| library.feed(&theirs, &owner)).await?
+    };
+    let page = |after: u64, before: Option<u64>, class: Option<u8>| {
+        ask(assets, link, Request::Changes { owner: owner.to_string(), after, before, class, limit: CHANGES_AT_ONCE })
+    };
+    let mut after = stood.as_ref().map_or(0, |(_, change)| *change);
+    let Reply::Changes { mut generation, mut streams, mut top, mut top_at, mut more, .. } =
+        page(after, None, None).await?
+    else {
+        return Err("the hub did not say what changed".into());
+    };
+    // The hub was put back since: its numbers start again, and so does this.
+    if stood.as_ref().is_some_and(|(was, _)| *was != generation) && after > 0 {
+        after = 0;
+        let Reply::Changes { generation: now, streams: all, top: at, top_at: when, more: further, .. } =
+            page(0, None, None).await?
+        else {
+            return Err("the hub did not say what changed".into());
+        };
+        (generation, streams, top, top_at, more) = (now, all, at, when, further);
+    }
+    if generation.is_empty() || top <= after {
+        if stood.is_none() && !generation.is_empty() {
+            let (theirs, owner) = (hub.as_str().to_string(), owner.to_string());
+            blocking(library, move |library| library.fed(&theirs, &owner, &generation, top, top_at)).await?;
+        }
+        return Ok(());
+    }
+    let mut failed = catch_up(assets, hub, link, key, streams).await;
+    // More than a page: class by class, each newest first.
+    if more {
+        for class in CLASSES {
+            let mut before = Some(top + 1);
+            loop {
+                let Reply::Changes { streams, through, more, .. } = page(after, before, Some(class)).await? else {
+                    return Err("the hub did not say what changed".into());
+                };
+                if let Some(why) = catch_up(assets, hub, link, key, streams).await {
+                    failed.get_or_insert(why);
+                }
+                if !more {
+                    break;
+                }
+                before = Some(through);
+            }
+        }
+    }
+    if let Some(why) = failed {
+        return Err(why);
+    }
+    let (theirs, owner) = (hub.as_str().to_string(), owner.to_string());
+    blocking(library, move |library| library.fed(&theirs, &owner, &generation, top, top_at)).await
+}
+
+/// Brings each of `streams`, as the hub said they stand, to where they
+/// stand here: a replica's frames taken; this machine's own streams go up
+/// by their uploads instead. A scope not held here yet is listed again at
+/// the next pass. The first failure, the rest gone on with.
+async fn catch_up(
+    assets: &Assets,
+    hub: &HubId,
+    link: &Arc<Link>,
+    key: &PublicKey,
+    streams: Vec<wire::ChangedStream>,
+) -> Option<String> {
+    let library = &assets.library;
+    let device = assets.device();
+    let mut failed = None;
+    for changed in streams {
+        let done: Result<(), String> = async {
+            let scope = changed.scope.clone();
+            let Some(holding) = blocking(library, move |library| library.holding(&scope)).await? else {
+                // Given to hold but not installed here yet (design §28.1).
+                assets.forget_listing(hub);
+                return Ok(());
+            };
+            let (scope, stream) = (changed.scope.clone(), changed.stream.clone());
+            if blocking(library, move |library| library.orderer(&scope, &stream)).await? == Some(device) {
+                return Ok(());
+            }
+            let scope = changed.scope.clone();
+            let at = blocking(library, move |library| library.streams(&scope))
+                .await?
+                .into_iter()
+                .find(|(name, _)| *name == changed.stream)
+                .map_or(0, |(_, next)| next);
+            pull_stream(assets, hub, link, key, &changed.scope, &changed.stream, holding, at, changed.next).await
+        }
+        .await;
+        if let Err(why) = done
+            && !why.starts_with(REVOKED)
+        {
+            failed.get_or_insert(format!("{} of {}: {why}", changed.stream, changed.scope));
+        }
+    }
+    failed
 }
 
 /// The holding revision this machine's shares wait at, by the hub's view.
@@ -438,7 +698,9 @@ async fn open(assets: &Assets, hub: &HubId, link: &Arc<Link>, session: u64) -> R
         .filter_map(|(scope, receipt)| {
             let said = match &receipt.said {
                 Said::Applied { change, prefix } => wire::Said::Applied { change: *change, prefix: (*prefix).into() },
-                Said::Parked { sequence, accumulated } => wire::Said::Parked { sequence: *sequence, accumulated: (*accumulated).into() },
+                Said::Parked { sequence, accumulated } => {
+                    wire::Said::Parked { sequence: *sequence, accumulated: (*accumulated).into() }
+                }
                 Said::Rejected { .. } => return None,
             };
             Some(wire::Reported {
@@ -452,8 +714,13 @@ async fn open(assets: &Assets, hub: &HubId, link: &Arc<Link>, session: u64) -> R
             })
         })
         .collect();
-    let request =
-        Request::Open { version: VERSION, seen: assets.seen(hub), reported: wired, pinned: assets.pinned(hub), lineage: assets.lineage(hub) };
+    let request = Request::Open {
+        version: VERSION,
+        seen: assets.seen(hub),
+        reported: wired,
+        pinned: assets.pinned(hub),
+        lineage: assets.lineage(hub),
+    };
     let (offered, checkpointed, rotations, closed) = match link.assets(request).await? {
         Reply::Ready { key, checkpointed, rotations, closed, .. } => (key, checkpointed, rotations, closed),
         Reply::Sealed { why } => return Err(format!("the hub keeps every asset sealed: {why}")),
@@ -463,7 +730,9 @@ async fn open(assets: &Assets, hub: &HubId, link: &Arc<Link>, session: u64) -> R
     if closed {
         // The hub set the history this machine saw aside when it recovered:
         // its head is forgotten and its receipts wait no more; what the hub
-        // lacks is given back as each scope is gone through (`pull`).
+        // lacks is given back as each scope is gone through (`pull`), in a
+        // whole look this very pass.
+        assets.looked.lock().expect("looked").remove(hub);
         assets.forget_seen(hub).map_err(|error| error.to_string())?;
         let scopes: std::collections::BTreeSet<String> = reported.iter().map(|(scope, _)| scope.clone()).collect();
         for scope in scopes {
@@ -475,25 +744,38 @@ async fn open(assets: &Assets, hub: &HubId, link: &Arc<Link>, session: u64) -> R
     assets.current.lock().expect("sessions").insert(hub.clone(), (session, key));
     for checkpoint in checkpointed {
         let head = array(&checkpoint.head, "a checkpoint's head")?;
-        let statement = checkpoint_statement(&checkpoint.scope, checkpoint.change, checkpoint.parked, checkpoint.seq, &head);
+        let statement =
+            checkpoint_statement(&checkpoint.scope, checkpoint.change, checkpoint.parked, checkpoint.seq, &head);
         if !assets.heard(hub, &key, &statement, &checkpoint.word.0) {
             continue;
         }
-        blocking(library, move |library| library.checkpointed(&checkpoint.scope, checkpoint.change, checkpoint.parked, session)).await?;
+        blocking(library, move |library| {
+            library.checkpointed(&checkpoint.scope, checkpoint.change, checkpoint.parked, session)
+        })
+        .await?;
     }
     Ok(key)
 }
 
 /// The scopes this machine began before any hub described them, described.
-async fn describe(assets: &Assets, hub: &HubId, link: &Arc<Link>, key: &PublicKey, network: &Network) -> Result<(), String> {
+async fn describe(
+    assets: &Assets,
+    hub: &HubId,
+    link: &Arc<Link>,
+    key: &PublicKey,
+    network: &Network,
+) -> Result<(), String> {
     let library = &assets.library;
     for (scope, proposal) in blocking(library, |library| library.provisionals()).await? {
         let Some(proposal) = proposal else { continue };
-        let Proposal { hub: meant, readers, classes } = serde_json::from_slice(&proposal).map_err(|error| error.to_string())?;
+        let Proposal { hub: meant, readers, classes } =
+            serde_json::from_slice(&proposal).map_err(|error| error.to_string())?;
         if meant != hub.as_str() {
             continue;
         }
-        let Reply::Described { descriptor } = link.assets(Request::Describe { scope: scope.clone(), readers, classes }).await? else {
+        let Reply::Described { descriptor } =
+            link.assets(Request::Describe { scope: scope.clone(), readers, classes }).await?
+        else {
             return Err("the hub did not describe the scope".into());
         };
         if !assets.heard(hub, key, &descriptor.fact.0, &descriptor.word.0) {
@@ -504,7 +786,8 @@ async fn describe(assets: &Assets, hub: &HubId, link: &Arc<Link>, key: &PublicKe
             return Err(format!("the hub described another scope than {scope}"));
         }
         let network = network.clone();
-        blocking(library, move |library| library.install_on(&network, &scope, descriptor.fact.0, read.seq as i64)).await?;
+        blocking(library, move |library| library.install_on(&network, &scope, descriptor.fact.0, read.seq as i64))
+            .await?;
     }
     Ok(())
 }
@@ -514,16 +797,28 @@ async fn describe(assets: &Assets, hub: &HubId, link: &Arc<Link>, key: &PublicKe
 const RELIST: Duration = Duration::from_secs(300);
 
 /// Installs each scope the hub says this machine may hold that it does not
-/// hold yet (design §6.6), its descriptor the hub's word: those described
-/// since the last listing, or all of them when the driver begins and every
-/// `RELIST`.
-async fn discover(assets: &Assets, hub: &HubId, link: &Arc<Link>, key: &PublicKey, network: &Network) -> Result<(), String> {
+/// hold yet, or holds under another descriptor (design §6.6), the
+/// descriptor the hub's word: those described since the last listing, or
+/// all of them when the driver begins, every `RELIST` and as what decides
+/// holding changes. Each installed is pulled whole before the change
+/// numbers carry it (§28.1). All it listed, when it listed all under one
+/// basis.
+async fn discover(
+    assets: &Assets,
+    hub: &HubId,
+    link: &Arc<Link>,
+    key: &PublicKey,
+    network: &Network,
+) -> Result<Option<std::collections::BTreeSet<String>>, String> {
     let library = &assets.library;
+    let mut listed_all = std::collections::BTreeSet::new();
     let began = assets.forgotten.load(std::sync::atomic::Ordering::SeqCst);
     let known = assets.listed.lock().expect("listed").get(hub).cloned();
     // No basis kept — the last listing unsettled, or told none — lists all.
     let (mut after, mut whole, heard) = match known {
-        Some(listed) if listed.whole.elapsed() < RELIST && !listed.basis.is_empty() => (listed.through, None, Some(listed.basis)),
+        Some(listed) if listed.whole.elapsed() < RELIST && !listed.basis.is_empty() => {
+            (listed.through, None, Some(listed.basis))
+        }
         _ => (None, Some(std::time::Instant::now()), None),
     };
     // What the listing went by. Changed before it began, all is listed
@@ -534,7 +829,8 @@ async fn discover(assets: &Assets, hub: &HubId, link: &Arc<Link>, key: &PublicKe
     let mut basis: Option<String> = None;
     let mut unsettled = false;
     loop {
-        let Reply::Holdings { scopes, next, through, basis: said } = ask(assets, link, Request::Holdings { after: after.clone() }).await?
+        let Reply::Holdings { scopes, next, through, basis: said } =
+            ask(assets, link, Request::Holdings { after: after.clone() }).await?
         else {
             return Err("the hub did not list what this machine may hold".into());
         };
@@ -561,14 +857,17 @@ async fn discover(assets: &Assets, hub: &HubId, link: &Arc<Link>, key: &PublicKe
             if !assets.heard(hub, key, &held.descriptor.fact.0, &held.descriptor.word.0) {
                 return Err(format!("the descriptor of {} is not the hub's", held.scope));
             }
-            let read: wire::Descriptor = serde_json::from_slice(&held.descriptor.fact.0).map_err(|error| error.to_string())?;
+            let read: wire::Descriptor =
+                serde_json::from_slice(&held.descriptor.fact.0).map_err(|error| error.to_string())?;
             if read.scope != held.scope || read.hub != hub.as_str() {
                 return Err(format!("the hub listed another scope than {}", held.scope));
             }
-            let scope = held.scope.clone();
-            if blocking(library, move |library| library.holding(&scope)).await?.is_none() {
-                let (fact, network) = (held.descriptor.fact.0, network.clone());
-                blocking(library, move |library| library.install_on(&network, &held.scope, fact, read.seq as i64)).await?;
+            listed_all.insert(held.scope.clone());
+            let (scope, fact) = (held.scope.clone(), held.descriptor.fact.0);
+            let here = blocking(library, move |library| library.held_description(&scope)).await?;
+            if here.as_deref() != Some(fact.as_slice()) {
+                let (network, scope, revision) = (network.clone(), held.scope.clone(), read.seq as i64);
+                blocking(library, move |library| library.install_on(&network, &scope, fact, revision)).await?;
             }
         }
         // Where the next listing goes on from: the last scope looked at,
@@ -585,18 +884,25 @@ async fn discover(assets: &Assets, hub: &HubId, link: &Arc<Link>, key: &PublicKe
     // Forgotten while it went on — access revoked, the session ended — it
     // is not kept: the next pass lists all (CC07).
     if assets.forgotten.load(std::sync::atomic::Ordering::SeqCst) != began {
-        return Ok(());
+        return Ok(None);
     }
     let at = whole.or_else(|| listed.get(hub).map(|listed| listed.whole)).unwrap_or_else(std::time::Instant::now);
     // Unsettled, no basis is kept: the next pass lists all.
     let basis = if unsettled { String::new() } else { basis.unwrap_or_default() };
     listed.insert(hub.clone(), crate::assets::Listed { through: after, whole: at, basis });
-    Ok(())
+    Ok((whole.is_some() && !unsettled).then_some(listed_all))
 }
 
 /// The frames of this machine's own streams of `scope` past what the hub
 /// has.
-async fn upload(assets: &Assets, hub: &HubId, link: &Arc<Link>, key: &PublicKey, session: u64, scope: &str) -> Result<(), String> {
+async fn upload(
+    assets: &Assets,
+    hub: &HubId,
+    link: &Arc<Link>,
+    key: &PublicKey,
+    session: u64,
+    scope: &str,
+) -> Result<(), String> {
     let library = &assets.library;
     // What a refusal took out goes again first, the hub asked for a new
     // epoch where none was opened yet (a pass cut short after the refusal).
@@ -610,7 +916,10 @@ async fn upload(assets: &Assets, hub: &HubId, link: &Arc<Link>, key: &PublicKey,
             // Only into an epoch this machine orders: one another took over
             // takes none of this one's writes (AG08).
             let (scope_text, stream_text, device) = (scope.to_string(), stream.clone(), assets.device());
-            if blocking(library, move |library| library.orderer(&scope_text, &stream_text)).await?.is_some_and(|orderer| orderer != device) {
+            if blocking(library, move |library| library.orderer(&scope_text, &stream_text))
+                .await?
+                .is_some_and(|orderer| orderer != device)
+            {
                 return Err("another device orders the stream now; what waits is not committed again".to_string());
             }
             resubmit(assets, scope, &stream).await
@@ -629,69 +938,74 @@ async fn upload(assets: &Assets, hub: &HubId, link: &Arc<Link>, key: &PublicKey,
     let mut failed: Option<String> = waiting_failed;
     for (stream, from) in blocking(library, move |library| library.uploads(&key_text, &device)).await? {
         let done: Result<(), String> = async {
-        let mut from = from;
-        loop {
-            let (scope_text, stream_text) = (scope.to_string(), stream.clone());
-            let frames = blocking(library, move |library| library.export(&scope_text, &stream_text, from, FRAMES_AT_ONCE)).await?;
-            if frames.is_empty() {
-                break;
-            }
-            for frame in frames {
-                let header = Header::decode(&frame.header).map_err(|error| error.to_string())?;
-                let frame = wire::Frame::whole(frame.header, frame.signature, frame.body);
-                // Objects the hub has not, or wants proved, go first; then
-                // the frame again, naming what this machine proved.
-                let mut proven: Vec<Bytes> = Vec::new();
-                let (mut rounds, mut staged) = (0, 0);
-                let received = loop {
-                    let Reply::Received { received } = super::apart::take(assets, link, scope, &frame, &proven, &mut staged).await? else {
-                        return Err("the hub did not take the frame".into());
-                    };
-                    let (objects, prove) = match &received {
-                        wire::Received::Missing { objects } => (objects, false),
-                        wire::Received::Prove { objects } => (objects, true),
-                        _ => break received,
-                    };
-                    rounds += 1;
-                    if rounds > OBJECT_ROUNDS {
-                        return Err(format!("{stream} of {scope}: the hub still wants objects after they went"));
-                    }
-                    proven.extend(super::objects::put(library, link, scope, objects, prove).await?);
-                };
-                let receipt = |said: Said, word: Bytes| Receipt {
-                    stream: stream.clone(),
-                    epoch: header.epoch,
-                    first: header.first,
-                    digest: header.digest,
-                    said,
-                    signature: word.0,
-                };
-                match received {
-                    wire::Received::Applied { change, prefix, word, .. } => {
-                        let said = Said::Applied { change, prefix: array(&prefix, "a receipt's prefix")? };
-                        keep(assets, hub, key, session, scope, receipt(said, word)).await?;
-                    }
-                    wire::Received::Parked { sequence, accumulated, word } => {
-                        let said = Said::Parked { sequence, accumulated: array(&accumulated, "a receipt's accumulator")? };
-                        keep(assets, hub, key, session, scope, receipt(said, word)).await?;
-                    }
-                    wire::Received::Rejected { from: cut, word, .. } => {
-                        keep(assets, hub, key, session, scope, receipt(Said::Rejected { from: cut }, word)).await?;
-                        refused(assets, hub, link, key, scope, &stream, cut).await?;
-                        return Ok(());
-                    }
-                    wire::Received::Gap { from: wanted, .. } => {
-                        from = wanted;
-                        continue;
-                    }
-                    wire::Received::Missing { .. } | wire::Received::Prove { .. } => {
-                        return Err(format!("{stream} of {scope}: the hub still wants objects after they went"));
-                    }
+            let mut from = from;
+            loop {
+                let (scope_text, stream_text) = (scope.to_string(), stream.clone());
+                let frames =
+                    blocking(library, move |library| library.export(&scope_text, &stream_text, from, FRAMES_AT_ONCE))
+                        .await?;
+                if frames.is_empty() {
+                    break;
                 }
-                from = header.first + u64::from(header.count);
+                for frame in frames {
+                    let header = Header::decode(&frame.header).map_err(|error| error.to_string())?;
+                    let frame = wire::Frame::whole(frame.header, frame.signature, frame.body);
+                    // Objects the hub has not, or wants proved, go first; then
+                    // the frame again, naming what this machine proved.
+                    let mut proven: Vec<Bytes> = Vec::new();
+                    let (mut rounds, mut staged) = (0, 0);
+                    let received = loop {
+                        let Reply::Received { received } =
+                            super::apart::take(assets, link, scope, &frame, &proven, &mut staged).await?
+                        else {
+                            return Err("the hub did not take the frame".into());
+                        };
+                        let (objects, prove) = match &received {
+                            wire::Received::Missing { objects } => (objects, false),
+                            wire::Received::Prove { objects } => (objects, true),
+                            _ => break received,
+                        };
+                        rounds += 1;
+                        if rounds > OBJECT_ROUNDS {
+                            return Err(format!("{stream} of {scope}: the hub still wants objects after they went"));
+                        }
+                        proven.extend(super::objects::put(library, link, scope, objects, prove).await?);
+                    };
+                    let receipt = |said: Said, word: Bytes| Receipt {
+                        stream: stream.clone(),
+                        epoch: header.epoch,
+                        first: header.first,
+                        digest: header.digest,
+                        said,
+                        signature: word.0,
+                    };
+                    match received {
+                        wire::Received::Applied { change, prefix, word, .. } => {
+                            let said = Said::Applied { change, prefix: array(&prefix, "a receipt's prefix")? };
+                            keep(assets, hub, key, session, scope, receipt(said, word)).await?;
+                        }
+                        wire::Received::Parked { sequence, accumulated, word } => {
+                            let said =
+                                Said::Parked { sequence, accumulated: array(&accumulated, "a receipt's accumulator")? };
+                            keep(assets, hub, key, session, scope, receipt(said, word)).await?;
+                        }
+                        wire::Received::Rejected { from: cut, word, .. } => {
+                            keep(assets, hub, key, session, scope, receipt(Said::Rejected { from: cut }, word)).await?;
+                            refused(assets, hub, link, key, scope, &stream, cut).await?;
+                            return Ok(());
+                        }
+                        wire::Received::Gap { from: wanted, .. } => {
+                            from = wanted;
+                            continue;
+                        }
+                        wire::Received::Missing { .. } | wire::Received::Prove { .. } => {
+                            return Err(format!("{stream} of {scope}: the hub still wants objects after they went"));
+                        }
+                    }
+                    from = header.first + u64::from(header.count);
+                }
             }
-        }
-        Ok(())
+            Ok(())
         }
         .await;
         if let Err(why) = done {
@@ -705,7 +1019,14 @@ async fn upload(assets: &Assets, hub: &HubId, link: &Arc<Link>, key: &PublicKey,
 }
 
 /// Keeps the hub's word on a frame, when it is the pinned key's.
-async fn keep(assets: &Assets, hub: &HubId, key: &PublicKey, session: u64, scope: &str, receipt: Receipt) -> Result<(), String> {
+async fn keep(
+    assets: &Assets,
+    hub: &HubId,
+    key: &PublicKey,
+    session: u64,
+    scope: &str,
+    receipt: Receipt,
+) -> Result<(), String> {
     let frame = fastctx_content::v2::FrameKey {
         scope,
         stream: &receipt.stream,
@@ -715,7 +1036,9 @@ async fn keep(assets: &Assets, hub: &HubId, key: &PublicKey, session: u64, scope
     };
     let statement = match &receipt.said {
         Said::Applied { change, prefix } => Some(fastctx_content::v2::applied_statement(&frame, *change, prefix)),
-        Said::Parked { sequence, accumulated } => Some(fastctx_content::v2::parked_statement(&frame, *sequence, accumulated)),
+        Said::Parked { sequence, accumulated } => {
+            Some(fastctx_content::v2::parked_statement(&frame, *sequence, accumulated))
+        }
         Said::Rejected { .. } => None,
     };
     if let Some(statement) = statement
@@ -731,7 +1054,15 @@ async fn keep(assets: &Assets, hub: &HubId, key: &PublicKey, session: u64, scope
 /// before it, the hub opens a new epoch for this machine there, and what
 /// the refusal took out is committed again in it. A pass cut short
 /// anywhere here takes it up again (`Library::waiting`).
-async fn refused(assets: &Assets, hub: &HubId, link: &Arc<Link>, key: &PublicKey, scope: &str, stream: &str, cut: u64) -> Result<(), String> {
+async fn refused(
+    assets: &Assets,
+    hub: &HubId,
+    link: &Arc<Link>,
+    key: &PublicKey,
+    scope: &str,
+    stream: &str,
+    cut: u64,
+) -> Result<(), String> {
     let (scope_text, stream_text) = (scope.to_string(), stream.to_string());
     blocking(&assets.library, move |library| library.rejected(&scope_text, &stream_text, cut)).await?;
     renew(assets, hub, link, key, scope, stream, cut).await?;
@@ -741,7 +1072,15 @@ async fn refused(assets: &Assets, hub: &HubId, link: &Arc<Link>, key: &PublicKey
 /// The hub opens a new epoch of `stream` for this machine at `cut`, where
 /// the stream was cut back to: what was committed into it since goes with
 /// what the refusal took out.
-async fn renew(assets: &Assets, hub: &HubId, link: &Arc<Link>, key: &PublicKey, scope: &str, stream: &str, cut: u64) -> Result<(), String> {
+async fn renew(
+    assets: &Assets,
+    hub: &HubId,
+    link: &Arc<Link>,
+    key: &PublicKey,
+    scope: &str,
+    stream: &str,
+    cut: u64,
+) -> Result<(), String> {
     let library = &assets.library;
     let scope_text = scope.to_string();
     let next = blocking(library, move |library| library.streams(&scope_text))
@@ -779,7 +1118,8 @@ async fn renew(assets: &Assets, hub: &HubId, link: &Arc<Link>, key: &PublicKey, 
 async fn resubmit(assets: &Assets, scope: &str, stream: &str) -> Result<(), String> {
     loop {
         let (scope_text, stream_text, signer) = (scope.to_string(), stream.to_string(), assets.signer());
-        let committed = blocking(&assets.library, move |library| library.resubmit(&scope_text, &stream_text, 64, signer)).await?;
+        let committed =
+            blocking(&assets.library, move |library| library.resubmit(&scope_text, &stream_text, 64, signer)).await?;
         if committed == 0 {
             return Ok(());
         }
@@ -803,7 +1143,8 @@ async fn pull(
     isolated: bool,
 ) -> Result<(std::collections::BTreeSet<String>, Option<String>), String> {
     let library = &assets.library;
-    let Reply::Streams { streams, withheld } = ask(assets, link, Request::Streams { scope: scope.to_string() }).await? else {
+    let Reply::Streams { streams, withheld } = ask(assets, link, Request::Streams { scope: scope.to_string() }).await?
+    else {
         return Err("the hub did not list the scope's streams".into());
     };
     let scope_text = scope.to_string();
@@ -815,7 +1156,9 @@ async fn pull(
     // the same (U05): a first write on its way finds it so.
     let scope_text = scope.to_string();
     let already = blocking(library, move |library| library.withheld_streams(&scope_text)).await?;
-    for stream in withheld.into_iter().filter(|stream| local.get(stream).is_some_and(|at| *at > 0) || !already.contains(stream)) {
+    for stream in
+        withheld.into_iter().filter(|stream| local.get(stream).is_some_and(|at| *at > 0) || !already.contains(stream))
+    {
         let (scope_text, device) = (scope.to_string(), assets.device());
         blocking(library, move |library| library.withhold(&scope_text, &stream, &device)).await?;
     }
@@ -824,7 +1167,8 @@ async fn pull(
     // What the hub lacks that this machine has — the hub recovered to
     // before it (design §17) — goes back: its own streams' uploading goes on
     // from where the hub is, a replica's frames are given again.
-    let theirs: std::collections::BTreeMap<String, u64> = streams.iter().map(|at| (at.stream.clone(), at.next)).collect();
+    let theirs: std::collections::BTreeMap<String, u64> =
+        streams.iter().map(|at| (at.stream.clone(), at.next)).collect();
     let (scope_text, device) = (scope.to_string(), assets.device());
     let own: std::collections::BTreeSet<String> =
         blocking(library, move |library| library.own_streams(&scope_text, &device)).await?.into_iter().collect();
@@ -835,6 +1179,9 @@ async fn pull(
             if *at > hub_at {
                 let (scope_text, stream_text) = (scope.to_string(), stream.clone());
                 blocking(library, move |library| library.rewind_uploads(&scope_text, &stream_text, hub_at)).await?;
+                // Gone up again from where the hub is, this very pass
+                // (`pass`), and until it has.
+                assets.uploads.lock().expect("uploads").insert(scope.to_string());
             }
         } else if *at > hub_at.unwrap_or(0) {
             // A replica's frames the hub lost, all of the stream or its
@@ -851,62 +1198,8 @@ async fn pull(
     // Isolated, the hub's frames do not come down to this disk.
     let streams = if isolated { Vec::new() } else { streams };
     for wire::StreamAt { stream, next } in streams {
-        let done: Result<(), String> = async {
-        let mut at = local.get(&stream).copied().unwrap_or(0);
-        if at >= next {
-            return Ok(());
-        }
-        let Reply::Succession { epochs, gaps } =
-            ask(assets, link, Request::Succession { scope: scope.to_string(), stream: stream.clone() }).await?
-        else {
-            return Err("the hub did not give the stream's succession".into());
-        };
-        for fact in epochs {
-            let signed = fastctx_content::v2::Signed { fact: fact.fact.0, signature: fact.word.0 };
-            let scope_text = scope.to_string();
-            let verifier = Pinning { assets, hub, key: *key };
-            // The verifier borrows this machine's state: checked here, kept on the library's thread.
-            if !fastctx_content::v2::HubVerifier::verify(&verifier, &signed.fact, &signed.signature) {
-                return Err("an epoch's descriptor is not the hub's".into());
-            }
-            blocking(library, move |library| library.accept_epoch(&scope_text, signed, &Trusted)).await?;
-        }
-        for fact in gaps {
-            let signed = fastctx_content::v2::Signed { fact: fact.fact.0, signature: fact.word.0 };
-            let verifier = Pinning { assets, hub, key: *key };
-            if !fastctx_content::v2::HubVerifier::verify(&verifier, &signed.fact, &signed.signature) {
-                return Err("a gap fact is not the hub's".into());
-            }
-            let scope_text = scope.to_string();
-            blocking(library, move |library| library.accept_gap(&scope_text, signed, &Trusted)).await?;
-        }
-        while at < next {
-            let request = Request::Frames { scope: scope.to_string(), stream: stream.clone(), from: at, limit: FRAMES_AT_ONCE as u32 };
-            let Reply::Frames { mut frames, ticket } = ask(assets, link, request).await? else {
-                return Err("the hub did not give frames".into());
-            };
-            super::apart::bring(link, ticket, &mut frames).await?;
-            if frames.is_empty() {
-                break;
-            }
-            for frame in frames {
-                let raw = RawFrame { header: frame.header.0, signature: frame.signature.0, body: frame.body.0, objects: Vec::new() };
-                let scope_text = scope.to_string();
-                let imported =
-                    blocking(library, move |library| library.import(&scope_text, raw, &DeviceKeys, Holder::Replica, holding)).await?;
-                match imported {
-                    Imported::Applied { next: reached, .. } => at = reached,
-                    Imported::Already => {}
-                    Imported::Gap { from, .. } => at = from,
-                    Imported::Conflict => return Err(format!("{stream} of {scope} holds other records at a place the hub gave")),
-                    Imported::Epoch(epoch) => return Err(format!("{stream} of {scope} has a frame of epoch {epoch} the hub gave no descriptor of")),
-                }
-            }
-        }
-        Ok(())
-        }
-        .await;
-        if let Err(why) = done {
+        let at = local.get(&stream).copied().unwrap_or(0);
+        if let Err(why) = pull_stream(assets, hub, link, key, scope, &stream, holding, at, next).await {
             if why.starts_with(REVOKED) {
                 return Err(why);
             }
@@ -919,11 +1212,102 @@ async fn pull(
     let scope_text = scope.to_string();
     let now: std::collections::BTreeMap<String, u64> =
         blocking(library, move |library| library.streams(&scope_text)).await?.into_iter().collect();
-    let caught_up: Vec<String> =
-        theirs.iter().filter(|(stream, next)| now.get(*stream).copied().unwrap_or(0) >= **next).map(|(stream, _)| stream.clone()).collect();
+    let caught_up: Vec<String> = theirs
+        .iter()
+        .filter(|(stream, next)| now.get(*stream).copied().unwrap_or(0) >= **next)
+        .map(|(stream, _)| stream.clone())
+        .collect();
     let scope_text = scope.to_string();
     blocking(library, move |library| library.hold_again(&scope_text, holding, caught_up)).await?;
     Ok((ahead, failed))
+}
+
+/// Takes the frames of the replica `stream` of `scope` from `at`, where it
+/// stands here, to `next`, where the hub said it stands: the stream's
+/// epochs and gaps first, under the hub's word.
+#[allow(clippy::too_many_arguments)]
+async fn pull_stream(
+    assets: &Assets,
+    hub: &HubId,
+    link: &Arc<Link>,
+    key: &PublicKey,
+    scope: &str,
+    stream: &str,
+    holding: i64,
+    mut at: u64,
+    next: u64,
+) -> Result<(), String> {
+    let library = &assets.library;
+    let stream = stream.to_string();
+    if at >= next {
+        return Ok(());
+    }
+    let Reply::Succession { epochs, gaps } =
+        ask(assets, link, Request::Succession { scope: scope.to_string(), stream: stream.clone() }).await?
+    else {
+        return Err("the hub did not give the stream's succession".into());
+    };
+    for fact in epochs {
+        let signed = fastctx_content::v2::Signed { fact: fact.fact.0, signature: fact.word.0 };
+        let scope_text = scope.to_string();
+        let verifier = Pinning { assets, hub, key: *key };
+        // The verifier borrows this machine's state: checked here, kept on the library's thread.
+        if !fastctx_content::v2::HubVerifier::verify(&verifier, &signed.fact, &signed.signature) {
+            return Err("an epoch's descriptor is not the hub's".into());
+        }
+        blocking(library, move |library| library.accept_epoch(&scope_text, signed, &Trusted)).await?;
+    }
+    for fact in gaps {
+        let signed = fastctx_content::v2::Signed { fact: fact.fact.0, signature: fact.word.0 };
+        let verifier = Pinning { assets, hub, key: *key };
+        if !fastctx_content::v2::HubVerifier::verify(&verifier, &signed.fact, &signed.signature) {
+            return Err("a gap fact is not the hub's".into());
+        }
+        let scope_text = scope.to_string();
+        blocking(library, move |library| library.accept_gap(&scope_text, signed, &Trusted)).await?;
+    }
+    while at < next {
+        let request = Request::Frames {
+            scope: scope.to_string(),
+            stream: stream.clone(),
+            from: at,
+            limit: FRAMES_AT_ONCE as u32,
+        };
+        let Reply::Frames { mut frames, ticket } = ask(assets, link, request).await? else {
+            return Err("the hub did not give frames".into());
+        };
+        super::apart::bring(link, ticket, &mut frames).await?;
+        if frames.is_empty() {
+            break;
+        }
+        for frame in frames {
+            let raw = RawFrame {
+                header: frame.header.0,
+                signature: frame.signature.0,
+                body: frame.body.0,
+                objects: Vec::new(),
+            };
+            let scope_text = scope.to_string();
+            let imported = blocking(library, move |library| {
+                library.import(&scope_text, raw, &DeviceKeys, Holder::Replica, holding)
+            })
+            .await?;
+            match imported {
+                Imported::Applied { next: reached, .. } => at = reached,
+                Imported::Already => {}
+                Imported::Gap { from, .. } => at = from,
+                Imported::Conflict => {
+                    return Err(format!("{stream} of {scope} holds other records at a place the hub gave"));
+                }
+                Imported::Epoch(epoch) => {
+                    return Err(format!(
+                        "{stream} of {scope} has a frame of epoch {epoch} the hub gave no descriptor of"
+                    ));
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Gives the hub again the frames of the replica `stream` of `scope` from
@@ -943,7 +1327,8 @@ async fn resupply(
     let library = &assets.library;
     loop {
         let (scope_text, stream_text) = (scope.to_string(), stream.to_string());
-        let frames = blocking(library, move |library| library.export(&scope_text, &stream_text, from, FRAMES_AT_ONCE)).await?;
+        let frames =
+            blocking(library, move |library| library.export(&scope_text, &stream_text, from, FRAMES_AT_ONCE)).await?;
         if frames.is_empty() {
             return Ok(());
         }
@@ -953,7 +1338,9 @@ async fn resupply(
             let mut proven = Vec::new();
             let (mut rounds, mut staged) = (0, 0);
             let received = loop {
-                let Reply::Received { received } = super::apart::take(assets, link, scope, &frame, &proven, &mut staged).await? else {
+                let Reply::Received { received } =
+                    super::apart::take(assets, link, scope, &frame, &proven, &mut staged).await?
+                else {
                     return Err("the hub did not take a frame given back".into());
                 };
                 let (objects, prove) = match &received {
@@ -1013,11 +1400,12 @@ async fn cursors(
 ) -> Result<(), String> {
     let library = &assets.library;
     let (scope_text, device) = (scope.to_string(), assets.device());
-    let standing: Vec<(String, u64, [u8; 32])> = blocking(library, move |library| library.replica_standing(&scope_text, &device))
-        .await?
-        .into_iter()
-        .filter(|(stream, _, _)| !ahead.contains(stream))
-        .collect();
+    let standing: Vec<(String, u64, [u8; 32])> =
+        blocking(library, move |library| library.replica_standing(&scope_text, &device))
+            .await?
+            .into_iter()
+            .filter(|(stream, _, _)| !ahead.contains(stream))
+            .collect();
     if standing.is_empty() {
         return Ok(());
     }
@@ -1025,7 +1413,9 @@ async fn cursors(
         .into_iter()
         .map(|(stream, sequence, head)| wire::Cursor { stream, sequence, head: head.into() })
         .collect();
-    let Reply::Standing { streams } = ask(assets, link, Request::Cursors { scope: scope.to_string(), holding, streams }).await? else {
+    let Reply::Standing { streams } =
+        ask(assets, link, Request::Cursors { scope: scope.to_string(), holding, streams }).await?
+    else {
         return Err("the hub did not check the cursors".into());
     };
     for standing in streams.into_iter().filter(|standing| !standing.agrees) {
@@ -1059,7 +1449,11 @@ impl fastctx_content::v2::Verifier for DeviceKeys {
     fn verify(&self, header: &Header, header_bytes: &[u8], signature: &[u8]) -> bool {
         let Ok(signature) = <[u8; 64]>::try_from(signature) else { return false };
         PublicKey::from_bytes(header.key)
-            .verify(fastctx_net::sign::Domain::SyncSourceBatch, header_bytes, &fastctx_net::sign::Signature::from_bytes(signature))
+            .verify(
+                fastctx_net::sign::Domain::SyncSourceBatch,
+                header_bytes,
+                &fastctx_net::sign::Signature::from_bytes(signature),
+            )
             .is_ok()
     }
 }

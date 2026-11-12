@@ -153,6 +153,9 @@ pub struct Writer<K: Kind> {
     library: Library,
     scope: String,
     stream: String,
+    /// The holding period every write is made in, when the writer was made
+    /// for one; otherwise the scope's at each write.
+    holding: Option<i64>,
     kind: PhantomData<K>,
 }
 
@@ -161,7 +164,23 @@ impl<K: Kind> Writer<K> {
         if !stream.starts_with(K::STREAM) {
             return Err(Error::Invalid(format!("records of kind {} go in streams under {}", K::KIND, K::STREAM)));
         }
-        Ok(Self { library: library.clone(), scope: scope.to_string(), stream: stream.to_string(), kind: PhantomData })
+        Ok(Self { library: library.clone(), scope: scope.to_string(), stream: stream.to_string(), holding: None, kind: PhantomData })
+    }
+
+    /// The same writer, writing in the holding period `holding` alone: what
+    /// it writes after the scope was held anew is refused, not written into
+    /// the new period (GG02).
+    pub fn in_holding(mut self, holding: i64) -> Self {
+        self.holding = Some(holding);
+        self
+    }
+
+    /// The holding period a write is made in.
+    fn period(&self) -> Result<i64> {
+        match self.holding {
+            Some(holding) => Ok(holding),
+            None => self.library.holding(&self.scope)?.ok_or_else(|| Error::Invalid("the scope is not held here".into())),
+        }
     }
 
     /// Writes `value` as the item `item` at `order`, or deletes it when
@@ -179,7 +198,7 @@ impl<K: Kind> Writer<K> {
         signer: Arc<dyn Signer>,
     ) -> Result<Committed> {
         // The period first: what is judged is judged in it.
-        let holding = self.library.holding(&self.scope)?.ok_or_else(|| Error::Invalid("the scope is not held here".into()))?;
+        let holding = self.period()?;
         let state = match value {
             Some(value) => State::Is { body: K::encode(value), objects },
             None => State::Gone,
@@ -207,7 +226,7 @@ impl<K: Kind> Writer<K> {
     /// one; `leases` on their objects let go with it. A producer's commit
     /// waits for the disk only when `durable`.
     pub fn write_all(&self, writes: Vec<Write<K>>, leases: Vec<Lease>, durable: bool, signer: Arc<dyn Signer>) -> Result<Committed> {
-        let holding = self.library.holding(&self.scope)?.ok_or_else(|| Error::Invalid("the scope is not held here".into()))?;
+        let holding = self.period()?;
         let records = writes
             .into_iter()
             .map(|write| {

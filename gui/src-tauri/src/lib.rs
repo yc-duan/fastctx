@@ -635,9 +635,10 @@ async fn folders(
     shell: tauri::State<'_, Shell>,
     machine_name: Option<String>,
     path: Option<String>,
+    cursor: Option<String>,
 ) -> Result<fastctx_types::focus::Folders, fastctx_types::ipc::Failure> {
     let machine = machine(machine_name).map_err(fastctx_types::ipc::Failure::new)?;
-    shell.world().folders(machine, path).await.map_err(|error| match error {
+    shell.world().folders_page(machine, path, cursor).await.map_err(|error| match error {
         fastctx_client::world::Error::Call(fastctx_client::CallError::Failed(failure)) => failure,
         other => fastctx_types::ipc::Failure::new(other.to_string()),
     })

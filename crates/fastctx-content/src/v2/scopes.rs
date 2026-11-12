@@ -207,8 +207,13 @@ impl Library {
 pub(super) fn install_in(db: &Connection, key: &str, hub: &str, description: Vec<u8>, acl_revision: i64) -> fastctx_storage::Result<i64> {
     match held(db, key)? {
         Some((id, state, Some(holding))) if state == "provisional" || state == "live" => {
-            db.prepare_cached("UPDATE scopes SET state = 'live', description = ?2, hub = ?3, described = 1 WHERE id = ?1")?
-                .execute(params![id, description, hub])?;
+            // A description that says otherwise may let this device hold
+            // streams it held not: the scope is pulled whole again (§28.1).
+            db.prepare_cached(
+                "UPDATE scopes SET state = 'live', description = ?2, hub = ?3, described = 1,
+                 pulled = CASE WHEN description IS ?2 THEN pulled ELSE NULL END WHERE id = ?1",
+            )?
+            .execute(params![id, description, hub])?;
             Ok(holding)
         }
         Some((id, _, _)) => {

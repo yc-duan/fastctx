@@ -139,6 +139,9 @@ pub(crate) struct Assets {
     /// The machines that read each scope lately: told when a stream of it
     /// moves (design §6.6).
     holders: Mutex<BTreeMap<String, BTreeSet<fastctx_types::MachineName>>>,
+    /// The machines that asked what changed in each owner library, by the
+    /// library's key: told when a stream of it moves (§28.1).
+    followers: Mutex<BTreeMap<String, BTreeSet<fastctx_types::MachineName>>>,
     /// The machines given a receipt of each scope since the last
     /// checkpoint: told when a checkpoint covers it (design §17).
     receipted: Mutex<BTreeMap<String, BTreeSet<fastctx_types::MachineName>>>,
@@ -176,6 +179,7 @@ impl Assets {
             turn: Mutex::new(None),
             scope_turns: Mutex::new(BTreeMap::new()),
             holders: Mutex::new(BTreeMap::new()),
+            followers: Mutex::new(BTreeMap::new()),
             receipted: Mutex::new(BTreeMap::new()),
             pushes: Mutex::new(Vec::new()),
             objects: objects::Objects::default(),
@@ -856,10 +860,10 @@ impl Assets {
         }
     }
 
-    /// Whether the assets are sealed only as the hub started (design §17
-    /// (b)), not for a recovery.
-    pub(crate) fn sealed_at_start(&self) -> bool {
-        self.sealed.lock().expect("seal").as_deref() == Some(SEALED_AT_START)
+    /// Whether `why`, a seal as it was read, is the one the hub puts on as
+    /// it starts.
+    pub(crate) fn is_start_seal(why: &str) -> bool {
+        why == SEALED_AT_START
     }
 
     /// The seal, held: nothing seals the hub while a grant that checked it
@@ -920,10 +924,24 @@ impl Assets {
         self.receipted.lock().expect("receipted").entry(scope.to_string()).or_default().insert(machine.clone());
     }
 
-    /// `stream` of `scope` moved to `next`: each machine that reads the
-    /// scope but `by` is to be told.
-    pub(crate) fn moved(&self, scope: &str, stream: &str, next: u64, by: &fastctx_types::MachineName) {
-        let told: Vec<_> = self.holders.lock().expect("holders").get(scope).into_iter().flatten().filter(|machine| *machine != by).cloned().collect();
+    /// `machine` asked what changed in the library `owner`: it is told when
+    /// a stream of it moves.
+    pub(crate) fn follows(&self, owner: &Owner, machine: &fastctx_types::MachineName) {
+        self.followers.lock().expect("followers").entry(owner.key()).or_default().insert(machine.clone());
+    }
+
+    /// Whether `owner` has a library on this hub's disk.
+    pub(crate) fn has_library(&self, owner: &Owner) -> bool {
+        self.owners.exists(owner)
+    }
+
+    /// `stream` of `scope`, in `owner`'s library, moved to `next`: each
+    /// machine that reads the scope or follows the library, but `by`, is to
+    /// be told.
+    pub(crate) fn moved(&self, owner: &Owner, scope: &str, stream: &str, next: u64, by: &fastctx_types::MachineName) {
+        let mut told: BTreeSet<_> = self.holders.lock().expect("holders").get(scope).into_iter().flatten().cloned().collect();
+        told.extend(self.followers.lock().expect("followers").get(&owner.key()).into_iter().flatten().cloned());
+        told.remove(by);
         let mut pushes = self.pushes.lock().expect("pushes");
         for machine in told {
             pushes.push((machine, fastctx_types::assets::Push::Moved { scope: scope.into(), stream: stream.into(), next }));
@@ -963,12 +981,14 @@ impl Assets {
                     matches!(scopes::scope(self, &key), Ok(Some(scope)) if scopes::readable(directory, machine, &scope))
                 });
                 if !reads {
+                    // Told instead that it reads the scope no more, once —
+                    // one that only follows its library never read it.
+                    let held = self.holders.lock().expect("holders").get(&key).is_some_and(|machines| machines.contains(machine));
                     self.gone(&key, machine);
                     if let Some(machines) = self.receipted.lock().expect("receipted").get_mut(&key) {
                         machines.remove(machine);
                     }
-                    // Told instead that it reads the scope no more, once.
-                    if first {
+                    if first && held {
                         revoked.push((machine.clone(), Push::Revoked { scope: key }));
                     }
                 }

@@ -25,6 +25,8 @@ export interface FolderPickerWords {
   up: string;
   reading: string;
   noFolders: string;
+  /** Reads on into a large folder, for the folders after those shown. */
+  more: string;
   /** Where a folder's path can be typed. */
   path: string;
   /** A folder that could not be read; the machine's own words go under the pointer. */
@@ -39,7 +41,8 @@ export interface FolderPickerWords {
 export interface FolderPickerOptions {
   /** The machine, as the page names it. */
   machine: string;
-  folders(path: string | null): Promise<Folders>;
+  /** From `cursor`, the folders after a listing that said there are more. */
+  folders(path: string | null, cursor?: string | null): Promise<Folders>;
   chosen(path: string): void;
   /** Places already named on this machine, shown with its home and disks. */
   marks?: { name: string; path: string }[];
@@ -90,6 +93,8 @@ export class FolderPicker {
   private keptPrivate = false;
   /** The latest ask; an answer to an earlier one is dropped. */
   private asks = 0;
+  /** A large folder being read on into (`more`). */
+  private readingOn = false;
   private bar!: HTMLElement;
   private crumbs!: HTMLElement;
   private field!: HTMLInputElement;
@@ -197,6 +202,35 @@ export class FolderPicker {
       });
   }
 
+  /** Reads on into the folder listed, from where its listing stopped: the
+   *  folders after those shown join them, in order. */
+  private more(): void {
+    const options = this.options;
+    const listing = this.listing;
+    if (!options || !listing?.next_cursor || this.readingOn) return;
+    const asked = this.asks;
+    this.readingOn = true;
+    this.draw();
+    options
+      .folders(listing.path, listing.next_cursor)
+      .then((page) => {
+        if (asked !== this.asks || this.listing !== listing) return;
+        const known = new Set(listing.folders.map((folder) => folder.path));
+        const folders = [...listing.folders, ...page.folders.filter((folder) => !known.has(folder.path))];
+        folders.sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()) || a.name.localeCompare(b.name));
+        this.listing = { ...listing, folders, next_cursor: page.next_cursor ?? null, truncated: page.truncated ?? false };
+      })
+      .catch((error: unknown) => {
+        if (asked !== this.asks) return;
+        this.failed(error);
+      })
+      .finally(() => {
+        this.readingOn = false;
+        if (asked !== this.asks) return;
+        this.draw();
+      });
+  }
+
   private failed(error: unknown): void {
     const failure = typeof error === "object" && error !== null ? (error as { message?: unknown; code?: unknown }) : null;
     this.error = error instanceof Error ? error.message : typeof failure?.message === "string" ? failure.message : String(error);
@@ -242,7 +276,8 @@ export class FolderPicker {
       rows = `<div class="fp-note" title="${escape(this.error ?? "")}"><span>${escape(words.privacy)}</span>${go}</div>`;
     } else if (this.error) rows = `<p class="fp-note" title="${escape(this.error)}">${escape(words.unreadable)}</p>`;
     else if (!listing) rows = `<p class="fp-note quiet">${escape(words.reading)}</p>`;
-    else if (!listing.folders.length) rows = `<p class="fp-note quiet">${escape(words.noFolders)}</p>`;
+    else if (!listing.folders.length && !listing.next_cursor) rows = `<p class="fp-note quiet">${escape(words.noFolders)}</p>`;
+    else if (!listing.folders.length) rows = "";
     else
       rows = listing.folders
         .map((folder) => {
@@ -252,6 +287,11 @@ export class FolderPicker {
           return `<button type="button" class="fp-row${folder.hidden ? " quiet" : ""}${on ? " chosen" : ""}" role="option" aria-selected="${on}" data-path="${escape(folder.path)}" title="${escape(folder.path)}" tabindex="-1">${glyph(mark, 16)}<span class="fp-name">${escape(name)}</span></button>`;
         })
         .join("");
+    // A large folder is read on at a press, the folders after these coming
+    // below them.
+    if (listing?.next_cursor && !this.error) {
+      rows += `<button type="button" class="text-button quiet-button fp-more" data-fp="more">${escape(this.readingOn ? words.reading : words.more)}</button>`;
+    }
     this.list.innerHTML = rows;
     this.list.tabIndex = listing?.folders.length ? 0 : -1;
     const chosen = this.chosenPath();
@@ -313,6 +353,9 @@ export class FolderPicker {
           return;
         case "allow":
           this.options?.allow?.();
+          return;
+        case "more":
+          this.more();
           return;
         case "pick": {
           const chosen = this.chosenPath();

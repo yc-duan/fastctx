@@ -12,6 +12,7 @@ mod build;
 #[cfg(feature = "timeline-drill")]
 mod drill;
 mod identity;
+mod later;
 pub(crate) use identity::likeness;
 mod names;
 mod order;
@@ -79,6 +80,18 @@ pub(crate) fn runs_changed(node: &crate::Node, resident: &ResidentId) {
     tail::wanted(node, resident);
 }
 
+/// A network joined under a new term: every conversation here is brought to
+/// its history again, the timelines of that network's into their new
+/// holding periods whole (GG02); one of another network finds nothing to
+/// do.
+pub(crate) fn joined_anew(node: &crate::Node) {
+    let here: Vec<ResidentId> =
+        node.residents.everyone().filter(|record| record.here && record.removed.is_none()).map(|record| record.id).collect();
+    for resident in &here {
+        tail::wanted(node, resident);
+    }
+}
+
 /// Names what builds timelines, before the node's jobs start.
 pub(crate) fn register(node: &Arc<crate::Node>) {
     #[cfg(feature = "timeline-drill")]
@@ -113,6 +126,7 @@ fn produce(node: &std::sync::Weak<crate::Node>) {
             let Some(node) = node.upgrade() else { return };
             for resident in watched.take() {
                 wanted(&node, &resident);
+                later::grew(&node, &resident);
             }
         }
     });
@@ -208,6 +222,14 @@ async fn run(node: &Arc<crate::Node>, resident: &ResidentId) -> Outcome {
 pub(crate) fn wanted(node: &Arc<crate::Node>, resident: &ResidentId) {
     // The timeline in the asset library is brought along, apart (`tail`).
     tail::wanted(node, resident);
+    wanted_content(node, resident);
+}
+
+/// Asks for a conversation's timeline in the content database alone to be
+/// brought to its history, as a reading of it does. A reading never asks
+/// for the asset library's: that one is made from what changes at its
+/// source, whether anyone reads it or not (design §28.3).
+pub(crate) fn wanted_content(node: &Arc<crate::Node>, resident: &ResidentId) {
     let job = Job { kind: KIND, key: resident.to_string(), unit: resident.to_string(), payload: Vec::new() };
     // Built a moment ago, it waits out the pause rather than being taken up
     // only to be put back again (AA12).

@@ -61,6 +61,9 @@ pub(super) struct State {
     /// The last pump stopped at `LOOKED_AT_ONCE` with room still to send:
     /// it goes on between this mailbox's commands.
     unfinished: bool,
+    /// Letters still to delete through this number, a deletion cut short at
+    /// `LOOKED_AT_ONCE`: it goes on between this mailbox's commands.
+    erase_to: Option<u64>,
 }
 
 /// Letter numbers one pump looks at most, letters or not: a long run of
@@ -101,6 +104,7 @@ impl State {
             dirty_count: false,
             to: None,
             unfinished: false,
+            erase_to: None,
         }
     }
 
@@ -188,16 +192,23 @@ impl State {
         self.settle(blocking(move || remove_letters(&directory, numbers)).await)
     }
 
-    /// Deletes every letter numbered through `through`.
+    /// Deletes every letter numbered through `through`, at most
+    /// `LOOKED_AT_ONCE` numbers at once: what is left goes on between this
+    /// mailbox's commands.
     async fn erase_through(&mut self, through: u64) -> Result<()> {
+        self.erase_to = None;
         let last = through.min(self.record().next.saturating_sub(1));
         let first = self.held.first;
         if self.held.count == 0 || first > last {
             return Ok(());
         }
+        let cut = last.min(first.saturating_add(LOOKED_AT_ONCE - 1));
         let directory = self.directory();
-        self.settle(blocking(move || remove_letters(&directory, first..=last)).await)?;
-        self.held.first = self.held.first.max(last + 1);
+        self.settle(blocking(move || remove_letters(&directory, first..=cut)).await)?;
+        self.held.first = self.held.first.max(cut + 1);
+        if cut < last && self.held.count > 0 {
+            self.erase_to = Some(last);
+        }
         Ok(())
     }
 
@@ -261,6 +272,11 @@ impl State {
         .await?;
         let to = self.to.as_mut().expect("session");
         for (seq, size, present) in loaded {
+            // A number with no letter at the front of what is held is passed
+            // for good: no deletion looks at it again.
+            if size.is_none() && seq == self.held.first {
+                self.held.first = seq + 1;
+            }
             to.window.went(seq, size.filter(|_| present));
             // Sized, then gone before it was read: it was counted.
             if size.is_some() && !present {
@@ -534,9 +550,13 @@ pub(super) async fn run(mut state: State, mut commands: mpsc::Receiver<super::Qu
     while let Some(super::Queued { command, _active, _pending }) = commands.recv().await {
         let retiring = matches!(&command, Command::Retire { .. });
         let mut done = state.perform(command).await;
-        // A pump cut short at its look goes on while nothing else is asked.
-        while done.is_ok() && !retiring && state.unfinished && commands.is_empty() {
-            done = state.pump().await;
+        // A pump or a deletion cut short at its look goes on while nothing
+        // else is asked.
+        while done.is_ok() && !retiring && (state.unfinished || state.erase_to.is_some()) && commands.is_empty() {
+            done = match state.erase_to.take() {
+                Some(through) => state.erase_through(through).await,
+                None => state.pump().await,
+            };
         }
         if let Err(error) = done {
             if let Some(hub) = state.hub.get().and_then(Weak::upgrade) {

@@ -169,6 +169,18 @@ impl Database {
         Self::open_kept(path, schema, &|_| Ok(()), None, shape)
     }
 
+    /// Opens as `open_initialized` does, with the file laid out and cached as
+    /// `shape` says.
+    #[track_caller]
+    pub fn open_initialized_shaped(
+        path: &Path,
+        schema: &str,
+        shape: Shape,
+        initialize: impl Fn(&rusqlite::Connection) -> Result<()>,
+    ) -> Result<Self> {
+        Self::open_kept(path, schema, &initialize, None, shape)
+    }
+
     /// Opens as `open_initialized`, the writer keeping the rules of `guard`,
     /// made from the opened database, on every row it changes.
     #[track_caller]

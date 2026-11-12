@@ -86,13 +86,20 @@ impl Library {
     /// This machine is on `hub`'s network: under the term it is on it
     /// already, or a new one, whatever an earlier term left held here
     /// revoked first, `device`'s writes not yet uploaded kept.
-    pub fn join(&self, hub: &str, device: &[u8; 32]) -> Result<Network> {
+    /// `anew`, a membership begun now, as a login admits the machine again,
+    /// always starts a new term: whatever the one before left — a leaving
+    /// not done yet, as when the hub removed the machine — ends with it
+    /// (AJ04).
+    pub fn join(&self, hub: &str, device: &[u8; 32], anew: bool) -> Result<Network> {
         let (hub, device) = (hub.to_string(), *device);
         Ok(self.database().write_now_at(Priority::Control, 1 << 20, move |db| {
             let before = standing(db, &hub)?;
-            if let Some((term, true)) = before {
+            if let Some((term, true)) = before
+                && !anew
+            {
                 return Ok(Network { hub, term });
             }
+            db.prepare_cached("DELETE FROM feeds WHERE hub = ?1")?.execute([&hub])?;
             revoke_all(db, &hub, &device)?;
             let term = before.map_or(1, |(term, _)| term + 1);
             stand(db, &hub, term, true)?;
@@ -108,7 +115,71 @@ impl Library {
         Ok(self.database().write_now_at(Priority::Control, 1 << 20, move |db| {
             let term = standing(db, &hub)?.map_or(1, |(term, _)| term + 1);
             stand(db, &hub, term, false)?;
+            // Where it stood in the network's libraries goes with it: joined
+            // again, it starts from nothing.
+            db.prepare_cached("DELETE FROM feeds WHERE hub = ?1")?.execute([&hub])?;
             revoke_all(db, &hub, &device)
+        })?)
+    }
+
+    /// The scopes of `hub`'s network held here under a hub's descriptor
+    /// that were not pulled whole in their holding period yet (§28.1): each
+    /// is asked after by itself, not by the change numbers alone, until it
+    /// is.
+    pub fn unpulled_of(&self, hub: &str) -> Result<std::collections::BTreeSet<String>> {
+        let hub = hub.to_string();
+        Ok(self.database().read_now(move |db| {
+            let mut statement = db.prepare_cached(
+                "SELECT key FROM scopes WHERE hub = ?1 AND state = 'live' AND holding IS NOT NULL AND pulled IS NOT holding",
+            )?;
+            let rows = statement.query_map([&hub], |row| row.get(0))?;
+            Ok(rows.collect::<std::result::Result<_, _>>()?)
+        })?)
+    }
+
+    /// Every stream of `scope` was pulled whole in its holding period
+    /// `holding`; a later period is pulled whole again.
+    pub fn pulled(&self, scope: &str, holding: i64) -> Result<()> {
+        let scope = scope.to_string();
+        Ok(self.database().write_now_at(Priority::Normal, 128, move |db| {
+            db.prepare_cached("UPDATE scopes SET pulled = ?2 WHERE key = ?1 AND holding = ?2")?.execute(params![scope, holding])?;
+            Ok(())
+        })?)
+    }
+
+    /// The description `scope` is held here under, if it is held.
+    pub fn held_description(&self, scope: &str) -> Result<Option<Vec<u8>>> {
+        let scope = scope.to_string();
+        Ok(self.database().read_now(move |db| {
+            Ok(db
+                .prepare_cached("SELECT description FROM scopes WHERE key = ?1 AND holding IS NOT NULL")?
+                .query_row([&scope], |row| row.get::<_, Option<Vec<u8>>>(0))
+                .optional()?
+                .map(Option::unwrap_or_default))
+        })?)
+    }
+
+    /// The scopes of `hub`'s network held here under a hub's descriptor,
+    /// each with its descriptor and holding period.
+    pub fn live_scopes_of(&self, hub: &str) -> Result<Vec<(String, Vec<u8>, i64)>> {
+        let hub = hub.to_string();
+        Ok(self.database().read_now(move |db| {
+            let mut statement = db.prepare_cached(
+                "SELECT key, description, holding FROM scopes WHERE hub = ?1 AND state = 'live' AND holding IS NOT NULL ORDER BY key",
+            )?;
+            let rows = statement.query_map([&hub], |row| Ok((row.get(0)?, row.get::<_, Option<Vec<u8>>>(1)?.unwrap_or_default(), row.get(2)?)))?;
+            Ok(rows.collect::<std::result::Result<_, _>>()?)
+        })?)
+    }
+
+    /// The hub whose network `scope` belongs to here, if it is held.
+    pub fn hub_of(&self, scope: &str) -> Result<Option<String>> {
+        let scope = scope.to_string();
+        Ok(self.database().read_now(move |db| {
+            Ok(db
+                .prepare_cached("SELECT hub FROM scopes WHERE key = ?1 AND holding IS NOT NULL AND hub != ''")?
+                .query_row([&scope], |row| row.get(0))
+                .optional()?)
         })?)
     }
 

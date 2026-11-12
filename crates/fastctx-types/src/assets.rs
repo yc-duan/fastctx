@@ -294,6 +294,18 @@ pub enum Request {
     /// The streams of a scope this device holds, each with the sequence the
     /// hub's applied prefix reaches next (§6.6).
     Streams { scope: String },
+    /// What changed in `owner`'s library after the change number `after`
+    /// and below `before` (the latest, when none), of `class` alone when
+    /// given, newest first, at most `limit` streams (§28.1).
+    Changes {
+        owner: String,
+        after: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        before: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        class: Option<u8>,
+        limit: u32,
+    },
     /// A new epoch of a stream this device orders, after the hub refused
     /// one of its frames: what remains is committed again from `next`,
     /// chained from `head` (§6.5).
@@ -381,6 +393,22 @@ pub struct ChunkHead {
     pub size: u64,
 }
 
+/// One stream's latest change in an owner library: where it stands on the
+/// hub, the bytes of its frames through its head, and when it changed.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChangedStream {
+    pub scope: String,
+    pub stream: String,
+    pub next: u64,
+    pub head: Bytes,
+    pub bytes: u64,
+    /// The change at which the hub last indexed the stream's records again
+    /// (design §28.1): later frames leave it as it is.
+    #[serde(default)]
+    pub remade: u64,
+    pub at: i64,
+}
+
 /// Where a stream stands on the hub: the sequence its applied prefix
 /// reaches next.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -404,6 +432,7 @@ impl Request {
             | Self::Succession { .. }
             | Self::Describe { .. }
             | Self::Streams { .. }
+            | Self::Changes { .. }
             | Self::Epoch { .. }
             | Self::Takeover { .. }
             | Self::Put { .. }
@@ -562,6 +591,11 @@ pub enum Reply {
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         withheld: Vec<String>,
     },
+    /// A page of what changed in an owner library (§28.1): the library's
+    /// generation; the streams this device may hold among them, newest
+    /// first; the latest change and when it was; where the next page goes on
+    /// below, stepping past what this device may not hold as well.
+    Changes { generation: String, streams: Vec<ChangedStream>, top: u64, top_at: i64, through: u64, more: bool },
     /// The new epoch's descriptor and the hub's word on it.
     Epoch { descriptor: Fact },
     /// The chunks the hub lacks of an object put, sent under `ticket`; none

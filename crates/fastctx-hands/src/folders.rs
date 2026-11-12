@@ -21,15 +21,14 @@ pub fn list(machine: MachineName, path: Option<&str>) -> Result<Folders, Failure
 const FOLDERS_MOST: usize = 4096;
 const PAGES_MOST: usize = 256;
 
-/// The folders in `path` from `cursor` on, one page of its entries; asked
-/// from the first, as every interface asks, all of them, up to
-/// `FOLDERS_MOST` and `PAGES_MOST` pages looked through: a folder whose
-/// first page is all files still shows the folders after them.
+/// The folders in `path` from `cursor` on (from the first when none), page
+/// after page of its entries until at least `FOLDERS_MOST` folders or
+/// `PAGES_MOST` pages were looked through: a folder whose first pages are
+/// all files still shows the folders after them. Every folder of a page
+/// looked through is given, so the cursor given back goes on from just
+/// after them.
 pub fn list_page(machine: MachineName, path: Option<&str>, cursor: Option<&str>) -> Result<Folders, Failure> {
-    if cursor.is_some() {
-        return one_page(machine, path, cursor);
-    }
-    let mut whole = one_page(machine.clone(), path, None)?;
+    let mut whole = one_page(machine.clone(), path, cursor)?;
     let mut pages = 1;
     while let Some(next) = whole.next_cursor.clone()
         && whole.folders.len() < FOLDERS_MOST
@@ -43,10 +42,6 @@ pub fn list_page(machine: MachineName, path: Option<&str>, cursor: Option<&str>)
         pages += 1;
     }
     whole.folders.sort_by(by_name);
-    if whole.folders.len() > FOLDERS_MOST {
-        whole.folders.truncate(FOLDERS_MOST);
-        whole.truncated = true;
-    }
     Ok(whole)
 }
 

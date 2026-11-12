@@ -680,7 +680,7 @@ const makeNewTalk = (town: string | null) => new NewTalk({
   homeWords: agentHomeWords,
   modelWords: english ? enModelPanel : zhModelPanel,
   agents: (machine) => agentsOn(machine),
-  folders: (machine, path) => (live ? foldersOf(machine, path) : specimenFolders(machine, path)),
+  folders: (machine, path, cursor) => (live ? foldersOf(machine, path, cursor) : specimenFolders(machine, path)),
   async begin({ agent, machine, town, text, model, effort, attachments, account, focus, home, filesOn, mcpOff }) {
     if (!live) return specimenBegin(params.get("start"));
     const { to } = await openAgent(agent, machine, town, text, model, effort, attachments, {
@@ -735,7 +735,7 @@ const projectForm = new ProjectForm({
   store,
   words: english ? enProjectForm : zhProjectForm,
   focusWords: english ? enFocus : zhFocus,
-  folders: (machine, path) => (live ? foldersOf(machine, path) : specimenFolders(machine, path)),
+  folders: (machine, path, cursor) => (live ? foldersOf(machine, path, cursor) : specimenFolders(machine, path)),
   create(town, fields, login) {
     if (!live) return Promise.reject(new Error(specimenSaid));
     return projectNew(town, fields, login?.account ?? null, login?.hubName ?? null);
@@ -3091,7 +3091,7 @@ function show(next: Place): void {
         // A phone holds no folder of the World's; a plain browser walks the
         // specimen's folders.
         pick: live && onComputer() ? pickFolder : null,
-        folders: (machine, path) => (live ? foldersOf(machine, path) : specimenFolders(machine, path)),
+        folders: (machine, path, cursor) => (live ? foldersOf(machine, path, cursor) : specimenFolders(machine, path)),
         preview: (machine, agent, dir, into, takeBack, workbench) => (live ? previewAgentChange(machine, agent, dir, into, takeBack, workbench) : specimenPreview(machine, agent, dir, into, workbench)),
         change: (machine, agent, dir, into, raise, takeBack, expected, workbench) => (live ? changeAgentLogin(machine, agent, dir, into, raise, takeBack, expected, workbench) : specimenLoginChange(machine, agent, dir, into, workbench)),
         benched: (open) => workbenchChanged(open),

@@ -328,13 +328,26 @@ async fn logged_in(node: &Arc<Node>, joined: Joined) -> Result<Reply, Failure> {
                 relays,
             };
             let net = net_dir(&node.world, &hub);
+            // What an earlier membership of this hub left is not this one's:
+            // a logout that wrote down it was leaving and stopped (AJ03),
+            // and the hub's end of that membership, which would hold the new
+            // link inactive until it connects (GG04). The hub admitted this
+            // login.
+            let stale = [net.path().join(LEAVING), net.ended()];
             net.prepare()
+                .and_then(|()| {
+                    stale.iter().try_for_each(|path| match fastctx_platform::disk::remove_file(path) {
+                        Err(error) if error.kind() != io::ErrorKind::NotFound => Err(error),
+                        _ => Ok(()),
+                    })
+                })
                 .and_then(|()| fastctx_net::link::state::write(&net.membership(), &membership))
                 .map_err(|error| Failure::new(format!("logged in, but recording the membership failed: {error}")))?;
             // The asset library is on the network before anything is
-            // written for it; a join that fails is tried again by the
-            // network's asset driver.
-            if let Err(why) = crate::assets::membership::joined(node, &hub).await {
+            // written for it, under a new term: whatever an earlier
+            // membership left ends here. A join that fails is tried again by
+            // the network's asset driver.
+            if let Err(why) = crate::assets::membership::joined(node, &hub, true).await {
                 node.log.line(format_args!("joining {hub}'s assets here: {why}; tried again"));
             }
             start(node, membership).map_err(|error| Failure::new(format!("starting the link to the hub: {error}")))?;
@@ -505,14 +518,20 @@ async fn log_out(node: &Arc<Node>, link: &Arc<Link>, account: &AccountName) -> R
     }
     let last = link.view().me().is_none_or(|me| me.logins.iter().all(|login| login == account));
     // Leaving for good is written down before the hub is told: a computer
-    // stopped in between finishes leaving when it starts (`load`).
+    // stopped in between finishes leaving when it starts (`load`). Only
+    // while this link is the membership: one begun since by another login
+    // is not this logout's to leave (AJ03).
     if last {
-        let (leaving, account) = (hub_dir(&node.world, &link.membership().id).join(LEAVING), account.clone());
-        fastctx_platform::task::blocking(move || {
-            fastctx_platform::publish(&leaving, account.as_str().as_bytes(), fastctx_platform::Permissions::Private)
-        })
-        .await
-        .map_err(|error| Failure::new(format!("recording that this computer leaves: {error}")))?;
+        let hub = link.membership().id.clone();
+        let _one = memberships().lock().await;
+        if node.link_of(&hub).is_some_and(|current| Arc::ptr_eq(&current, link)) {
+            let (leaving, account) = (hub_dir(&node.world, &hub).join(LEAVING), account.clone());
+            fastctx_platform::task::blocking(move || {
+                fastctx_platform::publish(&leaving, account.as_str().as_bytes(), fastctx_platform::Permissions::Private)
+            })
+            .await
+            .map_err(|error| Failure::new(format!("recording that this computer leaves: {error}")))?;
+        }
     }
     let answer = link.manage(account, Change::Logout).await;
     if !last {
@@ -523,8 +542,12 @@ async fn log_out(node: &Arc<Node>, link: &Arc<Link>, account: &AccountName) -> R
     // that cannot be reached is not told, and the computer leaves it all
     // the same: there it stays a machine away until it is removed.
     if answer.is_err() && matches!(link.status(), Status::Online { .. }) {
-        let leaving = hub_dir(&node.world, &link.membership().id).join(LEAVING);
-        let _ = fastctx_platform::task::blocking(move || fastctx_platform::disk::remove_file(leaving)).await;
+        let hub = link.membership().id.clone();
+        let _one = memberships().lock().await;
+        if node.link_of(&hub).is_some_and(|current| Arc::ptr_eq(&current, link)) {
+            let leaving = hub_dir(&node.world, &hub).join(LEAVING);
+            let _ = fastctx_platform::task::blocking(move || fastctx_platform::disk::remove_file(leaving)).await;
+        }
         answer.map_err(Failure::new)?;
     }
     let aside = put_aside(node, link).await?;

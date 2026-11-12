@@ -6,6 +6,7 @@
 //! It stands beside the first version's content database until each kind of
 //! asset moves over (§15), in files of its own.
 
+mod changes;
 mod checkpoints;
 mod collect;
 mod commit;
@@ -19,6 +20,7 @@ mod hub;
 mod items;
 mod judged;
 mod kind;
+mod layout;
 mod letgo;
 mod networks;
 mod objects;
@@ -50,6 +52,7 @@ pub use reads::{Entry, PAGE};
 pub use receipts::{Mark, Receipt, Report, Said};
 pub use rejected::Resubmit;
 pub use window::Pruned;
+pub use changes::{Changed, Changes};
 pub use networks::Network;
 pub use scopes::Purged;
 pub use succession::{ENDS_AT_ONCE, HubVerifier, Standing};
@@ -84,6 +87,11 @@ struct Inner {
     /// another, or of a later schema, stays in its frame and out of the
     /// index until it knows it (§2.3).
     kinds: std::sync::RwLock<Option<Arc<dyn Authorizer>>>,
+    /// Whether it is a hub's owner library, with the hub's own tables.
+    hub: bool,
+    /// The scopes committed to here since `committed` was last asked: the
+    /// ones with something of this device's own to upload.
+    committed: std::sync::Mutex<std::collections::BTreeSet<String>>,
 }
 
 impl Library {
@@ -91,7 +99,7 @@ impl Library {
     /// settles what a stop left half done before any object is read or put
     /// (`collect::startup`). Call on a thread that may block.
     pub fn open(directory: &Path) -> Result<(Self, Started)> {
-        Self::open_with(directory, schema::SCHEMA.to_string())
+        Self::open_shaped(directory, schema::SCHEMA.to_string(), fastctx_storage::Shape::default(), false)
     }
 
     /// Opens an owner library of a hub (§6.2): the same library with the
@@ -101,15 +109,12 @@ impl Library {
     pub fn open_hub(directory: &Path) -> Result<(Self, Started)> {
         let shape =
             fastctx_storage::Shape { cache_bytes: Some(512 << 10), reader_cache_bytes: Some(32 << 10), ..Default::default() };
-        Self::open_shaped(directory, format!("{}{}", schema::SCHEMA, schema::HUB_SCHEMA), shape)
+        Self::open_shaped(directory, format!("{}{}", schema::SCHEMA, schema::HUB_SCHEMA), shape, true)
     }
 
-    fn open_with(directory: &Path, schema: String) -> Result<(Self, Started)> {
-        Self::open_shaped(directory, schema, fastctx_storage::Shape::default())
-    }
-
-    fn open_shaped(directory: &Path, schema: String, shape: fastctx_storage::Shape) -> Result<(Self, Started)> {
-        let database = Database::open_shaped(&directory.join(FILE), &schema, shape)?;
+    fn open_shaped(directory: &Path, schema: String, shape: fastctx_storage::Shape, hub: bool) -> Result<(Self, Started)> {
+        let file = directory.join(FILE);
+        let database = Database::open_initialized_shaped(&file, schema::PRELUDE, shape, |db| layout::made(db, &file, &schema))?;
         let bytes = Database::open_shaped(&directory.join(BYTES_FILE), schema::BYTES_SCHEMA, shape)?;
         let library = Self(Arc::new(Inner {
             database,
@@ -117,6 +122,8 @@ impl Library {
             objects: directory.join(OBJECTS_DIRECTORY),
             clearing: std::sync::RwLock::new(()),
             kinds: std::sync::RwLock::new(None),
+            hub,
+            committed: std::sync::Mutex::new(std::collections::BTreeSet::new()),
         }));
         let started = library.startup()?;
         Ok((library, started))
@@ -124,6 +131,13 @@ impl Library {
 
     pub(crate) fn database(&self) -> &Database {
         &self.0.database
+    }
+
+    /// The scopes committed to here since this was last asked, as a commit
+    /// of this device's own records went in: what may have something to
+    /// upload. Kept in memory alone; after a start every scope is looked at.
+    pub fn committed(&self) -> std::collections::BTreeSet<String> {
+        std::mem::take(&mut *self.0.committed.lock().unwrap_or_else(std::sync::PoisonError::into_inner))
     }
 
     /// Held while bytes of an object are written: no clearing comes between.
