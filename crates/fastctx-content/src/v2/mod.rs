@@ -21,6 +21,7 @@ mod kind;
 mod letgo;
 mod objects;
 mod ops;
+mod pending;
 mod reads;
 mod receipts;
 mod rejected;
@@ -72,6 +73,14 @@ struct Inner {
     database: Database,
     bytes: Database,
     objects: PathBuf,
+    /// Held to read by every write of an object's bytes and by every
+    /// transfer, to write by a clearing (`clear_unrooted`): while a machine
+    /// clears for a new holder, no write is under way and none begins.
+    clearing: std::sync::RwLock<()>,
+    /// The kinds this library knows, when it was told (`know`): a record of
+    /// another, or of a later schema, stays in its frame and out of the
+    /// index until it knows it (§2.3).
+    kinds: std::sync::RwLock<Option<Arc<dyn Authorizer>>>,
 }
 
 impl Library {
@@ -99,13 +108,38 @@ impl Library {
     fn open_shaped(directory: &Path, schema: String, shape: fastctx_storage::Shape) -> Result<(Self, Started)> {
         let database = Database::open_shaped(&directory.join(FILE), &schema, shape)?;
         let bytes = Database::open_shaped(&directory.join(BYTES_FILE), schema::BYTES_SCHEMA, shape)?;
-        let library = Self(Arc::new(Inner { database, bytes, objects: directory.join(OBJECTS_DIRECTORY) }));
+        let library = Self(Arc::new(Inner {
+            database,
+            bytes,
+            objects: directory.join(OBJECTS_DIRECTORY),
+            clearing: std::sync::RwLock::new(()),
+            kinds: std::sync::RwLock::new(None),
+        }));
         let started = library.startup()?;
         Ok((library, started))
     }
 
     pub(crate) fn database(&self) -> &Database {
         &self.0.database
+    }
+
+    /// Held while bytes of an object are written: no clearing comes between.
+    pub(super) fn writing(&self) -> std::sync::RwLockReadGuard<'_, ()> {
+        self.0.clearing.read().unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// Tells the library the kinds it knows: from now, a record of another
+    /// kind, or of a later schema, that comes in a frame is kept out of the
+    /// index until it does (`reconsider`).
+    pub fn know(&self, kinds: Arc<dyn Authorizer>) {
+        *self.0.kinds.write().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(kinds);
+    }
+
+    /// Whether records of `kind` at `schema` are known here: every one when
+    /// the library was told no kinds.
+    pub(super) fn knowing(&self) -> impl Fn(u16, u16) -> bool + Send + 'static {
+        let kinds = self.0.kinds.read().unwrap_or_else(std::sync::PoisonError::into_inner).clone();
+        move |kind, schema| kinds.as_ref().is_none_or(|kinds| kinds.knows(kind, schema))
     }
 
     /// Whether a clone of this library is held anywhere but by this one.

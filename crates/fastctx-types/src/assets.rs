@@ -532,6 +532,11 @@ pub enum Reply {
         scopes: Vec<Held>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         next: Option<HoldingsAt>,
+        /// What decides what any machine may hold, as a digest: when it is
+        /// not what the machine last heard, a scope described long ago may be
+        /// its to hold now, and it lists them all again.
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        basis: String,
     },
     Succession { epochs: Vec<Fact>, gaps: Vec<Fact> },
     /// A scope's descriptor, as JSON, and the hub's word on it.

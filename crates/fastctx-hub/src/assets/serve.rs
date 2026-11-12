@@ -196,6 +196,7 @@ pub(crate) fn scope_of(request: &Request) -> Option<&str> {
 pub(crate) fn ask(
     assets: &Assets,
     directory: &Indexed<'_>,
+    basis: &dyn Fn() -> String,
     machine: &MachineName,
     key: &PublicKey,
     request: Request,
@@ -232,7 +233,7 @@ pub(crate) fn ask(
                 .map_err(|error| error.to_string())?;
             Ok(Reply::Word { received: word.map(received) })
         }
-        Request::Holdings { after } => super::holdings::list(assets, directory, machine, after),
+        Request::Holdings { after } => super::holdings::list(assets, directory, machine, after, basis()),
         Request::Stage { scope, size } => {
             let kept = gated(assets, directory, machine, &scope)?;
             super::objects::stage(assets, machine, key, kept, size)
@@ -262,6 +263,7 @@ pub(crate) fn ask(
                     }
                 };
                 if body.len() as u64 != frame.apart {
+                    assets.objects.apart.untake(staged, key.as_bytes());
                     return Err("the body staged under that ticket is not the frame's".into());
                 }
                 (*body).clone()
@@ -270,12 +272,25 @@ pub(crate) fn ask(
             } else {
                 frame.body.0
             };
+            // However this take ends without a word on the frame, its staged
+            // body waits for the frame asked again (`touch` and `release`
+            // settle it otherwise first).
+            struct Untake<'a>(&'a super::apart::Apart, u64, [u8; 32]);
+            impl Drop for Untake<'_> {
+                fn drop(&mut self) {
+                    if self.1 != 0 {
+                        self.0.untake(self.1, &self.2);
+                    }
+                }
+            }
+            let _untake = Untake(&assets.objects.apart, staged, *key.as_bytes());
             let library = scopes::library(assets, &kept)?;
             let period = library.holding(&scope).map_err(|error| error.to_string())?.ok_or("the scope is not held here")?;
             // Only what this device sent every byte of lately, under its key
-            // (§6.5): every such proof, whether the request names it again or
-            // not.
-            let proven = assets.objects.proven_all(key.as_bytes());
+            // (§6.5), whether the request names it again or not: looked up
+            // for each object the frame refers to (AC06).
+            let device_key = *key.as_bytes();
+            let proven = |hash: &[u8; 32]| assets.objects.proven(&device_key, hash);
             // An object the device reaches through a stream of the scope it
             // holds needs no proof; through the scope alone it does.
             let readable = |object: &ObjectRef| {

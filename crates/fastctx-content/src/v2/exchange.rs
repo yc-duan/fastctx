@@ -135,6 +135,7 @@ impl Library {
         }
         let scope = scope.to_string();
         let bytes = frame.body.len() + frame.header.len() + 256 + records.len() * 64;
+        let knows = self.knowing();
         let write = move |db: &Connection| -> fastctx_storage::Result<Imported> {
             let Some((scope_id, state, Some(holding))) = held(db, &scope)? else {
                 return Err(invalid("the scope is not held here"));
@@ -236,6 +237,12 @@ impl Library {
             }
             let at = Applying { scope: scope_id, stream, holding };
             for (offset, record) in records.iter().enumerate() {
+                // A kind or schema this device does not know stays in its
+                // frame, out of the index, as its hub keeps it (§2.3).
+                if !knows(record.kind, record.schema) {
+                    super::pending::keep(db, stream, record.kind, record.schema, header.epoch, header.first)?;
+                    continue;
+                }
                 apply(db, at, header.first + offset as u64, record)?;
             }
             let end = header.first + u64::from(header.count);

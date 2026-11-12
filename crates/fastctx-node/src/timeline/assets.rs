@@ -31,6 +31,36 @@ use std::sync::Arc;
 const WRITES_AT_ONCE: usize = 1_024;
 const BYTES_AT_ONCE: usize = 4 * 1024 * 1024;
 
+/// The conversations whose timeline is being written here now, and the
+/// signal that one is done.
+static WRITING: (std::sync::Mutex<std::collections::BTreeSet<String>>, std::sync::Condvar) =
+    (std::sync::Mutex::new(std::collections::BTreeSet::new()), std::sync::Condvar::new());
+
+/// One conversation's timeline written by one writer at a time: a build its
+/// job gave up on, still writing, is done before the next one reads what is
+/// here (AA08).
+struct Writing(String);
+
+impl Writing {
+    fn take(resident: &ResidentId) -> Self {
+        let (busy, done) = &WRITING;
+        let mut busy = busy.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        while busy.contains(resident.as_str()) {
+            busy = done.wait(busy).unwrap_or_else(std::sync::PoisonError::into_inner);
+        }
+        busy.insert(resident.to_string());
+        Self(resident.to_string())
+    }
+}
+
+impl Drop for Writing {
+    fn drop(&mut self) {
+        let (busy, done) = &WRITING;
+        busy.lock().unwrap_or_else(std::sync::PoisonError::into_inner).remove(&self.0);
+        done.notify_all();
+    }
+}
+
 fn failure(error: impl std::fmt::Display) -> Failure {
     Failure::new(error.to_string())
 }
@@ -53,8 +83,18 @@ fn checkpoint(resident: &ResidentId) -> String {
 pub(super) fn placed(node: &Node, about: &About) -> Result<Option<Placed>, Failure> {
     let Some(account) = crate::placement::account(node, &about.acting, None)? else { return Ok(None) };
     let born_on = crate::record_ownership::origin(node, about);
-    let readers = Readers::Conversation { openers: vec![account.account.clone()], born_on };
-    let scope = format!("{}{}", readers.key_prefix(), about.id);
+    let mut readers = Readers::Conversation { openers: vec![account.account.clone()], born_on: born_on.clone() };
+    let mut scope = format!("{}{}", readers.key_prefix(), about.id);
+    // Moved here from the machine it was born on, its scope not here: it is
+    // described from here, where it lives now, as only the machine a scope
+    // is born on describes it (AA10).
+    if let (Some(born), Some(kept), Some(link)) = (&born_on, node.assets.as_ref(), node.link_of(&account.hub)) {
+        let here = link.name();
+        if *born != here && kept.library.holding(&scope).map_err(failure)?.is_none() {
+            readers = Readers::Conversation { openers: vec![account.account.clone()], born_on: Some(here) };
+            scope = format!("{}{}", readers.key_prefix(), about.id);
+        }
+    }
     let classes = vec![StreamClass { prefix: String::new(), holders: Holders::Readers }];
     Ok(Some(Placed { scope, hub: account.hub.clone(), proposal: Proposal { hub: account.hub.to_string(), readers, classes } }))
 }
@@ -130,6 +170,7 @@ pub(super) fn write(
     history: &[SessionEvent],
     version: Option<Vec<u8>>,
 ) -> Result<(usize, usize), Failure> {
+    let _writing = Writing::take(resident);
     if library.holding(&placed.scope).map_err(failure)?.is_none() {
         let proposal = serde_json::to_vec(&placed.proposal).map_err(failure)?;
         library.propose(&placed.scope, proposal).map_err(failure)?;
@@ -155,20 +196,29 @@ pub(super) fn write(
     let mut written = 0;
     for (index, (event, encoded)) in history.iter().zip(encoded).enumerate() {
         let order = keys[index].to_be_bytes().to_vec();
-        let (body, object) = body(library, resident, event, encoded)?;
+        let (body, object) = body(event, &encoded)?;
+        // Compared before anything is put: an unchanged large event writes
+        // nothing again (AA11).
+        let objects: Vec<fastctx_content::ObjectRef> = object.into_iter().collect();
         if let Some(entry) = had.get(&identities[index])
             && entry.order == order
             && entry.body == body
-            && entry.objects == object.as_ref().map(|lease| vec![lease.object]).unwrap_or_default()
+            && entry.objects == objects
         {
-            if let Some(lease) = object {
-                library.release(lease).map_err(failure)?;
-            }
             continue;
         }
-        let objects = object.as_ref().map(|lease| vec![lease.object]).unwrap_or_default();
+        let lease = match objects.first() {
+            Some(object) => {
+                let lease = library.put(&mut encoded.as_slice(), &format!("timeline:{resident}"), LEASE).map_err(failure)?;
+                if lease.object != *object {
+                    return Err(failure("an event's object is not what it was taken for"));
+                }
+                Some(lease)
+            }
+            None => None,
+        };
         let bytes = body.len();
-        pending.push(Write { item: identities[index].clone(), order, value: Some(body), objects }, object, bytes)?;
+        pending.push(Write { item: identities[index].clone(), order, value: Some(body), objects }, lease, bytes)?;
         written += 1;
     }
     pending.flush()?;
@@ -179,26 +229,26 @@ pub(super) fn write(
 }
 
 /// An event as its record holds it: itself, or when it is too large for a
-/// record, what is shown in its place, the whole of it an object leased
-/// until the record refers to it.
-fn body(library: &Library, resident: &ResidentId, event: &SessionEvent, encoded: Vec<u8>) -> Result<(Vec<u8>, Option<fastctx_content::v2::Lease>), Failure> {
+/// record, what is shown in its place, with the object the whole of it is
+/// (put only when the record is written).
+fn body(event: &SessionEvent, encoded: &[u8]) -> Result<(Vec<u8>, Option<fastctx_content::ObjectRef>), Failure> {
     if encoded.len() < RECORD_BYTES {
         let mut body = Vec::with_capacity(encoded.len() + 1);
         body.push(EVENT);
-        body.extend_from_slice(&encoded);
+        body.extend_from_slice(encoded);
         return Ok((body, None));
     }
-    let lease = library.put(&mut encoded.as_slice(), &format!("timeline:{resident}"), LEASE).map_err(failure)?;
+    let object = fastctx_content::ObjectRef { hash: Sha256::digest(encoded).into(), size: encoded.len() as u64 };
     let mut body = vec![OVERSIZED];
     body.extend_from_slice(
         &serde_json::to_vec(&serde_json::json!({
             "bytes": encoded.len(),
             "slim": preview::preview(event),
-            "likeness": super::identity::likeness(event, &encoded),
+            "likeness": super::identity::likeness(event, encoded),
         }))
         .map_err(failure)?,
     );
-    Ok((body, Some(lease)))
+    Ok((body, Some(object)))
 }
 
 /// Writes on their way to the timeline, a bounded commit at a time. The

@@ -16,8 +16,17 @@ const LOOKED_AT_ONCE: i64 = 1024;
 const GIVEN_AT_ONCE: usize = 256;
 
 /// The scopes `machine` may hold described after `after`, judged by the
-/// directory as it stands. Call on a thread that may block.
-pub(crate) fn list(assets: &Assets, directory: &Indexed<'_>, machine: &MachineName, after: Option<HoldingsAt>) -> Result<Reply, String> {
+/// directory as it stands, whose `basis` (`shares::basis`) the answer
+/// carries: a machine that heard another lists them all again, a scope
+/// described long ago being perhaps its to hold now. Call on a thread that
+/// may block.
+pub(crate) fn list(
+    assets: &Assets,
+    directory: &Indexed<'_>,
+    machine: &MachineName,
+    after: Option<HoldingsAt>,
+    basis: String,
+) -> Result<Reply, String> {
     let (seq, key) = after.map_or((-1, String::new()), |at| (at.seq as i64, at.scope));
     let rows: Vec<(String, i64)> = assets
         .control
@@ -41,5 +50,5 @@ pub(crate) fn list(assets: &Assets, directory: &Indexed<'_>, machine: &MachineNa
         }
     }
     let next = if looked == LOOKED_AT_ONCE || scopes.len() >= GIVEN_AT_ONCE { last } else { None };
-    Ok(Reply::Holdings { scopes, next })
+    Ok(Reply::Holdings { scopes, next, basis })
 }

@@ -69,8 +69,16 @@ ASSET_OPENING = re.compile(
 
 # A name made of pieces, an asset library's part among them.
 ASSET_PIECES = re.compile(r"concat!\s*\([^)]*\"asset", re.S)
-# The asset library's type under another name.
-LIBRARY_ALIAS = re.compile(r"\bLibrary\s+as\s+[A-Za-z_]\w*")
+# The asset library's type under another name, imported so or aliased (S12).
+LIBRARY_ALIAS = re.compile(r"\bLibrary\s+as\s+[A-Za-z_]\w*|\btype\s+\w+\s*(?:<[^>]*>)?\s*=\s*[\w:\s]*\bLibrary\b")
+# A file named as an asset library's part is: only the library names its
+# own, and these older names of other things (S12).
+ASSET_LIKE = re.compile(r"\"assets?[-_.][^\"]*\"")
+ASSET_LIKE_KNOWN = {
+    "crates/fastctx-types/src/sync/transfer.rs",
+    "crates/fastctx-types/src/sync/session.rs",
+    "crates/fastctx-platform/src/rooted_path/names.rs",
+}
 
 
 def check_assets(path, source):
@@ -81,6 +89,8 @@ def check_assets(path, source):
             raise ValueError(f"an asset library file named outside its module: {path}")
     if ASSET_PIECES.search(source):
         raise ValueError(f"an asset library file name made of pieces: {path}")
+    if ASSET_LIKE.search(source) and path not in ASSET_LIKE_KNOWN and "test" not in path and "drill" not in path:
+        raise ValueError(f"a file named like an asset library's outside it: {path}")
     if "fastctx_content" not in source:
         return
     code = wire.code(source)

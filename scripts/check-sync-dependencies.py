@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Keep synchronization contracts below their engine and network adapters."""
 from pathlib import Path
+import re
 import sys
 import tomllib
 
@@ -21,6 +22,35 @@ CONTENT_USERS = {"fastctx-hub", "fastctx-node"}
 # Who may open SQLite itself, past the storage layer: none other may make a
 # connection of its own to any database, an asset library's among them.
 RUSQLITE_USERS = {"fastctx-storage", "fastctx-gui"}
+# The modules of storage users that open a raw SQLite connection of their own
+# through the storage layer's re-export, each for a file that is not an asset
+# library: a module added here is a decision, made here (S11). Drills and
+# tests open what they like.
+RAW_OPENERS = {
+    "crates/fastctx-hub/src/assets/keys.rs",
+    "crates/fastctx-hub/src/moving/snapshot.rs",
+    "crates/fastctx-hub/src/store/reading.rs",
+    "crates/fastctx-hub/src/store/format.rs",
+    "crates/fastctx-node/src/conversation_store/bundle.rs",
+    "crates/fastctx-node/src/conversation_store/transfer/exporting.rs",
+    "crates/fastctx-node/src/conversation_store/transfer/importing.rs",
+    "crates/fastctx-node/src/conversation_store/transfer/release.rs",
+    "crates/fastctx-node/src/conversation_store/transfer/status.rs",
+    "crates/fastctx-node/src/timers/headers.rs",
+    "crates/fastctx-sync/src/registry/derived.rs",
+}
+# A raw connection opened, or SQLite's connection type under another name.
+RAW_OPENING = re.compile(r"\bConnection\s*::\s*open\w*\b|\bConnection\s+as\s+[A-Za-z_]\w*|\btype\s+\w+\s*=\s*[\w:]*\bConnection\b")
+
+
+def check_raw_openers():
+    for path in sorted((ROOT / "crates").rglob("*.rs")):
+        relative = path.relative_to(ROOT).as_posix()
+        package = relative.split("/")[1]
+        if package in RUSQLITE_USERS or "target" in path.parts or any(part in relative for part in ("test", "drill")):
+            continue
+        if RAW_OPENING.search(path.read_text(encoding="utf-8")) and relative not in RAW_OPENERS:
+            raise ValueError(f"unregistered raw SQLite connection: {relative}")
 
 
 def sections(manifest):
@@ -67,6 +97,7 @@ def check():
                 raise ValueError(f"unlisted asset library user: {package}")
             if dependency in {"rusqlite", "libsqlite3-sys"} and package not in RUSQLITE_USERS:
                 raise ValueError(f"unlisted direct SQLite user: {package}")
+    check_raw_openers()
     print("sync dependencies: types/platform/storage/engine direction preserved; storage and asset library users listed")
 
 

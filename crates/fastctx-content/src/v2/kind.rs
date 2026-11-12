@@ -78,6 +78,21 @@ pub trait Kind: Send + Sync + 'static {
 
 type Judgement = fn(&Actor<'_>, Option<&Entry>, &KindRecord) -> std::result::Result<(), String>;
 
+/// What every kind's records must be before its own rule judges them: in a
+/// stream of its class, no more objects than its roles. The writer and the
+/// hub judge by this one rule (S07).
+fn shaped(kind: u16, class: &str, roles: usize, stream: &str, record: &KindRecord) -> std::result::Result<(), String> {
+    if !stream.starts_with(class) {
+        return Err(format!("records of kind {kind} go in streams under {class}"));
+    }
+    if let State::Is { objects, .. } = &record.record.state
+        && objects.len() > roles
+    {
+        return Err(format!("a record of kind {kind} refers to more objects than its kind has roles"));
+    }
+    Ok(())
+}
+
 /// What a hub keeps of a kind to judge its records by.
 struct Rule {
     schema: u16,
@@ -114,14 +129,7 @@ impl Authorizer for Kinds {
         if record.schema > rule.schema {
             return Err(format!("a record of kind {} at schema {} is newer than this hub knows", record.kind, record.schema));
         }
-        if !frame.stream.starts_with(rule.stream) {
-            return Err(format!("records of kind {} go in streams under {}", record.kind, rule.stream));
-        }
-        if let State::Is { objects, .. } = &record.record.state
-            && objects.len() > rule.roles
-        {
-            return Err(format!("a record of kind {} refers to more objects than its kind has roles", record.kind));
-        }
+        shaped(record.kind, rule.stream, rule.roles, &frame.stream, record)?;
         (rule.judge)(&Actor { device: frame.device, scope: &frame.scope, stream: &frame.stream }, before, record)
     }
 
@@ -189,7 +197,10 @@ impl<K: Kind> Writer<K> {
     /// item as it stands in the commit's own transaction.
     fn judge(&self, device: [u8; 32]) -> super::commit::Judge {
         let (scope, stream) = (self.scope.clone(), self.stream.clone());
-        Box::new(move |before, record| K::authorize(&Actor { device, scope: &scope, stream: &stream }, before, record))
+        Box::new(move |before, record| {
+            shaped(K::KIND, K::STREAM, K::ROLES.len(), &stream, record)?;
+            K::authorize(&Actor { device, scope: &scope, stream: &stream }, before, record)
+        })
     }
 
     /// Writes several items in one commit, each judged as `write` judges

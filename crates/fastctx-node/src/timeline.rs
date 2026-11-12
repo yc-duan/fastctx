@@ -39,6 +39,14 @@ const APART: Duration = Duration::from_secs(15);
 
 /// When each conversation's timeline was last built, in this run of the node.
 static BUILT: LazyLock<Mutex<HashMap<ResidentId, Instant>>> = LazyLock::new(Mutex::default);
+/// Builds in a row whose reading missed a record, by conversation: built
+/// again until it reads whole, at most this many times (AA06).
+static UNREAD: LazyLock<Mutex<HashMap<ResidentId, u32>>> = LazyLock::new(Mutex::default);
+const UNREAD_TRIES: u32 = 20;
+/// How long after the node starts the conversations active lately are
+/// looked at again, and how lately (AA09).
+const RESCAN_AFTER: Duration = Duration::from_secs(60);
+const RESCAN_ACTIVE: Duration = Duration::from_secs(24 * 60 * 60);
 
 /// The scope of what the content database keeps of a conversation.
 pub(crate) fn scope(conversation: &str) -> String {
@@ -61,6 +69,7 @@ pub(crate) fn register(node: &Arc<crate::Node>) {
     #[cfg(feature = "timeline-drill")]
     drill::start(node);
     produce(&Arc::downgrade(node));
+    rescan(&Arc::downgrade(node));
     let jobs = node.durable_jobs.clone();
     let node = Arc::downgrade(node);
     let run = move |taken: Taken| -> std::pin::Pin<Box<dyn Future<Output = Outcome> + Send>> {
@@ -92,6 +101,27 @@ fn produce(node: &std::sync::Weak<crate::Node>) {
     });
 }
 
+/// A while after the node starts, the timelines of the conversations active
+/// lately are brought to their histories: what grew just before the node
+/// stopped, its job not yet written, is not left behind (AA09).
+fn rescan(node: &std::sync::Weak<crate::Node>) {
+    let node = node.clone();
+    fastctx_platform::task::spawn(async move {
+        tokio::time::sleep(RESCAN_AFTER).await;
+        let Some(node) = node.upgrade() else { return };
+        let lately = jiff::Timestamp::now() - jiff::SignedDuration::from_secs(RESCAN_ACTIVE.as_secs() as i64);
+        let active: Vec<ResidentId> = node
+            .residents
+            .everyone()
+            .filter(|record| record.here && record.removed.is_none() && record.now.as_ref().is_some_and(|now| now.since >= lately))
+            .map(|record| record.id)
+            .collect();
+        for resident in active {
+            wanted(&node, &resident);
+        }
+    });
+}
+
 async fn run(node: &Arc<crate::Node>, resident: &ResidentId) -> Outcome {
     if node.residents.about(resident).is_none() {
         return Outcome::Done;
@@ -105,6 +135,19 @@ async fn run(node: &Arc<crate::Node>, resident: &ResidentId) -> Outcome {
     match build::build(node, resident).await {
         Ok(built) => {
             BUILT.lock().expect("built timelines").insert(resident.clone(), Instant::now());
+            // A reading that missed a record is read again a while later:
+            // the host may write its last lines late (AA06).
+            if built.unread {
+                let mut unread = UNREAD.lock().expect("unread timelines");
+                let tries = unread.entry(resident.clone()).or_default();
+                *tries += 1;
+                if *tries < UNREAD_TRIES {
+                    return Outcome::Again { after: APART };
+                }
+                unread.remove(resident);
+            } else {
+                UNREAD.lock().expect("unread timelines").remove(resident);
+            }
             if built.written + built.gone > 0 || cfg!(feature = "timeline-drill") {
                 node.log.line(format_args!(
                     "{resident}'s timeline: {} events, {} written, {} gone",
@@ -122,11 +165,22 @@ async fn run(node: &Arc<crate::Node>, resident: &ResidentId) -> Outcome {
 /// nothing. Asked again while it waits or runs, it is one job.
 pub(crate) fn wanted(node: &Arc<crate::Node>, resident: &ResidentId) {
     let job = Job { kind: KIND, key: resident.to_string(), unit: resident.to_string(), payload: Vec::new() };
-    let (database, jobs) = (node.database.clone(), node.durable_jobs.clone());
+    // Built a moment ago, it waits out the pause rather than being taken up
+    // only to be put back again (AA12).
+    let pause = BUILT
+        .lock()
+        .expect("built timelines")
+        .get(resident)
+        .map(Instant::elapsed)
+        .filter(|since| *since < APART)
+        .map_or(Duration::ZERO, |since| APART - since);
+    let (database, jobs, log) = (node.database.clone(), node.durable_jobs.clone(), node.log.clone());
     fastctx_platform::task::spawn(async move {
         let bytes = job.key.len() * 2 + 64;
-        if database.write_relaxed(bytes, move |db| fastctx_jobs::submit(db, &job)).await.is_ok() {
-            jobs.stir(KIND);
+        let key = job.key.clone();
+        match database.write_relaxed(bytes, move |db| fastctx_jobs::submit_after(db, &job, pause)).await {
+            Ok(()) => jobs.stir(KIND),
+            Err(error) => log.line(format_args!("asking for {key}'s timeline: {error}")),
         }
     });
 }

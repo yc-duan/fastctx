@@ -411,6 +411,13 @@ impl Watchers {
             fastctx_types::session::Happened::Finished { .. }
                 | fastctx_types::session::Happened::Heard { .. }
                 | fastctx_types::session::Happened::TurnEnded { .. }
+                // The history the timeline is made from changed under it:
+                // turns taken back go from it too (AA07).
+                | fastctx_types::session::Happened::Changed {
+                    change: fastctx_types::session::SessionChange::HistoryChanged
+                        | fastctx_types::session::SessionChange::HistoryCut { .. },
+                    ..
+                }
         ) {
             self.produced.grew(id);
         }

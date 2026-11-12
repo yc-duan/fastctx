@@ -110,11 +110,24 @@ impl Objects {
         Ok(number)
     }
 
-    /// Every object the device whose key is `key` proved it holds lately.
-    pub(crate) fn proven_all(&self, key: &[u8; 32]) -> Vec<[u8; 32]> {
-        let now = Instant::now();
-        let proofs = self.proofs.lock().expect("proofs");
-        proofs.iter().filter(|((given, _), until)| given == key && now < **until).map(|((_, hash), _)| *hash).collect()
+    /// Whether the device whose key is `key` proved lately it holds the
+    /// object of `hash`.
+    pub(crate) fn proven(&self, key: &[u8; 32], hash: &[u8; 32]) -> bool {
+        self.proofs.lock().expect("proofs").get(&(*key, *hash)).is_some_and(|until| Instant::now() < *until)
+    }
+
+    /// While the device whose key is `key` puts an object, what it proved
+    /// lately and the bodies it staged stay (AA05): a frame that waits for
+    /// several large objects is not held up by the first one's proof, or
+    /// its staged body, ending while the last one comes.
+    pub(crate) fn keep_alive(&self, key: &[u8; 32]) {
+        let until = Instant::now() + proof_for(0);
+        for ((given, _), kept) in self.proofs.lock().expect("proofs").iter_mut() {
+            if given == key && *kept > Instant::now() && *kept < until {
+                *kept = until;
+            }
+        }
+        self.apart.keep_staged(key);
     }
 
     fn proved(&self, key: &[u8; 32], object: &ObjectRef) {
@@ -122,6 +135,14 @@ impl Objects {
         if proofs.len() >= PROOFS_KEPT {
             let now = Instant::now();
             proofs.retain(|_, until| now < *until);
+            // Past the bound with every proof still good, the quarter that
+            // ends soonest goes: a device asked again proves again.
+            if proofs.len() >= PROOFS_KEPT {
+                let mut ends: Vec<Instant> = proofs.values().copied().collect();
+                ends.sort_unstable();
+                let cut = ends[ends.len() / 4];
+                proofs.retain(|_, until| *until > cut);
+            }
         }
         proofs.insert((*key, object.hash), Instant::now() + proof_for(object.size));
     }
@@ -285,7 +306,7 @@ async fn still(hub: &Arc<Hub>, me: &MachineName, key: &PublicKey, scope: &Scope,
 }
 
 /// `still`, of `stream` too when one is named.
-async fn still_holding(
+pub(super) async fn still_holding(
     hub: &Arc<Hub>,
     me: &MachineName,
     key: &PublicKey,
@@ -335,7 +356,10 @@ pub(crate) async fn serve(hub: Arc<Hub>, mut socket: Socket, binding: [u8; 32], 
         Ticket::Put { scope, object, missing, prove, .. } => take(&hub, socket, &me, &key, Put { scope, object, missing, prove }).await,
         Ticket::Get { scope, object, from, .. } => give(&hub, socket, &me, &key, scope, object, from).await,
         Ticket::Stage { size, .. } => super::apart::receive(&hub, socket, &me, key.as_bytes(), number, size).await,
-        Ticket::Bodies { .. } => super::apart::send(&hub, socket, key.as_bytes(), number).await,
+        Ticket::Bodies { .. } => {
+            let stream = stream.clone().unwrap_or_default();
+            super::apart::send(&hub, socket, &me, &key, &scope, &stream, number).await
+        }
     };
     if let Err(why) = outcome {
         hub.log.line(format_args!("an object with {me}: {why}"));
@@ -373,6 +397,10 @@ where
     let mut bytes = Vec::with_capacity(length as usize);
     while (bytes.len() as u64) < length {
         match heard(stream, pulse).await? {
+            // Refused before it is kept: no more is kept than was said (AC05).
+            Some(WsMessage::Binary(piece)) if bytes.len() as u64 + piece.len() as u64 > length => {
+                return Err("more bytes came than were said".into());
+            }
             Some(WsMessage::Binary(piece)) => bytes.extend_from_slice(&piece),
             Some(WsMessage::Ping(_) | WsMessage::Pong(_)) => {}
             Some(WsMessage::Close(_)) | None => return Err("the member left before it sent it all".into()),
@@ -462,6 +490,7 @@ async fn take(hub: &Arc<Hub>, mut socket: Socket, me: &MachineName, key: &Public
             for expected in 0..chunks(object.size) {
                 if expected > 0 && expected.is_multiple_of(CHECK_EVERY) {
                     still(hub, me, key, &scope, None).await?;
+                    hub.assets.objects.keep_alive(key.as_bytes());
                 }
                 let (index, bytes) = chunk(&mut stream, &pulse).await?;
                 if index != expected {
@@ -494,6 +523,7 @@ async fn take(hub: &Arc<Hub>, mut socket: Socket, me: &MachineName, key: &Public
         while !wanted.is_empty() {
             if taken > 0 && taken.is_multiple_of(CHECK_EVERY) {
                 still(hub, me, key, &scope, None).await?;
+                hub.assets.objects.keep_alive(key.as_bytes());
             }
             let (index, bytes) = chunk(&mut stream, &pulse).await?;
             taken += 1;

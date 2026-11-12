@@ -84,6 +84,7 @@ impl Library {
         if digests.len() != chunk_count(object.size) || object.size as usize <= super::ROW_BYTES {
             return Err(Error::Invalid("a transfer is of a large object, with one digest a chunk".into()));
         }
+        let _writing = self.writing();
         let directory = self.0.objects.join(INCOMING);
         std::fs::create_dir_all(&directory).map_err(io)?;
         let manifest: Vec<u8> = digests.iter().flatten().copied().collect();
@@ -192,6 +193,16 @@ impl Library {
 }
 
 impl Transfer {
+    /// The transfer is still recorded: a clearing (`clear_unrooted`) drops
+    /// every transfer with its part, and one cleared away writes no more.
+    fn still(&self) -> Result<()> {
+        let id = self.id;
+        let recorded = self.library.database().read_now(move |db| {
+            Ok(db.prepare_cached("SELECT 1 FROM transfers WHERE id = ?1")?.query_row([id], |_| Ok(())).optional()?.is_some())
+        })?;
+        if recorded { Ok(()) } else { Err(Error::Invalid("the transfer was cleared away".into())) }
+    }
+
     /// The chunk numbers still to be received.
     pub fn missing(&self) -> Vec<u64> {
         let pending: std::collections::HashSet<u64> = self.written.iter().copied().collect();
@@ -212,9 +223,15 @@ impl Transfer {
         if self.durable[index as usize] || self.written.contains(&index) {
             return Ok(());
         }
-        self.file.seek(SeekFrom::Start(index * CHUNK_BYTES)).map_err(io)?;
-        self.file.write_all(bytes).map_err(io)?;
-        self.written.push(index);
+        {
+            // Let go before settling, which holds it again.
+            let library = self.library.clone();
+            let _writing = library.writing();
+            self.still()?;
+            self.file.seek(SeekFrom::Start(index * CHUNK_BYTES)).map_err(io)?;
+            self.file.write_all(bytes).map_err(io)?;
+            self.written.push(index);
+        }
         if self.written.len() >= SYNC_CHUNKS || self.since.elapsed() >= SYNC_AFTER {
             self.settle()?;
         }
@@ -226,6 +243,9 @@ impl Transfer {
         if self.written.is_empty() {
             return Ok(());
         }
+        let library = self.library.clone();
+        let _writing = library.writing();
+        self.still()?;
         self.file.sync_data().map_err(io)?;
         for index in self.written.drain(..) {
             self.durable[index as usize] = true;
@@ -243,6 +263,9 @@ impl Transfer {
     /// life and leases it to `holder`.
     pub fn finish(mut self, holder: &str, ttl: Duration) -> Result<Lease> {
         self.settle()?;
+        let library = self.library.clone();
+        let _writing = library.writing();
+        self.still()?;
         if self.durable.iter().any(|flag| !flag) {
             return Err(Error::Invalid("the transfer is missing chunks".into()));
         }

@@ -270,6 +270,13 @@ CREATE TABLE IF NOT EXISTS outbox (
     stream INTEGER PRIMARY KEY,
     uploaded INTEGER NOT NULL
 );
+-- Streams this device may hold no more in a holding period: nothing is
+-- committed to them until the hub gives them back.
+CREATE TABLE IF NOT EXISTS withheld (
+    stream INTEGER NOT NULL,
+    holding INTEGER NOT NULL,
+    PRIMARY KEY (stream, holding)
+) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS ops (
     op TEXT PRIMARY KEY,
     digest BLOB NOT NULL,

@@ -13,7 +13,7 @@ mod apart;
 mod objects;
 mod session;
 
-pub(crate) use session::{Proposal, pushed, wake};
+pub(crate) use session::{Proposal, pushed, shared_elsewhere, wake};
 
 use fastctx_content::v2::{HubVerifier, Library, Signer};
 use fastctx_net::sign::{Domain, PublicKey, SecretKey, heard_word};
@@ -88,7 +88,18 @@ pub(crate) struct Assets {
     pub(crate) cleared: Mutex<HashMap<HubId, (u64, Vec<String>)>>,
     /// How far each hub's scopes this machine may hold were listed, and when
     /// they were last listed whole (`session::discover`).
-    pub(crate) listed: Mutex<HashMap<HubId, (u64, std::time::Instant)>>,
+    pub(crate) listed: Mutex<HashMap<HubId, Listed>>,
+}
+
+/// How far a hub's scopes this machine may hold were listed.
+#[derive(Clone)]
+pub(crate) struct Listed {
+    /// The last description listed.
+    pub(crate) through: u64,
+    /// When they were last listed whole.
+    pub(crate) whole: std::time::Instant,
+    /// What decided what this machine may hold then, as the hub said.
+    pub(crate) basis: String,
 }
 
 impl Assets {
@@ -97,6 +108,13 @@ impl Assets {
     pub(crate) fn open(dir: PathBuf, device: SecretKey) -> io::Result<Self> {
         fastctx_platform::ensure_private_dir(&dir)?;
         let (library, _) = Library::open(&dir).map_err(|error| io::Error::other(error.to_string()))?;
+        // The kinds this machine knows: records of others wait in their
+        // frames, out of the index, until a release that knows them, which
+        // takes them in now (§2.3).
+        let kinds: Arc<dyn fastctx_content::v2::Authorizer> =
+            Arc::new(fastctx_content::v2::Kinds::new().register::<fastctx_content::v2::Timeline>());
+        library.know(kinds.clone());
+        library.reconsider(kinds, false).map_err(|error| io::Error::other(error.to_string()))?;
         let path = dir.join("hubs.json");
         let hubs = match fastctx_platform::disk::read(&path) {
             Ok(bytes) => serde_json::from_slice(&bytes)
@@ -165,7 +183,10 @@ impl Assets {
                 // Pinned once it is on the disk: a key kept only in memory
                 // would be met as new again after a restart.
                 let mut next = hubs.clone();
-                next.insert(hub.as_str().to_string(), Pinned { key: offered.into(), seen: None, lineage: rotations.to_vec() });
+                // Kept within its bound from the first (AA13).
+                let mut lineage = Vec::new();
+                grow(&mut lineage, rotations);
+                next.insert(hub.as_str().to_string(), Pinned { key: offered.into(), seen: None, lineage });
                 self.save(&next).map_err(|error| error.to_string())?;
                 *hubs = next;
                 Ok(PublicKey::from_bytes(offered))

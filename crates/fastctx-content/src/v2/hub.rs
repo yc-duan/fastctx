@@ -68,7 +68,8 @@ pub trait HubSigner: Send + Sync {
 pub struct Taking<'a> {
     pub period: i64,
     pub readable: &'a (dyn Fn(&ObjectRef) -> bool + Sync),
-    pub proven: &'a [[u8; 32]],
+    /// Whether the device proved it holds the object of this hash lately.
+    pub proven: &'a (dyn Fn(&[u8; 32]) -> bool + Sync),
 }
 
 /// The hub's word on a frame.
@@ -248,7 +249,7 @@ pub(super) fn before(db: &Connection, stream: i64, holding: i64, item: &[u8]) ->
 /// period stands there — its floor, or its row not yet purged — is kept as
 /// the state this period's prefix gives its item, for what is judged
 /// against it later.
-fn hidden_by_floor(db: &Connection, at: Applying, revision: u64, record: &KindRecord) -> fastctx_storage::Result<()> {
+pub(super) fn hidden_by_floor(db: &Connection, at: Applying, revision: u64, record: &KindRecord) -> fastctx_storage::Result<()> {
     let earlier: Option<i64> = db
         .prepare_cached("SELECT revision FROM items WHERE stream = ?1 AND item = ?2 AND (holding != ?3 OR state = ?4)")?
         .query_row(params![at.stream, record.record.item, at.holding, super::items::FLOOR], |row| row.get(0))
@@ -465,8 +466,7 @@ fn apply_frame(
         if !authorizer.knows(record.kind, record.schema) {
             // Kept in its frame, out of the index, until this hub knows its
             // kind (§2.3).
-            db.prepare_cached("INSERT OR IGNORE INTO pending_schema (stream, kind, schema, epoch, first) VALUES (?1, ?2, ?3, ?4, ?5)")?
-                .execute(params![at.stream, record.kind, record.schema, header.epoch as i64, header.first as i64])?;
+            super::pending::keep(db, at.stream, record.kind, record.schema, header.epoch, header.first)?;
             continue;
         }
         hidden_by_floor(db, applying, header.first + offset as u64, record)?;
@@ -591,7 +591,7 @@ impl Library {
         for object in &objects {
             match self.size(&object.hash)? {
                 Some(size) if size == object.size => {
-                    if (taking.readable)(object) || taking.proven.contains(&object.hash) {
+                    if (taking.readable)(object) || (taking.proven)(&object.hash) {
                         shown.insert(object.hash);
                     } else {
                         unproven.push(*object);

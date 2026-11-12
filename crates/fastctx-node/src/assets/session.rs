@@ -204,18 +204,23 @@ async fn pass(node: &Arc<Node>, hub: &HubId, link: &Arc<Link>) -> Result<(), Str
         // Each step goes on whatever the one before met; a revoked scope
         // goes no further.
         let uploaded = upload(assets, hub, link, &key, session, scope).await;
+        let pulled = match &uploaded {
+            Err(why) if why.starts_with(REVOKED) => Err(why.clone()),
+            _ => pull(assets, hub, link, &key, session, scope, *holding, isolated.is_some()).await,
+        };
+        // Isolated, what the hub lacks of what is here still goes back to it
+        // (AA04); nothing comes down.
         if isolated.is_some() {
-            if let Err(why) = uploaded
-                && !why.starts_with(REVOKED)
-            {
-                failed.get_or_insert(format!("{scope}: {why}"));
+            let pulled = pulled.and_then(|(_, failed)| failed.map_or(Ok(()), Err));
+            for done in [uploaded, pulled] {
+                if let Err(why) = done
+                    && !why.starts_with(REVOKED)
+                {
+                    failed.get_or_insert(format!("{scope}: {why}"));
+                }
             }
             continue;
         }
-        let pulled = match &uploaded {
-            Err(why) if why.starts_with(REVOKED) => Err(why.clone()),
-            _ => pull(assets, hub, link, &key, session, scope, *holding).await,
-        };
         // Where each stream stands is checked whatever a stream's frames
         // met: a frame that does not chain to what is here is what checking
         // finds the shared place for.
@@ -256,7 +261,7 @@ async fn pass(node: &Arc<Node>, hub: &HubId, link: &Arc<Link>) -> Result<(), Str
 
 /// Another network this machine is shared whole on, a share waiting or in
 /// force: one such network's holders may read the whole disk.
-fn shared_elsewhere(node: &Node, hub: &HubId) -> Option<HubId> {
+pub(crate) fn shared_elsewhere(node: &Node, hub: &HubId) -> Option<HubId> {
     node.links().iter().find_map(|link| {
         let other = link.membership().id;
         if other == *hub {
@@ -481,16 +486,28 @@ const RELIST: Duration = Duration::from_secs(300);
 /// `RELIST`.
 async fn discover(assets: &Assets, hub: &HubId, link: &Arc<Link>, key: &PublicKey) -> Result<(), String> {
     let library = &assets.library;
-    let (through, whole) = match assets.listed.lock().expect("listed").get(hub) {
-        Some((through, at)) if at.elapsed() < RELIST => (Some(*through), None),
-        _ => (None, Some(std::time::Instant::now())),
+    let known = assets.listed.lock().expect("listed").get(hub).cloned();
+    let (through, mut whole, heard) = match known {
+        Some(listed) if listed.whole.elapsed() < RELIST => (Some(listed.through), None, Some(listed.basis)),
+        _ => (None, Some(std::time::Instant::now()), None),
     };
     let mut after = through.map(|seq| wire::HoldingsAt { seq, scope: String::new() });
     let mut highest = through.unwrap_or(0);
+    let mut basis;
     loop {
-        let Reply::Holdings { scopes, next } = ask(assets, link, Request::Holdings { after: after.clone() }).await? else {
+        let Reply::Holdings { scopes, next, basis: said } = ask(assets, link, Request::Holdings { after: after.clone() }).await? else {
             return Err("the hub did not list what this machine may hold".into());
         };
+        // What decides what this machine may hold changed since it last
+        // listed: a scope described long ago may be its now (granted again),
+        // so all are listed again from the first.
+        if whole.is_none() && heard.as_deref() != Some(said.as_str()) {
+            whole = Some(std::time::Instant::now());
+            after = None;
+            highest = 0;
+            continue;
+        }
+        basis = said;
         for held in scopes {
             if !assets.heard(hub, key, &held.descriptor.fact.0, &held.descriptor.word.0) {
                 return Err(format!("the descriptor of {} is not the hub's", held.scope));
@@ -515,8 +532,8 @@ async fn discover(assets: &Assets, hub: &HubId, link: &Arc<Link>, key: &PublicKe
         }
     }
     let mut listed = assets.listed.lock().expect("listed");
-    let at = whole.or_else(|| listed.get(hub).map(|(_, at)| *at)).unwrap_or_else(std::time::Instant::now);
-    listed.insert(hub.clone(), (highest, at));
+    let at = whole.or_else(|| listed.get(hub).map(|listed| listed.whole)).unwrap_or_else(std::time::Instant::now);
+    listed.insert(hub.clone(), crate::assets::Listed { through: highest, whole: at, basis });
     Ok(())
 }
 
@@ -711,6 +728,7 @@ async fn resubmit(assets: &Assets, scope: &str, stream: &str) -> Result<(), Stri
 /// Takes the frames of the streams of `scope` this machine holds past what
 /// it has: the streams the hub lags on, and the first stream's failure, if
 /// any (one fails holding up no other).
+#[allow(clippy::too_many_arguments)]
 async fn pull(
     assets: &Assets,
     hub: &HubId,
@@ -719,6 +737,7 @@ async fn pull(
     session: u64,
     scope: &str,
     holding: i64,
+    isolated: bool,
 ) -> Result<(std::collections::BTreeSet<String>, Option<String>), String> {
     let library = &assets.library;
     let Reply::Streams { streams, withheld } = ask(assets, link, Request::Streams { scope: scope.to_string() }).await? else {
@@ -734,6 +753,11 @@ async fn pull(
         let (scope_text, device) = (scope.to_string(), assets.device());
         blocking(library, move |library| library.withhold(&scope_text, &stream, &device)).await?;
     }
+    // What the hub gives this machine to hold is committed to again, if it
+    // was withheld before.
+    let given: Vec<String> = streams.iter().map(|at| at.stream.clone()).collect();
+    let scope_text = scope.to_string();
+    blocking(library, move |library| library.hold_again(&scope_text, given)).await?;
     // The streams the hub lags on: given back here, not checked against it.
     let mut ahead = std::collections::BTreeSet::new();
     // What the hub lacks that this machine has — the hub recovered to
@@ -763,6 +787,8 @@ async fn pull(
         }
     }
     let mut failed: Option<String> = None;
+    // Isolated, the hub's frames do not come down to this disk.
+    let streams = if isolated { Vec::new() } else { streams };
     for wire::StreamAt { stream, next } in streams {
         let done: Result<(), String> = async {
         let mut at = local.get(&stream).copied().unwrap_or(0);

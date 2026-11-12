@@ -120,7 +120,12 @@ pub(super) fn rebuild(db: &Connection, at: Applying) -> fastctx_storage::Result<
         }
         for (first, header, body) in frames {
             let header = Header::decode(&header).map_err(invalid)?;
+            // What the frame kept out of the index stays out (§2.3).
+            let kept = super::pending::kept(db, at.stream, header.epoch, header.first)?;
             for (offset, record) in open(&header, &body).map_err(invalid)?.iter().enumerate() {
+                if kept.contains(&(record.kind, record.schema)) {
+                    continue;
+                }
                 apply(db, at, header.first + offset as u64, record)?;
             }
             after = first;
@@ -230,6 +235,16 @@ impl Library {
     /// commit, and an operation points at where its write landed now.
     /// Records no longer writable are left for `refuse`.
     pub fn resubmit(&self, scope: &str, stream: &str, take: usize, signer: Arc<dyn Signer>) -> Result<usize> {
+        // A stream this device may hold no more waits for the hub to give
+        // it back (`withhold`).
+        let (scope_key, stream_name) = (scope.to_string(), stream.to_string());
+        let withheld = self.database().read_now(move |db| match super::scopes::held(db, &scope_key)? {
+            Some((scope_id, _, Some(holding))) => super::letgo::withheld(db, scope_id, &stream_name, holding),
+            _ => Ok(false),
+        })?;
+        if withheld {
+            return Ok(0);
+        }
         let waiting = self.resubmits(scope, stream, take)?;
         let Some(holding) = waiting.first().map(|first| first.holding) else { return Ok(0) };
         let batch: Vec<Resubmit> = waiting.into_iter().take_while(|resubmit| resubmit.holding == holding).collect();
@@ -354,7 +369,7 @@ pub(super) fn end_resubmits(db: &Connection, scope: i64, holding: i64) -> fastct
         let waiting: Vec<Waiting> = {
             let mut statement = db.prepare_cached(
                 "SELECT id, stream, record, op FROM resubmits
-                 WHERE holding = ?2 AND stream IN (SELECT id FROM streams WHERE scope = ?1) LIMIT ?3",
+                 WHERE holding = ?2 AND stream IN (SELECT id FROM streams WHERE scope = ?1) ORDER BY stream, seq, id LIMIT ?3",
             )?;
             let rows = statement.query_map(params![scope, holding, ROWS_AT_ONCE], |row| {
                 Ok(Waiting { id: row.get(0)?, stream: row.get(1)?, raw: row.get(2)?, op: row.get(3)? })

@@ -427,11 +427,19 @@ pub struct Snapshot {
     pub(crate) tokens: Arc<std::collections::HashMap<AccountName, Vec<usize>>>,
     pub(crate) letters: crate::post::Read,
     pub(crate) worked: Arc<crate::worked::Worked>,
+    /// What decides what any machine may hold, worked out once for this
+    /// directory at need (`shares::basis`).
+    pub(crate) basis: Arc<std::sync::OnceLock<String>>,
 }
 
 impl Snapshot {
     pub fn dir(&self) -> &Path {
         &self.dir
+    }
+
+    /// What decides what any machine may hold, in this directory.
+    pub(crate) fn basis(&self) -> &str {
+        self.basis.get_or_init(|| crate::shares::basis(&self.book.directory))
     }
     pub(crate) fn indexed(&self) -> fastctx_net::directory_index::Indexed<'_> {
         fastctx_net::directory_index::Indexed::new(&self.book.directory, &self.index)
@@ -547,6 +555,7 @@ impl Store {
 
     pub(crate) fn refresh(&mut self) {
         self.metadata.index = Arc::new(fastctx_net::directory_index::Index::new(&self.book.directory));
+        self.metadata.basis = Arc::default();
         self.metadata.assist_ends = Arc::new(assist_ends::AssistEnds::new(&self.book.directory));
         self.check_acting();
         self.metadata.tokens = Self::token_index(&self.book);
@@ -572,6 +581,7 @@ impl Store {
             if book {
                 next.book = self.book.clone();
                 next.index = self.index.clone();
+                next.basis = Arc::default();
                 next.tokens = self.tokens.clone();
                 next.audience = self.audience.clone();
                 next.assist_ends = self.assist_ends.clone();
@@ -699,6 +709,7 @@ impl Store {
                 sequence: 0,
                 hub: hub.into(),
                 index: Arc::new(fastctx_net::directory_index::Index::new(&book.directory)),
+                basis: Arc::default(),
                 audience: Arc::default(),
                 assist_ends: Arc::new(assist_ends::AssistEnds::new(&book.directory)),
                 acting_clean: false,

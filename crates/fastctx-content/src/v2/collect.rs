@@ -20,9 +20,6 @@ use std::time::Duration;
 const GRACE: Duration = Duration::from_secs(24 * 60 * 60);
 /// The most objects one pass makes tombstones of.
 const PASS: i64 = 512;
-/// How long after its last write a file in `incoming`, or a life still
-/// preparing, can no longer be a write in progress.
-const SETTLED: Duration = Duration::from_secs(10 * 60);
 /// How long a published file is checked for at start: a rename the power
 /// took is lost within moments of it.
 const PUBLISHED_KEPT: Duration = Duration::from_secs(60 * 60);
@@ -66,15 +63,16 @@ impl Library {
     }
 
     /// Clears, for a new holder of this machine (§6.3), every object nothing
-    /// that stays here refers to or holds: transfers under way go with their
-    /// parts, files in `incoming` no transfer names and lives still
-    /// preparing go once they are older than a write in progress could be, a
-    /// tombstone a deletion that failed left goes again, and what nothing
-    /// roots goes without the grace, however much of it. What is left, if
-    /// anything: what a live lease alone keeps, a write under way, a transfer
-    /// begun meanwhile — gone at a later pass — or a refused write kept for
-    /// its user, which waits for the user to send it again or drop it.
+    /// that stays here refers to or holds. No write of an object's bytes is
+    /// under way while it clears, nor begins (`writing`): transfers go with
+    /// their parts, every other file in `incoming` and every life still
+    /// preparing is one a stop or a failure left, a tombstone a deletion
+    /// that failed left goes again, and what nothing roots goes without the
+    /// grace, however much of it. What is left, if anything: what a live
+    /// lease alone keeps — gone at a later pass — or a refused write kept
+    /// for its user, which waits for the user to send it again or drop it.
     pub fn clear_unrooted(&self) -> Result<Option<String>> {
+        let _clearing = self.0.clearing.write().unwrap_or_else(std::sync::PoisonError::into_inner);
         let parts: Vec<(i64, String)> = self.database().read_now(|db| {
             let mut statement = db.prepare_cached("SELECT id, part FROM transfers")?;
             let rows = statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
@@ -91,26 +89,18 @@ impl Library {
                 Ok(())
             })?;
         }
-        // Files a put cut short left, none of them a transfer's, once no put
-        // could still be writing them.
-        let mut fresh = 0;
+        // Files a put cut short left: no put is under way, and the transfers
+        // went.
         if let Ok(entries) = std::fs::read_dir(&incoming) {
             for entry in entries {
-                let entry = entry.map_err(io)?;
-                let old = entry.metadata().and_then(|meta| meta.modified()).is_ok_and(|at| at.elapsed().is_ok_and(|age| age > SETTLED));
-                if old {
-                    fastctx_platform::durable_file::delete_unreferenced(&entry.path()).map_err(io)?;
-                } else {
-                    fresh += 1;
-                }
+                fastctx_platform::durable_file::delete_unreferenced(&entry.map_err(io)?.path()).map_err(io)?;
             }
         }
-        // Lives still preparing long after any write would have placed them:
-        // a write that failed between its bytes and their publication.
-        let stale = now() - SETTLED.as_millis() as i64;
+        // Lives still preparing with no write under way: a write that failed
+        // between its bytes and their publication, or a file a stop lost.
         let preparing: Vec<(Vec<u8>, i64, i64)> = self.database().read_now(move |db| {
-            let mut statement = db.prepare_cached("SELECT hash, life, size FROM objects WHERE state = 0 AND placed < ?1")?;
-            let rows = statement.query_map([stale], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
+            let mut statement = db.prepare_cached("SELECT hash, life, size FROM objects WHERE state = 0")?;
+            let rows = statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
             Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
         })?;
         for (hash, life, size) in preparing {
@@ -151,8 +141,8 @@ impl Library {
         let refused: i64 = self.database().read_now(|db| Ok(db.prepare_cached("SELECT COUNT(*) FROM ops WHERE kept IS NOT NULL")?.query_row([], |row| row.get(0))?))?;
         Ok(if refused > 0 {
             Some(format!("{refused} refused write(s) kept for their user, who sends them again or drops them"))
-        } else if left > 0 || fresh > 0 {
-            Some("objects a lease or a write under way still keeps".into())
+        } else if left > 0 {
+            Some("objects a lease still keeps".into())
         } else {
             None
         })
@@ -226,6 +216,13 @@ impl Library {
     /// recently published files the power took.
     pub(super) fn startup(&self) -> Result<Started> {
         let mut started = Started::default();
+        // Lives are counted from past every life a library made before they
+        // were, before anything here deletes one (I5).
+        self.database().write_now_at(Priority::Normal, 64, |db| {
+            db.prepare_cached("INSERT OR IGNORE INTO stamps (name, value) SELECT 'life', COALESCE(MAX(life), 0) FROM objects")?
+                .execute([])?;
+            Ok(())
+        })?;
         let tombstones: Vec<(Vec<u8>, i64, i64)> = self.database().read_now(|db| {
             let mut statement = db.prepare_cached("SELECT hash, life, size FROM objects WHERE state = ?1")?;
             let rows = statement.query_map([TOMBSTONE], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;

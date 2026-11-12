@@ -93,15 +93,20 @@ def check(registry):
             raise ValueError(f"invalid asset table: {record}")
         asset_tables.add((table, owner))
     created = set()
-    # A table however its name is quoted, in Rust and in the SQL it loads.
-    creating = re.compile(r"CREATE\s+(?:TEMP\s+|TEMPORARY\s+)?TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:\\?[\"`\[])?([A-Za-z_][A-Za-z0-9_]*)", re.I)
+    # A table however its name is quoted, in Rust and in the SQL it loads:
+    # a quoted name whole, whatever it holds (S13).
+    creating = re.compile(
+        r"CREATE\s+(?:TEMP\s+|TEMPORARY\s+)?TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?"
+        r"(?:\\?\"((?:[^\"\\]|\\[^\"])+)\\?\"|`([^`]+)`|\[([^\]]+)\]|([A-Za-z_][A-Za-z0-9_]*))",
+        re.I,
+    )
     for path in sorted((ROOT / "crates").rglob("*.rs")) + sorted((ROOT / "crates").rglob("*.sql")):
         name = path.as_posix()
         if "/src/" not in name or "/fastctx-sync/" in name or any(x in path.name for x in ("test", "drill")):
             continue
         owner = path.relative_to(ROOT).as_posix()
-        for table in creating.findall(path.read_text(encoding="utf-8")):
-            table = table.lower()
+        for groups in creating.findall(path.read_text(encoding="utf-8")):
+            table = next(group for group in groups if group).lower()
             if "/fastctx-content/" in name:
                 if (table, owner) not in asset_tables:
                     raise ValueError(f"unregistered asset table {table}: {owner}")

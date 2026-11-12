@@ -152,6 +152,7 @@ impl Library {
     /// durable before it is present. Bytes already present are not written
     /// again. Call on a thread that may block.
     pub fn put(&self, source: &mut dyn Read, holder: &str, ttl: Duration) -> Result<Lease> {
+        let _writing = self.writing();
         let mut held = Vec::with_capacity(ROW_BYTES + 1);
         let mut window = vec![0u8; 256 * 1024];
         let mut whole = Sha256::new();

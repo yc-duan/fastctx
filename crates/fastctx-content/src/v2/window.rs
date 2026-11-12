@@ -215,6 +215,10 @@ pub(super) fn truncate_in(
     }
     db.prepare_cached("UPDATE streams SET next = ?2, head = ?3 WHERE id = ?1")?
         .execute(params![stream_id, keep + 1, head])?;
+    // What is uploaded never reaches past the stream: a record committed at
+    // a place cut away is one the hub does not have (AA01).
+    db.prepare_cached("UPDATE outbox SET uploaded = MIN(uploaded, ?2) WHERE stream = ?1")?
+        .execute(params![stream_id, keep + 1])?;
     super::rejected::rebuild(db, Applying { scope: scope_id, stream: stream_id, holding })?;
     tidy_wanted(db, scope_id, holding)
 }

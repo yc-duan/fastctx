@@ -33,6 +33,8 @@ pub(crate) struct Built {
     pub written: usize,
     /// The items the history no longer holds.
     pub gone: usize,
+    /// The reading missed a record: built again once it can be read whole.
+    pub unread: bool,
 }
 
 fn failure(error: impl std::fmt::Display) -> Failure {
@@ -58,13 +60,13 @@ pub(crate) async fn build(node: &Arc<Node>, resident: &ResidentId) -> Result<Bui
     };
     let assets = assets_due(node, resident, version.clone()).await?;
     if current && assets.is_none() {
-        return Ok(Built { events: 0, written: 0, gone: 0 });
+        return Ok(Built { events: 0, written: 0, gone: 0, unread: false });
     }
     let crate::talk::HistoryRead { history, unread, .. } = crate::talk::history_quietly(node, resident).await?;
     let history = Arc::new(history);
     let stream = super::stream(resident);
-    let built = if current {
-        Built { events: history.len(), written: 0, gone: 0 }
+    let mut built = if current {
+        Built { events: history.len(), written: 0, gone: 0, unread: false }
     } else {
         // A reading that missed a record is not the version's history.
         let checkpoint = (!unread).then(|| Checkpoint { name, state: version.clone().unwrap_or_default() });
@@ -84,6 +86,7 @@ pub(crate) async fn build(node: &Arc<Node>, resident: &ResidentId) -> Result<Bui
             crate::assets::wake(node, &hub);
         }
     }
+    built.unread = unread;
     Ok(built)
 }
 
@@ -122,7 +125,7 @@ fn write(
     // A reading that missed some record is not the history as its files hold
     // it: what the timeline holds of it stays, until one reads it whole.
     if unread && !had.is_empty() {
-        return Ok(Built { events: history.len(), written: 0, gone: 0 });
+        return Ok(Built { events: history.len(), written: 0, gone: 0, unread: false });
     }
     let encoded: Vec<Vec<u8>> = history.iter().map(serde_json::to_vec).collect::<Result<_, _>>().map_err(failure)?;
     let identities = identity::identities(history, &encoded);
@@ -148,7 +151,7 @@ fn write(
         written += 1;
     }
     pending.flush(checkpoint)?;
-    Ok(Built { events: history.len(), written, gone })
+    Ok(Built { events: history.len(), written, gone, unread: false })
 }
 
 /// An event as its record holds it: itself, or when it is too large for a

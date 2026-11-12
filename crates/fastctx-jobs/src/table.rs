@@ -38,6 +38,18 @@ pub(crate) fn now() -> i64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |since| since.as_millis() as i64)
 }
 
+/// Submits `job` as `submit` does, due no sooner than `after` from now: a
+/// job already waiting keeps the later of its own due time and that, so
+/// asking again while it waits out a pause does not bring it on early.
+pub fn submit_after(db: &Connection, job: &Job, after: std::time::Duration) -> Result<()> {
+    submit(db, job)?;
+    if !after.is_zero() {
+        db.prepare_cached("UPDATE jobs SET due = MAX(due, ?3) WHERE kind = ?1 AND key = ?2 AND state <> ?4")?
+            .execute(params![job.kind, job.key, now() + after.as_millis() as i64, RUNNING])?;
+    }
+    Ok(())
+}
+
 /// Asks for work, in the transaction that records why it is needed. A job
 /// of the same kind and key that waits takes this payload and is due now;
 /// one that runs is run once more with it after.

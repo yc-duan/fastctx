@@ -1075,7 +1075,10 @@ fn handle(
                         let store = hub.store();
                         let answer = origin
                             .check(&store.book.directory)
-                            .and_then(|()| crate::assets::serve::ask(&hub.assets, &store.indexed(), &from, &origin.key, request));
+                            .and_then(|()| {
+                                let basis = || store.basis().to_string();
+                                crate::assets::serve::ask(&hub.assets, &store.indexed(), &basis, &from, &origin.key, request)
+                            });
                         drop(store);
                         // Judged again, and told only, by the directory as it
                         // stands now, read after what is to be told was taken.

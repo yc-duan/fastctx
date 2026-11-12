@@ -139,6 +139,11 @@ impl Owners {
         if let Some(why) = check(&opened)? {
             return Ok(Err(why));
         }
+        // Records of a kind this hub did not know when they came are judged
+        // now that it may (§2.3), before anyone reads the library.
+        let kinds: Arc<dyn fastctx_content::v2::Authorizer> = super::serve::kinds();
+        opened.know(kinds.clone());
+        opened.reconsider(kinds, true).map_err(|error| io::Error::other(error.to_string()))?;
         *library = Some(opened.clone());
         Ok(Ok(opened))
     }
@@ -166,6 +171,11 @@ impl Owners {
     /// now is a new one.
     pub(crate) fn deleted(&self, owner: &Owner) {
         self.fenced.lock().expect("fenced owners").remove(owner);
+    }
+
+    /// The owners whose libraries are fenced off for deletion now.
+    pub(crate) fn fenced(&self) -> Vec<Owner> {
+        self.fenced.lock().expect("fenced owners").iter().cloned().collect()
     }
 
     /// Closes the libraries left idle past `IDLE` that nobody holds, and,

@@ -66,6 +66,21 @@ const UNREAD_FOR: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 /// How often owners are looked at for whether anyone reads them.
 const SWEEP_EVERY: u32 = 600;
 
+/// Whether `current` is the very directory `judged` was taken from: every
+/// part the same shared one, as a directory no edit touched since is.
+fn same_directory(judged: &fastctx_net::directory::Directory, current: &fastctx_net::directory::Directory) -> bool {
+    fn same<T>(a: &[Arc<T>], b: &[Arc<T>]) -> bool {
+        a.len() == b.len() && a.iter().zip(b).all(|(a, b)| Arc::ptr_eq(a, b))
+    }
+    same(&judged.accounts, &current.accounts)
+        && same(&judged.members, &current.members)
+        && same(&judged.shares, &current.shares)
+        && same(&judged.assists, &current.assists)
+        && same(&judged.plans, &current.plans)
+        && same(&judged.acting, &current.acting)
+        && same(&judged.projects, &current.projects)
+}
+
 /// How often the owner libraries are checkpointed.
 pub(crate) const CHECKPOINT_EVERY: Duration = Duration::from_secs(1);
 
@@ -212,7 +227,7 @@ impl Assets {
     /// then, and only while the owner holds the very scopes judged.
     fn sweep_owner(&self, directory: &fastctx_net::directory_index::Indexed<'_>, owner: &str, now: i64) -> io::Result<bool> {
         let read = |directory: &fastctx_net::directory_index::Indexed<'_>| -> io::Result<Option<(bool, [u8; 32])>> {
-            let (mut digest, mut after, mut anyone) = (Sha256::new(), String::new(), false);
+            let (mut digest, mut after) = (Sha256::new(), String::new());
             loop {
                 let (key, from) = (owner.to_string(), after.clone());
                 let page: Vec<String> = self
@@ -229,24 +244,23 @@ impl Assets {
                 for key in &page {
                     digest.update((key.len() as u64).to_le_bytes());
                     digest.update(key.as_bytes());
-                    if anyone {
-                        continue;
-                    }
                     let judged = match scopes::scope(self, key) {
                         Ok(Some(scope)) => scopes::anyone_reads(directory, &scope),
                         Ok(None) => Ok(false),
                         Err(why) => Err(io::Error::other(why)),
                     };
                     match judged {
-                        Ok(read) => anyone |= read,
+                        // One reader keeps the owner: nothing more to judge.
+                        Ok(true) => return Ok(Some((true, [0; 32]))),
+                        Ok(false) => {}
                         // Not known now: judged again at a later sweep.
                         Err(_) => return Ok(None),
                     }
                 }
             }
-            Ok(Some((anyone, digest.finalize().into())))
+            Ok(Some((false, digest.finalize().into())))
         };
-        let Some((anyone, _)) = read(directory)? else { return Ok(false) };
+        let Some((anyone, first)) = read(directory)? else { return Ok(false) };
         let key = owner.to_string();
         if anyone {
             self.control
@@ -274,14 +288,26 @@ impl Assets {
             Owner::Body(id) => Some(id.clone()),
             _ => None,
         };
+        // The seal before the directory's writer, as every grant takes them:
+        // a hub found put back deletes nothing more (AC03).
+        let seal = self.seal_held();
+        if seal.is_some() {
+            return Ok(false);
+        }
         let begun = self.bodies.under_directory(directory.all, |current| -> io::Result<Option<(u64, [u8; 32])>> {
             // The directory as it is now: a project given back, an account
-            // restored, may read it again.
-            let index = fastctx_net::directory_index::Index::new(current);
-            let Some((anyone, judged)) = read(&fastctx_net::directory_index::Indexed::new(current, &index))? else { return Ok(None) };
-            if anyone {
-                return Ok(None);
-            }
+            // restored, may read it again. Unchanged since the judgment, the
+            // judgment stands (AC02).
+            let judged = if same_directory(directory.all, current) {
+                first
+            } else {
+                let index = fastctx_net::directory_index::Index::new(current);
+                let Some((anyone, judged)) = read(&fastctx_net::directory_index::Indexed::new(current, &index))? else { return Ok(None) };
+                if anyone {
+                    return Ok(None);
+                }
+                judged
+            };
             let key = owner.to_string();
             self.control
                 .write_now(1024, move |c| {
@@ -309,6 +335,7 @@ impl Assets {
         })?;
         let Some((seq, head)) = begun else { return Ok(false) };
         self.witness.advanced(seq, &head)?;
+        drop(seal);
         Ok(true)
     }
 
@@ -325,6 +352,13 @@ impl Assets {
     /// batch at a time, then their files once nobody holds their library; one
     /// still open goes at a later sweep.
     fn finish_deleting(&self) -> io::Result<()> {
+        // A fence whose deletion is no longer recorded is of one that ended,
+        // though whoever ended it never heard so (AC01).
+        for owner in self.owners.fenced() {
+            if !self.deleting(&owner)? {
+                self.owners.deleted(&owner);
+            }
+        }
         let deleting: Vec<String> = self
             .control
             .read_now(|c| {
@@ -336,6 +370,12 @@ impl Assets {
         for key in deleting {
             let Some(owner) = Owner::from_key(&key) else { continue };
             loop {
+                // Nothing goes once the hub is found put back (AC03): the seal
+                // is held while each batch goes.
+                let seal = self.seal_held();
+                if seal.is_some() {
+                    return Ok(());
+                }
                 let batch = key.clone();
                 let removed = self
                     .control
@@ -358,9 +398,14 @@ impl Assets {
                         Ok(removed)
                     })
                     .map_err(io::Error::other)?;
+                drop(seal);
                 if removed == 0 {
                     break;
                 }
+            }
+            let seal = self.seal_held();
+            if seal.is_some() {
+                return Ok(());
             }
             if self.owners.delete(&owner).is_ok() {
                 self.control
@@ -1014,21 +1059,29 @@ impl Assets {
 /// every ten minutes deletes the libraries no one has read for a week.
 pub(crate) async fn checkpoints(hub: Weak<crate::Hub>) {
     let mut rounds = 0u32;
+    let sweeping = Arc::new(std::sync::atomic::AtomicBool::new(false));
     loop {
         tokio::time::sleep(CHECKPOINT_EVERY).await;
         rounds = rounds.wrapping_add(1);
+        // The sweep goes on beside the checkpoints, one at a time: a long one
+        // does not hold them back (AC02).
         if rounds.is_multiple_of(SWEEP_EVERY)
+            && !sweeping.swap(true, std::sync::atomic::Ordering::AcqRel)
             && let Some(running) = hub.upgrade()
         {
             let (assets, store, log) = (running.assets.clone(), running.store(), running.log.clone());
             drop(running);
-            let swept = fastctx_platform::task::spawn_blocking(move || assets.sweep_owners(&store.indexed())).await;
-            match swept {
-                Ok(Ok(0)) => {}
-                Ok(Ok(dropped)) => log.line(format_args!("deleted {dropped} owner librar(ies) no one has read for a week")),
-                Ok(Err(error)) => log.line(format_args!("looking for libraries no one reads: {error}")),
-                Err(error) => log.line(format_args!("looking for libraries no one reads: {error}")),
-            }
+            let sweeping = sweeping.clone();
+            fastctx_platform::task::spawn(async move {
+                let swept = fastctx_platform::task::spawn_blocking(move || assets.sweep_owners(&store.indexed())).await;
+                sweeping.store(false, std::sync::atomic::Ordering::Release);
+                match swept {
+                    Ok(Ok(0)) => {}
+                    Ok(Ok(dropped)) => log.line(format_args!("deleted {dropped} owner librar(ies) no one has read for a week")),
+                    Ok(Err(error)) => log.line(format_args!("looking for libraries no one reads: {error}")),
+                    Err(error) => log.line(format_args!("looking for libraries no one reads: {error}")),
+                }
+            });
         }
         let assets_hub = hub.clone();
         let Some(hub) = hub.upgrade() else { return };

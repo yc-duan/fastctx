@@ -111,6 +111,17 @@ impl Library {
             if holding != commit.holding {
                 return Err(invalid("the holding period the records were made in has ended"));
             }
+            let (stream, epoch, next, mut head) = stream_of(db, scope, &commit.stream)?;
+            // An operation done before is answered as it was, before anything
+            // is judged again: the item may have moved on since (§3).
+            if let Some((op, _)) = &commit.op
+                && super::ops::seen(db, op)?
+            {
+                return Ok(Committed { first: next, count: 0, frames: 0, head, duplicate: true });
+            }
+            if super::letgo::withheld(db, scope, &commit.stream, holding)? {
+                return Err(invalid("this device may hold the stream no more"));
+            }
             for record in &commit.records {
                 if let State::Is { objects, .. } = &record.record.state {
                     for object in objects {
@@ -121,7 +132,6 @@ impl Library {
                     }
                 }
             }
-            let (stream, epoch, next, mut head) = stream_of(db, scope, &commit.stream)?;
             if let Some(judge) = &judge {
                 let mut earlier: std::collections::BTreeMap<Vec<u8>, Option<Entry>> = std::collections::BTreeMap::new();
                 for (offset, record) in commit.records.iter().enumerate() {
@@ -133,11 +143,6 @@ impl Library {
                     judge(prior.as_ref(), record).map_err(invalid)?;
                     earlier.insert(item.clone(), super::hub::after(record, next + offset as u64));
                 }
-            }
-            if let Some((op, _)) = &commit.op
-                && super::ops::seen(db, op)?
-            {
-                return Ok(Committed { first: next, count: 0, frames: 0, head, duplicate: true });
             }
             let at = Applying { scope, stream, holding };
             let mut first = next;

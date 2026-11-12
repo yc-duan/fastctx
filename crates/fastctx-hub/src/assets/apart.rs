@@ -31,6 +31,9 @@ enum Body {
     /// clock, the connection's own pulse bounds it.
     Receiving,
     Staged(Arc<Vec<u8>>),
+    /// A staged body its frame is being taken with now: one take at a time,
+    /// so no more copies of it are made than the room counts for (AC04).
+    Taking(Arc<Vec<u8>>),
     /// The bodies a reply of frames sends apart, in order, their data
     /// connection not here yet.
     Going(Vec<Vec<u8>>),
@@ -55,7 +58,7 @@ pub(crate) struct Apart {
 impl Apart {
     fn reserve(&self, ticket: u64, key: [u8; 32], bytes: usize, body: Body) -> Result<(), String> {
         let mut waiting = self.waiting.lock().expect("bodies apart");
-        waiting.retain(|_, kept| matches!(kept.body, Body::Receiving | Body::Sending) || kept.at.elapsed() < WAITS);
+        waiting.retain(|_, kept| matches!(kept.body, Body::Receiving | Body::Sending | Body::Taking(_)) || kept.at.elapsed() < WAITS);
         let total: usize = waiting.values().map(|kept| kept.bytes).sum();
         let device: usize = waiting.values().filter(|kept| kept.key == key).map(|kept| kept.bytes).sum();
         if total + bytes > ROOM || device + bytes > DEVICE_ROOM {
@@ -97,13 +100,45 @@ impl Apart {
         }
     }
 
-    /// The body the device whose key is `key` staged under `ticket`, kept
-    /// for the frame asked again until `release`.
+    /// The body the device whose key is `key` staged under `ticket`, for its
+    /// frame to be taken with now: kept for the frame asked again until
+    /// `release`, and given to one take at a time (`untake`, `touch`).
     pub(crate) fn body(&self, ticket: u64, key: &[u8; 32]) -> Result<Arc<Vec<u8>>, String> {
-        let waiting = self.waiting.lock().expect("bodies apart");
-        match waiting.get(&ticket) {
-            Some(Waiting { key: given, at, body: Body::Staged(body), .. }) if given == key && at.elapsed() < WAITS => Ok(body.clone()),
+        let mut waiting = self.waiting.lock().expect("bodies apart");
+        match waiting.get_mut(&ticket) {
+            Some(kept) if kept.key == *key && matches!(kept.body, Body::Taking(_)) => {
+                Err("the frame staged under that ticket is being taken now: ask again".into())
+            }
+            Some(kept) if kept.key == *key && kept.at.elapsed() < WAITS => match &kept.body {
+                Body::Staged(body) => {
+                    let body = body.clone();
+                    kept.body = Body::Taking(body.clone());
+                    Ok(body)
+                }
+                _ => Err("no body is staged here under that ticket".into()),
+            },
             _ => Err("no body is staged here under that ticket".into()),
+        }
+    }
+
+    /// The take of the frame staged under `ticket` ended without a word on
+    /// it: the body waits for the frame asked again.
+    pub(crate) fn untake(&self, ticket: u64, key: &[u8; 32]) {
+        let mut waiting = self.waiting.lock().expect("bodies apart");
+        if let Some(kept) = waiting.get_mut(&ticket)
+            && kept.key == *key
+            && let Body::Taking(body) = &kept.body
+        {
+            kept.body = Body::Staged(body.clone());
+        }
+    }
+
+    /// Every body the device whose key is `key` staged waits on: it puts an
+    /// object its frame waits for.
+    pub(crate) fn keep_staged(&self, key: &[u8; 32]) {
+        let mut waiting = self.waiting.lock().expect("bodies apart");
+        for kept in waiting.values_mut().filter(|kept| kept.key == *key && matches!(kept.body, Body::Staged(_))) {
+            kept.at = Instant::now();
         }
     }
 
@@ -112,9 +147,15 @@ impl Apart {
         let mut waiting = self.waiting.lock().expect("bodies apart");
         if let Some(kept) = waiting.get_mut(&ticket)
             && kept.key == *key
-            && matches!(kept.body, Body::Staged(_))
         {
-            kept.at = Instant::now();
+            match &kept.body {
+                Body::Staged(_) => kept.at = Instant::now(),
+                Body::Taking(body) => {
+                    kept.body = Body::Staged(body.clone());
+                    kept.at = Instant::now();
+                }
+                _ => {}
+            }
         }
     }
 
@@ -196,8 +237,19 @@ pub(super) async fn receive(hub: &Arc<Hub>, mut socket: Socket, me: &MachineName
 }
 
 /// Sends the bodies kept under `ticket`, in order, each in chunks, and
-/// waits for the member's word that it has them all.
-pub(super) async fn send(hub: &Arc<Hub>, socket: Socket, key: &[u8; 32], ticket: u64) -> Result<(), String> {
+/// waits for the member's word that it has them all. Before each body the
+/// machine is judged again, as it is then, for whether it still holds the
+/// stream (§6.4, AC07): access ended meanwhile, the rest does not go.
+pub(super) async fn send(
+    hub: &Arc<Hub>,
+    socket: Socket,
+    me: &MachineName,
+    public: &fastctx_net::sign::PublicKey,
+    scope: &super::scopes::Scope,
+    held: &str,
+    ticket: u64,
+) -> Result<(), String> {
+    let key = public.as_bytes();
     let bodies = hub.assets.objects.apart.going(ticket, key).ok_or("the bodies under that ticket went")?;
     // Counted in the room until they went, however that ends.
     struct Gone<'a>(&'a Apart, u64, [u8; 32]);
@@ -222,6 +274,7 @@ pub(super) async fn send(hub: &Arc<Hub>, socket: Socket, key: &[u8; 32], ticket:
         let mut pace = fastctx_net::data::Pace::default();
         let mut index = 0u64;
         for body in &bodies {
+            objects::still_holding(hub, me, public, scope, None, Some(held)).await?;
             for chunk in body.chunks(CHUNK_BYTES as usize) {
                 let head = serde_json::to_string(&ChunkHead { index, size: chunk.len() as u64 }).expect("a head serializes");
                 write(&mut sink, &pulse, WsMessage::Text(head.into())).await?;
