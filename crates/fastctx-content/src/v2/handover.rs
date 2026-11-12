@@ -18,6 +18,7 @@
 
 use super::Library;
 use super::exchange::RawFrame;
+use super::facts::{EpochFact, EpochKind, GapFact};
 use super::frame::Header;
 use super::hub::{Authorizer, Drained, HubSigner, Prefix, drain, prefix};
 use super::scopes::held;
@@ -28,22 +29,6 @@ use fastctx_storage::Priority;
 use fastctx_storage::rusqlite::{Connection, OptionalExtension, params};
 use std::collections::BTreeSet;
 use std::sync::Arc;
-
-/// What an epoch's records come from (§2.2).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum EpochKind {
-    Source,
-    Observed,
-}
-
-impl EpochKind {
-    fn name(self) -> &'static str {
-        match self {
-            Self::Source => "source",
-            Self::Observed => "observed",
-        }
-    }
-}
 
 /// Who orders a stream next.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -77,35 +62,20 @@ pub(super) struct Epoch {
     pub follows: [u8; 32],
 }
 
-fn put(bytes: &mut Vec<u8>, field: &[u8]) {
-    bytes.extend_from_slice(&(field.len() as u32).to_le_bytes());
-    bytes.extend_from_slice(field);
-}
-
-/// An epoch's descriptor (§2.2), as signed: its stream, number, device and
-/// key, first sequence, kind, and the predecessor it follows and the chain
-/// value there.
-#[allow(clippy::too_many_arguments)]
-fn descriptor(
-    scope: &str,
-    stream: &str,
-    epoch: u64,
-    successor: &Successor,
-    start: u64,
-    predecessor: Option<u64>,
-    follows: &[u8; 32],
-) -> Vec<u8> {
-    let mut bytes = b"fastctx-epoch/1".to_vec();
-    put(&mut bytes, scope.as_bytes());
-    put(&mut bytes, stream.as_bytes());
-    bytes.extend_from_slice(&epoch.to_le_bytes());
-    bytes.extend_from_slice(&successor.device);
-    bytes.extend_from_slice(&successor.key);
-    bytes.extend_from_slice(&start.to_le_bytes());
-    put(&mut bytes, successor.kind.name().as_bytes());
-    bytes.extend_from_slice(&predecessor.map_or(u64::MAX, |epoch| epoch).to_le_bytes());
-    bytes.extend_from_slice(follows);
-    bytes
+/// An epoch's descriptor (§2.2), as signed.
+fn descriptor(scope: &str, stream: &str, epoch: u64, successor: &Successor, start: u64, predecessor: Option<u64>, follows: &[u8; 32]) -> Vec<u8> {
+    EpochFact {
+        scope: scope.to_string(),
+        stream: stream.to_string(),
+        epoch,
+        device: successor.device,
+        key: successor.key,
+        start,
+        kind: successor.kind,
+        predecessor,
+        follows: *follows,
+    }
+    .encode()
 }
 
 /// An epoch's row as read.
@@ -274,21 +244,6 @@ pub(super) fn advance(db: &Connection, at: &mut Prefix) -> fastctx_storage::Resu
     Ok(())
 }
 
-/// A gap fact (§8), as signed.
-fn gap_fact(header: (&str, &str, u64), from: u64, to: u64, start: &[u8; 32], follows: &[u8; 32], why: &str) -> Vec<u8> {
-    let (scope, stream, epoch) = header;
-    let mut bytes = b"fastctx-gap/1".to_vec();
-    put(&mut bytes, scope.as_bytes());
-    put(&mut bytes, stream.as_bytes());
-    bytes.extend_from_slice(&epoch.to_le_bytes());
-    bytes.extend_from_slice(&from.to_le_bytes());
-    bytes.extend_from_slice(&to.to_le_bytes());
-    bytes.extend_from_slice(start);
-    bytes.extend_from_slice(follows);
-    put(&mut bytes, why.as_bytes());
-    bytes
-}
-
 impl Library {
     /// Signs the first epoch of `stream` of `scope` for `device` before the
     /// hub took anything of it: a stream begun where the hub was not (a
@@ -453,12 +408,22 @@ impl Library {
                 return Err(invalid("nothing is missing before the cutoff"));
             }
             let (from, to) = (at.next, next.start - 1);
-            let fact = gap_fact((&key, &name, at.epoch), from, to, &at.head, &next.follows, &why);
+            let fact = GapFact {
+                scope: key.clone(),
+                stream: name.clone(),
+                epoch: at.epoch,
+                from,
+                to,
+                start: at.head,
+                follows: next.follows,
+                why: why.clone(),
+            }
+            .encode();
             let signature = signer.sign(&fact);
             db.prepare_cached(
-                "INSERT INTO gaps (stream, epoch, from_sequence, to_sequence, fact, signature) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                "INSERT INTO gaps (stream, epoch, from_sequence, to_sequence, follows, fact, signature) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             )?
-            .execute(params![at.stream, at.epoch as i64, from as i64, to as i64, fact, signature])?;
+            .execute(params![at.stream, at.epoch as i64, from as i64, to as i64, &next.follows[..], fact, signature])?;
             db.prepare_cached(
                 "INSERT INTO cursors (stream, holding, sequence, head) VALUES (?1, ?2, ?3, ?4)
                  ON CONFLICT (stream, holding) DO UPDATE SET sequence = excluded.sequence, head = excluded.head",

@@ -9,6 +9,7 @@
 mod collect;
 mod commit;
 mod exchange;
+mod facts;
 mod frame;
 mod handover;
 mod hub;
@@ -20,6 +21,7 @@ mod receipts;
 mod rejected;
 mod schema;
 mod scopes;
+mod succession;
 mod transfers;
 mod window;
 
@@ -27,7 +29,8 @@ pub use collect::{Collected, Started};
 pub use commit::{Commit, Committed};
 pub use exchange::{Holder, Imported, RawFrame, Verifier};
 pub use frame::{FORMAT, Header, KindRecord, Signer, open};
-pub use handover::{Cutoff, EpochKind, Signed, Successor};
+pub use facts::{EpochFact, EpochKind, GapFact};
+pub use handover::{Cutoff, Signed, Successor};
 pub use hub::{Authorizer, Drained, HubSigner, Received, Refused, Taking};
 pub use ops::{Delivery, Op};
 pub use reads::{Entry, PAGE};
@@ -35,6 +38,7 @@ pub use receipts::{Mark, Receipt, Report, Said};
 pub use rejected::Resubmit;
 pub use window::Pruned;
 pub use scopes::Purged;
+pub use succession::{ENDS_AT_ONCE, HubVerifier, Standing};
 pub use objects::{CHUNK_BYTES, LEASE, Lease, READ_BYTES, ROW_BYTES};
 pub use transfers::Transfer;
 

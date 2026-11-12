@@ -4,10 +4,12 @@
 //!
 //! An import is idempotent by (stream, epoch, first) within the current
 //! holding period: the same frame again writes nothing. The same position
-//! with other records is refused and kept as evidence. A frame past what is
-//! held answers what is missing. A hub or producer imports only frames whose
-//! objects are present (I3); a replica imports them anyway and wants what
-//! it lacks.
+//! with other records is refused and kept as evidence. A frame is taken
+//! only under its epoch's descriptor from the hub, from that epoch's device
+//! and short of any cutoff (§8); a gap fact moves the cursor past a tail
+//! that will never come. A frame past what is held answers what is
+//! missing. A hub or producer imports only frames whose objects are
+//! present (I3); a replica imports them anyway and wants what it lacks.
 
 use super::Library;
 use super::frame::{Header, open};
@@ -42,6 +44,8 @@ pub enum Imported {
     Gap { from: u64, to: u64 },
     /// Its position is held with other records: refused and kept.
     Conflict,
+    /// The hub's descriptor of this epoch is not here: take it first.
+    Epoch(u64),
 }
 
 /// Checks a frame's signature against the key its epoch names.
@@ -142,6 +146,9 @@ impl Library {
                 return Err(invalid("the holding period the frame was asked for in has ended"));
             }
             let stream = stream_id(db, scope_id, &header.stream)?;
+            if let Err(epoch) = super::succession::may_import(db, stream, &header)? {
+                return Ok(Imported::Epoch(epoch));
+            }
             let known: Option<Vec<u8>> = db
                 .prepare_cached("SELECT header FROM frames WHERE stream = ?1 AND epoch = ?2 AND first = ?3 AND holding = ?4")?
                 .query_row(params![stream, header.epoch as i64, header.first as i64, holding], |row| row.get(0))
@@ -172,6 +179,7 @@ impl Library {
                 }
                 None => (0, [0; 32]),
             };
+            let (next, previous) = super::succession::skip_gaps(db, stream, holding, (next, previous))?;
             if header.first < next {
                 return Ok(Imported::Already);
             }

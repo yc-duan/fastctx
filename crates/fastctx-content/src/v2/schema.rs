@@ -39,6 +39,24 @@ CREATE TABLE IF NOT EXISTS epochs (
     descriptor BLOB NOT NULL,
     PRIMARY KEY (stream, epoch)
 ) WITHOUT ROWID;
+-- The hub's signed epoch descriptors and gap facts a holder took (§8).
+CREATE TABLE IF NOT EXISTS known_epochs (
+    stream INTEGER NOT NULL,
+    epoch INTEGER NOT NULL,
+    predecessor INTEGER,
+    fact BLOB NOT NULL,
+    signature BLOB NOT NULL,
+    PRIMARY KEY (stream, epoch)
+) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS known_epochs_by_predecessor ON known_epochs (stream, predecessor);
+CREATE TABLE IF NOT EXISTS known_gaps (
+    stream INTEGER NOT NULL,
+    epoch INTEGER NOT NULL,
+    from_sequence INTEGER NOT NULL,
+    fact BLOB NOT NULL,
+    signature BLOB NOT NULL,
+    PRIMARY KEY (stream, from_sequence)
+) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS frames (
     stream INTEGER NOT NULL,
     epoch INTEGER NOT NULL,
@@ -335,6 +353,7 @@ CREATE TABLE IF NOT EXISTS gaps (
     epoch INTEGER NOT NULL,
     from_sequence INTEGER NOT NULL,
     to_sequence INTEGER NOT NULL,
+    follows BLOB NOT NULL,
     fact BLOB NOT NULL,
     signature BLOB NOT NULL,
     PRIMARY KEY (stream, epoch, from_sequence)
