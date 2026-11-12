@@ -332,6 +332,11 @@ pub struct Letters {
     /// on an answer through those letters stops waiting.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub settled: Option<Timestamp>,
+    /// The last of the hub's letters to the member settled then as not
+    /// delivered: none through it is ever sent, and they go as they can,
+    /// however a deletion of them was cut short (R2).
+    #[serde(default)]
+    pub expired_through: u64,
     /// The member's last session said it reads names of any language
     /// (`fastctx_net::wire::Intent::Session`).
     #[serde(default)]
@@ -394,6 +399,7 @@ impl Letters {
             last_seen: None,
             connected_at: None,
             settled: None,
+            expired_through: 0,
             any_names: false,
             renames: false,
             forgets: false,

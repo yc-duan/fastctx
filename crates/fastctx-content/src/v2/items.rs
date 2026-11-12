@@ -18,14 +18,12 @@ pub(super) const GONE: i64 = 1;
 pub(super) const FLOOR: i64 = 2;
 
 /// Where records are applied: their scope, stream and the scope's current
-/// holding period; into the stream's backfill (`shadow_items`, §28.2)
-/// rather than its index when `shadow`.
+/// holding period.
 #[derive(Clone, Copy, Debug)]
 pub(super) struct Applying {
     pub scope: i64,
     pub stream: i64,
     pub holding: i64,
-    pub shadow: bool,
 }
 
 /// An index row as it stands: its order key, revision, state, packed
@@ -40,9 +38,6 @@ struct Row {
 
 /// Applies `record` at `revision`; whether it changed the index.
 pub(super) fn apply(db: &Connection, at: Applying, revision: u64, record: &KindRecord) -> fastctx_storage::Result<bool> {
-    if at.shadow {
-        return shadow(db, at, revision, record);
-    }
     let record_item = &record.record.item;
     let existing = db
         .prepare_cached("SELECT place, revision, state, objects, holding FROM items WHERE stream = ?1 AND item = ?2")?
@@ -91,37 +86,6 @@ pub(super) fn apply(db: &Connection, at: Applying, revision: u64, record: &KindR
         at.holding
     ])?;
     Ok(true)
-}
-
-/// Applies `record` at `revision` to the stream's backfill: what each item
-/// is as the backfilled frames leave it, nothing readable and nothing
-/// referred to until it goes into the index (`backfill.rs`).
-fn shadow(db: &Connection, at: Applying, revision: u64, record: &KindRecord) -> fastctx_storage::Result<bool> {
-    let (state, body, objects) = match &record.record.state {
-        State::Is { body, objects } => (IS, Some(body.as_slice()), Some(pack(objects))),
-        State::Gone => (GONE, None, None),
-    };
-    let changed = db
-        .prepare_cached(
-            "INSERT INTO shadow_items (stream, holding, item, place, revision, state, kind, schema, body, objects)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
-             ON CONFLICT (stream, holding, item) DO UPDATE SET place = excluded.place, revision = excluded.revision,
-                state = excluded.state, kind = excluded.kind, schema = excluded.schema, body = excluded.body, objects = excluded.objects
-             WHERE excluded.revision > shadow_items.revision",
-        )?
-        .execute(params![
-            at.stream,
-            at.holding,
-            record.record.item,
-            record.record.order,
-            revision as i64,
-            state,
-            record.kind,
-            record.schema,
-            body,
-            objects
-        ])?;
-    Ok(changed > 0)
 }
 
 fn refer(db: &Connection, scope: i64, holding: i64, stream: i64, hash: &[u8; 32]) -> fastctx_storage::Result<()> {

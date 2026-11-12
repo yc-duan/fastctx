@@ -150,12 +150,27 @@ pub(crate) fn recheck(
 
 /// The stream a request is of, if it is of one.
 pub(crate) fn stream_of(request: &Request) -> Option<&str> {
+    // Every request named: one added later is judged here before it is
+    // answered, not passed by (AL03).
     match request {
         Request::Frames { stream, .. }
         | Request::Succession { stream, .. }
         | Request::Epoch { stream, .. }
-        | Request::Takeover { stream, .. } => Some(stream),
-        _ => None,
+        | Request::Takeover { stream, .. }
+        | Request::Window { stream, .. }
+        | Request::Older { stream, .. } => Some(stream),
+        Request::Open { .. }
+        | Request::Describe { .. }
+        | Request::Cleared { .. }
+        | Request::Holdings { .. }
+        | Request::Changes { .. }
+        | Request::Answer { .. }
+        | Request::Take { .. }
+        | Request::Stage { .. }
+        | Request::Cursors { .. }
+        | Request::Streams { .. }
+        | Request::Put { .. }
+        | Request::Get { .. } => None,
     }
 }
 
@@ -648,6 +663,9 @@ pub(crate) fn ask(
                 .window(&scope, &stream, fastctx_content::v2::WINDOW_ITEMS, fastctx_content::v2::WINDOW_BYTES)
                 .map_err(|error| error.to_string())?
                 .ok_or_else(|| format!("{stream} of {scope} is not on the hub"))?;
+            // In the hub's history outside its directory before it is given:
+            // a library put back to before it is found out (II08).
+            assets.checkpoint_now(&kept.owner, &scope).map_err(|error| error.to_string())?;
             // The hub's word on the whole of it, as of its head.
             let word = assets.signer().sign(&window.statement());
             Ok(Reply::Window {

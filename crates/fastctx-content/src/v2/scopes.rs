@@ -138,8 +138,6 @@ impl Library {
                     ("parked", "stream, epoch, first, holding"),
                     ("evidence", "stream, epoch, first, digest, holding"),
                     ("prefix_items", "stream, item, holding"),
-                    ("backfills", "stream, holding"),
-                    ("shadow_items", "stream, holding, item"),
                 ] {
                     done += db
                         .prepare_cached(&format!(

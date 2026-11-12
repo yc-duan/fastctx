@@ -236,7 +236,7 @@ impl Library {
             for hash in &hashes {
                 referring.execute(params![stream, header.epoch as i64, header.first as i64, holding, &hash[..]])?;
             }
-            let at = Applying { scope: scope_id, stream, holding, shadow: false };
+            let at = Applying { scope: scope_id, stream, holding };
             // What was judged of another frame once in this place is not of
             // this one (U04).
             let head = header.chain();
@@ -284,6 +284,10 @@ impl Library {
         };
         // What comes from elsewhere can be had again: it does not wait for
         // the disk (§3).
-        Ok(self.database().write_relaxed_now_at(Priority::Normal, bytes, write)?)
+        let imported = self.database().write_relaxed_now_at(Priority::Normal, bytes, write)?;
+        if matches!(imported, Imported::Applied { .. }) {
+            self.wrote();
+        }
+        Ok(imported)
     }
 }

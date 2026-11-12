@@ -178,6 +178,11 @@ impl State {
             let (lowest, count) = blocking(move || crate::store::letter_span(&directory)).await?;
             self.held = Held { first: lowest.unwrap_or(self.record().next), count };
             self.loaded = true;
+            // Letters settled as never delivered still here go on going.
+            let expired = self.record().expired_through;
+            if expired >= self.held.first && self.held.count > 0 {
+                self.erase_to = Some(self.erase_to.unwrap_or(0).max(expired));
+            }
             self.backlog.held.store(count, Ordering::Relaxed);
             self.backlog.counted.store(true, Ordering::Relaxed);
         }
@@ -198,19 +203,22 @@ impl State {
     async fn erase_through(&mut self, through: u64) -> Result<()> {
         // A deletion still under way goes on to where it was to go: a lower
         // number, as an older `taken` a reconnection brings, never calls it
-        // off (R2).
-        let through = through.max(self.erase_to.take().unwrap_or(0));
+        // off; nor does a deletion that failed part way, the target kept
+        // until it is reached (R2).
+        let through = through.max(self.erase_to.unwrap_or(0)).max(self.record().expired_through);
         let last = through.min(self.record().next.saturating_sub(1));
         let first = self.held.first;
         if self.held.count == 0 || first > last {
+            self.erase_to = None;
             return Ok(());
         }
+        self.erase_to = Some(last);
         let cut = last.min(first.saturating_add(LOOKED_AT_ONCE - 1));
         let directory = self.directory();
         self.settle(blocking(move || remove_letters(&directory, first..=cut)).await)?;
         self.held.first = self.held.first.max(cut + 1);
-        if cut < last && self.held.count > 0 {
-            self.erase_to = Some(last);
+        if cut >= last || self.held.count == 0 {
+            self.erase_to = None;
         }
         Ok(())
     }
@@ -242,7 +250,7 @@ impl State {
         let to = self.to.as_ref().expect("session");
         // Nothing a deletion under way is to take is sent: it was settled
         // as never delivered (R2).
-        let erasing = self.erase_to.map_or(0, |to| to + 1);
+        let erasing = self.erase_to.unwrap_or(0).max(self.record().expired_through) + 1;
         let (from, next) = ((to.window.sent() + 1).max(self.held.first).max(erasing), self.persisted_next);
         if from >= next {
             return Ok(());
@@ -519,7 +527,11 @@ impl State {
                         Ok(senders)
                     })
                     .await?;
+                    // What is settled is kept with when: through which
+                    // letter none is sent, whatever comes between (R2).
+                    let through = self.record().next.saturating_sub(1);
                     self.record_mut().settled = Some(jiff::Timestamp::now());
+                    self.record_mut().expired_through = through;
                     self.persist().await?;
                     let count = self.held.count;
                     self.erase_through(u64::MAX).await?;
@@ -559,7 +571,7 @@ pub(super) async fn run(mut state: State, mut commands: mpsc::Receiver<super::Qu
         // A pump or a deletion cut short at its look goes on while nothing
         // else is asked.
         while done.is_ok() && !retiring && (state.unfinished || state.erase_to.is_some()) && commands.is_empty() {
-            done = match state.erase_to.take() {
+            done = match state.erase_to {
                 Some(through) => state.erase_through(through).await,
                 None => state.pump().await,
             };

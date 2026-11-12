@@ -6,6 +6,7 @@
 
 pub(crate) mod apart;
 pub(crate) mod bodies;
+mod brought;
 pub(crate) mod chain;
 #[cfg(test)]
 pub(crate) mod drill_kinds;
@@ -136,6 +137,9 @@ pub(crate) struct Assets {
     turn: Mutex<Option<Owner>>,
     /// Within each owner, the scope the last round stopped at.
     scope_turns: Mutex<BTreeMap<Owner, String>>,
+    /// One checkpoint written at a time: the round's, or one a window asks
+    /// for (II08).
+    checkpointing: Mutex<()>,
     /// The machines that read each scope lately: told when a stream of it
     /// moves (design §6.6).
     holders: Mutex<BTreeMap<String, BTreeSet<fastctx_types::MachineName>>>,
@@ -178,6 +182,7 @@ impl Assets {
             changed: Mutex::new(BTreeMap::new()),
             turn: Mutex::new(None),
             scope_turns: Mutex::new(BTreeMap::new()),
+            checkpointing: Mutex::new(()),
             holders: Mutex::new(BTreeMap::new()),
             followers: Mutex::new(BTreeMap::new()),
             receipted: Mutex::new(BTreeMap::new()),
@@ -197,6 +202,22 @@ impl Assets {
             .read_now(|c| Ok(c.prepare_cached("SELECT why FROM asset_seal WHERE id = 1")?.query_row([], |row| row.get(0)).optional()?))
             .map_err(io::Error::other)?;
         if let Some(why) = kept {
+            assets.witness.freeze();
+            *assets.sealed.lock().expect("seal") = Some(why);
+            return Ok(assets);
+        }
+        // What was brought and kept, the seal it showed not yet written as
+        // the hub stopped, seals it now as it would have (AL01).
+        if let Some(why) = brought::put_back(&assets)? {
+            let (kept, at) = (why.clone(), jiff::Timestamp::now().as_millisecond());
+            assets
+                .control
+                .write_now(512, move |c| {
+                    c.prepare_cached("INSERT OR REPLACE INTO asset_seal (id, why, at) VALUES (1, ?1, ?2)")?
+                        .execute(fastctx_storage::rusqlite::params![kept, at])?;
+                    Ok(())
+                })
+                .map_err(io::Error::other)?;
             assets.witness.freeze();
             *assets.sealed.lock().expect("seal") = Some(why);
             return Ok(assets);
@@ -1087,7 +1108,10 @@ impl Assets {
         if batch.is_empty() {
             return Ok(None);
         }
-        let done = self.checkpoint_of(&batch);
+        let done = {
+            let _one = self.checkpointing.lock().expect("checkpointing");
+            self.checkpoint_of(&batch)
+        };
         if done.is_err() {
             let mut again = self.changed.lock().expect("changed scopes");
             for (owner, scopes) in batch {
@@ -1095,6 +1119,21 @@ impl Assets {
             }
         }
         done
+    }
+
+    /// A checkpoint of `scope` of `owner` now, as a window of it is given
+    /// (II08): what the window shows is in the hub's history outside its
+    /// directory before any device holds it, so a library put back to before
+    /// it is found out as it opens. Nothing while sealed. Call on a thread
+    /// that may block.
+    pub(crate) fn checkpoint_now(&self, owner: &Owner, scope: &str) -> io::Result<()> {
+        if self.sealed().is_some() {
+            return Ok(());
+        }
+        self.catch_up()?;
+        let batch = BTreeMap::from([(owner.clone(), BTreeSet::from([scope.to_string()]))]);
+        let _one = self.checkpointing.lock().expect("checkpointing");
+        self.checkpoint_of(&batch).map(|_| ())
     }
 
     fn checkpoint_of(&self, batch: &BTreeMap<Owner, BTreeSet<String>>) -> io::Result<Option<(u64, [u8; 32])>> {

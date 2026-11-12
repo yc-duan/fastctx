@@ -90,7 +90,14 @@ pub(crate) async fn here(node: &Arc<Node>, request: TimelineAsk) -> Result<Timel
     if !about.world_managed() {
         return Err(Failure::refused(crate::speech::OWN_SESSION));
     }
-    if matches!(&request, TimelineAsk::Moved { .. } | TimelineAsk::Page { from: TimelineFrom::Latest, .. }) {
+    // Read from the content timeline, it is brought to the history as it
+    // is read; the asset library's is made from its sources (§28.3). A lab
+    // keeps the content timeline made as it is read all the same, to compare
+    // the two by.
+    if matches!(&request, TimelineAsk::Moved { .. } | TimelineAsk::Page { from: TimelineFrom::Latest, .. })
+        && (std::env::var_os("FASTCTX_LAB_CONTENT_TIMELINE").is_some()
+            || !fastctx_platform::roles::in_place("choosing a timeline", || reads::from_assets(node, request.resident()))?)
+    {
         super::wanted_content(node, request.resident());
     }
     match request {

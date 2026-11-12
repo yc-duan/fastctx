@@ -1,6 +1,8 @@
 //! A stream's recent window and the pages below it (design §9, §28.2): what
 //! a hub gives of a stream as it stands, read in one transaction, and how a
-//! device takes it in.
+//! light device takes it in. A device that holds whole streams takes their
+//! frames in order instead (§28.8): what is judged by a record's item as it
+//! stood before is judged right only after every frame before it.
 //!
 //! A window is the stream's newest items, by order key, as they stand at
 //! the stream's head H, with H itself: its sequence, chain value, bytes and
@@ -10,8 +12,8 @@
 //! not, from a frame before H, did not stand there at H — deleted, or moved
 //! below the window — so its row goes and a revision floor just past its
 //! own takes the place: nothing as old comes back, whatever is newer does.
-//! The stream's frames then go on from H; what lies between where the
-//! index was whole and H is filled in behind (`backfill.rs`).
+//! The stream's frames then go on from H; what lies below the window comes
+//! a page at a time, as it is read.
 //!
 //! A page is items below a key, as they stand when the hub answers, with
 //! the stream's sequence then: one that stands before where the device's
@@ -77,11 +79,11 @@ pub enum Installed {
     /// The stream here is at its head or past it: nothing to do.
     Behind,
     /// Installed; frames go on from its head.
-    Installed {
-        /// What is to be filled in below it, from and to, when asked to.
-        backfill: Option<(u64, u64)>,
-    },
+    Installed,
 }
+
+/// Rows of what a window lacks taken at once, a batch at a time (G09).
+const HIDDEN_AT_ONCE: i64 = 1_000;
 
 /// A held row a window has not: order key, identity, revision and packed
 /// objects.
@@ -199,30 +201,58 @@ fn hide_unstood(
     high: Option<&(Vec<u8>, Vec<u8>)>,
     through: u64,
 ) -> fastctx_storage::Result<()> {
-    let unstood: Vec<Unstood> = {
-        let mut statement = db.prepare_cached(
-            "SELECT place, item, revision, objects FROM items
-             WHERE stream = ?1 AND holding = ?2 AND state = ?3 AND revision < ?4
-               AND (?5 = 0 OR (place, item) >= (?6, ?7)) AND (?8 = 0 OR (place, item) < (?9, ?10))",
-        )?;
-        let (low_place, low_item) = low.cloned().unwrap_or_default();
-        let (high_place, high_item) = high.cloned().unwrap_or_default();
-        let rows = statement.query_map(
-            params![stream, holding, IS, through as i64, low.is_some(), low_place, low_item, high.is_some(), high_place, high_item],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
-        )?;
-        rows.collect::<std::result::Result<Vec<_>, _>>()?.into_iter().filter(|(_, item, _, _)| !standing.contains(item)).collect()
-    };
-    for (place, item, revision, objects) in unstood {
-        if let Some(objects) = objects {
-            for object in unpack(&objects).map_err(invalid)? {
-                unrefer(db, scope, holding, stream, &object.hash)?;
+    let (low_place, low_item) = low.cloned().unwrap_or_default();
+    let (high_place, high_item) = high.cloned().unwrap_or_default();
+    // A batch at a time, in key order from where the last ended: what is
+    // held in memory stays bounded however much is cached here (G09).
+    let mut after: Option<(Vec<u8>, Vec<u8>)> = None;
+    loop {
+        let rows: Vec<Unstood> = {
+            let mut statement = db.prepare_cached(
+                "SELECT place, item, revision, objects FROM items
+                 WHERE stream = ?1 AND holding = ?2 AND state = ?3 AND revision < ?4
+                   AND (?5 = 0 OR (place, item) >= (?6, ?7)) AND (?8 = 0 OR (place, item) < (?9, ?10))
+                   AND (?11 = 0 OR (place, item) > (?12, ?13))
+                 ORDER BY place, item LIMIT ?14",
+            )?;
+            let (going, (after_place, after_item)) = (after.is_some(), after.clone().unwrap_or_default());
+            let rows = statement.query_map(
+                params![
+                    stream,
+                    holding,
+                    IS,
+                    through as i64,
+                    low.is_some(),
+                    low_place,
+                    low_item,
+                    high.is_some(),
+                    high_place,
+                    high_item,
+                    going,
+                    after_place,
+                    after_item,
+                    HIDDEN_AT_ONCE
+                ],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )?;
+            rows.collect::<std::result::Result<Vec<_>, _>>()?
+        };
+        let Some(last) = rows.last() else { return Ok(()) };
+        after = Some((last.0.clone(), last.1.clone()));
+        let full = rows.len() as i64 == HIDDEN_AT_ONCE;
+        for (place, item, revision, objects) in rows.into_iter().filter(|(_, item, _, _)| !standing.contains(item)) {
+            if let Some(objects) = objects {
+                for object in unpack(&objects).map_err(invalid)? {
+                    unrefer(db, scope, holding, stream, &object.hash)?;
+                }
             }
+            db.prepare_cached("UPDATE items SET state = ?4, revision = ?5, body = NULL, objects = NULL WHERE stream = ?1 AND place = ?2 AND item = ?3")?
+                .execute(params![stream, place, item, FLOOR, revision + 1])?;
         }
-        db.prepare_cached("UPDATE items SET state = ?4, revision = ?5, body = NULL, objects = NULL WHERE stream = ?1 AND place = ?2 AND item = ?3")?
-            .execute(params![stream, place, item, FLOOR, revision + 1])?;
+        if !full {
+            return Ok(());
+        }
     }
-    Ok(())
 }
 
 fn record(entry: &Entry) -> KindRecord {
@@ -245,6 +275,9 @@ impl Library {
         let generation = self.generation()?;
         let (key, name) = (scope.to_string(), stream.to_string());
         Ok(self.database().read_now(move |db| {
+            // The head and the items as of one moment (AL05).
+            let snapshot = db.unchecked_transaction()?;
+            let db: &Connection = &snapshot;
             let Some((scope_id, _, Some(holding))) = held(db, &key)? else { return Ok(None) };
             let Some((stream_id, next, head)): Option<(i64, i64, Option<Vec<u8>>)> = db
                 .prepare_cached("SELECT id, next, head FROM streams WHERE scope = ?1 AND name = ?2")?
@@ -282,6 +315,9 @@ impl Library {
     pub fn older(&self, scope: &str, stream: &str, before: Option<(Vec<u8>, Vec<u8>)>, limit: usize) -> Result<Option<Older>> {
         let (key, name) = (scope.to_string(), stream.to_string());
         Ok(self.database().read_now(move |db| {
+            // The head and the items as of one moment (AL05).
+            let snapshot = db.unchecked_transaction()?;
+            let db: &Connection = &snapshot;
             let Some((scope_id, _, Some(holding))) = held(db, &key)? else { return Ok(None) };
             let Some((stream_id, next)): Option<(i64, i64)> = db
                 .prepare_cached("SELECT id, next FROM streams WHERE scope = ?1 AND name = ?2")?
@@ -296,15 +332,17 @@ impl Library {
     }
 
     /// Installs `window`, which the hub's word stood behind, into the
-    /// holding period `holding` it was asked for in (design §28.2): its items
-    /// by the revision rule; each held item of its keys it has not, from a
-    /// frame before its head, hidden behind a floor just past its own
-    /// revision; the stream's frames going on from its head. With
-    /// `backfill`, what lies between where the index was whole and the head
-    /// is to be filled in: one already under way goes on, to this head.
-    pub fn install_window(&self, window: Window, holding: i64, backfill: bool) -> Result<Installed> {
+    /// holding period `holding` it was asked for in, on a light device
+    /// (design §9, §28.2): its items by the revision rule; each held item of
+    /// its keys it has not, from a frame before its head, hidden behind a
+    /// floor just past its own revision; the stream's frames going on from
+    /// its head, what is below it read a page at a time. A window at the head
+    /// already here is nothing to it unless `again`: the hub indexed the
+    /// stream's records again, or its library is of another generation
+    /// (§28.1, G01).
+    pub fn install_window(&self, window: Window, holding: i64, again: bool) -> Result<Installed> {
         let bytes = window.entries.iter().map(|entry| entry.body.len() + 256).sum::<usize>() + 4096;
-        Ok(self.database().write_now_at(Priority::Normal, bytes, move |db| {
+        let installed = self.database().write_now_at(Priority::Normal, bytes, move |db| {
             let Some((scope_id, state, Some(held_in))) = held(db, &window.scope)? else {
                 return Err(invalid("the scope is not held here"));
             };
@@ -312,21 +350,15 @@ impl Library {
                 return Err(invalid("the holding period the window was asked for in has ended"));
             }
             let stream = super::exchange::stream_id(db, scope_id, &window.stream)?;
-            let cursor: Option<(i64, Option<Vec<u8>>)> = db
-                .prepare_cached("SELECT sequence, head FROM cursors WHERE stream = ?1 AND holding = ?2")?
-                .query_row(params![stream, holding], |row| Ok((row.get(0)?, row.get(1)?)))
-                .optional()?;
-            let (here, here_head) = match cursor {
-                Some((sequence, head)) => {
-                    let head: [u8; 32] = head.unwrap_or_default().try_into().map_err(|_| invalid("a malformed cursor"))?;
-                    (sequence as u64 + 1, head)
-                }
-                None => (0, [0; 32]),
-            };
-            if here >= window.next {
+            let here: u64 = db
+                .prepare_cached("SELECT sequence FROM cursors WHERE stream = ?1 AND holding = ?2")?
+                .query_row(params![stream, holding], |row| row.get::<_, i64>(0))
+                .optional()?
+                .map_or(0, |sequence| sequence as u64 + 1);
+            if here > window.next || (here == window.next && !again) {
                 return Ok(Installed::Behind);
             }
-            let at = Applying { scope: scope_id, stream, holding, shadow: false };
+            let at = Applying { scope: scope_id, stream, holding };
             want(db, scope_id, &window.scope, &window.entries)?;
             let mut standing = HashSet::new();
             for entry in &window.entries {
@@ -349,41 +381,14 @@ impl Library {
                  ON CONFLICT (stream) DO UPDATE SET floor = excluded.floor, head = excluded.head",
             )?
             .execute(params![stream, window.next as i64, &window.head[..]])?;
-            if !backfill {
-                return Ok(Installed::Installed { backfill: None });
-            }
-            let under_way: Option<(String, i64, Vec<u8>, i64)> = db
-                .prepare_cached("SELECT generation, from_next, from_head, reached_next FROM backfills WHERE stream = ?1 AND holding = ?2")?
-                .query_row(params![stream, holding], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)))
-                .optional()?;
-            match under_way {
-                // The same generation: what was filled in stands, and goes on
-                // to this head.
-                Some((generation, _, _, reached)) if generation == window.generation => {
-                    db.prepare_cached("UPDATE backfills SET to_next = ?3, to_head = ?4 WHERE stream = ?1 AND holding = ?2")?
-                        .execute(params![stream, holding, window.next as i64, &window.head[..]])?;
-                    Ok(Installed::Installed { backfill: Some((reached as u64, window.next)) })
-                }
-                // Another generation, or none: filled in afresh from where the
-                // index was whole — under way, where it began (E04).
-                other => {
-                    let (from, from_head) = match other {
-                        Some((_, from, from_head, _)) => (from, from_head),
-                        None => (here as i64, here_head.to_vec()),
-                    };
-                    db.prepare_cached("DELETE FROM shadow_items WHERE stream = ?1 AND holding = ?2")?.execute(params![stream, holding])?;
-                    db.prepare_cached(
-                        "INSERT INTO backfills (stream, holding, generation, from_next, from_head, to_next, to_head, reached_next, reached_head)
-                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?4, ?5)
-                         ON CONFLICT (stream, holding) DO UPDATE SET generation = excluded.generation, from_next = excluded.from_next,
-                            from_head = excluded.from_head, to_next = excluded.to_next, to_head = excluded.to_head,
-                            reached_next = excluded.reached_next, reached_head = excluded.reached_head",
-                    )?
-                    .execute(params![stream, holding, window.generation, from, from_head, window.next as i64, &window.head[..]])?;
-                    Ok(Installed::Installed { backfill: Some((from as u64, window.next)) })
-                }
-            }
-        })?)
+            // What stood before its head came in: readers read anew.
+            super::view::rebased(db, stream)?;
+            Ok(Installed::Installed)
+        })?;
+        if installed != Installed::Behind {
+            self.wrote();
+        }
+        Ok(installed)
     }
 
     /// Takes in `older` for the holding period `holding`: its items by the
@@ -391,7 +396,7 @@ impl Library {
     /// began is dropped: whether false.
     pub fn install_older(&self, older: Older, holding: i64) -> Result<bool> {
         let bytes = older.entries.iter().map(|entry| entry.body.len() + 256).sum::<usize>() + 1024;
-        Ok(self.database().write_now_at(Priority::Normal, bytes, move |db| {
+        let taken = self.database().write_now_at(Priority::Normal, bytes, move |db| {
             let Some((scope_id, state, Some(held_in))) = held(db, &older.scope)? else {
                 return Err(invalid("the scope is not held here"));
             };
@@ -405,7 +410,7 @@ impl Library {
                 return Ok(false);
             }
             want(db, scope_id, &older.scope, &older.entries)?;
-            let at = Applying { scope: scope_id, stream, holding, shadow: false };
+            let at = Applying { scope: scope_id, stream, holding };
             let mut standing = HashSet::new();
             for entry in &older.entries {
                 standing.insert(entry.item.clone());
@@ -418,8 +423,13 @@ impl Library {
                 return Ok(true);
             }
             hide_unstood(db, scope_id, stream, holding, &standing, low.as_ref(), older.before.as_ref(), older.through)?;
+            super::view::rebased(db, stream)?;
             Ok(true)
-        })?)
+        })?;
+        if taken {
+            self.wrote();
+        }
+        Ok(taken)
     }
 }
 

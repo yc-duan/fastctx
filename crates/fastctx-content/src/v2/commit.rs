@@ -145,7 +145,7 @@ impl Library {
                     earlier.insert(item.clone(), super::hub::after(record, next + offset as u64));
                 }
             }
-            let at = Applying { scope, stream, holding, shadow: false };
+            let at = Applying { scope, stream, holding };
             let mut first = next;
             for frame in &sealed {
                 let header = Header {
@@ -223,6 +223,7 @@ impl Library {
         if !committed.duplicate {
             self.0.committed.lock().unwrap_or_else(std::sync::PoisonError::into_inner).insert(scope_key);
         }
+        self.wrote();
         Ok(committed)
     }
 }

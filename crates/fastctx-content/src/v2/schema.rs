@@ -9,7 +9,7 @@
 
 /// The layout of the tables this build makes (`layout.rs`): changed with
 /// every change to them until the layout is settled (plan 3-3).
-pub(crate) const LAYOUT: &str = "2026-11-12.3";
+pub(crate) const LAYOUT: &str = "2026-11-12.5";
 
 /// Made before anything else as the library opens (`layout.rs`): where its
 /// layout is stamped. Nothing is written when it is there already.
@@ -73,6 +73,10 @@ CREATE TABLE IF NOT EXISTS streams (
     -- stream is in a later epoch, what waits needs a new one first.
     rejected_at INTEGER,
     rejected_epoch INTEGER,
+    -- How often the stream's index took in what is older than where readers
+    -- stood — a window, a backfill merged, records indexed again — so they
+    -- read it anew (`view.rs`).
+    rebased INTEGER NOT NULL DEFAULT 0,
     UNIQUE (scope, name)
 );
 CREATE TABLE IF NOT EXISTS epochs (
@@ -187,6 +191,7 @@ CREATE TABLE IF NOT EXISTS items (
 ) WITHOUT ROWID;
 CREATE UNIQUE INDEX IF NOT EXISTS items_by_identity ON items (stream, item);
 CREATE INDEX IF NOT EXISTS items_floors ON items (stream, revision) WHERE state = 2;
+CREATE INDEX IF NOT EXISTS items_by_revision ON items (stream, holding, revision);
 CREATE TABLE IF NOT EXISTS object_refs (
     scope INTEGER NOT NULL,
     holding INTEGER NOT NULL,
@@ -296,35 +301,6 @@ CREATE TABLE IF NOT EXISTS retention (
     floor INTEGER NOT NULL,
     head BLOB
 );
--- What a stream's window left to fill in below it, on a device (design
--- §28.2): from where the index was whole, to the window's head, reached so
--- far, each as (the sequence next, its chain value). Its frames' records go
--- into `shadow_items` until all are in, then into the index in batches.
-CREATE TABLE IF NOT EXISTS backfills (
-    stream INTEGER NOT NULL,
-    holding INTEGER NOT NULL,
-    generation TEXT NOT NULL,
-    from_next INTEGER NOT NULL,
-    from_head BLOB NOT NULL,
-    to_next INTEGER NOT NULL,
-    to_head BLOB NOT NULL,
-    reached_next INTEGER NOT NULL,
-    reached_head BLOB NOT NULL,
-    PRIMARY KEY (stream, holding)
-) WITHOUT ROWID;
-CREATE TABLE IF NOT EXISTS shadow_items (
-    stream INTEGER NOT NULL,
-    holding INTEGER NOT NULL,
-    item BLOB NOT NULL,
-    place BLOB NOT NULL,
-    revision INTEGER NOT NULL,
-    state INTEGER NOT NULL,
-    kind INTEGER NOT NULL,
-    schema INTEGER NOT NULL,
-    body BLOB,
-    objects BLOB,
-    PRIMARY KEY (stream, holding, item)
-) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS coverage (
     scope INTEGER NOT NULL,
     low BLOB NOT NULL,

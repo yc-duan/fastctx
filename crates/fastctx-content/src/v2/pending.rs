@@ -107,7 +107,7 @@ impl Library {
                         let header = Header::decode(&header).map_err(invalid)?;
                         if header.chain() == head {
                             gone = false;
-                            let at = Applying { scope, stream, holding, shadow: false };
+                            let at = Applying { scope, stream, holding };
                             let records = open(&header, &body).map_err(invalid)?;
                             let refused = refused(db, stream, epoch as u64, first as u64, &head)?;
                             let fate = |offset: usize, record: &KindRecord| {
@@ -144,6 +144,11 @@ impl Library {
                             if hub && went > 0 {
                                 super::changes::moved(db, stream, 0, true)?;
                             }
+                            // Records from before where readers stood came
+                            // in: they read anew.
+                            if went > 0 {
+                                super::view::rebased(db, stream)?;
+                            }
                             done += went;
                         }
                     }
@@ -171,6 +176,9 @@ impl Library {
             blocked = passing;
             kept_history = history;
             applied += page;
+            if page > 0 {
+                self.wrote();
+            }
             match last {
                 Some(last) => after = last,
                 None => return Ok(applied),

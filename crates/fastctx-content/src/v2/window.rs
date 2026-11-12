@@ -52,7 +52,7 @@ impl Library {
                 .query_row(params![scope_id, stream], |row| row.get(0))
                 .optional()?
                 .ok_or_else(|| invalid("no such stream"))?;
-            let at = Applying { scope: scope_id, stream: stream_id, holding, shadow: false };
+            let at = Applying { scope: scope_id, stream: stream_id, holding };
             let mut pruned = Pruned::default();
             let mut floor: Option<(i64, Vec<u8>)> = None;
             // A few frames at a time, from the first: what is kept may be
@@ -156,15 +156,19 @@ impl Library {
     /// after it come again (§7.5).
     pub fn truncate(&self, scope: &str, stream: &str, through: Option<u64>) -> Result<()> {
         let (scope, stream) = (scope.to_string(), stream.to_string());
-        Ok(self.database().write_now_at(Priority::Normal, 4096, move |db| {
+        self.database().write_now_at(Priority::Normal, 4096, move |db| {
             let Some((scope_id, _, Some(holding))) = held(db, &scope)? else { return Err(invalid("the scope is not held here")) };
             let stream_id: i64 = db
                 .prepare_cached("SELECT id FROM streams WHERE scope = ?1 AND name = ?2")?
                 .query_row(params![scope_id, stream], |row| row.get(0))
                 .optional()?
                 .ok_or_else(|| invalid("no such stream"))?;
-            truncate_in(db, scope_id, holding, stream_id, through)
-        })?)
+            truncate_in(db, scope_id, holding, stream_id, through)?;
+            // Cut back and indexed again from what is left: readers read anew.
+            super::view::rebased(db, stream_id)
+        })?;
+        self.wrote();
+        Ok(())
     }
 }
 
@@ -223,6 +227,6 @@ pub(super) fn truncate_in(
     // a place cut away is one the hub does not have (AA01).
     db.prepare_cached("UPDATE outbox SET uploaded = MIN(uploaded, ?2) WHERE stream = ?1")?
         .execute(params![stream_id, keep + 1])?;
-    super::rejected::rebuild(db, Applying { scope: scope_id, stream: stream_id, holding, shadow: false })?;
+    super::rejected::rebuild(db, Applying { scope: scope_id, stream: stream_id, holding })?;
     tidy_wanted(db, scope_id, holding)
 }

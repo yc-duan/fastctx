@@ -63,8 +63,17 @@ fn failure(error: impl std::fmt::Display) -> Failure {
     Failure::new(error.to_string())
 }
 
+/// Whether the conversation's timeline is read from the asset library
+/// (`local`), not the content timeline.
+pub(crate) fn from_assets(node: &Node, resident: &ResidentId) -> Result<bool, Failure> {
+    Ok(super::local::held(node, resident)?.is_some())
+}
+
 /// A completed reading always installs a checkpoint, even without a host stamp.
 pub(crate) fn initializing(node: &Node, resident: &ResidentId) -> Result<bool, Failure> {
+    if from_assets(node, resident)? {
+        return Ok(false);
+    }
     node.content()?.checkpoint(&super::checkpoint(resident.as_str())).map(|state| state.is_none()).map_err(failure)
 }
 
@@ -77,6 +86,9 @@ pub(crate) fn page(
     max_items: u32,
     max_bytes: u32,
 ) -> Result<Read, Failure> {
+    if let Some(held) = super::local::held(node, resident)? {
+        return super::local::page(&held, anchor, max_items.clamp(1, PAGE_ITEMS), max_bytes.min(PAGE_BYTES));
+    }
     let page = node
         .content()?
         .page(&super::stream(resident), anchor, max_items.clamp(1, PAGE_ITEMS), max_bytes.min(PAGE_BYTES))
@@ -98,7 +110,7 @@ pub(crate) fn page(
 
 /// What a timeline record's body shows: the event, or what stands for one
 /// kept whole as an object.
-fn likeness(body: &[u8]) -> Option<[u8; 32]> {
+pub(super) fn likeness(body: &[u8]) -> Option<[u8; 32]> {
     match body.split_first()? {
         (&EVENT, encoded) => {
             let event = serde_json::from_slice(encoded).ok()?;
@@ -111,7 +123,7 @@ fn likeness(body: &[u8]) -> Option<[u8; 32]> {
     }
 }
 
-fn shown(body: &[u8], objects: &[ObjectRef]) -> Result<Shown, Failure> {
+pub(super) fn shown(body: &[u8], objects: &[ObjectRef]) -> Result<Shown, Failure> {
     match body.split_first() {
         Some((&EVENT, event)) => Ok(Shown::Event(event.to_vec())),
         Some((&OVERSIZED, told)) => {
@@ -137,6 +149,9 @@ pub(crate) fn changes(
     max_items: u32,
     max_bytes: u32,
 ) -> Result<Option<Changed>, Failure> {
+    if let Some(held) = super::local::held(node, resident)? {
+        return super::local::changes(&held, after, max_items.clamp(1, PAGE_ITEMS), max_bytes.min(PAGE_BYTES));
+    }
     let read = node
         .content()?
         .changes(&super::stream(resident), after, max_items.clamp(1, PAGE_ITEMS), max_bytes.min(PAGE_BYTES))
@@ -169,6 +184,9 @@ pub(crate) async fn moved(
     after: u64,
     within: Duration,
 ) -> Result<Option<u64>, Failure> {
+    if let Some(held) = super::local::held(node, resident)? {
+        return super::local::moved(&held, after, within).await;
+    }
     node.content()?.moved(&super::stream(resident), after, within).await.map_err(failure)
 }
 
@@ -181,6 +199,11 @@ pub(crate) fn object(
     offset: u64,
     length: u32,
 ) -> Result<Option<Vec<u8>>, Failure> {
+    if let Some(held) = super::local::held(node, resident)?
+        && let Some(bytes) = super::local::object(&held, hash, offset, length)?
+    {
+        return Ok(Some(bytes));
+    }
     let content = node.content()?;
     if !content.refers(&super::stream(resident).scope, hash).map_err(failure)? {
         return Ok(None);

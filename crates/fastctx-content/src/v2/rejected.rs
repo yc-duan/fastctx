@@ -521,6 +521,6 @@ pub(super) fn rejected_in(
         .execute(params![stream_id, holding, first as i64 - 1, before])?;
     db.prepare_cached("UPDATE outbox SET uploaded = MIN(uploaded, ?2) WHERE stream = ?1")?
         .execute(params![stream_id, first as i64])?;
-    rebuild(db, Applying { scope: scope_id, stream: stream_id, holding, shadow: false })?;
+    rebuild(db, Applying { scope: scope_id, stream: stream_id, holding })?;
     Ok(position as usize)
 }

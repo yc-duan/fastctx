@@ -297,10 +297,6 @@ pub(super) fn hidden_before(db: &Connection, stream: i64, holding: i64, item: &[
 /// the state this period's prefix gives its item, for what is judged
 /// against it later.
 pub(super) fn hidden_by_floor(db: &Connection, at: Applying, revision: u64, record: &KindRecord) -> fastctx_storage::Result<()> {
-    // A backfill's records meet the index only as they go into it.
-    if at.shadow {
-        return Ok(());
-    }
     let earlier: Option<i64> = db
         .prepare_cached("SELECT revision FROM items WHERE stream = ?1 AND item = ?2 AND (holding != ?3 OR state = ?4)")?
         .query_row(params![at.stream, record.record.item, at.holding, super::items::FLOOR], |row| row.get(0))
@@ -523,7 +519,7 @@ fn apply_frame(
     for object in objects_of(records) {
         referring.execute(params![at.stream, header.epoch as i64, header.first as i64, holding, &object.hash[..]])?;
     }
-    let applying = Applying { scope, stream: at.stream, holding, shadow: false };
+    let applying = Applying { scope, stream: at.stream, holding };
     for (offset, record) in records.iter().enumerate() {
         if !authorizer.knows(record.kind, record.schema) || waiting.contains(&offset) {
             // Kept in its frame, out of the index, until this hub knows its

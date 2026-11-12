@@ -261,12 +261,16 @@ async fn pass(node: &Arc<Node>, hub: &HubId, link: &Arc<Link>, network: &Network
     };
     let mut owners = stood.clone();
     let mut scopes = Vec::new();
+    // Each scope's owner library: one held here with no place in it kept yet
+    // is asked where it stands every pass until it is (II01).
+    let mut owner_of: std::collections::HashMap<String, String> = std::collections::HashMap::new();
     for (scope, descriptor, holding) in held {
         let fresh = unpulled.contains(&scope);
-        if (whole || fresh)
-            && let Ok(read) = serde_json::from_slice::<wire::Descriptor>(&descriptor)
-        {
-            owners.insert(read.owner);
+        if let Ok(read) = serde_json::from_slice::<OwnerOf>(&descriptor) {
+            if whole || fresh || !stood.contains(&read.owner) {
+                owners.insert(read.owner.clone());
+            }
+            owner_of.insert(scope.clone(), read.owner);
         }
         // Held, yet not among all a whole listing says this machine may
         // hold: asked after by itself, the hub says whether it may hold it
@@ -290,6 +294,9 @@ async fn pass(node: &Arc<Node>, hub: &HubId, link: &Arc<Link>, network: &Network
     if untold {
         failed.get_or_insert("where the hub's owner libraries stand could not be asked".to_string());
     }
+    // The owner libraries some scope of which this pass did not go through
+    // whole: where they stand is not taken as reached (II01).
+    let mut short: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     // A scope that fails holds up none after it; the pass reports the first.
     for (scope, holding, first) in &scopes {
         // Each step goes on whatever the one before met; a revoked scope
@@ -318,12 +325,21 @@ async fn pass(node: &Arc<Node>, hub: &HubId, link: &Arc<Link>, network: &Network
         // (AA04); nothing comes down.
         if isolated.is_some() {
             let pulled = pulled.and_then(|(_, failed)| failed.map_or(Ok(()), Err));
+            let mut whole_here = true;
             for done in [uploaded, pulled] {
                 if let Err(why) = done
                     && !why.starts_with(REVOKED)
                 {
+                    whole_here = false;
                     failed.get_or_insert(format!("{scope}: {why}"));
                 }
+            }
+            // What the hub still lacks goes back next pass too (II02).
+            let mut relook = assets.relook.lock().expect("relook");
+            if whole_here {
+                relook.remove(scope);
+            } else {
+                relook.insert(scope.clone());
             }
             continue;
         }
@@ -367,7 +383,11 @@ async fn pass(node: &Arc<Node>, hub: &HubId, link: &Arc<Link>, network: &Network
             }
         }
         // Not gone through whole, it is looked at by itself again next pass
-        // until it is (HH03, HH06).
+        // until it is (HH03, HH06), and its owner library is not taken as
+        // reached.
+        if !whole_here && let Some(owner) = owner_of.get(scope) {
+            short.insert(owner.clone());
+        }
         let mut relook = assets.relook.lock().expect("relook");
         if whole_here {
             relook.remove(scope);
@@ -378,29 +398,19 @@ async fn pass(node: &Arc<Node>, hub: &HubId, link: &Arc<Link>, network: &Network
     if whole && !untold {
         assets.looked.lock().expect("looked").insert(hub.clone(), std::time::Instant::now());
     }
-    // Looked at without a failure, each library stands where it stood as
-    // the look began.
-    if failed.is_none() {
-        for (owner, generation, top, at) in marks.unwrap_or_default() {
-            let theirs = hub.as_str().to_string();
-            blocking(library, move |library| library.fed(&theirs, &owner, &generation, top, at)).await?;
+    // Each library every scope of which was gone through whole stands
+    // where it stood as the look began (II01).
+    for (owner, generation, top, at) in marks.unwrap_or_default() {
+        if short.contains(&owner) {
+            continue;
         }
+        let theirs = hub.as_str().to_string();
+        blocking(library, move |library| library.fed(&theirs, &owner, &generation, top, at)).await?;
     }
     if !whole && isolated.is_none() {
         for owner in &stood {
             if let Err(why) = feed(assets, hub, link, &key, owner).await {
                 failed.get_or_insert(format!("what changed in {owner}: {why}"));
-            }
-        }
-    }
-    // What windows left below them is filled in behind the newest, a share
-    // each pass; more to do, the next pass comes at once (design §28.2).
-    if isolated.is_none() {
-        match fill_in(assets, hub, link).await {
-            Ok(true) => wake(node, hub),
-            Ok(false) => {}
-            Err(why) => {
-                failed.get_or_insert(format!("filling in below a window: {why}"));
             }
         }
     }
@@ -1337,13 +1347,6 @@ async fn pull_stream(
         let scope_text = scope.to_string();
         blocking(library, move |library| library.accept_gap(&scope_text, signed, &Trusted)).await?;
     }
-    // Far behind — more than a window holds — the newest come first: the
-    // window now, what is below it filled in behind (design §28.2).
-    if next - at > fastctx_content::v2::WINDOW_ITEMS as u64
-        && let Some(head) = window(assets, hub, link, key, scope, &stream, holding).await?
-    {
-        at = at.max(head);
-    }
     while at < next {
         let request = Request::Frames {
             scope: scope.to_string(),
@@ -1398,120 +1401,6 @@ async fn pull_stream(
         }
     }
     Ok(())
-}
-
-/// Installs the hub's window of `stream` of `scope`, far behind it: its
-/// newest items as they stand at its head, the hub's word on them checked;
-/// the head, when it was installed.
-#[allow(clippy::too_many_arguments)]
-async fn window(
-    assets: &Assets,
-    hub: &HubId,
-    link: &Arc<Link>,
-    key: &PublicKey,
-    scope: &str,
-    stream: &str,
-    holding: i64,
-) -> Result<Option<u64>, String> {
-    let request = Request::Window { scope: scope.to_string(), stream: stream.to_string() };
-    let Reply::Window { generation, next, head, bytes, remade, low, entries, word } = ask(assets, link, request).await? else {
-        return Err("the hub did not give the stream's window".into());
-    };
-    let head = head.array().ok_or("a malformed window head")?;
-    let entries = entries.into_iter().map(entry_of).collect::<Result<Vec<_>, String>>()?;
-    let window = fastctx_content::v2::Window {
-        scope: scope.to_string(),
-        stream: stream.to_string(),
-        generation,
-        next,
-        head,
-        bytes,
-        remade,
-        low: low.map(|(place, item)| (place.0, item.0)),
-        entries,
-    };
-    if !assets.heard(hub, key, &window.statement(), &word.0) {
-        return Err("the stream's window is not the hub's".into());
-    }
-    match blocking(&assets.library, move |library| library.install_window(window, holding, true)).await? {
-        fastctx_content::v2::Installed::Behind => Ok(None),
-        fastctx_content::v2::Installed::Installed { .. } => Ok(Some(next)),
-    }
-}
-
-/// An item of the hub's index as it came.
-fn entry_of(entry: wire::Entry) -> Result<fastctx_content::v2::Entry, String> {
-    let objects = entry
-        .objects
-        .into_iter()
-        .map(|(hash, size)| Ok(fastctx_content::ObjectRef { hash: hash.array().ok_or("a malformed object hash")?, size }))
-        .collect::<Result<Vec<_>, String>>()?;
-    Ok(fastctx_content::v2::Entry {
-        item: entry.item.0,
-        order: entry.order.0,
-        revision: entry.revision,
-        kind: entry.kind,
-        schema: entry.schema,
-        body: entry.body.0,
-        objects,
-    })
-}
-
-/// Frame requests one pass makes at most to fill in below windows.
-const FILLED_AT_ONCE: usize = 64;
-
-/// Fills in below the windows of `hub`'s streams here, from where each
-/// reached towards its window's head, at most `FILLED_AT_ONCE` requests of
-/// frames; each whole merged into the index. Whether more is left.
-async fn fill_in(assets: &Assets, hub: &HubId, link: &Arc<Link>) -> Result<bool, String> {
-    let library = &assets.library;
-    let mut budget = FILLED_AT_ONCE;
-    for backfill in blocking(library, |library| library.backfills()).await? {
-        let of = backfill.scope.clone();
-        if blocking(library, move |library| library.hub_of(&of)).await?.as_deref() != Some(hub.as_str()) {
-            continue;
-        }
-        let fastctx_content::v2::Backfill { scope, stream, holding, mut reached, to } = backfill;
-        while reached < to {
-            if budget == 0 {
-                return Ok(true);
-            }
-            budget -= 1;
-            let request = Request::Frames { scope: scope.clone(), stream: stream.clone(), from: reached, limit: FRAMES_AT_ONCE as u32 };
-            let Reply::Frames { mut frames, ticket } = ask(assets, link, request).await? else {
-                return Err("the hub did not give frames".into());
-            };
-            super::apart::bring(link, ticket, &mut frames).await?;
-            let began = reached;
-            for frame in frames {
-                let raw = RawFrame { header: frame.header.0, signature: frame.signature.0, body: frame.body.0, objects: Vec::new() };
-                let of = scope.clone();
-                match blocking(library, move |library| library.backfill(&of, raw, &DeviceKeys, holding)).await? {
-                    fastctx_content::v2::Filled::Applied { reached: at } => reached = at,
-                    fastctx_content::v2::Filled::Ready => reached = to,
-                    fastctx_content::v2::Filled::Already => {}
-                    fastctx_content::v2::Filled::Gap { from, .. } => reached = from,
-                    fastctx_content::v2::Filled::Epoch(epoch) => {
-                        return Err(format!("{stream} of {scope} has a frame of epoch {epoch} the hub gave no descriptor of"));
-                    }
-                }
-            }
-            if reached == began && reached < to {
-                return Err(format!("{stream} of {scope}: the hub's frames from {reached} fill nothing in"));
-            }
-        }
-        loop {
-            let (of, name) = (scope.clone(), stream.clone());
-            let done = blocking(library, move |library| {
-                library.merge_backfill(&of, &name, holding, fastctx_content::v2::MERGED_AT_ONCE)
-            })
-            .await?;
-            if done {
-                break;
-            }
-        }
-    }
-    Ok(false)
 }
 
 /// Gives the hub again the frames of the replica `stream` of `scope` from
@@ -1637,6 +1526,12 @@ async fn cursors(
         cut = true;
     }
     Ok(cut)
+}
+
+/// A scope's descriptor as far as its owner library goes.
+#[derive(serde::Deserialize)]
+struct OwnerOf {
+    owner: String,
 }
 
 /// Facts already checked under the pinned key on the way in.

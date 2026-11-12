@@ -340,14 +340,16 @@ async fn logged_in(node: &Arc<Node>, joined: Joined) -> Result<Reply, Failure> {
             // Marked new before it is written: a stop or a failure before
             // its network is joined anew still joins it anew (AK02).
             let mark = net.path().join(crate::assets::membership::JOINING);
+            // The mark first: what an earlier membership left is cleared only
+            // once a stop after it still joins anew (AL02).
             net.prepare()
+                .and_then(|()| fastctx_platform::publish(&mark, b"", fastctx_platform::Permissions::Private))
                 .and_then(|()| {
                     stale.iter().try_for_each(|path| match fastctx_platform::disk::remove_file(path) {
                         Err(error) if error.kind() != io::ErrorKind::NotFound => Err(error),
                         _ => Ok(()),
                     })
                 })
-                .and_then(|()| fastctx_platform::publish(&mark, b"", fastctx_platform::Permissions::Private))
                 .and_then(|()| fastctx_net::link::state::write(&net.membership(), &membership))
                 .map_err(|error| Failure::new(format!("logged in, but recording the membership failed: {error}")))?;
             // The asset library is on the network before anything is

@@ -6,7 +6,6 @@
 //! It stands beside the first version's content database until each kind of
 //! asset moves over (§15), in files of its own.
 
-mod backfill;
 mod changes;
 mod checkpoints;
 mod collect;
@@ -37,6 +36,7 @@ mod stamps;
 mod succession;
 mod timeline;
 mod transfers;
+mod view;
 mod window;
 
 pub use collect::{Collected, Started};
@@ -55,8 +55,8 @@ pub use receipts::{Mark, Receipt, Report, Said};
 pub use rejected::Resubmit;
 pub use window::Pruned;
 pub use changes::{Changed, Changes};
-pub use backfill::{Backfill, Filled, MERGED_AT_ONCE};
 pub use snapshot::{Installed, Older, WINDOW_BYTES, WINDOW_ITEMS, Window};
+pub use view::{ViewChange, ViewChanges, ViewPage};
 pub use networks::Network;
 pub use scopes::Purged;
 pub use succession::{ENDS_AT_ONCE, HubVerifier, Standing};
@@ -96,6 +96,8 @@ struct Inner {
     /// The scopes committed to here since `committed` was last asked: the
     /// ones with something of this device's own to upload.
     committed: std::sync::Mutex<std::collections::BTreeSet<String>>,
+    /// Counts the writes that may move what a reader reads (`view.rs`).
+    moved: tokio::sync::watch::Sender<u64>,
 }
 
 impl Library {
@@ -128,6 +130,7 @@ impl Library {
             kinds: std::sync::RwLock::new(None),
             hub,
             committed: std::sync::Mutex::new(std::collections::BTreeSet::new()),
+            moved: tokio::sync::watch::channel(0).0,
         }));
         let started = library.startup()?;
         Ok((library, started))
@@ -135,6 +138,15 @@ impl Library {
 
     pub(crate) fn database(&self) -> &Database {
         &self.0.database
+    }
+
+    /// Something a reader reads may have moved: those waiting look again.
+    pub(super) fn wrote(&self) {
+        self.0.moved.send_modify(|count| *count = count.wrapping_add(1));
+    }
+
+    pub(super) fn watch_moves(&self) -> tokio::sync::watch::Receiver<u64> {
+        self.0.moved.subscribe()
     }
 
     /// The scopes committed to here since this was last asked, as a commit
