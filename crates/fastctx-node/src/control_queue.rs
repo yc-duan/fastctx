@@ -457,7 +457,7 @@ fn drain_now<'a>(
     Box::pin(crate::gate_waits::internal(Box::pin(async move {
         loop {
             node.residents.active(id)?;
-            if busy(node, id).await? {
+            if RECOVERING.lock().expect("never poisoned").contains(id) || busy(node, id).await? {
                 return Ok(());
             }
             let rows = pending(node, id).await?;
@@ -545,6 +545,12 @@ const DRAINS_WITHIN: Duration = Duration::from_secs(45 * 60);
 /// Drains in a row that may be dropped for taking too long before the job
 /// is set aside until the conversation is poked again.
 const DRAIN_TRIES: u32 = 5;
+
+/// Conversations whose controls from before this start are not recovered
+/// yet: their queue starts nothing, so recovery never mistakes a control
+/// this process started for one a stop left running.
+static RECOVERING: std::sync::LazyLock<std::sync::Mutex<std::collections::HashSet<ResidentId>>> =
+    std::sync::LazyLock::new(Default::default);
 
 /// The drains in a row that failed, and what the last said, by conversation:
 /// what paces the next and keeps the log from repeating itself.
@@ -645,13 +651,25 @@ pub(crate) fn poke(node: &Arc<Node>, id: &ResidentId) {
 }
 
 pub(crate) async fn recover(node: &Arc<Node>, id: &ResidentId) {
-    if let Err(error) = recovered(node, id).await {
+    // What this start recovers was written before it: a control this
+    // process admits afterwards is its own, settled as it ends.
+    let started = jiff::Timestamp::now();
+    if let Err(error) = recovered(node, id, started).await {
         // A row left running would keep the queue waiting for a control no
-        // process runs: recovering is tried again, apart from the start.
+        // process runs: recovering is tried again, apart from the start, in
+        // turn with the conversation's other actions.
         node.log.line(format_args!("recovering {id}'s controls, trying again: {error}"));
+        RECOVERING.lock().expect("never poisoned").insert(id.clone());
         let (node, id) = (node.clone(), id.clone());
         fastctx_platform::task::spawn(async move {
-            if until_written(&node, &id, "recovering", || recovered(&node, &id)).await {
+            let recovering = || async {
+                let actions = gate(&node, &id);
+                let _action = actions.lock().await;
+                recovered(&node, &id, started).await
+            };
+            let recovered = until_written(&node, &id, "recovering", recovering).await;
+            RECOVERING.lock().expect("never poisoned").remove(&id);
+            if recovered {
                 schedule(&node, &id);
             }
         });
@@ -660,8 +678,8 @@ pub(crate) async fn recover(node: &Arc<Node>, id: &ResidentId) {
     schedule(node, id);
 }
 
-async fn recovered(node: &Arc<Node>, id: &ResidentId) -> Result<(), Failure> {
-    for mut row in pending(node, id).await? {
+async fn recovered(node: &Arc<Node>, id: &ResidentId, started: jiff::Timestamp) -> Result<(), Failure> {
+    for mut row in pending(node, id).await?.into_iter().filter(|row| row.at < started) {
         if row.state == ControlState::Running {
             row.state = ControlState::Uncertain;
             let why = "the node stopped while this control was entering the host; its outcome is unknown and it was not repeated";

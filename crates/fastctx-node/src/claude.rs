@@ -760,10 +760,19 @@ pub(crate) async fn receive(
     let harvested = {
         let (directory, node, session) = (directory.clone(), node.clone(), session.to_string());
         fastctx_platform::task::spawn_blocking(move || {
-            let changed = |name: &str| fastctx_platform::disk::metadata(directory.join(name)).and_then(|meta| meta.modified()).ok();
-            let now = (changed("events"), changed("accounting"));
-            let written = !node.claude.markers.quiet(&session, now) && exchange::written(&directory)?;
-            node.claude.markers.note_quiet(&session, (!written).then_some(now));
+            // A directory that is not there was last changed never; one
+            // whose time cannot be read is not known to be unchanged.
+            let changed = |name: &str| match fastctx_platform::disk::metadata(directory.join(name)) {
+                Ok(meta) => meta.modified().map(Some).ok(),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => Some(None),
+                Err(_) => None,
+            };
+            let now = changed("events").zip(changed("accounting"));
+            let quiet = now.is_some_and(|now| node.claude.markers.quiet(&session, now));
+            let written = !quiet && exchange::written(&directory)?;
+            if !quiet {
+                node.claude.markers.note_quiet(&session, now.filter(|_| !written));
+            }
             let harvested = if written { exchange::harvest(&directory)? } else { (Vec::new(), Vec::new()) };
             Ok::<_, std::io::Error>((written, harvested))
         })

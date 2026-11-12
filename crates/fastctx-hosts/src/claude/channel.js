@@ -84,10 +84,13 @@ async function channelReport($, context, name, report) {
     return false
   }
   try {
-    const told = await channelHand($, context, [...again, { name, report }])
-    for (const held of again) held.channel = channel
-    context.unconfirmed.push({ name, report, channel })
-    channelConfirmed(context, told.applied)
+    const handing = [...again, { name, report }]
+    const told = await channelHand($, context, handing)
+    again.forEach((held, index) => channelTaken(context, held, channel, told.receipts?.[index]))
+    const taken = { name, report, channel }
+    channelTaken(context, taken, channel, told.receipts?.[again.length])
+    context.unconfirmed.push(taken)
+    channelConfirmed(context, told, channel)
     return true
   } catch (error) {
     // A stop cuts short what the turn's hooks asked for, this hand-over
@@ -106,11 +109,26 @@ function channelToFiles($, context, why) {
   $.ui.log('World channel: this session reports through files from now: ' + why, { to: 'debug' })
 }
 
-// The node dealt with every report up to `applied`, on the channel that
-// answered: they are let go of.
-function channelConfirmed(context, applied) {
-  if (typeof applied !== 'string') return
-  const through = applied.replace(/\.json$/, '')
+// Notes that the node took `held` on `channel`, with the receipt it gave:
+// the node deals with reports in the order it took them, which is not their
+// names' order when one is handed again after a later one.
+function channelTaken(context, held, channel, receipt) {
+  held.channel = channel
+  held.receipt = typeof receipt === 'number' ? receipt : null
+}
+
+// The node dealt with every report it took up to receipt `dealt`, on the
+// channel that answered: those are let go of, and only those. A node that
+// gives no receipts says the last report's name it dealt with instead.
+function channelConfirmed(context, told, channel) {
+  if (typeof told.dealt === 'number') {
+    context.unconfirmed = context.unconfirmed.filter(
+      (held) => held.channel !== channel || held.receipt === null || held.receipt > told.dealt,
+    )
+    return
+  }
+  if (typeof told.applied !== 'string') return
+  const through = told.applied.replace(/\.json$/, '')
   context.unconfirmed = context.unconfirmed.filter((held) => held.name > through)
 }
 
@@ -140,8 +158,8 @@ function channelSettle($, context) {
     if (context.channelReports && channel !== null && again.length > 0) {
       try {
         const told = await channelHand($, context, again)
-        for (const held of again) held.channel = channel
-        channelConfirmed(context, told.applied)
+        again.forEach((held, index) => channelTaken(context, held, channel, told.receipts?.[index]))
+        channelConfirmed(context, told, channel)
         return
       } catch (error) {
         // Given up on the way: tried again at the next look.

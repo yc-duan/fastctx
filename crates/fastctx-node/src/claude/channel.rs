@@ -53,6 +53,10 @@ pub struct Channel {
     /// is never told "nothing new" by its successor, and the counts stay
     /// well inside what the mod's JSON numbers hold exactly.
     ticks: AtomicU64,
+    /// Receipts given for reports handed over, channel-wide: each report the
+    /// node takes gets the next, which its mod lets it go of by, and a queue
+    /// made anew never gives one an earlier queue gave.
+    receipts: AtomicU64,
     /// The sessions told where the channel is since the node started.
     told: Mutex<HashSet<String>>,
     queues: Mutex<HashMap<String, Arc<Queue>>>,
@@ -72,6 +76,8 @@ struct QueueState {
     /// written back to the session's files to be applied there. Its mod keeps
     /// every report after it, to hand again or write to files itself.
     through: Option<String>,
+    /// The receipt of `through`: every report taken up to it was dealt with.
+    dealt: u64,
     /// A report could neither be applied nor written to the files: the queue
     /// takes nothing more, so nothing after it is applied before it, and the
     /// mod writes what it kept to files.
@@ -201,6 +207,7 @@ pub(super) fn start(node: &Arc<Node>) -> io::Result<()> {
             key,
             wakes: Mutex::default(),
             ticks: AtomicU64::new(0),
+            receipts: AtomicU64::new(0),
             told: Mutex::default(),
             queues: Mutex::default(),
         });
@@ -343,14 +350,14 @@ async fn route(node: &Arc<Node>, request: Request<Incoming>) -> Result<Value, Re
                 .await
                 .map_err(|error| (StatusCode::BAD_REQUEST, format!("reading the reports: {error}")))?
                 .to_bytes();
-            let handed: Handed = serde_json::from_slice(&body)
+            let mut handed: Handed = serde_json::from_slice(&body)
                 .map_err(|error| (StatusCode::BAD_REQUEST, format!("reading the reports: {error}")))?;
             let names: Vec<String> = handed.reports.iter().map(|report| report.name.clone()).collect();
             if let Some(name) = names.iter().find(|name| !name.strip_suffix(".json").is_some_and(watermark)) {
                 return Err((StatusCode::BAD_REQUEST, format!("{name} is not a report's name")));
             }
             let mut queue = queue(node, channel, session);
-            let through = {
+            let (through, dealt, receipts) = {
                 let mut state = queue.state.lock().expect("never poisoned");
                 if state.retired {
                     drop(state);
@@ -363,14 +370,26 @@ async fn route(node: &Arc<Node>, request: Request<Incoming>) -> Result<Value, Re
                 if state.queued + names.len() > QUEUED_MOST || state.bytes + body.len() > QUEUED_BYTES {
                     return Err((StatusCode::SERVICE_UNAVAILABLE, "too many of the session's reports wait".to_string()));
                 }
+                // Numbered in the order taken, which is the order they are
+                // dealt with: a mod lets go of exactly those dealt with, not
+                // of every report with a smaller name (one handed again after
+                // a later one may wait here still).
+                let receipts: Vec<u64> = handed
+                    .reports
+                    .iter_mut()
+                    .map(|report| {
+                        report.receipt = channel.receipts.fetch_add(1, Ordering::AcqRel) + 1;
+                        report.receipt
+                    })
+                    .collect();
                 queue.sender.send(Batch { reports: handed.reports, bytes: body.len() }).map_err(|_| {
                     (StatusCode::SERVICE_UNAVAILABLE, "the session's reports are not taken now".to_string())
                 })?;
                 state.queued += names.len();
                 state.bytes += body.len();
-                state.through.clone()
+                (state.through.clone(), state.dealt, receipts)
             };
-            Ok(json!({ "received": names, "applied": through }))
+            Ok(json!({ "received": names, "applied": through, "receipts": receipts, "dealt": dealt }))
         }
         (Method::GET, "subagents") => {
             let configuration = crate::profile::subagents::for_session(node, session)
@@ -476,13 +495,14 @@ async fn apply_in_order(
                 Err(_) => 0,
             }
         };
-        let (through, whole) = dealt(&batch, &applied, written);
+        let (through, receipt, whole) = dealt(&batch, &applied, written);
         {
             let mut state = queue.state.lock().expect("never poisoned");
             state.queued = state.queued.saturating_sub(count);
             state.bytes = state.bytes.saturating_sub(taken);
             if through.is_some() {
                 state.through = through;
+                state.dealt = state.dealt.max(receipt);
             }
             state.refused |= !whole;
         }
@@ -528,20 +548,22 @@ fn retire(node: &Node, session: &str, queue: &Arc<Queue>) -> bool {
 }
 
 /// How far a batch was dealt with, in order: the last report applied or
-/// written to the files with every one before it, and whether all were.
-/// `written` counts the reports not applied, in order, that reached the files.
-fn dealt(batch: &[HandedReport], applied: &[String], written: usize) -> (Option<String>, bool) {
-    let (mut through, mut unapplied) = (None, 0);
+/// written to the files with every one before it, its receipt, and whether
+/// all were. `written` counts the reports not applied, in order, that
+/// reached the files.
+fn dealt(batch: &[HandedReport], applied: &[String], written: usize) -> (Option<String>, u64, bool) {
+    let (mut through, mut receipt, mut unapplied) = (None, 0, 0);
     for report in batch {
         if !applied.contains(&report.name) {
             if unapplied == written {
-                return (through, false);
+                return (through, receipt, false);
             }
             unapplied += 1;
         }
         through = Some(report.name.clone());
+        receipt = report.receipt;
     }
-    (through, true)
+    (through, receipt, true)
 }
 
 /// Writes reports to the session's files as its mod writes them: the report,
@@ -572,6 +594,9 @@ struct HandedReport {
     #[serde(default)]
     sequence: Option<String>,
     report: Value,
+    /// Given when the node takes it.
+    #[serde(skip)]
+    receipt: u64,
 }
 
 /// Whether `name` is a mod's report name: its clock and a count, at the
@@ -596,6 +621,7 @@ mod tests {
             key: [0; 32],
             wakes: Mutex::default(),
             ticks: AtomicU64::new(0),
+            receipts: AtomicU64::new(0),
             told: Mutex::default(),
             queues: Mutex::default(),
         })

@@ -228,9 +228,11 @@ function floor(context, own) {
       const first = reports === undefined ? undefined : reports.keys().next().value
       if (first !== undefined && first < lowest) lowest = first
     }
-    // Taken by the node and not applied yet: not on disk either.
-    const held = writer.unconfirmed?.[0]?.name
-    if (held !== undefined && held < lowest) lowest = held
+    // Taken by the node and not applied yet: not on disk either. They are
+    // kept in the order the node took them, not their names' order.
+    for (const held of writer.unconfirmed ?? []) {
+      if (held.name < lowest) lowest = held.name
+    }
   }
   return lowest + '.json'
 }

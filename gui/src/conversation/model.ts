@@ -456,6 +456,9 @@ export class Fold {
     const pending = this.entries.filter((entry): entry is Heard => entry.kind === "heard" && entry.sending !== undefined);
     const known = new Set(this.entries.filter((entry) => entry.kind === "heard").map((entry) => entry.key));
     const halted = this.halted;
+    // Turns this view knew before reading again: a stop of words still on
+    // their way is of the first turn the reading shows starting after them.
+    const knownTurns = new Set<string>([...this.running, ...this.began.keys(), ...this.endedTurns, ...this.byTurn.keys()]);
     this.entries = [];
     this.byCall.clear();
     if (places) {
@@ -507,9 +510,16 @@ export class Fold {
     this.stale = false;
     // A stop asked of what still runs, or of words still on their way,
     // stands through a reading again: only on the turns it was asked of,
-    // never on one the reading shows starting after they ended.
-    if (halted?.size === 0) this.halt();
-    else for (const turn of halted ?? []) if (this.running.has(turn)) this.haltTurn(turn);
+    // never on one the reading shows starting after they ended. Words on
+    // their way start the first turn the reading shows that this view did
+    // not know: stopped if it still runs, spent if it ended; with none yet,
+    // the stop waits for it as before.
+    if (halted?.size === 0) {
+      const target = [...carry, ...events, ...(authoritativePending ?? [])]
+        .flatMap((event) => (event.event === "turn_started" && !knownTurns.has(event.turn) ? [event.turn] : []))[0];
+      if (target === undefined) this.halted = new Set();
+      else if (this.running.has(target)) this.haltTurn(target);
+    } else for (const turn of halted ?? []) if (this.running.has(turn)) this.haltTurn(turn);
     for (const turn of this.machineHalted) if (this.running.has(turn)) this.haltTurn(turn);
     for (const ask of waiting) {
       if (ask.kind === "ask" && !this.entries.some((entry) => entry.kind === "ask" && askKey(entry.id) === askKey(ask.id))) this.add(ask);
