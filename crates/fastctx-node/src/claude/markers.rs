@@ -22,9 +22,6 @@ struct Pace {
     /// The latest floor the session's mod declared. An earlier one stays
     /// true, so the latest is the furthest any of them reaches.
     floor: Option<String>,
-    /// The last report applied in this run, in order: one named up to it
-    /// was applied, as the mod hands its reports over in order.
-    through: Option<String>,
     /// When the session's `events/` and `accounting/` were last found
     /// holding nothing, the times they were last changed then.
     quiet: Option<Changed>,
@@ -55,25 +52,6 @@ impl Markers {
         let floor = pace.floor.clone()?;
         pace.applied = 0;
         Some(floor)
-    }
-
-    /// Notes `last`, the last report of `session` applied in order.
-    pub(super) fn applied_through(&self, session: &str, last: &str) {
-        let mut paces = self.0.lock().expect("never poisoned");
-        let pace = paces.entry(session.to_string()).or_default();
-        if pace.through.as_deref().is_none_or(|known| last > known) {
-            pace.through = Some(last.to_string());
-        }
-    }
-
-    /// Whether the report `name` of `session` is one applied in this run.
-    pub(super) fn applied_already(&self, session: &str, name: &str) -> bool {
-        self.0
-            .lock()
-            .expect("never poisoned")
-            .get(session)
-            .and_then(|pace| pace.through.as_deref())
-            .is_some_and(|through| name <= through)
     }
 
     /// Whether the session's files are known to hold nothing to take: they

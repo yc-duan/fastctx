@@ -709,9 +709,6 @@ async fn apply(
             Err(_) => return (Vec::new(), false),
         }
     }
-    if let Some(last) = applied_reports.last() {
-        node.claude.markers.applied_through(session, last);
-    }
     if acknowledged > 0
         && let Some(before) = node.claude.markers.applied(session, acknowledged, floor)
     {
@@ -791,7 +788,7 @@ pub(crate) async fn receive(
     // short leaves it, a report is applied once: the file came first.
     let mut already = Vec::new();
     for (name, value) in reports {
-        if node.claude.markers.applied_already(session, &name) || exchange::was_applied(&directory, &name)? {
+        if exchange::was_applied(&directory, &name)? {
             already.push(name);
             continue;
         }
