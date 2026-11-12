@@ -122,6 +122,28 @@ impl Library {
         })?)
     }
 
+    /// Whether `hash` may be read in `scope` here through the evidence
+    /// gate (§6.4 item 5): a predecessor's tail kept as evidence refers to
+    /// it, and the device that brought it showed it holds it (§8, Q05).
+    pub fn readable_as_evidence(&self, scope: &str, hash: &[u8; 32]) -> Result<bool> {
+        let (scope, hash) = (scope.to_string(), *hash);
+        Ok(self.database().read_now(move |db| {
+            let Some((scope, state, Some(holding))) = held(db, &scope)? else { return Ok(false) };
+            if state != "live" {
+                return Ok(false);
+            }
+            Ok(db
+                .prepare_cached(
+                    "SELECT 1 FROM evidence e JOIN streams s ON s.id = e.stream
+                     JOIN object_holds h ON h.kind = 'evidence' AND h.holder = e.holder
+                     WHERE s.scope = ?1 AND e.holding = ?2 AND h.hash = ?3 AND h.proven = 1 LIMIT 1",
+                )?
+                .query_row(params![scope, holding, &hash[..]], |_| Ok(()))
+                .optional()?
+                .is_some())
+        })?)
+    }
+
     /// Reads `hash` within `scope`, through the gate.
     pub fn read_in(&self, scope: &str, hash: &[u8; 32], offset: u64, length: u32) -> Result<Vec<u8>> {
         if !self.readable(scope, hash)? {

@@ -202,26 +202,30 @@ fn after(record: &KindRecord, revision: u64) -> Option<Entry> {
 
 /// The applied prefix of a stream: its id, epoch, next sequence and chain
 /// value.
-struct Prefix {
-    stream: i64,
-    epoch: u64,
-    next: u64,
-    head: [u8; 32],
+pub(super) struct Prefix {
+    pub stream: i64,
+    pub epoch: u64,
+    pub next: u64,
+    pub head: [u8; 32],
 }
 
-fn prefix(db: &Connection, scope: i64, holding: i64, name: &str) -> fastctx_storage::Result<Prefix> {
+/// The applied prefix of a stream, made at need.
+pub(super) fn prefix(db: &Connection, scope: i64, holding: i64, name: &str) -> fastctx_storage::Result<Prefix> {
+    if let Some(at) = standing(db, scope, holding, name)? {
+        return Ok(at);
+    }
+    db.prepare_cached("INSERT INTO streams (scope, name, epoch, next, head, complete_through) VALUES (?1, ?2, 0, 0, NULL, NULL)")?
+        .execute(params![scope, name])?;
+    Ok(Prefix { stream: db.last_insert_rowid(), epoch: 0, next: 0, head: [0; 32] })
+}
+
+/// The applied prefix of a stream already here.
+fn standing(db: &Connection, scope: i64, holding: i64, name: &str) -> fastctx_storage::Result<Option<Prefix>> {
     let found: Option<(i64, i64)> = db
         .prepare_cached("SELECT id, epoch FROM streams WHERE scope = ?1 AND name = ?2")?
         .query_row(params![scope, name], |row| Ok((row.get(0)?, row.get(1)?)))
         .optional()?;
-    let (stream, epoch) = match found {
-        Some(found) => found,
-        None => {
-            db.prepare_cached("INSERT INTO streams (scope, name, epoch, next, head, complete_through) VALUES (?1, ?2, 0, 0, NULL, NULL)")?
-                .execute(params![scope, name])?;
-            (db.last_insert_rowid(), 0)
-        }
-    };
+    let Some((stream, epoch)) = found else { return Ok(None) };
     let cursor: Option<(i64, Option<Vec<u8>>)> = db
         .prepare_cached("SELECT sequence, head FROM cursors WHERE stream = ?1 AND holding = ?2")?
         .query_row(params![stream, holding], |row| Ok((row.get(0)?, row.get(1)?)))
@@ -232,7 +236,7 @@ fn prefix(db: &Connection, scope: i64, holding: i64, name: &str) -> fastctx_stor
         }
         None => (0, [0; 32]),
     };
-    Ok(Prefix { stream, epoch: epoch as u64, next, head })
+    Ok(Some(Prefix { stream, epoch: epoch as u64, next, head }))
 }
 
 /// The hub's word on a frame it has one on already (§6.5 steps 1 and 3, a
@@ -389,6 +393,7 @@ fn apply_frame(
         .execute(params![at.stream, end as i64, &head[..], end as i64 - 1])?;
     at.next = end;
     at.head = head;
+    super::handover::advance(db, at)?;
     Ok(Ok((change, prefix)))
 }
 
@@ -446,21 +451,32 @@ impl Library {
         lengths_agree(&records)?;
         // A word given already is given again before any object is asked
         // for: a refused frame's are not wanted, nor a known one's again.
-        let given = self.database().read_now(|db| match held(db, scope)? {
+        // Nor are those of a frame kept only as evidence: it is kept with
+        // what its device showed it holds (§8).
+        let (given, evidence) = self.database().read_now(|db| match held(db, scope)? {
             Some((scope_id, state, Some(holding))) if state == "live" && holding == taking.period => {
-                known(db, scope_id, holding, &header, &frame.header, signer.as_ref())
+                let at = standing(db, scope_id, holding, &header.stream)?;
+                super::handover::sequencer(db, at.as_ref().map(|at| at.stream), &header)?;
+                let given = known(db, scope_id, holding, &header, &frame.header, signer.as_ref())?;
+                let evidence = match &at {
+                    Some(at) if given.is_none() => super::handover::evidence(db, at, &header)?.is_some(),
+                    _ => false,
+                };
+                Ok((given, evidence))
             }
-            _ => Ok(None),
+            _ => Ok((None, false)),
         })?;
         if let Some(given) = given {
             return Ok(given);
         }
         let objects = objects_of(&records);
-        let (mut missing, mut unproven) = (Vec::new(), Vec::new());
+        let (mut missing, mut unproven, mut shown) = (Vec::new(), Vec::new(), BTreeSet::new());
         for object in &objects {
             match self.size(&object.hash)? {
                 Some(size) if size == object.size => {
-                    if !(taking.readable)(object) && !taking.proven.contains(&object.hash) {
+                    if (taking.readable)(object) || taking.proven.contains(&object.hash) {
+                        shown.insert(object.hash);
+                    } else {
                         unproven.push(*object);
                     }
                 }
@@ -468,10 +484,10 @@ impl Library {
                 None => missing.push(*object),
             }
         }
-        if !missing.is_empty() {
+        if !evidence && !missing.is_empty() {
             return Ok(Received::Missing(missing));
         }
-        if !unproven.is_empty() {
+        if !evidence && !unproven.is_empty() {
             return Ok(Received::Prove(unproven));
         }
         let (scope, period) = (scope.to_string(), taking.period);
@@ -488,14 +504,21 @@ impl Library {
             if holding_id != period {
                 return Err(invalid("the holding period the frame was taken in has ended"));
             }
+            let mut at = prefix(db, scope_id, holding_id, &header.stream)?;
+            if super::handover::sequencer(db, Some(at.stream), &header)? {
+                super::handover::first_epoch(db, at.stream, &header, signer.as_ref())?;
+            }
+            if let Some(given) = known(db, scope_id, holding_id, &header, &frame.header, signer.as_ref())? {
+                return Ok((given, false));
+            }
+            if let Some(why) = super::handover::evidence(db, &at, &header)? {
+                super::handover::keep_evidence(db, (at.stream, holding_id), &header, &frame, why, &objects, &shown)?;
+                return Ok((refusal(&header, why, header.first, signer.as_ref()), false));
+            }
             for object in &objects {
                 if present(db, &object.hash)?.is_none() {
                     return Err(invalid("an object went while the frame was checked"));
                 }
-            }
-            let mut at = prefix(db, scope_id, holding_id, &header.stream)?;
-            if let Some(given) = known(db, scope_id, holding_id, &header, &frame.header, signer.as_ref())? {
-                return Ok((given, false));
             }
             if header.epoch > at.epoch {
                 // A successor's frame before its predecessor's tail: kept,
@@ -539,9 +562,6 @@ impl Library {
                 let signature = signer.sign(&statement("parked", &header, &[&sequence.to_le_bytes(), &accumulated]));
                 return Ok((Received::Parked { sequence, accumulated, signature }, false));
             }
-            if header.epoch < at.epoch {
-                return Err(invalid("a predecessor's frame is taken only up to its cutoff (§8)"));
-            }
             if header.first > at.next {
                 return Ok((Received::Gap { from: at.next, to: header.first - 1 }, false));
             }
@@ -570,7 +590,7 @@ impl Library {
 
     /// Goes on applying the parked frames of `stream` that follow, a few
     /// to a transaction.
-    fn drain_on(
+    pub(super) fn drain_on(
         &self,
         scope: &str,
         stream: &str,
@@ -620,45 +640,13 @@ impl Library {
             _ => Ok(None),
         })?)
     }
-
-    /// Moves a stream of `scope` to `epoch` once its predecessor's tail is
-    /// all here (or a gap fact stands for it), applying the frames parked
-    /// behind it that now follow.
-    pub fn advance_epoch(
-        &self,
-        scope: &str,
-        stream: &str,
-        epoch: u64,
-        authorizer: Arc<dyn Authorizer>,
-        signer: Arc<dyn HubSigner>,
-    ) -> Result<Drained> {
-        let (key, name) = (scope.to_string(), stream.to_string());
-        let (authorizing, signing) = (authorizer.clone(), signer.clone());
-        let (mut drained, more) = self.database().write_now_at(Priority::Normal, 1 << 20, move |db| {
-            let mut drained = Drained::default();
-            let Some((scope_id, _, Some(holding_id))) = held(db, &key)? else {
-                return Err(invalid("the scope is not held here"));
-            };
-            let mut at = prefix(db, scope_id, holding_id, &name)?;
-            if epoch <= at.epoch {
-                return Ok((drained, false));
-            }
-            db.prepare_cached("UPDATE streams SET epoch = ?2 WHERE id = ?1")?.execute(params![at.stream, epoch as i64])?;
-            at.epoch = epoch;
-            let more = drain(db, scope_id, holding_id, &mut at, authorizer.as_ref(), signer.as_ref(), &mut drained)?;
-            Ok((drained, more))
-        })?;
-        if more {
-            self.drain_on(scope, stream, &authorizing, &signing, &mut drained)?;
-        }
-        Ok(drained)
-    }
 }
 
 /// Applies, in order, up to `DRAIN_AT_ONCE` of the parked frames of the
-/// current epoch that follow the applied prefix; a refused one ends its
-/// epoch's run. Whether more may follow.
-fn drain(
+/// current epoch that follow the applied prefix, moving on through the
+/// epochs whose cutoffs it reaches; a refused one ends its epoch's run.
+/// Whether more may follow.
+pub(super) fn drain(
     db: &Connection,
     scope: i64,
     holding: i64,

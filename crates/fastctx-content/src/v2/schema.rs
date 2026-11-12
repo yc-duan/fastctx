@@ -95,6 +95,23 @@ CREATE TABLE IF NOT EXISTS refused_objects (
     PRIMARY KEY (stream, epoch, first, holding, hash)
 ) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS refused_objects_by_hash ON refused_objects (hash);
+-- A predecessor's frame a hub found after a handover cut its epoch, kept
+-- as it came, outside the stream (§8); its objects are held under its
+-- holder. Empty on devices.
+CREATE TABLE IF NOT EXISTS evidence (
+    stream INTEGER NOT NULL,
+    epoch INTEGER NOT NULL,
+    first INTEGER NOT NULL,
+    digest BLOB NOT NULL,
+    holding INTEGER NOT NULL,
+    holder TEXT NOT NULL,
+    header BLOB NOT NULL,
+    signature BLOB NOT NULL,
+    body BLOB NOT NULL,
+    why TEXT NOT NULL,
+    at INTEGER NOT NULL,
+    PRIMARY KEY (stream, epoch, first, digest)
+) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS items (
     stream INTEGER NOT NULL,
     place BLOB NOT NULL,
@@ -298,6 +315,29 @@ CREATE TABLE IF NOT EXISTS change_log (
     first INTEGER NOT NULL,
     prefix BLOB NOT NULL,
     PRIMARY KEY (scope, change)
+) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS hub_epochs (
+    stream INTEGER NOT NULL,
+    epoch INTEGER NOT NULL,
+    device BLOB NOT NULL,
+    key BLOB NOT NULL,
+    start INTEGER NOT NULL,
+    kind TEXT NOT NULL CHECK (kind IN ('source', 'observed')),
+    predecessor INTEGER,
+    follows BLOB NOT NULL,
+    fact BLOB NOT NULL,
+    signature BLOB NOT NULL,
+    PRIMARY KEY (stream, epoch)
+) WITHOUT ROWID;
+CREATE UNIQUE INDEX IF NOT EXISTS hub_epochs_by_predecessor ON hub_epochs (stream, predecessor);
+CREATE TABLE IF NOT EXISTS gaps (
+    stream INTEGER NOT NULL,
+    epoch INTEGER NOT NULL,
+    from_sequence INTEGER NOT NULL,
+    to_sequence INTEGER NOT NULL,
+    fact BLOB NOT NULL,
+    signature BLOB NOT NULL,
+    PRIMARY KEY (stream, epoch, from_sequence)
 ) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS parked_history (
     scope INTEGER NOT NULL,

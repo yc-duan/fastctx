@@ -138,6 +138,18 @@ impl Library {
                     ))?
                     .execute(params![scope, holding, PURGE_PASS, now()])?;
                 }
+                // So does what only evidence of the period held; its holds go
+                // before it does.
+                let evidence = "SELECT holder FROM evidence WHERE stream IN (SELECT id FROM streams WHERE scope = ?1) AND holding = ?2
+                                ORDER BY stream, epoch, first, digest LIMIT ?3";
+                db.prepare_cached(&format!(
+                    "UPDATE objects SET unreferenced = ?4 WHERE state = 1 AND hash IN
+                     (SELECT hash FROM object_holds WHERE kind = 'evidence' AND holder IN ({evidence}))"
+                ))?
+                .execute(params![scope, holding, PURGE_PASS, now()])?;
+                done += db
+                    .prepare_cached(&format!("DELETE FROM object_holds WHERE kind = 'evidence' AND holder IN ({evidence})"))?
+                    .execute(params![scope, holding, PURGE_PASS])?;
                 for (table, key) in [
                     ("frame_objects", "stream, epoch, first, holding, hash"),
                     ("frames", "stream, epoch, first, holding"),
@@ -145,6 +157,7 @@ impl Library {
                     ("parked_objects", "stream, epoch, first, holding, hash"),
                     ("refused_objects", "stream, epoch, first, holding, hash"),
                     ("parked", "stream, epoch, first, holding"),
+                    ("evidence", "stream, epoch, first, digest"),
                 ] {
                     done += db
                         .prepare_cached(&format!(
