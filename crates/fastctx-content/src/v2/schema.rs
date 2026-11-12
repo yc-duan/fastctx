@@ -124,7 +124,7 @@ CREATE TABLE IF NOT EXISTS transfers (
     ranges BLOB NOT NULL,
     source TEXT
 );
-CREATE TABLE IF NOT EXISTS receipts (
+CREATE TABLE IF NOT EXISTS hub_receipts (
     stream INTEGER NOT NULL,
     epoch INTEGER NOT NULL,
     first INTEGER NOT NULL,
@@ -134,6 +134,7 @@ CREATE TABLE IF NOT EXISTS receipts (
     parked INTEGER,
     accumulated BLOB,
     signature BLOB NOT NULL,
+    checkpointed INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (stream, epoch, first, digest)
 ) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS cursors (

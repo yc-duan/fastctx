@@ -57,7 +57,7 @@ fn holder(stream: i64, rejected: u64) -> String {
 
 /// Rebuilds the index rows of `stream` in the current period from its
 /// frames there, in order (§7.5).
-fn rebuild(db: &Connection, at: Applying) -> fastctx_storage::Result<()> {
+pub(super) fn rebuild(db: &Connection, at: Applying) -> fastctx_storage::Result<()> {
     let rows: Vec<Option<Vec<u8>>> = {
         let mut statement = db.prepare_cached("SELECT objects FROM items WHERE stream = ?1 AND holding = ?2 AND state = 0")?;
         let rows = statement.query_map(params![at.stream, at.holding], |row| row.get(0))?;
