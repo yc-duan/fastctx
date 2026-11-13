@@ -279,8 +279,12 @@ fn write_job(node: &Arc<Node>, resident: &ResidentId, job: &JobRecord) -> Result
         let length = match length_of(path)? {
             Some(length) => length,
             None => {
-                let kept = job.output_lost.as_ref().map_or(0, |lost| lost.kept_bytes);
-                if part == "output" && kept > *at {
+                // Gone before all it kept was written: so the end says,
+                // the output's or the stderr's, as their loss records it, or
+                // as much as was written before the file went (OO07).
+                let lost = if part == "output" { job.output_lost.as_ref() } else { job.stderr_lost.as_ref() };
+                let drained = job.output_drained.as_ref().map(|drained| if part == "output" { drained.stdout } else { drained.stderr });
+                if lost.is_some_and(|lost| lost.kept_bytes > *at) || drained.is_some_and(|drained| drained > *at) || *at > 0 {
                     missing.push(part);
                 }
                 *at

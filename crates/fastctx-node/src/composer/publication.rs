@@ -79,6 +79,11 @@ pub(super) fn committed(
         return;
     }
     failures::committed(node, id, view.revision);
+    // Committed: its draft in the asset library is written again (OO20).
+    {
+        let _entered = runtime.enter();
+        crate::timeline::draft::changed(node, id);
+    }
     {
         let mut pending = node.composers.publications.0.lock().expect("composer publications");
         match pending.entry(id.clone()) {

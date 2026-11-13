@@ -186,7 +186,14 @@ impl Readers {
             Self::Account { account } => format!("a/{hub}/{account}/"),
             Self::Body { body, .. } => format!("b/{body}/"),
             Self::Hub => format!("h/{hub}/"),
-            Self::Working { account, machine } => format!("w/{hub}/{account}/{machine}/"),
+            // Digested, so a long account and machine name never make a key
+            // longer than a scope's (OO18).
+            Self::Working { account, machine } => {
+                use sha2::{Digest as _, Sha256};
+                let digest = Sha256::digest(format!("{account}\0{machine}").as_bytes());
+                let named: String = digest[..16].iter().map(|byte| format!("{byte:02x}")).collect();
+                format!("w/{hub}/{named}/")
+            }
         }
     }
 }

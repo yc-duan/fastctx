@@ -43,14 +43,29 @@ pub(super) async fn produce(
     producing: &super::serial::Serial,
 ) -> Result<usize, Failure> {
     let changed = CHANGED.lock().expect("changed drafts").remove(resident);
-    let held = producing.hold(resident).await;
-    let Some(Beside { library, scope, holding }) = writable(node, resident, ConversationDraft::STREAM, &held).await?
-    else {
-        // Looked at again once it may be written.
+    let again = || {
         if changed {
             CHANGED.lock().expect("changed drafts").insert(resident.clone());
         }
-        return Ok(0);
+    };
+    // Where it would go, and whether it is looked at at all: the
+    // conversation's producers held only for this, never while the composer
+    // is read, which waits on the conversation's gate the words take with
+    // these held (OO03).
+    let holding = {
+        let held = producing.hold(resident).await;
+        match writable(node, resident, ConversationDraft::STREAM, &held).await {
+            Ok(Some(Beside { holding, .. })) => holding,
+            // Looked at again once it may be written (OO21).
+            Ok(None) => {
+                again();
+                return Ok(0);
+            }
+            Err(error) => {
+                again();
+                return Err(error);
+            }
+        }
     };
     // Looked at in this holding period and not changed since: nothing; held
     // anew, it is written again (M22).
@@ -64,6 +79,17 @@ pub(super) async fn produce(
             CHANGED.lock().expect("changed drafts").insert(resident.clone());
             return Err(error);
         }
+    };
+    let held = producing.hold(resident).await;
+    let Some(Beside { library, scope, holding }) = (match writable(node, resident, ConversationDraft::STREAM, &held).await {
+        Ok(beside) => beside,
+        Err(error) => {
+            CHANGED.lock().expect("changed drafts").insert(resident.clone());
+            return Err(error);
+        }
+    }) else {
+        CHANGED.lock().expect("changed drafts").insert(resident.clone());
+        return Ok(0);
     };
     let draft = &composer.draft;
     let body = serde_json::to_vec(&serde_json::json!({

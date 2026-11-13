@@ -127,9 +127,11 @@ pub(crate) async fn timing(node: &Node, id: &ResidentId, view: &View) -> Result<
             .is_none_or(|timer| timer.delivery != work.id || timer.due != work.due || timer.action != action)
         {
             table.set(key, owner, work.due, action, work.id.clone()).await.map_err(failure)?;
+            crate::timeline::described(node, id);
         }
     } else if current.is_some() {
         table.cancel(&key).await.map_err(failure)?;
+        crate::timeline::described(node, id);
     }
     Ok(())
 }

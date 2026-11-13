@@ -62,7 +62,7 @@ pub async fn talk(
         None => locate(node, &to).await?,
     };
     if local || node.is_here(&machine) {
-        let landed = talk_here(node, &here, &to, text, attachments, files_on.as_ref(), id.as_deref()).await?;
+        let landed = talk_here(node, None, &here, &to, text, attachments, files_on.as_ref(), id.as_deref()).await?;
         return Ok((Address { machine: here, resident: to }, landed));
     }
     let call = RemoteCall::Talk { to: to.clone(), text, attachments, files_on, id };
@@ -85,8 +85,10 @@ pub async fn talk(
 
 /// The user's words, typed on `typed_on`, to a resident of this machine.
 /// Attachments retain their original locations; `files_on` is a legacy hint.
+#[allow(clippy::too_many_arguments)]
 pub async fn talk_here(
     node: &Arc<Node>,
+    via: Option<&fastctx_types::access::HubId>,
     typed_on: &MachineName,
     to: &ResidentId,
     text: String,
@@ -97,7 +99,7 @@ pub async fn talk_here(
     crate::attachments::resolve(node, to, &attachments).await?;
     let attachments = crate::attachments::place(node, to, attachments, files_on).await?;
     crate::placement::location::speaking(node, to, typed_on)?;
-    let id = id.map(|id| speech::talk_id(node, typed_on, id));
+    let id = id.map(|id| speech::talk_id(node, via, typed_on, id));
     let delivery = crate::attachments::delivery(typed_on, text, attachments, id);
     speech::tell_here(node, to, delivery, Owed::Nobody).await
 }
@@ -1262,7 +1264,7 @@ pub async fn open_here(
     crate::context::instructed(node, &id, &heard).await.map_err(|error| Failure::new(error.to_string()))?;
     node.residents.set_instructed(&id, heard);
     crate::codex::claim(node, &thread, &id).await;
-    let landed = talk_here(node, typed_on, &id, text, attachments, opened.files_on.as_ref(), None).await?;
+    let landed = talk_here(node, None, typed_on, &id, text, attachments, opened.files_on.as_ref(), None).await?;
     Ok((id, landed))
 }
 

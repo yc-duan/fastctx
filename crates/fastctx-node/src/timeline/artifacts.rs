@@ -53,11 +53,13 @@ pub(super) async fn produce(
         }
         keys.sort();
         let (mut writes, mut leases, mut bytes) = (Vec::new(), Vec::new(), 0u64);
+        let mut more = false;
         for (key, path) in keys {
             if writes.len() >= FOLDERS || bytes >= BYTES {
+                more = true;
                 break;
             }
-            let item = key.clone().into_bytes();
+            let item = fastctx_content::v2::item_of(&key);
             if library.item(&scope, ConversationArtifact::STREAM, &item).map_err(failure)?.is_some() {
                 continue;
             }
@@ -97,7 +99,7 @@ pub(super) async fn produce(
             writes.push(Write::<ConversationArtifact> { order: item.clone(), item, value: Some(body), objects });
         }
         if writes.is_empty() {
-            return Ok(0);
+            return Ok((0, more));
         }
         let count = writes.len();
         Writer::<ConversationArtifact>::new(&library, &scope, ConversationArtifact::STREAM)
@@ -105,7 +107,14 @@ pub(super) async fn produce(
             .in_holding(holding)
             .write_all(writes, leases, false, signer)
             .map_err(failure)?;
-        Ok::<_, Failure>(count)
+        Ok::<_, Failure>((count, more))
     })
     .await
+    .map(|(count, more)| {
+        // Cut short by its bounds: the rest in the next look (OO23).
+        if more {
+            super::tail::wanted(node, resident);
+        }
+        count
+    })
 }

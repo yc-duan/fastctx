@@ -74,7 +74,7 @@ impl Kind for ConversationArtifact {
             };
         }
         let (key, files) = files(body)?;
-        if key.as_bytes() != after.record.item.as_slice() {
+        if super::names::item_of(&key) != after.record.item {
             return Err("an evidence folder is named by its key".into());
         }
         if files.len() != objects.len() {

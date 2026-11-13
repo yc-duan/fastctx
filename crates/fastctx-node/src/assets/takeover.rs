@@ -102,7 +102,11 @@ pub(super) async fn run(
             .collect())
     })
     .await?;
-    if theirs.is_empty() {
+    // Over only once every stream of the scope is known here — pulled whole
+    // since — and none of them is another device's (OO08).
+    let (scope_text, pulled) = (scope.to_string(), &assets.library);
+    let whole = blocking(pulled, move |library| library.is_pulled(&scope_text)).await?;
+    if theirs.is_empty() && whole {
         assets.adopting.lock().expect("adopting").remove(scope);
         super::release::adopted(&directory);
     } else if assets.adopting.lock().expect("adopting").contains(scope) {

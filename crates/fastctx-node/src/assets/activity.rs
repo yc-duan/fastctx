@@ -45,9 +45,13 @@ pub(crate) fn start(node: &Arc<Node>) {
                 let view = link.view();
                 let Some(me) = view.me() else { continue };
                 // The machine's own user: its owner, logged in here.
-                let home = me.home.clone().filter(|home| me.logins.contains(home));
+                // A managed machine works for its owner, logged in or not;
+                // another's owner logged out for now leaves what is its own
+                // user's to wait (OO17).
+                let home = me.home.clone().filter(|home| me.managed || me.logins.contains(home));
+                let waits = me.home.is_some() && home.is_none();
                 drop(view);
-                if let Err(error) = fastctx_platform::task::blocking(move || look(&working, &hub, home.as_ref())).await {
+                if let Err(error) = fastctx_platform::task::blocking(move || look(&working, &hub, home.as_ref(), waits)).await {
                     node.log.line(format_args!("writing what was done here into the asset library: {error}"));
                 }
             }
@@ -89,11 +93,11 @@ fn writable(node: &Node, library: &Library, hub: &HubId, account: &AccountName, 
 }
 
 /// One look at what was done here for the accounts of `hub`.
-fn look(node: &Arc<Node>, hub: &HubId, home: Option<&AccountName>) -> Result<(), String> {
+fn look(node: &Arc<Node>, hub: &HubId, home: Option<&AccountName>, waits: bool) -> Result<(), String> {
     let Some(assets) = node.assets.as_ref() else { return Ok(()) };
     let machine: String = assets.device()[..8].iter().map(|byte| format!("{byte:02x}")).collect();
-    deeds(node, hub, home, &format!("{}/{machine}", AccountActivity::STREAM))?;
-    usage(node, hub, home, &format!("{}/{machine}", AccountUsage::STREAM))
+    deeds(node, hub, home, waits, &format!("{}/{machine}", AccountActivity::STREAM))?;
+    usage(node, hub, home, waits, &format!("{}/{machine}", AccountUsage::STREAM))
 }
 
 /// Where a look stands, kept beside: by network.
@@ -179,7 +183,7 @@ fn deed_of(row: &fastctx_storage::rusqlite::Row<'_>) -> fastctx_storage::rusqlit
 
 /// Writes the deeds since the last look, and those still read, of the
 /// accounts of `hub`.
-fn deeds(node: &Arc<Node>, hub: &HubId, home: Option<&AccountName>, stream: &str) -> Result<(), String> {
+fn deeds(node: &Arc<Node>, hub: &HubId, home: Option<&AccountName>, waits: bool, stream: &str) -> Result<(), String> {
     let Some(assets) = node.assets.as_ref() else { return Ok(()) };
     let library = &assets.library;
     if node.book_database.fault().is_some() {
@@ -238,7 +242,14 @@ fn deeds(node: &Arc<Node>, hub: &HubId, home: Option<&AccountName>, stream: &str
         if deed.began > last_began || (deed.began == last_began && deed.key > last_deed) {
             (last_began, last_deed) = (deed.began, deed.key.clone());
         }
-        let Some(account) = routed(&deed.account, hub, home) else { continue };
+        let Some(account) = routed(&deed.account, hub, home) else {
+            // The machine's own user's, its owner not logged in now: looked at
+            // again, not passed by (OO17).
+            if deed.account.is_empty() && waits {
+                still_open.insert(deed.key.clone());
+            }
+            continue;
+        };
         let Some((scope, holding)) = writable(node, library, hub, &account, stream)? else {
             // Its scope not held yet: looked at again.
             still_open.insert(deed.key.clone());
@@ -290,7 +301,7 @@ fn deeds(node: &Arc<Node>, hub: &HubId, home: Option<&AccountName>, stream: &str
 
 /// Writes the usage lines since the last look of the accounts of `hub`,
 /// each account's lines of a piece as one object.
-fn usage(node: &Arc<Node>, hub: &HubId, home: Option<&AccountName>, stream: &str) -> Result<(), String> {
+fn usage(node: &Arc<Node>, hub: &HubId, home: Option<&AccountName>, waits: bool, stream: &str) -> Result<(), String> {
     let Some(assets) = node.assets.as_ref() else { return Ok(()) };
     let library = &assets.library;
     let root = node.world.path().join("usage");
@@ -341,8 +352,11 @@ fn usage(node: &Arc<Node>, hub: &HubId, home: Option<&AccountName>, stream: &str
         // Whole lines only: the rest is read when it is whole.
         let Some(end) = bytes.iter().rposition(|&byte| byte == b'\n') else { continue };
         let mut bytes = &bytes[..=end];
+        // Each account's lines; and whether any is the machine's own user's
+        // with its owner not logged in now, which waits (OO17).
         let split = |bytes: &[u8]| {
             let mut lines: BTreeMap<AccountName, Vec<u8>> = BTreeMap::new();
+            let mut unowned = false;
             for line in bytes.split_inclusive(|&byte| byte == b'\n') {
                 let Ok(value) = serde_json::from_slice::<serde_json::Value>(line) else { continue };
                 let account = match value.get("who").filter(|who| !who.is_null()) {
@@ -350,15 +364,18 @@ fn usage(node: &Arc<Node>, hub: &HubId, home: Option<&AccountName>, stream: &str
                         let (Some(of), Some(name)) = (who["hub"].as_str(), who["account"].as_str()) else { continue };
                         routed(&format!("{of}/{name}"), hub, home)
                     }
-                    None => home.cloned(),
+                    None => {
+                        unowned |= waits;
+                        home.cloned()
+                    }
                 };
                 if let Some(account) = account {
                     lines.entry(account).or_default().extend_from_slice(line);
                 }
             }
-            lines
+            (lines, unowned)
         };
-        let mut lines = split(bytes);
+        let (mut lines, mut unowned) = split(bytes);
         // A piece written here before a stop that kept no standing ends
         // where it ended then, however the file grew since: read again to
         // there, the rest comes as a piece of its own (M15).
@@ -377,9 +394,9 @@ fn usage(node: &Arc<Node>, hub: &HubId, home: Option<&AccountName>, stream: &str
         }
         if let Some(ended) = ended.filter(|ended| *ended > 0 && *ended < bytes.len()) {
             bytes = &bytes[..ended];
-            lines = split(bytes);
+            (lines, unowned) = split(bytes);
         }
-        let mut waiting = false;
+        let mut waiting = unowned;
         for (account, lines) in lines {
             let Some((scope, holding)) = writable(node, library, hub, &account, stream)? else {
                 waiting = true;

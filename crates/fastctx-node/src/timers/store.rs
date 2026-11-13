@@ -23,7 +23,7 @@ use tokio::sync::Notify;
 const FAMILY: &str = "timers";
 /// The most timers one owner's list gives: a sentinel or a conversation
 /// keeps a few, and one that kept more is shown the first of them.
-const OWNED: usize = 4096;
+pub(crate) const OWNED: usize = 4096;
 use super::claims::Claims;
 
 pub struct Store {

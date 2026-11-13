@@ -31,6 +31,7 @@ mod activity;
 mod artifact;
 mod attachment;
 mod meta;
+mod names;
 mod words;
 mod moves;
 mod networks;
@@ -73,6 +74,7 @@ pub use document::{
     MachineAudit, ProjectLedger,
 };
 pub use hub_ordered::{HUB_ORDERED, hub_orders};
+pub use names::item_of;
 pub use logs::{HubLog, KEPT_MS, MachineLog, McpLog};
 pub use job::{JobFacts, JobOutput, OUTPUT_PARTS};
 pub use meta::{ConversationMeta, META_ITEMS};

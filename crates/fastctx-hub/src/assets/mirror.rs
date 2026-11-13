@@ -55,12 +55,7 @@ const BODY_MOST: usize = fastctx_content::RECORD_BYTES - 4096;
 /// An item's identity for `name`: as it is when it fits, otherwise a digest
 /// of it, the whole name staying in the body (AR03).
 pub(super) fn item_of(name: &str) -> Vec<u8> {
-    if name.len() <= fastctx_content::KEY_BYTES {
-        return name.as_bytes().to_vec();
-    }
-    use sha2::Digest as _;
-    let digest: String = sha2::Sha256::digest(name.as_bytes()).iter().map(|byte| format!("{byte:02x}")).collect();
-    format!("#{}", &digest[..fastctx_content::KEY_BYTES - 1]).into_bytes()
+    fastctx_content::v2::item_of(name)
 }
 
 /// A body as it goes in a record, the objects it refers to, and the lease

@@ -48,7 +48,7 @@ impl Kind for ConversationTimer {
                 if !objects.is_empty() {
                     return Err("a timer refers to no object".into());
                 }
-                if id_of(body)?.as_bytes() != after.record.item.as_slice() {
+                if super::names::item_of(&id_of(body)?) != after.record.item {
                     return Err("a timer is named by its id".into());
                 }
                 Ok(())

@@ -38,9 +38,14 @@ pub(super) async fn produce(
         return Ok(0);
     };
     let mut wanted = BTreeMap::new();
+    // A list as long as the table gives at most may leave some out: then
+    // none is let go on not being in it (OO24).
+    let mut whole = true;
     for owner in [Owner::Conversation { resident: resident.clone() }, Owner::Goal { resident: resident.clone() }] {
-        for timer in store.list(&owner).await.map_err(failure)? {
-            wanted.insert(timer.id.clone(), serde_json::to_vec(&timer).map_err(failure)?);
+        let timers = store.list(&owner).await.map_err(failure)?;
+        whole &= timers.len() < crate::timers::store::OWNED;
+        for timer in timers {
+            wanted.insert(fastctx_content::v2::item_of(&timer.id), serde_json::to_vec(&timer).map_err(failure)?);
         }
     }
     let signer = node.assets.as_ref().map(|assets| assets.signer()).ok_or_else(|| failure("no asset library"))?;
@@ -56,6 +61,7 @@ pub(super) async fn produce(
             .map_err(failure)?
             .and_then(|bytes| serde_json::from_slice(&bytes).ok())
             .unwrap_or_default();
+        let known = mine.len();
         let mut writes = Vec::new();
         let mut after = None;
         loop {
@@ -64,7 +70,7 @@ pub(super) async fn produce(
             after = Some((last.order.clone(), last.item.clone()));
             for entry in page {
                 let id = String::from_utf8_lossy(&entry.item).into_owned();
-                match wanted.remove(&id) {
+                match wanted.remove(&entry.item) {
                     Some(body) if body == entry.body => {
                         mine.insert(id.clone());
                     }
@@ -74,7 +80,7 @@ pub(super) async fn produce(
                         value: Some(body),
                         objects: Vec::new(),
                     }),
-                    None if mine.remove(&id) => writes.push(Write::<ConversationTimer> {
+                    None if whole && mine.remove(&id) => writes.push(Write::<ConversationTimer> {
                         order: entry.item.clone(),
                         item: entry.item,
                         value: None,
@@ -84,8 +90,7 @@ pub(super) async fn produce(
                 }
             }
         }
-        for (id, body) in wanted {
-            let item = id.into_bytes();
+        for (item, body) in wanted {
             writes.push(Write::<ConversationTimer> { order: item.clone(), item, value: Some(body), objects: Vec::new() });
         }
         for write in &writes {
@@ -94,6 +99,11 @@ pub(super) async fn produce(
             }
         }
         if writes.is_empty() {
+            // Ones found already as this table has them are this machine's
+            // from now on, kept though nothing is written.
+            if mine.len() != known {
+                library.keep_checkpoint(&mine_name, serde_json::to_vec(&mine).map_err(failure)?).map_err(failure)?;
+            }
             return Ok(0);
         }
         let count = writes.len();

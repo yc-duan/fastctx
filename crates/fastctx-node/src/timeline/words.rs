@@ -83,8 +83,26 @@ fn order(settled: bool, at: jiff::Timestamp) -> Vec<u8> {
 /// The operation words arrive under: their notice id, and the digest of
 /// what they say.
 fn op_of(delivery: &Delivery) -> Result<Op, Failure> {
-    let digest = Sha256::digest(serde_json::to_vec(&delivery.notice).map_err(failure)?).into();
-    Ok(Op { id: delivery.id.to_string(), digest, kind: "words".into() })
+    Ok(Op { id: delivery.id.to_string(), digest: digest_of(&delivery.notice)?, kind: "words".into() })
+}
+
+/// What words say, as their operation's digest: the machines they name
+/// left out — a machine's name changes, the words do not — so the same words
+/// sent again after a rename are the same request (OO05).
+fn digest_of(notice: &Notice) -> Result<[u8; 32], Failure> {
+    fn unnamed(value: &mut serde_json::Value) {
+        match value {
+            serde_json::Value::Object(map) => {
+                map.remove("machine");
+                map.values_mut().for_each(unnamed);
+            }
+            serde_json::Value::Array(items) => items.iter_mut().for_each(unnamed),
+            _ => {}
+        }
+    }
+    let mut value = serde_json::to_value(notice).map_err(failure)?;
+    unnamed(&mut value);
+    Ok(Sha256::digest(serde_json::to_vec(&value).map_err(failure)?).into())
 }
 
 /// The most a body holds as it is: words larger keep their delivery as the
@@ -201,6 +219,10 @@ async fn keep(node: &Arc<Node>, to: &ResidentId, delivery: &Delivery) -> Result<
     }
     let Some((about, _)) = node.residents.about(to) else { return Ok(Wrote::Skipped) };
     let Some(placed) = placed(node, &about)? else { return Ok(Wrote::Skipped) };
+    // One at a time with the conversation's producers: where the words stand
+    // is never written over on what was read before they were said again
+    // (OO03).
+    let _producing = super::tail::PRODUCING.hold(to).await;
     // Let go to another machine with its export: the inbox keeps them
     // alone (J08).
     if crate::assets::release::released_away(node.world.conversation(to).path(), &placed.scope, &kept.device()) {
@@ -243,7 +265,7 @@ async fn keep(node: &Arc<Node>, to: &ResidentId, delivery: &Delivery) -> Result<
             // Kept elsewhere under this number as other words: refused too.
             if !ours
                 && let Some(held) = &held
-                && Sha256::digest(serde_json::to_vec(&held.delivery.notice).unwrap_or_default()).as_slice() != op.digest
+                && digest_of(&held.delivery.notice).ok() != Some(op.digest)
             {
                 return Err(refused());
             }
@@ -387,7 +409,7 @@ pub(super) async fn produce(
             continue;
         }
         let order = order(settled, said.delivery.at);
-        writes.push((entry.item.clone(), order, state, said.delivery.clone()));
+        writes.push((entry.item.clone(), order, state, said.delivery.clone(), entry.revision));
         match stood {
             Stood::Delivering => ways.push((said.delivery.id.to_string(), Way::Delivering)),
             Stood::Delivered => ways.push((said.delivery.id.to_string(), Way::Delivered)),
@@ -421,7 +443,12 @@ pub(super) async fn produce(
         }
         if !writes.is_empty() {
             let (mut records, mut all_leases) = (Vec::new(), Vec::new());
-            for (item, order, state, delivery) in writes {
+            for (item, order, state, delivery, revision) in writes {
+                // Said again meanwhile, the words moved on since they were
+                // read: what was read stands no more (OO03).
+                if library.item(&scope, ConversationWords::STREAM, &item)?.is_none_or(|now| now.revision != revision) {
+                    continue;
+                }
                 let (value, objects, leases) = stored(&library, state, &delivery, None)?;
                 records.push(Write::<ConversationWords> { item, order, value: Some(value), objects });
                 all_leases.extend(leases);

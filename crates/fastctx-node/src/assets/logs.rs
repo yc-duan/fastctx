@@ -253,9 +253,20 @@ fn mcp_logs(node: &Arc<Node>, scope: &str, folder: &std::path::Path) -> Result<(
         writes.push(Write { order: item.clone(), item, value: Some(body), objects: vec![lease.object] });
         leases.push(lease);
     }
-    for entry in library.page(scope, McpLog::STREAM, None, usize::MAX).map_err(error)? {
-        if !present.contains(String::from_utf8_lossy(&entry.item).as_ref()) {
-            writes.push(Write { order: entry.order.clone(), item: entry.item, value: None, objects: Vec::new() });
+    // Every page of them, not the first only (OO12).
+    let mut after = None;
+    loop {
+        let page = library.page(scope, McpLog::STREAM, after.clone(), 500).map_err(error)?;
+        let Some(last) = page.last() else { break };
+        after = Some((last.order.clone(), last.item.clone()));
+        let full = page.len() == 500;
+        for entry in page {
+            if !present.contains(String::from_utf8_lossy(&entry.item).as_ref()) {
+                writes.push(Write { order: entry.order.clone(), item: entry.item, value: None, objects: Vec::new() });
+            }
+        }
+        if !full {
+            break;
         }
     }
     if writes.is_empty() {

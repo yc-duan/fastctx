@@ -89,6 +89,17 @@ pub(crate) fn attachment_for(
                     _ => (attachment, acting.clone().unwrap_or(Acting::Here)),
                 };
                 let machine = attachment.owner().machine.clone();
+                // Kept elsewhere, its original in the asset library here:
+                // read from it, that machine offline or not (§28.27).
+                if !node.is_here(&machine.clone().into())
+                    && let fastctx_types::attachments::AttachmentSource::Upload(receipt) = &attachment
+                    && let Some(passing) = crate::attachments::kept_here::original(&node, &receipt.file).await
+                {
+                    let request = ReadFileRequest { path: crate::world::native(passing.path()), range };
+                    let read = local::read_attachment(node.machine(), request, None, None, None, &sender).await;
+                    drop(passing);
+                    return Ok(read);
+                }
                 if !node.is_here(&machine.clone().into()) {
                     node.settled(&machine.clone().into()).await;
                     let speakers = node.speakers(&acting, &machine.clone().into(), fastctx_types::remote::RemoteCall::ReadAttachment {

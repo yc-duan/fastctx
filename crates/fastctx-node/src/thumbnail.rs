@@ -59,6 +59,15 @@ pub(crate) async fn attachment(
     max: u32,
 ) -> Result<Thumbnail, Failure> {
     let machine: Written = attachment.thumbnail_owner().machine.clone().into();
+    // Kept elsewhere, its original in the asset library here: drawn from it,
+    // that machine offline or not (§28.27).
+    if !node.is_here(&machine)
+        && let fastctx_types::attachments::AttachmentSource::Upload(receipt) = &attachment
+        && let Some(passing) = crate::attachments::kept_here::original(node, &receipt.file).await
+    {
+        let path = crate::world::native(passing.path());
+        return here(node, ThumbnailRequest { path, max }, None).await;
+    }
     if !node.is_here(&machine) {
         return match node
             .call_with_stream(
