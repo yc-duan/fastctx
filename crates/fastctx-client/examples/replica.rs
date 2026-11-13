@@ -82,23 +82,41 @@ async fn run() -> Result<(), String> {
         tokio::task::spawn_blocking(move || device.replicate(tier)).await.map_err(|error| error.to_string())?.map_err(error)?
     };
     // Settled: two passes in a row ended well, with every hub's last pass
-    // well and nothing new held.
+    // well and nothing new held but the running logs: a machine's, an MCP
+    // server's and the hub's own grow by the minute while they run, and a
+    // quiet follower passes once a minute, so they would never hold still.
     let deadline = Instant::now() + Duration::from_secs(asked.seconds);
     let mut passes = replica.passes();
     let mut settled = 0;
-    let mut held_before = String::new();
+    let mut held_before = std::collections::BTreeMap::new();
+    // What each pass seen changed, the last few, for a copy that does not
+    // settle: how many passes, and which streams moved in them.
+    let started = Instant::now();
+    let mut seen = Vec::new();
     while settled < 2 && Instant::now() < deadline {
         if tokio::time::timeout(deadline.saturating_duration_since(Instant::now()), passes.changed()).await.is_err() {
             break;
         }
         let library = replica.library();
-        let mut held = String::new();
+        let mut held = std::collections::BTreeMap::new();
         for (scope, _, _) in library.live_scopes().map_err(|error| error.to_string())? {
-            held.push_str(&format!("{scope}:{:?};", library.streams(&scope).map_err(|error| error.to_string())?));
+            for (stream, next) in library.streams(&scope).map_err(|error| error.to_string())? {
+                if !matches!(stream.as_str(), "node" | "mcp" | "hub") {
+                    held.insert(format!("{scope} {stream}"), next);
+                }
+            }
         }
         let on = hubs(&replica);
         let well = !on.is_empty() && on.iter().all(|hub| matches!(replica.ended(hub), Some(Ok(()))));
-        settled = if well && held == held_before { settled + 1 } else { 0 };
+        let moved: Vec<String> = held
+            .iter()
+            .filter(|(stream, next)| held_before.get(*stream) != Some(*next))
+            .map(|(stream, next)| format!("{stream}={next}"))
+            .chain(held_before.keys().filter(|stream| !held.contains_key(*stream)).map(|stream| format!("{stream} gone")))
+            .take(6)
+            .collect();
+        settled = if well && moved.is_empty() { settled + 1 } else { 0 };
+        seen.push(serde_json::json!({ "at": started.elapsed().as_secs(), "well": well, "moved": moved }));
         held_before = held;
     }
     // Pages down what was asked, from the hub, as a reader scrolling would.
@@ -154,6 +172,8 @@ async fn run() -> Result<(), String> {
         .collect();
     println!("{}", serde_json::json!({ "settled": settled >= 2, "tier": format!("{tier:?}"), "passes": ended }));
     if settled < 2 {
+        let last: Vec<_> = seen.iter().rev().take(8).rev().collect();
+        println!("{}", serde_json::json!({ "passes_seen": seen.len(), "last": last }));
         return Err("the copy did not settle in time".into());
     }
     Ok(())
