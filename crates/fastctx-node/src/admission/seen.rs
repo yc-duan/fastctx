@@ -34,11 +34,20 @@ pub enum Looker<'a> {
     Here(&'a Acting),
 }
 
+/// Whether the hub `asker` asks through keeps every asset sealed, by this
+/// machine's view of it: nothing of an account's goes to another machine
+/// meanwhile, a watch begun before among it (design §28.41).
+fn sealed_for(node: &Node, asker: &Asker) -> bool {
+    node.link_of(&asker.hub).is_some_and(|link| link.view().assets_sealed.is_some())
+}
+
 impl Looker<'_> {
     /// Whether what works for `account` is the looker's to see.
     pub(crate) fn sees_account(self, node: &Node, account: &HubAccount) -> bool {
         match self {
-            Looker::Asker(asker) => account.hub == asker.hub && account.account == asker.account,
+            Looker::Asker(asker) => {
+                account.hub == asker.hub && account.account == asker.account && !sealed_for(node, asker)
+            }
             Looker::Here(acting) => node.serves(acting, &account.hub, &account.account),
         }
     }
@@ -49,7 +58,7 @@ impl Looker<'_> {
     /// logged in to.
     pub(crate) fn sees(self, node: &Node, acting: &Acting) -> bool {
         match (self, acting) {
-            (Looker::Asker(asker), _) => node.serves(acting, &asker.hub, &asker.account),
+            (Looker::Asker(asker), _) => node.serves(acting, &asker.hub, &asker.account) && !sealed_for(node, asker),
             (Looker::Here(_), Acting::Accounts { accounts }) => {
                 accounts.iter().any(|account| self.sees_account(node, account))
             }

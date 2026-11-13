@@ -117,6 +117,14 @@ pub(crate) fn register(
     by: &MachineName,
     generation: u64,
 ) -> Result<(), String> {
+    // Sealed meanwhile, no stream but an answer to work's is paired: one a
+    // call answered after the seal's cutting looked would go on unseen
+    // (design §28.41).
+    if standing.purpose != fastctx_types::access::Purpose::Echo
+        && let Some(why) = crate::control::sealed(hub)
+    {
+        return Err(why);
+    }
     // Its ends are known by their names now: the members that come to pair
     // it are.
     let (source, sink) = {
@@ -247,6 +255,13 @@ pub(crate) fn cut_streams(hub: &Hub) {
                                 )
                                 .err()
                                 .map(|error| error.message)
+                        })
+                        // Sealed meanwhile, a stream of anything but an
+                        // answer to work ends too (design §28.41).
+                        .or_else(|| {
+                            (standing.purpose != fastctx_types::access::Purpose::Echo)
+                                .then(|| crate::control::sealed(hub))
+                                .flatten()
                         })
                     })
                     .map(|why| (stream, why))

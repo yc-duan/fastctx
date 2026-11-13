@@ -125,9 +125,16 @@ fn made(
                 | Change::MoveProject { .. }
         );
         let opening = matches!(&change, Change::OpenAssets);
-        let mut seal = (grants || opening).then(|| hub.assets.seal_held());
-        if grants && seal.as_ref().is_some_and(|seal| seal.is_some()) {
-            return Err("every asset is sealed until the hub is reopened: no access is granted meanwhile".into());
+        // Nor is an account's configuration written meanwhile: a view gives
+        // it whole to every machine logged in to the account, a login taken
+        // back after the copy among them (design §28.41).
+        let configures = matches!(&change, Change::Profile { .. } | Change::Collab { .. } | Change::Subagents { .. });
+        let mut seal = (grants || opening || configures).then(|| hub.assets.seal_held());
+        if (grants || configures) && seal.as_ref().is_some_and(|seal| seal.is_some()) {
+            return Err(
+                "every asset is sealed until the hub is reopened: no access is granted and no account's configuration is written meanwhile"
+                    .into(),
+            );
         }
         let mut store = hub.edit_store();
         asker.check(&store.book.directory)?;

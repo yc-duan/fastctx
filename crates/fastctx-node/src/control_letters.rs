@@ -64,7 +64,7 @@ pub(crate) fn admit(node: &Arc<Node>, hub: &HubId, caller: &Caller, command: &Co
     {
         return Err(Failure::refused("only the run owner's machine can stop its dispatch"));
     }
-    crate::admission::admit(node, &link, caller, &command.call()).map(|_| ())
+    crate::admission::admit_held(node, &link, caller, &command.call()).map(|_| ())
 }
 
 fn directory(node: &Node, owner: &Address) -> PathBuf {

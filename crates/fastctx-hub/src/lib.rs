@@ -1038,11 +1038,16 @@ async fn serving(
         workbench: Mutex::new("hub workbench", Rank::HUB_WORKBENCH, HashMap::new()),
     });
     let _ = hub.this.set(Arc::downgrade(&hub));
-    // Sealed while it runs, every machine is told at once (design §28.41).
+    // Sealed while it runs, every machine is sent a view that says so, what
+    // is afoot elsewhere is told no more, and every call and stream between
+    // machines but an answer to work ends (design §28.41).
     let sealing = Arc::downgrade(&hub);
     let _ = hub.assets.on_seal.set(Box::new(move || {
         let Some(hub) = sealing.upgrade() else { return };
         fastctx_platform::task::spawn_blocking(move || {
+            control::cut_calls(&hub);
+            data::cut_streams(&hub);
+            afoot::directory_changed(&hub);
             let machines = hub.sessions().keys().cloned().collect();
             hub.views_changed_for(&machines);
         });

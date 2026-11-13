@@ -101,7 +101,7 @@ pub(crate) fn town_of(call: &RemoteCall) -> Option<&TownName> {
 
 /// Refuses a call `caller` may not make here; otherwise, who asked.
 pub fn admit(node: &Arc<Node>, link: &Arc<Link>, caller: &Caller, call: &RemoteCall) -> Result<Asker, Failure> {
-    admit_inner(node, link, caller, call, true)
+    admit_inner(node, link, caller, call, true, true)
 }
 
 /// Admission before durable submission. Project membership is checked by the
@@ -109,11 +109,19 @@ pub fn admit(node: &Arc<Node>, link: &Arc<Link>, caller: &Caller, call: &RemoteC
 pub(crate) fn admit_for_submission(
     node: &Arc<Node>, link: &Arc<Link>, caller: &Caller, call: &RemoteCall,
 ) -> Result<Asker, Failure> {
-    admit_inner(node, link, caller, call, false)
+    admit_inner(node, link, caller, call, false, true)
+}
+
+/// Admission of what a letter the hub kept carries: the hub took it before
+/// its assets were sealed, and refuses any new one while they are, so a
+/// seal met on the way pauses nothing here into a refusal for good (design
+/// §28.41).
+pub(crate) fn admit_held(node: &Arc<Node>, link: &Arc<Link>, caller: &Caller, call: &RemoteCall) -> Result<Asker, Failure> {
+    admit_inner(node, link, caller, call, true, false)
 }
 
 fn admit_inner(
-    node: &Arc<Node>, link: &Arc<Link>, caller: &Caller, call: &RemoteCall, project_ready: bool,
+    node: &Arc<Node>, link: &Arc<Link>, caller: &Caller, call: &RemoteCall, project_ready: bool, sealing: bool,
 ) -> Result<Asker, Failure> {
     let here = node.machine();
     // Nothing of a call turned away here ran.
@@ -129,7 +137,8 @@ fn admit_inner(
     let view = crate::authorization::current_view(link)?;
     // Its hub's assets sealed, nothing of an account's goes between machines
     // until they are opened: not over a direct link either (design §28.41).
-    if let Some(why) = view.assets_sealed.as_ref()
+    if sealing
+        && let Some(why) = view.assets_sealed.as_ref()
         && !view.same(&caller.machine, &here)
     {
         return Err(refuse(format!("{}{why}", fastctx_types::assets::SEALED_RELAY)));

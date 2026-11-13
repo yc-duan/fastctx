@@ -102,6 +102,13 @@ pub(crate) fn view_for_in(
             account.profile = account.profile.as_ref().map(|profile| profile.located(|machine| x.same(machine, me)));
         }
     }
+    // Its assets sealed, the hub carries nothing between machines (design
+    // §28.41), and no view says where one may be reached directly: a link
+    // between two lets go with the view, a release of before the seal's
+    // own check among them, and none is dialed anew. How a machine reaches
+    // the hub through another (`relay`, `through`, the forwarders) stays:
+    // the machines are to come to the hub sealed.
+    let sealed = hub.assets.sealed().is_some();
     for member in &mut directory.members {
         let others = member.name != *me
             && member.home.as_ref().is_some_and(|owner| x.is_visitor(owner) && !mine.contains(owner));
@@ -117,6 +124,9 @@ pub(crate) fn view_for_in(
             member.through = None;
             member.paths = None;
             member.group = None;
+        }
+        if sealed && member.name != *me {
+            member.direct.clear();
         }
     }
     // A release that cannot read a visitor would lose its whole view to one.

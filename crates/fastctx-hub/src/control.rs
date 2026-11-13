@@ -745,6 +745,19 @@ fn over(hub: &Hub, key: u64, pending: &Pending) {
     }
 }
 
+/// Why nothing goes between machines now, the hub's assets sealed.
+pub(crate) fn sealed(hub: &Hub) -> Option<String> {
+    hub.assets.sealed().map(|why| format!("{}{why}", fastctx_types::assets::SEALED_RELAY))
+}
+
+/// Why `standing` holds no more: lapsed in the directory, or the hub sealed
+/// meanwhile — a watch begun before goes on giving what comes after, so
+/// every call but an answer to work ends as a right taken back does
+/// (design §28.41).
+pub(crate) fn lapsed(hub: &Hub, store: &crate::store::Snapshot, standing: &Standing) -> Option<String> {
+    standing.lapsed_in(hub, store).or_else(|| if standing.purpose == Purpose::Echo { None } else { sealed(hub) })
+}
+
 /// Ends every call in flight whose standing lapsed, telling its caller.
 pub(crate) fn cut_calls(hub: &Hub) {
     // No lock is held while another is taken: the calls are copied out,
@@ -761,7 +774,7 @@ pub(crate) fn cut_calls(hub: &Hub) {
         let store = hub.store();
         standings
             .into_iter()
-            .filter_map(|(key, standing)| standing.lapsed_in(hub, &store).map(|why| (key, why)))
+            .filter_map(|(key, standing)| lapsed(hub, &store, &standing).map(|why| (key, why)))
             .collect()
     };
     let lapsed: Vec<(u64, Pending, String)> = {
@@ -802,6 +815,17 @@ fn of_records(question: &Question) -> bool {
     )
 }
 
+/// The questions besides the records' a hub sealed refuses (design
+/// §28.41): deleting a conversation on another machine, which a login taken
+/// back after the copy could ask again, and moving the hub, which hands out
+/// its keys.
+fn sealed_refuses(question: &Question) -> bool {
+    matches!(
+        question,
+        Question::Forget { .. } | Question::HubMove { .. } | Question::HubArrival { .. }
+    )
+}
+
 /// Does what the member's frame asks; `took`, how many bytes of this
 /// connection the hub took from it, goes back with its heartbeat.
 #[allow(clippy::too_many_arguments)]
@@ -827,7 +851,7 @@ fn handle(
     // written by any way, the requests from before the asset service among
     // them (design §17; the user, 2026-11-12).
     if let Up::Ask { id, question, .. } = &frame
-        && of_records(question)
+        && (of_records(question) || sealed_refuses(question))
         && let Some(why) = hub.assets.sealed()
     {
         reply(Down::Told { id: *id, answer: Err(format!("the hub's assets are sealed: {why}")) });
@@ -1366,15 +1390,17 @@ fn canonical_address(hub: &Hub, address: fastctx_types::Address) -> fastctx_type
 /// The standing a call or a letter names, if the directory allows it: of
 /// the machines as they are named now.
 fn standing(hub: &Hub, store: &crate::store::Snapshot, message: &Envelope) -> Result<Standing, String> {
+    let (account, purpose) = message.standing()?;
     // Its assets sealed, the hub gives no account's content by any way
     // until they are opened (design §17, §28.41): a share or a login taken
     // back after the copy it was put back from is in its directory again,
-    // so it carries no new call or letter between machines meanwhile. One
-    // already under way goes on; an answer to work it took goes back.
-    if let Some(why) = hub.assets.sealed() {
-        return Err(format!("{}{why}", fastctx_types::assets::SEALED_RELAY));
+    // so it carries no new call or letter between machines meanwhile. What
+    // answers work taken before goes back, a result or a part of one.
+    if purpose != Purpose::Echo
+        && let Some(why) = sealed(hub)
+    {
+        return Err(why);
     }
-    let (account, purpose) = message.standing()?;
     let directory = store.indexed();
     let from = directory.member(&message.from).ok_or("the sender is not a member of the hub")?;
     let to = directory.member(&message.to).ok_or("the receiver is not a member of the hub")?;

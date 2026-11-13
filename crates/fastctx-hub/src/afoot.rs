@@ -186,6 +186,10 @@ fn tell(hub: &Hub, shown: &mut HashMap<MachineName, Shown>, scope: Scope<'_>) {
         })
         .collect();
     let hidden = crate::forget::hidden(&store);
+    // Its assets sealed, the hub tells no one what is afoot on another
+    // machine, words and questions in it (design §28.41): told again once
+    // they are opened.
+    let sealed = hub.assets.sealed().is_some();
     if matches!(scope, Scope::All) {
         shown
             .retain(|name, kept| hub.sessions().get(name).is_some_and(|session| session.generation == kept.generation));
@@ -223,7 +227,7 @@ fn tell(hub: &Hub, shown: &mut HashMap<MachineName, Shown>, scope: Scope<'_>) {
             let mut now = projected
                 .entry((group, machine.clone()))
                 .or_insert_with(|| {
-                    if !sees(&directory, &logins, &machine) {
+                    if sealed || !sees(&directory, &logins, &machine) {
                         return None;
                     }
                     let source = sources

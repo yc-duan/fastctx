@@ -270,7 +270,16 @@ impl Inner {
             .iter()
             .filter_map(|(key, call)| {
                 let from = call.conn.upgrade().map(|conn| conn.name.clone())?;
-                view.admits(&from, &call.account, me, call.purpose).err().map(|why| (*key, why))
+                view.admits(&from, &call.account, me, call.purpose)
+                    .err()
+                    // Its hub's assets sealed, a call answered over a direct
+                    // link ends as one the hub carried does: an answer to
+                    // work aside (design §28.41).
+                    .or_else(|| {
+                        let sealed = view.assets_sealed.as_ref().filter(|_| call.purpose != fastctx_types::access::Purpose::Echo);
+                        sealed.map(|why| format!("{}{why}", fastctx_types::assets::SEALED_RELAY))
+                    })
+                    .map(|why| (*key, why))
             })
             .collect();
         for (key, why) in lapsed {
