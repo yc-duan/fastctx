@@ -108,7 +108,21 @@ async fn work(
                 let page = link.plan_read_named(&account, of).await.map_err(Failure::new)?;
                 return Ok(plan::Result::Page { page });
             }
-            let page = link.plan_read_of(&account, &whose).await.map_err(Failure::new)?;
+            let page = match link.plan_read_of(&account, &whose).await {
+                Ok(page) => page,
+                // The hub not reached: the plan as the copy here holds it (plan 3-5).
+                Err(error) if !matches!(link.status(), fastctx_net::link::Status::Online { .. }) => {
+                    let (asking, resident, machine) = (node.clone(), whose.resident.clone(), whose.machine.clone());
+                    fastctx_platform::task::spawn_blocking(move || {
+                        crate::timeline::copied_plan::page(&asking, &resident, Some(&machine))
+                    })
+                    .await
+                    .ok()
+                    .flatten()
+                    .ok_or_else(|| Failure::new(error))?
+                }
+                Err(error) => return Err(Failure::new(error)),
+            };
             if let Some(other) = link.plan_of_another(&page, &whose) {
                 return Err(Failure::not_run(words::elsewhere(other)));
             }

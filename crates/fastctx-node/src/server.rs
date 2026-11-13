@@ -1981,11 +1981,26 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
             users_voice(node, peer)?;
             let (link, account) =
                 crate::profile::scope(node, &caller::of(node, peer)?, hub.as_ref(), account.as_ref())?;
-            let page = match machine {
+            let page = match machine.clone() {
                 Some(machine) => {
-                    link.plan_read_of(&account, &fastctx_types::Address { machine, resident: owner }).await
+                    link.plan_read_of(&account, &fastctx_types::Address { machine, resident: owner.clone() }).await
                 }
-                None => link.plan_read(&account, owner).await,
+                None => link.plan_read(&account, owner.clone()).await,
+            };
+            // The hub not reached: the plan as the copy here holds it (plan 3-5).
+            let page = match page {
+                Err(error) if !matches!(link.status(), fastctx_net::link::Status::Online { .. }) => {
+                    let asking = node.clone();
+                    match fastctx_platform::task::spawn_blocking(move || {
+                        crate::timeline::copied_plan::page(&asking, &owner, machine.as_ref())
+                    })
+                    .await
+                    {
+                        Ok(Some(page)) => Ok(page),
+                        _ => Err(error),
+                    }
+                }
+                page => page,
             };
             page.map(|page| Reply::Plan { result: fastctx_types::plan::Result::Page { page } }).map_err(Failure::new)
         }

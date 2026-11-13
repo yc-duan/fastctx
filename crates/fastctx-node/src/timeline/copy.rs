@@ -62,7 +62,7 @@ pub(crate) fn of(node: &Node, resident: &ResidentId, machine: Option<&Written>) 
 
 /// Whether the conversation of `scope` lives on `machine` as its copy here
 /// has it, or was born there.
-fn lives_on(library: &fastctx_content::v2::Library, scope: &fastctx_content::v2::HeldScope, machine: &fastctx_types::MachineName) -> bool {
+pub(super) fn lives_on(library: &fastctx_content::v2::Library, scope: &fastctx_content::v2::HeldScope, machine: &fastctx_types::MachineName) -> bool {
     if scope.key.starts_with(&format!("c/{}/{machine}/", scope.hub.as_deref().unwrap_or_default())) {
         return true;
     }
