@@ -435,6 +435,12 @@ async fn pass(node: &Arc<Node>, hub: &HubId, link: &Arc<Link>, network: &Network
     }
     if !whole && isolated.is_none() {
         for owner in &stood {
+            // Which scopes are not pulled whole yet is read again here: one
+            // pulled by itself earlier in this pass is caught up by its
+            // changes from now on, a change after that pull included — read
+            // as the pass began, it would be passed over for good.
+            let theirs = hub.as_str().to_string();
+            let unpulled = blocking(library, move |library| library.unpulled_of(&theirs)).await?;
             if let Err(why) = feed(assets, hub, link, &key, owner, &unpulled).await {
                 failed.get_or_insert(format!("what changed in {owner}: {why}"));
             }
