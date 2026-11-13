@@ -1304,6 +1304,17 @@ async fn pull(
     // from where the hub is, a replica's frames are given again.
     let theirs: std::collections::BTreeMap<String, u64> =
         streams.iter().map(|at| (at.stream.clone(), at.next)).collect();
+    // What this machine wrote of a stream before the hub described the
+    // scope, the hub never having taken any of it, while the hub had the
+    // stream from another machine all along — a conversation come from it,
+    // begun here in vain — goes: it is made again once the stream is handed
+    // over here, and followed as a replica's till then (AH01, LL11).
+    let local = if discard_unaccepted(assets, hub, link, key, scope, &theirs).await? {
+        let scope_text = scope.to_string();
+        blocking(library, move |library| library.streams(&scope_text)).await?.into_iter().collect()
+    } else {
+        local
+    };
     let (scope_text, device) = (scope.to_string(), assets.device());
     let own: std::collections::BTreeSet<String> =
         blocking(library, move |library| library.own_streams(&scope_text, &device)).await?.into_iter().collect();
@@ -1409,6 +1420,47 @@ async fn succession(assets: &Assets, hub: &HubId, link: &Arc<Link>, key: &Public
         blocking(library, move |library| library.accept_gap(&scope_text, signed, &Trusted)).await?;
     }
     Ok(())
+}
+
+/// Lets go what this machine wrote of the streams of `scope` the hub never
+/// took anything of, where the hub's first epoch of the stream is another
+/// device's (AH01): whether any went.
+async fn discard_unaccepted(
+    assets: &Assets,
+    hub: &HubId,
+    link: &Arc<Link>,
+    key: &PublicKey,
+    scope: &str,
+    theirs: &std::collections::BTreeMap<String, u64>,
+) -> Result<bool, String> {
+    let library = &assets.library;
+    let (scope_text, device) = (scope.to_string(), assets.device());
+    let unaccepted = blocking(library, move |library| library.unaccepted(&scope_text, &device)).await?;
+    let mut discarded = false;
+    for (stream, _) in unaccepted {
+        // The hub has none of it: this machine's to send up.
+        if theirs.get(&stream).copied().unwrap_or(0) == 0 {
+            continue;
+        }
+        let Reply::Succession { epochs, .. } =
+            ask(assets, link, Request::Succession { scope: scope.to_string(), stream: stream.clone() }).await?
+        else {
+            return Err("the hub did not give the stream's succession".into());
+        };
+        let Some(first) = epochs.first() else { continue };
+        let verifier = Pinning { assets, hub, key: *key };
+        if !fastctx_content::v2::HubVerifier::verify(&verifier, &first.fact.0, &first.word.0) {
+            return Err("an epoch's descriptor is not the hub's".into());
+        }
+        if EpochFact::decode(&first.fact.0)?.device == device {
+            continue;
+        }
+        let checkpoint = crate::timeline::checkpoint_of(scope.rsplit('/').next().unwrap_or(scope));
+        let (scope_text, stream_text) = (scope.to_string(), stream.clone());
+        discarded |=
+            blocking(library, move |library| library.discard_unaccepted(&scope_text, &stream_text, &device, Some(&checkpoint))).await?;
+    }
+    Ok(discarded)
 }
 
 /// Takes the frames of the replica `stream` of `scope` from `at`, where it

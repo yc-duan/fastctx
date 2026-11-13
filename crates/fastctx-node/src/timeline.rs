@@ -16,7 +16,7 @@ mod later;
 mod local;
 mod meta;
 pub(crate) mod words;
-pub(crate) use assets::scope_of;
+pub(crate) use assets::{checkpoint_of, scope_of};
 pub(crate) use identity::likeness;
 mod names;
 mod order;

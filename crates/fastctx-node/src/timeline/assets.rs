@@ -83,6 +83,11 @@ pub(crate) fn scope_of(node: &Node, resident: &ResidentId) -> Result<Option<(Hub
 
 /// The name a conversation's producer keeps where it stands under.
 pub(super) fn checkpoint(resident: &ResidentId) -> String {
+    checkpoint_of(resident.as_str())
+}
+
+/// The same, of the conversation named `resident` in a scope's key.
+pub(crate) fn checkpoint_of(resident: &str) -> String {
     format!("timeline/{resident}")
 }
 
