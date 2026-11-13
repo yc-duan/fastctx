@@ -1332,6 +1332,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "fastctx-bench"
+version = "1.0.1-beta.17"
+dependencies = [
+ "fastctx-content",
+ "fastctx-net",
+ "serde_json",
+]
+
+[[package]]
 name = "fastctx-client"
 version = "1.0.1-beta.17"
 dependencies = [

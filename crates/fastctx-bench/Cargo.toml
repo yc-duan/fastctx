@@ -1,0 +1,17 @@
+[package]
+name = "fastctx-bench"
+description = "The numbers of the sync design's §18, measured on fixed inputs"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+fastctx-content = { path = "../fastctx-content", features = ["drill"] }
+fastctx-net = { path = "../fastctx-net" }
+serde_json = { workspace = true }
+
+[lints]
+workspace = true
