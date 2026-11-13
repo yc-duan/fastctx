@@ -13,7 +13,7 @@ mod storage;
 use std::path::PathBuf;
 
 const USAGE: &str = "usage: fastctx-bench <row|storage> --dir <scratch directory> [--small]
-rows: first-screen hub-frames replica-catch-up object-loop durable-word durable-attachment";
+rows: first-screen hub-frames replica-catch-up object-loop durable-word durable-attachment commit-to-readable";
 
 fn main() {
     let mut args = std::env::args().skip(1);

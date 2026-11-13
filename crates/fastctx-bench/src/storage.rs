@@ -18,7 +18,8 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-pub(crate) const ROWS: [&str; 6] = ["hub-frames", "replica-catch-up", "first-screen", "object-loop", "durable-word", "durable-attachment"];
+pub(crate) const ROWS: [&str; 7] =
+    ["hub-frames", "replica-catch-up", "first-screen", "object-loop", "durable-word", "durable-attachment", "commit-to-readable"];
 
 /// How much of each row's input: as §18 writes it, or a tenth to try the
 /// harness.
@@ -52,6 +53,7 @@ pub(crate) fn run(row: &str, dir: &Path, scale: Scale) -> Result<bool, String> {
         "object-loop" => object_loop(dir, scale),
         "durable-word" => durable_word(dir),
         "durable-attachment" => durable_attachment(dir),
+        "commit-to-readable" => commit_to_readable(dir),
         other => Err(format!("no row {other}")),
     }
 }
@@ -185,6 +187,70 @@ fn replica_catch_up(dir: &Path, scale: Scale) -> Result<bool, String> {
     three.ship()?;
     let took = three.import()?;
     Ok(stats::rate("replica-catch-up", "storage core: frames imported", count as f64, "records", took, 100_000.0, serde_json::json!({ "bytes": 1024 })))
+}
+
+/// From a producer's commit of one 1 KiB record to a reader on another
+/// device told it can read it, its local subscription woken (`view_moved`):
+/// the hub's take and the replica's import between, all in this process,
+/// nothing of the network. §18 asks at most 250 ms with the network; this
+/// is the storage core's part of it, 20 warm-ups and 1,000 samples.
+fn commit_to_readable(dir: &Path) -> Result<bool, String> {
+    let three = three(dir)?;
+    three.produce(1000, 100, |_| 1024, 41)?;
+    three.ship()?;
+    three.import()?;
+    let producing = three.producer.holding(SCOPE).map_err(error)?.ok_or("not held")?;
+    let holding = three.replica.holding(SCOPE).map_err(error)?.ok_or("not held")?;
+    let runtime = tokio::runtime::Builder::new_current_thread().enable_time().build().map_err(error)?;
+    let mut seeded = Seeded::new(42);
+    let mut number = 1000u64;
+    let mut samples = Samples::default();
+    for round in 0..1020 {
+        let at = runtime.block_on(three.replica.view_moved(SCOPE, Timeline::STREAM, 0, Duration::ZERO)).map_err(error)?.unwrap_or(0);
+        // The reader waits first, on a thread of its own, as the interface's
+        // reading does.
+        let replica = three.replica.clone();
+        let (waiting, waited) = std::sync::mpsc::channel();
+        let reader = std::thread::spawn(move || -> Result<Option<Instant>, String> {
+            let runtime = tokio::runtime::Builder::new_current_thread().enable_time().build().map_err(error)?;
+            let _ = waiting.send(());
+            let moved = runtime.block_on(replica.view_moved(SCOPE, Timeline::STREAM, at, Duration::from_secs(10))).map_err(error)?;
+            Ok(moved.filter(|now| *now > at).map(|_| Instant::now()))
+        });
+        waited.recv().map_err(error)?;
+        std::thread::sleep(Duration::from_millis(2));
+        number += 1;
+        let record = event(number, 1024, &mut seeded);
+        let started = Instant::now();
+        let commit = Commit {
+            scope: SCOPE.into(),
+            stream: Timeline::STREAM.into(),
+            records: vec![record],
+            leases: Vec::new(),
+            durable: false,
+            op: None,
+            holding: producing,
+        };
+        three.producer.raw_commit(commit, three.device.clone()).map_err(error)?;
+        three.ship()?;
+        for frame in Three::frames_of(&three.hub, Three::next_of(&three.replica)?, 64)? {
+            three.replica.import(SCOPE, frame, &Checked, Holder::Replica, holding).map_err(error)?;
+        }
+        let told = reader.join().map_err(|_| "the reader ended without an answer".to_string())??;
+        if round < 20 {
+            continue;
+        }
+        match told {
+            Some(at) => samples.push(at.saturating_duration_since(started)),
+            None => samples.failed += 1,
+        }
+    }
+    Ok(samples.report(
+        "commit-to-readable",
+        "storage core: a 1 KiB record committed, taken, imported and told to another device's reader",
+        Some(250.0),
+        serde_json::json!({ "network": false, "warm_up": 20 }),
+    ))
 }
 
 /// The first page of a conversation of 300,000 events of 1–4 KiB, warm, 101

@@ -1338,6 +1338,7 @@ dependencies = [
  "fastctx-content",
  "fastctx-net",
  "serde_json",
+ "tokio",
 ]
 
 [[package]]
