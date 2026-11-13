@@ -16,6 +16,9 @@ pub struct HeldScope {
     /// The classes of its streams the hub lets this device hold, one
     /// prefix a line.
     pub allowed: Option<String>,
+    /// Those logged in here the hub last said read it, one `account@opened`
+    /// a line.
+    pub readers: Option<String>,
     /// The hub that described it, and its description as the hub gave it.
     pub hub: Option<String>,
     pub description: Option<Vec<u8>>,
@@ -47,7 +50,7 @@ impl Library {
         let tail = tail.to_string();
         Ok(self.database().read_now(move |db| {
             let mut statement = db.prepare_cached(
-                "SELECT key, holding, pulled, allowed, hub, description FROM scopes
+                "SELECT key, holding, pulled, allowed, hub, description, readers FROM scopes
                  WHERE state = 'live' AND holding IS NOT NULL AND length(key) > length(?1)
                    AND (?1 = '' OR substr(key, length(key) - length(?1) + 1) = ?1)
                  ORDER BY key",
@@ -60,6 +63,7 @@ impl Library {
                     allowed: row.get(3)?,
                     hub: row.get(4)?,
                     description: row.get(5)?,
+                    readers: row.get(6)?,
                 })
             })?;
             Ok(rows.collect::<std::result::Result<_, _>>()?)

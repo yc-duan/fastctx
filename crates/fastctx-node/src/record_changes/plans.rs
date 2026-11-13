@@ -45,7 +45,7 @@ pub(super) fn check(
                 return Err(Failure::refused("only the user writes a plan through this call"));
             }
             fastctx_types::plan::validate(markdown).map_err(Failure::not_run)?;
-            let super::Resolved::PlanWrite { scope } = resolved else {
+            let super::Resolved::PlanWrite { scope, .. } = resolved else {
                 return Err(Failure::not_run("the plan has no selected account"));
             };
             super::unit(&("plan", scope, machine, owner))

@@ -14,7 +14,13 @@ pub(super) enum Resolved {
     Direct,
     Page { town: TownName, identity: Option<PageIdentity> },
     Plan(crate::plan::selection::Target),
-    PlanWrite { scope: HubAccount },
+    /// The account as it was opened when the write was taken, in
+    /// milliseconds: one made again under its name since is not it (AV07).
+    PlanWrite {
+        scope: HubAccount,
+        #[serde(default)]
+        opened: Option<i64>,
+    },
     ProjectNew { owner: Option<HubAccount> },
     ProjectEdit { town: TownName },
 }
@@ -44,7 +50,8 @@ impl Resolved {
             ),
             Call::PlanWrite { hub, account, .. } => {
                 let (link, account) = crate::profile::scope(node, caller, hub.as_ref(), account.as_ref())?;
-                Self::PlanWrite { scope: HubAccount { hub: link.membership().id, account } }
+                let opened = link.view().account(&account).map(|found| found.opened.as_millisecond());
+                Self::PlanWrite { scope: HubAccount { hub: link.membership().id, account }, opened }
             }
             Call::Project(ProjectCall::New { account, hub, .. }) => {
                 Self::ProjectNew { owner: crate::town::project::owner(node, caller, account.clone(), hub.clone())? }
@@ -68,7 +75,7 @@ impl Resolved {
                 }
             }
             Self::Plan(target) => target.check(node, caller)?,
-            Self::PlanWrite { scope } => check_written_offline(node, caller, scope)?,
+            Self::PlanWrite { scope, opened } => check_written_offline(node, caller, scope, *opened)?,
             Self::ProjectNew { owner: Some(owner) } => check_scope(node, caller, owner)?,
             Self::ProjectNew { owner: None } => {}
             Self::ProjectEdit { town } => {
@@ -105,7 +112,7 @@ impl Resolved {
 /// As `check_scope`, for a plan written while the hub is away: judged by the
 /// view the hub gave last, the hub judging it again as it writes it (design
 /// §20, 3-3: an edit made offline, then back).
-fn check_written_offline(node: &Node, caller: &Caller, scope: &HubAccount) -> Result<(), Failure> {
+fn check_written_offline(node: &Node, caller: &Caller, scope: &HubAccount, opened: Option<i64>) -> Result<(), Failure> {
     let link =
         node.link_of(&scope.hub).ok_or_else(|| Failure::refused("the selected account's network is unavailable"))?;
     let view = match crate::authorization::current_view(&link) {
@@ -117,6 +124,9 @@ fn check_written_offline(node: &Node, caller: &Caller, scope: &HubAccount) -> Re
         || view.account(&scope.account).is_none_or(|account| account.locked)
     {
         return Err(Failure::refused("the caller no longer serves the selected account"));
+    }
+    if opened.is_some_and(|opened| view.account(&scope.account).is_some_and(|account| account.opened.as_millisecond() != opened)) {
+        return Err(Failure::refused("the account the plan was written for was deleted and made again since"));
     }
     Ok(())
 }

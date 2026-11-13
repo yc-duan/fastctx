@@ -29,7 +29,7 @@ pub(super) async fn execute(node: &Arc<Node>, asked: Asked, resolved: Resolved) 
                 // A plan written while the hub is away is kept with the call
                 // and written once the hub is back and gave its view, within
                 // the while a call's work is done in (design §20, 3-3).
-                if let (Call::PlanWrite { .. }, Resolved::PlanWrite { scope }) = (call.as_ref(), &resolved)
+                if let (Call::PlanWrite { .. }, Resolved::PlanWrite { scope, .. }) = (call.as_ref(), &resolved)
                     && let Some(link) = node.link_of(&scope.hub)
                     && link.online_within(OFFLINE_WAIT).await
                 {
@@ -52,7 +52,7 @@ pub(super) async fn execute(node: &Arc<Node>, asked: Asked, resolved: Resolved) 
                         Reply::Plan { result }
                     }
                     Call::PlanWrite { owner, expected, markdown, machine, .. } => {
-                        let Resolved::PlanWrite { scope } = &resolved else {
+                        let Resolved::PlanWrite { scope, .. } = &resolved else {
                             return Err(Failure::not_run("the plan has no selected account"));
                         };
                         let link = node

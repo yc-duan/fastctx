@@ -185,10 +185,11 @@ pub(super) fn evidence(db: &Connection, at: &Prefix, header: &Header) -> fastctx
 }
 
 /// What holds evidence's objects: the frame in its holding period, so a
-/// later period that keeps the same frame keeps it under its own.
+/// later period that keeps the same frame keeps it under its own; a frame of
+/// the same place and body after other frames is another (AV04).
 fn holder(stream: i64, holding: i64, header: &Header) -> String {
-    let digest: String = header.digest.iter().map(|byte| format!("{byte:02x}")).collect();
-    format!("{stream}:{holding}:{}:{}:{digest}", header.epoch, header.first)
+    let hex = |bytes: &[u8]| bytes.iter().map(|byte| format!("{byte:02x}")).collect::<String>();
+    format!("{stream}:{holding}:{}:{}:{}:{}", header.epoch, header.first, hex(&header.digest), hex(&header.chain()))
 }
 
 /// Keeps a frame as evidence with its objects held; those in `shown` the
@@ -207,14 +208,15 @@ pub(super) fn keep_evidence(
     let (stream, holding) = at;
     let key = holder(stream, holding, header);
     db.prepare_cached(
-        "INSERT OR IGNORE INTO evidence (stream, epoch, first, digest, holding, holder, header, signature, body, why, at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+        "INSERT OR IGNORE INTO evidence (stream, epoch, first, digest, chain, holding, holder, header, signature, body, why, at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
     )?
     .execute(params![
         stream,
         header.epoch as i64,
         header.first as i64,
         &header.digest[..],
+        &header.chain()[..],
         holding,
         key,
         frame.header,

@@ -13,8 +13,9 @@
 use super::local::{self, Held};
 use crate::Node;
 use fastctx_content::v2::{Kind as _, Timeline};
-use fastctx_types::ResidentId;
-use fastctx_types::assets::{Holders, conversation_classes};
+use fastctx_types::access::Written;
+use fastctx_types::assets::{Holders, Readers, conversation_classes};
+use fastctx_types::{AccountName, ResidentId};
 use fastctx_types::ipc::Failure;
 use fastctx_types::timeline_pages::{TimelineAsk, TimelineChange, TimelineTold};
 
@@ -30,7 +31,7 @@ fn failure(error: impl std::fmt::Display) -> Failure {
 /// (the hub lets it hold a class only those logged in hold), and its
 /// timeline begun. One held only because this machine works for one of
 /// its readers is read by no one here (§20, 3-3).
-pub(crate) fn of(node: &Node, resident: &ResidentId, machine: Option<&fastctx_types::MachineName>) -> Result<Option<Held>, Failure> {
+pub(crate) fn of(node: &Node, resident: &ResidentId, machine: Option<&Written>) -> Result<Option<Held>, Failure> {
     let Some(kept) = node.assets.as_ref() else { return Ok(None) };
     let library = kept.library.clone();
     let mut found = None;
@@ -39,9 +40,10 @@ pub(crate) fn of(node: &Node, resident: &ResidentId, machine: Option<&fastctx_ty
             continue;
         }
         // Asked of a machine, the copy of the conversation that lives there
-        // or was born there, never another machine's of the same id (AU04).
+        // or was born there, never another machine's of the same id (AU04),
+        // nor one of a machine of that name on another network (AV03).
         if let Some(machine) = machine
-            && !lives_on(&library, &scope.key, machine)
+            && !(lives_on(&library, &scope.key, &machine.name) && of_network(node, &scope, machine))
         {
             continue;
         }
@@ -72,6 +74,17 @@ fn lives_on(library: &fastctx_content::v2::Library, scope: &str, machine: &fastc
         .is_some_and(|place| place.get("machine").and_then(serde_json::Value::as_str) == Some(machine.as_str()))
 }
 
+/// Whether `scope` is of the network `machine` is named on: a name given with
+/// its hub's is that hub's machine alone; one without names a machine no
+/// other network here has.
+fn of_network(node: &Node, scope: &fastctx_content::v2::HeldScope, machine: &Written) -> bool {
+    let Some(hub) = &machine.hub else { return true };
+    node.links()
+        .into_iter()
+        .find(|link| link.hub_name() == *hub)
+        .is_some_and(|link| scope.hub.as_deref() == Some(link.membership().id.as_str()))
+}
+
 /// Whether `scope` is a conversation's copy held whole here as one logged
 /// in here reads it: a conversation's or a body's conversation's scope,
 /// pulled whole in its holding period, of which the hub lets this machine
@@ -88,12 +101,14 @@ pub(crate) fn read_here(node: &Node, scope: &fastctx_content::v2::HeldScope) -> 
         && reader_here(node, scope)
 }
 
-/// Whether one of the scope's readers is logged in here now, as the hub's
-/// latest view says: what the hub let this machine hold when it last listed
-/// it is no leave for one logged out since (AU03). A body's members are its
-/// machine's owner and those it is shared with whole, as they are now; a
-/// body whose machine left the network is read as the hub listed it, its
-/// members frozen.
+/// Whether one the hub last said reads the scope is logged in here now as
+/// the same account, unlocked: the hub's own gate judged who reads it — a
+/// body's frozen members, an opener as the account it was, the holders of
+/// the machine it was born on — and what it let this machine hold is no
+/// leave for one logged out, locked or made again since (AU03, AV01, AV02,
+/// AV09). Changes the hub's next listing has not judged yet are judged here
+/// too: an opener or holder of the machine it was born on as the directory
+/// has them now, a body's members as they are while its machine is there.
 fn reader_here(node: &Node, scope: &fastctx_content::v2::HeldScope) -> bool {
     let Some(link) = node.links().into_iter().find(|link| Some(link.membership().id.as_str()) == scope.hub.as_deref()) else {
         return false;
@@ -104,28 +119,37 @@ fn reader_here(node: &Node, scope: &fastctx_content::v2::HeldScope) -> bool {
         return false;
     };
     let logins = node.accounts_on(&link, &fastctx_types::access::Acting::Here);
-    match &descriptor.readers {
-        fastctx_types::assets::Readers::Conversation { openers, .. } => openers.iter().any(|opener| logins.contains(opener)),
-        fastctx_types::assets::Readers::Body { body, opener } => {
-            if logins.contains(opener) {
-                return true;
-            }
-            let view = link.view();
-            let directory = &view.directory;
-            let machine = directory.members.iter().find(|member| directory.body_of(&member.name).as_deref() == Some(body.as_str()));
-            match machine {
-                None => true,
-                Some(member) => {
-                    member.home.as_ref().is_some_and(|home| logins.contains(home))
-                        || directory
-                            .shares
-                            .iter()
-                            .any(|share| share.machine == member.name && share.active() && logins.contains(&share.account))
+    let view = link.view();
+    let directory = &view.directory;
+    let reads_now = |account: &AccountName| match &descriptor.readers {
+        Readers::Conversation { openers, born_on } => {
+            fastctx_net::record_ownership::allows(directory, account, openers, born_on.as_ref())
+        }
+        Readers::Body { body, opener } => {
+            account == opener || {
+                let machine =
+                    directory.members.iter().find(|member| directory.body_of(&member.name).as_deref() == Some(body.as_str()));
+                match machine {
+                    // Its machine gone, its members frozen: as the hub listed them.
+                    None => true,
+                    Some(member) => {
+                        member.home.as_ref() == Some(account)
+                            || directory.shares.iter().any(|share| share.machine == member.name && share.active() && &share.account == account)
+                    }
                 }
             }
         }
         _ => false,
-    }
+    };
+    scope.readers.as_deref().unwrap_or_default().lines().any(|reader| {
+        let Some((name, opened)) = reader.rsplit_once('@') else { return false };
+        let Ok(account) = AccountName::try_from(name.to_string()) else { return false };
+        logins.contains(&account)
+            && directory
+                .account(&account)
+                .is_some_and(|found| !found.locked && found.opened.as_millisecond().to_string() == opened)
+            && reads_now(&account)
+    })
 }
 
 /// The record of the job `job`, as a copy here read by one logged in here

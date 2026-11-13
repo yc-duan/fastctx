@@ -53,6 +53,19 @@ pub(crate) fn noted(node: &Node, hub: &HubId, directory: &fastctx_net::directory
     }
 }
 
+/// Every body this machine has been on `hub`, as noted, and the one the
+/// directory says it is now.
+pub(crate) fn bodies(node: &Node, hub: &HubId) -> std::collections::BTreeSet<String> {
+    let mut bodies: std::collections::BTreeSet<String> =
+        read(node).into_iter().filter(|change| change.hub == hub.as_str()).filter_map(|change| change.body).collect();
+    if let Some(link) = node.link_of(hub) {
+        let (view, me) = (link.view(), node.machine());
+        let directory = &view.directory;
+        bodies.extend(directory.body_of(directory.canonical(&me)));
+    }
+    bodies
+}
+
 /// What this machine was on `hub` at `at`: shared whole as a body, or not;
 /// none when nothing is noted of that network.
 pub(crate) fn at(node: &Node, hub: &HubId, at: jiff::Timestamp) -> Option<Option<String>> {

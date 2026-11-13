@@ -9,7 +9,7 @@
 
 /// The layout of the tables this build makes (`layout.rs`): changed with
 /// every change to them until the layout is settled (plan 3-3).
-pub(crate) const LAYOUT: &str = "2026-11-12.6";
+pub(crate) const LAYOUT: &str = "2026-11-13.1";
 
 /// Made before anything else as the library opens (`layout.rs`): where its
 /// layout is stamped. Nothing is written when it is there already.
@@ -33,7 +33,10 @@ CREATE TABLE IF NOT EXISTS scopes (
     pulled INTEGER,
     -- What the hub last said this device may hold of the scope, on a
     -- device: changed, the scope is pulled whole again (HH04).
-    allowed TEXT
+    allowed TEXT,
+    -- Those logged in on this device the hub last said read the scope, one
+    -- `account@opened` a line: its copy is read here only for them.
+    readers TEXT
 );
 CREATE INDEX IF NOT EXISTS scopes_of_hub ON scopes (hub) WHERE holding IS NOT NULL;
 CREATE TABLE IF NOT EXISTS holdings (
@@ -164,11 +167,14 @@ CREATE INDEX IF NOT EXISTS refused_objects_by_hash ON refused_objects (hash);
 -- A predecessor's frame a hub found after a handover cut its epoch, kept
 -- as it came, outside the stream (§8); its objects are held under its
 -- holder. Empty on devices.
+-- Two signed frames of one place and body that follow other frames differ
+-- by their chain value, and both are kept (AV04).
 CREATE TABLE IF NOT EXISTS evidence (
     stream INTEGER NOT NULL,
     epoch INTEGER NOT NULL,
     first INTEGER NOT NULL,
     digest BLOB NOT NULL,
+    chain BLOB NOT NULL,
     holding INTEGER NOT NULL,
     holder TEXT NOT NULL,
     header BLOB NOT NULL,
@@ -176,7 +182,7 @@ CREATE TABLE IF NOT EXISTS evidence (
     body BLOB NOT NULL,
     why TEXT NOT NULL,
     at INTEGER NOT NULL,
-    PRIMARY KEY (stream, epoch, first, digest, holding)
+    PRIMARY KEY (stream, epoch, first, digest, chain, holding)
 ) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS items (
     stream INTEGER NOT NULL,

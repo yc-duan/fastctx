@@ -146,6 +146,9 @@ pub(crate) fn audit(
 ) -> Result<(), String> {
     let Some((scope, library)) = scope_of(assets, account, opened)? else { return Ok(()) };
     let key = scope.descriptor.scope.clone();
+    // One look at a scope at a time: another's ending forgets no place this
+    // one kept (AV05).
+    let _auditing = writing(&format!("audit/{key}"));
     let error = |error: fastctx_content::Error| error.to_string();
     let readers = vec![crate::store::log_store::account(account, opened)];
     // The newest it holds, as the log has them now (AR11), and on back a

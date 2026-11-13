@@ -9,7 +9,7 @@ use super::scopes;
 use fastctx_net::directory_index::Indexed;
 use fastctx_storage::rusqlite::params;
 use fastctx_types::MachineName;
-use fastctx_types::assets::{Held, HoldingsAt, Readers, Reply};
+use fastctx_types::assets::{Held, Holders, HoldingsAt, Readers, Reply};
 
 /// Scopes one answer looks at, and gives, at most.
 const LOOKED_AT_ONCE: i64 = 1024;
@@ -57,7 +57,8 @@ pub(crate) fn list(
                     .filter(|class| scopes::holds(directory, machine, &scope, &class.prefix))
                     .map(|class| class.prefix.clone())
                     .collect();
-                scopes.push(Held { scope: key, descriptor: scope.fact.clone(), holds });
+                let readers = readers_here(directory, machine, &scope);
+                scopes.push(Held { scope: key, descriptor: scope.fact.clone(), holds, readers });
             }
         }
         through = Some(at);
@@ -67,6 +68,24 @@ pub(crate) fn list(
     }
     let next = if looked == LOOKED_AT_ONCE || scopes.len() >= GIVEN_AT_ONCE { through.clone() } else { None };
     Ok(Reply::Holdings { scopes, next, through, basis })
+}
+
+/// Those logged in on `machine` who read `scope` by the hub's own gate, as
+/// `account@opened`: the machine reads its copy only for them, as they stay
+/// (AV01, AV02, AV09). None for a scope no class of which only those logged
+/// in hold.
+fn readers_here(directory: &Indexed<'_>, machine: &MachineName, scope: &scopes::Scope) -> Vec<String> {
+    let descriptor = &scope.descriptor;
+    if !descriptor.classes.iter().any(|class| class.holders == Holders::Logged) {
+        return Vec::new();
+    }
+    let Some(member) = directory.member(machine) else { return Vec::new() };
+    member
+        .logins
+        .iter()
+        .filter(|account| scopes::reads(directory, account, &descriptor.readers, &descriptor.born, scope.bodies.as_deref()))
+        .filter_map(|account| directory.account(account).map(|found| format!("{account}@{}", found.opened.as_millisecond())))
+        .collect()
 }
 
 /// An answer of what `machine` may hold, made by the directory as it stood

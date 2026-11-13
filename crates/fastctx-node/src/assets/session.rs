@@ -1059,17 +1059,20 @@ async fn discover(
             listed_all.insert(held.scope.clone());
             let (scope, fact) = (held.scope.clone(), held.descriptor.fact.0);
             let here = blocking(library, move |library| library.held_listing(&scope)).await?;
-            let (described, allowed) = here.unzip();
+            let described = here.as_ref().map(|listing| listing.description.clone());
             if described.as_deref() != Some(fact.as_slice()) {
                 let (network, scope, revision) = (network.clone(), held.scope.clone(), read.seq as i64);
                 blocking(library, move |library| library.install_on(&network, &scope, fact, revision)).await?;
             }
             // What it may hold of the scope changed with nothing else of it:
             // pulled whole again, its streams each judged anew (HH04).
-            let holds = held.holds.join("\n");
-            if allowed.flatten().as_deref() != Some(holds.as_str()) {
+            // Who logged in here reads it rides along: a copy is read here
+            // only for them (AV01).
+            let (holds, readers) = (held.holds.join("\n"), held.readers.join("\n"));
+            let listed = here.as_ref().map(|listing| (listing.allowed.as_deref(), listing.readers.as_deref()));
+            if listed != Some((Some(holds.as_str()), Some(readers.as_str()))) {
                 let scope = held.scope.clone();
-                blocking(library, move |library| library.allow(&scope, &holds)).await?;
+                blocking(library, move |library| library.allow(&scope, &holds, &readers)).await?;
             }
         }
         // Where the next listing goes on from: the last scope looked at,

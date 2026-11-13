@@ -464,6 +464,12 @@ pub struct Held {
     /// it may hold of a scope can change with no new descriptor (HH04).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub holds: Vec<String>,
+    /// Those logged in on this machine who read the scope, each as
+    /// `account@opened` (milliseconds): a copy is read here only by one of
+    /// them while still logged in, unlocked and the same account (AV01,
+    /// AV02, AV09). Listed for a scope with a class only those logged in hold.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub readers: Vec<String>,
 }
 
 /// The old service key's word that the new one follows it (§6.1),

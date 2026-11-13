@@ -51,9 +51,8 @@ pub(crate) async fn call(
     // lives on asked nothing. What it is running now only it has.
     if !matches!(request, TimelineAsk::Running { .. }) {
         let resident = request.resident().clone();
-        let named = machine.as_ref().map(|machine| machine.name.clone());
         let copy = fastctx_platform::roles::in_place("finding a conversation's copy", || {
-            super::copy::of(node, &resident, named.as_ref())
+            super::copy::of(node, &resident, machine.as_ref())
         })?;
         if let Some(held) = copy {
             return if marked { Ok(super::copy::anew(&request)) } else { from_copy(&held, request).await };

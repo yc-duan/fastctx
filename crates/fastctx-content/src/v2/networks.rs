@@ -24,6 +24,17 @@ pub struct Network {
     term: i64,
 }
 
+/// A held scope as the hub last listed it to this device.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Listing {
+    /// Its descriptor as the hub gave it.
+    pub description: Vec<u8>,
+    /// The prefixes of its stream classes this device may hold, one a line.
+    pub allowed: Option<String>,
+    /// Those logged in here who read it, one `account@opened` a line.
+    pub readers: Option<String>,
+}
+
 impl Network {
     /// The hub whose network it is.
     pub fn hub(&self) -> &str {
@@ -164,28 +175,37 @@ impl Library {
         })?)
     }
 
-    /// The description `scope` is held here under, and what the hub last
-    /// said this device may hold of it, if it is held.
-    pub fn held_listing(&self, scope: &str) -> Result<Option<(Vec<u8>, Option<String>)>> {
+    /// The description `scope` is held here under, what the hub last said
+    /// this device may hold of it, and who logged in here it said reads it,
+    /// if it is held.
+    pub fn held_listing(&self, scope: &str) -> Result<Option<Listing>> {
         let scope = scope.to_string();
         Ok(self.database().read_now(move |db| {
             Ok(db
-                .prepare_cached("SELECT description, allowed FROM scopes WHERE key = ?1 AND holding IS NOT NULL")?
-                .query_row([&scope], |row| Ok((row.get::<_, Option<Vec<u8>>>(0)?.unwrap_or_default(), row.get(1)?)))
+                .prepare_cached("SELECT description, allowed, readers FROM scopes WHERE key = ?1 AND holding IS NOT NULL")?
+                .query_row([&scope], |row| {
+                    Ok(Listing {
+                        description: row.get::<_, Option<Vec<u8>>>(0)?.unwrap_or_default(),
+                        allowed: row.get(1)?,
+                        readers: row.get(2)?,
+                    })
+                })
                 .optional()?)
         })?)
     }
 
-    /// What the hub says this device may hold of the held `scope` now: once
-    /// it is otherwise than it was, the scope is pulled whole again (HH04).
-    pub fn allow(&self, scope: &str, allowed: &str) -> Result<()> {
-        let (scope, allowed) = (scope.to_string(), allowed.to_string());
-        Ok(self.database().write_now_at(Priority::Normal, 256 + allowed.len(), move |db| {
+    /// What the hub says this device may hold of the held `scope` now, and
+    /// who logged in here reads it: once what it may hold is otherwise than
+    /// it was, the scope is pulled whole again (HH04); its readers changing
+    /// pull nothing.
+    pub fn allow(&self, scope: &str, allowed: &str, readers: &str) -> Result<()> {
+        let (scope, allowed, readers) = (scope.to_string(), allowed.to_string(), readers.to_string());
+        Ok(self.database().write_now_at(Priority::Normal, 256 + allowed.len() + readers.len(), move |db| {
             db.prepare_cached(
-                "UPDATE scopes SET allowed = ?2, pulled = CASE WHEN allowed IS ?2 THEN pulled ELSE NULL END
+                "UPDATE scopes SET allowed = ?2, readers = ?3, pulled = CASE WHEN allowed IS ?2 THEN pulled ELSE NULL END
                  WHERE key = ?1 AND holding IS NOT NULL",
             )?
-            .execute(params![scope, allowed])?;
+            .execute(params![scope, allowed, readers])?;
             Ok(())
         })?)
     }
