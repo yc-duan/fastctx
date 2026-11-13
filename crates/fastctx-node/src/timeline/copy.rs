@@ -75,14 +75,25 @@ fn lives_on(library: &fastctx_content::v2::Library, scope: &fastctx_content::v2:
 }
 
 /// Whether `scope` is of the network `machine` is named on: a name given with
-/// its hub's is that hub's machine alone; one without names a machine no
-/// other network here has.
+/// its hub's is that hub's machine alone; one without names the machine of
+/// the one network here that has a machine of that name. Two networks having
+/// one, the name is not this copy's to settle: the machine is asked, and
+/// says it is ambiguous (RR01). None having one — the machine gone — its copy
+/// is what there is.
 fn of_network(node: &Node, scope: &fastctx_content::v2::HeldScope, machine: &Written) -> bool {
-    let Some(hub) = &machine.hub else { return true };
-    node.links()
-        .into_iter()
-        .find(|link| link.hub_name() == *hub)
-        .is_some_and(|link| scope.hub.as_deref() == Some(link.membership().id.as_str()))
+    let links = node.links();
+    if let Some(hub) = &machine.hub {
+        return links
+            .into_iter()
+            .find(|link| link.hub_name() == *hub)
+            .is_some_and(|link| scope.hub.as_deref() == Some(link.membership().id.as_str()));
+    }
+    let naming: Vec<_> = links.iter().filter(|link| link.view().member(&machine.name).is_some()).collect();
+    match naming.as_slice() {
+        [] => true,
+        [link] => scope.hub.as_deref() == Some(link.membership().id.as_str()),
+        _ => false,
+    }
 }
 
 /// Whether `scope` is a conversation's copy held whole here as one logged
