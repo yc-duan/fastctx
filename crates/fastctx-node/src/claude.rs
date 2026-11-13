@@ -625,6 +625,8 @@ async fn apply(
                             Ok(ids.iter().any(|id| id == pending.delivery.id.as_str()))
                         })
                         .await?;
+                        // A lab kill point (plan 3-6): taken, its receipt not written here.
+                        fastctx_platform::lab::die_at("words-receipt", "");
                         exchange::acknowledge_handover(directory, &ids, &turn)?;
                     }
                     exchange::Reported::Replaced { ids } => {
@@ -1992,8 +1994,12 @@ async fn into_inbox(
         crate::inbox::set_state(directory, &pending.delivery.id, PendingState::Handed)
             .map_err(|error| Failure::new(error.to_string()))?;
     }
+    // Lab kill points (plan 3-6): handing noted, nothing in the inbox; then
+    // in the inbox, the session not yet woken.
+    fastctx_platform::lab::die_at("words-durable", "");
     exchange::deliver(&session_directory, pending.delivery.id.as_str(), &text, how)
         .map(|()| {
+            fastctx_platform::lab::die_at("words-handing", "");
             channel::wake(node, session);
             Landed::Handed { id: pending.delivery.id.clone() }
         })

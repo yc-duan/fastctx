@@ -61,7 +61,13 @@ pub fn keep(directory: &ConversationDir, pending: &Pending) -> io::Result<bool> 
         rows.put_ordered("pending-inputs", key, &pending, pending.delivery.at)?;
         Ok(true)
     };
-    if words { storage::change_durable(directory, bytes, write) } else { change(directory, bytes, write) }
+    if words {
+        // A lab kill point (plan 3-6): taken, not yet on the disk.
+        fastctx_platform::lab::die_at("words-accepted", "");
+        storage::change_durable(directory, bytes, write)
+    } else {
+        change(directory, bytes, write)
+    }
 }
 pub(crate) fn knows(directory: &ConversationDir, id: &NoticeId) -> io::Result<bool> {
     if crate::lifecycle::refused::contains(directory, id)? {
