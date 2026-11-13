@@ -54,6 +54,7 @@ pub(crate) fn run(row: &str, dir: &Path, scale: Scale) -> Result<bool, String> {
         "durable-word" => durable_word(dir),
         "durable-attachment" => durable_attachment(dir),
         "commit-to-readable" => commit_to_readable(dir),
+        "replica-catch-up-parts" => replica_catch_up_parts(dir, scale),
         other => Err(format!("no row {other}")),
     }
 }
@@ -187,6 +188,43 @@ fn replica_catch_up(dir: &Path, scale: Scale) -> Result<bool, String> {
     three.ship()?;
     let took = three.import()?;
     Ok(stats::rate("replica-catch-up", "storage core: frames imported", count as f64, "records", took, 100_000.0, serde_json::json!({ "bytes": 1024 })))
+}
+
+/// Where the replica's catch-up spends its time, apart from §18's rows: the
+/// frames' checking and opening alone; their import into a replica that
+/// knows no kind (each record kept aside in its frame, nothing judged or
+/// indexed); and their import as `replica-catch-up` does it.
+fn replica_catch_up_parts(dir: &Path, scale: Scale) -> Result<bool, String> {
+    let three = three(dir)?;
+    let count = scale.of(300_000);
+    three.produce(count, 960, |_| 1024, 19)?;
+    three.ship()?;
+    let frames = Three::frames_of(&three.hub, 0, usize::MAX)?;
+    let started = Instant::now();
+    let mut records = 0usize;
+    for frame in &frames {
+        let header = fastctx_content::v2::Header::decode(&frame.header).map_err(error)?;
+        if !<Checked as fastctx_content::v2::Verifier>::verify(&Checked, &header, &frame.header, &frame.signature) {
+            return Err("a frame did not verify".into());
+        }
+        records += fastctx_content::v2::open(&header, &frame.body)?.len();
+    }
+    stats::rate("replica-catch-up-parts", "frames checked and opened alone", records as f64, "records", started.elapsed(), 100_000.0, serde_json::json!({}));
+    // A replica that knows no kind.
+    let at = dir.join("unknowing");
+    std::fs::create_dir_all(&at).map_err(error)?;
+    let (unknowing, _) = Library::open(&at).map_err(error)?;
+    unknowing.install(SCOPE, b"bench".to_vec(), 1).map_err(error)?;
+    let device_key = three.device.key();
+    unknowing.accept_epoch(SCOPE, keys::first_epoch(SCOPE, Timeline::STREAM, device_key), &Trusted).map_err(error)?;
+    let holding = unknowing.holding(SCOPE).map_err(error)?.ok_or("not held")?;
+    let started = Instant::now();
+    for frame in frames.iter().cloned() {
+        unknowing.import(SCOPE, frame, &Checked, Holder::Replica, holding).map_err(error)?;
+    }
+    stats::rate("replica-catch-up-parts", "imported, no kind known", records as f64, "records", started.elapsed(), 100_000.0, serde_json::json!({}));
+    let took = three.import()?;
+    Ok(stats::rate("replica-catch-up-parts", "imported, every kind known", records as f64, "records", took, 100_000.0, serde_json::json!({})))
 }
 
 /// From a producer's commit of one 1 KiB record to a reader on another

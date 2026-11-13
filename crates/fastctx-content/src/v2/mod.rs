@@ -142,12 +142,20 @@ struct Inner {
     moved: tokio::sync::watch::Sender<u64>,
 }
 
+/// The page size a library is made with (§18, 3-6): a frame's body, up to a
+/// MiB, is a long chain of pages, and with 4 KiB ones a replica took 24,000
+/// records a second; with 16 KiB ones 49,000, its pages read faster too,
+/// the rest as before; 64 KiB ones gave less. A library made earlier keeps
+/// the size it was made with.
+const PAGE_BYTES: u32 = 16 * 1024;
+
 impl Library {
     /// Opens the library in `directory`, making it when it is not there, and
     /// settles what a stop left half done before any object is read or put
     /// (`collect::startup`). Call on a thread that may block.
     pub fn open(directory: &Path) -> Result<(Self, Started)> {
-        Self::open_shaped(directory, schema::SCHEMA.to_string(), fastctx_storage::Shape::default(), false)
+        let shape = fastctx_storage::Shape { page_bytes: Some(PAGE_BYTES), ..Default::default() };
+        Self::open_shaped(directory, schema::SCHEMA.to_string(), shape, false)
     }
 
     /// Opens an owner library of a hub (§6.2): the same library with the
@@ -155,8 +163,12 @@ impl Library {
     /// two databases' writers and readers, as up to 64 are open at once
     /// (R27).
     pub fn open_hub(directory: &Path) -> Result<(Self, Started)> {
-        let shape =
-            fastctx_storage::Shape { cache_bytes: Some(512 << 10), reader_cache_bytes: Some(32 << 10), ..Default::default() };
+        let shape = fastctx_storage::Shape {
+            cache_bytes: Some(512 << 10),
+            reader_cache_bytes: Some(32 << 10),
+            page_bytes: Some(PAGE_BYTES),
+            ..Default::default()
+        };
         Self::open_shaped(directory, format!("{}{}", schema::SCHEMA, schema::HUB_SCHEMA), shape, true)
     }
 
