@@ -116,8 +116,6 @@ impl Objects {
         Ok(number)
     }
 
-    /// Whether the device whose key is `key` proved lately it holds the
-    /// object of `hash`.
     /// The proofs of `hashes` the device whose key is `key` gave go: a frame
     /// of them is applied, and they are read through it now (AF04).
     pub(crate) fn forget_proofs(&self, key: &[u8; 32], hashes: &[[u8; 32]]) {
@@ -132,9 +130,17 @@ impl Objects {
         }
     }
 
+    /// Whether the device whose key is `key` proved lately it holds the
+    /// object of `hash`.
     pub(crate) fn proven(&self, key: &[u8; 32], hash: &[u8; 32]) -> bool {
         let proofs = self.proofs.lock().expect("proofs");
         proofs.get(key).and_then(|proven| proven.get(hash)).is_some_and(|until| Instant::now() < *until)
+    }
+
+    /// Keeps a proof as the data connection keeps one, for the drills.
+    #[cfg(test)]
+    pub(crate) fn prove_for_drill(&self, key: [u8; 32], hash: [u8; 32]) {
+        self.proofs.lock().expect("proofs").entry(key).or_default().insert(hash, Instant::now() + proof_for(0));
     }
 
     /// While the device whose key is `key` puts an object, what it proved

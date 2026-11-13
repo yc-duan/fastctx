@@ -10,6 +10,8 @@ pub(crate) mod brought;
 pub(crate) mod chain;
 #[cfg(test)]
 pub(crate) mod drill_kinds;
+#[cfg(test)]
+mod drills;
 mod handback;
 mod handback_repair;
 mod holdings;
