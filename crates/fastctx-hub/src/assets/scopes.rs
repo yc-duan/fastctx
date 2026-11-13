@@ -467,5 +467,7 @@ pub(crate) fn describe(
         .map_err(|error| error.to_string())?;
     let kept = Scope { descriptor, fact: Fact { fact: Bytes(bytes), word: Bytes(word) }, owner, bodies };
     library(assets, &kept)?;
+    // What the hub's records hold of it goes into it (design §28.17).
+    assets.described.lock().expect("described scopes").push(key.to_string());
     Ok(kept.fact)
 }

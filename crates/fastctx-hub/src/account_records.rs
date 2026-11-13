@@ -529,11 +529,11 @@ pub(crate) async fn ask_as(
 }
 
 pub(crate) fn tell(hub: &Hub, account: &AccountName, opened: Timestamp, metadata: &Metadata) {
-    // A plan or a conversation's note goes into the asset library too
-    // (design §28.17).
-    if matches!(metadata.kind.as_str(), fastctx_types::plan::KIND | fastctx_types::history::RECORD_KIND) {
+    // What of an account and its conversations goes into the asset library
+    // goes there too (design §28.17).
+    if crate::assets::mirror::mirrored(&metadata.kind) {
         let path = hub.account_records.account(account, opened).path(&metadata.kind, &metadata.key);
-        if let Err(error) = storage::read(&path).and_then(|record| crate::assets::mirror::document(&hub.assets, &record)) {
+        if let Err(error) = storage::read(&path).and_then(|record| crate::assets::mirror::document(&hub.assets, account, &record)) {
             hub.log.line(format_args!("writing {} {} into the asset library: {error}", metadata.kind, metadata.key));
         }
     }

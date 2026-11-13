@@ -48,7 +48,11 @@ pub(crate) fn kinds() -> Arc<fastctx_content::v2::Kinds> {
         .register::<fastctx_content::v2::JobFacts>()
         .register::<fastctx_content::v2::JobOutput>()
         .register::<fastctx_content::v2::ConversationPlan>()
-        .register::<fastctx_content::v2::ConversationHistory>();
+        .register::<fastctx_content::v2::ConversationHistory>()
+        .register::<fastctx_content::v2::ConversationGoal>()
+        .register::<fastctx_content::v2::ConversationSentinel>()
+        .register::<fastctx_content::v2::AccountSettings>()
+        .register::<fastctx_content::v2::AccountSkill>();
     #[cfg(test)]
     let kinds = kinds.register::<super::drill_kinds::Plain>();
     Arc::new(kinds)

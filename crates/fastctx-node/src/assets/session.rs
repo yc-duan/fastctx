@@ -892,6 +892,23 @@ async fn describe(
     network: &Network,
 ) -> Result<(), String> {
     let library = &assets.library;
+    // Each account logged in here keeps its records' scope on this hub: the
+    // hub writes its skills and settings there (design §28.17). Begun here
+    // once, described as any scope begun here is.
+    let logins: Vec<fastctx_types::AccountName> = link.view().me().map(|me| me.logins.iter().cloned().collect()).unwrap_or_default();
+    for account in logins {
+        let readers = Readers::Account { account };
+        let scope = format!("{}records", readers.key_prefix(hub.as_str()));
+        let proposal = Proposal { hub: hub.to_string(), readers, classes: vec![StreamClass { prefix: String::new(), holders: wire::Holders::Readers }] };
+        let (network, proposal) = (network.clone(), serde_json::to_vec(&proposal).map_err(|error| error.to_string())?);
+        blocking(library, move |library| {
+            if library.holding(&scope)?.is_none() {
+                library.propose_on(&network, &scope, proposal)?;
+            }
+            Ok::<_, fastctx_content::Error>(())
+        })
+        .await?;
+    }
     for (scope, proposal) in blocking(library, |library| library.provisionals()).await? {
         let Some(proposal) = proposal else { continue };
         let Proposal { hub: meant, readers, classes } =

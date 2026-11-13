@@ -135,6 +135,9 @@ pub(crate) struct Assets {
     sealing: Arc<std::sync::atomic::AtomicBool>,
     /// The scopes of each owner library changed since the last checkpoint.
     changed: Mutex<BTreeMap<Owner, BTreeSet<String>>>,
+    /// Scopes described since the hub's records were last written into
+    /// them (design §28.17).
+    pub(crate) described: Mutex<Vec<String>>,
     /// The owner the last checkpoint stopped at: the next goes on after it,
     /// so every owner comes round.
     turn: Mutex<Option<Owner>>,
@@ -185,6 +188,7 @@ impl Assets {
             sealed: Mutex::new(None),
             sealing: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             changed: Mutex::new(BTreeMap::new()),
+            described: Mutex::new(Vec::new()),
             turn: Mutex::new(None),
             scope_turns: Mutex::new(BTreeMap::new()),
             checkpointing: Mutex::new(()),
@@ -1267,9 +1271,21 @@ impl Assets {
 pub(crate) async fn checkpoints(hub: Weak<crate::Hub>) {
     let mut rounds = 0u32;
     let sweeping = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    // What the hub's records hold goes into the asset library once after it
+    // starts (design §28.17).
+    if let Some(running) = hub.upgrade() {
+        fastctx_platform::task::spawn(mirror::everything(running));
+    }
     loop {
         tokio::time::sleep(CHECKPOINT_EVERY).await;
         rounds = rounds.wrapping_add(1);
+        // And what they hold of each scope described since, into it.
+        if let Some(running) = hub.upgrade() {
+            let described = std::mem::take(&mut *running.assets.described.lock().expect("described scopes"));
+            if !described.is_empty() {
+                fastctx_platform::task::spawn(mirror::described(running, described));
+            }
+        }
         // The sweep goes on beside the checkpoints, one at a time: a long one
         // does not hold them back (AC02).
         if rounds.is_multiple_of(SWEEP_EVERY)

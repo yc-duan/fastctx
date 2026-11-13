@@ -1,25 +1,21 @@
-//! The kinds of a conversation's plan and notes in the asset library (design
-//! §28.17): the hub's account records are where they are written and merged;
-//! the hub writes each record as it accepts it into a stream it orders in
-//! the conversation's scope, the plan's one item in `plan`, each note by its
-//! name in `history`. A body is the account record itself — its version,
-//! who wrote it and when, and what it says.
+//! The kinds of the records the hub keeps of an account and its
+//! conversations, in the asset library (design §28.17): the hub's account
+//! records are where they are written and merged; as the hub accepts one, it
+//! writes the record into a stream it orders — in the conversation's scope
+//! for a conversation's plan, notes, goals and sentinels, in the account's
+//! scope for its skills and settings — each by its key. A body is the
+//! account record itself: its version, who wrote it and when, and what it
+//! says.
 
 use super::kind::{Actor, Deletion, Holding, Import, Kind};
 use super::{Entry, KindRecord};
 use crate::State;
 
-/// A conversation's plan.
-pub struct ConversationPlan;
-
-/// A conversation's notes, one item each.
-pub struct ConversationHistory;
-
 fn record(body: &[u8]) -> Result<Vec<u8>, String> {
     match serde_json::from_slice::<serde_json::Value>(body) {
         Ok(value) if value.get("metadata").is_some_and(serde_json::Value::is_object) => Ok(body.to_vec()),
-        Ok(_) => Err("a document's record carries its metadata".into()),
-        Err(error) => Err(format!("a document's record is not JSON: {error}")),
+        Ok(_) => Err("a record of the hub's carries its metadata".into()),
+        Err(error) => Err(format!("a record of the hub's is not JSON: {error}")),
     }
 }
 
@@ -27,68 +23,72 @@ fn judged(after: &KindRecord) -> Result<(), String> {
     match &after.record.state {
         State::Gone => Ok(()),
         State::Is { body, objects } if objects.is_empty() => record(body).map(|_| ()),
-        State::Is { .. } => Err("a document's record refers to no object".into()),
+        State::Is { .. } => Err("a record of the hub's refers to no object".into()),
     }
 }
 
-impl Kind for ConversationPlan {
-    /// `conversation.plan` in the registry (`fastctx_sync::registry`), whose
-    /// order only grows.
-    const KIND: u16 = 12;
-    const SCHEMA: u16 = 1;
-    const STREAM: &'static str = "plan";
-    const HOLDING: Holding = Holding::Readers;
-    const ROLES: &'static [&'static str] = &[];
-    const RETENTION: Option<u64> = None;
-    const DELETION: Deletion = Deletion::Tombstone;
-    /// Taken up from the hub's account records.
-    const IMPORT: Import = Import::From("account-records");
-    type Value = Vec<u8>;
+/// A kind of the hub's records: its name, its number in the registry
+/// (`fastctx_sync::registry`, whose order only grows) and its stream.
+macro_rules! hub_record {
+    ($(#[$doc:meta])* $name:ident, $number:literal, $stream:literal) => {
+        $(#[$doc])*
+        pub struct $name;
 
-    fn encode(value: &Vec<u8>) -> Vec<u8> {
-        value.clone()
-    }
+        impl Kind for $name {
+            const KIND: u16 = $number;
+            const SCHEMA: u16 = 1;
+            const STREAM: &'static str = $stream;
+            const HOLDING: Holding = Holding::Readers;
+            const ROLES: &'static [&'static str] = &[];
+            const RETENTION: Option<u64> = None;
+            const DELETION: Deletion = Deletion::Tombstone;
+            /// Taken up from the hub's account records.
+            const IMPORT: Import = Import::From("account-records");
+            type Value = Vec<u8>;
 
-    fn decode(body: &[u8]) -> Result<Vec<u8>, String> {
-        record(body)
-    }
+            fn encode(value: &Vec<u8>) -> Vec<u8> {
+                value.clone()
+            }
 
-    /// The hub alone orders the stream (`HUB_ORDERED`): what is judged is
-    /// that each record is an account record.
-    fn authorize(_actor: &Actor<'_>, _before: Option<&Entry>, after: &KindRecord) -> Result<(), String> {
-        judged(after)
-    }
+            fn decode(body: &[u8]) -> Result<Vec<u8>, String> {
+                record(body)
+            }
 
-    fn subscription(scope: &str, _stream: &str) -> String {
-        format!("plan:{scope}")
-    }
+            /// The hub alone orders the stream (`HUB_ORDERED`): what is
+            /// judged is that each record is an account record.
+            fn authorize(_actor: &Actor<'_>, _before: Option<&Entry>, after: &KindRecord) -> Result<(), String> {
+                judged(after)
+            }
+
+            fn subscription(scope: &str, _stream: &str) -> String {
+                format!("{}:{scope}", $stream)
+            }
+        }
+    };
 }
 
-impl Kind for ConversationHistory {
-    /// `conversation.history` in the registry.
-    const KIND: u16 = 13;
-    const SCHEMA: u16 = 1;
-    const STREAM: &'static str = "history";
-    const HOLDING: Holding = Holding::Readers;
-    const ROLES: &'static [&'static str] = &[];
-    const RETENTION: Option<u64> = None;
-    const DELETION: Deletion = Deletion::Tombstone;
-    const IMPORT: Import = Import::From("account-records");
-    type Value = Vec<u8>;
-
-    fn encode(value: &Vec<u8>) -> Vec<u8> {
-        value.clone()
-    }
-
-    fn decode(body: &[u8]) -> Result<Vec<u8>, String> {
-        record(body)
-    }
-
-    fn authorize(_actor: &Actor<'_>, _before: Option<&Entry>, after: &KindRecord) -> Result<(), String> {
-        judged(after)
-    }
-
-    fn subscription(scope: &str, _stream: &str) -> String {
-        format!("history:{scope}")
-    }
-}
+hub_record!(
+    /// A conversation's plan (`conversation.plan`).
+    ConversationPlan, 12, "plan"
+);
+hub_record!(
+    /// A conversation's notes, one item each (`conversation.history`).
+    ConversationHistory, 13, "history"
+);
+hub_record!(
+    /// A conversation's goals, the one it pursues and those past
+    /// (`conversation.goal`).
+    ConversationGoal, 14, "goals"
+);
+hub_record!(
+    /// A conversation's sentinels as registered (`conversation.sentinel`).
+    ConversationSentinel, 15, "sentinels"
+);
+hub_record!(
+    /// An account's settings kept as records (`account.settings`).
+    AccountSettings, 4, "settings"
+);
+hub_record!(
+    /// An account's skills and their index (`account.skill`).
+    AccountSkill, 5, "skills"
+);
