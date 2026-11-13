@@ -8,22 +8,23 @@
 //! which only the account reads, and only while it can work here. Each scope
 //! is proposed here and described by the hub as any other. Of the pieces of
 //! a log — this machine's, the hub's, another machine's it holds — a device
-//! keeps the latest `KEPT_PIECES`; the hub keeps all, so only what it took
-//! goes.
+//! keeps a week of them; the hub keeps all, so only what it took goes.
 
 use crate::Node;
-use fastctx_content::v2::{HubLog, KEPT_PIECES, Kind as _, LEASE, Library, MachineLog, McpLog, Write, Writer};
+use fastctx_content::v2::{HubLog, KEPT_MS, Kind as _, LEASE, Library, MachineLog, McpLog, Write, Writer};
 use fastctx_net::ids::HubId;
 use fastctx_platform::log_tail::{self, Tail};
 use crate::assets::Proposal;
-use fastctx_types::assets::{Holders, Readers, StreamClass};
+use fastctx_types::assets::Readers;
 use fastctx_types::{AccountName, MachineName};
 use sha2::{Digest, Sha256};
 use std::sync::{Arc, Weak};
 use std::time::Duration;
 
-/// How often the logs are looked at.
-const EVERY: Duration = Duration::from_secs(60);
+/// How often the logs are looked at: often enough that a log rolling twice
+/// in between, losing what it had not given yet, takes logging fast beyond
+/// any ordinary rate (M11).
+const EVERY: Duration = Duration::from_secs(10);
 /// The most a piece holds, and a look writes of the machine's log.
 const PIECE: usize = 1 << 20;
 const A_LOOK: usize = 16 << 20;
@@ -65,7 +66,7 @@ pub(crate) fn start(node: &Arc<Node>) {
 
 /// The scope `readers` and `name` make on `hub`: proposed here while it is
 /// not held, and the key with whether it is held.
-pub(super) fn proposed(node: &Node, hub: &HubId, readers: Readers, name: &str, holders: Holders) -> Result<Option<String>, String> {
+pub(super) fn proposed(node: &Node, hub: &HubId, readers: Readers, name: &str) -> Result<Option<String>, String> {
     let Some(kept) = node.assets.as_ref() else { return Ok(None) };
     let library = &kept.library;
     let key = format!("{}{name}", readers.key_prefix(hub.as_str()));
@@ -74,11 +75,8 @@ pub(super) fn proposed(node: &Node, hub: &HubId, readers: Readers, name: &str, h
         return Ok(Some(key));
     }
     let Some(network) = crate::assets::membership::network(node, hub) else { return Ok(None) };
-    // An account's records' scope is proposed alike wherever it is.
-    let classes = match &readers {
-        Readers::Account { .. } => fastctx_types::assets::records_classes(),
-        _ => vec![StreamClass { prefix: String::new(), holders }],
-    };
+    // Proposed with its kind's classes, as the hub describes it (AS09).
+    let classes = fastctx_types::assets::classes_for(&readers, &key);
     let proposal = Proposal { hub: hub.to_string(), readers, classes };
     let proposal = serde_json::to_vec(&proposal).map_err(|error| error.to_string())?;
     library.propose_on(&network, &key, proposal).map_err(error)?;
@@ -96,8 +94,11 @@ fn look(
 ) -> Result<(), String> {
     // The machine's own log, in its body's scope: opened by its owner, as
     // one of the accounts it is logged in as.
-    if let (Some(body), Some(home)) = (body, home.filter(|home| logins.contains(home)))
-        && let Some(scope) = proposed(node, hub, Readers::Body { body, opener: home }, "log", Holders::Logged)?
+    // A managed machine's too, its owner logged in or not (M12): the hub
+    // describes it if the machine works for its owner.
+    let _ = logins;
+    if let (Some(body), Some(home)) = (body, home)
+        && let Some(scope) = proposed(node, hub, Readers::Body { body, opener: home }, "log")?
     {
         own_log(node, &scope)?;
     }
@@ -106,7 +107,7 @@ fn look(
     if let Some(link) = node.link_of(hub)
         && logins.iter().any(|login| link.view().directory.is_super(login))
     {
-        proposed(node, hub, Readers::Hub, "log", Holders::Logged)?;
+        proposed(node, hub, Readers::Hub, "log")?;
     }
     // Each account's MCP commands' logs, in its scope on this machine.
     let logs = node.world.path().join("mcp").join(hub.as_str()).join("logs");
@@ -120,8 +121,18 @@ fn look(
         else {
             continue;
         };
+        // Named by the account as opened and this machine's key too: an
+        // account or a machine made again under the name has its own (AS10).
+        let Some(name) = node.link_of(hub).and_then(|link| {
+            let view = link.view();
+            let opened = view.directory.account(&account)?.opened.as_millisecond();
+            let key: String = view.directory.member(me)?.key.as_bytes()[..8].iter().map(|byte| format!("{byte:02x}")).collect();
+            Some(format!("mcp-{opened}-{key}"))
+        }) else {
+            continue;
+        };
         let readers = Readers::Working { account, machine: me.clone() };
-        if let Some(scope) = proposed(node, hub, readers, "mcp", Holders::Readers)? {
+        if let Some(scope) = proposed(node, hub, readers, &name)? {
             mcp_logs(node, &scope, &entry.path())?;
         }
     }
@@ -161,23 +172,31 @@ fn own_log(node: &Arc<Node>, scope: &str) -> Result<(), String> {
     while written < A_LOOK {
         let Some(piece) = log_tail::next(&path, &at, PIECE).map_err(|error| error.to_string())? else { break };
         let item = format!("{}/{:016x}", piece.file, piece.offset).into_bytes();
-        // Written before a stop that kept no standing: as it was.
-        if library.item(scope, MachineLog::STREAM, &item).map_err(error)?.is_none() {
-            let order = format!(
-                "{:016x}/{}/{:016x}",
-                log_tail::first_time(&piece.bytes).unwrap_or(0).max(0),
-                piece.file,
-                piece.offset
-            )
-            .into_bytes();
-            let lease = library.put(&mut piece.bytes.as_slice(), "machine-log", LEASE).map_err(error)?;
-            let body = serde_json::to_vec(
-                &serde_json::json!({ "file": piece.file, "offset": piece.offset, "length": piece.bytes.len() }),
-            )
-            .map_err(|error| error.to_string())?;
-            writes.push(Write { item, order, value: Some(body), objects: vec![lease.object] });
-            leases.push(lease);
+        // Written before a stop that kept no standing: on from its end, as
+        // long as it was then, not as long as the file is now (AS11).
+        if let Some(entry) = library.item(scope, MachineLog::STREAM, &item).map_err(error)? {
+            let length = entry.objects.first().map_or(0, |object| object.size);
+            if length == 0 {
+                return Err(format!("the piece of this machine's log at {} is empty", piece.offset));
+            }
+            written += length as usize;
+            at = Tail { offset: piece.offset + length, file: piece.file };
+            continue;
         }
+        let order = format!(
+            "{:016x}/{}/{:016x}",
+            log_tail::first_time(&piece.bytes).unwrap_or(0).max(0),
+            piece.file,
+            piece.offset
+        )
+        .into_bytes();
+        let lease = library.put(&mut piece.bytes.as_slice(), "machine-log", LEASE).map_err(error)?;
+        let body = serde_json::to_vec(
+            &serde_json::json!({ "file": piece.file, "offset": piece.offset, "length": piece.bytes.len() }),
+        )
+        .map_err(|error| error.to_string())?;
+        writes.push(Write { item, order, value: Some(body), objects: vec![lease.object] });
+        leases.push(lease);
         written += piece.bytes.len();
         at = Tail { offset: piece.offset + piece.bytes.len() as u64, file: piece.file };
     }
@@ -250,8 +269,8 @@ fn mcp_logs(node: &Arc<Node>, scope: &str, folder: &std::path::Path) -> Result<(
     Ok(())
 }
 
-/// Lets the oldest pieces of each log held here go, the latest
-/// `KEPT_PIECES` of each kept: only what the hub took of this machine's own.
+/// Lets the pieces of each log held here older than a week go: only what
+/// the hub took of this machine's own.
 fn prune(node: &Arc<Node>) -> Result<(), String> {
     let Some(kept) = node.assets.as_ref() else { return Ok(()) };
     let library = &kept.library;
@@ -265,16 +284,36 @@ fn prune(node: &Arc<Node>) -> Result<(), String> {
         } else {
             continue;
         };
-        let Some(next) =
-            library.streams(&scope).map_err(error)?.into_iter().find(|(name, _)| name == stream).map(|(_, next)| next)
-        else {
-            continue;
-        };
-        if next <= KEPT_PIECES {
-            continue;
+        // The pieces whose first line is older than a week, in the order
+        // their time leads: the frames that set them go (M14).
+        let cutoff = jiff::Timestamp::now().as_millisecond() - KEPT_MS;
+        let mut through: Option<u64> = None;
+        let mut after = None;
+        for _ in 0..8 {
+            let page = library.page(&scope, stream, after.clone(), 500).map_err(error)?;
+            let full = page.len() == 500;
+            let mut older = 0;
+            for entry in &page {
+                let at = std::str::from_utf8(&entry.order)
+                    .ok()
+                    .and_then(|order| order.split('/').next())
+                    .and_then(|hex| i64::from_str_radix(hex, 16).ok())
+                    .unwrap_or(0);
+                if at >= cutoff {
+                    break;
+                }
+                through = Some(through.map_or(entry.revision, |through| through.max(entry.revision)));
+                older += 1;
+            }
+            let Some(last) = page.last() else { break };
+            if !full || older < page.len() {
+                break;
+            }
+            after = Some((last.order.clone(), last.item.clone()));
         }
+        let Some(through) = through else { continue };
         let own = library.orderer(&scope, stream).map_err(error)?.is_some_and(|orderer| orderer == device);
-        library.prune(&scope, stream, next - KEPT_PIECES - 1, own).map_err(error)?;
+        library.prune(&scope, stream, through, own).map_err(error)?;
     }
     Ok(())
 }

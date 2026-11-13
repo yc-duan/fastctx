@@ -61,7 +61,11 @@ impl Kind for ConversationArtifact {
     /// A folder is named by its key and its objects are the very files it
     /// lists; once written it stays as it is.
     fn authorize(_actor: &Actor<'_>, before: Option<&Entry>, after: &KindRecord) -> Result<(), String> {
-        let State::Is { body, objects } = &after.record.state else { return Ok(()) };
+        // Let go only with its conversation, never on its own: one let go
+        // could be placed again otherwise (AS15).
+        let State::Is { body, objects } = &after.record.state else {
+            return Err("an evidence folder goes only with its conversation".into());
+        };
         if let Some(before) = before {
             return if before.body == *body && before.objects == *objects && before.order == after.record.order {
                 Ok(())

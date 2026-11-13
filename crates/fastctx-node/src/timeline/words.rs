@@ -13,7 +13,7 @@
 use super::assets::placed;
 use crate::Node;
 use crate::inbox::standing::Stood;
-use fastctx_content::v2::{ConversationWords, Delivery as Way, Entry, Kind as _, Op, Write, Writer};
+use fastctx_content::v2::{ConversationWords, Delivery as Way, Entry, Kind as _, Library, Op, Write, Writer};
 use fastctx_types::ResidentId;
 use fastctx_types::ipc::Failure;
 use fastctx_types::residents::{Delivery, Notice, Pending};
@@ -87,8 +87,51 @@ fn op_of(delivery: &Delivery) -> Result<Op, Failure> {
     Ok(Op { id: delivery.id.to_string(), digest, kind: "words".into() })
 }
 
-fn body(state: &str, delivery: &Delivery, why: Option<String>) -> Result<Vec<u8>, Failure> {
-    serde_json::to_vec(&Body { state: state.into(), delivery: delivery.clone(), why }).map_err(failure)
+/// The most a body holds as it is: words larger keep their delivery as the
+/// one object, their body saying where they stand and that it is so.
+const BODY_MOST: usize = fastctx_content::RECORD_BYTES - 4096;
+
+/// A record's body of words standing at `state`, with the objects it refers
+/// to and the leases that keep a new one until it is committed.
+type Stored = (Vec<u8>, Vec<fastctx_content::ObjectRef>, Vec<fastctx_content::v2::Lease>);
+
+fn stored(library: &Library, state: &str, delivery: &Delivery, why: Option<String>) -> fastctx_content::Result<Stored> {
+    let invalid = |error: serde_json::Error| fastctx_content::Error::Invalid(error.to_string());
+    let whole = serde_json::to_vec(&Body { state: state.into(), delivery: delivery.clone(), why: why.clone() }).map_err(invalid)?;
+    if whole.len() <= BODY_MOST {
+        return Ok((whole, Vec::new(), Vec::new()));
+    }
+    let delivered = serde_json::to_vec(delivery).map_err(invalid)?;
+    let lease = library.put(&mut delivered.as_slice(), "words", fastctx_content::v2::LEASE)?;
+    let said = serde_json::json!({ "state": state, "why": why, "in_object": true, "id": delivery.id, "at": delivery.at });
+    Ok((serde_json::to_vec(&said).map_err(invalid)?, vec![lease.object], vec![lease]))
+}
+
+/// The words `entry` holds: its body, or, kept as an object, its delivery
+/// read from it.
+fn held_body(library: &Library, entry: &Entry) -> Option<Body> {
+    if let Ok(body) = serde_json::from_slice::<Body>(&entry.body) {
+        return Some(body);
+    }
+    let value: serde_json::Value = serde_json::from_slice(&entry.body).ok()?;
+    if value.get("in_object").and_then(serde_json::Value::as_bool) != Some(true) {
+        return None;
+    }
+    let object = entry.objects.first()?;
+    let mut bytes = Vec::with_capacity(object.size as usize);
+    while (bytes.len() as u64) < object.size {
+        let piece = library.read(&object.hash, bytes.len() as u64, 1 << 20).ok()?;
+        if piece.is_empty() {
+            return None;
+        }
+        bytes.extend_from_slice(&piece);
+    }
+    let delivery: Delivery = serde_json::from_slice(&bytes).ok()?;
+    Some(Body {
+        state: value.get("state")?.as_str()?.to_string(),
+        delivery,
+        why: value.get("why").and_then(serde_json::Value::as_str).map(str::to_string),
+    })
 }
 
 /// What became of writing words.
@@ -145,6 +188,17 @@ pub(crate) async fn said(node: &Arc<Node>, to: &ResidentId, delivery: &Delivery)
 
 async fn keep(node: &Arc<Node>, to: &ResidentId, delivery: &Delivery) -> Result<Wrote, Failure> {
     let Some(kept) = node.assets.as_ref() else { return Ok(Wrote::Skipped) };
+    // Kept here before under this number as other words: refused, before
+    // anything else is looked at, whatever else holds (AR16, NN02, L01, AS05).
+    let (checking, op) = (kept.library.clone(), op_of(delivery)?);
+    let digest = op.digest;
+    let reused = fastctx_platform::task::blocking(move || checking.op_digest(&op.id))
+        .await
+        .map_err(failure)?
+        .is_some_and(|kept| kept != digest);
+    if reused {
+        return Err(Failure::new(fastctx_content::v2::OP_REUSED));
+    }
     let Some((about, _)) = node.residents.about(to) else { return Ok(Wrote::Skipped) };
     let Some(placed) = placed(node, &about)? else { return Ok(Wrote::Skipped) };
     // Let go to another machine with its export: the inbox keeps them
@@ -159,7 +213,7 @@ async fn keep(node: &Arc<Node>, to: &ResidentId, delivery: &Delivery) -> Result<
     let (library, signer, device) = (kept.library.clone(), kept.signer(), kept.device());
     let (scope, network) = (placed.scope.clone(), placed.network.clone());
     let proposal = serde_json::to_vec(&placed.proposal).map_err(failure)?;
-    let (op, value) = (op_of(delivery)?, body("kept", delivery, None)?);
+    let (op, said) = (op_of(delivery)?, delivery.clone());
     let (item, order) = (delivery.id.as_str().as_bytes().to_vec(), order(false, delivery.at));
     let refused = || fastctx_content::Error::Invalid(fastctx_content::v2::OP_REUSED.to_string());
     let wrote = fastctx_platform::task::blocking(move || {
@@ -184,7 +238,7 @@ async fn keep(node: &Arc<Node>, to: &ResidentId, delivery: &Delivery) -> Result<
         // still kept or let go, they go on.
         let ours = library.op_digest(&op.id)?.is_some();
         if let Some(entry) = library.item(&scope, ConversationWords::STREAM, &item)? {
-            let held: Option<Body> = serde_json::from_slice(&entry.body).ok();
+            let held = held_body(&library, &entry);
             let (state, why) = held.as_ref().map_or((String::new(), None), |held| (held.state.clone(), held.why.clone()));
             // Kept elsewhere under this number as other words: refused too.
             if !ours
@@ -219,7 +273,8 @@ async fn keep(node: &Arc<Node>, to: &ResidentId, delivery: &Delivery) -> Result<
         // Kept here before and let go since, said again as the same words:
         // on their way again, its operation as it was (NN03).
         let operation = if ours { None } else { Some((op, true)) };
-        writer.write(item, order, Some(&value), Vec::new(), Vec::new(), operation, signer)?;
+        let (value, objects, leases) = stored(&library, "kept", &said, None)?;
+        writer.write(item, order, Some(&value), objects, leases, operation, signer)?;
         Ok::<_, fastctx_content::Error>(Wrote::Written)
     })
     .await
@@ -267,6 +322,16 @@ pub(super) async fn produce(
             }
             after = Some((last.order.clone(), last.item.clone()));
         }
+        // Each with what it says and whether its operation is this
+        // machine's: one kept where the conversation lived before is never
+        // let go here on not being in this inbox (M05).
+        let mut resolved: Vec<(Entry, Option<Body>, bool)> = Vec::with_capacity(open.len());
+        for entry in open {
+            let body = held_body(&asking, &entry);
+            let ours = asking.op_digest(&String::from_utf8_lossy(&entry.item))?.is_some();
+            resolved.push((entry, body, ours));
+        }
+        let open = resolved;
         Ok::<_, fastctx_content::Error>((
             asking.holding(&looked)?,
             asking.is_live(&looked)? && asking.is_pulled(&looked)?,
@@ -288,7 +353,7 @@ pub(super) async fn produce(
         crate::assets::takeover::want(node, &placed.hub, &scope, ConversationWords::STREAM);
         return Ok(0);
     }
-    let ids: Vec<String> = open.iter().map(|entry| String::from_utf8_lossy(&entry.item).into_owned()).collect();
+    let ids: Vec<String> = open.iter().map(|(entry, _, _)| String::from_utf8_lossy(&entry.item).into_owned()).collect();
     let directory = node.world.conversation(resident);
     let holds = held.clone();
     let crate::inbox::standing::Standing { asked: stood, others } = fastctx_platform::task::blocking(move || {
@@ -299,8 +364,8 @@ pub(super) async fn produce(
     .map_err(failure)?;
     let mut writes = Vec::new();
     let mut ways = Vec::new();
-    for (entry, stood) in open.iter().zip(stood) {
-        let said: Body = serde_json::from_slice(&entry.body).map_err(failure)?;
+    for ((entry, said, ours), stood) in open.iter().zip(stood) {
+        let Some(said) = said else { return Err(failure(format!("{resident}'s words {} cannot be read", String::from_utf8_lossy(&entry.item)))) };
         // Nothing of them in the inbox yet is not their being let go: kept
         // here just now, the inbox keeps them next (MM03, K02). Only long
         // after this node first saw them missing, they are taken as let go;
@@ -314,13 +379,15 @@ pub(super) async fn produce(
             }
         }
         MISSING.lock().expect("missing words").remove(&id);
+        // Not this machine's and nowhere here: whether they went in where
+        // they were kept before is not known, never let go (M05, §3 N02).
+        let stood = if stood == Stood::Gone && !ours { Stood::Uncertain } else { stood };
         let (state, settled) = state_of(stood);
         if state == said.state {
             continue;
         }
-        let value = Some(body(state, &said.delivery, None)?);
         let order = order(settled, said.delivery.at);
-        writes.push(Write::<ConversationWords> { item: entry.item.clone(), order, value, objects: Vec::new() });
+        writes.push((entry.item.clone(), order, state, said.delivery.clone()));
         match stood {
             Stood::Delivering => ways.push((said.delivery.id.to_string(), Way::Delivering)),
             Stood::Delivered => ways.push((said.delivery.id.to_string(), Way::Delivered)),
@@ -343,18 +410,23 @@ pub(super) async fn produce(
             if library.item(&scope, ConversationWords::STREAM, &item)?.is_some() {
                 continue;
             }
-            let (Ok(op), Ok(value)) = (op_of(&pending.delivery), body(state, &pending.delivery, None)) else {
-                continue;
-            };
+            let Ok(op) = op_of(&pending.delivery) else { continue };
+            let (value, objects, leases) = stored(&library, state, &pending.delivery, None)?;
             let order = order(settled, pending.delivery.at);
             // Let go and kept again under the same operation, the words are
             // written again without it: it landed once already.
             let landed = library.durability(vec![op.id.clone()])?.first().is_some_and(|(_, durable)| *durable);
             let op = (!landed).then_some((op, true));
-            writer.write(item, order, Some(&value), Vec::new(), Vec::new(), op, signer.clone())?;
+            writer.write(item, order, Some(&value), objects, leases, op, signer.clone())?;
         }
         if !writes.is_empty() {
-            writer.write_all(writes, Vec::new(), false, signer)?;
+            let (mut records, mut all_leases) = (Vec::new(), Vec::new());
+            for (item, order, state, delivery) in writes {
+                let (value, objects, leases) = stored(&library, state, &delivery, None)?;
+                records.push(Write::<ConversationWords> { item, order, value: Some(value), objects });
+                all_leases.extend(leases);
+            }
+            writer.write_all(records, all_leases, false, signer)?;
         }
         // Where their operations stand follows; one taken up from before
         // the asset library kept words has no operation to move.

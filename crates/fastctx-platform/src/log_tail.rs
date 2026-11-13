@@ -93,14 +93,14 @@ pub fn next(path: &Path, at: &Tail, most: usize) -> io::Result<Option<Piece>> {
         let file = now.as_mut().expect("named");
         return Ok(lines(file, at.offset, most)?.map(|bytes| Piece { file: at.file.clone(), offset: at.offset, bytes }));
     }
-    // The file it read rolled: finish it first; from the start, the rolled
-    // file comes before the one the log is now.
+    // The file it read rolled: finish it first. From the start — or having
+    // lost the file it read, rolled twice since — the rolled file is read
+    // whole before the one the log is now (AS12).
     if let Some(mut old) = open(&rolled)?
         && let Some(old_name) = name(&mut old)?
-        && (at.file.is_empty() || old_name == at.file)
         && Some(&old_name) != now_name.as_ref()
     {
-        let offset = if at.file.is_empty() { 0 } else { at.offset };
+        let offset = if old_name == at.file { at.offset } else { 0 };
         if let Some(bytes) = lines(&mut old, offset, most)? {
             return Ok(Some(Piece { file: old_name, offset, bytes }));
         }

@@ -919,7 +919,8 @@ async fn describe(
         let Some(opened) = link.view().directory.account(&account).map(|found| found.opened) else { continue };
         let scope = wire::records_key(hub.as_str(), &account, opened.as_millisecond());
         let readers = Readers::Account { account };
-        let proposal = Proposal { hub: hub.to_string(), readers, classes: wire::records_classes() };
+        let classes = wire::classes_for(&readers, &scope);
+        let proposal = Proposal { hub: hub.to_string(), readers, classes };
         let (network, proposal) = (network.clone(), serde_json::to_vec(&proposal).map_err(|error| error.to_string())?);
         blocking(library, move |library| {
             if library.holding(&scope)?.is_none() {
@@ -929,21 +930,16 @@ async fn describe(
         })
         .await?;
     }
-    // And each project this machine keeps the bodies of: the hub writes its
-    // ledger there (design §28.18).
-    let view = link.view();
-    let projects: Vec<fastctx_types::access::TownId> = view
-        .directory
-        .projects
-        .iter()
-        .filter(|project| view.directory.member_keeps_project(&view.me, &project.town))
-        .map(|project| project.town.clone())
-        .collect();
-    drop(view);
+    // A project's ledger is not proposed: its entries name its machines and
+    // their places, which a reader who cannot use a machine does not see;
+    // held whole by every reader it would show them (M09). It waits for the
+    // ledger split by project and machine, with the project's local reads.
+    let projects: Vec<fastctx_types::access::TownId> = Vec::new();
     for town in projects {
         let readers = Readers::Project { town };
         let scope = format!("{}ledger", readers.key_prefix(hub.as_str()));
-        let proposal = Proposal { hub: hub.to_string(), readers, classes: vec![StreamClass { prefix: String::new(), holders: wire::Holders::Readers }] };
+        let classes = wire::classes_for(&readers, &scope);
+        let proposal = Proposal { hub: hub.to_string(), readers, classes };
         let (network, proposal) = (network.clone(), serde_json::to_vec(&proposal).map_err(|error| error.to_string())?);
         blocking(library, move |library| {
             if library.holding(&scope)?.is_none() {
@@ -1395,6 +1391,13 @@ async fn pull(
                 // (`pass`), and until it has.
                 assets.uploads.lock().expect("uploads").insert(scope.to_string());
             }
+        } else if *at > hub_at.unwrap_or(0) && fastctx_content::v2::hub_orders(stream) {
+            // A stream the hub orders, longer here than the hub has it after
+            // a recovery: the hub writes it again from its records, and this
+            // replica follows it, cut back to what the hub has (AS02, AS07).
+            let (scope_text, stream_text) = (scope.to_string(), stream.clone());
+            let through = hub_at.unwrap_or(0).checked_sub(1);
+            blocking(library, move |library| library.truncate(&scope_text, &stream_text, through)).await?;
         } else if *at > hub_at.unwrap_or(0) {
             // A replica's frames the hub lost, all of the stream or its
             // tail, given again; a stream that fails holds up no other.

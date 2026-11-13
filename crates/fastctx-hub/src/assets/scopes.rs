@@ -422,6 +422,11 @@ pub(crate) fn describe(
     {
         return Err("what an account does on a machine is described by that machine".into());
     }
+    // Described only with its kind's classes: no device widens who holds it
+    // (AS09).
+    if classes != fastctx_types::assets::classes_for(&readers, key) {
+        return Err(format!("the scope {key} is described with its own classes"));
+    }
     if let Some(kept) = scope(assets, key)? {
         // Read through the gate like any other answer.
         if !readable(directory, machine, &kept) {

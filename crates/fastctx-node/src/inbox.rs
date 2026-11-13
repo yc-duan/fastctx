@@ -45,7 +45,11 @@ use storage::{Receipt, change, read_rows};
 pub fn keep(directory: &ConversationDir, pending: &Pending) -> io::Result<bool> {
     crate::attachments::delivered::prepare(directory)?;
     let (pending, bytes) = (pending.clone(), serde_json::to_vec(pending)?.len());
-    change(directory, bytes, move |rows| {
+    // The user's words are kept on the disk before they are answered for:
+    // an answer the sender takes as landed is never lost to a power cut
+    // after it (M03).
+    let words = crate::timeline::words::is_words(&pending.delivery);
+    let write = move |rows: &crate::records::Rows<'_>| {
         let key = pending.delivery.id.as_str();
         if storage::delivered(rows, key)?
             || rows.get::<Pending>("uncertain-inputs", key)?.is_some()
@@ -56,7 +60,8 @@ pub fn keep(directory: &ConversationDir, pending: &Pending) -> io::Result<bool> 
         crate::attachments::delivered::record_in(rows, std::slice::from_ref(&pending))?;
         rows.put_ordered("pending-inputs", key, &pending, pending.delivery.at)?;
         Ok(true)
-    })
+    };
+    if words { storage::change_durable(directory, bytes, write) } else { change(directory, bytes, write) }
 }
 pub(crate) fn knows(directory: &ConversationDir, id: &NoticeId) -> io::Result<bool> {
     if crate::lifecycle::refused::contains(directory, id)? {

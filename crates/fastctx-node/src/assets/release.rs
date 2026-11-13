@@ -95,29 +95,31 @@ pub(crate) fn export(world: &WorldDir, directory: &Path, conversation: &str, to:
         clear(directory)?;
         return Ok(None);
     }
+    // The new package's objects join the folder first, beside the earlier
+    // package's; then the package file is replaced in one step: killed at
+    // any point, the folder holds a whole package — the earlier or the new
+    // — with every object it names (NN15, L03, M06). The earlier package's
+    // objects the new one does not name go last.
     let (folder, path) = (directory.join(OBJECTS), directory.join(FILE));
-    let (new_folder, new_path) = (directory.join(format!("{OBJECTS}.new")), directory.join(format!("{FILE}.new")));
-    let made = (|| -> io::Result<()> {
-        match fastctx_platform::disk::remove_dir_all(&new_folder) {
-            Err(error) if error.kind() != io::ErrorKind::NotFound => return Err(error),
-            _ => {}
-        }
-        fastctx_platform::disk::create_dir_all(&new_folder)?;
-        for object in package.streams.iter().flat_map(|released| &released.objects) {
-            copy_out(&library, &object.0, &new_folder)?;
-        }
-        let bytes = serde_json::to_vec_pretty(&package).map_err(io::Error::other)?;
-        fastctx_platform::publish(&new_path, &bytes, fastctx_platform::Permissions::Private)
-    })();
-    if let Err(error) = made {
-        let _ = fastctx_platform::disk::remove_dir_all(&new_folder);
-        let _ = fastctx_platform::disk::remove_file(&new_path);
-        return Err(error);
+    for object in package.streams.iter().flat_map(|released| &released.objects) {
+        copy_out(&library, &object.0, &folder)?;
     }
-    clear(directory)?;
-    fastctx_platform::disk::rename(&new_folder, &folder)?;
-    fastctx_platform::disk::rename(&new_path, &path)?;
-    Ok(Some(path))
+    let bytes = serde_json::to_vec_pretty(&package).map_err(io::Error::other)?;
+    fastctx_platform::publish(&path, &bytes, fastctx_platform::Permissions::Private)?;
+    let named: std::collections::BTreeSet<String> =
+        package.streams.iter().flat_map(|released| &released.objects).map(|object| hex(&object.0)).collect();
+    if let Ok(entries) = fastctx_platform::disk::read_dir(&folder) {
+        for entry in entries.flatten() {
+            if entry.file_name().to_str().is_some_and(|name| !named.contains(name)) {
+                let _ = fastctx_platform::disk::remove_file(entry.path());
+            }
+        }
+    }
+    // What this machine was adopting goes with the earlier export (AQ02).
+    match fastctx_platform::disk::remove_file(directory.join(ADOPTED)) {
+        Err(error) if error.kind() != io::ErrorKind::NotFound => Err(error),
+        _ => Ok(Some(path)),
+    }
 }
 
 /// The device key of the machine `to` — by its name or one it had — as
@@ -202,11 +204,18 @@ fn package(library: &Library, key: &SecretKey, hub: &str, scope: &str, to: &str,
     })
 }
 
-/// Writes the object `hash` of the library into `folder`, named by it.
+/// Writes the object `hash` of the library into `folder`, named by it: one
+/// there already, of an earlier package, is the same bytes and stays as it
+/// is; a new one is written beside and put in place whole.
 fn copy_out(library: &Library, hash: &[u8], folder: &Path) -> io::Result<()> {
     let hash: [u8; 32] = hash.try_into().map_err(|_| io::Error::other("a malformed object hash"))?;
     fastctx_platform::disk::create_dir_all(folder)?;
-    let mut file = fastctx_platform::disk::create(folder.join(hex(&hash)))?;
+    let path = folder.join(hex(&hash));
+    if fastctx_platform::disk::exists(&path)? {
+        return Ok(());
+    }
+    let part = folder.join(format!("{}.part", hex(&hash)));
+    let mut file = fastctx_platform::disk::create(&part)?;
     let mut at = 0u64;
     loop {
         let piece = library.read(&hash, at, PIECE).map_err(|error| io::Error::other(error.to_string()))?;
@@ -216,7 +225,9 @@ fn copy_out(library: &Library, hash: &[u8], folder: &Path) -> io::Result<()> {
             break;
         }
     }
-    file.sync_all()
+    file.sync_all()?;
+    drop(file);
+    fastctx_platform::disk::rename(&part, &path)
 }
 
 /// Where the object `hash` of the package is beside the conversation, if it

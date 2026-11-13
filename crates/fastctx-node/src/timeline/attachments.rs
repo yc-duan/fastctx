@@ -208,9 +208,11 @@ pub(super) async fn produce(
     })
     .await?;
     let (written, unread) = written;
-    // Looked at whole only when everything could be read (L07).
-    if !unread {
-        LOOKED.lock().expect("looked attachments").insert(resident.clone(), (placed_count, holding));
+    // Looked at whole only when everything could be read (L07); what could
+    // not be is looked at again soon, the job asked again (M08).
+    if unread {
+        return Err(failure(format!("{resident}'s attachments: some could not be read now; {written} written")));
     }
+    LOOKED.lock().expect("looked attachments").insert(resident.clone(), (placed_count, holding));
     Ok(written)
 }

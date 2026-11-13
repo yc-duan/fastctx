@@ -4,15 +4,16 @@
 //! each named by its file and where it begins and written once; and the
 //! logs of the MCP commands an account runs on a machine (`mcp.log`, stream
 //! `mcp`, in that account's scope on that machine), each as it stands now.
-//! The hub keeps every piece; a device keeps the latest `KEPT_PIECES` of a
-//! log's pieces, about a week's at a piece a minute.
+//! The hub keeps every piece; a device keeps a week of a log's pieces, by
+//! when their first line was written (`KEPT_MS`).
 
 use super::kind::{Actor, Deletion, Holding, Import, Kind};
 use super::{Entry, KindRecord};
 use crate::State;
 
-/// The pieces of a log a device keeps: a week of minutes.
-pub const KEPT_PIECES: u64 = 7 * 24 * 60;
+/// How long a device keeps a log's pieces, by when their first line was
+/// written: a week (M14).
+pub const KEPT_MS: i64 = 7 * 24 * 60 * 60 * 1000;
 
 fn object(body: &[u8]) -> Result<serde_json::Map<String, serde_json::Value>, String> {
     match serde_json::from_slice::<serde_json::Value>(body) {
@@ -59,7 +60,8 @@ macro_rules! log_pieces {
             const STREAM: &'static str = $stream;
             const HOLDING: Holding = Holding::Readers;
             const ROLES: &'static [&'static str] = &["bytes"];
-            const RETENTION: Option<u64> = Some(KEPT_PIECES);
+            /// Kept a week by time on a device (`KEPT_MS`), not by count.
+            const RETENTION: Option<u64> = None;
             const DELETION: Deletion = Deletion::Tombstone;
             /// Taken up from the log file as it grows.
             const IMPORT: Import = Import::From($import);

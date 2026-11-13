@@ -65,26 +65,35 @@ fn look(assets: &Assets, path: &Path) -> Result<(), String> {
     while written < A_LOOK {
         let Some(piece) = log_tail::next(path, &at, PIECE).map_err(|error| error.to_string())? else { break };
         let item = format!("{}/{:016x}", piece.file, piece.offset).into_bytes();
-        if library.item(&key, HubLog::STREAM, &item).map_err(error)?.is_none() {
-            let order = format!(
-                "{:016x}/{}/{:016x}",
-                log_tail::first_time(&piece.bytes).unwrap_or(0).max(0),
-                piece.file,
-                piece.offset
-            )
-            .into_bytes();
-            let lease = library.put(&mut piece.bytes.as_slice(), "hub-log", LEASE).map_err(error)?;
-            let body = serde_json::to_vec(
-                &serde_json::json!({ "file": piece.file, "offset": piece.offset, "length": piece.bytes.len() }),
-            )
-            .map_err(|error| error.to_string())?;
-            records.push(KindRecord {
-                kind: HubLog::KIND,
-                schema: 1,
-                record: Item { item, order, state: State::Is { body, objects: vec![lease.object] } },
-            });
-            _leases.push(lease);
+        // Written before a stop that kept no standing: on from its end, as
+        // long as it was then, not as long as the file is now (AS11).
+        if let Some(entry) = library.item(&key, HubLog::STREAM, &item).map_err(error)? {
+            let length = entry.objects.first().map_or(0, |object| object.size);
+            if length == 0 {
+                return Err(format!("the piece of the hub's log at {} is empty", piece.offset));
+            }
+            written += length as usize;
+            at = Tail { offset: piece.offset + length, file: piece.file };
+            continue;
         }
+        let order = format!(
+            "{:016x}/{}/{:016x}",
+            log_tail::first_time(&piece.bytes).unwrap_or(0).max(0),
+            piece.file,
+            piece.offset
+        )
+        .into_bytes();
+        let lease = library.put(&mut piece.bytes.as_slice(), "hub-log", LEASE).map_err(error)?;
+        let body = serde_json::to_vec(
+            &serde_json::json!({ "file": piece.file, "offset": piece.offset, "length": piece.bytes.len() }),
+        )
+        .map_err(|error| error.to_string())?;
+        records.push(KindRecord {
+            kind: HubLog::KIND,
+            schema: 1,
+            record: Item { item, order, state: State::Is { body, objects: vec![lease.object] } },
+        });
+        _leases.push(lease);
         written += piece.bytes.len();
         at = Tail { offset: piece.offset + piece.bytes.len() as u64, file: piece.file };
     }

@@ -29,7 +29,8 @@ impl Kind for AccountActivity {
     const SCHEMA: u16 = 1;
     const STREAM: &'static str = "activity";
     const HOLDING: Holding = Holding::Readers;
-    const ROLES: &'static [&'static str] = &[];
+    /// A deed larger than a body holds is its one object.
+    const ROLES: &'static [&'static str] = &["deed"];
     const RETENTION: Option<u64> = None;
     const DELETION: Deletion = Deletion::Tombstone;
     /// Taken up from the machine's activity book.
@@ -47,10 +48,11 @@ impl Kind for AccountActivity {
     /// A deed is named by its key and refers to no object.
     fn authorize(_actor: &Actor<'_>, _before: Option<&Entry>, after: &KindRecord) -> Result<(), String> {
         let State::Is { body, objects } = &after.record.state else { return Ok(()) };
-        if !objects.is_empty() {
-            return Err("a deed refers to no object".into());
-        }
         let map = object(body)?;
+        let in_object = map.get("in_object").and_then(serde_json::Value::as_bool) == Some(true);
+        if objects.len() != usize::from(in_object) {
+            return Err("a deed is its body, or the one object its body says it is".into());
+        }
         let deed = map.get("deed").and_then(serde_json::Value::as_str).ok_or("a deed says its key")?;
         if deed.as_bytes() != after.record.item.as_slice() {
             return Err("a deed is named by its key".into());

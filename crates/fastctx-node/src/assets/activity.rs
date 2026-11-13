@@ -15,10 +15,13 @@ use fastctx_content::v2::{AccountActivity, AccountUsage, Kind as _, LEASE, Libra
 use fastctx_net::ids::HubId;
 use fastctx_storage::rusqlite::params;
 use fastctx_types::AccountName;
-use fastctx_types::assets::{Holders, Readers};
+use fastctx_types::assets::Readers;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Weak};
 use std::time::Duration;
+
+/// The most a body holds as it is.
+const BODY_MOST: usize = fastctx_content::RECORD_BYTES - 4096;
 
 /// How often what was done here is looked at.
 const EVERY: Duration = Duration::from_secs(60);
@@ -73,7 +76,7 @@ fn writable(node: &Node, library: &Library, hub: &HubId, account: &AccountName, 
     };
     let name = fastctx_types::assets::records_key("", account, opened.as_millisecond());
     let name = name.rsplit('/').next().unwrap_or_default().to_string();
-    let Some(scope) = proposed(node, hub, Readers::Account { account: account.clone() }, &name, Holders::Readers)? else {
+    let Some(scope) = proposed(node, hub, Readers::Account { account: account.clone() }, &name)? else {
         return Ok(None);
     };
     let error = |error: fastctx_content::Error| error.to_string();
@@ -100,6 +103,33 @@ fn standing(library: &Library, name: &str) -> Result<serde_json::Value, String> 
         .map_err(|error| error.to_string())?
         .and_then(|bytes| serde_json::from_slice(&bytes).ok())
         .unwrap_or_else(|| serde_json::json!({})))
+}
+
+/// Whether any scope written before was held anew since, whether or not
+/// anything new is there to write: then everything is looked at again from
+/// the start (M18).
+fn any_held_anew(library: &Library, standing: &mut serde_json::Value) -> Result<bool, String> {
+    let scopes: Vec<(String, i64)> = standing["holdings"]
+        .as_object()
+        .map(|held| held.iter().filter_map(|(scope, holding)| Some((scope.clone(), holding.as_i64()?))).collect())
+        .unwrap_or_default();
+    let mut anew = false;
+    for (scope, was) in scopes {
+        match library.holding(&scope).map_err(|error| error.to_string())? {
+            Some(holding) if holding == was => {}
+            Some(holding) => {
+                standing["holdings"][&scope] = serde_json::json!(holding);
+                anew = true;
+            }
+            None => {
+                if let Some(held) = standing["holdings"].as_object_mut() {
+                    held.remove(&scope);
+                }
+                anew = true;
+            }
+        }
+    }
+    Ok(anew)
 }
 
 /// Whether a scope was held anew since the last look: then everything is
@@ -157,6 +187,10 @@ fn deeds(node: &Arc<Node>, hub: &HubId, home: Option<&AccountName>, stream: &str
     }
     let name = format!("activity/{hub}");
     let mut at = standing(library, &name)?;
+    if any_held_anew(library, &mut at)? {
+        at["began"] = serde_json::json!(i64::MIN);
+        at["deed"] = serde_json::json!("");
+    }
     let (began, after) = (at["began"].as_i64().unwrap_or(i64::MIN), at["deed"].as_str().unwrap_or_default().to_string());
     let open: BTreeSet<String> =
         at["open"].as_array().into_iter().flatten().filter_map(|deed| deed.as_str().map(str::to_string)).collect();
@@ -196,7 +230,8 @@ fn deeds(node: &Arc<Node>, hub: &HubId, home: Option<&AccountName>, stream: &str
         })
         .map_err(|error| error.to_string())?;
     let error = |error: fastctx_content::Error| error.to_string();
-    let mut writes: BTreeMap<String, (i64, Vec<Write<AccountActivity>>)> = BTreeMap::new();
+    type Writes = (i64, Vec<Write<AccountActivity>>, Vec<fastctx_content::v2::Lease>);
+    let mut writes: BTreeMap<String, Writes> = BTreeMap::new();
     let (mut still_open, mut anew) = (BTreeSet::new(), false);
     let (mut last_began, mut last_deed) = (began, at["deed"].as_str().unwrap_or_default().to_string());
     for mut deed in found {
@@ -215,22 +250,33 @@ fn deeds(node: &Arc<Node>, hub: &HubId, home: Option<&AccountName>, stream: &str
         }
         deed.body["touched"] = serde_json::json!(touched.get(&deed.key).cloned().unwrap_or_default());
         let body = serde_json::to_vec(&deed.body).map_err(|error| error.to_string())?;
-        let item = deed.key.into_bytes();
-        if library.item(&scope, stream, &item).map_err(error)?.is_some_and(|entry| entry.body == body) {
+        let item = deed.key.clone().into_bytes();
+        use sha2::Digest as _;
+        let digest: [u8; 32] = sha2::Sha256::digest(&body).into();
+        if library.item(&scope, stream, &item).map_err(error)?.is_some_and(|entry| match entry.objects.first() {
+            None => entry.body == body,
+            Some(object) => object.hash == digest,
+        }) {
             continue;
         }
-        writes.entry(scope).or_insert_with(|| (holding, Vec::new())).1.push(Write {
-            order: item.clone(),
-            item,
-            value: Some(body),
-            objects: Vec::new(),
-        });
+        // A deed larger than a body holds — a job that touched very many
+        // files — is its one object (M17).
+        let scoped = writes.entry(scope).or_insert_with(|| (holding, Vec::new(), Vec::new()));
+        let (value, objects) = if body.len() > BODY_MOST {
+            let lease = library.put(&mut body.as_slice(), "activity", LEASE).map_err(error)?;
+            let said = serde_json::json!({ "deed": deed.key, "in_object": true, "bytes": body.len() });
+            scoped.2.push(lease);
+            (serde_json::to_vec(&said).map_err(|error| error.to_string())?, vec![lease.object])
+        } else {
+            (body, Vec::new())
+        };
+        scoped.1.push(Write { order: item.clone(), item, value: Some(value), objects });
     }
-    for (scope, (holding, writes)) in writes {
+    for (scope, (holding, writes, leases)) in writes {
         Writer::<AccountActivity>::new(library, &scope, stream)
             .map_err(error)?
             .in_holding(holding)
-            .write_all(writes, Vec::new(), false, assets.signer())
+            .write_all(writes, leases, false, assets.signer())
             .map_err(error)?;
     }
     if anew {
@@ -267,6 +313,9 @@ fn usage(node: &Arc<Node>, hub: &HubId, home: Option<&AccountName>, stream: &str
     files.sort();
     let name = format!("usage/{hub}");
     let mut at = standing(library, &name)?;
+    if any_held_anew(library, &mut at)? {
+        at["files"] = serde_json::json!({});
+    }
     let error = |error: fastctx_content::Error| error.to_string();
     let (mut budget, mut anew) = (USAGE_BYTES, false);
     for (file, path) in files {
@@ -291,20 +340,44 @@ fn usage(node: &Arc<Node>, hub: &HubId, home: Option<&AccountName>, stream: &str
         };
         // Whole lines only: the rest is read when it is whole.
         let Some(end) = bytes.iter().rposition(|&byte| byte == b'\n') else { continue };
-        let bytes = &bytes[..=end];
-        let mut lines: BTreeMap<AccountName, Vec<u8>> = BTreeMap::new();
-        for line in bytes.split_inclusive(|&byte| byte == b'\n') {
-            let Ok(value) = serde_json::from_slice::<serde_json::Value>(line) else { continue };
-            let account = match value.get("who").filter(|who| !who.is_null()) {
-                Some(who) => {
-                    let (Some(of), Some(name)) = (who["hub"].as_str(), who["account"].as_str()) else { continue };
-                    routed(&format!("{of}/{name}"), hub, home)
+        let mut bytes = &bytes[..=end];
+        let split = |bytes: &[u8]| {
+            let mut lines: BTreeMap<AccountName, Vec<u8>> = BTreeMap::new();
+            for line in bytes.split_inclusive(|&byte| byte == b'\n') {
+                let Ok(value) = serde_json::from_slice::<serde_json::Value>(line) else { continue };
+                let account = match value.get("who").filter(|who| !who.is_null()) {
+                    Some(who) => {
+                        let (Some(of), Some(name)) = (who["hub"].as_str(), who["account"].as_str()) else { continue };
+                        routed(&format!("{of}/{name}"), hub, home)
+                    }
+                    None => home.cloned(),
+                };
+                if let Some(account) = account {
+                    lines.entry(account).or_default().extend_from_slice(line);
                 }
-                None => home.cloned(),
-            };
-            if let Some(account) = account {
-                lines.entry(account).or_default().extend_from_slice(line);
             }
+            lines
+        };
+        let mut lines = split(bytes);
+        // A piece written here before a stop that kept no standing ends
+        // where it ended then, however the file grew since: read again to
+        // there, the rest comes as a piece of its own (M15).
+        let item = format!("{file}/{offset:016x}").into_bytes();
+        let mut ended = None;
+        for account in lines.keys() {
+            let Some((scope, _)) = writable(node, library, hub, account, stream)? else { continue };
+            if let Some(entry) = library.item(&scope, stream, &item).map_err(error)?
+                && let Some(source) = serde_json::from_slice::<serde_json::Value>(&entry.body)
+                    .ok()
+                    .and_then(|body| body.get("source").and_then(serde_json::Value::as_u64))
+            {
+                ended = Some(source as usize);
+                break;
+            }
+        }
+        if let Some(ended) = ended.filter(|ended| *ended > 0 && *ended < bytes.len()) {
+            bytes = &bytes[..ended];
+            lines = split(bytes);
         }
         let mut waiting = false;
         for (account, lines) in lines {
@@ -313,17 +386,23 @@ fn usage(node: &Arc<Node>, hub: &HubId, home: Option<&AccountName>, stream: &str
                 continue;
             };
             anew |= held_anew(&mut at, &scope, holding);
-            let item = format!("{file}/{offset:016x}").into_bytes();
             if library.item(&scope, stream, &item).map_err(error)?.is_some() {
                 continue;
             }
             let lease = library.put(&mut lines.as_slice(), "usage", LEASE).map_err(error)?;
-            let body = serde_json::to_vec(&serde_json::json!({ "file": file, "offset": offset, "length": lines.len() }))
-                .map_err(|error| error.to_string())?;
+            let body = serde_json::to_vec(
+                &serde_json::json!({ "file": file, "offset": offset, "length": lines.len(), "source": bytes.len() }),
+            )
+            .map_err(|error| error.to_string())?;
             Writer::<AccountUsage>::new(library, &scope, stream)
                 .map_err(error)?
                 .in_holding(holding)
-                .write_all(vec![Write { order: item.clone(), item, value: Some(body), objects: vec![lease.object] }], vec![lease], false, assets.signer())
+                .write_all(
+                    vec![Write { order: item.clone(), item: item.clone(), value: Some(body), objects: vec![lease.object] }],
+                    vec![lease],
+                    false,
+                    assets.signer(),
+                )
                 .map_err(error)?;
         }
         // A scope not held yet: this piece is read again next time.

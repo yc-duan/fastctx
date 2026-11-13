@@ -666,9 +666,23 @@ pub async fn send_composer(
             session: None,
             since: None,
         };
+        // The user's words are kept in the asset library first here too
+        // (§3, M04).
+        if crate::timeline::words::is_words(&pending.delivery) {
+            match crate::timeline::words::said(node, id, &pending.delivery).await? {
+                crate::timeline::words::Said::Go => {}
+                crate::timeline::words::Said::Crossed => {
+                    return Ok(Some(Landed::Waiting { why: None, answered: answered(node, id, &about) }));
+                }
+                crate::timeline::words::Said::Uncertain(why) => return Ok(Some(Landed::Uncertain { why })),
+            }
+        }
         if keep(&directory, &pending).await? {
             node.idle_probes.touched(id);
             crate::goals::engine::input_changed(node, id);
+            if crate::timeline::words::is_words(&pending.delivery) {
+                crate::timeline::described(node, id);
+            }
         }
         return submit_thread(node, id, thread, &directory, pending, true, idle_only).await;
     }

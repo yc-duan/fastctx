@@ -12,9 +12,14 @@ use crate::State;
 /// A conversation's draft.
 pub struct ConversationDraft;
 
-fn object(body: &[u8]) -> Result<(), String> {
+/// Whether a draft's body is the draft, or says the draft is its one
+/// object (AS16).
+fn object(body: &[u8]) -> Result<bool, String> {
     match serde_json::from_slice::<serde_json::Value>(body) {
-        Ok(serde_json::Value::Object(map)) if map.get("text").is_some_and(serde_json::Value::is_string) => Ok(()),
+        Ok(serde_json::Value::Object(map)) if map.get("in_object").and_then(serde_json::Value::as_bool) == Some(true) => {
+            Ok(true)
+        }
+        Ok(serde_json::Value::Object(map)) if map.get("text").is_some_and(serde_json::Value::is_string) => Ok(false),
         Ok(_) => Err("a draft is a JSON object with its text".into()),
         Err(error) => Err(format!("a draft is not JSON: {error}")),
     }
@@ -26,7 +31,8 @@ impl Kind for ConversationDraft {
     const SCHEMA: u16 = 1;
     const STREAM: &'static str = "draft";
     const HOLDING: Holding = Holding::Readers;
-    const ROLES: &'static [&'static str] = &[];
+    /// A draft larger than a body holds is its one object.
+    const ROLES: &'static [&'static str] = &["draft"];
     const RETENTION: Option<u64> = None;
     const DELETION: Deletion = Deletion::Tombstone;
     /// Taken up from the conversation's composer.
@@ -38,14 +44,16 @@ impl Kind for ConversationDraft {
     }
 
     fn decode(body: &[u8]) -> Result<Vec<u8>, String> {
-        object(body).map(|()| body.to_vec())
+        object(body).map(|_| body.to_vec())
     }
 
     fn authorize(_actor: &Actor<'_>, _before: Option<&Entry>, after: &KindRecord) -> Result<(), String> {
         match &after.record.state {
             State::Gone => Ok(()),
-            State::Is { body, objects } if objects.is_empty() => object(body),
-            State::Is { .. } => Err("a draft refers to no object".into()),
+            State::Is { body, objects } => match (object(body)?, objects.len()) {
+                (false, 0) | (true, 1) => Ok(()),
+                _ => Err("a draft is its body, or the one object its body says it is".into()),
+            },
         }
     }
 

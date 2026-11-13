@@ -92,6 +92,29 @@ pub(crate) fn running(world: &WorldDir) -> io::Result<Vec<(JobRecord, PathBuf)>>
 }
 
 /// Every job record here running or ended within a day, read once.
+/// The records of every job here that is running, or ended since `since`,
+/// however long ago: read from where they are kept, past the index's day
+/// (M07). Read whole each time; for a look that takes in everything.
+pub(crate) fn ended_since(world: &WorldDir, since: jiff::Timestamp) -> io::Result<Vec<(JobRecord, PathBuf)>> {
+    let mut found = Vec::new();
+    for parent in world.job_parents()? {
+        for owner in entries(&parent)? {
+            for path in entries(&owner.join("jobs"))? {
+                if path.extension().is_none_or(|extension| extension != "json") {
+                    continue;
+                }
+                match fastctx_hands::run::record::read(&path) {
+                    Ok(record) if record.end.as_ref().is_none_or(|end| end.at >= since) => found.push((record, path)),
+                    Ok(_) => {}
+                    Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                    Err(error) => return Err(error),
+                }
+            }
+        }
+    }
+    Ok(found)
+}
+
 fn every(world: &WorldDir) -> io::Result<Vec<PathBuf>> {
     let since = jiff::Timestamp::now() - KEPT;
     let mut found = Vec::new();

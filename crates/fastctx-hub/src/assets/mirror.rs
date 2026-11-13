@@ -122,11 +122,16 @@ fn conversation_scope(
     resident: &str,
 ) -> Result<Option<String>, String> {
     let ending = format!("/{resident}");
+    // Only the account's own, or a body's: another's that ends the same
+    // holds none of these up (AS06).
+    let owner = super::owners::Owner::Account(account.to_string(), opened.as_millisecond()).key();
     let keys: Vec<String> = assets
         .control
         .read_now(move |c| {
-            let mut statement = c.prepare_cached("SELECT key FROM asset_scopes WHERE substr(key, -?2) = ?1 ORDER BY key LIMIT 64")?;
-            let rows = statement.query_map(fastctx_storage::rusqlite::params![ending, ending.len() as i64], |row| {
+            let mut statement = c.prepare_cached(
+                "SELECT key FROM asset_scopes WHERE substr(key, -?2) = ?1 AND (owner = ?3 OR owner LIKE 'body:%') ORDER BY key",
+            )?;
+            let rows = statement.query_map(fastctx_storage::rusqlite::params![ending, ending.len() as i64, owner], |row| {
                 row.get::<_, String>(0)
             })?;
             Ok(rows.collect::<Result<Vec<_>, _>>()?)
@@ -264,8 +269,10 @@ pub(super) fn apply(
         return Ok(());
     }
     // A sealed hub writes nothing new until it is opened again (AR08);
-    // what is left is written then.
-    if let Some(why) = assets.sealed() {
+    // what is left is written then. The seal held till the frames are
+    // taken: none seals it in between (AS03).
+    let seal = assets.seal_held();
+    if let Some(why) = seal.as_deref() {
         return Err(format!("the hub is sealed: {why}"));
     }
     let scope_key = scope.descriptor.scope.as_str();
@@ -288,6 +295,7 @@ pub(super) fn apply(
         .into_iter()
         .find(|(name, _)| name == stream)
         .map_or(0, |(_, next)| next);
+    drop(seal);
     assets.moved_by_hub(&scope.owner, scope_key, stream, next);
     Ok(())
 }
@@ -335,6 +343,12 @@ pub(crate) async fn again(hub: std::sync::Arc<crate::Hub>) {
             continue;
         };
         write_all(&hub, account, opened, paths).await;
+    }
+    let towns = std::mem::take(&mut *LEDGERS_FAILED.lock().unwrap_or_else(PoisonError::into_inner));
+    for town in towns {
+        if let Ok(town) = TownId::try_from(town) {
+            ledger_of(hub.clone(), town).await;
+        }
     }
     super::told::again(&hub).await;
 }
@@ -474,9 +488,15 @@ pub(crate) async fn ledger_of(hub: std::sync::Arc<crate::Hub>, town: TownId) {
             let Ok(bytes) = fastctx_platform::disk::read(&path) else { continue };
             if let Err(error) = ledger_entry(&assets, &town, seq, &bytes) {
                 log.line(format_args!("writing entry {seq} of {town} into the asset library: {error}"));
+                // Tried again in a minute (AS08).
+                LEDGERS_FAILED.lock().unwrap_or_else(PoisonError::into_inner).insert(town.to_string());
                 return;
             }
         }
     })
     .await;
 }
+
+/// The projects whose ledger failed to be written whole, tried again every
+/// minute (AS08).
+static LEDGERS_FAILED: LazyLock<Mutex<BTreeSet<String>>> = LazyLock::new(Mutex::default);

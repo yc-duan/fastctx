@@ -44,8 +44,18 @@ pub(super) async fn produce(
         }
     }
     let signer = node.assets.as_ref().map(|assets| assets.signer()).ok_or_else(|| failure("no asset library"))?;
+    let mine_name = format!("timers/{resident}");
     fastctx_platform::task::blocking(move || {
         let _held = held;
+        // The timers this machine wrote: only those it lets go, as its table
+        // no longer has them. One taken over from where the conversation
+        // lived before stays until its own machine's table is had here
+        // (M19).
+        let mut mine: std::collections::BTreeSet<String> = library
+            .checkpoint(&mine_name)
+            .map_err(failure)?
+            .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+            .unwrap_or_default();
         let mut writes = Vec::new();
         let mut after = None;
         loop {
@@ -55,25 +65,33 @@ pub(super) async fn produce(
             for entry in page {
                 let id = String::from_utf8_lossy(&entry.item).into_owned();
                 match wanted.remove(&id) {
-                    Some(body) if body == entry.body => {}
+                    Some(body) if body == entry.body => {
+                        mine.insert(id.clone());
+                    }
                     Some(body) => writes.push(Write::<ConversationTimer> {
                         order: entry.item.clone(),
                         item: entry.item,
                         value: Some(body),
                         objects: Vec::new(),
                     }),
-                    None => writes.push(Write::<ConversationTimer> {
+                    None if mine.remove(&id) => writes.push(Write::<ConversationTimer> {
                         order: entry.item.clone(),
                         item: entry.item,
                         value: None,
                         objects: Vec::new(),
                     }),
+                    None => {}
                 }
             }
         }
         for (id, body) in wanted {
             let item = id.into_bytes();
             writes.push(Write::<ConversationTimer> { order: item.clone(), item, value: Some(body), objects: Vec::new() });
+        }
+        for write in &writes {
+            if write.value.is_some() {
+                mine.insert(String::from_utf8_lossy(&write.item).into_owned());
+            }
         }
         if writes.is_empty() {
             return Ok(0);
@@ -84,6 +102,7 @@ pub(super) async fn produce(
             .in_holding(holding)
             .write_all(writes, Vec::new(), false, signer)
             .map_err(failure)?;
+        library.keep_checkpoint(&mine_name, serde_json::to_vec(&mine).map_err(failure)?).map_err(failure)?;
         Ok::<_, Failure>(count)
     })
     .await

@@ -102,7 +102,7 @@ pub(super) fn placed(node: &Node, about: &About) -> Result<Option<Placed>, Failu
     // over (design §8, plan 3-4), never in a scope of its own here (BB08).
     let born_on = crate::record_ownership::origin(node, about);
     let (readers, scope) = scope_for(node, &account.hub, &account.account, born_on, &about.id)?;
-    let classes = fastctx_types::assets::conversation_classes();
+    let classes = fastctx_types::assets::classes_for(&readers, &scope);
     Ok(Some(Placed { scope, hub: account.hub.clone(), proposal: Proposal { hub: account.hub.to_string(), readers, classes }, network }))
 }
 

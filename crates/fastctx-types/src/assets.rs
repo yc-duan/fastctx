@@ -217,6 +217,26 @@ pub fn records_classes() -> Vec<StreamClass> {
     classes
 }
 
+/// The classes a scope of `readers` under `key` is described with: the
+/// same wherever it is proposed, and the only ones the hub describes it
+/// with, so the first device to describe one cannot widen who holds it
+/// (AS09).
+pub fn classes_for(readers: &Readers, key: &str) -> Vec<StreamClass> {
+    let whole = |holders| vec![StreamClass { prefix: String::new(), holders }];
+    match readers {
+        Readers::Conversation { .. } => conversation_classes(),
+        // A machine's log, read by its owner and those it is shared with
+        // whole, held where they are logged in; a conversation opened on
+        // it, as any conversation.
+        Readers::Body { .. } if key.ends_with("/log") => whole(Holders::Logged),
+        Readers::Body { .. } => conversation_classes(),
+        Readers::Account { .. } => records_classes(),
+        Readers::Project { .. } => whole(Holders::Readers),
+        Readers::Hub => whole(Holders::Logged),
+        Readers::Working { .. } => whole(Holders::Readers),
+    }
+}
+
 /// The key of the scope an account's records are kept in on `hub`: by when
 /// it was opened too, so one made again under the same name has its own.
 pub fn records_key(hub: &str, account: &AccountName, opened_ms: i64) -> String {

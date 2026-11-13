@@ -31,8 +31,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 /// The most records written in one go, the scope held for that long only.
 const A_BATCH: usize = 256;
-/// How many of the newest records a scope holds are looked at again.
+/// How many of the newest records a scope holds are looked at again, a page
+/// at a time, and how many pages back at most in one look.
 const LOOKED_AGAIN: u32 = 32;
+const VERIFIED_PAGES: usize = 64;
 
 /// Whether a write of what the hub tells failed since the last look: then
 /// the next minute's look writes it all again (AR15).
@@ -91,6 +93,34 @@ fn holds(entry: &fastctx_content::v2::Entry, body: &[u8]) -> bool {
     }
 }
 
+/// Puts right the records `entries` of the scope holds, numbered `ids`, as
+/// the log has them now: whether any was otherwise.
+fn put_right(
+    assets: &Assets,
+    scope: &scopes::Scope,
+    library: &fastctx_content::v2::Library,
+    database: &fastctx_storage::Database,
+    readers: &[String],
+    entries: &[fastctx_content::v2::Entry],
+    ids: &[u64],
+) -> Result<bool, String> {
+    let now = crate::store::log_store::readable_of(database, readers, ids).map_err(|error| error.to_string())?;
+    let (mut records, mut _leases) = (Vec::new(), Vec::new());
+    for entry in entries {
+        let Some(id) = audit_id(&entry.item) else { continue };
+        let body = now.get(&id).cloned();
+        if body.as_deref().is_some_and(|body| holds(entry, body)) {
+            continue;
+        }
+        let (record, lease) = audit_record(library, id, body)?;
+        records.push(record);
+        _leases.extend(lease);
+    }
+    let fixed = !records.is_empty();
+    apply(assets, scope, library, MachineAudit::STREAM, records)?;
+    Ok(fixed)
+}
+
 /// Writes the machine changes `account`, opened at `opened`, reads that its
 /// scope lacks, oldest first, and puts right the newest it holds where the
 /// log has them otherwise now. Call on a thread that may block.
@@ -104,25 +134,27 @@ pub(crate) fn audit(
     let key = scope.descriptor.scope.clone();
     let error = |error: fastctx_content::Error| error.to_string();
     let readers = vec![crate::store::log_store::account(account, opened)];
-    // The newest it holds, as the log has them now (AR11).
-    {
+    // The newest it holds, as the log has them now (AR11), and on back a
+    // page at a time while a page held anything the log has otherwise: a
+    // recovery longer than a page is put right whole (AS04).
+    let mut anchor = Anchor::Latest;
+    for _ in 0..VERIFIED_PAGES {
         let _writing = writing(&key);
-        let newest =
-            library.view_page(&key, MachineAudit::STREAM, &Anchor::Latest, LOOKED_AGAIN, u32::MAX).map_err(error)?;
-        let ids: Vec<u64> = newest.entries.iter().filter_map(|entry| audit_id(&entry.item)).collect();
-        let now = crate::store::log_store::readable_of(database, &readers, &ids).map_err(|error| error.to_string())?;
-        let (mut records, mut _leases) = (Vec::new(), Vec::new());
-        for entry in &newest.entries {
-            let Some(id) = audit_id(&entry.item) else { continue };
-            let body = now.get(&id).cloned();
-            if body.as_deref().is_some_and(|body| holds(entry, body)) {
-                continue;
+        let newest = library.view_page(&key, MachineAudit::STREAM, &anchor, LOOKED_AGAIN, u32::MAX).map_err(error)?;
+        let Some(oldest) = newest.older.clone() else {
+            if newest.entries.is_empty() {
+                break;
             }
-            let (record, lease) = audit_record(&library, id, body)?;
-            records.push(record);
-            _leases.extend(lease);
+            // The first page: nothing older to look at.
+            let ids: Vec<u64> = newest.entries.iter().filter_map(|entry| audit_id(&entry.item)).collect();
+            put_right(assets, &scope, &library, database, &readers, &newest.entries, &ids)?;
+            break;
+        };
+        let ids: Vec<u64> = newest.entries.iter().filter_map(|entry| audit_id(&entry.item)).collect();
+        if !put_right(assets, &scope, &library, database, &readers, &newest.entries, &ids)? {
+            break;
         }
-        apply(assets, &scope, &library, MachineAudit::STREAM, records)?;
+        anchor = Anchor::Before(oldest);
     }
     loop {
         let _writing = writing(&key);
@@ -195,12 +227,44 @@ pub(crate) fn notices(
 /// its collaboration, each as JSON, none where it has none.
 pub(crate) type Kept = (Option<Vec<u8>>, Option<Vec<u8>>);
 
-/// What the directory keeps of `account`.
+/// What the directory keeps of `account`: its profile without what an MCP
+/// server at an address is asked with — the values of its headers and its
+/// address's query — which stay on the hub alone, given to a machine that
+/// runs the server as before, never into a replica (user 2026-11-11; M01).
 pub(crate) fn kept_of(account: &fastctx_net::directory::Account) -> Kept {
     (
-        account.profile.as_ref().and_then(|profile| serde_json::to_vec(profile).ok()),
+        account.profile.as_ref().and_then(|profile| serde_json::to_value(profile).ok()).and_then(|mut profile| {
+            without_secrets(&mut profile);
+            serde_json::to_vec(&profile).ok()
+        }),
         account.collab.as_ref().and_then(|collab| serde_json::to_vec(collab).ok()),
     )
+}
+
+/// Takes out of a profile, as JSON, every header's value and every
+/// address's query: their names and the address's path stay.
+fn without_secrets(value: &mut serde_json::Value) {
+    match value {
+        serde_json::Value::Object(map) => {
+            for (name, inner) in map.iter_mut() {
+                match (name.as_str(), inner) {
+                    ("headers" | "http_headers" | "env", serde_json::Value::Object(headers)) => {
+                        for header in headers.values_mut() {
+                            *header = serde_json::Value::Null;
+                        }
+                    }
+                    ("url", serde_json::Value::String(url)) => {
+                        if let Some(at) = url.find(['?', '#']) {
+                            url.truncate(at);
+                        }
+                    }
+                    (_, inner) => without_secrets(inner),
+                }
+            }
+        }
+        serde_json::Value::Array(items) => items.iter_mut().for_each(without_secrets),
+        _ => {}
+    }
 }
 
 /// Writes the account's settings the directory keeps into its scope where

@@ -61,13 +61,21 @@ pub(super) async fn produce(
             if library.item(&scope, ConversationArtifact::STREAM, &item).map_err(failure)?.is_some() {
                 continue;
             }
+            // Every file of it at any depth, named by its path within it
+            // (M20).
             let mut names: Vec<(String, std::path::PathBuf)> = Vec::new();
-            for entry in fastctx_platform::disk::read_dir(&path).map_err(failure)? {
-                let entry = entry.map_err(failure)?;
-                if entry.file_type().map_err(failure)?.is_file()
-                    && let Some(name) = entry.file_name().to_str()
-                {
-                    names.push((name.to_string(), entry.path()));
+            let mut folders = vec![(String::new(), path.clone())];
+            while let Some((within, folder)) = folders.pop() {
+                for entry in fastctx_platform::disk::read_dir(&folder).map_err(failure)? {
+                    let entry = entry.map_err(failure)?;
+                    let Some(name) = entry.file_name().to_str().map(str::to_string) else { continue };
+                    let named = if within.is_empty() { name } else { format!("{within}/{name}") };
+                    let kind = entry.file_type().map_err(failure)?;
+                    if kind.is_dir() {
+                        folders.push((named, entry.path()));
+                    } else if kind.is_file() {
+                        names.push((named, entry.path()));
+                    }
                 }
             }
             names.sort();

@@ -44,13 +44,25 @@ impl Verifier for DeviceKeys {
 /// cannot take a new stream first. Other scopes are not gated here.
 fn first_epoch_gate(assets: &Assets, directory: &Indexed<'_>, kept: &Scope, scope: &str, stream: &str, device: &[u8; 32]) -> Result<(), String> {
     // A conversation's scope, or a body's — a conversation opened on a
-    // machine shared whole, or that machine's log — begun on its machine.
+    // machine shared whole, or that machine's log — begun on its machine;
+    // what an account does on a machine, on that machine; what a machine
+    // did and spent for an account, by the machine its stream names (AS14).
     let born_on = match &kept.descriptor.readers {
         wire::Readers::Conversation { born_on, .. } => born_on.clone(),
         wire::Readers::Body { body, .. } => match &kept.bodies {
             Some(bodies) => bodies.machine(body).map_err(|error| error.to_string())?,
             None => None,
         },
+        wire::Readers::Working { machine, .. } => Some(machine.clone()),
+        wire::Readers::Account { .. } => {
+            let Some((_, named)) = stream.split_once('/') else { return Ok(()) };
+            let library = scopes::library(assets, kept)?;
+            if library.last_epoch(scope, stream).map_err(|error| error.to_string())?.is_some() {
+                return Ok(());
+            }
+            let hex: String = device[..8].iter().map(|byte| format!("{byte:02x}")).collect();
+            return if named == hex { Ok(()) } else { Err(format!("{stream} of {scope} is begun by the machine it names")) };
+        }
         _ => return Ok(()),
     };
     let library = scopes::library(assets, kept)?;
@@ -460,16 +472,19 @@ pub(crate) fn ask(
         }
         Request::Take { scope, frame, proven: _, staged } => {
             let kept = gated(assets, directory, machine, &scope)?;
-            // The streams the hub orders itself take no device's frames
-            // (design §28.17); its own, given back after a recovery, it
-            // takes as its own (AR07).
-            if Header::decode(&frame.header.0).is_ok_and(|header| {
-                fastctx_content::v2::hub_orders(&header.stream) && header.key != assets.keys().frame_key()
-            }) {
+            // The streams the hub orders itself take no frame a device
+            // brings, its own given back among them: after a recovery the hub
+            // writes them again from its records, and a replica follows it
+            // (design §28.17; AS02, AS07).
+            if Header::decode(&frame.header.0).is_ok_and(|header| fastctx_content::v2::hub_orders(&header.stream)) {
                 return Err("the hub orders that stream itself".into());
             }
-            // A stream's first epoch is opened by its source alone (AQ07).
+            // A stream's first epoch is opened by its source alone (AQ07),
+            // signed by the very device it names (AS01).
             if let Ok(header) = Header::decode(&frame.header.0) {
+                if header.key != header.device {
+                    return Err("a frame is signed by the device it names".into());
+                }
                 first_epoch_gate(assets, directory, &kept, &scope, &header.stream, &header.device)?;
             }
             // A body too large for the control connection was staged apart

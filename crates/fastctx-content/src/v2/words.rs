@@ -25,7 +25,8 @@ impl Kind for ConversationWords {
     const SCHEMA: u16 = 1;
     const STREAM: &'static str = "words";
     const HOLDING: Holding = Holding::Readers;
-    const ROLES: &'static [&'static str] = &[];
+    /// Words larger than a body holds keep their delivery as the one object.
+    const ROLES: &'static [&'static str] = &["delivery"];
     const RETENTION: Option<u64> = None;
     const DELETION: Deletion = Deletion::Tombstone;
     /// What the inbox kept before is taken up from it.
@@ -56,10 +57,15 @@ impl Kind for ConversationWords {
         match &after.record.state {
             State::Gone => Ok(()),
             State::Is { body, objects } => {
-                if !objects.is_empty() {
-                    return Err("words refer to no object yet".into());
+                Self::decode(body)?;
+                let in_object = serde_json::from_slice::<serde_json::Value>(body)
+                    .ok()
+                    .and_then(|value| value.get("in_object").and_then(serde_json::Value::as_bool))
+                    .unwrap_or(false);
+                match (in_object, objects.len()) {
+                    (false, 0) | (true, 1) => Ok(()),
+                    _ => Err("words are their body, or keep their delivery as the one object their body says".into()),
                 }
-                Self::decode(body).map(|_| ())
             }
         }
     }

@@ -144,11 +144,12 @@ fn look(node: &Arc<Node>, whole: bool, held: u64) -> Result<u64, String> {
         .and_then(|text| text.parse::<jiff::Timestamp>().ok());
     let now_held = holdings(library)?;
     let day = jiff::Timestamp::now() - jiff::SignedDuration::from_hours(24);
-    let since = match written_since {
-        Some(written) if whole || now_held != held => written.min(day),
-        _ => day,
+    let found = match written_since {
+        // Every job since then, past the index's day (M07).
+        Some(written) if whole || now_held != held => crate::job_index::ended_since(&node.world, written.min(day)),
+        _ => crate::job_index::recent(&node.world, day),
     };
-    let mut jobs: BTreeMap<String, (JobRecord, PathBuf)> = crate::job_index::recent(&node.world, since)
+    let mut jobs: BTreeMap<String, (JobRecord, PathBuf)> = found
         .map_err(|error| error.to_string())?
         .into_iter()
         .map(|(job, path)| (job.id.to_string(), (job, path)))
