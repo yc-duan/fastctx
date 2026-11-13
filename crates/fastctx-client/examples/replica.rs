@@ -81,7 +81,8 @@ async fn run() -> Result<(), String> {
         let device = device.clone();
         tokio::task::spawn_blocking(move || device.replicate(tier)).await.map_err(|error| error.to_string())?.map_err(error)?
     };
-    // Settled: two passes in a row ended well with nothing new held.
+    // Settled: two passes in a row ended well, with every hub's last pass
+    // well and nothing new held.
     let deadline = Instant::now() + Duration::from_secs(asked.seconds);
     let mut passes = replica.passes();
     let mut settled = 0;
@@ -95,25 +96,25 @@ async fn run() -> Result<(), String> {
         for (scope, _, _) in library.live_scopes().map_err(|error| error.to_string())? {
             held.push_str(&format!("{scope}:{:?};", library.streams(&scope).map_err(|error| error.to_string())?));
         }
-        settled = if held == held_before { settled + 1 } else { 0 };
+        let well = hubs(&device).iter().all(|hub| matches!(replica.ended(hub), Some(Ok(()))));
+        settled = if well && held == held_before { settled + 1 } else { 0 };
         held_before = held;
     }
     // Pages down what was asked, from the hub, as a reader scrolling would.
     for (scope, stream) in &asked.older {
         let hub = hub_id(&replica, scope).ok_or(format!("{scope} is not held here"))?;
-        // From the lowest held down, a page at a time, until a page brings
-        // nothing lower.
-        let mut before = lowest(&replica, scope, stream)?;
-        loop {
-            match replica.older(&hub, scope, stream, before.clone(), 200).await? {
+        // Down from the top, along what is covered without a gap, a page
+        // below where that ends, until it reaches below everything.
+        let mut pages = 0;
+        while let Some(before) = uncovered(&replica, scope, stream)? {
+            match replica.older(&hub, scope, stream, before, 200).await? {
                 OlderTaken::Taken => {}
                 taken => return Err(format!("the page of {stream} of {scope} was not taken: {taken:?}")),
             }
-            let now = lowest(&replica, scope, stream)?;
-            if now == before || now.is_none() {
-                break;
+            pages += 1;
+            if pages > 10_000 {
+                return Err(format!("{stream} of {scope} does not come whole"));
             }
-            before = now;
         }
     }
     let library = replica.library();
@@ -146,24 +147,43 @@ async fn run() -> Result<(), String> {
             );
         }
     }
-    let ended: Vec<_> = device
-        .state()
-        .hubs
-        .iter()
-        .filter_map(|hub| fastctx_net::ids::HubId::try_from(hub.hub.to_string()).ok())
+    let ended: Vec<_> = hubs(&device)
+        .into_iter()
         .map(|hub| serde_json::json!({ "hub": hub.to_string(), "ended": format!("{:?}", replica.ended(&hub)) }))
         .collect();
     println!("{}", serde_json::json!({ "settled": settled >= 2, "tier": format!("{tier:?}"), "passes": ended }));
+    if settled < 2 {
+        return Err("the copy did not settle in time".into());
+    }
     Ok(())
+}
+
+/// The hubs the device is on.
+fn hubs(device: &Device) -> Vec<fastctx_net::ids::HubId> {
+    device.state().hubs.iter().filter_map(|hub| fastctx_net::ids::HubId::try_from(hub.hub.to_string()).ok()).collect()
 }
 
 /// An item's order key and identity.
 type Key = (Vec<u8>, Vec<u8>);
 
-/// The lowest item of `stream` of `scope` held here.
-fn lowest(replica: &fastctx_client::device::replica::Replica, scope: &str, stream: &str) -> Result<Option<Key>, String> {
-    let page = replica.library().page(scope, stream, None, 1).map_err(|error| error.to_string())?;
-    Ok(page.first().map(|entry| (entry.order.clone(), entry.item.clone())))
+/// Where what is covered of `stream` of `scope` from its top down ends, a
+/// page to be asked below it; none once it reaches below everything.
+fn uncovered(replica: &fastctx_client::device::replica::Replica, scope: &str, stream: &str) -> Result<Option<Option<Key>>, String> {
+    let runs = replica.library().coverage(scope, stream).map_err(|error| error.to_string())?;
+    // From the top: the run reaching above everything, then each run that
+    // ends where the one above it begins.
+    let Some(mut low) = runs.iter().find(|run| run.high.is_none()).map(|run| run.low.clone()) else {
+        return Ok(Some(None));
+    };
+    loop {
+        if low.0.is_empty() && low.1.is_empty() {
+            return Ok(None);
+        }
+        match runs.iter().find(|run| run.high.as_ref() == Some(&low)) {
+            Some(run) => low = run.low.clone(),
+            None => return Ok(Some(Some(low))),
+        }
+    }
 }
 
 /// The hub the scope `scope` of the copy is of, as its descriptor names it.

@@ -24,8 +24,9 @@ fn chunks(size: u64) -> u64 {
 }
 
 /// Fetches what the records taken refer to and this device has not, of the
-/// length its tier fetches as they come; what did not come, and why.
-pub(super) async fn fetch(replica: &Replica, hub: &HubId, link: &Arc<Link>) -> Vec<String> {
+/// length its tier fetches as they come; what did not come, and why, and
+/// whether more may be waiting than one look fetched.
+pub(super) async fn fetch(replica: &Replica, hub: &HubId, link: &Arc<Link>) -> (Vec<String>, bool) {
     let library = &replica.library;
     let at_most = super::tiers::fetched_at_most(replica.tier);
     let skipped: Vec<[u8; 32]> = {
@@ -41,8 +42,9 @@ pub(super) async fn fetch(replica: &Replica, hub: &HubId, link: &Arc<Link>) -> V
     let theirs = hub.as_str().to_string();
     let wanted = match blocking(library, move |library| library.wanted_of_hub(&theirs, FETCHED_AT_ONCE, &skipped)).await {
         Ok(wanted) => wanted,
-        Err(why) => return vec![format!("listing the objects wanted: {why}")],
+        Err(why) => return (vec![format!("listing the objects wanted: {why}")], false),
     };
+    let more = wanted.len() == FETCHED_AT_ONCE;
     let mut failed = Vec::new();
     for (scope, object) in wanted {
         if object.size > at_most {
@@ -54,13 +56,13 @@ pub(super) async fn fetch(replica: &Replica, hub: &HubId, link: &Arc<Link>) -> V
             failed.push(format!("fetching an object of {scope}: {why}"));
         }
     }
-    failed
+    (failed, more)
 }
 
 /// Fetches `object` of `scope` from the hub, remembering a failure.
 pub(super) async fn fetch_now(replica: &Replica, hub: &HubId, link: &Arc<Link>, scope: &str, object: ObjectRef) -> Result<(), String> {
     let library = &replica.library;
-    match fetch_one(library, link, scope, object).await {
+    match fetch_one(replica, link, scope, object).await {
         Ok(()) => {
             replica.unreached.lock().expect("unreached").remove(&(hub.clone(), object.hash));
             replica.deferred.lock().expect("deferred").remove(&object.hash);
@@ -76,12 +78,15 @@ pub(super) async fn fetch_now(replica: &Replica, hub: &HubId, link: &Arc<Link>, 
     }
 }
 
-async fn fetch_one(library: &Library, link: &Arc<Link>, scope: &str, object: ObjectRef) -> Result<(), String> {
+/// Fetches `object`, asked of the hub as every request of a scope is: one
+/// the device reads no more ends its holding here (`pass::ask`).
+async fn fetch_one(replica: &Replica, link: &Arc<Link>, scope: &str, object: ObjectRef) -> Result<(), String> {
+    let library: &Library = &replica.library;
     let holder = format!("fetch:{scope}");
     let wire_object = wire::ObjectRef { hash: object.hash.into(), size: object.size };
     if object.size as usize <= ROW_BYTES {
         let request = Request::Get { scope: scope.to_string(), object: wire_object, from: 0 };
-        let Reply::Get { ticket, .. } = link.assets(request).await? else {
+        let Reply::Get { ticket, .. } = super::pass::ask(replica, link, request).await? else {
             return Err("the hub did not give the object".into());
         };
         let mut incoming = link.get_object(ticket).await?;
@@ -97,7 +102,7 @@ async fn fetch_one(library: &Library, link: &Arc<Link>, scope: &str, object: Obj
     let transfer = blocking(library, move |library| library.under_way(object)).await?;
     let mut from = transfer.as_ref().and_then(|transfer| transfer.missing().first().copied()).unwrap_or(0);
     let request = Request::Get { scope: scope.to_string(), object: wire_object.clone(), from };
-    let Reply::Get { ticket, .. } = link.assets(request).await? else {
+    let Reply::Get { ticket, .. } = super::pass::ask(replica, link, request).await? else {
         return Err("the hub did not give the object".into());
     };
     let mut incoming = link.get_object(ticket).await?;
@@ -112,7 +117,7 @@ async fn fetch_one(library: &Library, link: &Arc<Link>, scope: &str, object: Obj
         drop(incoming);
         from = 0;
         let request = Request::Get { scope: scope.to_string(), object: wire_object, from };
-        let Reply::Get { ticket: again, .. } = link.assets(request).await? else {
+        let Reply::Get { ticket: again, .. } = super::pass::ask(replica, link, request).await? else {
             return Err("the hub did not give the object".into());
         };
         incoming = link.get_object(again).await?;

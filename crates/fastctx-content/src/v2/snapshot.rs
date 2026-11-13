@@ -650,6 +650,13 @@ impl Library {
                 return Err(invalid("the holding period the page was asked for in has ended"));
             }
             let stream = super::exchange::stream_id(db, scope_id, &older.stream)?;
+            // A stream withheld since the page was asked takes none of it.
+            let withheld: bool = db
+                .prepare_cached("SELECT EXISTS (SELECT 1 FROM withheld WHERE stream = ?1 AND holding = ?2)")?
+                .query_row(params![stream, holding], |row| row.get(0))?;
+            if withheld {
+                return Ok(OlderTaken::Stale);
+            }
             let reclaimed: i64 =
                 db.prepare_cached("SELECT reclaimed FROM streams WHERE id = ?1")?.query_row([stream], |row| row.get(0))?;
             if reclaimed as u64 > asked {

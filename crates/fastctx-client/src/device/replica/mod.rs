@@ -16,7 +16,7 @@ pub use fastctx_content::v2::{Library, OlderTaken};
 pub use tiers::Tier;
 
 use fastctx_net::ids::HubId;
-use fastctx_net::link::Link;
+use fastctx_net::link::{Link, Status};
 use fastctx_types::assets::Push;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::io;
@@ -67,9 +67,11 @@ pub struct Replica {
     unreached: Mutex<Unreached>,
     /// Objects longer than the tier fetches as they come.
     deferred: Mutex<HashSet<[u8; 32]>>,
+    /// The link followed for each hub: a follower of any other goes.
     links: Mutex<BTreeMap<HubId, Weak<Link>>>,
     called: Mutex<BTreeMap<HubId, Called>>,
-    wake: tokio::sync::Notify,
+    /// What wakes each hub's follower; a wake while it works is kept.
+    wakes: Mutex<BTreeMap<HubId, Arc<tokio::sync::Notify>>>,
     /// How each hub's last pass ended, and how many passes ended in all.
     ended: Mutex<BTreeMap<HubId, Result<(), String>>>,
     passes: tokio::sync::watch::Sender<u64>,
@@ -125,7 +127,7 @@ impl Replica {
             deferred: Mutex::default(),
             links: Mutex::default(),
             called: Mutex::default(),
-            wake: tokio::sync::Notify::new(),
+            wakes: Mutex::default(),
             ended: Mutex::default(),
             passes: tokio::sync::watch::channel(0).0,
         })
@@ -155,19 +157,50 @@ impl Replica {
     }
 
     /// Follows `link` while it is up and the device on its network: on a
-    /// task of its own.
+    /// task of its own, one for each link however often it is asked.
     pub(crate) fn follow(self: &Arc<Self>, link: &Arc<Link>) {
         let hub = link.membership().id.clone();
-        self.links.lock().expect("links").insert(hub.clone(), Arc::downgrade(link));
+        {
+            let mut links = self.links.lock().expect("links");
+            if links.get(&hub).and_then(Weak::upgrade).is_some_and(|followed| Arc::ptr_eq(&followed, link)) {
+                return;
+            }
+            links.insert(hub.clone(), Arc::downgrade(link));
+        }
+        self.wakes.lock().expect("wakes").entry(hub.clone()).or_default();
         self.called.lock().expect("called").entry(hub.clone()).or_default().whole = true;
         let (replica, link) = (self.clone(), Arc::downgrade(link));
         tokio::spawn(async move { replica.following(hub, link).await });
     }
 
+    /// Whether `link` is the one followed for `hub`: one replaced, or left,
+    /// is not, and its follower writes nothing more.
+    fn current(&self, hub: &HubId, link: &Arc<Link>) -> bool {
+        self.links.lock().expect("links").get(hub).and_then(Weak::upgrade).is_some_and(|followed| Arc::ptr_eq(&followed, link))
+    }
+
+    fn wake(&self, hub: &HubId) -> Arc<tokio::sync::Notify> {
+        self.wakes.lock().expect("wakes").entry(hub.clone()).or_default().clone()
+    }
+
     async fn following(self: Arc<Self>, hub: HubId, link: Weak<Link>) {
+        // What a purge left before the device stopped goes on, online or not.
+        let _ = self.upkeep().await;
         let mut looked: Option<Instant> = None;
         loop {
-            let Some(up) = link.upgrade().filter(|link| link.membership_active()) else { return };
+            let Some(up) = link.upgrade() else { return };
+            if !self.current(&hub, &up) {
+                return;
+            }
+            // The hub removed the device: what it held of the network goes.
+            if !up.membership_active() {
+                let _ = self.left(&hub).await;
+                return;
+            }
+            // Stopped here: nothing to follow until a link is started again.
+            if matches!(up.status(), Status::Stopped { .. }) {
+                return;
+            }
             if !up.online_within(Duration::from_secs(30)).await {
                 continue;
             }
@@ -181,11 +214,16 @@ impl Replica {
             if whole && ended.is_ok() {
                 looked = Some(Instant::now());
             }
+            // What a turn left goes on at once, as a whole look: streams
+            // past their turn, a backfill, objects waiting.
+            if more {
+                self.called.lock().expect("called").entry(hub.clone()).or_default().whole = true;
+            }
             self.ended.lock().expect("ended").insert(hub.clone(), ended.map(|_| ()));
             self.passes.send_modify(|passes| *passes += 1);
             drop(up);
             if !more {
-                let _ = tokio::time::timeout(AGAIN, self.wake.notified()).await;
+                let _ = tokio::time::timeout(AGAIN, self.wake(&hub).notified()).await;
             }
         }
     }
@@ -193,7 +231,13 @@ impl Replica {
     /// Looks at every scope held of `hub`: whether more is left to take.
     async fn pass_whole(&self, hub: &HubId, link: &Arc<Link>) -> Result<bool, String> {
         let library = &self.library;
+        // Long objects put off are looked at again once a whole look: those
+        // no record wants any more do not stay.
+        self.deferred.lock().expect("deferred").clear();
         let key = pass::open(self, hub, link).await?;
+        if !self.current(hub, link) {
+            return Err("the link is no longer the one followed".into());
+        }
         let (theirs, device) = (hub.as_str().to_string(), self.device());
         let network = blocking(library, move |library| library.join(&theirs, &device, false)).await?;
         let mut failed = pass::discover(self, hub, link, &key, &network).await.err();
@@ -209,13 +253,14 @@ impl Replica {
                 }
             }
         }
-        if let Some(why) = objects::fetch(self, hub, link).await.into_iter().next() {
+        let (fetched, left) = objects::fetch(self, hub, link).await;
+        if let Some(why) = fetched.into_iter().next() {
             failed.get_or_insert(why);
         }
         self.upkeep().await?;
         match failed {
             Some(why) => Err(why),
-            None => Ok(more),
+            None => Ok(more || left),
         }
     }
 
@@ -230,7 +275,11 @@ impl Replica {
         let scopes: BTreeSet<String> = moved.keys().map(|(scope, _)| scope.clone()).collect();
         for scope in scopes {
             let key_text = scope.clone();
-            let Some(holding) = blocking(library, move |library| library.holding(&key_text)).await? else { continue };
+            let Some(holding) = blocking(library, move |library| library.holding(&key_text)).await? else {
+                // Not held here yet: the hub may list it now.
+                self.called.lock().expect("called").entry(hub.clone()).or_default().whole = true;
+                continue;
+            };
             let key_text = scope.clone();
             let here: BTreeMap<String, u64> = blocking(library, move |library| library.streams(&key_text)).await?.into_iter().collect();
             for ((_, stream), next) in moved.iter().filter(|((of, _), _)| *of == scope) {
@@ -242,8 +291,8 @@ impl Replica {
                 }
             }
         }
-        let _ = objects::fetch(self, hub, link).await;
-        Ok(more || self.called.lock().expect("called").get(hub).is_some_and(|called| called.whole))
+        let (_, left) = objects::fetch(self, hub, link).await;
+        Ok(more || left || self.called.lock().expect("called").get(hub).is_some_and(|called| called.whole))
     }
 
     /// Lets go of what scopes let go held, and of objects nothing holds.
@@ -256,27 +305,54 @@ impl Replica {
         Ok(())
     }
 
-    /// The hub `hub` told the device something unasked.
+    /// The hub `hub` told the device something unasked. A scope it reads no
+    /// more ends its holding at once, as a node's does (§6.3).
     pub(crate) fn pushed(&self, hub: &HubId, push: Push) {
-        let mut called = self.called.lock().expect("called");
-        let called = called.entry(hub.clone()).or_default();
-        match push {
-            Push::Moved { scope, stream, next } => {
-                let at = called.moved.entry((scope, stream)).or_insert(next);
-                *at = (*at).max(next);
+        {
+            let mut called = self.called.lock().expect("called");
+            let called = called.entry(hub.clone()).or_default();
+            match push {
+                Push::Moved { scope, stream, next } => {
+                    let at = called.moved.entry((scope, stream)).or_insert(next);
+                    *at = (*at).max(next);
+                }
+                Push::Revoked { scope } => {
+                    called.whole = true;
+                    let (library, device) = (self.library.clone(), self.device());
+                    tokio::task::spawn_blocking(move || library.revoke_keeping(&scope, &device));
+                }
+                Push::Fact { .. } => called.whole = true,
+                Push::Checkpointed { .. } => return,
             }
-            Push::Revoked { .. } | Push::Fact { .. } => called.whole = true,
-            Push::Checkpointed { .. } => return,
         }
-        self.wake.notify_waiters();
+        self.wake(hub).notify_one();
     }
 
-    /// The device left `hub`'s network: every scope of it held here goes.
+    /// The device left `hub`'s network: every scope of it held here goes,
+    /// and its follower with it.
     pub(crate) async fn left(&self, hub: &HubId) -> Result<(), String> {
         self.links.lock().expect("links").remove(hub);
+        self.unreached.lock().expect("unreached").retain(|(of, _), _| of != hub);
+        self.deferred.lock().expect("deferred").clear();
+        if let Some(wake) = self.wakes.lock().expect("wakes").remove(hub) {
+            wake.notify_one();
+        }
         let (theirs, device) = (hub.as_str().to_string(), self.device());
         blocking(&self.library, move |library| library.leave(&theirs, &device)).await?;
         self.upkeep().await
+    }
+
+    /// Leaves each network the library is on that is not among `hubs`, the
+    /// device's now: one it left while the copy was not kept, or as it
+    /// stopped. Call on a thread that may block.
+    pub(crate) fn only_on(&self, hubs: &BTreeSet<String>) -> io::Result<()> {
+        let error = |error: fastctx_content::Error| io::Error::other(error.to_string());
+        for hub in self.library.joined().map_err(error)? {
+            if !hubs.contains(&hub) {
+                self.library.leave(&hub, &self.device).map_err(error)?;
+            }
+        }
+        Ok(())
     }
 
     fn link(&self, hub: &HubId) -> Result<Arc<Link>, String> {
@@ -294,7 +370,10 @@ impl Replica {
         limit: u32,
     ) -> Result<OlderTaken, String> {
         let link = self.link(hub)?;
-        pass::older(self, &link, scope, stream, before, limit).await
+        let taken = pass::older(self, &link, scope, stream, before, limit).await?;
+        // What the page refers to comes with it, as far as the tier fetches.
+        let _ = objects::fetch(self, hub, &link).await;
+        Ok(taken)
     }
 
     /// Fetches `object` of `scope`, as it is read.

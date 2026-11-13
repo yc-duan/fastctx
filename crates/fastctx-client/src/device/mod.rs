@@ -151,6 +151,11 @@ impl Device {
         }
         let device = *self.store.key()?.public().as_bytes();
         let opened = Arc::new(replica::Replica::open(&self.store.root().join("replica"), device, tier)?);
+        // A network the device left while no copy was kept, or as it
+        // stopped, is let go of now.
+        let on: std::collections::BTreeSet<String> =
+            self.sessions().iter().map(|session| session.link.membership().id.as_str().to_string()).collect();
+        opened.only_on(&on)?;
         let replica = self.replica.get_or_init(|| opened).clone();
         for session in self.sessions() {
             replica.follow(&session.link);
@@ -327,11 +332,13 @@ impl Device {
         });
         let link = Arc::new(start(self.store.net(&id), membership, key, handler.clone())?);
         let _ = handler.link.set(Arc::downgrade(&link));
+        self.sessions.write().expect("device sessions").insert(id, Arc::new(Session { link: link.clone() }));
+        // Among the sessions first: a copy kept from now on follows it either
+        // here or as it is asked for (`replicate`), never not at all.
         #[cfg(feature = "replica")]
         if let Some(replica) = self.replica.get() {
             replica.follow(&link);
         }
-        self.sessions.write().expect("device sessions").insert(id, Arc::new(Session { link }));
         // What the link said of its ways before it was among the sessions
         // was not seen in them.
         changed(&self.ways);

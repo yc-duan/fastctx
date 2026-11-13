@@ -72,9 +72,9 @@ impl Pins {
         fastctx_platform::publish(&self.path, &bytes, Permissions::Private)
     }
 
-    /// Writes `change` of the hubs kept, on the disk before in memory.
-    fn change(&self, change: impl FnOnce(&mut BTreeMap<String, Pinned>)) -> io::Result<()> {
-        let mut hubs = self.hubs.lock().expect("hubs");
+    /// Writes `change` of the hubs kept, on the disk before in memory, all
+    /// under the one lock it was judged under.
+    fn change(&self, hubs: &mut BTreeMap<String, Pinned>, change: impl FnOnce(&mut BTreeMap<String, Pinned>)) -> io::Result<()> {
         let mut next = hubs.clone();
         change(&mut next);
         self.save(&next)?;
@@ -101,10 +101,11 @@ impl Pins {
     /// where none leads to it.
     pub(super) fn pin_following(&self, hub: &HubId, offered: &Bytes, rotations: &[Rotation]) -> Result<PublicKey, String> {
         let offered_key: [u8; 32] = offered.array().ok_or("a service key is 32 bytes")?;
-        let pinned = self.hubs.lock().expect("hubs").get(hub.as_str()).and_then(|pinned| pinned.key.array());
+        let mut hubs = self.hubs.lock().expect("hubs");
+        let pinned = hubs.get(hub.as_str()).and_then(|pinned| pinned.key.array());
         let error = |error: io::Error| error.to_string();
         let Some(mut at) = pinned else {
-            self.change(|hubs| {
+            self.change(&mut hubs, |hubs| {
                 let mut lineage = Vec::new();
                 grow(&mut lineage, rotations);
                 hubs.insert(hub.as_str().to_string(), Pinned { key: offered_key.into(), seen: None, lineage });
@@ -131,14 +132,11 @@ impl Pins {
                 ));
             }
         }
-        let grows = self
-            .hubs
-            .lock()
-            .expect("hubs")
+        let grows = hubs
             .get(hub.as_str())
             .is_some_and(|pinned| pinned.key.array() != Some(offered_key) || grow(&mut pinned.lineage.clone(), rotations));
         if grows {
-            self.change(|hubs| {
+            self.change(&mut hubs, |hubs| {
                 if let Some(pinned) = hubs.get_mut(hub.as_str()) {
                     pinned.key = offered_key.into();
                     grow(&mut pinned.lineage, rotations);
@@ -151,7 +149,8 @@ impl Pins {
 
     /// The hub set aside the history this device saw as it recovered.
     pub(super) fn forget_seen(&self, hub: &HubId) -> io::Result<()> {
-        self.change(|hubs| {
+        let mut hubs = self.hubs.lock().expect("hubs");
+        self.change(&mut hubs, |hubs| {
             if let Some(pinned) = hubs.get_mut(hub.as_str()) {
                 pinned.seen = None;
             }
@@ -163,12 +162,13 @@ impl Pins {
     /// kept on the disk counts for nothing.
     pub(super) fn heard(&self, hub: &HubId, key: &PublicKey, statement: &[u8], word: &[u8]) -> bool {
         let Some((seq, head)) = heard_word(key, statement, word) else { return false };
-        let latest = self.hubs.lock().expect("hubs").get(hub.as_str()).map(|pinned| pinned.seen.as_ref().map(|seen| seen.seq));
+        let mut hubs = self.hubs.lock().expect("hubs");
+        let latest = hubs.get(hub.as_str()).map(|pinned| pinned.seen.as_ref().map(|seen| seen.seq));
         match latest {
             None => false,
             Some(Some(seen)) if seen >= seq => true,
             Some(_) => self
-                .change(|hubs| {
+                .change(&mut hubs, |hubs| {
                     if let Some(pinned) = hubs.get_mut(hub.as_str()) {
                         pinned.seen =
                             Some(Seen { seq, head: head.into(), statement: statement.to_vec().into(), word: word.to_vec().into() });
