@@ -16,6 +16,8 @@
 // account by account, each only what that account may use. The account and
 // the settings are at its foot.
 
+import { syncedOf } from "../world/sync";
+import { syncRing } from "./sync-draw";
 import { glyph } from "../conversation/glyphs";
 import { keptSettings, settingsTabOf } from "./talk-settings";
 import { dropZones, followDrags } from "./sidebar-drag";
@@ -404,8 +406,15 @@ export class Sidebar {
     // Managed machines that came in by one code are one thing to see.
     const arrivals = (world?.accounts.hubs ?? []).reduce((n, hub) => n + new Set(hub.arrivals.map((arrival) => arrival.code ?? `${arrival.account}\n${arrival.name}`)).size, 0);
     const [me] = loginsOf(world?.accounts);
+    // While some of the user's devices are not caught up, a small ring
+    // beside 「我」 draws how many are, and opens how they stand.
+    const { devices, synced } = syncedOf(world?.accounts.hubs);
+    const ring =
+      devices > 0 && synced < devices
+        ? `<a class="place sync-place${place.kind === "sync" ? " current" : ""}" href="${link({ kind: "sync" })}" title="${escape(words.syncing(synced, devices))}" aria-label="${escape(words.syncing(synced, devices))}">${syncRing(synced, devices, 16)}</a>`
+        : "";
     const account = me
-      ? `<a class="place account-place${place.kind === "account" ? " current" : ""}" href="${link({ kind: "account" })}" title="${escape(words.account)}">${glyph("person", 18)}<span class="place-name">${escape(me.account)}</span>${arrivals ? `<span class="count waiting"><span class="spoken">${escape(words.arrivals(arrivals))}</span>${arrivals}</span>` : ""}</a>`
+      ? `<div class="account-row"><a class="place account-place${place.kind === "account" ? " current" : ""}" href="${link({ kind: "account" })}" title="${escape(words.account)}">${glyph("person", 18)}<span class="place-name">${escape(me.account)}</span>${arrivals ? `<span class="count waiting"><span class="spoken">${escape(words.arrivals(arrivals))}</span>${arrivals}</span>` : ""}</a>${ring}</div>`
       : "";
     const html = `${account}<a class="place settings${place.kind === "settings" || place.kind === "data" ? " current" : ""}" href="${link({ kind: "settings" })}">${glyph("settings", 18)}<span class="place-name">${escape(words.settings)}</span></a>`;
     if (html !== this.foot.innerHTML) this.foot.innerHTML = html;

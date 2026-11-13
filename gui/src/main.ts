@@ -67,6 +67,7 @@ import { LoginPage } from "./app/login";
 import { LoginUsagePage } from "./app/usage/login-page";
 import { enUsage, zhUsage } from "./app/usage/words";
 import "./app/usage/usage.css";
+import "./app/sync.css";
 import "./app/usage/resets.css";
 import { enCalls, zhCalls } from "./app/usage/calls-words";
 import "./app/usage/calls.css";
@@ -140,6 +141,10 @@ import { enTroubles, zhTroubles } from "./app/trouble-words";
 import { enNameSaid, zhNameSaid } from "./app/name-words";
 import { specimenStats } from "./specimen/stats";
 import { specimenDoctor } from "./specimen/doctor";
+import { specimenSync } from "./specimen/sync";
+import { SyncPage } from "./app/sync-page";
+import { enSync, zhSync } from "./app/sync-words";
+import { syncStatus } from "./world/sync";
 import { doctorReadings } from "./world/doctor";
 import { SettingsPage } from "./app/settings";
 import { DataPage, enData, totalOf, zhData } from "./app/data-page";
@@ -503,7 +508,7 @@ function inner(at: Place): boolean {
   // An agent's own page is a step in from the agents' overview, which the
   // sidebar names; the agents themselves it does not.
   if (at.kind === "agents" && (at.section === "claude" || at.section === "codex")) return true;
-  return ["feature", "data", "history", "talk-history", "page", "file", "login", "talks", "archived", "machine", "usage", "subagents", "prompt", "sentinel", "sentinels"].includes(at.kind);
+  return ["feature", "data", "sync", "history", "talk-history", "page", "file", "login", "talks", "archived", "machine", "usage", "subagents", "prompt", "sentinel", "sentinels"].includes(at.kind);
 }
 
 /** Where a page's back goes when it was not come into from another page,
@@ -522,6 +527,8 @@ function parentOf(at: Place): Place {
       return { kind: "features" };
     case "data":
       return { kind: "settings" };
+    case "sync":
+      return { kind: "account" };
     case "machine":
       return { kind: "machines" };
     case "history":
@@ -563,6 +570,8 @@ function placeName(at: Place): string {
       return shellWords.settings;
     case "account":
       return shellWords.account;
+    case "sync":
+      return (english ? enSync : zhSync).title;
     case "project": {
       const world = live ? store.world.peek() : specimen!.world;
       return world?.towns.find((one) => one.town === at.town)?.record.name ?? at.town;
@@ -3282,6 +3291,15 @@ function show(next: Place): void {
         ago: (at) => homeWords.ago(Date.now() - at.getTime()),
       });
       break;
+    case "sync":
+      page = new SyncPage({
+        store,
+        words: english ? enSync : zhSync,
+        head,
+        read: (hub, account, hours) => (live ? syncStatus(hub, account, hours) : specimenSync(hub, account, hours)),
+        now: () => Date.now(),
+      });
+      break;
     case "data":
       page = new DataPage({
         words: english ? enData : zhData,
@@ -3447,6 +3465,8 @@ function specimenPlace(): Place | null {
       return { kind: "login" };
     case "account":
       return { kind: "account" };
+    case "sync":
+      return { kind: "sync" };
     case "settings":
       return { kind: "settings" };
     case "data":

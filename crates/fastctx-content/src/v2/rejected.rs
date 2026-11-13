@@ -143,7 +143,7 @@ impl Library {
     /// later one out of the stream, keeping their records to commit again.
     pub fn rejected(&self, scope: &str, stream: &str, first: u64) -> Result<usize> {
         let (scope, stream) = (scope.to_string(), stream.to_string());
-        Ok(self.database().write_now_at(Priority::Normal, 1 << 20, move |db| {
+        let kept = self.database().write_now_at(Priority::Normal, 1 << 20, move |db| {
             let Some((scope_id, _, Some(holding))) = held(db, &scope)? else {
                 return Err(invalid("the scope is not held here"));
             };
@@ -155,7 +155,9 @@ impl Library {
                 return Ok(0);
             };
             rejected_in(db, scope_id, holding, stream_id, &stream, first)
-        })?)
+        })?;
+        self.wrote();
+        Ok(kept)
     }
 
     /// The streams of `scope` with records waiting to be committed again in
@@ -522,5 +524,7 @@ pub(super) fn rejected_in(
     db.prepare_cached("UPDATE outbox SET uploaded = MIN(uploaded, ?2) WHERE stream = ?1")?
         .execute(params![stream_id, first as i64])?;
     rebuild(db, Applying { scope: scope_id, stream: stream_id, holding })?;
+    // Rebuilt to before the refused frame: readers read anew (JJ02).
+    super::view::rebased(db, stream_id)?;
     Ok(position as usize)
 }

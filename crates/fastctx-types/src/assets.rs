@@ -351,6 +351,12 @@ pub enum Request {
     /// see, at its holding revision `revision` (§6.3), under its key
     /// (`cleared_statement`).
     Cleared { revision: u64, proof: Bytes },
+    /// Where this device stands (design §28.9): the hub keeps the latest
+    /// report of each machine.
+    Report { report: crate::sync_status::SyncReport },
+    /// How `account`'s machines stand, over the last `hours` (design §28.9):
+    /// asked by a machine the account is logged in on.
+    SyncStatus { account: crate::AccountName, hours: u32 },
 }
 
 /// Where a listing of what a machine may hold goes on from: the place, in
@@ -471,7 +477,9 @@ impl Request {
             | Self::Takeover { .. }
             | Self::Put { .. }
             | Self::Get { .. }
-            | Self::Cleared { .. } => Purpose::AssetSync,
+            | Self::Cleared { .. }
+            | Self::Report { .. }
+            | Self::SyncStatus { .. } => Purpose::AssetSync,
         }
     }
 }
@@ -649,6 +657,10 @@ pub enum Reply {
     /// Items below a key as they stood when asked, with the sequence the
     /// stream's next frame took then, and whether more are below.
     Older { through: u64, entries: Vec<Entry>, more: bool },
+    /// The report was kept.
+    Reported,
+    /// How the account's machines stand.
+    SyncStatus { status: Box<crate::sync_status::SyncStatus> },
     /// The new epoch's descriptor and the hub's word on it.
     Epoch { descriptor: Fact },
     /// The chunks the hub lacks of an object put, sent under `ticket`; none

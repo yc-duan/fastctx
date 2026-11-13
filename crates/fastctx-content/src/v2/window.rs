@@ -163,9 +163,7 @@ impl Library {
                 .query_row(params![scope_id, stream], |row| row.get(0))
                 .optional()?
                 .ok_or_else(|| invalid("no such stream"))?;
-            truncate_in(db, scope_id, holding, stream_id, through)?;
-            // Cut back and indexed again from what is left: readers read anew.
-            super::view::rebased(db, stream_id)
+            truncate_in(db, scope_id, holding, stream_id, through)
         })?;
         self.wrote();
         Ok(())
@@ -228,5 +226,7 @@ pub(super) fn truncate_in(
     db.prepare_cached("UPDATE outbox SET uploaded = MIN(uploaded, ?2) WHERE stream = ?1")?
         .execute(params![stream_id, keep + 1])?;
     super::rejected::rebuild(db, Applying { scope: scope_id, stream: stream_id, holding })?;
+    // Cut back and indexed again from what is left: readers read anew.
+    super::view::rebased(db, stream_id)?;
     tidy_wanted(db, scope_id, holding)
 }

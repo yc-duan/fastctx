@@ -76,7 +76,7 @@ impl Library {
     /// meanwhile included, until the hub gives it back (`hold_again`).
     pub fn withhold(&self, scope: &str, stream: &str, device: &[u8; 32]) -> Result<()> {
         let (scope, stream, device) = (scope.to_string(), stream.to_string(), *device);
-        Ok(self.database().write_now_at(Priority::Normal, 1 << 20, move |db| {
+        self.database().write_now_at(Priority::Normal, 1 << 20, move |db| {
             let Some((scope_id, _, Some(holding))) = held(db, &scope)? else { return Err(invalid("the scope is not held here")) };
             // A stream not begun here yet is begun withheld: a commit on its
             // way finds it so (T04).
@@ -85,7 +85,9 @@ impl Library {
             super::window::truncate_in(db, scope_id, holding, stream_id, None)?;
             db.prepare_cached("INSERT OR IGNORE INTO withheld (stream, holding) VALUES (?1, ?2)")?.execute(params![stream_id, holding])?;
             Ok(())
-        })?)
+        })?;
+        self.wrote();
+        Ok(())
     }
 
     /// The streams of `scope` withheld here in its holding period now.
@@ -136,7 +138,9 @@ impl Library {
     /// user (§3, §4.5).
     pub fn revoke_keeping(&self, scope: &str, device: &[u8; 32]) -> Result<()> {
         let (scope, device) = (scope.to_string(), *device);
-        Ok(self.database().write_now_at(Priority::Control, 1 << 20, move |db| revoke_keeping_in(db, &scope, &device))?)
+        self.database().write_now_at(Priority::Control, 1 << 20, move |db| revoke_keeping_in(db, &scope, &device))?;
+        self.wrote();
+        Ok(())
     }
 }
 

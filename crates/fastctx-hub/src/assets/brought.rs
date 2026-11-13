@@ -45,10 +45,31 @@ pub(super) fn put_back(assets: &Assets) -> io::Result<Option<String>> {
         };
         let head = Head { scope: key.clone(), change: change as u64, prefix, parked: parked as u64, accumulated };
         let Some(scope) = scopes::scope(assets, &key).map_err(io::Error::other)? else { continue };
+        // A library being deleted holds what the hub let go of as it meant
+        // to: its receipts show nothing put back, and it opens for no one
+        // (AM01).
+        if assets.deleting(&scope.owner)? {
+            continue;
+        }
         let library = scopes::library(assets, &scope).map_err(io::Error::other)?;
         if !library.holds(&head).map_err(io::Error::other)? && !assets.closed_receipt(&head)? {
             return Ok(Some(format!("{machine} holds the hub's receipt of {key} that the hub's history no longer holds")));
         }
     }
     Ok(None)
+}
+
+/// Forgets what was brought while the hub was sealed as it started, once
+/// the super administrator opened it (AM01): judged then to show nothing
+/// put back, it is not judged again at every start after; what a machine
+/// brings later is kept and judged anew.
+pub(crate) fn forget(assets: &Assets) -> io::Result<()> {
+    assets
+        .control
+        .write_now(256, |c| {
+            c.prepare_cached("DELETE FROM recovery_heads")?.execute([])?;
+            c.prepare_cached("DELETE FROM recovery_receipts")?.execute([])?;
+            Ok(())
+        })
+        .map_err(io::Error::other)
 }

@@ -151,6 +151,11 @@ fn made(
             Ok(told) => {
                 if opening && let Some(seal) = seal.as_mut() {
                     **seal = None;
+                    // Judged to show nothing put back as the seal opened, what
+                    // was brought is not judged again at each start (AM01).
+                    if let Err(error) = crate::assets::brought::forget(&hub.assets) {
+                        hub.log.line(format_args!("forgetting what was brought while sealed: {error}"));
+                    }
                 }
                 // Names and letters move only after their directory commit.
                 if renaming {

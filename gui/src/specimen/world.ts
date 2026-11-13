@@ -404,6 +404,7 @@ function hubs(two: boolean): { nodes: HubNodes[]; accounts: HubAccounts[] } {
       logins: ["me"],
       home: "me",
       self_registration: false,
+      synced: new URLSearchParams(location.search).get("sync") === "all" ? [{ account: "me", devices: 3, synced: 3 }] : [{ account: "me", devices: 3, synced: 1, behind: 3 * 60 * 60 * 1000 }],
     addresses: ["192.168.1.20:7443"],
       me: "desktop",
       renames: true,

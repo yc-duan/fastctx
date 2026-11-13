@@ -452,6 +452,10 @@ pub struct HubAccounts {
     /// Why every asset is sealed now, if it is.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub assets_sealed: Option<String>,
+    /// How the machines of the accounts logged in here stand in syncing
+    /// with the hub, as it last sampled them (design §28.9).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub synced: Vec<crate::sync_status::AccountSync>,
     pub accounts: Vec<AccountSeen>,
     pub members: Vec<MemberSeen>,
     pub shares: Vec<ShareSeen>,

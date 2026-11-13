@@ -37,6 +37,7 @@ mod repair_probe;
 mod sentinel_controls;
 mod sentinels;
 mod skills;
+mod sync_status;
 mod startup;
 mod topics;
 mod transcript;
@@ -1282,6 +1283,7 @@ pub fn run() {
             data::data,
             #[cfg(desktop)]
             doctor::doctor_readings,
+            sync_status::sync_status,
             accounts::account_change,
             accounts::server_command,
             hub_moving::hub_move,

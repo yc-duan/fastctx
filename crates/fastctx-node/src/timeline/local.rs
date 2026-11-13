@@ -7,7 +7,7 @@
 
 use super::reads::{Change, Changed, Entry, Read, likeness, shown};
 use crate::Node;
-use fastctx_content::v2::{Kind as _, Library, Timeline, ViewChange};
+use fastctx_content::v2::{Kind as _, Library, Timeline, ViewChange, view_sequence};
 use fastctx_content::{Anchor, Place};
 use fastctx_types::ResidentId;
 use fastctx_types::ipc::Failure;
@@ -32,7 +32,14 @@ pub(crate) fn held(node: &Node, resident: &ResidentId) -> Result<Option<Held>, F
     let Some(placed) = super::assets::placed(node, &about)? else { return Ok(None) };
     let library = kept.library.clone();
     let Some(at) = library.view_revision(&placed.scope, Timeline::STREAM).map_err(failure)? else { return Ok(None) };
-    let made_here = library.checkpoint(&super::assets::checkpoint(resident)).map_err(failure)?.is_some();
+    // Made here only as the producer last finished making it whole in the
+    // holding period the scope is in now: one of an earlier period, or
+    // set back as a whole making began, is not (JJ05).
+    let holding = library.holding(&placed.scope).map_err(failure)?;
+    let made_here = library
+        .checkpoint(&super::assets::checkpoint(resident))
+        .map_err(failure)?
+        .is_some_and(|state| holding.is_some() && super::tail::made_in(&state) == holding);
     let made_elsewhere = at & ((1 << 40) - 1) > 0
         && library
             .orderer(&placed.scope, Timeline::STREAM)
@@ -41,12 +48,15 @@ pub(crate) fn held(node: &Node, resident: &ResidentId) -> Result<Option<Held>, F
     Ok((made_here || made_elsewhere).then_some(Held { library, scope: placed.scope }))
 }
 
-fn entry(entry: fastctx_content::v2::Entry) -> Result<Entry, Failure> {
+/// An entry as a reader at `at` knows it: its sequence is its revision in
+/// the era read in, so an entry made anew at the same revision is told
+/// again (JJ04).
+fn entry(at: u64, entry: fastctx_content::v2::Entry) -> Result<Entry, Failure> {
     Ok(Entry {
         shown: shown(&entry.body, &entry.objects)?,
         likeness: likeness(&entry.body),
         place: Place { order: entry.order, item: entry.item },
-        sequence: entry.revision,
+        sequence: view_sequence(at, entry.revision),
     })
 }
 
@@ -55,7 +65,7 @@ pub(crate) fn page(held: &Held, anchor: &Anchor, max_items: u32, max_bytes: u32)
     let page = held.library.view_page(&held.scope, Timeline::STREAM, anchor, max_items, max_bytes).map_err(failure)?;
     Ok(Read {
         revision: page.revision,
-        entries: page.entries.into_iter().map(entry).collect::<Result<_, Failure>>()?,
+        entries: page.entries.into_iter().map(|found| entry(page.through, found)).collect::<Result<_, Failure>>()?,
         older: page.older,
         newer: page.newer,
         through: page.through,
@@ -74,7 +84,7 @@ pub(crate) fn changes(held: &Held, after: u64, max_items: u32, max_bytes: u32) -
         .into_iter()
         .map(|change| {
             Ok(match change {
-                ViewChange::Is(found) => Change::Is(entry(found)?),
+                ViewChange::Is(found) => Change::Is(entry(read.through, found)?),
                 ViewChange::Gone { item } => Change::Gone { item },
             })
         })

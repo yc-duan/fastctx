@@ -33,6 +33,7 @@ import type { Page } from "./shell";
 import { effect } from "./signals";
 import type { Store } from "./store";
 import { factsByMachine } from "./talk-row";
+import { syncRing } from "./sync-draw";
 
 export interface MeOptions {
   store: Store;
@@ -454,12 +455,24 @@ export class MePage implements Page {
       // The administrator may use a member's machines, never a visitor's.
       admin && admin !== login.account ? `<span class="me-admin"${me?.level === "visitor" ? "" : ` title="${escape(words.superNote(admin))}"`}>${glyph("shield", 13)}${escape(words.adminIs(admin))}</span>` : "",
       hub.link.kind === "alone" ? "" : `<span class="me-link ${hub.link.kind}" title="${escape(linkSaid(hub.link, machines))}"><i aria-hidden="true"></i>${escape(state)}</span>`,
+      this.syncWay(login, hub),
     ].filter(Boolean);
     return `<header class="me-card">
       <span class="me-seal" aria-hidden="true">${seal(login.account)}</span>
       <div class="me-who"><h2 class="me-name">${escape(login.account)}</h2><p class="me-facts">${facts.join("")}</p></div>
       <button class="text-button quiet-button me-password" type="button" data-act="password" aria-label="${escape(words.changePassword)}"${narrow.matches ? ` title="${escape(words.changePassword)}"` : ""}>${glyph("key", 16)}<span>${escape(words.changePassword)}</span></button>
     </header>`;
+  }
+
+  /** The way to how the user's devices stand in syncing: the small ring of
+   *  how many are caught up, as the hub last sampled them. */
+  private syncWay(login: Login, hub: HubAccounts): string {
+    const { words } = this.options;
+    if (hub.link.kind === "alone") return "";
+    const sampled = hub.synced?.find((one) => one.account === login.account);
+    const said = sampled ? words.sync(sampled.synced, sampled.devices) : words.syncPlain;
+    const ring = sampled ? syncRing(sampled.synced, sampled.devices, 14, `me-sync:${login.hub}`) : "";
+    return `<span><a class="me-sync" href="${link({ kind: "sync" })}">${ring}${escape(said)}</a></span>`;
   }
 
   /** The administrator asks a visitor to become a member: what it means,

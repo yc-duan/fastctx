@@ -133,6 +133,12 @@ fn hub() -> HubAccounts {
         self_registration: true,
         asset_seal_at_start: true,
         assets_sealed: Some("the hub seals them each time it starts, until the super administrator opens them".into()),
+        synced: vec![fastctx_types::sync_status::AccountSync {
+            account: "ada".parse().unwrap(),
+            devices: 3,
+            synced: 2,
+            behind: 420_000,
+        }],
         accounts: vec![
             AccountSeen {
                 name: "ada".parse().unwrap(),

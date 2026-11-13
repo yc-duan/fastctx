@@ -1519,6 +1519,17 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
                 .map_err(|error| Failure::new(error.to_string()))?;
             Ok(Reply::DoctorCalls { calls: snapshot.calls, partial: snapshot.partial, next: snapshot.next })
         }
+        Call::SyncStatus { hub, account, hours } => {
+            users_voice(node, peer)?;
+            let assets = node.assets.as_ref().ok_or_else(|| Failure::new("the asset library is unavailable".to_string()))?;
+            let link = node
+                .links()
+                .into_iter()
+                .find(|link| link.membership().id == hub)
+                .ok_or_else(|| Failure::new(format!("this machine is not on {hub}")))?;
+            let (local, hub, unreached) = crate::assets::standing::status(assets, &link, account, hours).await;
+            Ok(Reply::SyncStatus { local, hub, unreached })
+        }
         Call::DoctorReadings => {
             users_voice(node, peer)?;
             let working = node.clone();

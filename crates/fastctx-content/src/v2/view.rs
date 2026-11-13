@@ -3,13 +3,16 @@
 //! read, and a wait until it moves. Reads only read.
 //!
 //! A reader's place in the stream is one number: the stream's sequence in
-//! its low 40 bits, and above them a tag of the scope's holding period and
-//! how often the stream took in what is older than where a reader stood (a
-//! window, a merged backfill, records indexed again; `streams.rebased`).
-//! Within one tag the index only moves forward by sequence, so what changed
-//! after a number is the items whose revision is past it; another tag, and
-//! the reader reads anew. The number only grows: a later holding period or
-//! rebasing gives a greater tag.
+//! its low 40 bits, and above them the stream's era (`streams.rebased`): a
+//! number the library gives from one counter that only grows, each time the
+//! stream is made, its scope is held anew, or its index is made otherwise
+//! than by going on from where readers stood — cut back, rebuilt as the hub
+//! refused a frame, a window or an older page taken in, records indexed
+//! again (JJ01, JJ02). Within one era the index only moves forward by
+//! sequence, so what changed after a number is the items whose revision is
+//! past it; another era, and the reader reads anew. No two states of a
+//! stream share a number, and the number only grows; the era has 24 bits, a
+//! library making that many is not one this counts on.
 
 use super::Library;
 use super::items::IS;
@@ -23,6 +26,8 @@ use fastctx_storage::rusqlite::{Connection, OptionalExtension, Row, params};
 use std::time::Duration;
 
 const SEQUENCE_BITS: u32 = 40;
+/// The stamp the library's latest era is kept under.
+const ERA: &str = "view_era";
 
 /// A page of a stream as a reader on this device reads it.
 #[derive(Clone, Debug, Default)]
@@ -71,11 +76,18 @@ fn standing(db: &Connection, scope: &str, name: &str) -> fastctx_storage::Result
         .query_row(params![stream, holding], |row| row.get::<_, i64>(0))
         .optional()?
         .map_or(0, |sequence| sequence as u64 + 1);
-    Ok(Some((stream, holding, place(tag(holding, rebased), next))))
+    Ok(Some((stream, holding, place(tag(rebased), next))))
 }
 
-fn tag(holding: i64, rebased: i64) -> u64 {
-    (((holding as u64) & 0xFFFF) << 8) | ((rebased as u64) & 0xFF)
+fn tag(era: i64) -> u64 {
+    (era as u64) & 0xFF_FFFF
+}
+
+/// What a reader at `at` knows an entry of revision `revision` as: the
+/// revision in the era it read in, so the same entry of the same revision
+/// is told again after the stream was made anew (JJ04).
+pub fn view_sequence(at: u64, revision: u64) -> u64 {
+    place(split(at).0, revision)
 }
 
 fn place(tag: u64, sequence: u64) -> u64 {
@@ -104,10 +116,34 @@ fn entry(row: &Row<'_>) -> fastctx_storage::rusqlite::Result<(Entry, Vec<u8>, i6
 
 const COLUMNS: &str = "item, place, revision, kind, schema, body, objects, state";
 
-/// Notes that `stream` took in what is older than where readers stood:
-/// they read it anew. In the transaction that did.
+/// The library's next era.
+fn next_era(db: &Connection) -> fastctx_storage::Result<i64> {
+    let latest = db
+        .prepare_cached("SELECT value FROM stamps WHERE name = ?1")?
+        .query_row([ERA], |row| row.get::<_, Vec<u8>>(0))
+        .optional()?
+        .and_then(|value| <[u8; 8]>::try_from(value.as_slice()).ok().map(i64::from_le_bytes))
+        .unwrap_or(0);
+    let era = latest + 1;
+    db.prepare_cached("INSERT INTO stamps (name, value) VALUES (?1, ?2) ON CONFLICT (name) DO UPDATE SET value = excluded.value")?
+        .execute(params![ERA, era.to_le_bytes().to_vec()])?;
+    Ok(era)
+}
+
+/// Notes that `stream` was made, or its index made otherwise than by going
+/// on from where readers stood: they read it anew. In the transaction that
+/// did.
 pub(super) fn rebased(db: &Connection, stream: i64) -> fastctx_storage::Result<()> {
-    db.prepare_cached("UPDATE streams SET rebased = rebased + 1 WHERE id = ?1")?.execute([stream])?;
+    let era = next_era(db)?;
+    db.prepare_cached("UPDATE streams SET rebased = ?2 WHERE id = ?1")?.execute(params![stream, era])?;
+    Ok(())
+}
+
+/// Notes that `scope` is held anew: readers of each of its streams read it
+/// anew. In the transaction that did.
+pub(super) fn held_anew(db: &Connection, scope: i64) -> fastctx_storage::Result<()> {
+    let era = next_era(db)?;
+    db.prepare_cached("UPDATE streams SET rebased = ?2 WHERE scope = ?1")?.execute(params![scope, era])?;
     Ok(())
 }
 

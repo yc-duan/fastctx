@@ -62,6 +62,8 @@ export type Place =
   | { kind: "login"; way?: "join" | "new" | "code" }
   /** The user's own things in the network shown: 「我」. */
   | { kind: "account" }
+  /** How the user's devices stand in syncing, a step in from 「我」. */
+  | { kind: "sync" }
   /** A file on a machine, read whole, or its end when it keeps growing. */
   | { kind: "file"; machine: string; path: string; tail: boolean }
   /** What one of a conversation's watchers did, read on the machine it
@@ -127,6 +129,8 @@ export function link(place: Place): string {
       return place.way ? `#/login/${place.way}` : "#/login";
     case "account":
       return "#/account";
+    case "sync":
+      return "#/sync";
     case "file":
       return `#/file/${part(place.machine)}/${place.tail ? "tail" : "whole"}/${part(place.path)}`;
     case "sentinel":
@@ -222,6 +226,8 @@ export function placeOf(hash: string): Place {
     case "network":
     case "account":
       return { kind: "account" };
+    case "sync":
+      return { kind: "sync" };
     case "admin":
       return { kind: "machines" };
     case "file":

@@ -9,7 +9,7 @@
 
 /// The layout of the tables this build makes (`layout.rs`): changed with
 /// every change to them until the layout is settled (plan 3-3).
-pub(crate) const LAYOUT: &str = "2026-11-12.5";
+pub(crate) const LAYOUT: &str = "2026-11-12.6";
 
 /// Made before anything else as the library opens (`layout.rs`): where its
 /// layout is stamped. Nothing is written when it is there already.
@@ -114,6 +114,8 @@ CREATE TABLE IF NOT EXISTS frames (
     signature BLOB NOT NULL,
     body BLOB NOT NULL,
     change INTEGER,
+    -- On a hub, the library's change number the frame was applied at.
+    feed INTEGER,
     PRIMARY KEY (stream, epoch, first, holding)
 ) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS frame_objects (
@@ -462,6 +464,9 @@ CREATE TABLE IF NOT EXISTS object_bytes (
 /// every value is kept for good, so a parked receipt can always be
 /// checked), the frames refused, and where each device stands.
 pub(crate) const HUB_SCHEMA: &str = "
+-- The frames applied after a change number of the library, for what a
+-- device has yet to take (standing.rs, design §28.9).
+CREATE INDEX IF NOT EXISTS frames_by_feed ON frames (feed) WHERE feed IS NOT NULL;
 -- Each stream's latest change under the library's own change number, one
 -- row a stream: what a device asks after where it stands (changes.rs).
 CREATE TABLE IF NOT EXISTS stream_changes (

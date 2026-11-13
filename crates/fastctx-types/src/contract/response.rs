@@ -143,6 +143,7 @@ impl Call {
             | Self::Collaboration { .. }
             | Self::DoctorCalls { .. }
             | Self::DoctorReadings
+            | Self::SyncStatus { .. }
             | Self::Features
             | Self::Folders { .. }
             | Self::HandOver

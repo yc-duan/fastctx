@@ -269,6 +269,7 @@ impl Link {
             self_registration: view.self_registration,
             asset_seal_at_start: view.asset_seal_at_start,
             assets_sealed: view.assets_sealed.clone(),
+            synced: view.synced.clone(),
             accounts: view
                 .accounts
                 .iter()

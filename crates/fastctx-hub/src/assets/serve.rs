@@ -170,7 +170,9 @@ pub(crate) fn stream_of(request: &Request) -> Option<&str> {
         | Request::Cursors { .. }
         | Request::Streams { .. }
         | Request::Put { .. }
-        | Request::Get { .. } => None,
+        | Request::Get { .. }
+        | Request::Report { .. }
+        | Request::SyncStatus { .. } => None,
     }
 }
 
@@ -298,7 +300,9 @@ pub(crate) fn scope_of(request: &Request) -> Option<&str> {
         | Request::Describe { .. }
         | Request::Cleared { .. }
         | Request::Holdings { .. }
-        | Request::Changes { .. } => None,
+        | Request::Changes { .. }
+        | Request::Report { .. }
+        | Request::SyncStatus { .. } => None,
         Request::Answer { scope, .. }
         | Request::Take { scope, .. }
         | Request::Stage { scope, .. }
@@ -583,6 +587,9 @@ pub(crate) fn ask(
             }
             Ok(Reply::Changes { generation: page.generation, streams, top: page.top, top_at: page.top_at, through: page.through, more: page.more })
         }
+        Request::Report { report } => super::standing::keep(assets, directory, machine, report),
+        // Answered beside the hub's sessions, where who is online is known.
+        Request::SyncStatus { .. } => Err("a sync status is asked of the hub itself".into()),
         Request::Streams { scope } => {
             let kept = gated(assets, directory, machine, &scope)?;
             let library = scopes::library(assets, &kept)?;

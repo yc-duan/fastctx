@@ -37,6 +37,10 @@ pub enum Call {
     /// The node's measures of itself, its health and the scenes it left.
     /// Never relayed through another machine.
     DoctorReadings,
+    /// How `account`'s machines stand in syncing with `hub` over the last
+    /// `hours` (design §28.9): what this machine sees itself, and what the
+    /// hub reckons when it is reached. Never relayed through another machine.
+    SyncStatus { hub: crate::access::HubId, account: crate::AccountName, hours: u32 },
     Plan {
         hub: Option<crate::HubName>,
         account: Option<crate::AccountName>,
@@ -1018,6 +1022,14 @@ pub enum Reply {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         next: Option<u64>,
     },
+    SyncStatus {
+        local: crate::sync_status::LocalSync,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        hub: Option<Box<crate::sync_status::SyncStatus>>,
+        /// Why the hub's part is missing, when it is.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        unreached: Option<String>,
+    },
     DoctorReadings {
         readings: Box<crate::readings::Readings>,
         health: crate::health::Health,
@@ -1464,6 +1476,7 @@ impl Call {
             | Self::Data { .. }
             | Self::DoctorCalls { .. }
             | Self::DoctorReadings { .. }
+            | Self::SyncStatus { .. }
             | Self::Features { .. }
             | Self::FindFiles { .. }
             | Self::Folders { .. }
@@ -1606,6 +1619,7 @@ impl Reply {
             | Self::Data { .. }
             | Self::DoctorCalls { .. }
             | Self::DoctorReadings { .. }
+            | Self::SyncStatus { .. }
             | Self::Done { .. }
             | Self::Entered { .. }
             | Self::EntryAdded { .. }

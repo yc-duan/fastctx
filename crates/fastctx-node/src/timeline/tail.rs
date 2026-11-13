@@ -148,6 +148,13 @@ fn waited_for_scope(resident: &ResidentId) -> bool {
     first.entry(resident.clone()).or_insert_with(Instant::now).elapsed() < SCOPE_WAIT
 }
 
+/// The holding period the producer last finished making the timeline in,
+/// as kept beside it; none while it is set back for a whole making, or was
+/// never made (JJ05).
+pub(super) fn made_in(state: &[u8]) -> Option<i64> {
+    serde_json::from_slice::<Following>(state).ok().and_then(|following| following.holding)
+}
+
 /// What is kept beside the timeline, set back before a whole write (DD03):
 /// a stop after the write and before what it leaves is kept reads whole
 /// again, not past a floor below which it wrote.

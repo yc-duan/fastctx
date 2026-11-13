@@ -362,7 +362,10 @@ pub(super) fn prefix(db: &Connection, scope: i64, holding: i64, name: &str) -> f
     }
     db.prepare_cached("INSERT INTO streams (scope, name, epoch, next, head, complete_through) VALUES (?1, ?2, 0, 0, NULL, NULL)")?
         .execute(params![scope, name])?;
-    Ok(Prefix { stream: db.last_insert_rowid(), epoch: 0, next: 0, head: [0; 32] })
+    // A stream made, again or for the first time, has an era of its own (JJ01).
+    let made = db.last_insert_rowid();
+    super::view::rebased(db, made)?;
+    Ok(Prefix { stream: made, epoch: 0, next: 0, head: [0; 32] })
 }
 
 /// The applied prefix of a stream already here.
@@ -567,7 +570,11 @@ fn apply_frame(
         .execute(params![at.stream, end as i64, &head[..], end as i64 - 1])?;
     // What devices ask after where they stand moves with it (§28.1).
     let bytes = frame.header.len() + frame.signature.len() + frame.body.len();
-    super::changes::moved(db, at.stream, bytes as u64, false)?;
+    let feed = super::changes::moved(db, at.stream, bytes as u64, false)?;
+    // The frame is applied at that change of the library: what a device has
+    // yet to take after where it stands is found by it (design §28.9, H07).
+    db.prepare_cached("UPDATE frames SET feed = ?5 WHERE stream = ?1 AND epoch = ?2 AND first = ?3 AND holding = ?4")?
+        .execute(params![at.stream, header.epoch as i64, header.first as i64, holding, feed])?;
     at.next = end;
     at.head = head;
     super::handover::advance(db, at)?;

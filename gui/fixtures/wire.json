@@ -4678,6 +4678,14 @@
             "self_registration": true,
             "asset_seal_at_start": true,
             "assets_sealed": "the hub seals them each time it starts, until the super administrator opens them",
+            "synced": [
+              {
+                "account": "ada",
+                "devices": 3,
+                "synced": 2,
+                "behind": 420000
+              }
+            ],
             "accounts": [
               {
                 "name": "ada",

@@ -142,7 +142,7 @@ impl Library {
                             // (§28.1): a device holding only a window takes
                             // it again.
                             if hub && went > 0 {
-                                super::changes::moved(db, stream, 0, true)?;
+                                super::changes::moved(db, stream, 0, true).map(|_| ())?;
                             }
                             // Records from before where readers stood came
                             // in: they read anew.

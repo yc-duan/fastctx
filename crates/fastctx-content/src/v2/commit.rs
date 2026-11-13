@@ -59,7 +59,10 @@ pub(super) fn stream_of(db: &Connection, scope: i64, name: &str) -> fastctx_stor
     }
     db.prepare_cached("INSERT INTO streams (scope, name, epoch, next, head, complete_through) VALUES (?1, ?2, 0, 0, NULL, NULL)")?
         .execute(params![scope, name])?;
-    Ok((db.last_insert_rowid(), 0, 0, [0; 32]))
+    // A stream made, again or for the first time, has an era of its own (JJ01).
+    let made = db.last_insert_rowid();
+    super::view::rebased(db, made)?;
+    Ok((made, 0, 0, [0; 32]))
 }
 
 /// A kind's rule, judging each record against its item as it stands in the

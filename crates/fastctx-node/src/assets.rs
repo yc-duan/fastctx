@@ -13,6 +13,7 @@ mod apart;
 pub(crate) mod membership;
 mod objects;
 mod session;
+pub(crate) mod standing;
 pub(crate) mod takeover;
 pub(crate) mod upkeep;
 
@@ -114,6 +115,14 @@ pub(crate) struct Assets {
     /// The hubs whose scopes' writes not yet uploaded were looked for on
     /// the disk since the node started (HH03).
     pub(crate) seeded: Mutex<std::collections::BTreeSet<HubId>>,
+    /// The bytes taken of each hub's owner library since this machine last
+    /// stood anew in it, what it took lately, and what it last told each
+    /// hub of where it stands (`standing`).
+    pub(crate) taken: Mutex<HashMap<(String, String), u64>>,
+    pub(crate) received: Mutex<standing::Received>,
+    pub(crate) reported: Mutex<HashMap<HubId, (fastctx_types::sync_status::SyncReport, std::time::Instant)>>,
+    /// The hubs a pass of which left a stream to go on with at once (H05).
+    pub(crate) more: Mutex<std::collections::BTreeSet<HubId>>,
 }
 
 /// How far a hub's scopes this machine may hold were listed.
@@ -134,6 +143,10 @@ impl Assets {
         let mut listed = self.listed.lock().expect("listed");
         self.forgotten.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         listed.remove(hub);
+        drop(listed);
+        // What was taken of a scope held no more counts against what is left
+        // of the others no longer: the hub reckons more left, never less (H08).
+        self.taken.lock().expect("taken").retain(|(of, _), _| of != hub.as_str());
     }
 
     /// Opens the asset side in `dir` for the machine whose key is `device`.
@@ -175,6 +188,10 @@ impl Assets {
             uploads: Mutex::new(std::collections::BTreeSet::new()),
             relook: Mutex::new(std::collections::BTreeSet::new()),
             seeded: Mutex::new(std::collections::BTreeSet::new()),
+            taken: Mutex::new(HashMap::new()),
+            received: Mutex::new(standing::Received::default()),
+            reported: Mutex::new(HashMap::new()),
+            more: Mutex::new(std::collections::BTreeSet::new()),
         })
     }
 

@@ -52,7 +52,10 @@ fn stream_of(db: &Connection, scope: i64, name: &str) -> fastctx_storage::Result
     }
     db.prepare_cached("INSERT INTO streams (scope, name, epoch, next, head, complete_through) VALUES (?1, ?2, 0, 0, NULL, NULL)")?
         .execute(params![scope, name])?;
-    Ok(db.last_insert_rowid())
+    // A stream made, again or for the first time, has an era of its own (JJ01).
+    let made = db.last_insert_rowid();
+    super::view::rebased(db, made)?;
+    Ok(made)
 }
 
 /// The descriptor of `epoch` of `stream` the holder took, if any.

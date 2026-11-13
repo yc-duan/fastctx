@@ -37,6 +37,12 @@ const CHANGES_AT_ONCE: u32 = 256;
 const CLASSES: [u8; 4] = [0, 1, 2, 3];
 /// Frames uploaded or taken at once.
 const FRAMES_AT_ONCE: usize = 16;
+/// How many frames of one stream a pass takes at most: a very long stream
+/// behind holds up no other for longer, and goes on the next pass, which
+/// comes at once (H05).
+const FRAMES_A_TURN: u64 = 512;
+/// What a stream not yet caught up when its turn ended says: not a failure.
+const GOES_ON: &str = "goes on next pass: ";
 /// Receipts reported in one page.
 const REPORTED_AT_ONCE: usize = 256;
 /// How many times a frame's objects go before the hub must take it: put,
@@ -105,7 +111,12 @@ pub(crate) fn pushed(node: &Arc<Node>, hub: &HubId, push: wire::Push) {
             let Some(head) = checkpoint.head.array() else { return };
             let statement =
                 checkpoint_statement(&checkpoint.scope, checkpoint.change, checkpoint.parked, checkpoint.seq, &head);
-            if !assets.heard(hub, &key, &statement, &checkpoint.word.0) {
+            // Only a checkpoint the hub's word binds to a witness that holds
+            // it lets go of the receipts it covers: one written as the hub
+            // sealed, its witness frozen before it, does not (AM03).
+            let witnessed = fastctx_net::sign::heard_word(&key, &statement, &checkpoint.word.0)
+                .is_some_and(|(seq, carried)| seq > checkpoint.seq || (seq == checkpoint.seq && carried == head));
+            if !witnessed || !assets.heard(hub, &key, &statement, &checkpoint.word.0) {
                 return;
             }
             let (library, log) = (assets.library.clone(), node.log.clone());
@@ -150,6 +161,10 @@ async fn run(node: std::sync::Weak<Node>, hub: HubId, wake: Arc<tokio::sync::Not
             Ok(Some(_)) => None,
             Err(why) => Some(format!("joining the network's assets here: {why}")),
         };
+        // A stream whose turn ended before it was caught up goes on at once,
+        // and that is no failure (H05).
+        let more = node.assets.as_ref().is_some_and(|assets| assets.more.lock().expect("more").remove(&hub));
+        let failed = failed.filter(|error| !(more && error.contains(GOES_ON)));
         let wait = match &failed {
             Some(error) => {
                 if previous.as_ref() != Some(error) {
@@ -161,7 +176,7 @@ async fn run(node: std::sync::Weak<Node>, hub: HubId, wake: Arc<tokio::sync::Not
             None => {
                 again = crate::again::Again::default();
                 previous = None;
-                AGAIN
+                if more { Duration::ZERO } else { AGAIN }
             }
         };
         let mut ways = node.ways.subscribe();
@@ -405,7 +420,9 @@ async fn pass(node: &Arc<Node>, hub: &HubId, link: &Arc<Link>, network: &Network
             continue;
         }
         let theirs = hub.as_str().to_string();
+        let mark = owner.clone();
         blocking(library, move |library| library.fed(&theirs, &owner, &generation, top, at)).await?;
+        super::standing::stood(assets, hub, &mark);
     }
     if !whole && isolated.is_none() {
         for owner in &stood {
@@ -434,6 +451,10 @@ async fn pass(node: &Arc<Node>, hub: &HubId, link: &Arc<Link>, network: &Network
     }
     for failed in super::objects::fetch(assets, hub, link).await {
         node.log.line(format_args!("assets with {hub}: {failed}; asked again later"));
+    }
+    // Where this machine stands goes to the hub as it changes (design §28.9).
+    if let Err(why) = super::standing::report(assets, hub, link).await {
+        node.log.line(format_args!("assets with {hub}: telling where this machine stands: {why}"));
     }
     failed.map_or(Ok(()), Err)
 }
@@ -668,7 +689,7 @@ async fn feed(assets: &Assets, hub: &HubId, link: &Arc<Link>, key: &PublicKey, o
         }
         return Ok(());
     }
-    let mut failed = catch_up(assets, hub, link, key, streams).await;
+    let mut failed = catch_up(assets, hub, link, key, owner, streams).await;
     // More than a page: class by class, each newest first.
     if more {
         for class in CLASSES {
@@ -677,7 +698,7 @@ async fn feed(assets: &Assets, hub: &HubId, link: &Arc<Link>, key: &PublicKey, o
                 let Reply::Changes { streams, through, more, .. } = page(after, before, Some(class)).await? else {
                     return Err("the hub did not say what changed".into());
                 };
-                if let Some(why) = catch_up(assets, hub, link, key, streams).await {
+                if let Some(why) = catch_up(assets, hub, link, key, owner, streams).await {
                     failed.get_or_insert(why);
                 }
                 if !more {
@@ -690,8 +711,10 @@ async fn feed(assets: &Assets, hub: &HubId, link: &Arc<Link>, key: &PublicKey, o
     if let Some(why) = failed {
         return Err(why);
     }
-    let (theirs, owner) = (hub.as_str().to_string(), owner.to_string());
-    blocking(library, move |library| library.fed(&theirs, &owner, &generation, top, top_at)).await
+    let (theirs, owned) = (hub.as_str().to_string(), owner.to_string());
+    blocking(library, move |library| library.fed(&theirs, &owned, &generation, top, top_at)).await?;
+    super::standing::stood(assets, hub, owner);
+    Ok(())
 }
 
 /// Brings each of `streams`, as the hub said they stand, to where they
@@ -703,6 +726,7 @@ async fn catch_up(
     hub: &HubId,
     link: &Arc<Link>,
     key: &PublicKey,
+    owner: &str,
     streams: Vec<wire::ChangedStream>,
 ) -> Option<String> {
     let library = &assets.library;
@@ -726,7 +750,7 @@ async fn catch_up(
                 .into_iter()
                 .find(|(name, _)| *name == changed.stream)
                 .map_or(0, |(_, next)| next);
-            pull_stream(assets, hub, link, key, &changed.scope, &changed.stream, holding, at, changed.next).await
+            pull_stream(assets, hub, link, key, &changed.scope, &changed.stream, holding, at, changed.next, Some(owner)).await
         }
         .await;
         if let Err(why) = done
@@ -1280,7 +1304,7 @@ async fn pull(
     let streams = if isolated { Vec::new() } else { streams };
     for wire::StreamAt { stream, next } in streams {
         let at = local.get(&stream).copied().unwrap_or(0);
-        if let Err(why) = pull_stream(assets, hub, link, key, scope, &stream, holding, at, next).await {
+        if let Err(why) = pull_stream(assets, hub, link, key, scope, &stream, holding, at, next, None).await {
             if why.starts_with(REVOKED) {
                 return Err(why);
             }
@@ -1317,12 +1341,14 @@ async fn pull_stream(
     holding: i64,
     mut at: u64,
     next: u64,
+    owner: Option<&str>,
 ) -> Result<(), String> {
     let library = &assets.library;
     let stream = stream.to_string();
     if at >= next {
         return Ok(());
     }
+    let from = at;
     let Reply::Succession { epochs, gaps } =
         ask(assets, link, Request::Succession { scope: scope.to_string(), stream: stream.clone() }).await?
     else {
@@ -1365,6 +1391,7 @@ async fn pull_stream(
         let began = at;
         let mut went = false;
         for frame in frames {
+            let bytes = (frame.header.0.len() + frame.signature.0.len() + frame.body.0.len()) as u64;
             let raw = RawFrame {
                 header: frame.header.0,
                 signature: frame.signature.0,
@@ -1380,6 +1407,7 @@ async fn pull_stream(
                 Imported::Applied { next: reached, .. } => {
                     at = reached;
                     went = true;
+                    super::standing::took(assets, hub, owner, bytes);
                 }
                 Imported::Already => {}
                 Imported::Gap { from, .. } => {
@@ -1398,6 +1426,11 @@ async fn pull_stream(
         }
         if !went {
             return Err(format!("{stream} of {scope}: the hub's frames from {began} take it no further"));
+        }
+        // Its turn is over: the rest comes the next pass, at once.
+        if at < next && at.saturating_sub(from) >= FRAMES_A_TURN {
+            assets.more.lock().expect("more").insert(hub.clone());
+            return Err(format!("{GOES_ON}{stream} of {scope} at {at} of {next}"));
         }
     }
     Ok(())

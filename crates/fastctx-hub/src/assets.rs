@@ -6,7 +6,7 @@
 
 pub(crate) mod apart;
 pub(crate) mod bodies;
-mod brought;
+pub(crate) mod brought;
 pub(crate) mod chain;
 #[cfg(test)]
 pub(crate) mod drill_kinds;
@@ -17,6 +17,7 @@ pub(crate) mod objects;
 mod owners;
 mod scopes;
 pub(crate) mod serve;
+pub(crate) mod standing;
 pub(crate) mod witness;
 
 pub(crate) use owners::Owner;
@@ -41,7 +42,7 @@ const SEALED_AT_START: &str = "the hub seals them each time it starts, until the
 
 /// The asset side's tables in the hub's control database.
 pub(crate) fn schema() -> String {
-    format!("{}{}{}", chain::SCHEMA, scopes::SCHEMA, bodies::SCHEMA)
+    format!("{}{}{}{}", chain::SCHEMA, scopes::SCHEMA, bodies::SCHEMA, standing::SCHEMA)
 }
 
 /// Brings the asset side's tables in the control database up to this
@@ -156,6 +157,8 @@ pub(crate) struct Assets {
     pub(crate) objects: objects::Objects,
     /// What several accounts own together, and who they are (design §6.2).
     pub(crate) bodies: Arc<bodies::Bodies>,
+    /// Where machines stand in syncing (design §28.9).
+    pub(crate) standing: standing::Standing,
 }
 
 impl Assets {
@@ -189,6 +192,7 @@ impl Assets {
             pushes: Mutex::new(Vec::new()),
             objects: objects::Objects::default(),
             bodies: Arc::new(bodies::Bodies::new(control.clone())),
+            standing: standing::Standing::default(),
         };
         if let Some(why) = assets.put_back(dir)? {
             assets.witness.freeze();
@@ -982,6 +986,7 @@ impl Assets {
     /// machine that reads the scope or follows the library, but `by`, is to
     /// be told.
     pub(crate) fn moved(&self, owner: &Owner, scope: &str, stream: &str, next: u64, by: &fastctx_types::MachineName) {
+        self.standing.moved(&owner.key());
         let mut told: BTreeSet<_> = self.holders.lock().expect("holders").get(scope).into_iter().flatten().cloned().collect();
         told.extend(self.followers.lock().expect("followers").get(&owner.key()).into_iter().flatten().cloned());
         told.remove(by);
@@ -1059,8 +1064,6 @@ impl Assets {
         if self.sealed().is_some() {
             return Ok(None);
         }
-        // A witness write that failed after its commit is made good first.
-        self.catch_up()?;
         let batch = {
             let mut changed = self.changed.lock().expect("changed scopes");
             let mut turn = self.turn.lock().expect("checkpoint turn");
@@ -1105,12 +1108,12 @@ impl Assets {
             }
             batch
         };
-        if batch.is_empty() {
-            return Ok(None);
-        }
         let done = {
             let _one = self.checkpointing.lock().expect("checkpointing");
-            self.checkpoint_of(&batch)
+            // A witness write that failed after its commit is made good
+            // first, under the lock: no checkpoint is taken as kept while the
+            // witness holds less (AM02).
+            self.catch_up().and_then(|()| if batch.is_empty() { Ok(None) } else { self.checkpoint_of(&batch) })
         };
         if done.is_err() {
             let mut again = self.changed.lock().expect("changed scopes");
@@ -1130,9 +1133,12 @@ impl Assets {
         if self.sealed().is_some() {
             return Ok(());
         }
-        self.catch_up()?;
         let batch = BTreeMap::from([(owner.clone(), BTreeSet::from([scope.to_string()]))]);
         let _one = self.checkpointing.lock().expect("checkpointing");
+        // Made good under the lock: a checkpoint another round wrote while
+        // this waited, its witness write failed, is in the witness before
+        // this one is found to need none (AM02).
+        self.catch_up()?;
         self.checkpoint_of(&batch).map(|_| ())
     }
 
@@ -1185,7 +1191,10 @@ impl Assets {
         let digest: [u8; 32] = hasher.finalize().into();
         let rows: Vec<(String, Head)> =
             owners.iter().flat_map(|(owner, heads)| heads.iter().map(|head| (owner.clone(), head.clone()))).collect();
+        let sealing = self.sealing.clone();
         let written = self.control.write_now(256 + rows.len() * 64, move |c| {
+            // Sealed meanwhile, nothing more goes into the chain (AM03).
+            unsealed(&sealing)?;
             let (seq, head) = chain::append(c, "checkpoint", &digest)?;
             let mut keeping = c.prepare_cached(
                 "INSERT OR REPLACE INTO hub_checkpoints (owner, scope, seq, change, parked, prefix, accumulated) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
@@ -1205,6 +1214,12 @@ impl Assets {
         });
         let (seq, head) = written.map_err(io::Error::other)?;
         self.witness.advanced(seq, &head)?;
+        // Frozen as the hub sealed, the witness holds less than the chain: no
+        // device is told a receipt is covered by what the witness does not
+        // hold, and lets go of it (AM03).
+        if self.witness.current().0 < seq {
+            return Err(io::Error::other("the witness was frozen as the checkpoint was written"));
+        }
         // Who was given a receipt of a scope it covers hears so.
         let mut receipted = self.receipted.lock().expect("receipted");
         let mut pushes = self.pushes.lock().expect("pushes");

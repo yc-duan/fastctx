@@ -92,7 +92,7 @@ impl Library {
     /// (AJ04).
     pub fn join(&self, hub: &str, device: &[u8; 32], anew: bool) -> Result<Network> {
         let (hub, device) = (hub.to_string(), *device);
-        Ok(self.database().write_now_at(Priority::Control, 1 << 20, move |db| {
+        let joined = self.database().write_now_at(Priority::Control, 1 << 20, move |db| {
             let before = standing(db, &hub)?;
             if let Some((term, true)) = before
                 && !anew
@@ -104,7 +104,9 @@ impl Library {
             let term = before.map_or(1, |(term, _)| term + 1);
             stand(db, &hub, term, true)?;
             Ok(Network { hub, term })
-        })?)
+        })?;
+        self.wrote();
+        Ok(joined)
     }
 
     /// This machine left `hub`'s network: its term ends and every scope of
@@ -112,14 +114,16 @@ impl Library {
     /// not yet uploaded kept first. How many scopes were held.
     pub fn leave(&self, hub: &str, device: &[u8; 32]) -> Result<usize> {
         let (hub, device) = (hub.to_string(), *device);
-        Ok(self.database().write_now_at(Priority::Control, 1 << 20, move |db| {
+        let held = self.database().write_now_at(Priority::Control, 1 << 20, move |db| {
             let term = standing(db, &hub)?.map_or(1, |(term, _)| term + 1);
             stand(db, &hub, term, false)?;
             // Where it stood in the network's libraries goes with it: joined
             // again, it starts from nothing.
             db.prepare_cached("DELETE FROM feeds WHERE hub = ?1")?.execute([&hub])?;
             revoke_all(db, &hub, &device)
-        })?)
+        })?;
+        self.wrote();
+        Ok(held)
     }
 
     /// The scopes of `hub`'s network held here under a hub's descriptor
@@ -263,9 +267,11 @@ impl Library {
     /// term it was asked under.
     pub fn install_on(&self, network: &Network, key: &str, description: Vec<u8>, acl_revision: i64) -> Result<i64> {
         let (network, key) = (network.clone(), key.to_string());
-        Ok(self.database().write_now_at(Priority::Normal, 256 + description.len(), move |db| {
+        let holding = self.database().write_now_at(Priority::Normal, 256 + description.len(), move |db| {
             under(db, &network)?;
             install_in(db, &key, &network.hub, description, acl_revision)
-        })?)
+        })?;
+        self.wrote();
+        Ok(holding)
     }
 }

@@ -41,6 +41,9 @@ export interface MeWords {
   /** Between the items of a list. */
   separator: string;
   changePassword: string;
+  /** The way to how the user's devices stand in syncing. */
+  sync(synced: number, devices: number): string;
+  syncPlain: string;
   passwordTitle: string;
   passwordWhat: string;
   password: string;
@@ -134,6 +137,8 @@ export const zhMe: MeWords = {
   notMeCodeGo: "作废并移除",
   separator: "、",
   changePassword: "修改密码",
+  sync: (synced, devices) => (synced === devices ? `同步：${devices === 1 ? "已齐" : `${devices} 台都已齐`}` : `同步：${devices} 台中 ${synced} 台已齐`),
+  syncPlain: "同步",
   passwordTitle: "修改密码",
   passwordWhat: "已登录的设备不受影响",
   password: "新密码",
@@ -221,6 +226,8 @@ export const enMe: MeWords = {
   notMeCodeGo: "Revoke and remove",
   separator: ", ",
   changePassword: "Change password",
+  sync: (synced, devices) => (synced === devices ? `Sync: ${devices === 1 ? "caught up" : `all ${devices} caught up`}` : `Sync: ${synced} of ${devices} caught up`),
+  syncPlain: "Sync",
   passwordTitle: "Change password",
   passwordWhat: "Signed-in devices stay signed in",
   password: "New password",

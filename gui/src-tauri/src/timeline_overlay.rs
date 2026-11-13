@@ -75,12 +75,19 @@ pub(crate) async fn rejected(
         let TimelineTold::Changes { changes, through, .. } = reply else {
             return Err("the timeline changed while live membership was being checked".into());
         };
-        if through <= after || through - after != changes.len() as u64 {
+        if through <= after {
             return Err("the timeline membership records did not advance".into());
         }
+        // A record log tells a change a record; the asset library tells each
+        // item once, as it stands, however many records changed it (JJ03):
+        // there what lies past the range is known by its sequence.
+        let dense = through - after == changes.len() as u64;
         for (offset, change) in changes.into_iter().enumerate() {
-            if after + offset as u64 >= to {
+            if dense && after + offset as u64 >= to {
                 break;
+            }
+            if !dense && matches!(&change, TimelineChange::Is { event } if event.sequence >= to) {
+                continue;
             }
             match change {
                 TimelineChange::Is { event } => {

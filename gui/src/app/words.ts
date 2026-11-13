@@ -84,6 +84,8 @@ export interface ShellWords {
   account: string;
   /** Who came into the accounts lately, not yet shown, for a screen reader. */
   arrivals(n: number): string;
+  /** The small ring beside 「我」 while some devices are not caught up. */
+  syncing(synced: number, devices: number): string;
   /** A login's part of the sidebar, folded or not. */
   groupOf(login: string): string;
   more(n: number): string;
@@ -1630,6 +1632,7 @@ export const zhShell: ShellWords = {
   machinesCount: (n) => `${n} 台机器`,
   account: "我",
   arrivals: (n) => `${n} 台新设备`,
+  syncing: (synced, devices) => `同步：${devices} 台中 ${synced} 台已齐`,
   groupOf: (login) => login,
   more: (n) => `另外 ${n} 个`,
   span: zhSpan,
@@ -1689,6 +1692,7 @@ export const enShell: ShellWords = {
   machinesCount: (n) => (n === 1 ? "1 machine" : `${n} machines`),
   account: "Me",
   arrivals: (n) => `${n} new device${n === 1 ? "" : "s"}`,
+  syncing: (synced, devices) => `Sync: ${synced} of ${devices} devices caught up`,
   groupOf: (login) => login,
   more: (n) => `${n} more`,
   span: enSpan,

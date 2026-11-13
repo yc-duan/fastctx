@@ -1112,6 +1112,14 @@ fn handle(
                             }
                             return (answer, Vec::new());
                         }
+                        // How an account's machines stand is reckoned beside
+                        // the sessions, where who is online is known.
+                        if let fastctx_types::assets::Request::SyncStatus { account, hours } = &request {
+                            let answer = origin
+                                .check(&hub.store().book.directory)
+                                .and_then(|()| crate::assets::standing::status(&hub, &from, account, *hours));
+                            return (answer, Vec::new());
+                        }
                         let scope = crate::assets::serve::scope_of(&request).map(str::to_string);
                         let stream = crate::assets::serve::stream_of(&request).map(str::to_string);
                         let store = hub.store();

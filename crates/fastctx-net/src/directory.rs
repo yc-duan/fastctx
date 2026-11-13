@@ -733,6 +733,10 @@ pub struct View {
     /// Why every asset is sealed now, if it is.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub assets_sealed: Option<String>,
+    /// How the machines of each account logged in on this member stand in
+    /// syncing with the hub, as it last sampled them (design §28.9).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub synced: Vec<fastctx_types::sync_status::AccountSync>,
     /// Whether this hub takes direct connections between machines: their
     /// allowing, the outside check, and what members say of their lines.
     /// Older hubs omit it.
@@ -931,6 +935,7 @@ impl View {
             self_registration: false,
             asset_seal_at_start: false,
             assets_sealed: None,
+            synced: Vec::new(),
             direct_links: false,
             health: false,
             trial: Vec::new(),

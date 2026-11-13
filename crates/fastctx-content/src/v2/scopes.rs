@@ -39,6 +39,8 @@ pub(super) fn open_holding(db: &Connection, scope: i64, acl_revision: i64) -> fa
         .query_row([scope], |row| row.get(0))?;
     db.prepare_cached("INSERT INTO holdings (scope, holding, started, ended, acl_revision) VALUES (?1, ?2, ?3, NULL, ?4)")?
         .execute(params![scope, holding, now(), acl_revision])?;
+    // Held anew, its streams are read anew (JJ01).
+    super::view::held_anew(db, scope)?;
     Ok(holding)
 }
 
@@ -79,16 +81,21 @@ impl Library {
     /// whatever of an ended period is still being purged.
     pub fn install(&self, key: &str, description: Vec<u8>, acl_revision: i64) -> Result<i64> {
         let key = key.to_string();
-        Ok(self.database().write_now_at(Priority::Normal, 256 + description.len(), move |db| {
+        let holding = self.database().write_now_at(Priority::Normal, 256 + description.len(), move |db| {
             install_in(db, &key, "", description, acl_revision)
-        })?)
+        })?;
+        self.wrote();
+        Ok(holding)
     }
 
     /// Revokes a scope here: disabled, its period ended and its purge
     /// recorded in one transaction; readers see none of it from then on.
     pub fn revoke(&self, key: &str) -> Result<()> {
         let key = key.to_string();
-        Ok(self.database().write_now_at(Priority::Control, 128, move |db| revoke_in(db, &key))?)
+        self.database().write_now_at(Priority::Control, 128, move |db| revoke_in(db, &key))?;
+        // Its readers are told at once that it is held no more (JJ02).
+        self.wrote();
+        Ok(())
     }
 
     /// One pass of every purge: an ended period's frames, references and

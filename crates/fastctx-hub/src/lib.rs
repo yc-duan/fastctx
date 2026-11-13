@@ -507,6 +507,26 @@ impl Hub {
         drop(before);
     }
 
+    /// What `machines` see in their views changed, nothing else did: each of
+    /// their sessions is sent what changed in its view, or told to ask.
+    pub(crate) fn views_changed_for(&self, machines: &std::collections::BTreeSet<MachineName>) {
+        let mut outs = Vec::new();
+        let mut changes = Vec::new();
+        for (name, session) in self.sessions().iter().filter(|(name, _)| machines.contains(*name)) {
+            if session.view_deltas {
+                changes.push((name.clone(), session.key, session.generation, session.out.clone()));
+            } else {
+                outs.push(session.out.clone());
+            }
+        }
+        for out in outs {
+            let _ = out.send(Out::Frame(Down::DirectoryChanged));
+        }
+        if !changes.is_empty() {
+            self.push_views(changes);
+        }
+    }
+
     /// `name`'s session `generation` ended: what it was given goes with it.
     pub(crate) fn forget_view(&self, name: &MachineName, generation: u64) {
         let mut given = self.given.lock().expect("never poisoned");
@@ -1017,6 +1037,7 @@ async fn serving(
     }
     fastctx_platform::task::spawn(health::keep(Arc::downgrade(&hub)));
     fastctx_platform::task::spawn(assets::checkpoints(Arc::downgrade(&hub)));
+    fastctx_platform::task::spawn(assets::standing::every_minute(Arc::downgrade(&hub)));
     fastctx_platform::task::spawn(data::expire(Arc::downgrade(&hub)));
     fastctx_platform::task::spawn(expiry::settle(Arc::downgrade(&hub)));
     fastctx_platform::task::spawn(updates::look_every(Arc::downgrade(&hub)));

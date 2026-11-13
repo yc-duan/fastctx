@@ -5,6 +5,7 @@
 // devices logged in, the projects, and who came into an account lately.
 // Serialized replies, before any presentation.
 
+import type { AccountSync } from "./sync";
 import type { LinkState, Strain } from "./world";
 import type { MachineName, Timestamp, TownName } from "./wire";
 
@@ -342,6 +343,9 @@ export interface HubAccounts {
   asset_seal_at_start?: boolean;
   /** Why every asset is sealed now, if it is. */
   assets_sealed?: string;
+  /** How the machines of the accounts logged in here stand in syncing with
+   *  the hub, as it last sampled them (`world/sync.ts`). */
+  synced?: AccountSync[];
   accounts: AccountSeen[];
   members: MemberSeen[];
   shares: ShareSeen[];

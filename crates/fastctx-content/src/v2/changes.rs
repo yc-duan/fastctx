@@ -82,8 +82,9 @@ fn fresh_generation() -> String {
 /// indexed again (`remade`, `bytes` 0): its row takes the library's next
 /// change number, with the stream's head as it stands; indexed again, the
 /// number is kept as where it was last remade, which later frames leave be
-/// (design §28.1). In the transaction that moved it.
-pub(super) fn moved(db: &Connection, stream: i64, bytes: u64, remade: bool) -> fastctx_storage::Result<()> {
+/// (design §28.1). In the transaction that moved it; the change number it
+/// took.
+pub(super) fn moved(db: &Connection, stream: i64, bytes: u64, remade: bool) -> fastctx_storage::Result<i64> {
     let (name, next, head): (String, i64, Option<Vec<u8>>) = db
         .prepare_cached("SELECT name, next, head FROM streams WHERE id = ?1")?
         .query_row([stream], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
@@ -118,7 +119,7 @@ pub(super) fn moved(db: &Connection, stream: i64, bytes: u64, remade: bool) -> f
         if remade { change } else { was_remade },
         now()
     ])?;
-    Ok(())
+    Ok(change)
 }
 
 impl Library {

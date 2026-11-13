@@ -88,6 +88,7 @@ pub mod skills;
 pub mod stats;
 pub mod submission;
 pub mod sync;
+pub mod sync_status;
 pub mod thumbnail;
 pub mod timeline_pages;
 pub mod timers;
