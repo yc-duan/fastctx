@@ -31,7 +31,7 @@ pub(super) async fn catalog(
             .owners
             .lock()
             .expect("never poisoned")
-            .candidates(directory, account)
+            .readable(directory, account)
             .into_iter()
             .filter(|conversation| {
                 fastctx_net::record_ownership::keeps(

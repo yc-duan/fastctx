@@ -20,11 +20,9 @@ pub(super) async fn head(
                 .owners
                 .lock()
                 .expect("never poisoned")
-                .candidates(&store.book.directory, actor)
+                .readable(&store.book.directory, actor)
                 .into_iter()
-                .filter(|conversation| {
-                    conversation.address.resident == *resident && allows(&store.book.directory, actor, conversation)
-                });
+                .filter(|conversation| conversation.address.resident == *resident);
             let found = choices.next();
             if choices.next().is_some() {
                 return Err("the plan name identifies more than one visible conversation".into());

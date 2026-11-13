@@ -5,7 +5,7 @@ use fastctx_types::owned_records::Conversation;
 pub(super) fn resolve(hub: &Hub, actor: &AccountName, address: &Address) -> Option<Conversation> {
     let store = hub.store();
     let directory = &store.book.directory;
-    if let Ok(conversation) =
+    if let Ok((conversation, _)) =
         hub.account_records.owners.lock().expect("never poisoned").resolve(directory, actor, address)
     {
         return Some(conversation);

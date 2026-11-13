@@ -15,6 +15,7 @@ recovery_receipts	runtime.assets	crates/fastctx-hub/src/assets/chain.rs
 closed_heads	runtime.assets	crates/fastctx-hub/src/assets/chain.rs
 closed_receipts	runtime.assets	crates/fastctx-hub/src/assets/chain.rs
 asset_bodies	runtime.assets	crates/fastctx-hub/src/assets/bodies.rs
+asset_body_conversations	runtime.assets	crates/fastctx-hub/src/assets/bodies.rs
 asset_unread	runtime.assets	crates/fastctx-hub/src/assets/bodies.rs
 asset_deleting	runtime.assets	crates/fastctx-hub/src/assets/bodies.rs
 sync_reports	runtime.assets	crates/fastctx-hub/src/assets/standing.rs

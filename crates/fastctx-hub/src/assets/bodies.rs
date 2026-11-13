@@ -25,6 +25,13 @@ pub(crate) const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS asset_bodies (
     id TEXT PRIMARY KEY, machine TEXT NOT NULL, members TEXT NOT NULL, revision INTEGER NOT NULL, key TEXT
 ) WITHOUT ROWID;
+-- Each conversation described into a body, by its opener as opened (in
+-- nanoseconds) and its resident: its records are read and written by the
+-- body's readers, its opener's account gone or not (§29, 2.6).
+CREATE TABLE IF NOT EXISTS asset_body_conversations (
+    opener TEXT NOT NULL, opened TEXT NOT NULL, resident TEXT NOT NULL, body TEXT NOT NULL,
+    PRIMARY KEY (opener, opened, resident)
+) WITHOUT ROWID;
 -- Owners none of whose scopes anyone reads any more, since when.
 CREATE TABLE IF NOT EXISTS asset_unread (owner TEXT PRIMARY KEY, since INTEGER NOT NULL) WITHOUT ROWID;
 -- Owners whose records went and whose files are still to go.
@@ -78,8 +85,13 @@ pub(crate) fn migrate(c: &fastctx_storage::rusqlite::Connection) -> fastctx_stor
     Ok(())
 }
 
+/// A conversation by its opener, as opened, and its resident.
+pub(crate) type ConversationOf = (fastctx_types::AccountName, jiff::Timestamp, String);
+
 pub(crate) struct Bodies {
     control: Database,
+    /// The conversations described into bodies, each with its body.
+    conversations: std::sync::Mutex<std::collections::BTreeMap<ConversationOf, String>>,
     /// The hub, under whose directory writer a body's first members are
     /// taken: no save comes between reading them and keeping them (each save
     /// keeps them up to date in its own transaction after).
@@ -88,7 +100,86 @@ pub(crate) struct Bodies {
 
 impl Bodies {
     pub(crate) fn new(control: Database) -> Self {
-        Self { control, hub: OnceLock::new() }
+        Self { control, conversations: Default::default(), hub: OnceLock::new() }
+    }
+
+    /// Takes the conversations described into bodies as the hub keeps them.
+    pub(crate) fn load_conversations(&self) -> io::Result<()> {
+        let rows: Vec<(String, String, String, String)> = self
+            .control
+            .read_now(|c| {
+                let mut statement = c.prepare_cached("SELECT opener, opened, resident, body FROM asset_body_conversations")?;
+                let rows = statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)))?;
+                Ok(rows.collect::<std::result::Result<_, _>>()?)
+            })
+            .map_err(io::Error::other)?;
+        let mut kept = self.conversations.lock().expect("body conversations");
+        for (opener, opened, resident, body) in rows {
+            let (Ok(opener), Some(opened)) = (
+                fastctx_types::AccountName::try_from(opener),
+                opened.parse::<i128>().ok().and_then(|opened| jiff::Timestamp::from_nanosecond(opened).ok()),
+            ) else {
+                continue;
+            };
+            kept.insert((opener, opened, resident), body);
+        }
+        Ok(())
+    }
+
+    /// The body the conversation `of` was described into.
+    pub(crate) fn conversation(&self, of: &ConversationOf) -> Option<String> {
+        self.conversations.lock().expect("body conversations").get(of).cloned()
+    }
+
+    /// The conversations described into bodies, each with its body.
+    pub(crate) fn conversations(&self) -> std::collections::BTreeMap<ConversationOf, String> {
+        self.conversations.lock().expect("body conversations").clone()
+    }
+
+    /// Every opener, as opened, of a conversation described into a body.
+    pub(crate) fn conversation_openers(&self) -> BTreeSet<(fastctx_types::AccountName, jiff::Timestamp)> {
+        self.conversations.lock().expect("body conversations").keys().map(|(opener, opened, _)| (opener.clone(), *opened)).collect()
+    }
+
+    /// The opener `opener` as opened at the millisecond `at`, of a
+    /// conversation described into a body.
+    pub(crate) fn opener_at(&self, opener: &fastctx_types::AccountName, at: i64) -> Option<jiff::Timestamp> {
+        self.conversations
+            .lock()
+            .expect("body conversations")
+            .keys()
+            .find(|(name, opened, _)| name == opener && opened.as_millisecond() == at)
+            .map(|(_, opened, _)| *opened)
+    }
+
+    /// Whether `actor` is one of `body`'s members now (or as frozen), as the
+    /// account it is: never one locked.
+    pub(crate) fn member(&self, directory: &Directory, actor: &fastctx_types::AccountName, body: &str) -> bool {
+        let Some(found) = directory.account(actor).filter(|found| !found.locked) else { return false };
+        self.members(directory, body).is_ok_and(|members| members.contains(&format!("{actor}@{}", found.opened.as_millisecond())))
+    }
+
+    /// Keeps that the conversation `resident` `opener` opened at `opened` is
+    /// `body`'s, in the transaction `c` is in.
+    pub(crate) fn keep_conversation_in(
+        c: &fastctx_storage::rusqlite::Connection,
+        body: &str,
+        opener: &fastctx_types::AccountName,
+        opened: jiff::Timestamp,
+        resident: &str,
+    ) -> fastctx_storage::Result<()> {
+        c.prepare_cached("INSERT OR IGNORE INTO asset_body_conversations (opener, opened, resident, body) VALUES (?1, ?2, ?3, ?4)")?
+            .execute(params![opener.as_str(), opened.as_nanosecond().to_string(), resident, body])?;
+        Ok(())
+    }
+
+    /// The same, as it is now kept, in memory.
+    pub(crate) fn kept_conversation(&self, body: &str, opener: &fastctx_types::AccountName, opened: jiff::Timestamp, resident: &str) {
+        self.conversations
+            .lock()
+            .expect("body conversations")
+            .entry((opener.clone(), opened, resident.to_string()))
+            .or_insert_with(|| body.to_string());
     }
 
     /// The hub whose directory writer a body's first members are read under.

@@ -11,14 +11,7 @@ pub(super) async fn list(
 ) -> Result<Vec<Registration>, String> {
     let conversations = {
         let store = hub.store();
-        hub.account_records
-            .owners
-            .lock()
-            .expect("never poisoned")
-            .candidates(&store.book.directory, actor)
-            .into_iter()
-            .filter(|conversation| allows(&store.book.directory, actor, conversation))
-            .collect::<Vec<_>>()
+        hub.account_records.owners.lock().expect("never poisoned").readable(&store.book.directory, actor)
     };
     let mut result = Vec::new();
     for conversation in conversations {

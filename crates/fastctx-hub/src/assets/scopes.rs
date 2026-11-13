@@ -522,6 +522,15 @@ pub(crate) fn describe(
     let bytes = serde_json::to_vec(&descriptor).map_err(|error| error.to_string())?;
     let digest: [u8; 32] = Sha256::digest(&bytes).into();
     let (key_text, owner_key, stored) = (key.to_string(), owner.key(), bytes.clone());
+    // A conversation described into a body: its records are the body's
+    // readers' from now on, kept with the description (§29, 2.6).
+    let into_body = match &descriptor.readers {
+        Readers::Body { body, opener } if !machines_own(key) => directory
+            .account(opener)
+            .map(|found| (body.clone(), opener.clone(), found.opened, key[prefix.len()..].to_string())),
+        _ => None,
+    };
+    let keeping = into_body.clone();
     let (seq, head) = assets
         .control
         .write_now(256 + bytes.len(), move |c| {
@@ -535,6 +544,9 @@ pub(crate) fn describe(
             if added == 0 {
                 return Ok(None);
             }
+            if let Some((body, opener, opened, resident)) = &keeping {
+                super::bodies::Bodies::keep_conversation_in(c, body, opener, *opened, resident)?;
+            }
             let (seq, head) = chain::append(c, "scope", &digest)?;
             // Listed in the order the scopes were committed in, by the
             // number this very commit took: one committed late is never
@@ -545,6 +557,9 @@ pub(crate) fn describe(
         .map_err(|error| error.to_string())?
         .ok_or("the library the scope belongs in is being deleted; describe it again later")?;
     assets.witness.advanced(seq, &head).map_err(|error| error.to_string())?;
+    if let Some((body, opener, opened, resident)) = &into_body {
+        assets.bodies.kept_conversation(body, opener, *opened, resident);
+    }
     // Signed now, bound to the head the descriptor went into: a device that
     // saw it carries a head a hub put back to before it does not hold.
     let word = assets.signer().sign(&bytes);

@@ -1,10 +1,14 @@
 //! Metadata-only ownership index, rebuilt from committed account records.
 
+use crate::assets::bodies::Bodies;
+use fastctx_net::{authorization::Lookup, directory::Directory};
 use fastctx_types::{AccountName, Address, MachineName, owned_records::Conversation};
 use jiff::Timestamp;
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
-type Identity = (AccountName, Timestamp, String);
+/// A conversation by the account that opened it, as opened, and its key.
+pub(crate) type Identity = (AccountName, Timestamp, String);
 
 #[derive(Default)]
 pub(crate) struct Index {
@@ -12,9 +16,41 @@ pub(crate) struct Index {
     addresses: BTreeMap<(MachineName, fastctx_types::ResidentId), BTreeSet<Identity>>,
     accounts: BTreeMap<AccountName, BTreeSet<Identity>>,
     machines: BTreeMap<MachineName, BTreeSet<Identity>>,
+    /// The hub's bodies, which know the conversations described into one.
+    bodies: Option<Arc<Bodies>>,
 }
 
 impl Index {
+    /// Takes the hub's bodies, once the asset library is open.
+    pub(crate) fn attach(&mut self, bodies: Arc<Bodies>) {
+        self.bodies = Some(bodies);
+    }
+
+    /// The body the conversation `identity` was described into.
+    fn body(&self, identity: &Identity) -> Option<String> {
+        self.bodies.as_ref()?.conversation(identity)
+    }
+
+    /// Whether the conversation `identity` still has readers to answer: its
+    /// opener is the account it was, or it is a body's, whose records stay
+    /// its readers' with the opener gone (§29, 2.6).
+    pub(crate) fn live<L: Lookup + ?Sized>(&self, directory: &L, identity: &Identity) -> bool {
+        directory.find_account(&identity.0).is_some_and(|owner| owner.opened == identity.1) || self.body(identity).is_some()
+    }
+
+    /// Whether `actor` reads and writes the records of the conversation
+    /// `identity`: any by its opener, or those its birth machine is held by,
+    /// while its opener is the account it was; a body's by the body's
+    /// members too, its opener gone or not (§29, 2.6).
+    pub(crate) fn reads(&self, directory: &Directory, actor: &AccountName, identity: &Identity, conversation: &Conversation) -> bool {
+        let opener = directory.account(&identity.0).is_some_and(|owner| owner.opened == identity.1);
+        if opener && super::allows(directory, actor, conversation) {
+            return true;
+        }
+        let (Some(body), Some(bodies)) = (self.body(identity), self.bodies.as_ref()) else { return false };
+        bodies.member(directory, actor, &body)
+    }
+
     pub(crate) fn of_record(
         &self,
         account: &AccountName,
@@ -60,12 +96,19 @@ impl Index {
         }
     }
 
-    pub(crate) fn candidates(
-        &self,
-        directory: &fastctx_net::directory::Directory,
-        account: &AccountName,
-    ) -> Vec<Conversation> {
+    /// The conversations whose records `account` reads.
+    pub(crate) fn readable(&self, directory: &Directory, account: &AccountName) -> Vec<Conversation> {
         let mut keys = self.accounts.get(account).cloned().unwrap_or_default();
+        // A body's conversations, its machine gone from the directory or not.
+        if let Some(bodies) = &self.bodies {
+            let mut member: BTreeMap<String, bool> = BTreeMap::new();
+            for (identity, body) in bodies.conversations() {
+                let is = *member.entry(body.clone()).or_insert_with(|| bodies.member(directory, account, &body));
+                if is && self.conversations.contains_key(&identity) {
+                    keys.insert(identity);
+                }
+            }
+        }
         let machines: BTreeSet<_> = directory
             .members
             .iter()
@@ -86,10 +129,9 @@ impl Index {
         }
         keys.into_iter()
             .filter_map(|identity| {
-                if directory.account(&identity.0).is_none_or(|account| account.opened != identity.1) {
-                    return None;
-                }
-                self.conversations.get(&identity).map(|conversation| super::verified(directory, conversation))
+                let conversation = self.conversations.get(&identity)?;
+                (self.live(directory, &identity) && self.reads(directory, account, &identity, conversation))
+                    .then(|| super::verified(directory, conversation))
             })
             .collect()
     }
@@ -122,19 +164,20 @@ impl Index {
             None => vec![&address.machine],
         };
         names.into_iter().any(|name| {
-            self.addresses.get(&(name.clone(), address.resident.clone())).is_some_and(|keys| {
-                keys.iter()
-                    .any(|identity| directory.find_account(&identity.0).is_some_and(|owner| owner.opened == identity.1))
-            })
+            self.addresses
+                .get(&(name.clone(), address.resident.clone()))
+                .is_some_and(|keys| keys.iter().any(|identity| self.live(directory, identity)))
         })
     }
 
-    pub(crate) fn resolve<L: fastctx_net::authorization::Lookup + ?Sized>(
+    /// The conversation at `address` whose records `account` reads, and
+    /// when its opener's account was opened.
+    pub(crate) fn resolve(
         &self,
-        directory: &L,
+        directory: &Directory,
         account: &AccountName,
         address: &Address,
-    ) -> Result<Conversation, String> {
+    ) -> Result<(Conversation, Timestamp), String> {
         let member = directory.find_member(&address.machine);
         let names: Vec<_> = match member {
             Some(member) => std::iter::once(&member.name).chain(&member.was).collect(),
@@ -147,11 +190,12 @@ impl Index {
             }
         }
         let mut found = candidates.into_iter().filter_map(|identity| {
-            if directory.find_account(&identity.0).is_none_or(|owner| owner.opened != identity.1) {
+            if !self.live(directory, &identity) {
                 return None;
             }
             let conversation = self.conversations.get(&identity)?;
-            super::allows(directory, account, conversation).then(|| super::verified(directory, conversation))
+            self.reads(directory, account, &identity, conversation)
+                .then(|| (super::verified(directory, conversation), identity.1))
         });
         let conversation = found.next().ok_or("this account has no record of that conversation")?;
         if found.next().is_some() {

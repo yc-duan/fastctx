@@ -405,11 +405,9 @@ pub(crate) async fn described(hub: std::sync::Arc<crate::Hub>, keys: Vec<String>
             }
             _ => continue,
         };
-        let (Ok(account), Ok(opened)) =
-            (AccountName::try_from(name.as_str()), jiff::Timestamp::from_millisecond(opened))
-        else {
-            continue;
-        };
+        let Ok(account) = AccountName::try_from(name.as_str()) else { continue };
+        // The incarnation to the nanosecond, as its records are kept by.
+        let Some(opened) = incarnation(&hub, &account, opened) else { continue };
         let paths = if key == account_scope(&hub.assets, &account, opened) {
             super::told::caught_up(&hub, &account, opened).await;
             records_of(&hub, &account, opened, placed_account).await
@@ -421,14 +419,32 @@ pub(crate) async fn described(hub: std::sync::Arc<crate::Hub>, keys: Vec<String>
     }
 }
 
+/// The account `account` as opened at the millisecond `at`: the one in the
+/// directory, or a removed one a body's conversation keeps its records in.
+fn incarnation(hub: &crate::Hub, account: &AccountName, at: i64) -> Option<jiff::Timestamp> {
+    let store = hub.store();
+    match store.book.directory.account(account).filter(|found| found.opened.as_millisecond() == at) {
+        Some(found) => Some(found.opened),
+        None => hub.assets.bodies.opener_at(account, at),
+    }
+}
+
 /// Everything the hub's records hold that goes into the asset library,
 /// written once after the hub starts: only what the library lacks is.
 pub(crate) async fn everything(hub: std::sync::Arc<crate::Hub>) {
     let accounts: Vec<(AccountName, jiff::Timestamp)> =
         hub.store().book.directory.accounts.iter().map(|owner| (owner.name.clone(), owner.opened)).collect();
-    for (account, opened) in accounts {
-        let paths = records_of(&hub, &account, opened, |_| true).await;
-        write_all(&hub, account, opened, paths).await;
+    for (account, opened) in &accounts {
+        let paths = records_of(&hub, account, *opened, |_| true).await;
+        write_all(&hub, account.clone(), *opened, paths).await;
+    }
+    // A removed account's conversations in a body, and nothing else of it.
+    for ((opener, opened, resident), _) in hub.assets.bodies.conversations() {
+        if accounts.contains(&(opener.clone(), opened)) {
+            continue;
+        }
+        let paths = records_of(&hub, &opener, opened, |entry| of_conversation(entry, &resident)).await;
+        write_all(&hub, opener, opened, paths).await;
     }
     let towns: Vec<TownId> = hub.ledgers.lock().expect("never poisoned").towns.keys().cloned().collect();
     for town in towns {

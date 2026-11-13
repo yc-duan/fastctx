@@ -907,6 +907,15 @@ fn open(dir: &Path, log: Arc<log::Log>) -> anyhow::Result<Opened> {
     }
     store.witness = Some(assets.witness.clone());
     store.bodies = Some(assets.bodies.clone());
+    // A body's conversations keep their records with their opener's account
+    // removed: those incarnations are loaded too (§29, 2.6).
+    assets.bodies.load_conversations()?;
+    account_records.owners.lock().expect("never poisoned").attach(assets.bodies.clone());
+    for (opener, opened) in assets.bodies.conversation_openers() {
+        if store.book.directory.account(&opener).is_none_or(|account| account.opened != opened) {
+            account_records.load(&opener, opened)?;
+        }
+    }
     // Members a directory saved before they were kept with it are kept now.
     assets.bodies.settle(&store.book.directory)?;
     let mut ledgers = ledger::Ledgers::open(dir, &store.hub.id)?;

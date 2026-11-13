@@ -34,8 +34,8 @@ pub(crate) fn check(
             if !owners.registered_at(&directory, address) {
                 return legacy(author, submitted, now);
             }
-            let conversation = owners
-                .resolve(&directory, actor, address)
+            let (conversation, _) = owners
+                .resolve(directory.all, actor, address)
                 .map_err(|_| "the history author is not a registered conversation for this account")?;
             if &conversation.account != actor {
                 return Err("the history author's conversation belongs to a different account".into());
