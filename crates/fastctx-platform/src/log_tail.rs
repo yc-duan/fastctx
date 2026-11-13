@@ -116,6 +116,12 @@ pub fn piece_time(bytes: &[u8], before: i64) -> i64 {
     first_time(bytes).unwrap_or(before).max(0)
 }
 
+/// The time the last line of `bytes` that begins with one begins with: how
+/// late a piece reaches (N13).
+pub fn last_time(bytes: &[u8]) -> Option<i64> {
+    bytes.split(|&byte| byte == b'\n').rev().find_map(first_time)
+}
+
 /// The time an order key made as `{time:016x}/...` is ordered by.
 pub fn order_time(order: &[u8]) -> Option<i64> {
     let digits = std::str::from_utf8(order.get(..16)?).ok()?;

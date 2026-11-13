@@ -80,7 +80,7 @@ pub(super) async fn produce(
                         value: Some(body),
                         objects: Vec::new(),
                     }),
-                    None if whole && mine.remove(&id) => writes.push(Write::<ConversationTimer> {
+                    None if whole && mine.contains(&id) => writes.push(Write::<ConversationTimer> {
                         order: entry.item.clone(),
                         item: entry.item,
                         value: None,
@@ -93,10 +93,11 @@ pub(super) async fn produce(
         for (item, body) in wanted {
             writes.push(Write::<ConversationTimer> { order: item.clone(), item, value: Some(body), objects: Vec::new() });
         }
+        // What this machine writes is its own before it is written, and stays
+        // so until its tombstone is: stopped between the two, the next look
+        // still knows it as its own (PP15, N10).
         for write in &writes {
-            if write.value.is_some() {
-                mine.insert(String::from_utf8_lossy(&write.item).into_owned());
-            }
+            mine.insert(String::from_utf8_lossy(&write.item).into_owned());
         }
         if writes.is_empty() {
             // Ones found already as this table has them are this machine's
@@ -107,12 +108,20 @@ pub(super) async fn produce(
             return Ok(0);
         }
         let count = writes.len();
+        library.keep_checkpoint(&mine_name, serde_json::to_vec(&mine).map_err(failure)?).map_err(failure)?;
+        let gone: Vec<String> =
+            writes.iter().filter(|write| write.value.is_none()).map(|write| String::from_utf8_lossy(&write.item).into_owned()).collect();
         Writer::<ConversationTimer>::new(&library, &scope, ConversationTimer::STREAM)
             .map_err(failure)?
             .in_holding(holding)
             .write_all(writes, Vec::new(), false, signer)
             .map_err(failure)?;
-        library.keep_checkpoint(&mine_name, serde_json::to_vec(&mine).map_err(failure)?).map_err(failure)?;
+        if !gone.is_empty() {
+            gone.iter().for_each(|id| {
+                mine.remove(id);
+            });
+            library.keep_checkpoint(&mine_name, serde_json::to_vec(&mine).map_err(failure)?).map_err(failure)?;
+        }
         Ok::<_, Failure>(count)
     })
     .await

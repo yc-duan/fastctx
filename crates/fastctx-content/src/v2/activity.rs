@@ -54,7 +54,7 @@ impl Kind for AccountActivity {
             return Err("a deed is its body, or the one object its body says it is".into());
         }
         let deed = map.get("deed").and_then(serde_json::Value::as_str).ok_or("a deed says its key")?;
-        if deed.as_bytes() != after.record.item.as_slice() {
+        if super::names::item_of(deed) != after.record.item {
             return Err("a deed is named by its key".into());
         }
         Ok(())

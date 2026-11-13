@@ -201,8 +201,20 @@ pub(crate) fn readable(directory: &Indexed<'_>, machine: &MachineName, scope: &S
     readable_known(directory, machine, scope).unwrap_or(false)
 }
 
+/// Whether `scope` is the log of the body `machine` is now: its own, which
+/// it writes and holds whoever is logged in there — none, on a machine its
+/// owner manages (PP10, N08).
+fn own_log(directory: &Indexed<'_>, machine: &MachineName, scope: &Scope) -> bool {
+    matches!(&scope.descriptor.readers, Readers::Body { body, .. }
+        if scope.descriptor.scope.ends_with("/log")
+            && super::bodies::body_of(directory.all, machine).as_deref() == Some(body.as_str()))
+}
+
 /// As `readable`, an error where it cannot be told now.
 fn readable_known(directory: &Indexed<'_>, machine: &MachineName, scope: &Scope) -> std::io::Result<bool> {
+    if own_log(directory, machine, scope) {
+        return Ok(true);
+    }
     let descriptor = &scope.descriptor;
     for account in principal(directory, machine) {
         if reads_known(directory, &account, &descriptor.readers, &descriptor.born, scope.bodies.as_deref())? {
@@ -265,6 +277,9 @@ pub(crate) fn may_hold_known(directory: &Indexed<'_>, machine: &MachineName, sco
         return Ok(false);
     }
     let descriptor = &scope.descriptor;
+    if own_log(directory, machine, scope) {
+        return Ok(true);
+    }
     for class in &descriptor.classes {
         match class.holders {
             Holders::Readers => return Ok(true),
@@ -294,6 +309,7 @@ pub(crate) fn holds(directory: &Indexed<'_>, machine: &MachineName, scope: &Scop
     }
     match class.holders {
         Holders::Readers => readable(directory, machine, scope),
+        Holders::Logged if own_log(directory, machine, scope) => true,
         Holders::Logged => directory.member(machine).is_some_and(|member| {
             member.logins.iter().any(|account| reads(directory, account, &descriptor.readers, &descriptor.born, scope.bodies.as_deref()))
         }),
@@ -440,6 +456,12 @@ pub(crate) fn describe(
         }
         return Err(format!("the scope {key} is described otherwise"));
     }
+    // A project's ledger names where its machines are, which not every
+    // reader of the project may know: no new one is described until its
+    // entries are kept apart by machine (M09, N17).
+    if matches!(readers, Readers::Project { .. }) {
+        return Err("a project's ledger is not described yet: its entries are to be kept apart by machine first".into());
+    }
     let principal = principal(directory, machine);
     let born = identities(directory, &readers)?;
     if let Readers::Conversation { openers, .. } = &readers
@@ -454,12 +476,18 @@ pub(crate) fn describe(
         if super::bodies::body_of(directory.all, machine).as_deref() != Some(body.as_str()) {
             return Err("a body's scope is described by the machine that is that body".into());
         }
-        if !principal.contains(opener) {
+        // Its log, opened by its owner, though none is logged in there (a
+        // machine its owner manages, PP10, N08).
+        let owner = directory.member(machine).and_then(|member| member.home.clone());
+        let own_log = key.ends_with("/log") && owner.as_ref() == Some(opener);
+        if !own_log && !principal.contains(opener) {
             return Err("a body's opener is an account this machine acts for".into());
         }
         assets.bodies.known(directory.all, body, directory.canonical(machine)).map_err(|error| error.to_string())?;
     }
-    if !principal.iter().any(|account| reads(directory, account, &readers, &born, bodies.as_deref())) {
+    let own_log = matches!(&readers, Readers::Body { body, .. }
+        if key.ends_with("/log") && super::bodies::body_of(directory.all, machine).as_deref() == Some(body.as_str()));
+    if !own_log && !principal.iter().any(|account| reads(directory, account, &readers, &born, bodies.as_deref())) {
         return Err("none of this machine's accounts reads that scope".into());
     }
     let owner = owner_of(directory, &readers)?;

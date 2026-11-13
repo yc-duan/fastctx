@@ -195,8 +195,10 @@ fn own_log(node: &Arc<Node>, scope: &str) -> Result<(), String> {
         time = log_tail::piece_time(&piece.bytes, time);
         let order = format!("{time:016x}/{}/{:016x}", piece.file, piece.offset).into_bytes();
         let lease = library.put(&mut piece.bytes.as_slice(), "machine-log", LEASE).map_err(error)?;
+        // How late its last line is, which says when it is old (N13).
+        let last = log_tail::last_time(&piece.bytes).unwrap_or(time).max(time);
         let body = serde_json::to_vec(
-            &serde_json::json!({ "file": piece.file, "offset": piece.offset, "length": piece.bytes.len() }),
+            &serde_json::json!({ "file": piece.file, "offset": piece.offset, "length": piece.bytes.len(), "last": last }),
         )
         .map_err(|error| error.to_string())?;
         writes.push(Write { item, order, value: Some(body), objects: vec![lease.object] });
@@ -300,32 +302,31 @@ fn prune(node: &Arc<Node>) -> Result<(), String> {
         } else {
             continue;
         };
-        // The pieces whose first line is older than a week, in the order
-        // their time leads: the frames that set them go (M14).
+        // The pieces whose last line is older than a week, in the order they
+        // were written, up to the first that is not: what goes is a prefix
+        // of the stream, and none of it is of the week (M14, PP11, N13).
         let cutoff = jiff::Timestamp::now().as_millisecond() - KEPT_MS;
+        let Some(at) = library.view_revision(&scope, stream).map_err(error)? else { continue };
+        let mut from = at & !((1u64 << 40) - 1);
         let mut through: Option<u64> = None;
-        let mut after = None;
-        for _ in 0..8 {
-            let page = library.page(&scope, stream, after.clone(), 500).map_err(error)?;
-            let full = page.len() == 500;
-            let mut older = 0;
-            for entry in &page {
-                let at = std::str::from_utf8(&entry.order)
+        'pieces: for _ in 0..8 {
+            let Some(read) = library.view_changes(&scope, stream, from, 500, u32::MAX).map_err(error)? else { break };
+            for change in &read.changes {
+                let fastctx_content::v2::ViewChange::Is(entry) = change else { continue };
+                let last = serde_json::from_slice::<serde_json::Value>(&entry.body)
                     .ok()
-                    .and_then(|order| order.split('/').next())
-                    .and_then(|hex| i64::from_str_radix(hex, 16).ok())
-                    .unwrap_or(0);
-                if at >= cutoff {
-                    break;
+                    .and_then(|body| body.get("last").and_then(serde_json::Value::as_i64))
+                    .or_else(|| log_tail::order_time(&entry.order))
+                    .unwrap_or(i64::MAX);
+                if last >= cutoff {
+                    break 'pieces;
                 }
-                through = Some(through.map_or(entry.revision, |through| through.max(entry.revision)));
-                older += 1;
+                through = Some(entry.revision);
             }
-            let Some(last) = page.last() else { break };
-            if !full || older < page.len() {
+            if !read.more {
                 break;
             }
-            after = Some((last.order.clone(), last.item.clone()));
+            from = read.through;
         }
         let Some(through) = through else { continue };
         let own = library.orderer(&scope, stream).map_err(error)?.is_some_and(|orderer| orderer == device);

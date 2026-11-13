@@ -1569,21 +1569,22 @@ pub fn new_id(prefix: &str) -> NoticeId {
 ///
 /// Words typed here are named by this machine's own key; words from another
 /// machine by its key in the directory of the network they came through,
-/// `via` — never another network's machine of the same name (OO02).
+/// `via` — never another network's machine of the same name (OO02), nor
+/// this machine though it was once called so (PP02).
 pub(crate) fn talk_id(
     node: &Node,
     via: Option<&fastctx_types::access::HubId>,
     typed_on: &fastctx_types::MachineName,
     id: &str,
 ) -> NoticeId {
-    let key = if node.is_me(typed_on) {
-        node.assets.as_ref().map(|assets| PublicKey::from_bytes(assets.device()).to_string())
-    } else {
-        via.and_then(|hub| node.link_of(hub)).and_then(|link| {
+    let key = match via {
+        Some(hub) => node.link_of(hub).and_then(|link| {
             let view = link.view();
             let directory = &view.directory;
             directory.member(directory.canonical(typed_on)).map(|member| member.key.to_string())
-        })
+        }),
+        None if node.is_me(typed_on) => node.assets.as_ref().map(|assets| PublicKey::from_bytes(assets.device()).to_string()),
+        None => None,
     };
     match key {
         Some(key) => fixed_id("talk", &[&key, id]),

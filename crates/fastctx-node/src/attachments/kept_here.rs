@@ -35,6 +35,15 @@ pub(crate) async fn original(node: &Arc<Node>, file: &UploadFile) -> Option<Pass
         if library.size(&hash).ok()?? != size {
             return None;
         }
+        // Only as one logged in here reads it: a conversation held here as
+        // such refers to it now. Bytes still on the disk after the scope was
+        // let go, or kept for another's, are read by no one (N12).
+        let readable = library.held_scopes().ok()?.iter().any(|scope| {
+            crate::timeline::copy::read_here(scope) && library.refers(&scope.key, &hash).unwrap_or(false)
+        });
+        if !readable {
+            return None;
+        }
         fastctx_platform::disk::create_dir_all(&folder).ok()?;
         let name: String = hash.iter().map(|byte| format!("{byte:02x}")).collect();
         let path = folder.join(format!("{name}-{}", std::process::id() as u64 ^ jiff::Timestamp::now().as_nanosecond() as u64));
@@ -52,6 +61,15 @@ pub(crate) async fn original(node: &Arc<Node>, file: &UploadFile) -> Option<Pass
         Some(passing)
     })
     .await
+}
+
+/// What a stop left of originals written out to read: none is read any
+/// more as the node starts (PP21).
+pub(crate) fn clear_left(node: &Node) {
+    let folder = node.world.path().join("passing");
+    if fastctx_platform::disk::metadata(&folder).is_ok() {
+        let _ = fastctx_platform::disk::remove_dir_all(&folder);
+    }
 }
 
 fn hash_of(sha256: &str) -> Option<[u8; 32]> {

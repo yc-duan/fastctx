@@ -50,6 +50,16 @@ pub(crate) fn placed_here(node: &Node, resident: &ResidentId) {
 /// An attachment kept: its slot, its receipt and its original when here.
 type Found = (String, Attachment, Option<PathBuf>);
 
+/// Whether an original is at `path`: not there is no; one that cannot be
+/// looked at is an error, tried again later, never taken as none (N11).
+fn present(path: &std::path::Path) -> std::io::Result<bool> {
+    match fastctx_platform::disk::metadata(path) {
+        Ok(metadata) => Ok(metadata.is_file()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error),
+    }
+}
+
 fn kept(room: &fastctx_types::layout::ConversationDir) -> std::io::Result<(Vec<Found>, bool)> {
     let directory = room.attachments();
     let mut found = Vec::new();
@@ -92,7 +102,9 @@ fn kept(room: &fastctx_types::layout::ConversationDir) -> std::io::Result<(Vec<F
                     path.file_name().and_then(|name| name.to_str()).is_some_and(|name| name.starts_with("content."))
                 })
                 .or(named)
-                .filter(|path| fastctx_platform::disk::is_file(path))
+                .map(|path| present(&path).map(|here| here.then_some(path)))
+                .transpose()?
+                .flatten()
         };
         found.push((slot, attachment, original));
     }
@@ -104,7 +116,8 @@ fn kept(room: &fastctx_types::layout::ConversationDir) -> std::io::Result<(Vec<F
         if known.contains(&slot) || found.iter().any(|(id, _, _)| *id == slot) {
             continue;
         }
-        let original = Some(PathBuf::from(&attachment.path)).filter(|path| fastctx_platform::disk::is_file(path));
+        let path = PathBuf::from(&attachment.path);
+        let original = present(&path)?.then_some(path);
         found.push((slot, attachment, original));
     }
     found.sort_by(|a, b| a.0.cmp(&b.0));

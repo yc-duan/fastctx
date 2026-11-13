@@ -1001,6 +1001,7 @@ pub async fn run_prepared(
         // conversation to be ready itself. What is started with recovered
         // work below names its own kinds then.
         timeline::register(&node);
+        attachments::kept_here::clear_left(&node);
         job_assets::start(&node);
         assets::logs::start(&node);
         assets::activity::start(&node);

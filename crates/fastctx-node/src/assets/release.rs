@@ -104,6 +104,13 @@ pub(crate) fn export(world: &WorldDir, directory: &Path, conversation: &str, to:
     for object in package.streams.iter().flat_map(|released| &released.objects) {
         copy_out(&library, &object.0, &folder)?;
     }
+    // What this machine was adopting goes with the earlier export (AQ02),
+    // before the new package is there: stopped between the two, it still
+    // orders the stream itself, as it did (N06).
+    match fastctx_platform::disk::remove_file(directory.join(ADOPTED)) {
+        Err(error) if error.kind() != io::ErrorKind::NotFound => return Err(error),
+        _ => {}
+    }
     let bytes = serde_json::to_vec_pretty(&package).map_err(io::Error::other)?;
     fastctx_platform::publish(&path, &bytes, fastctx_platform::Permissions::Private)?;
     let named: std::collections::BTreeSet<String> =
@@ -115,11 +122,7 @@ pub(crate) fn export(world: &WorldDir, directory: &Path, conversation: &str, to:
             }
         }
     }
-    // What this machine was adopting goes with the earlier export (AQ02).
-    match fastctx_platform::disk::remove_file(directory.join(ADOPTED)) {
-        Err(error) if error.kind() != io::ErrorKind::NotFound => Err(error),
-        _ => Ok(Some(path)),
-    }
+    Ok(Some(path))
 }
 
 /// The device key of the machine `to` — by its name or one it had — as

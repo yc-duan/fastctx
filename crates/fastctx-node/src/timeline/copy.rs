@@ -66,6 +66,28 @@ pub(crate) fn read_here(scope: &fastctx_content::v2::HeldScope) -> bool {
         })
 }
 
+/// The record of the job `job`, as a copy here read by one logged in here
+/// holds it: what is known of a command run for a conversation whose
+/// machine is away (§28.33). Job ids are unique on their machine alone:
+/// two copies holding one of that id, and none is told.
+pub(crate) fn job(node: &Node, job: &fastctx_types::JobId) -> Option<fastctx_types::run::JobRecord> {
+    let library = &node.assets.as_ref()?.library;
+    let mut found = None;
+    for scope in library.held_scopes().ok()? {
+        if !read_here(&scope) {
+            continue;
+        }
+        let Ok(Some(entry)) = library.item(&scope.key, fastctx_content::v2::JobFacts::STREAM, job.as_str().as_bytes()) else {
+            continue;
+        };
+        let Ok(record) = serde_json::from_slice::<fastctx_types::run::JobRecord>(&entry.body) else { continue };
+        if found.replace(record).is_some() {
+            return None;
+        }
+    }
+    found
+}
+
 /// Where a reader asks to read on from, when it does.
 pub(super) fn after(request: &TimelineAsk) -> Option<u64> {
     match request {

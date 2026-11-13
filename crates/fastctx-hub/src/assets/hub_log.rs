@@ -88,8 +88,10 @@ fn look(assets: &Assets, path: &Path) -> Result<(), String> {
         time = log_tail::piece_time(&piece.bytes, time);
         let order = format!("{time:016x}/{}/{:016x}", piece.file, piece.offset).into_bytes();
         let lease = library.put(&mut piece.bytes.as_slice(), "hub-log", LEASE).map_err(error)?;
+        // How late its last line is, which says when it is old (N13).
+        let last = log_tail::last_time(&piece.bytes).unwrap_or(time).max(time);
         let body = serde_json::to_vec(
-            &serde_json::json!({ "file": piece.file, "offset": piece.offset, "length": piece.bytes.len() }),
+            &serde_json::json!({ "file": piece.file, "offset": piece.offset, "length": piece.bytes.len(), "last": last }),
         )
         .map_err(|error| error.to_string())?;
         records.push(KindRecord {

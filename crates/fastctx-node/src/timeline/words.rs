@@ -94,6 +94,10 @@ fn digest_of(notice: &Notice) -> Result<[u8; 32], Failure> {
         match value {
             serde_json::Value::Object(map) => {
                 map.remove("machine");
+                // The machine words with files attached came from (PP04).
+                if map.contains_key("delivery") && map.contains_key("attachments") {
+                    map.remove("from");
+                }
                 map.values_mut().for_each(unnamed);
             }
             serde_json::Value::Array(items) => items.iter_mut().for_each(unnamed),
@@ -150,6 +154,12 @@ fn held_body(library: &Library, entry: &Entry) -> Option<Body> {
         delivery,
         why: value.get("why").and_then(serde_json::Value::as_str).map(str::to_string),
     })
+}
+
+/// Where words kept as an object stand, as their record says, though the
+/// object is not here.
+fn kept_state(body: &[u8]) -> Option<String> {
+    serde_json::from_slice::<serde_json::Value>(body).ok()?.get("state")?.as_str().map(str::to_string)
 }
 
 /// What became of writing words.
@@ -218,16 +228,16 @@ async fn keep(node: &Arc<Node>, to: &ResidentId, delivery: &Delivery) -> Result<
         return Err(Failure::new(fastctx_content::v2::OP_REUSED));
     }
     let Some((about, _)) = node.residents.about(to) else { return Ok(Wrote::Skipped) };
-    let Some(placed) = placed(node, &about)? else { return Ok(Wrote::Skipped) };
     // One at a time with the conversation's producers: where the words stand
     // is never written over on what was read before they were said again
-    // (OO03).
+    // (OO03); and where they go is chosen then, as a producer that went
+    // first left it (PP08).
     let _producing = super::tail::PRODUCING.hold(to).await;
+    let Some(placed) = placed(node, &about)? else { return Ok(Wrote::Skipped) };
     // Let go to another machine with its export: the inbox keeps them
-    // alone (J08).
-    if crate::assets::release::released_away(node.world.conversation(to).path(), &placed.scope, &kept.device()) {
-        return Ok(Wrote::Skipped);
-    }
+    // alone (J08), once what is held here of this number was looked at
+    // (PP03).
+    let released = crate::assets::release::released_away(node.world.conversation(to).path(), &placed.scope, &kept.device());
     // Come from another machine, its scope is begun here by the hub's
     // description alone (AG10), and nothing is written to it before every
     // stream of it was pulled here once: what orders each is known (MM02).
@@ -244,30 +254,30 @@ async fn keep(node: &Arc<Node>, to: &ResidentId, delivery: &Delivery) -> Result<
         if library.op_digest(&op.id)?.is_some_and(|digest| digest != op.digest) {
             return Err(refused());
         }
-        let holding = match library.holding(&scope)? {
-            Some(holding) => holding,
-            None if born_elsewhere => return Ok(Wrote::Skipped),
-            None => {
-                library.propose_on(&network, &scope, proposal)?;
-                let Some(holding) = library.holding(&scope)? else { return Ok(Wrote::Skipped) };
-                holding
-            }
-        };
-        if born_elsewhere && !(library.is_live(&scope)? && library.is_pulled(&scope)?) {
-            return Ok(Wrote::Skipped);
-        }
         // Held here already: crossed into the host, they go no further;
-        // still kept or let go, they go on.
+        // still kept or let go, they go on — let go to another machine or
+        // not (PP03).
         let ours = library.op_digest(&op.id)?.is_some();
         if let Some(entry) = library.item(&scope, ConversationWords::STREAM, &item)? {
             let held = held_body(&library, &entry);
-            let (state, why) = held.as_ref().map_or((String::new(), None), |held| (held.state.clone(), held.why.clone()));
-            // Kept elsewhere under this number as other words: refused too.
-            if !ours
-                && let Some(held) = &held
-                && digest_of(&held.delivery.notice).ok() != Some(op.digest)
-            {
-                return Err(refused());
+            let state = held.as_ref().map(|held| held.state.clone()).or_else(|| kept_state(&entry.body)).unwrap_or_default();
+            let why = held.as_ref().and_then(|held| held.why.clone());
+            if !ours {
+                match &held {
+                    // Kept elsewhere under this number as other words:
+                    // refused too.
+                    Some(held) if digest_of(&held.delivery.notice).ok() != Some(op.digest) => return Err(refused()),
+                    Some(_) => {}
+                    // What was kept under this number is not all here yet:
+                    // whether these are those words is not known, and they
+                    // are not taken for new ones (PP01, N05).
+                    None => {
+                        return Ok(Wrote::Uncertain(
+                            "words were kept under this id that are not all here yet: whether these are they is not known"
+                                .into(),
+                        ));
+                    }
+                }
             }
             match state.as_str() {
                 "delivering" | "delivered" => return Ok(Wrote::Crossed),
@@ -288,6 +298,21 @@ async fn keep(node: &Arc<Node>, to: &ResidentId, delivery: &Delivery) -> Result<
                 _ => {}
             }
         }
+        if released {
+            return Ok(Wrote::Skipped);
+        }
+        let holding = match library.holding(&scope)? {
+            Some(holding) => holding,
+            None if born_elsewhere => return Ok(Wrote::Skipped),
+            None => {
+                library.propose_on(&network, &scope, proposal)?;
+                let Some(holding) = library.holding(&scope)? else { return Ok(Wrote::Skipped) };
+                holding
+            }
+        };
+        if born_elsewhere && !(library.is_live(&scope)? && library.is_pulled(&scope)?) {
+            return Ok(Wrote::Skipped);
+        }
         if library.orderer(&scope, ConversationWords::STREAM)?.is_some_and(|orderer| orderer != device) {
             return Ok(Wrote::Wanted);
         }
@@ -303,6 +328,10 @@ async fn keep(node: &Arc<Node>, to: &ResidentId, delivery: &Delivery) -> Result<
     .map_err(failure)?;
     if matches!(wrote, Wrote::Wanted) {
         crate::assets::takeover::want(node, &placed.hub, &placed.scope, ConversationWords::STREAM);
+    }
+    // Kept again: when they went missing before counts no more (PP05).
+    if matches!(wrote, Wrote::Written) {
+        MISSING.lock().expect("missing words").remove(delivery.id.as_str());
     }
     Ok(wrote)
 }

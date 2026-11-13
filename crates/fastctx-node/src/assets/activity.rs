@@ -261,7 +261,9 @@ fn deeds(node: &Arc<Node>, hub: &HubId, home: Option<&AccountName>, waits: bool,
         }
         deed.body["touched"] = serde_json::json!(touched.get(&deed.key).cloned().unwrap_or_default());
         let body = serde_json::to_vec(&deed.body).map_err(|error| error.to_string())?;
-        let item = deed.key.clone().into_bytes();
+        // A key longer than an item's: named by its digest, the whole key in
+        // the body (PP13, N09).
+        let item = fastctx_content::v2::item_of(&deed.key);
         use sha2::Digest as _;
         let digest: [u8; 32] = sha2::Sha256::digest(&body).into();
         if library.item(&scope, stream, &item).map_err(error)?.is_some_and(|entry| match entry.objects.first() {
@@ -329,7 +331,7 @@ fn usage(node: &Arc<Node>, hub: &HubId, home: Option<&AccountName>, waits: bool,
     }
     let error = |error: fastctx_content::Error| error.to_string();
     let (mut budget, mut anew) = (USAGE_BYTES, false);
-    for (file, path) in files {
+    'files: for (file, path) in files {
         if budget == 0 {
             break;
         }
@@ -402,7 +404,13 @@ fn usage(node: &Arc<Node>, hub: &HubId, home: Option<&AccountName>, waits: bool,
                 waiting = true;
                 continue;
             };
-            anew |= held_anew(&mut at, &scope, holding);
+            // Held anew since the look began: nothing is written on from
+            // where the earlier holding stood; the next look begins at each
+            // file's start (PP12).
+            if held_anew(&mut at, &scope, holding) {
+                anew = true;
+                break 'files;
+            }
             if library.item(&scope, stream, &item).map_err(error)?.is_some() {
                 continue;
             }

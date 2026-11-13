@@ -21,6 +21,10 @@ use fastctx_types::access::HubId;
 use fastctx_types::assets::{Received, Reply, Request};
 use std::sync::Arc;
 
+/// The scopes being adopted that looked done, by how many looks running.
+static QUIET: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<String, u32>>> =
+    std::sync::LazyLock::new(Default::default);
+
 /// How often the hub may ask again for the objects of one frame.
 const OBJECT_ROUNDS: usize = 3;
 
@@ -106,7 +110,22 @@ pub(super) async fn run(
     // since — and none of them is another device's (OO08).
     let (scope_text, pulled) = (scope.to_string(), &assets.library);
     let whole = blocking(pulled, move |library| library.is_pulled(&scope_text)).await?;
-    if theirs.is_empty() && whole {
+    // And so in two looks running, each over the streams as the hub listed
+    // them just then: a stream the device it was taken from began as it let
+    // the others go is seen by the second (PP06).
+    let settled = {
+        let mut quiet = QUIET.lock().expect("quiet adoptings");
+        if theirs.is_empty() && whole {
+            let looks = quiet.entry(scope.to_string()).or_insert(0);
+            *looks += 1;
+            *looks >= 2
+        } else {
+            quiet.remove(scope);
+            false
+        }
+    };
+    if settled {
+        QUIET.lock().expect("quiet adoptings").remove(scope);
         assets.adopting.lock().expect("adopting").remove(scope);
         super::release::adopted(&directory);
     } else if assets.adopting.lock().expect("adopting").contains(scope) {

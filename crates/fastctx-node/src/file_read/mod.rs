@@ -93,11 +93,8 @@ pub(crate) fn attachment_for(
                 // read from it, that machine offline or not (§28.27).
                 if !node.is_here(&machine.clone().into())
                     && let fastctx_types::attachments::AttachmentSource::Upload(receipt) = &attachment
-                    && let Some(passing) = crate::attachments::kept_here::original(&node, &receipt.file).await
+                    && let Some(read) = from_library(&node, receipt, range.clone(), &sender).await
                 {
-                    let request = ReadFileRequest { path: crate::world::native(passing.path()), range };
-                    let read = local::read_attachment(node.machine(), request, None, None, None, &sender).await;
-                    drop(passing);
                     return Ok(read);
                 }
                 if !node.is_here(&machine.clone().into()) {
@@ -118,13 +115,50 @@ pub(crate) fn attachment_for(
                     }
                     return Err(refused.expect("speakers names at least one account"));
                 }
-                let file = crate::attachment_files::resolve(&node, attachment, cancel.0.clone()).await?;
+                // Its own copy here gone, an upload's original is read from
+                // the asset library here all the same (PP20).
+                let upload = match &attachment {
+                    fastctx_types::attachments::AttachmentSource::Upload(receipt) => Some(receipt.clone()),
+                    _ => None,
+                };
+                let file = match crate::attachment_files::resolve(&node, attachment, cancel.0.clone()).await {
+                    Ok(file) => file,
+                    Err(failure) => match &upload {
+                        Some(receipt) => match from_library(&node, receipt, range.clone(), &sender).await {
+                            Some(read) => return Ok(read),
+                            None => return Err(failure),
+                        },
+                        None => return Err(failure),
+                    },
+                };
                 let request = ReadFileRequest { path: { let path = file.path.clone(); fastctx_platform::task::blocking(move || crate::world::native(&path)).await }, range };
                 Ok(local::read_attachment(node.machine(), request, Some(file.description.clone()), Some(file.snapshot.clone()), file.version.clone(), &sender).await)
             } => { let _ = sender.send(result.map(Part::Finished)).await; }
         }
     });
     receiver
+}
+
+/// An upload's original read from the asset library here, if it holds it
+/// for one logged in here: told as the original it is (PP18), under a
+/// version its bytes make, so a reading broken off goes on (PP19).
+async fn from_library(
+    node: &Arc<Node>,
+    receipt: &fastctx_types::attachments::Attachment,
+    range: FileRange,
+    sender: &Sender,
+) -> Option<FileReadResult> {
+    let passing = crate::attachments::kept_here::original(node, &receipt.file).await?;
+    let description = fastctx_types::attachments::AttachmentFile {
+        name: receipt.file.name.clone(),
+        media_type: receipt.file.media_type.clone(),
+        source: fastctx_types::attachments::AttachmentFileSource::Original,
+    };
+    let request = ReadFileRequest { path: crate::world::native(passing.path()), range };
+    let version = Some(format!("sha256:{}", receipt.file.sha256));
+    let read = local::read_attachment(node.machine(), request, Some(description), None, version, sender).await;
+    drop(passing);
+    Some(read)
 }
 
 pub(super) use ipc::serve as serve_local;
