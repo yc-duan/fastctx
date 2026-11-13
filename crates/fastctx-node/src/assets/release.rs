@@ -54,11 +54,14 @@ pub(crate) struct Released {
     pub objects: Vec<fastctx_types::assets::Bytes>,
 }
 
-/// Takes away what an earlier export left beside the conversation.
+/// Takes away what an earlier export left beside the conversation: its
+/// package, and an adopting not done, which was this machine's (AQ02).
 pub(crate) fn clear(directory: &Path) -> io::Result<()> {
-    match fastctx_platform::disk::remove_file(directory.join(FILE)) {
-        Err(error) if error.kind() != io::ErrorKind::NotFound => return Err(error),
-        _ => {}
+    for file in [FILE, ADOPTED] {
+        match fastctx_platform::disk::remove_file(directory.join(file)) {
+            Err(error) if error.kind() != io::ErrorKind::NotFound => return Err(error),
+            _ => {}
+        }
     }
     match fastctx_platform::disk::remove_dir_all(directory.join(OBJECTS)) {
         Err(error) if error.kind() != io::ErrorKind::NotFound => Err(error),
@@ -70,12 +73,17 @@ pub(crate) fn clear(directory: &Path) -> io::Result<()> {
 /// `to`, beside it in `world`; none when this machine orders none of them.
 /// The node is stopped.
 pub(crate) fn export(world: &WorldDir, directory: &Path, conversation: &str, to: &str) -> io::Result<Option<PathBuf>> {
-    clear(directory)?;
     let key = crate::world::key(world)?;
     let library = super::Assets::open_stopped(world)?;
-    let Some((hub, scope)) = scope_of(&library, conversation)? else { return Ok(None) };
+    let Some((hub, scope)) = scope_of(&library, conversation)? else {
+        clear(directory)?;
+        return Ok(None);
+    };
+    // Made whole before what an earlier export left goes: one that fails
+    // leaves that one as it was (K06).
     let to_key = member_key(world, &hub, to)?;
     let package = package(&library, &key, &hub, &scope, to, to_key)?;
+    clear(directory)?;
     if package.streams.is_empty() {
         return Ok(None);
     }
@@ -215,25 +223,30 @@ pub(crate) fn carried(directory: &Path, hub: &str, scope: &str, stream: &str, me
 /// when it starts (LL09).
 pub(crate) const ADOPTED: &str = "streams-adopted.json";
 
-/// What adopting a conversation keeps beside it.
+/// What adopting a conversation keeps beside it: on which hub, which scope,
+/// and the device key of the machine whose account adopted it there —
+/// carried to another machine, it is that one's no more (AQ02).
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct Adopting {
     hub: String,
     scope: String,
+    #[serde(default)]
+    by: String,
 }
 
-/// Keeps that `scope` of `hub` is adopted here.
-pub(crate) fn adopt(directory: &Path, hub: &str, scope: &str) -> io::Result<()> {
-    let bytes = serde_json::to_vec(&Adopting { hub: hub.to_string(), scope: scope.to_string() }).map_err(io::Error::other)?;
+/// Keeps that `scope` of `hub` is adopted on this machine, `me`.
+pub(crate) fn adopt(directory: &Path, hub: &str, scope: &str, me: &[u8; 32]) -> io::Result<()> {
+    let adopting = Adopting { hub: hub.to_string(), scope: scope.to_string(), by: hex(me) };
+    let bytes = serde_json::to_vec(&adopting).map_err(io::Error::other)?;
     fastctx_platform::publish(&directory.join(ADOPTED), &bytes, fastctx_platform::Permissions::Private)
 }
 
-/// Whether `scope` of `hub` is being adopted here.
-pub(crate) fn adopting(directory: &Path, hub: &str, scope: &str) -> bool {
+/// Whether `scope` of `hub` is being adopted on this machine, `me`.
+pub(crate) fn adopting(directory: &Path, hub: &str, scope: &str, me: &[u8; 32]) -> bool {
     fastctx_platform::disk::read(directory.join(ADOPTED))
         .ok()
         .and_then(|bytes| serde_json::from_slice::<Adopting>(&bytes).ok())
-        .is_some_and(|adopting| adopting.hub == hub && adopting.scope == scope)
+        .is_some_and(|adopting| adopting.hub == hub && adopting.scope == scope && adopting.by == hex(me))
 }
 
 /// Adopting is over: each stream taken over, or the conversation gone.
@@ -250,7 +263,7 @@ pub(crate) fn released_away(directory: &Path, scope: &str, me: &[u8; 32]) -> boo
     let adopted = fastctx_platform::disk::read(directory.join(ADOPTED))
         .ok()
         .and_then(|bytes| serde_json::from_slice::<Adopting>(&bytes).ok())
-        .is_some_and(|adopting| adopting.scope == scope);
+        .is_some_and(|adopting| adopting.scope == scope && adopting.by == hex(me));
     !adopted
         && fastctx_platform::disk::read(directory.join(FILE))
             .ok()

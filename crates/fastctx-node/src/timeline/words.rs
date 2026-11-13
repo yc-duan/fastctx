@@ -26,8 +26,12 @@ use std::sync::Arc;
 const OPEN: u8 = 0;
 const SETTLED: u8 = 1;
 
-/// The most words on their way followed at once.
-const OPEN_AT_ONCE: usize = 512;
+/// The most words on their way read in one page.
+const OPEN_AT_ONCE: usize = 500;
+
+/// How long after they were said words nowhere in the inbox are taken as
+/// let go.
+const GONE_AFTER: std::time::Duration = std::time::Duration::from_secs(10 * 60);
 
 fn failure(error: impl std::fmt::Display) -> Failure {
     Failure::new(error.to_string())
@@ -35,7 +39,7 @@ fn failure(error: impl std::fmt::Display) -> Failure {
 
 /// An item of words as its record holds it.
 #[derive(Serialize, Deserialize)]
-struct Said {
+struct Body {
     state: String,
     delivery: Delivery,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -78,7 +82,7 @@ fn op_of(delivery: &Delivery) -> Result<Op, Failure> {
 }
 
 fn body(state: &str, delivery: &Delivery, why: Option<String>) -> Result<Vec<u8>, Failure> {
-    serde_json::to_vec(&Said { state: state.into(), delivery: delivery.clone(), why }).map_err(failure)
+    serde_json::to_vec(&Body { state: state.into(), delivery: delivery.clone(), why }).map_err(failure)
 }
 
 /// What became of writing words.
@@ -88,32 +92,56 @@ enum Wrote {
     /// the job takes them up later.
     Skipped,
     Wanted,
+    /// Held here already — taken from the machine they were said to before,
+    /// or kept here before — as having crossed into the host (MM01).
+    Crossed,
+}
+
+/// What keeping the user's words in the asset library says of handing them
+/// on.
+pub(crate) enum Said {
+    /// Kept, or kept by the inbox alone: they go on to the host.
+    Go,
+    /// They crossed into the host already, here or where the conversation
+    /// lived before: they are not handed over again.
+    Crossed,
 }
 
 /// Keeps the user's words `delivery` for `to` in the asset library, with
-/// their operation, before the inbox keeps them. Said again under the same
-/// operation, nothing is written again. What goes wrong is told and leaves
-/// the inbox to keep them alone, as before (§28.14).
-pub(crate) async fn said(node: &Arc<Node>, to: &ResidentId, delivery: &Delivery) {
+/// their operation, before the inbox keeps them (§28.14). Said again under
+/// the same operation, nothing is written again; under the same number with
+/// other words, they are refused (AQ13, MM04); held as having crossed into
+/// the host already, they are not handed over again (MM01). A write that
+/// fails refuses them: what is kept is kept here first (K01, MM05).
+pub(crate) async fn said(node: &Arc<Node>, to: &ResidentId, delivery: &Delivery) -> Result<Said, Failure> {
     if !is_words(delivery) {
-        return;
+        return Ok(Said::Go);
     }
-    if let Err(error) = keep(node, to, delivery).await {
-        node.log.line(format_args!("{to}'s words {} in the asset library: {}", delivery.id, error.message));
+    match keep(node, to, delivery).await {
+        Ok(Wrote::Crossed) => Ok(Said::Crossed),
+        Ok(_) => Ok(Said::Go),
+        Err(failure) if failure.message.contains(fastctx_content::v2::OP_REUSED) => {
+            Err(Failure::refused(format!("{}: those words were sent before as other words under that id", delivery.id)))
+        }
+        Err(failure) => {
+            node.log.line(format_args!("{to}'s words {} in the asset library: {}", delivery.id, failure.message));
+            Err(Failure::new(format!("keeping these words: {}", failure.message)))
+        }
     }
 }
 
-async fn keep(node: &Arc<Node>, to: &ResidentId, delivery: &Delivery) -> Result<(), Failure> {
-    let Some(kept) = node.assets.as_ref() else { return Ok(()) };
-    let Some((about, _)) = node.residents.about(to) else { return Ok(()) };
-    let Some(placed) = placed(node, &about)? else { return Ok(()) };
+async fn keep(node: &Arc<Node>, to: &ResidentId, delivery: &Delivery) -> Result<Wrote, Failure> {
+    let Some(kept) = node.assets.as_ref() else { return Ok(Wrote::Skipped) };
+    let Some((about, _)) = node.residents.about(to) else { return Ok(Wrote::Skipped) };
+    let Some(placed) = placed(node, &about)? else { return Ok(Wrote::Skipped) };
     // Let go to another machine with its export: the inbox keeps them
     // alone (J08).
     if crate::assets::release::released_away(node.world.conversation(to).path(), &placed.scope, &kept.device()) {
-        return Ok(());
+        return Ok(Wrote::Skipped);
     }
     // Come from another machine, its scope is begun here by the hub's
-    // description alone (AG10).
+    // description alone (AG10), and nothing is written to it before every
+    // stream of it was pulled here once: what orders each is known (MM02).
     let born_elsewhere = node.residents.birth_machine(to).is_some_and(|born| !node.is_me(&born));
     let (library, signer, device) = (kept.library.clone(), kept.signer(), kept.device());
     let (scope, network) = (placed.scope.clone(), placed.network.clone());
@@ -130,8 +158,19 @@ async fn keep(node: &Arc<Node>, to: &ResidentId, delivery: &Delivery) -> Result<
                 holding
             }
         };
-        if born_elsewhere && !library.is_live(&scope)? {
+        if born_elsewhere && !(library.is_live(&scope)? && library.is_pulled(&scope)?) {
             return Ok(Wrote::Skipped);
+        }
+        // Held here already: crossed into the host, they go no further;
+        // still kept or let go, they go on.
+        if let Some(entry) = library.item(&scope, ConversationWords::STREAM, &item)? {
+            let state = serde_json::from_slice::<serde_json::Value>(&entry.body)
+                .ok()
+                .and_then(|body| body.get("state").and_then(serde_json::Value::as_str).map(str::to_string))
+                .unwrap_or_default();
+            if matches!(state.as_str(), "delivering" | "delivered" | "uncertain") {
+                return Ok(Wrote::Crossed);
+            }
         }
         if library.orderer(&scope, ConversationWords::STREAM)?.is_some_and(|orderer| orderer != device) {
             return Ok(Wrote::Wanted);
@@ -145,7 +184,7 @@ async fn keep(node: &Arc<Node>, to: &ResidentId, delivery: &Delivery) -> Result<
     if matches!(wrote, Wrote::Wanted) {
         crate::assets::takeover::want(node, &placed.hub, &placed.scope, ConversationWords::STREAM);
     }
-    Ok(())
+    Ok(wrote)
 }
 
 /// Brings where `resident`'s words stand in the asset library to what its
@@ -170,11 +209,24 @@ pub(super) async fn produce(
     let (asking, looked, holds) = (library.clone(), scope.clone(), held.clone());
     let (holding, live, orderer, open) = fastctx_platform::task::blocking(move || {
         let _held = holds;
-        let page = asking.page(&looked, ConversationWords::STREAM, None, OPEN_AT_ONCE)?;
-        let open: Vec<Entry> = page.into_iter().take_while(|entry| entry.order.first() == Some(&OPEN)).collect();
+        // Every item still on its way, a page at a time up to the first
+        // settled one (MM06).
+        let mut open: Vec<Entry> = Vec::new();
+        let mut after = None;
+        loop {
+            let page = asking.page(&looked, ConversationWords::STREAM, after.clone(), OPEN_AT_ONCE)?;
+            let full = page.len() == OPEN_AT_ONCE;
+            let before = open.len();
+            open.extend(page.into_iter().take_while(|entry| entry.order.first() == Some(&OPEN)));
+            let Some(last) = open.last() else { break };
+            if !full || open.len() - before < OPEN_AT_ONCE {
+                break;
+            }
+            after = Some((last.order.clone(), last.item.clone()));
+        }
         Ok::<_, fastctx_content::Error>((
             asking.holding(&looked)?,
-            asking.is_live(&looked)?,
+            asking.is_live(&looked)? && asking.is_pulled(&looked)?,
             asking.orderer(&looked, ConversationWords::STREAM)?,
             open,
         ))
@@ -182,7 +234,8 @@ pub(super) async fn produce(
     .await
     .map_err(failure)?;
     // Not before the scope is held here; for one from elsewhere, not before
-    // the hub described it (AG10).
+    // the hub described it and every stream of it was pulled here once
+    // (AG10, MM02).
     let Some(holding) = holding else { return Ok(0) };
     let born_elsewhere = node.residents.birth_machine(resident).is_some_and(|born| !node.is_me(&born));
     if born_elsewhere && !live {
@@ -203,13 +256,20 @@ pub(super) async fn produce(
     .map_err(failure)?;
     let mut writes = Vec::new();
     let mut ways = Vec::new();
+    let now = jiff::Timestamp::now();
     for (entry, stood) in open.iter().zip(stood) {
-        let said: Said = serde_json::from_slice(&entry.body).map_err(failure)?;
+        let said: Body = serde_json::from_slice(&entry.body).map_err(failure)?;
+        // Nothing of them in the inbox yet is not their being let go: kept
+        // here just now, the inbox keeps them next (MM03, K02). Only long
+        // after, they are taken as let go.
+        if stood == Stood::Gone && now.duration_since(said.delivery.at).unsigned_abs() < GONE_AFTER {
+            continue;
+        }
         let (state, settled) = state_of(stood);
         if state == said.state {
             continue;
         }
-        let value = (stood != Stood::Gone).then(|| body(state, &said.delivery, None)).transpose()?;
+        let value = Some(body(state, &said.delivery, None)?);
         let order = order(settled, said.delivery.at);
         writes.push(Write::<ConversationWords> { item: entry.item.clone(), order, value, objects: Vec::new() });
         match stood {

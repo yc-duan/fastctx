@@ -127,6 +127,34 @@ pub(crate) async fn set_model(
     Ok(())
 }
 
+/// Takes a selection as a host takes it: what is given replaces what was
+/// chosen, what is not keeps it (MM13).
+pub(crate) async fn set_choice(
+    node: &Arc<Node>,
+    id: &ResidentId,
+    model: Option<String>,
+    effort: Option<String>,
+) -> Result<(), Failure> {
+    if model.is_none() && effort.is_none() {
+        return Ok(());
+    }
+    let (working, resident) = (node.clone(), id.clone());
+    fastctx_platform::task::spawn_blocking(move || {
+        let mut options = read(&working, &resident)?;
+        if model.is_some() {
+            options.model = model;
+        }
+        if effort.is_some() {
+            options.reasoning_effort = effort;
+        }
+        store(&working.world.conversation(&resident), encoded(&options)?, false).map_err(failed)
+    })
+    .await
+    .map_err(failed)??;
+    crate::timeline::described(node, id);
+    Ok(())
+}
+
 pub fn configure(config: &mut serde_json::Value, options: SessionOptions) {
     if let Some(model) = options.model {
         config["model"] = model.into();

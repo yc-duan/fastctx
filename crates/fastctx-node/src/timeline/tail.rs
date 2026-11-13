@@ -351,7 +351,11 @@ pub(super) async fn produce(node: &Arc<Node>, resident: &ResidentId, whole: bool
     let born_elsewhere = node.residents.birth_machine(resident).is_some_and(|born| !node.is_me(&born));
     if born_elsewhere {
         let (asking, scope) = (library.clone(), placed.scope.clone());
-        let live = fastctx_platform::task::blocking(move || asking.is_live(&scope)).await.map_err(failure)?;
+        // Described by the hub and every stream of it pulled here once: what
+        // orders each is known (MM02).
+        let live = fastctx_platform::task::blocking(move || Ok::<_, fastctx_content::Error>(asking.is_live(&scope)? && asking.is_pulled(&scope)?))
+            .await
+            .map_err(failure)?;
         if !live && waited_for_scope(resident) {
             crate::assets::wake(node, &placed.hub);
             return Ok(Produced { handing: true, ..Produced::default() });

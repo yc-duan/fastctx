@@ -37,7 +37,7 @@ pub(super) fn own(
 /// latest epoch known of it names, frames of it here or not (a successor
 /// known takes it over at once); else the one whose frame is its last; none
 /// for a stream with neither.
-fn orderer(db: &fastctx_storage::rusqlite::Connection, stream: i64, holding: i64) -> fastctx_storage::Result<Option<[u8; 32]>> {
+pub(super) fn orderer(db: &fastctx_storage::rusqlite::Connection, stream: i64, holding: i64) -> fastctx_storage::Result<Option<[u8; 32]>> {
     let described: Option<Vec<u8>> = db
         .prepare_cached(
             "SELECT descriptor FROM (SELECT epoch, descriptor FROM epochs WHERE stream = ?1

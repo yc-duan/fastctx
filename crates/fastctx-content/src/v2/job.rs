@@ -88,34 +88,49 @@ impl Kind for JobOutput {
         Ok(body.to_vec())
     }
 
-    /// A piece is its part's bytes from an offset, the one object exactly
-    /// as long as it says; the end refers to none. Once written, a piece is
-    /// not written again otherwise.
+    /// A piece is its part's bytes from an offset, named by its job, part
+    /// and offset, the one object exactly as long as it says; the end, named
+    /// by its job, says each part's length and refers to none. Once written,
+    /// neither is written again otherwise, nor let go (AQ09, AQ12).
     fn authorize(_actor: &Actor<'_>, before: Option<&Entry>, after: &KindRecord) -> Result<(), String> {
-        let State::Is { body, objects } = &after.record.state else { return Ok(()) };
-        let map = object(body)?;
-        map.get("job").and_then(serde_json::Value::as_str).ok_or("a piece of output names its job")?;
-        if map.get("end").and_then(serde_json::Value::as_bool) == Some(true) {
-            return if objects.is_empty() {
+        let State::Is { body, objects } = &after.record.state else {
+            return Err("a job's output is not let go".into());
+        };
+        if let Some(before) = before {
+            return if before.body == *body && before.objects == *objects {
                 Ok(())
             } else {
+                Err("a piece of output, once written, stays as it is".into())
+            };
+        }
+        let map = object(body)?;
+        let job = map.get("job").and_then(serde_json::Value::as_str).ok_or("a piece of output names its job")?;
+        let item = String::from_utf8_lossy(&after.record.item);
+        if map.get("end").and_then(serde_json::Value::as_bool) == Some(true) {
+            let lengths = OUTPUT_PARTS.iter().all(|part| map.get(*part).and_then(serde_json::Value::as_u64).is_some());
+            return if !objects.is_empty() {
                 Err("the end of a job's output refers to no object".into())
+            } else if !lengths || item != format!("{job}/end") {
+                Err("the end of a job's output names its job and says each part's length".into())
+            } else {
+                Ok(())
             };
         }
         let part = map.get("part").and_then(serde_json::Value::as_str).unwrap_or_default();
         if !OUTPUT_PARTS.contains(&part) {
             return Err("a piece of output is of the output or the stderr".into());
         }
+        let offset =
+            map.get("offset").and_then(serde_json::Value::as_u64).ok_or("a piece of output says where it begins")?;
+        if item != format!("{job}/{part}/{offset:016x}") {
+            return Err("a piece of output is named by its job, part and offset".into());
+        }
         let length =
             map.get("length").and_then(serde_json::Value::as_u64).ok_or("a piece of output says how long it is")?;
         match objects.as_slice() {
-            [bytes] if bytes.size == length => {}
-            _ => return Err("a piece of output is its one object of the length it says".into()),
+            [bytes] if bytes.size == length => Ok(()),
+            _ => Err("a piece of output is its one object of the length it says".into()),
         }
-        if before.is_some_and(|before| before.body != *body || before.objects != *objects) {
-            return Err("a piece of output, once written, stays as it is".into());
-        }
-        Ok(())
     }
 
     fn subscription(scope: &str, _stream: &str) -> String {

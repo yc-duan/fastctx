@@ -127,6 +127,10 @@ pub(crate) struct Assets {
     /// Streams another device orders that came here with no release for
     /// this machine, told of once (`takeover`).
     pub(crate) unreleased: Mutex<std::collections::BTreeSet<(String, String)>>,
+    /// Scopes a stream of which this machine began ordering as it took the
+    /// stream's descriptors, the takeover's answer lost: what wanted it is
+    /// made again by the pass (MM14).
+    pub(crate) taken_over: Mutex<Vec<String>>,
     /// Scopes the account that opened them adopted here (`takeover`).
     pub(crate) adopting: Mutex<std::collections::BTreeSet<String>>,
 }
@@ -201,6 +205,7 @@ impl Assets {
             reported: Mutex::new(HashMap::new()),
             more: Mutex::new(std::collections::BTreeSet::new()),
             unreleased: Mutex::new(std::collections::BTreeSet::new()),
+            taken_over: Mutex::new(Vec::new()),
             adopting: Mutex::new(std::collections::BTreeSet::new()),
         })
     }

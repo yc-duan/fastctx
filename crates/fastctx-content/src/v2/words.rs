@@ -10,7 +10,7 @@ use super::{Entry, KindRecord};
 use crate::State;
 
 /// Where the user's words can stand.
-pub const WORDS_STATES: [&str; 5] = ["kept", "delivering", "delivered", "uncertain", "refused"];
+pub const WORDS_STATES: [&str; 6] = ["kept", "delivering", "delivered", "uncertain", "refused", "gone"];
 
 /// The longest name an item of words has.
 const NAME_BYTES: usize = 256;

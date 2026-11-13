@@ -40,7 +40,8 @@ pub(crate) fn want(node: &Arc<Node>, hub: &HubId, scope: &str, stream: &str) {
     }
     let directory = assets.conversation_dir(resident_of(scope));
     let wish = (scope.to_string(), stream.to_string());
-    let adopted = assets.adopting.lock().expect("adopting").contains(scope) || super::release::adopting(&directory, hub.as_str(), scope);
+    let adopted =
+        assets.adopting.lock().expect("adopting").contains(scope) || super::release::adopting(&directory, hub.as_str(), scope, &assets.device());
     if !adopted && super::release::carried(&directory, hub.as_str(), scope, stream, &assets.device()).is_none() {
         // Said once: the producer asks again and again while it waits.
         if assets.unreleased.lock().expect("unreleased").insert(wish) {
@@ -85,8 +86,19 @@ pub(super) async fn run(
         taken |= take_over(assets, hub, link, key, scope, &stream).await?;
         assets.takeovers.lock().expect("takeovers").remove(&(scope.to_string(), stream));
     }
-    // Every stream asked for is done with: adopting it is over.
-    if !assets.takeovers.lock().expect("takeovers").iter().any(|(of, _)| of == scope) {
+    // Adopting is over once every stream of the scope is ordered here —
+    // those begun later by the device it was taken from among them (MM09,
+    // MM15).
+    let (scope_text, device) = (scope.to_string(), assets.device());
+    let all_here = blocking(&assets.library, move |library| {
+        let own: std::collections::BTreeSet<String> = library.own_streams(&scope_text, &device)?.into_iter().collect();
+        Ok(library
+            .streams(&scope_text)?
+            .into_iter()
+            .all(|(stream, _)| own.contains(&stream) || fastctx_content::v2::HUB_ORDERED.contains(&stream.as_str())))
+    })
+    .await?;
+    if all_here {
         assets.adopting.lock().expect("adopting").remove(scope);
         super::release::adopted(&directory);
     }
@@ -123,7 +135,8 @@ async fn take_over(assets: &Assets, hub: &HubId, link: &Arc<Link>, key: &PublicK
     let directory = assets.conversation_dir(resident_of(scope));
     // Adopted by the account's word, a package beside it — broken, it may
     // be — is not used (LL08).
-    let adopted = assets.adopting.lock().expect("adopting").contains(scope) || super::release::adopting(&directory, hub.as_str(), scope);
+    let adopted =
+        assets.adopting.lock().expect("adopting").contains(scope) || super::release::adopting(&directory, hub.as_str(), scope, &device);
     let carried = if adopted { None } else { super::release::carried(&directory, hub.as_str(), scope, stream, &device) };
     if carried.is_none() && !adopted {
         return Ok(false);
@@ -194,6 +207,11 @@ async fn take_over(assets: &Assets, hub: &HubId, link: &Arc<Link>, key: &PublicK
         adopt: carried.is_none(),
     };
     let pinning = Pinning { assets, hub, key: *key };
+    // Gone from here while what came with it went on to the hub: not asked
+    // (AQ03, MM11).
+    if !fastctx_platform::disk::is_file(directory.join("about")) {
+        return Ok(false);
+    }
     match ask(assets, link, request).await? {
         Reply::Epoch { descriptor } => {
             let signed = Signed { fact: descriptor.fact.0, signature: descriptor.word.0 };
@@ -217,15 +235,24 @@ async fn take_over(assets: &Assets, hub: &HubId, link: &Arc<Link>, key: &PublicK
             }
         }
         Reply::HandedOn { epochs } => {
-            for fact in epochs {
+            let last = epochs.len().saturating_sub(1);
+            let mut opened = false;
+            for (index, fact) in epochs.into_iter().enumerate() {
                 let signed = Signed { fact: fact.fact.0, signature: fact.word.0 };
                 if !pinning.verify(&signed.fact, &signed.signature) {
                     return Err("an epoch's descriptor is not the hub's".into());
                 }
                 let scope_text = scope.to_string();
+                // Handed back to this device since: its own last epoch is
+                // opened as a takeover opens it (AQ01).
+                if index == last && EpochFact::decode(&signed.fact).is_ok_and(|fact| fact.device == device) {
+                    opened |= blocking(library, move |library| library.take_over(&scope_text, signed, &super::session::Trusted)).await?
+                        == Taken::Opened;
+                    continue;
+                }
                 blocking(library, move |library| library.accept_epoch(&scope_text, signed, &super::session::Trusted)).await?;
             }
-            Ok(false)
+            Ok(opened)
         }
         _ => Err("the hub did not hand the stream over".into()),
     }
@@ -241,14 +268,26 @@ pub(crate) fn adopt(node: &Arc<Node>, resident: &fastctx_types::ResidentId) -> R
     };
     // Kept beside the conversation first: a node that stops goes on with it
     // when it starts (LL09).
-    super::release::adopt(&assets.conversation_dir(resident.as_str()), hub.as_str(), &scope).map_err(|error| error.to_string())?;
+    super::release::adopt(&assets.conversation_dir(resident.as_str()), hub.as_str(), &scope, &assets.device()).map_err(|error| error.to_string())?;
     assets.adopting.lock().expect("adopting").insert(scope.clone());
     assets.unreleased.lock().expect("unreleased").retain(|(of, _)| *of != scope);
-    // Every stream of a conversation's scope: its timeline, its metadata
-    // and the user's words.
-    want(node, &hub, &scope, <fastctx_content::v2::Timeline as fastctx_content::v2::Kind>::STREAM);
-    want(node, &hub, &scope, <fastctx_content::v2::ConversationMeta as fastctx_content::v2::Kind>::STREAM);
-    want(node, &hub, &scope, <fastctx_content::v2::ConversationWords as fastctx_content::v2::Kind>::STREAM);
+    // Every stream of the conversation's scope another device orders now —
+    // its timeline, metadata, words, attachments, jobs — and those its
+    // producers ask for later (MM15).
+    let (library, scope_text, device) = (assets.library.clone(), scope.clone(), assets.device());
+    let theirs: Vec<String> = (|| -> Result<Vec<String>, fastctx_content::Error> {
+        let own: std::collections::BTreeSet<String> = library.own_streams(&scope_text, &device)?.into_iter().collect();
+        Ok(library
+            .streams(&scope_text)?
+            .into_iter()
+            .map(|(stream, _)| stream)
+            .filter(|stream| !own.contains(stream) && !fastctx_content::v2::HUB_ORDERED.contains(&stream.as_str()))
+            .collect())
+    })()
+    .map_err(|error| error.to_string())?;
+    for stream in theirs.iter().map(String::as_str).chain([<fastctx_content::v2::Timeline as fastctx_content::v2::Kind>::STREAM]) {
+        want(node, &hub, &scope, stream);
+    }
     Ok(())
 }
 

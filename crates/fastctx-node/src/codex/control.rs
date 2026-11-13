@@ -220,12 +220,9 @@ pub async fn control(node: &Arc<Node>, resident: &ResidentId, mut control: Contr
         Control::Model { model, effort } => {
             codex.select_model(&thread, model.clone(), effort.clone()).await.map_err(Failure::new)?;
             // What the conversation starts again with, as a Claude one's,
-            // which its metadata says (LL12).
-            if let Some(model) = model
-                && let Err(failure) = crate::session_options::set_model(node, resident, model, effort).await
-            {
-                node.log.line(format_args!("keeping the model {resident} starts again with: {}", failure.message));
-            }
+            // which its metadata says: what is given replaces, what is not
+            // stays (LL12, MM13).
+            crate::session_options::set_choice(node, resident, model, effort).await?;
             done("Selection saved for the next turn started through the World. The running turn keeps its settings.")
         }
         Control::Rename { name } => {

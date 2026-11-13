@@ -8,18 +8,32 @@
 
 use super::Library;
 use super::scopes::held;
-use crate::error::invalid;
 use crate::Result;
+use crate::error::invalid;
 use fastctx_storage::Priority;
 use fastctx_storage::rusqlite::{Connection, OptionalExtension, params};
+
+/// The streams whose records are made again from their sources here: what
+/// of them is let go is written again once the stream is handed over. A
+/// true source's — the user's words, an attachment, a job's output — is
+/// never let go this way (AQ06).
+pub const REMADE: [&str; 2] = ["timeline", "meta"];
 
 /// Whether `stream`, ordered by `device` in `holding`, is in its first
 /// epoch, with nothing of it uploaded and no descriptor of the hub's for it
 /// here.
-fn never_taken(db: &Connection, scope: i64, holding: i64, stream: i64, device: &[u8; 32]) -> fastctx_storage::Result<bool> {
-    let epoch: i64 = db.prepare_cached("SELECT epoch FROM streams WHERE id = ?1")?.query_row([stream], |row| row.get(0))?;
-    let known: bool =
-        db.prepare_cached("SELECT EXISTS (SELECT 1 FROM known_epochs WHERE stream = ?1)")?.query_row([stream], |row| row.get(0))?;
+fn never_taken(
+    db: &Connection,
+    scope: i64,
+    holding: i64,
+    stream: i64,
+    device: &[u8; 32],
+) -> fastctx_storage::Result<bool> {
+    let epoch: i64 =
+        db.prepare_cached("SELECT epoch FROM streams WHERE id = ?1")?.query_row([stream], |row| row.get(0))?;
+    let known: bool = db
+        .prepare_cached("SELECT EXISTS (SELECT 1 FROM known_epochs WHERE stream = ?1)")?
+        .query_row([stream], |row| row.get(0))?;
     let uploaded: i64 = db
         .prepare_cached("SELECT uploaded FROM outbox WHERE stream = ?1")?
         .query_row([stream], |row| row.get(0))
@@ -38,7 +52,7 @@ impl Library {
             let Some((scope_id, _, Some(holding))) = held(db, &scope)? else { return Ok(Vec::new()) };
             let mut found = Vec::new();
             for (stream, name, next) in super::device::own(db, scope_id, holding, &device)? {
-                if next > 0 && never_taken(db, scope_id, holding, stream, &device)? {
+                if next > 0 && REMADE.contains(&name.as_str()) && never_taken(db, scope_id, holding, stream, &device)? {
                     found.push((name, next as u64));
                 }
             }
@@ -51,10 +65,22 @@ impl Library {
     /// transaction: the stream empty here, its frames and index rows gone,
     /// read anew. Whether it did: written to meanwhile so the hub took some,
     /// it is not.
-    pub fn discard_unaccepted(&self, scope: &str, stream: &str, device: &[u8; 32], checkpoint: Option<&str>) -> Result<bool> {
-        let (scope, stream, device, checkpoint) = (scope.to_string(), stream.to_string(), *device, checkpoint.map(str::to_string));
+    pub fn discard_unaccepted(
+        &self,
+        scope: &str,
+        stream: &str,
+        device: &[u8; 32],
+        checkpoint: Option<&str>,
+    ) -> Result<bool> {
+        if !REMADE.contains(&stream) {
+            return Ok(false);
+        }
+        let (scope, stream, device, checkpoint) =
+            (scope.to_string(), stream.to_string(), *device, checkpoint.map(str::to_string));
         let discarded = self.database().write_now_at(Priority::Normal, 4096, move |db| {
-            let Some((scope_id, _, Some(holding))) = held(db, &scope)? else { return Err(invalid("the scope is not held here")) };
+            let Some((scope_id, _, Some(holding))) = held(db, &scope)? else {
+                return Err(invalid("the scope is not held here"));
+            };
             let Some(stream_id) = db
                 .prepare_cached("SELECT id FROM streams WHERE scope = ?1 AND name = ?2")?
                 .query_row(params![scope_id, stream], |row| row.get::<_, i64>(0))

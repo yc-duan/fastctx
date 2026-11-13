@@ -37,6 +37,30 @@ impl Verifier for DeviceKeys {
     }
 }
 
+/// Who may open the first epoch of `stream` of a conversation's scope, the
+/// hub having none of it yet (AQ07): the device that orders the
+/// conversation's timeline — where it lives now — or, before anything of it
+/// is ordered, the machine it was born on. Another reader of the scope
+/// cannot take a new stream first. Other scopes are not gated here.
+fn first_epoch_gate(assets: &Assets, directory: &Indexed<'_>, kept: &Scope, scope: &str, stream: &str, key: &PublicKey) -> Result<(), String> {
+    let wire::Readers::Conversation { born_on, .. } = &kept.descriptor.readers else { return Ok(()) };
+    let library = scopes::library(assets, kept)?;
+    if library.last_epoch(scope, stream).map_err(|error| error.to_string())?.is_some() {
+        return Ok(());
+    }
+    let source = match library.last_epoch(scope, <fastctx_content::v2::Timeline as fastctx_content::v2::Kind>::STREAM).map_err(|error| error.to_string())? {
+        Some((_, orderer)) => orderer,
+        None => match born_on.as_ref().and_then(|machine| directory.all.member(machine)) {
+            Some(member) => *member.key.as_bytes(),
+            None => return Ok(()),
+        },
+    };
+    if source != *key.as_bytes() {
+        return Err(format!("{stream} of {scope} is begun by the machine the conversation lives on"));
+    }
+    Ok(())
+}
+
 /// The kinds the hub takes records of, each judged by its own rule (design
 /// §11); a record of a kind not registered is refused.
 pub(crate) fn kinds() -> Arc<fastctx_content::v2::Kinds> {
@@ -415,6 +439,10 @@ pub(crate) fn ask(
             // (design §28.17).
             if Header::decode(&frame.header.0).is_ok_and(|header| fastctx_content::v2::HUB_ORDERED.contains(&header.stream.as_str())) {
                 return Err("the hub orders that stream itself".into());
+            }
+            // A stream's first epoch is opened by its source alone (AQ07).
+            if let Ok(header) = Header::decode(&frame.header.0) {
+                first_epoch_gate(assets, directory, &kept, &scope, &header.stream, key)?;
             }
             // A body too large for the control connection was staged apart
             // under its ticket (§7.1), and stays there while the frame

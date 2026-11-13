@@ -40,21 +40,27 @@ pub(crate) struct Standing {
 /// Where each of `ids` stands, in their order; and the words `of_words`
 /// picks out of what is kept or in doubt that are not among `ids`, with
 /// where they stand.
-pub(crate) fn words(directory: &ConversationDir, ids: &[String], of_words: impl Fn(&Pending) -> bool) -> io::Result<Standing> {
+pub(crate) fn words(
+    directory: &ConversationDir,
+    ids: &[String],
+    of_words: impl Fn(&Pending) -> bool,
+) -> io::Result<Standing> {
     let asked = ids.to_vec();
     let mut stood: Vec<Stood> = read_rows(directory, move |rows| {
         let mut stood = Vec::with_capacity(asked.len());
         for id in &asked {
-            let found = if let Some(pending) = rows.get::<Pending>("pending-inputs", id)? {
-                if pending.state == PendingState::Waiting { Stood::Kept } else { Stood::Delivering }
-            } else if rows.get::<Pending>("uncertain-inputs", id)?.is_some() {
-                Stood::Uncertain
-            } else if rows.get::<Receipt>("delivery-receipts", id)?.is_some_and(|receipt| receipt != Receipt::Answered)
-            {
-                Stood::Delivered
-            } else {
-                Stood::Gone
-            };
+            // A receipt says they went in, whatever is kept beside it: an
+            // archived conversation keeps what waited (MM07).
+            let found =
+                if rows.get::<Receipt>("delivery-receipts", id)?.is_some_and(|receipt| receipt != Receipt::Answered) {
+                    Stood::Delivered
+                } else if let Some(pending) = rows.get::<Pending>("pending-inputs", id)? {
+                    if pending.state == PendingState::Waiting { Stood::Kept } else { Stood::Delivering }
+                } else if rows.get::<Pending>("uncertain-inputs", id)?.is_some() {
+                    Stood::Uncertain
+                } else {
+                    Stood::Gone
+                };
             stood.push(found);
         }
         Ok(stood)

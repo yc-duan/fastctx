@@ -105,6 +105,7 @@ impl Library {
         let bytes = sealed.iter().map(|frame| frame.body.len() + 256).sum::<usize>() + commit.records.len() * 64;
         let durable = commit.durable;
         let scope_key = commit.scope.clone();
+        let device = signer.device();
         let write = move |db: &Connection| -> fastctx_storage::Result<Committed> {
             let Some((scope, state, Some(holding))) = held(db, &commit.scope)? else {
                 return Err(invalid("the scope is not held here"));
@@ -116,6 +117,12 @@ impl Library {
                 return Err(invalid("the holding period the records were made in has ended"));
             }
             let (stream, epoch, next, mut head) = stream_of(db, scope, &commit.stream)?;
+            // A stream another device orders — handed on, or one this device
+            // never took over — takes no commit here, whatever a producer
+            // read before (MM12).
+            if super::device::orderer(db, stream, holding)?.is_some_and(|orderer| orderer != device) {
+                return Err(invalid("the stream is ordered by another device"));
+            }
             // An operation done before is answered as it was, before anything
             // is judged again: the item may have moved on since (§3).
             if let Some((op, _)) = &commit.op

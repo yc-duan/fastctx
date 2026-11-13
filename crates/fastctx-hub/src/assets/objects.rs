@@ -261,6 +261,11 @@ pub(crate) fn put(assets: &Assets, machine: &MachineName, key: &PublicKey, scope
     let object = local(object)?;
     let library = scopes::library(assets, &scope)?;
     let held = library.size(&object.hash).map_err(|error| error.to_string())?;
+    // A proof is of an object the hub holds at that length: asked of one it
+    // does not, nothing is sized by what the request says (AQ10).
+    if prove && held != Some(object.size) {
+        return Err("a proof is of an object the hub holds at that length".into());
+    }
     let missing = if prove {
         Some((0..chunks(object.size)).collect())
     } else if held == Some(object.size) {

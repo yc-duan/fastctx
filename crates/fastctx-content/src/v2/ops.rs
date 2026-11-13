@@ -16,6 +16,10 @@ use crate::Result;
 use fastctx_storage::Priority;
 use fastctx_storage::rusqlite::{Connection, OptionalExtension, params};
 
+/// What refusing an operation number used for another request says: told
+/// apart by those who answer the sender (§3).
+pub const OP_REUSED: &str = "that operation number was used for another request";
+
 /// A write's operation: its number, the digest of the request and its kind.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Op {
@@ -49,7 +53,7 @@ pub(super) fn seen(db: &Connection, op: &Op) -> fastctx_storage::Result<bool> {
         db.prepare_cached("SELECT digest FROM ops WHERE op = ?1")?.query_row([&op.id], |row| row.get(0)).optional()?;
     match digest {
         Some(digest) if digest == op.digest => Ok(true),
-        Some(_) => Err(invalid("that operation number was used for another request")),
+        Some(_) => Err(invalid(OP_REUSED)),
         None => Ok(false),
     }
 }

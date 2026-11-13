@@ -46,7 +46,7 @@ pub(super) async fn produce(
         let _held = holds;
         Ok::<_, fastctx_content::Error>((
             asking.holding(&looked)?,
-            asking.is_live(&looked)?,
+            asking.is_live(&looked)? && asking.is_pulled(&looked)?,
             asking.orderer(&looked, ConversationMeta::STREAM)?,
         ))
     })

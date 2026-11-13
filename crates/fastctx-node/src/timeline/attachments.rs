@@ -13,19 +13,21 @@ use fastctx_content::v2::{ConversationAttachment, Kind as _, LEASE, Write, Write
 use fastctx_types::ResidentId;
 use fastctx_types::attachments::Attachment;
 use fastctx_types::ipc::Failure;
-use std::collections::HashSet;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock, Mutex};
 
-/// The conversations whose attachments were looked at since this node
-/// began, with nothing placed since.
-static LOOKED: LazyLock<Mutex<HashSet<ResidentId>>> = LazyLock::new(Mutex::default);
+/// How many times an attachment was placed in each conversation since this
+/// node began.
+static PLACED: LazyLock<Mutex<HashMap<ResidentId, u64>>> = LazyLock::new(Mutex::default);
+
+/// The conversations whose attachments were looked at whole since this node
+/// began: as many placed as then, in which holding period. One placed
+/// meanwhile, or a period held anew, is looked at again (MM16, K15).
+static LOOKED: LazyLock<Mutex<HashMap<ResidentId, (u64, i64)>>> = LazyLock::new(Mutex::default);
 
 /// The most attachments one commit writes.
 const AT_ONCE: usize = 64;
-
-/// The files of an attachment's folder that are not its original.
-const BESIDE: [&str; 3] = ["receipt.json", "reference.json", "upload.part"];
 
 fn failure(error: impl std::fmt::Display) -> Failure {
     Failure::new(error.to_string())
@@ -33,11 +35,14 @@ fn failure(error: impl std::fmt::Display) -> Failure {
 
 /// An attachment was placed in `resident`'s directory: looked at again.
 pub(crate) fn placed_here(node: &Node, resident: &ResidentId) {
-    LOOKED.lock().expect("looked attachments").remove(resident);
+    *PLACED.lock().expect("placed attachments").entry(resident.clone()).or_default() += 1;
     super::tail::wanted(node, resident);
 }
 
-/// Each attachment folder of `directory` with its receipt.
+/// Each attachment folder of `directory` with its receipt — or the
+/// reference of one kept elsewhere (MM17) — and its original when kept
+/// here: the node keeps it as `content.<ext>`, or where its receipt says,
+/// never whatever else lies beside it (MM18).
 fn kept(directory: &Path) -> std::io::Result<Vec<(String, Attachment, Option<PathBuf>)>> {
     let mut found = Vec::new();
     let entries = match fastctx_platform::disk::read_dir(directory) {
@@ -49,13 +54,27 @@ fn kept(directory: &Path) -> std::io::Result<Vec<(String, Attachment, Option<Pat
         let entry = entry?;
         let folder = entry.path();
         let Some(slot) = folder.file_name().and_then(|name| name.to_str()).map(str::to_string) else { continue };
-        let Ok(bytes) = fastctx_platform::disk::read(folder.join("receipt.json")) else { continue };
+        let (bytes, referenced) = match fastctx_platform::disk::read(folder.join("receipt.json")) {
+            Ok(bytes) => (bytes, false),
+            Err(_) => match fastctx_platform::disk::read(folder.join("reference.json")) {
+                Ok(bytes) => (bytes, true),
+                Err(_) => continue,
+            },
+        };
         let Ok(attachment) = serde_json::from_slice::<Attachment>(&bytes) else { continue };
-        let original =
-            fastctx_platform::disk::read_dir(&folder)?.filter_map(Result::ok).map(|file| file.path()).find(|path| {
-                path.file_name().and_then(|name| name.to_str()).is_some_and(|name| !BESIDE.contains(&name))
-                    && fastctx_platform::disk::is_file(path)
-            });
+        let named = Path::new(&attachment.path).file_name().map(|name| folder.join(name));
+        let original = if referenced {
+            None
+        } else {
+            fastctx_platform::disk::read_dir(&folder)?
+                .filter_map(Result::ok)
+                .map(|file| file.path())
+                .find(|path| {
+                    path.file_name().and_then(|name| name.to_str()).is_some_and(|name| name.starts_with("content."))
+                })
+                .or(named)
+                .filter(|path| fastctx_platform::disk::is_file(path))
+        };
         found.push((slot, attachment, original));
     }
     found.sort_by(|a, b| a.0.cmp(&b.0));
@@ -69,9 +88,7 @@ pub(super) async fn produce(
     resident: &ResidentId,
     producing: &super::serial::Serial,
 ) -> Result<usize, Failure> {
-    if LOOKED.lock().expect("looked attachments").contains(resident) {
-        return Ok(0);
-    }
+    let placed_count = PLACED.lock().expect("placed attachments").get(resident).copied().unwrap_or(0);
     // Held by each piece of blocking work too (LL16).
     let held = producing.hold(resident).await;
     let Some(assets) = node.assets.as_ref() else { return Ok(0) };
@@ -87,7 +104,7 @@ pub(super) async fn produce(
         let _held = holds;
         Ok::<_, fastctx_content::Error>((
             asking.holding(&looked)?,
-            asking.is_live(&looked)?,
+            asking.is_live(&looked)? && asking.is_pulled(&looked)?,
             asking.orderer(&looked, ConversationAttachment::STREAM)?,
         ))
     })
@@ -96,6 +113,9 @@ pub(super) async fn produce(
     // Not before the scope is held here; for one from elsewhere, not before
     // the hub described it (AG10); ordered elsewhere, taken over first.
     let Some(holding) = holding else { return Ok(0) };
+    if LOOKED.lock().expect("looked attachments").get(resident) == Some(&(placed_count, holding)) {
+        return Ok(0);
+    }
     let born_elsewhere = node.residents.birth_machine(resident).is_some_and(|born| !node.is_me(&born));
     if born_elsewhere && !live {
         return Ok(0);
@@ -156,6 +176,6 @@ pub(super) async fn produce(
         Ok::<_, Failure>(written)
     })
     .await?;
-    LOOKED.lock().expect("looked attachments").insert(resident.clone());
+    LOOKED.lock().expect("looked attachments").insert(resident.clone(), (placed_count, holding));
     Ok(written)
 }

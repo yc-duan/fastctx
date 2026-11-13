@@ -241,6 +241,14 @@ async fn pass(node: &Arc<Node>, hub: &HubId, link: &Arc<Link>, network: &Network
     let waited = waiting_revision(link);
     let key = open(assets, hub, link, session).await?;
     let mut failed = describe(assets, hub, link, &key, network).await.err();
+    // What wanted a stream taken over as its descriptors came is made again
+    // (MM14).
+    let taken: Vec<String> = std::mem::take(&mut *assets.taken_over.lock().expect("taken over"));
+    for scope in taken {
+        if let Ok(resident) = fastctx_types::ResidentId::try_from(scope.rsplit('/').next().unwrap_or_default()) {
+            crate::timeline::described(node, &resident);
+        }
+    }
     // Shared whole on another network, this machine takes nothing of this
     // one: what it begins goes up, nothing comes down to its disk.
     let isolated = shared_elsewhere(node, hub);
@@ -685,9 +693,12 @@ async fn feed(
         return Err("the hub did not say what changed".into());
     };
     // The hub was put back since: its numbers start again, and so does this;
-    // what was taken in the generation before counts no more (LL02).
-    if stood.as_ref().is_some_and(|(was, _)| *was != generation) && after > 0 {
+    // what was taken in the generation before counts no more, from wherever
+    // it stood (LL02, MM08).
+    if stood.as_ref().is_some_and(|(was, _)| *was != generation) {
         super::standing::stood(assets, hub, owner);
+    }
+    if stood.as_ref().is_some_and(|(was, _)| *was != generation) && after > 0 {
         after = 0;
         let Reply::Changes { generation: now, streams: all, top: at, top_at: when, more: further, .. } =
             page(0, None, None).await?
@@ -1451,7 +1462,11 @@ async fn succession(assets: &Assets, hub: &HubId, link: &Arc<Link>, key: &Public
         // reaches where it begins; until then nothing of it is known here,
         // and the stream is followed as a replica's (AP03).
         if index == last && EpochFact::decode(&signed.fact).is_ok_and(|fact| fact.device == device) {
-            blocking(library, move |library| library.take_over(&scope_text, signed, &Trusted)).await?;
+            if blocking(library, move |library| library.take_over(&scope_text, signed, &Trusted)).await?
+                == fastctx_content::v2::Taken::Opened
+            {
+                assets.taken_over.lock().expect("taken over").push(scope.to_string());
+            }
             continue;
         }
         blocking(library, move |library| library.accept_epoch(&scope_text, signed, &Trusted)).await?;

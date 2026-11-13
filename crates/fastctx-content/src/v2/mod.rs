@@ -66,7 +66,7 @@ pub use job::{JobFacts, JobOutput, OUTPUT_PARTS};
 pub use meta::{ConversationMeta, META_ITEMS};
 pub use words::{ConversationWords, WORDS_STATES};
 pub use hub::{Authorizer, Drained, FrameKey, HubSigner, Received, Refused, Taking, applied_statement, parked_statement};
-pub use ops::{Delivery, Op};
+pub use ops::{Delivery, OP_REUSED, Op};
 pub use reads::{Entry, PAGE};
 pub use receipts::{Mark, Receipt, Report, Said};
 pub use rejected::Resubmit;

@@ -141,6 +141,19 @@ impl Library {
         })?)
     }
 
+    /// Whether every stream of `scope` was pulled whole in its holding period
+    /// here: what orders each is known.
+    pub fn is_pulled(&self, scope: &str) -> Result<bool> {
+        let scope = scope.to_string();
+        Ok(self.database().read_now(move |db| {
+            Ok(db
+                .prepare_cached("SELECT 1 FROM scopes WHERE key = ?1 AND holding IS NOT NULL AND pulled IS holding")?
+                .query_row([&scope], |_| Ok(()))
+                .optional()?
+                .is_some())
+        })?)
+    }
+
     /// Every stream of `scope` was pulled whole in its holding period
     /// `holding`; a later period is pulled whole again.
     pub fn pulled(&self, scope: &str, holding: i64) -> Result<()> {
