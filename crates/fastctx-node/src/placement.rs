@@ -239,7 +239,12 @@ pub(crate) async fn prepare_copy(
         }
         fastctx_types::placement::Resource::Directory => {}
         fastctx_types::placement::Resource::Files { key, files } => {
-            return artifacts::put(node, directory, key, files).await;
+            let placed = artifacts::put(node, directory, key, files).await;
+            // A folder placed: its conversation's evidence is written (§28.22).
+            if placed.is_ok() {
+                crate::timeline::described(node, &owner.resident);
+            }
+            return placed;
         }
     }
     Ok(fastctx_types::placement::Location { machine: node.machine(), path: crate::world::native(&directory) })

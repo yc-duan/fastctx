@@ -14,7 +14,9 @@ mod drill;
 mod identity;
 mod later;
 mod local;
+mod artifacts;
 mod attachments;
+mod beside;
 mod meta;
 pub(crate) mod words;
 pub(crate) use assets::{checkpoint_of, scope_of};
@@ -26,6 +28,7 @@ mod preview;
 pub(crate) mod reads;
 mod serial;
 mod tail;
+pub(crate) mod timers;
 
 use fastctx_content::StreamKey;
 use fastctx_jobs::{Job, Kind, Outcome, Taken};

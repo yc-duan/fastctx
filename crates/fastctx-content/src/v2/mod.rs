@@ -26,6 +26,7 @@ mod kind;
 mod layout;
 mod letgo;
 mod logs;
+mod artifact;
 mod attachment;
 mod meta;
 mod words;
@@ -41,6 +42,7 @@ mod schema;
 mod scopes;
 mod snapshot;
 mod stamps;
+mod timer;
 mod standing;
 mod succession;
 mod timeline;
@@ -58,7 +60,9 @@ pub use handover::{Cutoff, Signed, Successor};
 pub use heads::Head;
 pub use kind::{Actor, Deletion, Holding, Import, Kind, Kinds, Write, Writer};
 pub use timeline::{EVENT, OVERSIZED, Timeline};
+pub use artifact::ConversationArtifact;
 pub use attachment::ConversationAttachment;
+pub use timer::ConversationTimer;
 pub use document::{
     AccountNotice, AccountSettings, AccountSkill, ConversationGoal, ConversationHistory, ConversationPlan, ConversationSentinel,
     MachineAudit, ProjectLedger,

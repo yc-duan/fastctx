@@ -90,6 +90,7 @@ pub(crate) async fn call(node: &Arc<Node>, call: TimerCall) -> Result<Reply, Fai
                     })
                 })?;
                 let timer = store.replace_header(previous, owner, due, action, delivery).await.map_err(failure)?;
+                crate::timeline::described(node, &resident);
                 return Ok(timer.map_or(Reply::Done, |timer| Reply::Timers {
                     timers: vec![timer],
                     next: None,
@@ -97,6 +98,7 @@ pub(crate) async fn call(node: &Arc<Node>, call: TimerCall) -> Result<Reply, Fai
                 }));
             }
             let timer = store.set(id, owner, due, action, delivery).await.map_err(failure)?;
+            crate::timeline::described(node, &resident);
             Ok(Reply::Timers { timers: vec![timer], next: None, oversized: Vec::new() })
         }
         TimerCall::Cancel { id, handle } => {
@@ -115,6 +117,7 @@ pub(crate) async fn call(node: &Arc<Node>, call: TimerCall) -> Result<Reply, Fai
                     }
                 }
                 store.cancel_header(header).await.map_err(failure)?;
+                crate::timeline::described(node, &resident);
             }
             Ok(Reply::Done)
         }
@@ -176,6 +179,8 @@ pub(crate) fn start(node: &Arc<Node>) {
                 running.spawn(async move {
                     let _claim = Claimed(store.clone(), timer.clone());
                     let result = execute(&node, &store, &timer).await;
+                    // Fired or tried: its conversation's timers are written again.
+                    crate::timeline::timers::changed(&node, &timer.owner);
                     if let Err(error) = result {
                         if timer.error.as_deref() != Some(&error) {
                             node.log.line(format_args!("timer {}: {error}", timer.id));
