@@ -1630,6 +1630,9 @@ async fn pull_stream(
                     at = reached;
                     went = true;
                     super::standing::took(assets, hub, counted, bytes);
+                    if stream == <fastctx_content::v2::ConversationMeta as fastctx_content::v2::Kind>::STREAM {
+                        assets.metadata_moved.send_modify(|count| *count = count.wrapping_add(1));
+                    }
                 }
                 Imported::Already => {}
                 Imported::Gap { from, .. } => {

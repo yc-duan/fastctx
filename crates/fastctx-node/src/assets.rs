@@ -115,6 +115,11 @@ pub(crate) struct Assets {
     /// check or a giving back failed — looked at by themselves again until
     /// one does (HH03, HH06).
     pub(crate) relook: Mutex<std::collections::BTreeSet<String>>,
+    /// Counted up as a conversation's description, place, title or
+    /// archiving comes here from the hub: the World the interfaces are
+    /// shown is worked out again, a machine that is away listed from the
+    /// copies here as they fill in (plan 3-5, design §28.32).
+    pub(crate) metadata_moved: tokio::sync::watch::Sender<u64>,
     /// The hubs whose scopes' writes not yet uploaded were looked for on
     /// the disk since the node started (HH03).
     pub(crate) seeded: Mutex<std::collections::BTreeSet<HubId>>,
@@ -201,6 +206,7 @@ impl Assets {
             looked: Mutex::new(HashMap::new()),
             uploads: Mutex::new(std::collections::BTreeSet::new()),
             relook: Mutex::new(std::collections::BTreeSet::new()),
+            metadata_moved: tokio::sync::watch::channel(0).0,
             seeded: Mutex::new(std::collections::BTreeSet::new()),
             taken: Mutex::new(HashMap::new()),
             received: Mutex::new(standing::Received::default()),

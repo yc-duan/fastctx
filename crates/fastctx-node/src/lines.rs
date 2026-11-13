@@ -1,5 +1,6 @@
 //! User-only line sources, owned by live connections and the holding file.
 
+mod copied;
 mod projection;
 pub(crate) mod reading;
 
@@ -36,6 +37,9 @@ struct Source {
     _watcher: Mutex<fastctx_watch::Watcher>,
     cancelled: Arc<AtomicBool>,
     requests: Mutex<Vec<Weak<AtomicBool>>>,
+    /// A job's output written out from the copy here (`copied`), gone with
+    /// the source: last, so what reads it is let go first.
+    _copied: Option<crate::attachments::kept_here::Passing>,
 }
 struct State {
     index: Option<fastctx_hands::lines::Index>,
@@ -98,10 +102,39 @@ pub(crate) async fn open(
     decoding: Decoding,
 ) -> std::result::Result<(Reply, Lease), Failure> {
     if let Some(machine) = machine.filter(|machine| !node.is_here(machine)) {
+        // A job's output the copy here has whole, or what came of it while
+        // its machine is away, is read here (plan 3-5).
+        if let Decoding::Output { job } = &decoding
+            && let Some(copy) = copied::output(node, &machine.name, job, &path).await
+        {
+            let local = copy.path().to_string_lossy().into_owned();
+            return opened_here(node, from, Some((machine.name.clone(), path)), local, decoding, Some(copy)).await;
+        }
         let (link, account) = node.speaking(&Acting::Here, &machine, Purpose::Hands).await.map_err(failed)?;
         let (reply, lease) = fastctx_net::lines::open(link, machine.name, account, path, decoding).await?;
         return Ok((reply, Lease::Remote(lease)));
     }
+    opened_here(node, from, None, path, decoding, None).await
+}
+
+/// Whether the line source `source` of `from` was opened on this machine: a
+/// job's output read from the copy here goes on being read here, though the
+/// requests name the machine it ran on.
+fn held_here(node: &Node, from: &MachineName, source: &str) -> bool {
+    node.line_sources.0.lock().expect("line sources").contains_key(&(from.clone(), source.to_string()))
+}
+
+/// Opens the line source at `path` on this machine: a file of its own, or a
+/// job's output written out from the copy here (`copy`) for the machine it
+/// ran on, at the path it has there (`standing_for`).
+async fn opened_here(
+    node: &Arc<Node>,
+    from: MachineName,
+    standing_for: Option<(MachineName, String)>,
+    path: String,
+    decoding: Decoding,
+    copy: Option<crate::attachments::kept_here::Passing>,
+) -> std::result::Result<(Reply, Lease), Failure> {
     let initializing = crate::initializing::take().await?;
     let (decoding, expected, policy, annotation) = match decoding {
         Decoding::Immutable { content, policy, annotation, decoding } => {
@@ -120,8 +153,13 @@ pub(crate) async fn open(
     if !path.is_absolute() {
         return Err(failed("the text path must be absolute"));
     }
-    crate::replicas::sync::repair_paths(node, std::slice::from_ref(&path)).await.map_err(failed)?;
+    if copy.is_none() {
+        crate::replicas::sync::repair_paths(node, std::slice::from_ref(&path)).await.map_err(failed)?;
+    }
     let (job_record, notes_record) = match &decoding {
+        // Written out from the copy here: no record of the job on this
+        // machine, and the file grows no more.
+        Decoding::Output { .. } if copy.is_some() => (None, None),
         Decoding::Output { job } => {
             let found = crate::look::look_here(node, job.as_str()).await?.0;
             let Some(fastctx_types::town::Looked::Job { record, .. }) = found else {
@@ -225,6 +263,7 @@ pub(crate) async fn open(
         _watcher: Mutex::new(watcher),
         cancelled: Arc::new(AtomicBool::new(false)),
         requests: Mutex::new(Vec::new()),
+        _copied: copy,
     });
     let mut random = [0; 16];
     getrandom::fill(&mut random).map_err(failed)?;
@@ -237,13 +276,8 @@ pub(crate) async fn open(
     // another filesystem event to happen after the monitor starts.
     refresh(source.clone(), Some(initializing)).await?;
     let extent = source.state.lock().expect("line source").extent.clone();
-    Ok((
-        Reply {
-            machine: node.machine(),
-            result: Answer::Opened { source: id, path: path.to_string_lossy().into_owned(), extent },
-        },
-        lease,
-    ))
+    let (machine, path) = standing_for.unwrap_or_else(|| (node.machine(), path.to_string_lossy().into_owned()));
+    Ok((Reply { machine, result: Answer::Opened { source: id, path, extent } }, lease))
 }
 
 /// How often the output of a job still running is looked at again, beside its file's events: its
@@ -383,7 +417,16 @@ pub(crate) async fn call(
     machine: Option<Written>,
     request: Request,
 ) -> std::result::Result<Reply, Failure> {
-    if let Some(machine) = machine.filter(|machine| !node.is_here(machine)) {
+    let named = match &request {
+        Request::Read { source, .. }
+        | Request::Find { source, .. }
+        | Request::Changed { source, .. }
+        | Request::Close { source } => Some(source.as_str()),
+        Request::Open { .. } => None,
+    };
+    if let Some(machine) = machine.filter(|machine| !node.is_here(machine))
+        && !named.is_some_and(|source| held_here(node, &from, source))
+    {
         return match node
             .call_with_stream(
                 &Acting::Here,

@@ -13,6 +13,11 @@ use std::sync::Arc;
 pub(crate) struct Passing(PathBuf);
 
 impl Passing {
+    /// What is written out at `path`, gone as the value is dropped.
+    pub(crate) fn new(path: PathBuf) -> Self {
+        Self(path)
+    }
+
     pub(crate) fn path(&self) -> &Path {
         &self.0
     }

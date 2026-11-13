@@ -72,6 +72,8 @@ async fn publish(node: Arc<Node>) {
     let mut residents = node.residents.changes();
     let mut shown = node.shown.subscribe();
     let mut jobs = node.jobs.subscribe();
+    // The copies here filling in: a machine away is listed from them.
+    let mut copies = node.assets.as_ref().map(|assets| assets.metadata_moved.subscribe());
     let told = &node.world_shown.told;
     // What could not be read is read again in a moment: the interfaces go
     // on showing what they were told, and the log says why, once a reason.
@@ -93,6 +95,7 @@ async fn publish(node: Arc<Node>) {
                         return;
                     }
                 }
+                () = copies_moved(&mut copies) => {}
             }
             if told.receiver_count() == 0 {
                 told.send_replace(None);
@@ -107,6 +110,9 @@ async fn publish(node: Arc<Node>) {
             }
             residents.borrow_and_update();
             shown.borrow_and_update();
+            if let Some(copies) = copies.as_mut() {
+                copies.borrow_and_update();
+            }
             while jobs.try_recv().is_ok() {}
             // Once shown, link and permission changes must not wait for a new afoot snapshot.
             let held = if told.borrow().is_some() || ready(&node) {
@@ -156,11 +162,22 @@ async fn publish(node: Arc<Node>) {
                 }
                 stale = true;
             }
+            () = copies_moved(&mut copies) => stale = true,
         }
         // Something changed since it was told: it is worked out anew first.
         if stale {
             node.world_shown.fresh.store(false, Ordering::Release);
         }
+    }
+}
+
+/// Waits until a conversation's metadata came into the copies here; never,
+/// where this machine keeps no assets or the library is gone.
+async fn copies_moved(copies: &mut Option<tokio::sync::watch::Receiver<u64>>) {
+    let Some(receiver) = copies.as_mut() else { return std::future::pending().await };
+    if receiver.changed().await.is_err() {
+        *copies = None;
+        std::future::pending::<()>().await;
     }
 }
 
