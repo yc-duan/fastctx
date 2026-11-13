@@ -120,7 +120,7 @@ impl Library {
             // A stream another device orders — handed on, or one this device
             // never took over — takes no commit here, whatever a producer
             // read before (MM12).
-            if super::device::orderer(db, stream, holding)?.is_some_and(|orderer| orderer != device) {
+            if super::device::described_orderer(db, stream)?.is_some_and(|orderer| orderer != device) {
                 return Err(invalid("the stream is ordered by another device"));
             }
             // An operation done before is answered as it was, before anything

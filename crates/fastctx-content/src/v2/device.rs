@@ -38,6 +38,19 @@ pub(super) fn own(
 /// known takes it over at once); else the one whose frame is its last; none
 /// for a stream with neither.
 pub(super) fn orderer(db: &fastctx_storage::rusqlite::Connection, stream: i64, holding: i64) -> fastctx_storage::Result<Option<[u8; 32]>> {
+    if let Some(device) = described_orderer(db, stream)? {
+        return Ok(Some(device));
+    }
+    let last: Option<Vec<u8>> = db
+        .prepare_cached("SELECT header FROM frames WHERE stream = ?1 AND holding = ?2 ORDER BY first DESC LIMIT 1")?
+        .query_row(params![stream, holding], |row| row.get(0))
+        .optional()?;
+    last.map(|last| Header::decode(&last).map(|header| header.device).map_err(invalid)).transpose()
+}
+
+/// The device the latest epoch descriptor known of `stream` names, opened
+/// here or not: the hub's word on who orders it.
+pub(super) fn described_orderer(db: &fastctx_storage::rusqlite::Connection, stream: i64) -> fastctx_storage::Result<Option<[u8; 32]>> {
     let described: Option<Vec<u8>> = db
         .prepare_cached(
             "SELECT descriptor FROM (SELECT epoch, descriptor FROM epochs WHERE stream = ?1
@@ -45,14 +58,7 @@ pub(super) fn orderer(db: &fastctx_storage::rusqlite::Connection, stream: i64, h
         )?
         .query_row(params![stream], |row| row.get(0))
         .optional()?;
-    if let Some(fact) = described.and_then(|fact| super::facts::EpochFact::decode(&fact).ok()) {
-        return Ok(Some(fact.device));
-    }
-    let last: Option<Vec<u8>> = db
-        .prepare_cached("SELECT header FROM frames WHERE stream = ?1 AND holding = ?2 ORDER BY first DESC LIMIT 1")?
-        .query_row(params![stream, holding], |row| row.get(0))
-        .optional()?;
-    last.map(|last| Header::decode(&last).map(|header| header.device).map_err(invalid)).transpose()
+    Ok(described.and_then(|fact| super::facts::EpochFact::decode(&fact).ok()).map(|fact| fact.device))
 }
 
 impl Library {
