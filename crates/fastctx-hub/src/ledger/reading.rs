@@ -158,7 +158,7 @@ impl Page {
 }
 
 /// A damaged file must not make a read allocate beyond the multipart limit.
-pub(super) fn entry(path: &Path) -> io::Result<Signed> {
+pub(crate) fn entry(path: &Path) -> io::Result<Signed> {
     let mut bytes = Vec::new();
     fastctx_platform::disk::open(path)?.take(wire::PARTS_AT_MOST as u64 + 1).read_to_end(&mut bytes)?;
     if bytes.len() > wire::PARTS_AT_MOST {

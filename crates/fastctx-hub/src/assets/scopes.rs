@@ -467,10 +467,11 @@ pub(crate) fn describe(
         return Err(format!("the scope {key} is described otherwise"));
     }
     // A project's ledger names where its machines are, which not every
-    // reader of the project may know: no new one is described until its
-    // entries are kept apart by machine (M09, N17).
+    // reader of the project may know: each reader reads it in its own
+    // records, as it may know it, and no project's scope is described
+    // (M09, N17, §29 2.4).
     if matches!(readers, Readers::Project { .. }) {
-        return Err("a project's ledger is not described yet: its entries are to be kept apart by machine first".into());
+        return Err("a project's ledger is read in each reader's own records, not in a scope of its own".into());
     }
     let principal = principal(directory, machine);
     let born = identities(directory, &readers)?;

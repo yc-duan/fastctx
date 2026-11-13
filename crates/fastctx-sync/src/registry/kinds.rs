@@ -424,7 +424,7 @@ pub(super) const KINDS: &[Registration] = &[
     kind!(
         "project.ledger",
         Asset,
-        Project,
+        Account,
         Hub,
         SingleWriter,
         UntilDeleted,

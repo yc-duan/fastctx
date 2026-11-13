@@ -71,6 +71,13 @@ impl Keys {
         self.current.sign(fastctx_net::sign::Domain::SyncSourceBatch, header).to_bytes().to_vec()
     }
 
+    /// A ledger entry as the hub tells it to one reader, filtered: its own,
+    /// so signed with the key in use, which it then names (§29, 2.4).
+    pub(crate) fn sign_entry(&self, mut entry: fastctx_net::ledger::Entry) -> fastctx_net::sign::Signed {
+        entry.key = self.current.public();
+        fastctx_net::sign::Signed::new(&self.current, fastctx_net::sign::Domain::Ledger, &entry)
+    }
+
     /// The keyring in `dir`, its first key made when there is none.
     pub(crate) fn open(dir: &Path) -> io::Result<Self> {
         fastctx_platform::ensure_private_dir(dir)?;

@@ -42,7 +42,7 @@ static FAILED: AtomicBool = AtomicBool::new(false);
 
 /// The scope of `account`'s records, held here, when the account opened at
 /// `opened` owns it.
-fn scope_of(
+pub(super) fn scope_of(
     assets: &Assets,
     account: &AccountName,
     opened: Timestamp,

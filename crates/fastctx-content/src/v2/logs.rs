@@ -25,6 +25,9 @@ fn object(body: &[u8]) -> Result<serde_json::Map<String, serde_json::Value>, Str
 
 /// A piece is its bytes from where it begins in its file, named by both, the
 /// one object exactly as long as it says; once written, it stays as it is.
+/// The hub's pieces are named under how many times the hub was put back too,
+/// which their body says (§29, 2.2): a log put back and written on again
+/// names its pieces anew.
 fn piece(before: Option<&Entry>, after: &KindRecord) -> Result<(), String> {
     let State::Is { body, objects } = &after.record.state else {
         return Err("a piece of a log is not let go: a device lets the oldest frames go".into());
@@ -39,7 +42,14 @@ fn piece(before: Option<&Entry>, after: &KindRecord) -> Result<(), String> {
     let map = object(body)?;
     let file = map.get("file").and_then(serde_json::Value::as_str).ok_or("a piece of a log names its file")?;
     let offset = map.get("offset").and_then(serde_json::Value::as_u64).ok_or("a piece of a log says where it begins")?;
-    if after.record.item != format!("{file}/{offset:016x}").into_bytes() {
+    let named = match map.get("restored") {
+        None => format!("{file}/{offset:016x}"),
+        Some(restored) => {
+            let restored = restored.as_u64().ok_or("a piece of a log says how many times the hub was put back as a number")?;
+            format!("{restored:x}/{file}/{offset:016x}")
+        }
+    };
+    if after.record.item != named.into_bytes() {
         return Err("a piece of a log is named by its file and where it begins".into());
     }
     let length = map.get("length").and_then(serde_json::Value::as_u64).ok_or("a piece of a log says how long it is")?;

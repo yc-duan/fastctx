@@ -95,7 +95,9 @@ fn look(assets: &Assets, path: &Path) -> Result<(), String> {
         // How late its last line is, which says when it is old (N13).
         let last = log_tail::last_time(&piece.bytes).unwrap_or(time).max(time);
         let body = serde_json::to_vec(
-            &serde_json::json!({ "file": piece.file, "offset": piece.offset, "length": piece.bytes.len(), "last": last }),
+            &serde_json::json!({
+                "file": piece.file, "offset": piece.offset, "length": piece.bytes.len(), "last": last, "restored": restored,
+            }),
         )
         .map_err(|error| error.to_string())?;
         records.push(KindRecord {

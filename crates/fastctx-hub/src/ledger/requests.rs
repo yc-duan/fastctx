@@ -114,10 +114,17 @@ pub(crate) fn ask(hub: &Arc<Hub>, from: &crate::origin::Origin, out: &Outq, id: 
                 Ok::<_, String>((plan, store.hub.id.clone()))
             };
             let (plan, hub_id) = prepare()?;
-            let project = town.clone();
-            crate::readers::blocking(move || plan.read(&hub_id, &project))
-                .await
-                .map_err(|error| format!("reading project memory: {error}"))?
+            // Told as the asking machine's account may know it: the machines
+            // it names only where that account may work, or this machine
+            // (M09, §29 2.4).
+            let usable = super::for_reader::usable(&hub.store().book.directory, &account, Some(&from.name));
+            let (project, signing, asking) = (town.clone(), hub.assets.clone(), from.name.clone());
+            crate::readers::blocking(move || {
+                let usable = |machine: &fastctx_types::MachineName| usable.contains(machine);
+                plan.read(&hub_id, &project, &usable, &|entry| signing.keys().sign_entry(entry), &asking)
+            })
+            .await
+            .map_err(|error| format!("reading project memory: {error}"))?
         })
         .await;
         let answer = authorize(&hub.store().book.directory, &from, &account, &town, body).and(answer);
@@ -126,7 +133,14 @@ pub(crate) fn ask(hub: &Arc<Hub>, from: &crate::origin::Origin, out: &Outq, id: 
 }
 
 impl Plan {
-    fn read(self, hub: &fastctx_net::ids::HubId, town: &TownId) -> Result<Told, String> {
+    fn read(
+        self,
+        hub: &fastctx_net::ids::HubId,
+        town: &TownId,
+        usable: &dyn Fn(&fastctx_types::MachineName) -> bool,
+        sign: &dyn Fn(fastctx_net::ledger::Entry) -> fastctx_net::sign::Signed,
+        asking: &fastctx_types::MachineName,
+    ) -> Result<Told, String> {
         let entry = |path: &PathBuf| {
             let signed = super::reading::entry(path).map_err(|error| error.to_string())?;
             let opened = fastctx_net::ledger::open(&signed, hub, town)?;
@@ -147,18 +161,29 @@ impl Plan {
                 };
                 let first = record(&first)?;
                 let opened = Stamp { by: first.by, on: first.on, at: first.at };
-                Ok(Told::ProjectIndex {
-                    index: Box::new(ProjectIndex {
-                        seq,
-                        record: record(&last)?,
-                        opened,
-                        catalog,
-                        pages: super::page_index::read(pages, hub, town)?,
-                    }),
-                })
+                let mut index = ProjectIndex {
+                    seq,
+                    record: record(&last)?,
+                    opened,
+                    catalog,
+                    pages: super::page_index::read(pages, hub, town)?,
+                };
+                super::for_reader::index(&mut index, usable);
+                Ok(Told::ProjectIndex { index: Box::new(index) })
             }
-            Self::Document { path, versions, evidence } => {
-                let (entry, _) = entry(&path)?;
+            Self::Document { path, mut versions, mut evidence } => {
+                let (signed, mut opened) = entry(&path)?;
+                super::for_reader::document(&mut versions, &mut evidence, usable);
+                // The author's own signature while nothing in it is told
+                // otherwise; else the hub's, the entry named as the asking
+                // machine's, which a reader checks the same way.
+                let entry = if super::for_reader::filter(&mut opened.files, usable, &|_| {}) {
+                    opened.author = asking.clone();
+                    opened.machines = None;
+                    sign(opened)
+                } else {
+                    signed
+                };
                 Ok(Told::MemoryDocument { entry, versions, evidence })
             }
         }

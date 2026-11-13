@@ -37,12 +37,13 @@ use fastctx_types::access::TownId;
 
 use crate::Hub;
 
+pub(crate) mod for_reader;
 mod history_ranges;
 pub(crate) mod history_requests;
 mod page_index;
 mod reading;
 pub(crate) mod requests;
-pub(crate) use reading::{ask, projection};
+pub(crate) use reading::{ask, entry as read_entry, projection};
 
 /// What the hub knows of one project's ledger.
 #[derive(Default)]
@@ -436,7 +437,7 @@ pub(crate) async fn write_as(
         Err(failure) => return Err(format!("the hub could not keep the entry: {}", failure.error)),
     }
     let history = checked.prepared.history.as_ref().map(|stored| stored.revision.clone());
-    let checked_bytes = checked.prepared.bytes.clone();
+
     let (seq, tell) = {
         let store = hub.store();
         let directory = &store.book.directory;
@@ -453,13 +454,9 @@ pub(crate) async fn write_as(
         (seq, tell)
     };
     hub.log.line(format_args!("{from} wrote entry {seq} of {town}"));
-    // Into the asset library too, in the project's scope (design §28.18).
-    let (assets, log, mirrored, bytes) = (hub.assets.clone(), hub.log.clone(), town.clone(), checked_bytes);
-    fastctx_platform::task::spawn_blocking(move || {
-        if let Err(error) = crate::assets::mirror::ledger_entry(&assets, &mirrored, seq, &bytes) {
-            log.line(format_args!("writing entry {seq} of {mirrored} into the asset library: {error}"));
-        }
-    });
+    // Into the asset library too, as each reader of the project may know it
+    // (§29, 2.4).
+    crate::assets::ledger_views::look(hub);
     for machine in tell {
         // A machine of a release before history reads only that the ledger
         // changed, and takes the history append as any entry.

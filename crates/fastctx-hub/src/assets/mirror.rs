@@ -11,12 +11,12 @@ use super::Assets;
 use super::scopes;
 use fastctx_content::v2::{
     AccountSettings, AccountSkill, ConversationGoal, ConversationHistory, ConversationPlan, ConversationSentinel,
-    Header, Kind as _, KindRecord, LEASE, ProjectLedger, Received, Signer, Taking, Verifier,
+    Header, Kind as _, KindRecord, LEASE, Received, Signer, Taking, Verifier,
 };
 use fastctx_content::{ObjectRef, Record as Item, State};
 use fastctx_net::sign::{Domain, PublicKey, Signature};
 use fastctx_types::AccountName;
-use fastctx_types::access::TownId;
+
 use fastctx_types::account_records::Record;
 use fastctx_types::assets::Readers;
 use std::collections::BTreeSet;
@@ -285,6 +285,9 @@ pub(super) fn apply(
     for frame in frames {
         match library.take(scope_key, frame, &Keyed, &taking, super::serve::kinds(), assets.signer()).map_err(error)? {
             Received::Applied { .. } => {}
+            Received::Rejected { why, .. } => {
+                return Err(format!("the hub refused its own frame of {stream} in {scope_key}: {why}"));
+            }
             _ => return Err(format!("the hub did not apply its own frame of {stream} in {scope_key}")),
         }
     }
@@ -344,12 +347,9 @@ pub(crate) async fn again(hub: std::sync::Arc<crate::Hub>) {
         };
         write_all(&hub, account, opened, paths).await;
     }
-    let towns = std::mem::take(&mut *LEDGERS_FAILED.lock().unwrap_or_else(PoisonError::into_inner));
-    for town in towns {
-        if let Ok(town) = TownId::try_from(town) {
-            ledger_of(hub.clone(), town).await;
-        }
-    }
+    // The projects' ledgers in their readers' records, looked at again: a
+    // reader's machines may have changed (§29, 2.4).
+    super::ledger_views::look(&hub);
     super::told::again(&hub).await;
 }
 
@@ -380,16 +380,9 @@ async fn write_all(
 /// The scopes `keys` were described just now: what the hub's records hold
 /// of them is written into them.
 pub(crate) async fn described(hub: std::sync::Arc<crate::Hub>, keys: Vec<String>) {
+    // An account's records described: the ledgers it reads go in (§29, 2.4).
+    super::ledger_views::look(&hub);
     for key in keys {
-        // A project's ledger scope: what its ledger holds goes in.
-        if let Some(town) = key
-            .strip_prefix("p/")
-            .and_then(|rest| rest.strip_suffix("/ledger"))
-            .and_then(|town| TownId::try_from(town.to_string()).ok())
-        {
-            ledger_of(hub.clone(), town).await;
-            continue;
-        }
         let Ok(Some(scope)) = scopes::scope(&hub.assets, &key) else { continue };
         // An account's own scope, or a body's conversation, whose opener's
         // records of it go in as well (AT04).
@@ -446,10 +439,7 @@ pub(crate) async fn everything(hub: std::sync::Arc<crate::Hub>) {
         let paths = records_of(&hub, &opener, opened, |entry| of_conversation(entry, &resident)).await;
         write_all(&hub, opener, opened, paths).await;
     }
-    let towns: Vec<TownId> = hub.ledgers.lock().expect("never poisoned").towns.keys().cloned().collect();
-    for town in towns {
-        ledger_of(hub.clone(), town).await;
-    }
+    super::ledger_views::look(&hub);
 }
 
 /// Whether `entry` is one of an account's own records that go into its
@@ -474,68 +464,3 @@ fn of_conversation(entry: &crate::account_records::storage::Entry, resident: &st
         _ => false,
     }
 }
-
-/// The key of the scope a project's ledger is kept in.
-pub(crate) fn project_scope(town: &TownId) -> String {
-    format!("{}ledger", Readers::Project { town: town.clone() }.key_prefix(""))
-}
-
-/// Writes the entry `seq` of `town`'s ledger, its signed bytes `bytes`, into
-/// the stream the hub orders in the project's scope (design §28.18), once
-/// the scope is described. Call on a thread that may block.
-pub(crate) fn ledger_entry(assets: &Assets, town: &TownId, seq: u64, bytes: &[u8]) -> Result<(), String> {
-    let written = ledger_entry_once(assets, town, seq, bytes);
-    // Not written: the whole ledger is looked at again with the next retry
-    // (AT08), as one whose look failed is.
-    if written.is_err() {
-        LEDGERS_FAILED.lock().unwrap_or_else(PoisonError::into_inner).insert(town.to_string());
-    }
-    written
-}
-
-fn ledger_entry_once(assets: &Assets, town: &TownId, seq: u64, bytes: &[u8]) -> Result<(), String> {
-    let scope_key = project_scope(town);
-    let Some(scope) = scopes::scope(assets, &scope_key)? else { return Ok(()) };
-    let library = scopes::library(assets, &scope)?;
-    let error = |error: fastctx_content::Error| error.to_string();
-    let _writing = writing(&scope_key);
-    let item = seq.to_be_bytes().to_vec();
-    if library.item(&scope_key, ProjectLedger::STREAM, &item).map_err(error)?.is_some() {
-        return Ok(());
-    }
-    let lease = library.put(&mut &bytes[..], "ledger", LEASE).map_err(error)?;
-    let body = serde_json::to_vec(&serde_json::json!({ "seq": seq, "size": bytes.len() }))
-        .map_err(|error| error.to_string())?;
-    let records = vec![KindRecord {
-        kind: ProjectLedger::KIND,
-        schema: 1,
-        record: Item { item: item.clone(), order: item, state: State::Is { body, objects: vec![lease.object] } },
-    }];
-    apply(assets, &scope, &library, ProjectLedger::STREAM, records)
-}
-
-/// Writes what of `town`'s ledger the asset library lacks, in order.
-pub(crate) async fn ledger_of(hub: std::sync::Arc<crate::Hub>, town: TownId) {
-    let (assets, log) = (hub.assets.clone(), hub.log.clone());
-    let next = hub.ledgers.lock().expect("never poisoned").towns.get(&town).map_or(1, |ledger| ledger.next);
-    let paths: Vec<(u64, std::path::PathBuf)> = {
-        let ledgers = hub.ledgers.lock().expect("never poisoned");
-        (1..next).map(|seq| (seq, ledgers.entry_path(&town, seq))).collect()
-    };
-    let _ = fastctx_platform::task::spawn_blocking(move || {
-        for (seq, path) in paths {
-            let Ok(bytes) = fastctx_platform::disk::read(&path) else { continue };
-            if let Err(error) = ledger_entry(&assets, &town, seq, &bytes) {
-                log.line(format_args!("writing entry {seq} of {town} into the asset library: {error}"));
-                // Tried again in a minute (AS08).
-                LEDGERS_FAILED.lock().unwrap_or_else(PoisonError::into_inner).insert(town.to_string());
-                return;
-            }
-        }
-    })
-    .await;
-}
-
-/// The projects whose ledger failed to be written whole, tried again every
-/// minute (AS08).
-static LEDGERS_FAILED: LazyLock<Mutex<BTreeSet<String>>> = LazyLock::new(Mutex::default);

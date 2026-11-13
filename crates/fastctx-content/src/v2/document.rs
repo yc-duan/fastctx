@@ -143,11 +143,12 @@ hub_record!(
     AccountCollaboration, 3, "collaboration", object, "directory"
 );
 
-/// A project's ledger (`project.ledger`, design §28.18): each entry the hub
-/// numbered, by its number, its signed bytes as they were handed — the
-/// author's signature with them — the one object; the body says its number
-/// and length. The project's notes, pages and record are files of these
-/// entries.
+/// A project's ledger as one of its readers may know it (`project.ledger`,
+/// §29 2.4), in that account's records, a stream `ledger/<project>` the hub
+/// orders: each entry the hub numbered, by its number, the hub's projection
+/// of it (`fastctx_net::ledger::Projection`) the one object; the body says
+/// its number, length and digest. The project's notes, pages and record are
+/// files of these entries.
 pub struct ProjectLedger;
 
 impl Kind for ProjectLedger {

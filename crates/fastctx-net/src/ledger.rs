@@ -42,6 +42,24 @@ pub struct File {
     pub bytes: Bytes,
 }
 
+/// An entry as one account may read it, which the hub writes into that
+/// account's records (§29, 2.4): the number the hub gave it, the machines
+/// it names only where the account may work, and its files as the first
+/// version tells them to such a reader. The hub's own statement: no
+/// author's signature goes with it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Projection {
+    pub seq: u64,
+    pub at: Timestamp,
+    /// The machine that wrote it, where the account may work on it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub author: Option<MachineName>,
+    /// As `Entry::machines`, of those the account may work on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub machines: Option<Vec<MachineName>>,
+    pub files: Vec<File>,
+}
+
 /// The entry `signed` holds, if the key it names signed it, for `town` of
 /// `hub`, with paths a ledger can hold.
 pub fn open(signed: &Signed, hub: &HubId, town: &TownId) -> Result<Entry, String> {
