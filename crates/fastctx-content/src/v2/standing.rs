@@ -44,7 +44,30 @@ pub struct Fed {
     pub at: i64,
 }
 
+/// The running logs: a machine's, an MCP server's and the hub's own, which
+/// grow every few seconds while they run, so nothing away is ever at their
+/// latest.
+pub fn running_logs() -> [&'static str; 3] {
+    use super::Kind as _;
+    [super::MachineLog::STREAM, super::McpLog::STREAM, super::HubLog::STREAM]
+}
+
 impl Library {
+    /// A hub library's latest change to a stream that is no running log,
+    /// and when it was made; none before its first (design §28.42).
+    pub fn latest_steady_change(&self) -> Result<Option<(u64, i64)>> {
+        let [node, mcp, hub] = running_logs();
+        Ok(self.database().read_now(move |db| {
+            Ok(db
+                .prepare_cached(
+                    "SELECT c.change, c.at FROM stream_changes c JOIN streams s ON s.id = c.stream
+                     WHERE s.name NOT IN (?1, ?2, ?3) ORDER BY c.change DESC LIMIT 1",
+                )?
+                .query_row(params![node, mcp, hub], |row| Ok((row.get::<_, i64>(0)? as u64, row.get::<_, i64>(1)?)))
+                .optional()?)
+        })?)
+    }
+
     /// A hub library's latest change number and when it was made; none
     /// before its first.
     pub fn latest_change(&self) -> Result<Option<(u64, i64)>> {

@@ -6,11 +6,13 @@
 //!
 //! ```text
 //! replica <device directory> [--hub <host:port> --account <name> --name <device name>]
-//!         [--whole] [--seconds <n>] [--older <scope> <stream>]...
+//!         [--whole] [--seconds <n>] [--older <scope> <stream>]... [--ask <scope> <stream>]...
 //! ```
 //!
 //! The password is read from `FASTCTX_PASSWORD`. `--older` pages a stream
-//! down from the hub to its first item before it is printed.
+//! down from the hub to its first item before it is printed. `--ask` asks
+//! the hub for a stream's top page as soon as the device links to it,
+//! before anything settles, and prints what the hub answered.
 
 use fastctx_client::device::Device;
 use fastctx_client::device::replica::{OlderTaken, Tier};
@@ -25,12 +27,14 @@ struct Asked {
     whole: bool,
     seconds: u64,
     older: Vec<(String, String)>,
+    ask: Vec<(String, String)>,
 }
 
 fn asked() -> Result<Asked, String> {
     let mut args = std::env::args().skip(1);
     let directory = PathBuf::from(args.next().ok_or("the device directory comes first")?);
-    let mut asked = Asked { directory, hub: None, account: None, name: None, whole: false, seconds: 120, older: Vec::new() };
+    let mut asked =
+        Asked { directory, hub: None, account: None, name: None, whole: false, seconds: 120, older: Vec::new(), ask: Vec::new() };
     while let Some(arg) = args.next() {
         let mut value = || args.next().ok_or(format!("{arg} takes a value"));
         match arg.as_str() {
@@ -43,6 +47,11 @@ fn asked() -> Result<Asked, String> {
                 let scope = value()?;
                 let stream = args.next().ok_or("--older takes a scope and a stream")?;
                 asked.older.push((scope, stream));
+            }
+            "--ask" => {
+                let scope = value()?;
+                let stream = args.next().ok_or("--ask takes a scope and a stream")?;
+                asked.ask.push((scope, stream));
             }
             other => return Err(format!("not understood: {other}")),
         }
@@ -83,6 +92,22 @@ async fn run() -> Result<(), String> {
         let device = device.clone();
         tokio::task::spawn_blocking(move || device.replicate(tier)).await.map_err(|error| error.to_string())?.map_err(error)?
     };
+    // Asked at once, as the first thing the device asks of a scope: the top
+    // page, as soon as there is a link to its hub; what the hub answered.
+    for (scope, stream) in &asked.ask {
+        let hub = hub_id(&replica, scope).ok_or(format!("{scope} is not held here"))?;
+        let linked_by = Instant::now() + Duration::from_secs(60);
+        let answer = loop {
+            match replica.older(&hub, scope, stream, None, 50).await {
+                Err(why) if why.starts_with("no link to") && Instant::now() < linked_by => {
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                }
+                Ok(taken) => break format!("{taken:?}"),
+                Err(why) => break why,
+            }
+        };
+        println!("{}", serde_json::json!({ "asked": scope, "stream": stream, "answer": answer }));
+    }
     // Settled: two passes in a row ended well, with every hub's last pass
     // well and nothing new held but the running logs: a machine's, an MCP
     // server's and the hub's own grow by the minute while they run, and a
@@ -109,7 +134,14 @@ async fn run() -> Result<(), String> {
             }
         }
         let on = hubs(&replica);
-        let well = !on.is_empty() && on.iter().all(|hub| matches!(replica.ended(hub), Some(Ok(()))));
+        // Every pass ended well, and nothing its tier fetches as records
+        // come is missing: a pass may end with objects still to fetch.
+        let lacking = on.iter().try_fold(0, |sum, hub| {
+            library.lacking_within(hub.as_str(), tier.fetches_at_most()).map(|(count, _)| sum + count)
+        });
+        let well = !on.is_empty()
+            && on.iter().all(|hub| matches!(replica.ended(hub), Some(Ok(()))))
+            && lacking.as_ref().is_ok_and(|count| *count == 0);
         let moved: Vec<String> = held
             .iter()
             .filter(|(stream, next)| held_before.get(*stream) != Some(*next))

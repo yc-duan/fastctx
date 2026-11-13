@@ -87,6 +87,10 @@ pub(crate) struct Standing {
 struct Top {
     change: u64,
     at: i64,
+    /// The latest change to a stream that is no running log, and when: a
+    /// machine is behind, or caught up, by it (design §28.42).
+    steady: u64,
+    steady_at: i64,
     generation: String,
     moves: u64,
     read_at: u64,
@@ -102,6 +106,8 @@ impl Standing {
         let top = tops.entry(owner.to_string()).or_insert_with(|| Top {
             change: 0,
             at: 0,
+            steady: 0,
+            steady_at: 0,
             generation: String::new(),
             moves: 0,
             read_at: u64::MAX,
@@ -211,7 +217,10 @@ fn top(assets: &Assets, owner: &str) -> Option<Top> {
             // Marked before it is read: a move while it is read leaves it
             // to be read again (AO02).
             None => {
-                tops.insert(owner.to_string(), Top { change: 0, at: 0, generation: String::new(), moves: 0, read_at: u64::MAX });
+                tops.insert(
+                    owner.to_string(),
+                    Top { change: 0, at: 0, steady: 0, steady_at: 0, generation: String::new(), moves: 0, read_at: u64::MAX },
+                );
                 0
             }
         }
@@ -222,16 +231,20 @@ fn top(assets: &Assets, owner: &str) -> Option<Top> {
     }
     let library = assets.library(&owned).ok()?;
     let (change, at) = library.latest_change().ok()??;
+    // A library of running logs alone holds nothing a machine is behind on.
+    let (steady, steady_at) = library.latest_steady_change().ok()?.unwrap_or((0, 0));
     let generation = library.generation().ok()?;
     let mut tops = assets.standing.tops.lock().expect("tops");
     // A move while it was read leaves it to be read again.
     let now_moves = tops.get(owner).map_or(moves, |top| top.moves);
-    let top = Top { change, at, generation, moves: now_moves, read_at: moves };
+    let top = Top { change, at, steady, steady_at, generation, moves: now_moves, read_at: moves };
     tops.insert(owner.to_string(), top.clone());
     Some(top)
 }
 
-/// How far behind its library's latest change `standing` is.
+/// How far behind its library's latest change `standing` is: the running
+/// logs aside, which grow every few seconds while they run, so a machine
+/// away is never at their latest (design §28.42).
 fn behind(top: Option<&Top>, standing: &OwnerStanding) -> u64 {
     let Some(top) = top else { return 0 };
     // Of another generation, it is as far behind as can be told; never
@@ -239,10 +252,10 @@ fn behind(top: Option<&Top>, standing: &OwnerStanding) -> u64 {
     if standing.generation != top.generation {
         return (top.at - standing.at).max(CAUGHT_UP as i64) as u64;
     }
-    if standing.change >= top.change {
+    if standing.change >= top.steady {
         return 0;
     }
-    (top.at - standing.at).max(0) as u64
+    (top.steady_at - standing.at).max(0) as u64
 }
 
 /// The key of `account`'s own library.
@@ -277,7 +290,7 @@ fn reckon(assets: &Assets, directory: &Indexed<'_>, account: &AccountName, kept:
         if counts(&standing.owner) {
             let top = top(assets, &standing.owner);
             worst = worst.max(behind(top.as_ref(), standing));
-            exact &= top.is_none_or(|top| top.generation == standing.generation && standing.change >= top.change);
+            exact &= top.is_none_or(|top| top.generation == standing.generation && standing.change >= top.steady);
         }
     }
     // The account's own library and those of its bodies, where they hold

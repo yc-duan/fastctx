@@ -22,6 +22,12 @@ impl Tier {
     pub(super) fn of_code(code: u8) -> Self {
         if code == 1 { Self::Whole } else { Self::Light }
     }
+
+    /// The longest object a device of this tier fetches as its records
+    /// come; longer ones as they are read. A whole device fetches all.
+    pub fn fetches_at_most(self) -> u64 {
+        fetched_at_most(self)
+    }
 }
 
 /// How a light device holds a stream.

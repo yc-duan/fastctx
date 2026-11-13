@@ -97,7 +97,7 @@ pub use changes::{Changed, Changes};
 pub use backfill::{Backfill, Backfilled};
 pub use snapshot::{Covered, Installed, OLDER_BYTES, Older, OlderTaken, WINDOW_BYTES, WINDOW_ITEMS, Window};
 pub use view::{ViewChange, ViewChanges, ViewPage, view_sequence};
-pub use standing::{Fed, StreamBytes, Totals};
+pub use standing::{Fed, StreamBytes, Totals, running_logs};
 pub use moves::{Authority, KeyCheck, Moved, Releasable, Release, Taken};
 pub use networks::{Listing, Network};
 pub use scopes::Purged;

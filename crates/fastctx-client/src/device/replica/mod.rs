@@ -5,11 +5,14 @@
 //! library is a node's (`fastctx_content::v2::Library`), in `replica/` of
 //! the device's directory, with what it keeps of each hub beside it
 //! (`pins`). It follows each link the device has while it is up: a whole
-//! look now and then, otherwise the streams the hub says moved.
+//! look now and then, otherwise the streams the hub says moved and what
+//! changed in each owner library since it stood there, telling the hub
+//! where it stands (`standing`).
 
 mod objects;
 mod pass;
 mod pins;
+mod standing;
 mod tiers;
 
 pub use fastctx_content::v2::{Library, OlderTaken};
@@ -27,6 +30,9 @@ use std::time::{Duration, Instant};
 /// What a scope's pass ends with when the hub says the device reads it no
 /// more: not a failure.
 pub(super) const REVOKED: &str = "no longer read here: ";
+
+/// What a request ends with when the hub keeps every asset sealed.
+pub const SEALED: &str = "the hub keeps every asset sealed: ";
 
 /// How often every scope is looked at whole, and how long a follower waits
 /// when nothing calls for it.
@@ -77,6 +83,8 @@ pub struct Replica {
     /// How each hub's last pass ended, and how many passes ended in all.
     ended: Mutex<BTreeMap<HubId, Result<(), String>>>,
     passes: tokio::sync::watch::Sender<u64>,
+    /// What the device last told each hub of where it stands, and when.
+    reported: Mutex<HashMap<HubId, (fastctx_types::sync_status::SyncReport, Instant)>>,
 }
 
 impl Replica {
@@ -133,6 +141,7 @@ impl Replica {
             wakes: Mutex::default(),
             ended: Mutex::default(),
             passes: tokio::sync::watch::channel(0).0,
+            reported: Mutex::default(),
         })
     }
 
@@ -267,21 +276,48 @@ impl Replica {
         let mut failed = pass::discover(self, hub, link, &key, &network).await.err();
         let theirs = hub.as_str().to_string();
         let held = blocking(library, move |library| library.live_scopes_of(&theirs)).await?;
+        // Where each owner library stands as the look begins: every scope of
+        // one gone through whole, the device stands there (design §28.1).
+        let owners: BTreeSet<String> = held.iter().filter_map(|(_, descriptor, _)| standing::owner_of(descriptor)).collect();
+        let marks = match standing::tops(self, link, &owners).await {
+            Ok(marks) => Some(marks),
+            Err(why) => {
+                failed.get_or_insert(format!("where the owner libraries stand: {why}"));
+                None
+            }
+        };
+        let mut short = BTreeSet::new();
         let mut more = false;
-        for (scope, _, holding) in held {
+        for (scope, descriptor, holding) in held {
+            let owner = standing::owner_of(&descriptor);
             match pass::pull(self, hub, link, &key, &scope, holding).await {
-                Ok(went_on) => more |= went_on,
+                // Pulled whole in its holding period, as the tier holds it:
+                // its changes carry it from now on.
+                Ok(false) => {
+                    let scope = scope.clone();
+                    blocking(library, move |library| library.pulled(&scope, holding)).await?;
+                }
+                Ok(true) => {
+                    more = true;
+                    short.extend(owner);
+                }
                 Err(why) if why.starts_with(REVOKED) => {}
                 Err(why) => {
+                    short.extend(owner);
                     failed.get_or_insert(format!("{scope}: {why}"));
                 }
             }
+        }
+        if let Some(marks) = marks {
+            standing::stand(self, hub, marks, &short).await?;
         }
         let (fetched, left) = objects::fetch(self, hub, link).await;
         if let Some(why) = fetched.into_iter().next() {
             failed.get_or_insert(why);
         }
         self.upkeep().await?;
+        // Told as it stands now; a hub that does not keep it is told again.
+        let _ = standing::report(self, hub, link).await;
         match failed {
             Some(why) => Err(why),
             None => Ok(more || left),
@@ -290,10 +326,12 @@ impl Replica {
 
     /// Takes what the hub said moved of `hub`'s streams.
     async fn pass_moved(&self, hub: &HubId, link: &Arc<Link>, moved: BTreeMap<(String, String), u64>) -> Result<bool, String> {
-        if moved.is_empty() {
+        let library = &self.library;
+        let theirs = hub.as_str().to_string();
+        let stood = blocking(library, move |library| library.feed_owners(&theirs)).await?;
+        if moved.is_empty() && stood.is_empty() {
             return Ok(false);
         }
-        let library = &self.library;
         let key = pass::open(self, hub, link).await?;
         let mut more = false;
         let scopes: BTreeSet<String> = moved.keys().map(|(scope, _)| scope.clone()).collect();
@@ -321,8 +359,23 @@ impl Replica {
                 }
             }
         }
+        // What changed in each library the device stands in, by its change
+        // numbers, a push lost on the way among it: where it stands moves
+        // once all of it is taken (design §28.1).
+        for owner in stood {
+            match standing::feed(self, hub, link, &key, &owner).await {
+                Ok(went_on) => more |= went_on,
+                Err(_) => self.call_whole(hub),
+            }
+        }
         let (_, left) = objects::fetch(self, hub, link).await;
+        let _ = standing::report(self, hub, link).await;
         Ok(more || left || self.called.lock().expect("called").get(hub).is_some_and(|called| called.whole))
+    }
+
+    /// Something calls for a whole look of `hub` at the next pass.
+    fn call_whole(&self, hub: &HubId) {
+        self.called.lock().expect("called").entry(hub.clone()).or_default().whole = true;
     }
 
     /// Lets go of what scopes let go held, and of objects nothing holds.
@@ -373,6 +426,7 @@ impl Replica {
     pub(crate) async fn left(&self, hub: &HubId) -> Result<(), String> {
         self.links.lock().expect("links").remove(hub);
         self.unreached.lock().expect("unreached").retain(|(of, _), _| of != hub);
+        self.reported.lock().expect("reported").remove(hub);
         if let Some(wake) = self.wakes.lock().expect("wakes").remove(hub) {
             wake.notify_one();
         }

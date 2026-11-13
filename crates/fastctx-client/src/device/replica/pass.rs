@@ -8,7 +8,7 @@
 //! and nothing else, and a scope it may hold no more is let go.
 
 use super::tiers::{self, Hold, RECENT_BEHIND, RECENT_BYTES, Tier};
-use super::{REVOKED, Replica, blocking};
+use super::{REVOKED, Replica, SEALED, blocking};
 use fastctx_content::v2::{
     Backfilled, Header, Holder, Imported, Installed, Network, RawFrame, Signed, Verifier, Window, hub_orders,
 };
@@ -35,6 +35,9 @@ pub(super) async fn ask(replica: &Replica, link: &Arc<Link>, request: Request) -
             blocking(&replica.library, move |library| library.revoke_keeping(&key, &device)).await?;
             Err(format!("{REVOKED}{scope}"))
         }
+        // Sealed, the hub gives nothing until it is opened: said as such,
+        // not as an answer of the wrong kind.
+        Reply::Sealed { why, .. } => Err(format!("{SEALED}{why}")),
         reply => Ok(reply),
     }
 }
@@ -51,7 +54,7 @@ pub(super) async fn open(replica: &Replica, hub: &HubId, link: &Arc<Link>) -> Re
     };
     let (offered, rotations, closed) = match link.assets(request).await? {
         Reply::Ready { key, rotations, closed, .. } => (key, rotations, closed),
-        Reply::Sealed { why, .. } => return Err(format!("the hub keeps every asset sealed: {why}")),
+        Reply::Sealed { why, .. } => return Err(format!("{SEALED}{why}")),
         _ => return Err("the hub did not open the session".into()),
     };
     let key = replica.pins.pin_following(hub, &offered, &rotations)?;
@@ -121,7 +124,14 @@ pub(super) async fn discover(
 
 /// Takes the hub's signed epochs and gap facts of `stream` of `scope`,
 /// each checked under the pinned key.
-async fn succession(replica: &Replica, hub: &HubId, link: &Arc<Link>, key: &PublicKey, scope: &str, stream: &str) -> Result<(), String> {
+pub(super) async fn succession(
+    replica: &Replica,
+    hub: &HubId,
+    link: &Arc<Link>,
+    key: &PublicKey,
+    scope: &str,
+    stream: &str,
+) -> Result<(), String> {
     let library = &replica.library;
     let Reply::Succession { epochs, gaps } =
         ask(replica, link, Request::Succession { scope: scope.to_string(), stream: stream.to_string() }).await?
@@ -223,26 +233,10 @@ pub(super) async fn pull(replica: &Replica, hub: &HubId, link: &Arc<Link>, key: 
             succession(replica, hub, link, key, scope, &at.stream).await?;
         }
     }
-    // What this device holds as it was read, of an earlier making of the
-    // hub's stream, or pages of one that moved on since: pages let go of, to
-    // be read anew; a window taken again (codex-058517ed #10, #11).
     let mut anew = BTreeSet::new();
     for at in &streams {
-        let (scope_text, stream_text) = (scope.to_string(), at.stream.clone());
-        let covered = blocking(library, move |library| library.coverage(&scope_text, &stream_text)).await?;
-        if covered.is_empty() {
-            continue;
-        }
-        let earlier = covered.iter().any(|run| run.remade < at.remade);
-        match tiers::hold(replica.tier(), &at.stream) {
-            Hold::Metadata if earlier || covered.iter().any(|run| run.through < at.next) => {
-                let (scope_text, stream_text, device) = (scope.to_string(), at.stream.clone(), replica.device());
-                blocking(library, move |library| library.drop_cached(&scope_text, &stream_text, &device)).await?;
-            }
-            Hold::Recent if earlier => {
-                anew.insert(at.stream.clone());
-            }
-            _ => {}
+        if read_anew(replica, scope, &at.stream, at.remade, at.next).await? {
+            anew.insert(at.stream.clone());
         }
     }
     let mut more = false;
@@ -266,6 +260,29 @@ pub(super) async fn pull(replica: &Replica, hub: &HubId, link: &Arc<Link>, key: 
     match failed {
         Some(why) => Err(why),
         None => Ok(more),
+    }
+}
+
+/// What this device holds of `stream` of `scope` as it was read, of an
+/// earlier making of the hub's stream (`remade`) or pages of one that moved
+/// on since (`next`): pages let go of, to be read anew; whether a window is
+/// to be taken again (codex-058517ed #10, #11).
+pub(super) async fn read_anew(replica: &Replica, scope: &str, stream: &str, remade: u64, next: u64) -> Result<bool, String> {
+    let library = &replica.library;
+    let (scope_text, stream_text) = (scope.to_string(), stream.to_string());
+    let covered = blocking(library, move |library| library.coverage(&scope_text, &stream_text)).await?;
+    if covered.is_empty() {
+        return Ok(false);
+    }
+    let earlier = covered.iter().any(|run| run.remade < remade);
+    match tiers::hold(replica.tier(), stream) {
+        Hold::Metadata if earlier || covered.iter().any(|run| run.through < next) => {
+            let (scope_text, stream_text, device) = (scope.to_string(), stream.to_string(), replica.device());
+            blocking(library, move |library| library.drop_cached(&scope_text, &stream_text, &device)).await?;
+            Ok(false)
+        }
+        Hold::Recent => Ok(earlier),
+        _ => Ok(false),
     }
 }
 
