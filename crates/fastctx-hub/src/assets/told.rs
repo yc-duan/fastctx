@@ -228,43 +228,41 @@ pub(crate) fn notices(
 pub(crate) type Kept = (Option<Vec<u8>>, Option<Vec<u8>>);
 
 /// What the directory keeps of `account`: its profile without what an MCP
-/// server at an address is asked with — the values of its headers and its
-/// address's query — which stay on the hub alone, given to a machine that
-/// runs the server as before, never into a replica (user 2026-11-11; M01).
+/// server at an address is asked with — the values of its headers, and of
+/// its address the user and password, query and fragment — which stay on
+/// the hub alone, given to a machine that runs the server as before, never
+/// into a replica (user 2026-11-11; M01, AT01).
 pub(crate) fn kept_of(account: &fastctx_net::directory::Account) -> Kept {
     (
-        account.profile.as_ref().and_then(|profile| serde_json::to_value(profile).ok()).and_then(|mut profile| {
-            without_secrets(&mut profile);
-            serde_json::to_vec(&profile).ok()
-        }),
+        account.profile.as_ref().map(without_secrets).and_then(|profile| serde_json::to_vec(&profile).ok()),
         account.collab.as_ref().and_then(|collab| serde_json::to_vec(collab).ok()),
     )
 }
 
-/// Takes out of a profile, as JSON, every header's value and every
-/// address's query: their names and the address's path stay.
-fn without_secrets(value: &mut serde_json::Value) {
-    match value {
-        serde_json::Value::Object(map) => {
-            for (name, inner) in map.iter_mut() {
-                match (name.as_str(), inner) {
-                    ("headers" | "http_headers" | "env", serde_json::Value::Object(headers)) => {
-                        for header in headers.values_mut() {
-                            *header = serde_json::Value::Null;
-                        }
-                    }
-                    ("url", serde_json::Value::String(url)) => {
-                        if let Some(at) = url.find(['?', '#']) {
-                            url.truncate(at);
-                        }
-                    }
-                    (_, inner) => without_secrets(inner),
-                }
-            }
+/// The profile with each server at an address bare: its headers' names
+/// with empty values, its address's scheme, host and path. Nothing else of
+/// the profile is touched: what an account sets for its sessions is chosen
+/// from lists that hold no secret, and a server's or a setting's name is
+/// only a name (AT09).
+fn without_secrets(profile: &fastctx_types::profile::Profile) -> fastctx_types::profile::Profile {
+    let mut profile = profile.clone();
+    for entry in profile.servers.values_mut() {
+        if let fastctx_types::profile::Entry::Remote(remote) = entry {
+            remote.headers.values_mut().for_each(String::clear);
+            remote.url = bare(&remote.url);
         }
-        serde_json::Value::Array(items) => items.iter_mut().for_each(without_secrets),
-        _ => {}
     }
+    profile
+}
+
+/// An address without the user and password before its host, its query
+/// and its fragment.
+fn bare(url: &str) -> String {
+    let (scheme, rest) = url.split_once("://").map_or(("", url), |(scheme, rest)| (scheme, rest));
+    let rest = &rest[..rest.find(['?', '#']).unwrap_or(rest.len())];
+    let (authority, path) = rest.split_at(rest.find('/').unwrap_or(rest.len()));
+    let host = authority.rsplit_once('@').map_or(authority, |(_, host)| host);
+    if scheme.is_empty() { format!("{host}{path}") } else { format!("{scheme}://{host}{path}") }
 }
 
 /// Writes the account's settings the directory keeps into its scope where
@@ -390,5 +388,16 @@ pub(crate) async fn follow(hub: &Arc<crate::Hub>) -> std::io::Result<()> {
         pass(hub, database, accounts, troubles).await;
         first = false;
         notified.await;
+    }
+}
+
+#[cfg(test)]
+mod bare_tests {
+    #[test]
+    fn an_address_keeps_no_secret() {
+        assert_eq!(super::bare("https://user:pw@example.test/mcp?token=x#y"), "https://example.test/mcp");
+        assert_eq!(super::bare("https://example.test:8443/a/b"), "https://example.test:8443/a/b");
+        assert_eq!(super::bare("http://a@b@example.test#f"), "http://example.test");
+        assert_eq!(super::bare("https://example.test/p@q?x"), "https://example.test/p@q");
     }
 }

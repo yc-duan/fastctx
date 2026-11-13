@@ -132,6 +132,7 @@ fn conversation_scope(
             Ok(rows.collect::<Result<Vec<_>, _>>()?)
         })
         .map_err(|error| error.to_string())?;
+    let mut found = None;
     for key in keys {
         let Some(scope) = scopes::scope(assets, &key)? else { continue };
         // The account's own, or a body's it opened on a machine shared whole
@@ -146,11 +147,15 @@ fn conversation_scope(
             }
             _ => false,
         };
-        if ours {
-            return Ok(Some(key));
+        // Two of the account's own end with it — ids are unique on their
+        // machine alone — and a record naming the conversation by its id
+        // goes into neither: into the wrong one it would reach that one's
+        // readers (AT05). The hub's records keep it.
+        if ours && found.replace(key).is_some() {
+            return Ok(None);
         }
     }
-    Ok(None)
+    Ok(found)
 }
 
 /// The version of the account record a document's item holds.
@@ -386,9 +391,22 @@ pub(crate) async fn described(hub: std::sync::Arc<crate::Hub>, keys: Vec<String>
             continue;
         }
         let Ok(Some(scope)) = scopes::scope(&hub.assets, &key) else { continue };
-        let super::owners::Owner::Account(name, opened) = &scope.owner else { continue };
+        // An account's own scope, or a body's conversation, whose opener's
+        // records of it go in as well (AT04).
+        let (name, opened) = match (&scope.owner, &scope.descriptor.readers) {
+            (super::owners::Owner::Account(name, opened), _) => (name.clone(), *opened),
+            (super::owners::Owner::Body(_), Readers::Body { opener, .. }) if !key.ends_with("/log") => {
+                let Some(opened) =
+                    scope.descriptor.born.get(&format!("account:{opener}")).and_then(|at| at.parse::<i64>().ok())
+                else {
+                    continue;
+                };
+                (opener.to_string(), opened)
+            }
+            _ => continue,
+        };
         let (Ok(account), Ok(opened)) =
-            (AccountName::try_from(name.as_str()), jiff::Timestamp::from_millisecond(*opened))
+            (AccountName::try_from(name.as_str()), jiff::Timestamp::from_millisecond(opened))
         else {
             continue;
         };
@@ -450,6 +468,16 @@ pub(crate) fn project_scope(town: &TownId) -> String {
 /// the stream the hub orders in the project's scope (design §28.18), once
 /// the scope is described. Call on a thread that may block.
 pub(crate) fn ledger_entry(assets: &Assets, town: &TownId, seq: u64, bytes: &[u8]) -> Result<(), String> {
+    let written = ledger_entry_once(assets, town, seq, bytes);
+    // Not written: the whole ledger is looked at again with the next retry
+    // (AT08), as one whose look failed is.
+    if written.is_err() {
+        LEDGERS_FAILED.lock().unwrap_or_else(PoisonError::into_inner).insert(town.to_string());
+    }
+    written
+}
+
+fn ledger_entry_once(assets: &Assets, town: &TownId, seq: u64, bytes: &[u8]) -> Result<(), String> {
     let scope_key = project_scope(town);
     let Some(scope) = scopes::scope(assets, &scope_key)? else { return Ok(()) };
     let library = scopes::library(assets, &scope)?;

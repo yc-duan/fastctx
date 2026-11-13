@@ -120,6 +120,22 @@ fn scope_for(
 ) -> Result<(Readers, String), Failure> {
     let conversation = Readers::Conversation { openers: vec![account.clone()], born_on: born_on.clone() };
     let conversation_key = format!("{}{}", conversation.key_prefix(hub.as_str()), id);
+    // One that has a scope here already keeps it, though the machine it was
+    // born on left the network since and its body is known by none now
+    // (AT11).
+    if let Some(assets) = node.assets.as_ref() {
+        let tail = format!("/{id}");
+        let keys = assets.library.keys_ending(&tail).map_err(|error| Failure::new(error.to_string()))?;
+        let body = keys.iter().find_map(|key| key.strip_prefix("b/").and_then(|rest| rest.strip_suffix(tail.as_str())));
+        if let Some(body) = body.filter(|body| !body.contains('/')) {
+            let readers = Readers::Body { body: body.to_string(), opener: account.clone() };
+            let key = format!("{}{}", readers.key_prefix(hub.as_str()), id);
+            return Ok((readers, key));
+        }
+        if keys.contains(&conversation_key) {
+            return Ok((conversation, conversation_key));
+        }
+    }
     let (Some(machine), Some(link), Some(assets)) = (born_on, node.link_of(hub), node.assets.as_ref()) else {
         return Ok((conversation, conversation_key));
     };

@@ -38,6 +38,7 @@ pub(crate) fn of(node: &Node, resident: &ResidentId) -> Result<Option<Held>, Fai
         .filter(|class| class.holders == Holders::Logged)
         .map(|class| class.prefix)
         .collect();
+    let mut found = None;
     for scope in library.scopes_ending(&format!("/{resident}")).map_err(failure)? {
         if !(scope.key.starts_with("c/") || scope.key.starts_with("b/")) || scope.pulled != Some(scope.holding) {
             continue;
@@ -53,9 +54,13 @@ pub(crate) fn of(node: &Node, resident: &ResidentId) -> Result<Option<Held>, Fai
         if at & ((1 << 40) - 1) == 0 {
             continue;
         }
-        return Ok(Some(local::Held::at(library, scope.key)));
+        // Ids are unique on their machine alone: two copies of that id, and
+        // the one asked of is read where it lives.
+        if found.replace(scope.key).is_some() {
+            return Ok(None);
+        }
     }
-    Ok(None)
+    Ok(found.map(|scope| local::Held::at(library, scope)))
 }
 
 /// Where a reader asks to read on from, when it does.

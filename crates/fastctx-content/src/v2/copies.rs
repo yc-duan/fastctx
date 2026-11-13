@@ -19,6 +19,21 @@ pub struct HeldScope {
 }
 
 impl Library {
+    /// The keys of every scope this library knows, in any state, ending
+    /// with `tail`.
+    pub fn keys_ending(&self, tail: &str) -> Result<Vec<String>> {
+        let tail = tail.to_string();
+        Ok(self.database().read_now(move |db| {
+            let mut statement = db.prepare_cached(
+                "SELECT key FROM scopes
+                 WHERE length(key) > length(?1) AND substr(key, length(key) - length(?1) + 1) = ?1
+                 ORDER BY key",
+            )?;
+            let rows = statement.query_map(params![tail], |row| row.get(0))?;
+            Ok(rows.collect::<std::result::Result<_, _>>()?)
+        })?)
+    }
+
     /// The live scopes held here whose key ends with `tail`.
     pub fn scopes_ending(&self, tail: &str) -> Result<Vec<HeldScope>> {
         let tail = tail.to_string();

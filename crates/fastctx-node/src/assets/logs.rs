@@ -167,6 +167,14 @@ fn own_log(node: &Arc<Node>, scope: &str) -> Result<(), String> {
             offset: value["offset"].as_u64().unwrap_or(0),
         })
         .unwrap_or_default();
+    // The time the last piece written was ordered by: what the rest of a
+    // line longer than a piece is ordered by (AT10).
+    let mut time = library
+        .checkpoint(&standing)
+        .map_err(error)?
+        .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+        .and_then(|value| value["time"].as_i64())
+        .unwrap_or(0);
     let path = node.world.node_log();
     let (mut writes, mut leases, mut written) = (Vec::new(), Vec::new(), 0);
     while written < A_LOOK {
@@ -180,16 +188,12 @@ fn own_log(node: &Arc<Node>, scope: &str) -> Result<(), String> {
                 return Err(format!("the piece of this machine's log at {} is empty", piece.offset));
             }
             written += length as usize;
+            time = log_tail::order_time(&entry.order).unwrap_or(time);
             at = Tail { offset: piece.offset + length, file: piece.file };
             continue;
         }
-        let order = format!(
-            "{:016x}/{}/{:016x}",
-            log_tail::first_time(&piece.bytes).unwrap_or(0).max(0),
-            piece.file,
-            piece.offset
-        )
-        .into_bytes();
+        time = log_tail::piece_time(&piece.bytes, time);
+        let order = format!("{time:016x}/{}/{:016x}", piece.file, piece.offset).into_bytes();
         let lease = library.put(&mut piece.bytes.as_slice(), "machine-log", LEASE).map_err(error)?;
         let body = serde_json::to_vec(
             &serde_json::json!({ "file": piece.file, "offset": piece.offset, "length": piece.bytes.len() }),
@@ -210,7 +214,8 @@ fn own_log(node: &Arc<Node>, scope: &str) -> Result<(), String> {
             .write_all(writes, leases, false, kept.signer())
             .map_err(error)?;
     }
-    let standing_now = serde_json::to_vec(&serde_json::json!({ "holding": holding, "file": at.file, "offset": at.offset }))
+    let standing_now =
+        serde_json::to_vec(&serde_json::json!({ "holding": holding, "file": at.file, "offset": at.offset, "time": time }))
         .map_err(|error| error.to_string())?;
     library.keep_checkpoint(&standing, standing_now).map_err(error)
 }

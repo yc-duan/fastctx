@@ -47,12 +47,20 @@ fn first_epoch_gate(assets: &Assets, directory: &Indexed<'_>, kept: &Scope, scop
     // machine shared whole, or that machine's log — begun on its machine;
     // what an account does on a machine, on that machine; what a machine
     // did and spent for an account, by the machine its stream names (AS14).
+    // A body's machine is the member whose body it is now: its key, its
+    // owner and when that owner was opened make the body's name, so neither
+    // one gone from the network nor another that took its name begins a
+    // body's stream (AT06).
+    let mut of_body = None;
     let born_on = match &kept.descriptor.readers {
         wire::Readers::Conversation { born_on, .. } => born_on.clone(),
-        wire::Readers::Body { body, .. } => match &kept.bodies {
-            Some(bodies) => bodies.machine(body).map_err(|error| error.to_string())?,
-            None => None,
-        },
+        wire::Readers::Body { body, .. } => {
+            of_body = Some(body.clone());
+            match &kept.bodies {
+                Some(bodies) => bodies.machine(body).map_err(|error| error.to_string())?,
+                None => None,
+            }
+        }
         wire::Readers::Working { machine, .. } => Some(machine.clone()),
         wire::Readers::Account { .. } => {
             let Some((_, named)) = stream.split_once('/') else { return Ok(()) };
@@ -72,8 +80,11 @@ fn first_epoch_gate(assets: &Assets, directory: &Indexed<'_>, kept: &Scope, scop
     let source = match library.last_epoch(scope, <fastctx_content::v2::Timeline as fastctx_content::v2::Kind>::STREAM).map_err(|error| error.to_string())? {
         Some((_, orderer)) => orderer,
         None => match born_on.as_ref().and_then(|machine| directory.all.member(machine)) {
-            Some(member) => *member.key.as_bytes(),
-            None => return Ok(()),
+            Some(member) if of_body.as_ref().is_none_or(|body| directory.all.body_of(&member.name).as_ref() == Some(body)) => {
+                *member.key.as_bytes()
+            }
+            _ if of_body.is_some() => return Err(format!("{stream} of {scope} is begun by its body's machine, which is not here")),
+            _ => return Ok(()),
         },
     };
     // The device the frame says made it, whose signature `take` checks:

@@ -18,8 +18,8 @@ use std::path::Path;
 use std::sync::Weak;
 use std::time::Duration;
 
-/// How often the log is looked at.
-const EVERY: Duration = Duration::from_secs(60);
+/// How often the log is looked at: as a machine's is (§28.28 M11).
+const EVERY: Duration = Duration::from_secs(10);
 /// The most a piece holds, and a look writes.
 const PIECE: usize = 1 << 20;
 const A_LOOK: usize = 16 << 20;
@@ -31,7 +31,7 @@ pub(crate) fn scope_key(assets: &Assets) -> String {
     format!("{}log", Readers::Hub.key_prefix(assets.id.as_str()))
 }
 
-/// Looks at the hub's log every minute for as long as the hub runs.
+/// Looks at the hub's log every ten seconds for as long as the hub runs.
 pub(crate) async fn follow(hub: Weak<crate::Hub>) {
     loop {
         tokio::time::sleep(EVERY).await;
@@ -60,6 +60,14 @@ fn look(assets: &Assets, path: &Path) -> Result<(), String> {
             offset: value["offset"].as_u64().unwrap_or(0),
         })
         .unwrap_or_default();
+    // The time the last piece written was ordered by: what the rest of a
+    // line longer than a piece is ordered by (AT10).
+    let mut time = library
+        .checkpoint(STANDING)
+        .map_err(error)?
+        .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+        .and_then(|value| value["time"].as_i64())
+        .unwrap_or(0);
     // The leases keep the new objects until their records are taken.
     let (mut records, mut _leases, mut written) = (Vec::new(), Vec::new(), 0);
     while written < A_LOOK {
@@ -73,16 +81,12 @@ fn look(assets: &Assets, path: &Path) -> Result<(), String> {
                 return Err(format!("the piece of the hub's log at {} is empty", piece.offset));
             }
             written += length as usize;
+            time = log_tail::order_time(&entry.order).unwrap_or(time);
             at = Tail { offset: piece.offset + length, file: piece.file };
             continue;
         }
-        let order = format!(
-            "{:016x}/{}/{:016x}",
-            log_tail::first_time(&piece.bytes).unwrap_or(0).max(0),
-            piece.file,
-            piece.offset
-        )
-        .into_bytes();
+        time = log_tail::piece_time(&piece.bytes, time);
+        let order = format!("{time:016x}/{}/{:016x}", piece.file, piece.offset).into_bytes();
         let lease = library.put(&mut piece.bytes.as_slice(), "hub-log", LEASE).map_err(error)?;
         let body = serde_json::to_vec(
             &serde_json::json!({ "file": piece.file, "offset": piece.offset, "length": piece.bytes.len() }),
@@ -101,7 +105,7 @@ fn look(assets: &Assets, path: &Path) -> Result<(), String> {
         return Ok(());
     }
     apply(assets, &scope, &library, HubLog::STREAM, records)?;
-    let standing = serde_json::to_vec(&serde_json::json!({ "file": at.file, "offset": at.offset }))
+    let standing = serde_json::to_vec(&serde_json::json!({ "file": at.file, "offset": at.offset, "time": time }))
         .map_err(|error| error.to_string())?;
     library.keep_checkpoint(STANDING, standing).map_err(error)
 }

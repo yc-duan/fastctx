@@ -109,6 +109,19 @@ pub fn next(path: &Path, at: &Tail, most: usize) -> io::Result<Option<Piece>> {
     Ok(lines(file, 0, most)?.map(|bytes| Piece { file: file_name, offset: 0, bytes }))
 }
 
+/// The time a piece is ordered by: its first line's, or, for one that
+/// begins inside a line (the rest of a line longer than a piece), the time
+/// the piece before it was ordered by (AT10).
+pub fn piece_time(bytes: &[u8], before: i64) -> i64 {
+    first_time(bytes).unwrap_or(before).max(0)
+}
+
+/// The time an order key made as `{time:016x}/...` is ordered by.
+pub fn order_time(order: &[u8]) -> Option<i64> {
+    let digits = std::str::from_utf8(order.get(..16)?).ok()?;
+    i64::from_str_radix(digits, 16).ok()
+}
+
 /// The time the first line of `bytes` begins with, in milliseconds since
 /// 1970, as the logs write it; none when it does not begin with one.
 pub fn first_time(bytes: &[u8]) -> Option<i64> {
