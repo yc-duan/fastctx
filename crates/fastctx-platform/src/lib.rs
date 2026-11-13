@@ -40,6 +40,7 @@ pub mod identity;
 pub mod image_usage;
 pub mod ipc;
 pub mod job_membership;
+pub mod lab;
 pub mod legacy_text;
 pub mod limits;
 pub mod local_path;

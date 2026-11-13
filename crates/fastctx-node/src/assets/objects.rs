@@ -183,6 +183,7 @@ async fn fetch_one(library: &Library, link: &Arc<Link>, scope: &str, object: Obj
                 .map_err(|error| error.to_string())?
                 .map_err(|error| error.to_string())?,
         );
+        fastctx_platform::lab::die_at("chunk", scope);
     }
     // Every byte is here and written: the hub hears so before the whole is
     // read through again here, however long that takes.

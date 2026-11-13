@@ -567,6 +567,7 @@ pub(crate) fn ask(
             let word = library
                 .take(&scope, raw, &DeviceKeys, &taking, kinds(), assets.signer())
                 .map_err(|error| error.to_string())?;
+            fastctx_platform::lab::die_at("take", &scope);
             if staged != 0 {
                 if matches!(word, Received::Missing(_) | Received::Prove(_)) {
                     assets.objects.apart.touch(staged, key.as_bytes());

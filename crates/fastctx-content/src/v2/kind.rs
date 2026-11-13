@@ -238,11 +238,13 @@ impl<K: Kind> Writer<K> {
             })
             .collect();
         let judge = self.judge(signer.device());
-        self.library.commit_judged(
+        let committed = self.library.commit_judged(
             Commit { scope: self.scope.clone(), stream: self.stream.clone(), records, leases, durable, op: None, holding },
             signer,
             judge,
-        )
+        )?;
+        fastctx_platform::lab::die_at("commit", &self.stream);
+        Ok(committed)
     }
 
     /// The item `item` as it stands here, decoded.

@@ -1177,6 +1177,7 @@ async fn upload(
                     };
                     match received {
                         wire::Received::Applied { change, prefix, word, .. } => {
+                            fastctx_platform::lab::die_at("receipt", &stream);
                             let said = Said::Applied { change, prefix: array(&prefix, "a receipt's prefix")? };
                             keep(assets, hub, key, session, scope, receipt(said, word)).await?;
                         }
@@ -1594,6 +1595,7 @@ async fn pull_stream(
             .await?;
             match imported {
                 Imported::Applied { next: reached, .. } => {
+                    fastctx_platform::lab::die_at("import", &stream);
                     at = reached;
                     went = true;
                     super::standing::took(assets, hub, counted, bytes);
