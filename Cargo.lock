@@ -1336,6 +1336,7 @@ name = "fastctx-client"
 version = "1.0.1-beta.17"
 dependencies = [
  "base64 0.22.1",
+ "fastctx-content",
  "fastctx-net",
  "fastctx-platform",
  "fastctx-types",

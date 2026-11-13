@@ -255,7 +255,8 @@ pub(super) const KINDS: &[Registration] = &[
         Hub,
         TextMerge,
         UntilDeleted,
-        Metadata,
+        // A phone reads a conversation's plan from its own copy (§29 3.4).
+        Complete,
         "fastctx-node::plan",
         Assets,
         Utf8,
@@ -272,7 +273,8 @@ pub(super) const KINDS: &[Registration] = &[
         Hub,
         TextMerge,
         UntilDeleted,
-        Metadata,
+        // And its notes.
+        Complete,
         "fastctx-node::history",
         Assets,
         Utf8,

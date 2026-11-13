@@ -60,6 +60,7 @@ ASSET_OPENERS = {
     "crates/fastctx-node/src/lib.rs",
     "crates/fastctx-node/src/assets.rs",
     "crates/fastctx-hub/src/assets/owners.rs",
+    "crates/fastctx-client/src/device/replica/mod.rs",
 }
 ASSET_OPENING = re.compile(
     r"\b(?:Content|Objects|Library)\s*>?\s*::\s*open(?:_hub)?\b|\b(?:OBJECTS_DIRECTORY|OBJECTS_FILE|BYTES_FILE)\b"

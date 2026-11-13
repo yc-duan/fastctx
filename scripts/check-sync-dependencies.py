@@ -18,7 +18,7 @@ LOCAL = {
 STORAGE_USERS = {
     "fastctx-sync", "fastctx-content", "fastctx-hub", "fastctx-node", "fastctx-net", "fastctx-jobs",
 }
-CONTENT_USERS = {"fastctx-hub", "fastctx-node"}
+CONTENT_USERS = {"fastctx-hub", "fastctx-node", "fastctx-client"}
 # Who may open SQLite itself, past the storage layer: none other may make a
 # connection of its own to any database, an asset library's among them.
 RUSQLITE_USERS = {"fastctx-storage", "fastctx-gui"}

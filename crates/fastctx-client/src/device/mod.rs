@@ -13,6 +13,8 @@ mod history;
 mod lines;
 mod mcp;
 mod project_memory;
+#[cfg(feature = "replica")]
+pub mod replica;
 mod store;
 mod thumbnail;
 mod updates;
@@ -59,6 +61,9 @@ pub struct Device {
     shown_changes: Arc<tokio::sync::watch::Sender<u64>>,
     /// New versions of Fastctx here (`updates`).
     updates: updates::Updates,
+    /// Its copy of what it may hold, once asked for (`replicate`).
+    #[cfg(feature = "replica")]
+    replica: std::sync::OnceLock<Arc<replica::Replica>>,
 }
 
 pub(super) struct Session {
@@ -122,6 +127,8 @@ impl Device {
             shown: world_now::Shown::default(),
             shown_changes: Arc::new(tokio::sync::watch::channel(0).0),
             updates: updates::Updates::default(),
+            #[cfg(feature = "replica")]
+            replica: std::sync::OnceLock::new(),
         });
         for membership in memberships {
             device.start(membership)?;
@@ -131,6 +138,24 @@ impl Device {
 
     pub fn directory(&self) -> &Path {
         self.store.root()
+    }
+
+    /// Keeps a copy of what this device may hold of each hub's assets, held
+    /// as `tier` holds (design §29 3.2), in `replica/` of its directory: it
+    /// follows every link the device has from now on. Asked again, the copy
+    /// it keeps already. Call on a thread that may block.
+    #[cfg(feature = "replica")]
+    pub fn replicate(&self, tier: replica::Tier) -> io::Result<Arc<replica::Replica>> {
+        if let Some(replica) = self.replica.get() {
+            return Ok(replica.clone());
+        }
+        let device = *self.store.key()?.public().as_bytes();
+        let opened = Arc::new(replica::Replica::open(&self.store.root().join("replica"), device, tier)?);
+        let replica = self.replica.get_or_init(|| opened).clone();
+        for session in self.sessions() {
+            replica.follow(&session.link);
+        }
+        Ok(replica)
     }
 
     pub fn state(&self) -> DeviceState {
@@ -240,6 +265,10 @@ impl Device {
         self.store.note_dissolved(name)?;
         let Some(session) = self.sessions.write().expect("device sessions").remove(hub) else { return Ok(()) };
         drop(session);
+        #[cfg(feature = "replica")]
+        if let Some(replica) = self.replica.get() {
+            replica.left(hub).await.map_err(io::Error::other)?;
+        }
         changed(&self.ways);
         changed(&self.shown_changes);
         self.store.forget(hub)
@@ -265,6 +294,11 @@ impl Device {
             let id = session.link.membership().id.clone();
             device.sessions.write().expect("device sessions").remove(&id);
             drop(session);
+            // What it held of the network goes with it.
+            #[cfg(feature = "replica")]
+            if let Some(replica) = device.replica.get() {
+                replica.left(&id).await.map_err(failed)?;
+            }
             changed(&device.ways);
             // What the device shows changes with it: a network fewer.
             changed(&device.shown_changes);
@@ -293,6 +327,10 @@ impl Device {
         });
         let link = Arc::new(start(self.store.net(&id), membership, key, handler.clone())?);
         let _ = handler.link.set(Arc::downgrade(&link));
+        #[cfg(feature = "replica")]
+        if let Some(replica) = self.replica.get() {
+            replica.follow(&link);
+        }
         self.sessions.write().expect("device sessions").insert(id, Arc::new(Session { link }));
         // What the link said of its ways before it was among the sessions
         // was not seen in them.
@@ -464,6 +502,19 @@ impl fastctx_net::link::Node for Handler {
 
     fn ledger_changed(&self, _: Option<fastctx_types::access::TownId>) {
         self.towns_changed();
+    }
+
+    /// The hub's asset sync told this device something: its copy, if it
+    /// keeps one, hears it.
+    fn assets_pushed(&self, push: fastctx_types::assets::Push) {
+        #[cfg(feature = "replica")]
+        if let (Some(device), Some(link)) = (self.device.upgrade(), self.link.get().and_then(std::sync::Weak::upgrade))
+            && let Some(replica) = device.replica.get()
+        {
+            replica.pushed(&link.membership().id, push);
+        }
+        #[cfg(not(feature = "replica"))]
+        let _ = push;
     }
 
     /// A conversation's history changed on some machine: the history the
