@@ -12,6 +12,7 @@ pub(crate) mod chain;
 pub(crate) mod drill_kinds;
 mod holdings;
 mod keys;
+pub(crate) mod mirror;
 pub mod recovery;
 pub(crate) mod objects;
 mod owners;
@@ -989,10 +990,22 @@ impl Assets {
     /// machine that reads the scope or follows the library, but `by`, is to
     /// be told.
     pub(crate) fn moved(&self, owner: &Owner, scope: &str, stream: &str, next: u64, by: &fastctx_types::MachineName) {
+        self.moved_except(owner, scope, stream, next, Some(by));
+    }
+
+    /// A stream the hub orders itself moved on (design §28.17): every
+    /// machine that holds the scope or follows its library is told.
+    pub(crate) fn moved_by_hub(&self, owner: &Owner, scope: &str, stream: &str, next: u64) {
+        self.moved_except(owner, scope, stream, next, None);
+    }
+
+    fn moved_except(&self, owner: &Owner, scope: &str, stream: &str, next: u64, by: Option<&fastctx_types::MachineName>) {
         self.standing.moved(&owner.key());
         let mut told: BTreeSet<_> = self.holders.lock().expect("holders").get(scope).into_iter().flatten().cloned().collect();
         told.extend(self.followers.lock().expect("followers").get(&owner.key()).into_iter().flatten().cloned());
-        told.remove(by);
+        if let Some(by) = by {
+            told.remove(by);
+        }
         let mut pushes = self.pushes.lock().expect("pushes");
         for machine in told {
             pushes.push((machine, fastctx_types::assets::Push::Moved { scope: scope.into(), stream: stream.into(), next }));

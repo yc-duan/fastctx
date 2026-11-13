@@ -46,7 +46,9 @@ pub(crate) fn kinds() -> Arc<fastctx_content::v2::Kinds> {
         .register::<fastctx_content::v2::ConversationWords>()
         .register::<fastctx_content::v2::ConversationAttachment>()
         .register::<fastctx_content::v2::JobFacts>()
-        .register::<fastctx_content::v2::JobOutput>();
+        .register::<fastctx_content::v2::JobOutput>()
+        .register::<fastctx_content::v2::ConversationPlan>()
+        .register::<fastctx_content::v2::ConversationHistory>();
     #[cfg(test)]
     let kinds = kinds.register::<super::drill_kinds::Plain>();
     Arc::new(kinds)
@@ -404,6 +406,11 @@ pub(crate) fn ask(
         }
         Request::Take { scope, frame, proven: _, staged } => {
             let kept = gated(assets, directory, machine, &scope)?;
+            // The streams the hub orders itself take no device's frames
+            // (design §28.17).
+            if Header::decode(&frame.header.0).is_ok_and(|header| fastctx_content::v2::HUB_ORDERED.contains(&header.stream.as_str())) {
+                return Err("the hub orders that stream itself".into());
+            }
             // A body too large for the control connection was staged apart
             // under its ticket (§7.1), and stays there while the frame
             // waits for objects.
@@ -911,7 +918,9 @@ fn covering(assets: &Assets, scope: &Scope, head: &Head) -> Result<Option<wire::
 
 #[cfg(test)]
 mod tests {
-    use fastctx_content::v2::{ConversationAttachment, ConversationMeta, ConversationWords, JobFacts, JobOutput, Kind, Timeline};
+    use fastctx_content::v2::{
+        ConversationAttachment, ConversationHistory, ConversationMeta, ConversationPlan, ConversationWords, JobFacts, JobOutput, Kind, Timeline,
+    };
 
     /// A kind's number is its place in the registry, which only grows.
     #[test]
@@ -923,5 +932,7 @@ mod tests {
         assert_eq!(place("conversation.attachment"), Some(usize::from(ConversationAttachment::KIND)));
         assert_eq!(place("job.facts"), Some(usize::from(JobFacts::KIND)));
         assert_eq!(place("job.output"), Some(usize::from(JobOutput::KIND)));
+        assert_eq!(place("conversation.plan"), Some(usize::from(ConversationPlan::KIND)));
+        assert_eq!(place("conversation.history"), Some(usize::from(ConversationHistory::KIND)));
     }
 }

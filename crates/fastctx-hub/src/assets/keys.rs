@@ -59,6 +59,18 @@ fn hex(bytes: &[u8]) -> String {
 }
 
 impl Keys {
+    /// The key the hub signs the frames of the streams it orders with: the
+    /// one in use (design §28.17).
+    pub(crate) fn frame_key(&self) -> [u8; 32] {
+        *self.current.public().as_bytes()
+    }
+
+    /// Signs a frame header of a stream the hub orders, in the domain a
+    /// device signs its frames in.
+    pub(crate) fn sign_frame(&self, header: &[u8]) -> Vec<u8> {
+        self.current.sign(fastctx_net::sign::Domain::SyncSourceBatch, header).to_bytes().to_vec()
+    }
+
     /// The keyring in `dir`, its first key made when there is none.
     pub(crate) fn open(dir: &Path) -> io::Result<Self> {
         fastctx_platform::ensure_private_dir(dir)?;
