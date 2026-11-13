@@ -9,7 +9,7 @@
 //! written.
 
 use crate::Node;
-use fastctx_content::v2::{ConversationPlan, Entry, Kind as _, Library};
+use fastctx_content::v2::{ConversationPlan, HeldScope, Kind as _, Library};
 use fastctx_types::account_records::Record;
 use fastctx_types::plan::{KIND, Page};
 use fastctx_types::{MachineName, ResidentId};
@@ -17,8 +17,10 @@ use fastctx_types::{MachineName, ResidentId};
 /// The plan of the conversation `resident` — the one on `machine`, where
 /// given — as the copy a reader here reads holds it; none when no such copy
 /// is here, or two are.
-pub(crate) fn page(node: &Node, resident: &ResidentId, machine: Option<&MachineName>) -> Option<Page> {
-    let record = record(node, resident, machine, ConversationPlan::STREAM, "plan")?
+pub(crate) fn plan(node: &Node, resident: &ResidentId, machine: Option<&MachineName>) -> Option<Page> {
+    let library = &node.assets.as_ref()?.library;
+    let scope = copy_of(node, resident, machine)?;
+    let record = record_in(library, &scope.key, ConversationPlan::STREAM, "plan")?
         .filter(|record| record.metadata.kind == KIND && record.metadata.key == resident.as_str());
     let Some(record) = record else { return Some(Page { owner: resident.clone(), metadata: None, body: None }) };
     // Read as the hub's own answer is read (`Link::plan_read`).
@@ -26,17 +28,9 @@ pub(crate) fn page(node: &Node, resident: &ResidentId, machine: Option<&MachineN
     Some(Page { owner: resident.clone(), metadata: Some(record.metadata), body })
 }
 
-/// The account record `item` of `stream` in the copy of the conversation
-/// `resident` — the one on `machine`, where given — a reader here reads:
-/// none when no such copy is here or two are, `Some(None)` when the copy
-/// holds no such record.
-pub(crate) fn record(
-    node: &Node,
-    resident: &ResidentId,
-    machine: Option<&MachineName>,
-    stream: &str,
-    item: &str,
-) -> Option<Option<Record>> {
+/// The copy of the conversation `resident` — the one on `machine`, where
+/// given — a reader here reads: none when no such copy is here, or two are.
+pub(crate) fn copy_of(node: &Node, resident: &ResidentId, machine: Option<&MachineName>) -> Option<HeldScope> {
     let library = &node.assets.as_ref()?.library;
     let mut found = None;
     for scope in library.scopes_ending(&format!("/{resident}")).ok()? {
@@ -48,31 +42,36 @@ pub(crate) fn record(
         {
             continue;
         }
-        if found.replace(scope.key).is_some() {
+        if found.replace(scope).is_some() {
             return None;
         }
     }
-    let scope = found?;
-    let item = fastctx_content::v2::item_of(item);
-    Some(library.item(&scope, stream, &item).ok()?.and_then(|entry| record_of(library, &entry)))
+    found
 }
 
-/// The account record an item of the hub's holds: its body, or the one
-/// object the body says it is in (AR03).
-fn record_of(library: &Library, entry: &Entry) -> Option<Record> {
-    let value: serde_json::Value = serde_json::from_slice(&entry.body).ok()?;
-    if value.get("in_object").and_then(serde_json::Value::as_bool) != Some(true) {
-        return serde_json::from_value(value).ok();
-    }
-    let [object] = entry.objects.as_slice() else { return None };
-    let (mut bytes, mut at) = (Vec::new(), 0u64);
-    while at < object.size {
-        let piece = library.read(&object.hash, at, 1 << 20).ok()?;
-        if piece.is_empty() {
-            return None;
+/// The account record `item` of `stream` in the copy `scope`: none when it
+/// cannot be read, `Some(None)` when the copy holds no such record.
+pub(crate) fn record_in(library: &Library, scope: &str, stream: &str, item: &str) -> Option<Option<Record>> {
+    let item = fastctx_content::v2::item_of(item);
+    let Some(entry) = library.item(scope, stream, &item).ok()? else { return Some(None) };
+    let body = super::copy::whole_body(library, &entry)?;
+    Some(Some(serde_json::from_slice(&body).ok()?))
+}
+
+/// Every account record of `stream` in the copy `scope`, in the order it
+/// holds them; none when one cannot be read.
+pub(crate) fn records_in(library: &Library, scope: &str, stream: &str) -> Option<Vec<Record>> {
+    let (mut records, mut after) = (Vec::new(), None);
+    loop {
+        let page = library.page(scope, stream, after.take(), 500).ok()?;
+        let full = page.len() == 500;
+        for entry in &page {
+            let body = super::copy::whole_body(library, entry)?;
+            records.push(serde_json::from_slice(&body).ok()?);
         }
-        at += piece.len() as u64;
-        bytes.extend_from_slice(&piece);
+        match page.last() {
+            Some(last) if full => after = Some((last.order.clone(), last.item.clone())),
+            _ => return Some(records),
+        }
     }
-    serde_json::from_slice(&bytes).ok()
 }

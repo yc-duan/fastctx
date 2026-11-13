@@ -1815,11 +1815,24 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
         }
         Call::MachineLog { hub, account, before } => {
             users_voice(node, peer)?;
-            crate::world::hub_link(node, Some(&hub))?
-                .machine_log(&account, before)
-                .await
-                .map(Reply::MachineLog)
-                .map_err(Failure::new)
+            let link = crate::world::hub_link(node, Some(&hub))?;
+            match link.machine_log(&account, before).await {
+                Ok(page) => Ok(Reply::MachineLog(page)),
+                // The hub not reached: the changes as the account's records
+                // here hold them (plan 3-5).
+                Err(error) if !matches!(link.status(), fastctx_net::link::Status::Online { .. }) => {
+                    let asking = node.clone();
+                    fastctx_platform::task::spawn_blocking(move || {
+                        crate::timeline::copied_changes::page(&asking, &link, &account, before)
+                    })
+                    .await
+                    .ok()
+                    .flatten()
+                    .map(Reply::MachineLog)
+                    .ok_or_else(|| Failure::new(error))
+                }
+                Err(error) => Err(Failure::new(error)),
+            }
         }
         Call::ServerCommand { hub, account, name, expires, managed, uses, label, windows, mac } => {
             users_voice(node, peer)?;
@@ -1992,7 +2005,7 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
                 Err(error) if !matches!(link.status(), fastctx_net::link::Status::Online { .. }) => {
                     let asking = node.clone();
                     match fastctx_platform::task::spawn_blocking(move || {
-                        crate::timeline::copied_plan::page(&asking, &owner, machine.as_ref())
+                        crate::timeline::copied_records::plan(&asking, &owner, machine.as_ref())
                     })
                     .await
                     {

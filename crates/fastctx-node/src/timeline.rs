@@ -10,7 +10,8 @@ pub(crate) mod api;
 mod assets;
 mod build;
 pub(crate) mod copy;
-pub(crate) mod copied_plan;
+pub(crate) mod copied_changes;
+pub(crate) mod copied_records;
 #[cfg(feature = "timeline-drill")]
 mod drill;
 mod identity;

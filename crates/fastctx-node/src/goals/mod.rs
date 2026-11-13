@@ -5,6 +5,7 @@ pub(crate) mod calls;
 pub(crate) mod colleagues;
 pub(crate) mod commands;
 pub(crate) mod context;
+mod copied;
 mod deletion;
 pub(crate) mod engine;
 mod hold;

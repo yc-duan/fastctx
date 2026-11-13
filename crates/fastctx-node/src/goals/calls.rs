@@ -24,6 +24,21 @@ pub(crate) async fn user(
         None if node.residents.knows(&resident) || node.residents.deleted(&resident).is_some() => node.machine().into(),
         None => crate::colleagues::find_for(node, &Acting::Here, &resident).await?,
     };
+    match asked(node, resident.clone(), machine.clone(), account.clone(), request.clone()).await {
+        // A read the machine or the hub did not answer, not reached: as the
+        // copy here holds it (plan 3-5).
+        Err(failure) => super::copied::answer(node, &resident, &machine.name, account.as_ref(), &request).await.ok_or(failure),
+        answered => answered,
+    }
+}
+
+async fn asked(
+    node: &Arc<Node>,
+    resident: ResidentId,
+    machine: Written,
+    account: Option<HubAccount>,
+    request: Request,
+) -> Result<Updated, Failure> {
     if node.is_here(&machine) {
         let account = scope::user(node, &resident, account.as_ref()).await?;
         return user_here(node, resident, account, node.machine(), request).await;

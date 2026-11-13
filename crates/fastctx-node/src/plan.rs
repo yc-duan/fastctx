@@ -114,7 +114,7 @@ async fn work(
                 Err(error) if !matches!(link.status(), fastctx_net::link::Status::Online { .. }) => {
                     let (asking, resident, machine) = (node.clone(), whose.resident.clone(), whose.machine.clone());
                     fastctx_platform::task::spawn_blocking(move || {
-                        crate::timeline::copied_plan::page(&asking, &resident, Some(&machine))
+                        crate::timeline::copied_records::plan(&asking, &resident, Some(&machine))
                     })
                     .await
                     .ok()

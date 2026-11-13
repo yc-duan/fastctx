@@ -121,6 +121,35 @@ pub(crate) fn records_here(node: &Node, scope: &fastctx_content::v2::HeldScope) 
     (account || body) && scope.pulled == Some(scope.holding) && reader_here(node, scope)
 }
 
+/// Whether the hub of the held scope `scope` is not reached now: no link to
+/// it is online.
+pub(crate) fn hub_away(node: &Node, scope: &fastctx_content::v2::HeldScope) -> bool {
+    !node.links().iter().any(|link| {
+        Some(link.membership().id.as_str()) == scope.hub.as_deref()
+            && matches!(link.status(), fastctx_net::link::Status::Online { .. })
+    })
+}
+
+/// An item's whole body as written: its body, or the one object it is in
+/// when it was too large to be one (`{"in_object":true,…}`, AR03, M17).
+pub(crate) fn whole_body(library: &fastctx_content::v2::Library, entry: &fastctx_content::v2::Entry) -> Option<Vec<u8>> {
+    let value: serde_json::Value = serde_json::from_slice(&entry.body).ok()?;
+    if value.get("in_object").and_then(serde_json::Value::as_bool) != Some(true) {
+        return Some(entry.body.clone());
+    }
+    let [object] = entry.objects.as_slice() else { return None };
+    let (mut bytes, mut at) = (Vec::new(), 0u64);
+    while at < object.size {
+        let piece = library.read(&object.hash, at, 1 << 20).ok()?;
+        if piece.is_empty() {
+            return None;
+        }
+        at += piece.len() as u64;
+        bytes.extend_from_slice(&piece);
+    }
+    Some(bytes)
+}
+
 /// Whether `machine` is away from every network this one shares with it:
 /// offline on each that lists it.
 pub(crate) fn away(node: &Node, machine: &fastctx_types::MachineName) -> bool {

@@ -119,21 +119,7 @@ pub(crate) fn answer(node: &Node, machine: &MachineName, query: &BookQuery) -> O
 /// A deed's body as written: its row, or the one object it is in when it
 /// was too large to be a body (`assets::activity`, M17).
 fn read(library: &Library, entry: &Entry) -> Option<serde_json::Value> {
-    let value: serde_json::Value = serde_json::from_slice(&entry.body).ok()?;
-    if value.get("in_object").and_then(serde_json::Value::as_bool) != Some(true) {
-        return Some(value);
-    }
-    let [object] = entry.objects.as_slice() else { return None };
-    let (mut bytes, mut at) = (Vec::new(), 0u64);
-    while at < object.size {
-        let piece = library.read(&object.hash, at, 1 << 20).ok()?;
-        if piece.is_empty() {
-            return None;
-        }
-        at += piece.len() as u64;
-        bytes.extend_from_slice(&piece);
-    }
-    serde_json::from_slice(&bytes).ok()
+    serde_json::from_slice(&crate::timeline::copy::whole_body(library, entry)?).ok()
 }
 
 /// A deed as the book's row, written as `assets::activity` writes it, the
