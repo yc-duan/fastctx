@@ -29,6 +29,7 @@ mod layout;
 mod letgo;
 mod logs;
 mod activity;
+mod aside;
 mod artifact;
 mod attachment;
 mod meta;

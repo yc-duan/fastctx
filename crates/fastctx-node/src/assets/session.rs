@@ -1395,10 +1395,15 @@ async fn pull(
         } else if *at > hub_at.unwrap_or(0) && fastctx_content::v2::hub_orders(stream) {
             // A stream the hub orders, longer here than the hub has it after
             // a recovery: the hub writes it again from its records, and this
-            // replica follows it, cut back to what the hub has (AS02, AS07).
-            let (scope_text, stream_text) = (scope.to_string(), stream.clone());
-            let through = hub_at.unwrap_or(0).checked_sub(1);
-            blocking(library, move |library| library.truncate(&scope_text, &stream_text, through)).await?;
+            // replica follows it (AS02, AS07). What the hub no longer has of
+            // it is kept aside here whole, never lost: its records may have
+            // gone from the hub's sources since (AT02); it is cut back at
+            // one of its own frames' ends (AT03).
+            let (scope_text, stream_text, from) = (scope.to_string(), stream.clone(), hub_at.unwrap_or(0));
+            blocking(library, move |library| {
+                library.set_aside(&scope_text, &stream_text, from, "the hub, put back, holds the stream only before this")
+            })
+            .await?;
         } else if *at > hub_at.unwrap_or(0) {
             // A replica's frames the hub lost, all of the stream or its
             // tail, given again; a stream that fails holds up no other.

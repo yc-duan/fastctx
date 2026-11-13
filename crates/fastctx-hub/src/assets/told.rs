@@ -56,6 +56,20 @@ fn scope_of(
     Ok(Some((scope, library)))
 }
 
+/// A place in a stream, kept: its order and its item, each in hexadecimal.
+fn place_bytes(place: &fastctx_content::Place) -> Vec<u8> {
+    let hex = |bytes: &[u8]| bytes.iter().map(|byte| format!("{byte:02x}")).collect::<String>();
+    serde_json::to_vec(&serde_json::json!({ "order": hex(&place.order), "item": hex(&place.item) })).unwrap_or_default()
+}
+
+fn place_of(bytes: &[u8]) -> Option<fastctx_content::Place> {
+    let value: serde_json::Value = serde_json::from_slice(bytes).ok()?;
+    let bytes_of = |text: &str| -> Option<Vec<u8>> {
+        (0..text.len()).step_by(2).map(|at| text.get(at..at + 2).and_then(|pair| u8::from_str_radix(pair, 16).ok())).collect()
+    };
+    Some(fastctx_content::Place { order: bytes_of(value["order"].as_str()?)?, item: bytes_of(value["item"].as_str()?)? })
+}
+
 /// The item a machine log record is kept by: its number.
 fn audit_item(id: u64) -> Vec<u8> {
     format!("{id:016x}").into_bytes()
@@ -136,25 +150,32 @@ pub(crate) fn audit(
     let readers = vec![crate::store::log_store::account(account, opened)];
     // The newest it holds, as the log has them now (AR11), and on back a
     // page at a time while a page held anything the log has otherwise: a
-    // recovery longer than a page is put right whole (AS04).
-    let mut anchor = Anchor::Latest;
+    // recovery longer than a page is put right whole (AS04). A look ends
+    // after so many pages; where it ended is kept, and the next look, a
+    // minute on, goes on from there (AT07).
+    let again = format!("audit/again/{key}");
+    let mut anchor = match library.checkpoint(&again).map_err(error)?.and_then(|bytes| place_of(&bytes)) {
+        Some(place) => Anchor::Before(place),
+        None => Anchor::Latest,
+    };
+    let mut stopped = None;
     for _ in 0..VERIFIED_PAGES {
         let _writing = writing(&key);
-        let newest = library.view_page(&key, MachineAudit::STREAM, &anchor, LOOKED_AGAIN, u32::MAX).map_err(error)?;
-        let Some(oldest) = newest.older.clone() else {
-            if newest.entries.is_empty() {
-                break;
-            }
-            // The first page: nothing older to look at.
-            let ids: Vec<u64> = newest.entries.iter().filter_map(|entry| audit_id(&entry.item)).collect();
-            put_right(assets, &scope, &library, database, &readers, &newest.entries, &ids)?;
-            break;
-        };
-        let ids: Vec<u64> = newest.entries.iter().filter_map(|entry| audit_id(&entry.item)).collect();
-        if !put_right(assets, &scope, &library, database, &readers, &newest.entries, &ids)? {
-            break;
+        let page = library.view_page(&key, MachineAudit::STREAM, &anchor, LOOKED_AGAIN, u32::MAX).map_err(error)?;
+        let ids: Vec<u64> = page.entries.iter().filter_map(|entry| audit_id(&entry.item)).collect();
+        let fixed = put_right(assets, &scope, &library, database, &readers, &page.entries, &ids)?;
+        stopped = None;
+        // The first page, nothing older; or one the log has as it is.
+        let Some(oldest) = page.older.clone().filter(|_| fixed) else { break };
+        anchor = Anchor::Before(oldest.clone());
+        stopped = Some(oldest);
+    }
+    match stopped {
+        Some(place) => {
+            library.keep_checkpoint(&again, place_bytes(&place)).map_err(error)?;
+            FAILED.store(true, Ordering::SeqCst);
         }
-        anchor = Anchor::Before(oldest);
+        None => library.drop_checkpoint(&again).map_err(error)?,
     }
     loop {
         let _writing = writing(&key);
