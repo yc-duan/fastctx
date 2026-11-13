@@ -17,6 +17,7 @@ mod draft;
 mod exchange;
 mod facts;
 mod frame;
+mod handback;
 mod handover;
 mod heads;
 mod hub;
@@ -79,6 +80,7 @@ pub use document::{
     ConversationPlan, ConversationSentinel,
     MachineAudit, ProjectLedger,
 };
+pub use handback::{HandedBack, Tail, read_handed_back};
 pub use hub_ordered::{HUB_ORDERED, hub_orders};
 pub use names::item_of;
 pub use logs::{HubLog, KEPT_MS, MachineLog, McpLog};

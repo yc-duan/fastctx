@@ -958,9 +958,15 @@ pub fn hub(command: HubCommand) -> anyhow::Result<()> {
             match reopened {
                 None => println!("the hub's assets are not sealed: there is nothing to reopen"),
                 Some((_, None)) => anyhow::bail!("the hub stays sealed"),
-                Some((_, Some(forgotten))) => println!(
-                    "the hub's assets are open again, the libraries taken as they are ({forgotten} records of them set aside); start the hub"
-                ),
+                Some((_, Some(reopened))) => {
+                    for line in &reopened.taken_back {
+                        println!("{line}");
+                    }
+                    println!(
+                        "the hub's assets are open again, the libraries taken as they are ({} records of them set aside); start the hub",
+                        reopened.forgotten
+                    );
+                }
             }
         }
         HubCommand::Show { dir: chosen } => {

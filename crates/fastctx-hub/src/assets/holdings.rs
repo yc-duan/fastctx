@@ -109,7 +109,7 @@ fn frozen(directory: &Indexed<'_>, scope: &scopes::Scope) -> bool {
 /// a machine told no basis lists all again. Sealed, nothing is given.
 pub(crate) fn recheck(assets: &Assets, directory: &Indexed<'_>, now: &str, machine: &MachineName, reply: Reply) -> Result<Reply, String> {
     if let Some(why) = assets.sealed() {
-        return Ok(Reply::Sealed { why });
+        return Ok(assets.sealed_reply(why));
     }
     let Reply::Holdings { scopes, next, through, basis } = reply else { return Ok(reply) };
     let basis = if basis == now { basis } else { String::new() };

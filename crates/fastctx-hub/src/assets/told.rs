@@ -119,9 +119,17 @@ fn put_right(
     ids: &[u64],
 ) -> Result<bool, String> {
     let now = crate::store::log_store::readable_of(database, readers, ids).map_err(|error| error.to_string())?;
+    // Only this recovery generation's records are put right: one numbered
+    // below its floor is of an earlier history — taken back from devices,
+    // or written before the hub was put back — which the log put back does
+    // not hold, and is no reason for it to go (§28.38, codex-795fd27c B14).
+    let floor = super::restores::floor(assets.restores());
     let (mut records, mut _leases) = (Vec::new(), Vec::new());
     for entry in entries {
         let Some(id) = audit_id(&entry.item) else { continue };
+        if id < floor {
+            continue;
+        }
         let body = now.get(&id).cloned();
         if body.as_deref().is_some_and(|body| holds(entry, body)) {
             continue;

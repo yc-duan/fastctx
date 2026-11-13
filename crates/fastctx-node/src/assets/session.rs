@@ -27,6 +27,10 @@ use std::time::Duration;
 /// hub is pushed, what is committed here wakes it, so this only catches a
 /// push lost on the way (design §28.1).
 const AGAIN: Duration = Duration::from_secs(30);
+/// How long the hub's answer to one request is waited for before the node
+/// says it waits, and a pass with the hub goes on before the node says so.
+const ANSWERED_WITHIN: Duration = Duration::from_secs(120);
+const PASSED_WITHIN: Duration = Duration::from_secs(120);
 /// How often every scope of a hub is looked at whole — every stream asked,
 /// every cursor checked — when nothing called for it sooner (design §28.1).
 const LOOK_WHOLE: Duration = Duration::from_secs(24 * 60 * 60);
@@ -157,6 +161,9 @@ async fn run(node: std::sync::Weak<Node>, hub: HubId, wake: Arc<tokio::sync::Not
                 return;
             }
             Ok(Some((link, network))) if link.view().asset_sync >= VERSION => {
+                // A pass that goes on past its time is told (`stuck`), with
+                // what in it waits.
+                let _passing = fastctx_platform::doing::waiting_outside(format!("a pass with {hub}"), PASSED_WITHIN);
                 pass(&node, &hub, &link, &network).await.err()
             }
             Ok(Some(_)) => None,
@@ -197,6 +204,8 @@ const REVOKED: &str = "no longer read here: ";
 /// Asks the hub `request` of a scope; where the hub says this machine reads
 /// the scope no more, its holding here ends (design §4.5, §6.3).
 pub(super) async fn ask(assets: &Assets, link: &Arc<Link>, request: Request) -> Result<Reply, String> {
+    // Waited for past its time, the node says which (`stuck`).
+    let _waiting = fastctx_platform::doing::waiting_outside(format!("the hub's answer to {}", request.name()), ANSWERED_WITHIN);
     match link.assets(request).await? {
         Reply::Revoked { scope } => {
             // What may be given back after it is found by listing all again:
@@ -718,6 +727,13 @@ async fn feed(
     // it stood (LL02, MM08).
     if stood.as_ref().is_some_and(|(was, _)| *was != generation) {
         super::standing::stood(assets, hub, owner);
+        // Put back, the hub may hold a stream it orders shorter than this
+        // replica does, which no change number shows: every scope is looked
+        // at whole at once, where such a stream is kept aside and cut back
+        // to the hub's (`pull`), though this machine saw nothing the hub
+        // set aside.
+        assets.looked.lock().expect("looked").remove(hub);
+        assets.more.lock().expect("more").insert(hub.clone());
     }
     if stood.as_ref().is_some_and(|(was, _)| *was != generation) && after > 0 {
         after = 0;
@@ -889,7 +905,16 @@ async fn open(assets: &Assets, hub: &HubId, link: &Arc<Link>, session: u64) -> R
     };
     let (offered, checkpointed, rotations, closed) = match link.assets(request).await? {
         Reply::Ready { key, checkpointed, rotations, closed, .. } => (key, checkpointed, rotations, closed),
-        Reply::Sealed { why } => return Err(format!("the hub keeps every asset sealed: {why}")),
+        Reply::Sealed { why, recovery } => {
+            // Sealed for its recovery: what this machine holds of what the
+            // hub signed past where it was put back is handed back (§28.38).
+            if let Some(recovery) = recovery
+                && let Err(error) = super::hand_back::hand_back(assets, hub, link, recovery).await
+            {
+                return Err(format!("the hub keeps every asset sealed: {why}; handing back what it lost stopped: {error}"));
+            }
+            return Err(format!("the hub keeps every asset sealed: {why}"));
+        }
         _ => return Err("the hub did not open the session".into()),
     };
     let key = assets.pin_following(hub, &offered, &rotations)?;

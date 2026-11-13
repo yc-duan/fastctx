@@ -158,7 +158,7 @@ fn refusal(header: &Header, why: &str, from: u64, signer: &dyn HubSigner) -> Rec
     Received::Rejected { why: why.to_string(), from, signature }
 }
 
-fn objects_of(records: &[KindRecord]) -> Vec<ObjectRef> {
+pub(super) fn objects_of(records: &[KindRecord]) -> Vec<ObjectRef> {
     let mut seen = BTreeSet::new();
     let mut objects = Vec::new();
     for record in records {
@@ -175,7 +175,7 @@ fn objects_of(records: &[KindRecord]) -> Vec<ObjectRef> {
 
 /// A frame gives each object it refers to one length (I3): only the first
 /// reference of a hash is checked against the object here.
-fn lengths_agree(records: &[KindRecord]) -> Result<()> {
+pub(super) fn lengths_agree(records: &[KindRecord]) -> Result<()> {
     let mut lengths = BTreeMap::new();
     for record in records {
         if let State::Is { objects, .. } = &record.record.state {
@@ -371,7 +371,7 @@ pub(super) fn prefix(db: &Connection, scope: i64, holding: i64, name: &str) -> f
 }
 
 /// The applied prefix of a stream already here.
-fn standing(db: &Connection, scope: i64, holding: i64, name: &str) -> fastctx_storage::Result<Option<Prefix>> {
+pub(super) fn standing(db: &Connection, scope: i64, holding: i64, name: &str) -> fastctx_storage::Result<Option<Prefix>> {
     let found: Option<(i64, i64)> = db
         .prepare_cached("SELECT id, epoch FROM streams WHERE scope = ?1 AND name = ?2")?
         .query_row(params![scope, name], |row| Ok((row.get(0)?, row.get(1)?)))

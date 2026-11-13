@@ -309,8 +309,12 @@ pub(crate) fn recheck(
     if matches!(reply, Reply::Revoked { .. } | Reply::Sealed { .. }) {
         return Ok(reply);
     }
-    if let Some(why) = assets.sealed() {
-        return Ok(Reply::Sealed { why });
+    // Sealed for a recovery, what helps it recover is still answered: where
+    // the hub stands and what it made of a frame handed back (§28.38).
+    if let Some(why) = assets.sealed()
+        && (Assets::is_start_seal(&why) || !matches!(reply, Reply::Standing { .. } | Reply::HandedBack { .. }))
+    {
+        return Ok(assets.sealed_reply(why));
     }
     let Some(scope) = scopes::scope(assets, key)? else { return Ok(reply) };
     if !scopes::readable(directory, machine, &scope)
@@ -343,6 +347,7 @@ pub(crate) fn stream_of(request: &Request) -> Option<&str> {
     // answered, not passed by (AL03).
     match request {
         Request::Frames { stream, .. }
+        | Request::HandBack { stream, .. }
         | Request::Succession { stream, .. }
         | Request::Epoch { stream, .. }
         | Request::Takeover { stream, .. }
@@ -496,6 +501,7 @@ pub(crate) fn scope_of(request: &Request) -> Option<&str> {
         | Request::Take { scope, .. }
         | Request::Stage { scope, .. }
         | Request::Cursors { scope, .. }
+        | Request::HandBack { scope, .. }
         | Request::Frames { scope, .. }
         | Request::Streams { scope }
         | Request::Epoch { scope, .. }
@@ -519,6 +525,20 @@ pub(crate) fn ask(
     request: Request,
 ) -> Result<Reply, String> {
     if let Some(why) = assets.sealed() {
+        // Sealed for a recovery, a device asks where the hub stands and hands
+        // back what the hub signed past it (§28.38); nothing else is served.
+        if !Assets::is_start_seal(&why) {
+            let recovery = assets.restores() + 1;
+            match request {
+                Request::Cursors { scope, holding, streams } => {
+                    return super::handback::cursors(assets, directory, machine, key, &scope, holding, streams);
+                }
+                Request::HandBack { scope, stream, frame, objects } => {
+                    return super::handback::hand_back(assets, directory, machine, recovery, scope, stream, frame, objects);
+                }
+                _ => {}
+            }
+        }
         // What a machine brings while sealed, as far as the hub's word stands
         // behind it, is kept for the recovery.
         if let Request::Open { seen, reported, pinned, lineage, .. } = &request {
@@ -534,7 +554,7 @@ pub(crate) fn ask(
                 match put_back(assets, directory, machine, seen.as_ref(), reported, pinned.as_ref(), lineage)? {
                     Some(found) => {
                         assets.seal(&found);
-                        return Ok(Reply::Sealed { why: found });
+                        return Ok(assets.sealed_reply(found));
                     }
                     // Judged to show nothing: only what is judged so goes
                     // as the seal is opened (AO01).
@@ -542,7 +562,7 @@ pub(crate) fn ask(
                 }
             }
         }
-        return Ok(Reply::Sealed { why });
+        return Ok(assets.sealed_reply(why));
     }
     // A scope this machine reads no more is answered so, whatever was asked
     // of it: its device stops using what it holds (§4.5, §6.3).
@@ -698,6 +718,7 @@ pub(crate) fn ask(
             Ok(Reply::Received { received: received(word) })
         }
         Request::Cleared { .. } => Err("a machine's word that it cleared is taken with the directory".into()),
+        Request::HandBack { .. } => Ok(Reply::HandedBack { kept: false, why: Some("the hub is not sealed for a recovery".into()) }),
         Request::Put { scope, object, prove, .. } => {
             let kept = gated(assets, directory, machine, &scope)?;
             super::objects::put(assets, machine, key, kept, &object, prove)
@@ -1018,7 +1039,7 @@ fn open(
     assets.speaks(key).map_err(|error| error.to_string())?;
     if let Some(why) = keyring_behind(assets, machine, seen.as_ref(), pinned.as_ref(), &lineage)? {
         assets.seal(&why);
-        return Ok(Reply::Sealed { why });
+        return Ok(assets.sealed_reply(why));
     }
     let public = assets.public();
     let (seq, head) = assets.witness.current();
@@ -1037,7 +1058,7 @@ fn open(
                 } else {
                     let why = format!("{machine} saw the hub's history at {} that the hub does not hold", seen.seq);
                     assets.seal(&why);
-                    return Ok(Reply::Sealed { why });
+                    return Ok(assets.sealed_reply(why));
                 }
             }
         }
@@ -1060,7 +1081,7 @@ fn open(
             }
             let why = format!("{machine} holds the hub's receipt of {} that the hub's history no longer holds", receipt.scope);
             assets.seal(&why);
-            return Ok(Reply::Sealed { why });
+            return Ok(assets.sealed_reply(why));
         }
         if let Some(checkpoint) = covering(assets, &scope, &wanted)? {
             checkpointed.push(checkpoint);

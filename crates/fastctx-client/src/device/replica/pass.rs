@@ -50,7 +50,7 @@ pub(super) async fn open(replica: &Replica, hub: &HubId, link: &Arc<Link>) -> Re
     };
     let (offered, rotations, closed) = match link.assets(request).await? {
         Reply::Ready { key, rotations, closed, .. } => (key, rotations, closed),
-        Reply::Sealed { why } => return Err(format!("the hub keeps every asset sealed: {why}")),
+        Reply::Sealed { why, .. } => return Err(format!("the hub keeps every asset sealed: {why}")),
         _ => return Err("the hub did not open the session".into()),
     };
     let key = replica.pins.pin_following(hub, &offered, &rotations)?;

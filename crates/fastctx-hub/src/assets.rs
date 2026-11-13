@@ -10,6 +10,8 @@ pub(crate) mod brought;
 pub(crate) mod chain;
 #[cfg(test)]
 pub(crate) mod drill_kinds;
+mod handback;
+mod handback_repair;
 mod holdings;
 mod keys;
 pub(crate) mod mirror;
@@ -48,7 +50,16 @@ const SEALED_AT_START: &str = restores::AT_START;
 
 /// The asset side's tables in the hub's control database.
 pub(crate) fn schema() -> String {
-    format!("{}{}{}{}{}{}", chain::SCHEMA, scopes::SCHEMA, bodies::SCHEMA, standing::SCHEMA, ledger_views::SCHEMA, sentinel_homes::SCHEMA)
+    format!(
+        "{}{}{}{}{}{}{}",
+        chain::SCHEMA,
+        scopes::SCHEMA,
+        bodies::SCHEMA,
+        standing::SCHEMA,
+        ledger_views::SCHEMA,
+        sentinel_homes::SCHEMA,
+        handback::SCHEMA
+    )
 }
 
 /// Brings the asset side's tables in the control database up to this
@@ -945,6 +956,15 @@ impl Assets {
     /// it starts.
     pub(crate) fn is_start_seal(why: &str) -> bool {
         why == SEALED_AT_START
+    }
+
+    /// The hub's answer that its assets are sealed for `why`: sealed for a
+    /// recovery, with the count of recoveries it reopens with, under which
+    /// a device hands back what the hub signed past where it was put back
+    /// (design §28.38).
+    pub(crate) fn sealed_reply(&self, why: String) -> fastctx_types::assets::Reply {
+        let recovery = (!Self::is_start_seal(&why)).then(|| self.restores() + 1);
+        fastctx_types::assets::Reply::Sealed { why, recovery }
     }
 
     /// The seal, held: nothing seals the hub while a grant that checked it

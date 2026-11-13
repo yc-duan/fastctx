@@ -102,23 +102,30 @@ pub fn report(dir: &Path) -> anyhow::Result<Option<Vec<String>>> {
     report_in(dir, &store, &assets)
 }
 
+/// What reopening did: how many of the hub's records of the libraries
+/// went, and what it said of the frames handed back it took back.
+pub struct Reopened {
+    pub forgotten: usize,
+    pub taken_back: Vec<String>,
+}
+
 /// Reopens the stopped hub in `dir` once `confirm` takes what `report`
 /// says of it, on the one opening of its store both are made on: a second
 /// opening could find the first one's writer still holding the database.
-/// None where its assets are not sealed; else what was said, and how many
-/// of the hub's records of the libraries went, if confirmed.
+/// None where its assets are not sealed; else what was said, and what
+/// reopening did, if confirmed.
 pub fn reopen_confirmed(
     dir: &Path,
     confirm: impl FnOnce(&[String]) -> anyhow::Result<bool>,
-) -> anyhow::Result<Option<(Vec<String>, Option<usize>)>> {
+) -> anyhow::Result<Option<(Vec<String>, Option<Reopened>)>> {
     let store = Store::open(dir)?;
     let assets = Assets::open(dir, store.hub.id.as_str(), store.shelf.0.clone())?;
     let Some(lines) = report_in(dir, &store, &assets)? else { return Ok(None) };
     if !confirm(&lines)? {
         return Ok(Some((lines, None)));
     }
-    let forgotten = reopen_in(dir, &store, &assets)?;
-    Ok(Some((lines, Some(forgotten))))
+    let reopened = reopen_in(dir, &store, &assets)?;
+    Ok(Some((lines, Some(reopened))))
 }
 
 fn report_in(dir: &Path, store: &Store, assets: &Assets) -> anyhow::Result<Option<Vec<String>>> {
@@ -160,6 +167,11 @@ fn report_in(dir: &Path, store: &Store, assets: &Assets) -> anyhow::Result<Optio
             lines.push(format!("{machine} came with {count} receipt(s) of the hub's that the hub no longer holds"));
         }
     }
+    // Sealed for a recovery, what devices handed back of what the hub
+    // signed past where it was put back (§28.38).
+    if assets.sealed().is_some_and(|why| !Assets::is_start_seal(&why)) {
+        lines.extend(super::handback::report(assets, assets.restores() + 1)?);
+    }
     lines.push(
         "what is set aside: exactly the heads and receipts above, and the head outside the hub's directory; a device that saw \
          another part of the set-aside history and has not come yet seals the hub again when it does"
@@ -198,10 +210,14 @@ fn owners_behind(assets: &Assets) -> anyhow::Result<Vec<(Owner, String)>> {
 pub fn reopen(dir: &Path) -> anyhow::Result<usize> {
     let store = Store::open(dir)?;
     let assets = Assets::open(dir, store.hub.id.as_str(), store.shelf.0.clone())?;
-    reopen_in(dir, &store, &assets)
+    Ok(reopen_in(dir, &store, &assets)?.forgotten)
 }
 
-fn reopen_in(dir: &Path, store: &Store, assets: &Assets) -> anyhow::Result<usize> {
+fn reopen_in(dir: &Path, store: &Store, assets: &Assets) -> anyhow::Result<Reopened> {
+    // What devices handed back is taken back first, and the account
+    // records in it written back, each step noted as it is done: only then
+    // is the history set aside and the seal taken off (§28.38).
+    let taken_back = super::handback::take_back(dir, assets, assets.restores() + 1)?;
     let control = store.shelf.0.clone();
     let (fork, _) = control.read_now(chain::latest)?.unwrap_or((0, [0; 32]));
     let kept = assets.witness.kept();
@@ -316,6 +332,9 @@ fn reopen_in(dir: &Path, store: &Store, assets: &Assets) -> anyhow::Result<usize
         .execute([])?;
         c.prepare_cached("DELETE FROM recovery_heads")?.execute([])?;
         c.prepare_cached("DELETE FROM recovery_receipts")?.execute([])?;
+        // The frames handed back are taken back or stay evidence in their
+        // libraries; what was done is in `recovery_results`.
+        c.prepare_cached("DELETE FROM recovery_frames")?.execute([])?;
         // Reopened: the seal for this recovery is done with, and what the
         // hub numbers from now on is in a count of its own (R01).
         c.prepare_cached("DELETE FROM asset_seal")?.execute([])?;
@@ -329,5 +348,5 @@ fn reopen_in(dir: &Path, store: &Store, assets: &Assets) -> anyhow::Result<usize
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
         Err(error) => return Err(error.into()),
     }
-    Ok(forgotten)
+    Ok(Reopened { forgotten, taken_back })
 }

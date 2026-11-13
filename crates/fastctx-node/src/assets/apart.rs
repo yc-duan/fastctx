@@ -9,6 +9,10 @@ use fastctx_net::link::Link;
 use fastctx_types::assets::{self as wire, APART_FRAME_BYTES, Bytes, CHUNK_BYTES, Reply, Request};
 use std::sync::Arc;
 
+/// How long frame bodies on a data connection go on before the node says
+/// it waits for them (`stuck`).
+const APART_WITHIN: std::time::Duration = std::time::Duration::from_secs(300);
+
 /// Asks the hub to take `frame` of `scope`, naming the objects `proven`.
 /// A body too large for the control connection is staged first, once:
 /// `staged` keeps its ticket for the frame asked again.
@@ -44,6 +48,7 @@ async fn stage(assets: &Assets, link: &Arc<Link>, scope: &str, body: &[u8]) -> R
     let Reply::Staged { ticket } = ask(assets, link, request).await? else {
         return Err("the hub gave no room for a frame body".into());
     };
+    let _waiting = fastctx_platform::doing::waiting_outside("a frame body going to the hub on a data connection", APART_WITHIN);
     let mut outgoing = link.put_object(ticket).await?;
     for (index, chunk) in body.chunks(CHUNK_BYTES as usize).enumerate() {
         outgoing.chunk(index as u64, chunk).await?;
@@ -61,6 +66,7 @@ pub(super) async fn bring(link: &Arc<Link>, ticket: u64, frames: &mut [wire::Fra
     if ticket == 0 {
         return Err("the hub sent frame bodies apart under no ticket".into());
     }
+    let _waiting = fastctx_platform::doing::waiting_outside("frame bodies coming from the hub on a data connection", APART_WITHIN);
     let mut incoming = link.get_object(ticket).await?;
     let mut expected = 0u64;
     for frame in frames.iter_mut().filter(|frame| frame.apart > 0) {

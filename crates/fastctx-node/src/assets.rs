@@ -10,6 +10,7 @@
 //! (design §6.1).
 
 mod apart;
+mod hand_back;
 pub(crate) mod activity;
 pub(crate) mod logs;
 pub(crate) mod membership;

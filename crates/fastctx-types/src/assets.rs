@@ -360,6 +360,17 @@ pub enum Request {
     /// Where the device's streams of a scope stand in its holding period
     /// `holding` (§6.6, §7.4).
     Cursors { scope: String, holding: i64, streams: Vec<Cursor> },
+    /// A frame of a stream the hub orders, as the hub signed it, handed back
+    /// while the hub is sealed for a recovery, with the bytes of the objects
+    /// its records refer to (hash, bytes): what the hub put back lost past
+    /// where it was put back (§28.38).
+    HandBack {
+        scope: String,
+        stream: String,
+        frame: Frame,
+        #[serde(default)]
+        objects: Vec<(Bytes, Bytes)>,
+    },
     /// Up to `limit` frames of a stream, from the one holding `from` (§6.6).
     Frames { scope: String, stream: String, from: u64, limit: u32 },
     /// A stream's signed epochs and gap facts (§8).
@@ -577,6 +588,33 @@ pub struct StreamAt {
 }
 
 impl Request {
+    /// The request's name as it goes on the wire, for what is told of it.
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::Open { .. } => "open",
+            Self::Answer { .. } => "answer",
+            Self::Take { .. } => "take",
+            Self::Stage { .. } => "stage",
+            Self::Holdings { .. } => "holdings",
+            Self::Cursors { .. } => "cursors",
+            Self::HandBack { .. } => "hand_back",
+            Self::Frames { .. } => "frames",
+            Self::Succession { .. } => "succession",
+            Self::Window { .. } => "window",
+            Self::Older { .. } => "older",
+            Self::Describe { .. } => "describe",
+            Self::Streams { .. } => "streams",
+            Self::Changes { .. } => "changes",
+            Self::Epoch { .. } => "epoch",
+            Self::Takeover { .. } => "takeover",
+            Self::Put { .. } => "put",
+            Self::Get { .. } => "get",
+            Self::Cleared { .. } => "cleared",
+            Self::Report { .. } => "report",
+            Self::SyncStatus { .. } => "sync_status",
+        }
+    }
+
     /// What every asset request is for on the wire.
     pub fn purpose(&self) -> crate::sync::transfer::Purpose {
         use crate::sync::transfer::Purpose;
@@ -587,6 +625,7 @@ impl Request {
             | Self::Stage { .. }
             | Self::Holdings { .. }
             | Self::Cursors { .. }
+            | Self::HandBack { .. }
             | Self::Frames { .. }
             | Self::Succession { .. }
             | Self::Window { .. }
@@ -704,8 +743,21 @@ pub enum Reply {
         closed: bool,
     },
     /// The hub was put back and keeps every asset sealed until recovery
-    /// ends (§17).
-    Sealed { why: String },
+    /// ends (§17). Sealed for a recovery, the recovery generation it will
+    /// reopen as: a device hands back what the hub signed past where it was
+    /// put back (`HandBack`, §28.38).
+    Sealed {
+        why: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        recovery: Option<u64>,
+    },
+    /// What the hub made of a frame handed back to it while sealed for a
+    /// recovery: kept for it to take back as it reopens, or not, and why.
+    HandedBack {
+        kept: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        why: Option<String>,
+    },
     /// This machine reads the scope no more, by the directory as it stands
     /// (§4.5, §6.3): it stops using what it holds of it.
     Revoked { scope: String },
