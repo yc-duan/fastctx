@@ -174,7 +174,9 @@ pub(super) async fn pull(replica: &Replica, hub: &HubId, link: &Arc<Link>, key: 
     for at in &streams {
         let (scope_text, stream_text) = (scope.to_string(), at.stream.clone());
         let known = blocking(library, move |library| library.known_last_epoch(&scope_text, &stream_text)).await?;
-        if at.epoch > known.unwrap_or(0) {
+        // None known here yet, the first epoch's descriptor included: its
+        // frames are not taken without it.
+        if known.is_none_or(|known| known < at.epoch) {
             succession(replica, hub, link, key, scope, &at.stream).await?;
         }
     }

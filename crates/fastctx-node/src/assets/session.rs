@@ -797,6 +797,14 @@ async fn catch_up(
             // stream handed away included (I09).
             let (scope, stream) = (changed.scope.clone(), changed.stream.clone());
             let known = blocking(library, move |library| library.known_last_epoch(&scope, &stream)).await?;
+            // A stream first heard of in a scope held here may stand for
+            // another the hub gives this machine no more — a reader's
+            // project ledger under the machines it may use now (§29, 2.4):
+            // the scope is looked at whole at the next pass, the hub's
+            // listing of what it withholds with it.
+            if known.is_none() {
+                assets.relook.lock().expect("relook").insert(changed.scope.clone());
+            }
             if changed.epoch > 0 && known.is_none_or(|known| known < changed.epoch) {
                 succession(assets, hub, link, key, &changed.scope, &changed.stream).await?;
             }

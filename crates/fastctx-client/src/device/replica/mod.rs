@@ -283,6 +283,12 @@ impl Replica {
             let key_text = scope.clone();
             let here: BTreeMap<String, u64> = blocking(library, move |library| library.streams(&key_text)).await?.into_iter().collect();
             for ((_, stream), next) in moved.iter().filter(|((of, _), _)| *of == scope) {
+                // A stream first heard of may stand for another the hub
+                // gives this device no more (§29, 2.4): a whole look lists
+                // what it withholds.
+                if !here.contains_key(stream) {
+                    self.called.lock().expect("called").entry(hub.clone()).or_default().whole = true;
+                }
                 let at = here.get(stream).copied().unwrap_or(0);
                 match pass::hold(self, hub, link, &key, &scope, stream, holding, at, *next).await {
                     Ok(went_on) => more |= went_on,

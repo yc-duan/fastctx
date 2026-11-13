@@ -96,7 +96,8 @@ async fn run() -> Result<(), String> {
         for (scope, _, _) in library.live_scopes().map_err(|error| error.to_string())? {
             held.push_str(&format!("{scope}:{:?};", library.streams(&scope).map_err(|error| error.to_string())?));
         }
-        let well = hubs(&device).iter().all(|hub| matches!(replica.ended(hub), Some(Ok(()))));
+        let on = hubs(&replica);
+        let well = !on.is_empty() && on.iter().all(|hub| matches!(replica.ended(hub), Some(Ok(()))));
         settled = if well && held == held_before { settled + 1 } else { 0 };
         held_before = held;
     }
@@ -147,7 +148,7 @@ async fn run() -> Result<(), String> {
             );
         }
     }
-    let ended: Vec<_> = hubs(&device)
+    let ended: Vec<_> = hubs(&replica)
         .into_iter()
         .map(|hub| serde_json::json!({ "hub": hub.to_string(), "ended": format!("{:?}", replica.ended(&hub)) }))
         .collect();
@@ -158,9 +159,18 @@ async fn run() -> Result<(), String> {
     Ok(())
 }
 
-/// The hubs the device is on.
-fn hubs(device: &Device) -> Vec<fastctx_net::ids::HubId> {
-    device.state().hubs.iter().filter_map(|hub| fastctx_net::ids::HubId::try_from(hub.hub.to_string()).ok()).collect()
+/// The hubs the copy holds scopes of, as their descriptors name them: a
+/// pass ends on each of them before the copy counts as settled.
+fn hubs(replica: &fastctx_client::device::replica::Replica) -> Vec<fastctx_net::ids::HubId> {
+    let mut found: Vec<fastctx_net::ids::HubId> = Vec::new();
+    for (scope, _, _) in replica.library().live_scopes().unwrap_or_default() {
+        if let Some(hub) = hub_id(replica, &scope)
+            && !found.iter().any(|known| known.as_str() == hub.as_str())
+        {
+            found.push(hub);
+        }
+    }
+    found
 }
 
 /// An item's order key and identity.
