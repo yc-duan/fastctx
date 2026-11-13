@@ -26,6 +26,7 @@ mod kind;
 mod layout;
 mod letgo;
 mod logs;
+mod activity;
 mod artifact;
 mod attachment;
 mod meta;
@@ -60,6 +61,7 @@ pub use handover::{Cutoff, Signed, Successor};
 pub use heads::Head;
 pub use kind::{Actor, Deletion, Holding, Import, Kind, Kinds, Write, Writer};
 pub use timeline::{EVENT, OVERSIZED, Timeline};
+pub use activity::{AccountActivity, AccountUsage};
 pub use artifact::ConversationArtifact;
 pub use attachment::ConversationAttachment;
 pub use timer::ConversationTimer;
@@ -68,7 +70,7 @@ pub use document::{
     ConversationPlan, ConversationSentinel,
     MachineAudit, ProjectLedger,
 };
-pub use hub_ordered::HUB_ORDERED;
+pub use hub_ordered::{HUB_ORDERED, hub_orders};
 pub use logs::{HubLog, KEPT_PIECES, MachineLog, McpLog};
 pub use job::{JobFacts, JobOutput, OUTPUT_PARTS};
 pub use meta::{ConversationMeta, META_ITEMS};

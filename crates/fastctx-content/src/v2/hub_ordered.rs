@@ -28,6 +28,13 @@ pub const HUB_ORDERED: [&str; 12] = [
     "collaboration",
 ];
 
+/// Whether the hub alone orders `stream`: a kind's records go in streams
+/// whose names begin with its stream's, so one beginning with a name the
+/// hub orders is the hub's too.
+pub fn hub_orders(stream: &str) -> bool {
+    HUB_ORDERED.iter().any(|name| stream.starts_with(name))
+}
+
 impl Library {
     /// Frames of `records` for `stream` of `scope`, ordered by the hub, whose
     /// service key `signer` is: chained on from what the hub applied of it,

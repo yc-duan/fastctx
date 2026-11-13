@@ -86,7 +86,9 @@ pub(crate) fn kinds() -> Arc<fastctx_content::v2::Kinds> {
         .register::<fastctx_content::v2::ConversationTimer>()
         .register::<fastctx_content::v2::ConversationArtifact>()
         .register::<fastctx_content::v2::AccountProfile>()
-        .register::<fastctx_content::v2::AccountCollaboration>();
+        .register::<fastctx_content::v2::AccountCollaboration>()
+        .register::<fastctx_content::v2::AccountActivity>()
+        .register::<fastctx_content::v2::AccountUsage>();
     #[cfg(test)]
     let kinds = kinds.register::<super::drill_kinds::Plain>();
     Arc::new(kinds)
@@ -447,7 +449,7 @@ pub(crate) fn ask(
             let kept = gated(assets, directory, machine, &scope)?;
             // The streams the hub orders itself take no device's frames
             // (design §28.17).
-            if Header::decode(&frame.header.0).is_ok_and(|header| fastctx_content::v2::HUB_ORDERED.contains(&header.stream.as_str())) {
+            if Header::decode(&frame.header.0).is_ok_and(|header| fastctx_content::v2::hub_orders(&header.stream)) {
                 return Err("the hub orders that stream itself".into());
             }
             // A stream's first epoch is opened by its source alone (AQ07).

@@ -10,6 +10,7 @@
 //! (design §6.1).
 
 mod apart;
+pub(crate) mod activity;
 pub(crate) mod logs;
 pub(crate) mod membership;
 mod objects;
@@ -171,7 +172,7 @@ impl Assets {
         // frames, out of the index, until a release that knows them, which
         // takes them in now (§2.3).
         let kinds: Arc<dyn fastctx_content::v2::Authorizer> =
-            Arc::new(fastctx_content::v2::Kinds::new().register::<fastctx_content::v2::Timeline>().register::<fastctx_content::v2::ConversationMeta>().register::<fastctx_content::v2::ConversationWords>().register::<fastctx_content::v2::ConversationAttachment>().register::<fastctx_content::v2::JobFacts>().register::<fastctx_content::v2::JobOutput>().register::<fastctx_content::v2::ConversationPlan>().register::<fastctx_content::v2::ConversationHistory>().register::<fastctx_content::v2::ConversationGoal>().register::<fastctx_content::v2::ConversationSentinel>().register::<fastctx_content::v2::AccountSettings>().register::<fastctx_content::v2::AccountSkill>().register::<fastctx_content::v2::ProjectLedger>().register::<fastctx_content::v2::MachineAudit>().register::<fastctx_content::v2::AccountNotice>().register::<fastctx_content::v2::MachineLog>().register::<fastctx_content::v2::McpLog>().register::<fastctx_content::v2::HubLog>().register::<fastctx_content::v2::ConversationTimer>().register::<fastctx_content::v2::ConversationArtifact>().register::<fastctx_content::v2::AccountProfile>().register::<fastctx_content::v2::AccountCollaboration>());
+            Arc::new(fastctx_content::v2::Kinds::new().register::<fastctx_content::v2::Timeline>().register::<fastctx_content::v2::ConversationMeta>().register::<fastctx_content::v2::ConversationWords>().register::<fastctx_content::v2::ConversationAttachment>().register::<fastctx_content::v2::JobFacts>().register::<fastctx_content::v2::JobOutput>().register::<fastctx_content::v2::ConversationPlan>().register::<fastctx_content::v2::ConversationHistory>().register::<fastctx_content::v2::ConversationGoal>().register::<fastctx_content::v2::ConversationSentinel>().register::<fastctx_content::v2::AccountSettings>().register::<fastctx_content::v2::AccountSkill>().register::<fastctx_content::v2::ProjectLedger>().register::<fastctx_content::v2::MachineAudit>().register::<fastctx_content::v2::AccountNotice>().register::<fastctx_content::v2::MachineLog>().register::<fastctx_content::v2::McpLog>().register::<fastctx_content::v2::HubLog>().register::<fastctx_content::v2::ConversationTimer>().register::<fastctx_content::v2::ConversationArtifact>().register::<fastctx_content::v2::AccountProfile>().register::<fastctx_content::v2::AccountCollaboration>().register::<fastctx_content::v2::AccountActivity>().register::<fastctx_content::v2::AccountUsage>());
         library.know(kinds.clone());
         library.reconsider(kinds, true).map_err(|error| io::Error::other(error.to_string()))?;
         let path = dir.join("hubs.json");

@@ -95,7 +95,7 @@ pub(super) async fn run(
         Ok(library
             .streams(&scope_text)?
             .into_iter()
-            .all(|(stream, _)| own.contains(&stream) || fastctx_content::v2::HUB_ORDERED.contains(&stream.as_str())))
+            .all(|(stream, _)| own.contains(&stream) || fastctx_content::v2::hub_orders(&stream)))
     })
     .await?;
     if all_here {
@@ -281,7 +281,7 @@ pub(crate) fn adopt(node: &Arc<Node>, resident: &fastctx_types::ResidentId) -> R
             .streams(&scope_text)?
             .into_iter()
             .map(|(stream, _)| stream)
-            .filter(|stream| !own.contains(stream) && !fastctx_content::v2::HUB_ORDERED.contains(&stream.as_str()))
+            .filter(|stream| !own.contains(stream) && !fastctx_content::v2::hub_orders(stream))
             .collect())
     })()
     .map_err(|error| error.to_string())?;

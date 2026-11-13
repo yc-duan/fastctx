@@ -1003,6 +1003,7 @@ pub async fn run_prepared(
         timeline::register(&node);
         job_assets::start(&node);
         assets::logs::start(&node);
+        assets::activity::start(&node);
         management::register(&node);
         record_changes::register(&node);
         record_writes::register(&node);

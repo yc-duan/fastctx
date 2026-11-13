@@ -65,7 +65,7 @@ pub(crate) fn start(node: &Arc<Node>) {
 
 /// The scope `readers` and `name` make on `hub`: proposed here while it is
 /// not held, and the key with whether it is held.
-fn proposed(node: &Node, hub: &HubId, readers: Readers, name: &str, holders: Holders) -> Result<Option<String>, String> {
+pub(super) fn proposed(node: &Node, hub: &HubId, readers: Readers, name: &str, holders: Holders) -> Result<Option<String>, String> {
     let Some(kept) = node.assets.as_ref() else { return Ok(None) };
     let library = &kept.library;
     let key = format!("{}{name}", readers.key_prefix(hub.as_str()));
