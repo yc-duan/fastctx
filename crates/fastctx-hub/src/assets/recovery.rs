@@ -303,7 +303,7 @@ fn reopen_in(dir: &Path, store: &Store, assets: &Assets) -> anyhow::Result<usize
     hasher.update(old_head);
     let digest: [u8; 32] = hasher.finalize().into();
     let old_seq = kept.seq;
-    let (seq, head) = control.write_now(4096, move |c| {
+    let (seq, head, instance) = control.write_now(4096, move |c| {
         if old_seq > 0 {
             c.prepare_cached("INSERT OR IGNORE INTO closed_heads (seq, head) VALUES (?1, ?2)")?.execute(params![old_seq as i64, &old_head[..]])?;
         }
@@ -317,8 +317,13 @@ fn reopen_in(dir: &Path, store: &Store, assets: &Assets) -> anyhow::Result<usize
         c.prepare_cached("DELETE FROM recovery_receipts")?.execute([])?;
         // Reopened: the seal for this recovery is done with.
         c.prepare_cached("DELETE FROM asset_seal")?.execute([])?;
-        chain::append(c, "branch-closed", &digest)
+        // What the hub's sources number from here on is another instance's
+        // (§29, 2.2).
+        let instance = super::instance::renew_in(c)?;
+        let (seq, head) = chain::append(c, "branch-closed", &digest)?;
+        Ok((seq, head, instance))
     })?;
+    assets.renewed(instance);
     assets.witness.reset(seq, &head)?;
     match fastctx_platform::disk::remove_file(dir.join(BACKUP_MARKER)) {
         Ok(()) => {}

@@ -15,6 +15,7 @@ mod keys;
 pub(crate) mod mirror;
 pub(crate) mod told;
 pub(crate) mod hub_log;
+pub(crate) mod instance;
 pub mod recovery;
 pub(crate) mod objects;
 mod owners;
@@ -166,6 +167,8 @@ pub(crate) struct Assets {
     pub(crate) bodies: Arc<bodies::Bodies>,
     /// Where machines stand in syncing (design §28.9).
     pub(crate) standing: standing::Standing,
+    /// The source instance the hub's numbered sources write under (§29, 2.2).
+    instance: std::sync::atomic::AtomicU64,
 }
 
 impl Assets {
@@ -180,6 +183,7 @@ impl Assets {
         let keys = Arc::new(keys::Keys::open(&dir.join("keys"))?);
         let witness = Arc::new(Witness::open(dir, id)?);
         let incarnation = incarnation(&control)?;
+        let source = instance::current(&control)?;
         let owners = owners::Owners::new(dir.join("assets"), incarnation);
         let assets = Self {
             id: id.to_string(),
@@ -201,6 +205,7 @@ impl Assets {
             objects: objects::Objects::default(),
             bodies: Arc::new(bodies::Bodies::new(control.clone())),
             standing: standing::Standing::default(),
+            instance: std::sync::atomic::AtomicU64::new(source),
         };
         if let Some(why) = assets.put_back(dir)? {
             assets.witness.freeze();
@@ -932,6 +937,16 @@ impl Assets {
     /// Why every asset is sealed, if it is.
     pub(crate) fn sealed(&self) -> Option<String> {
         self.sealed.lock().expect("seal").clone()
+    }
+
+    /// The source instance the hub's numbered sources write under now.
+    pub(crate) fn instance(&self) -> u64 {
+        self.instance.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// The source instance drawn anew as the hub reopened.
+    pub(crate) fn renewed(&self, instance: u64) {
+        self.instance.store(instance, std::sync::atomic::Ordering::SeqCst);
     }
 
     /// Seals every asset as the hub starts, its setting says so (design §17

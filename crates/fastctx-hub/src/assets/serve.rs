@@ -793,6 +793,16 @@ pub(crate) fn ask(
                     if !opened_here(directory, machine, &kept) {
                         return Err(format!("{scope} was opened by no account logged in on {me}: it is not this machine's to adopt"));
                     }
+                    // Nothing of it ordered anywhere yet: the account that
+                    // opened it begins it on its own machine (§29, 2.3, NN14).
+                    if last.is_none() {
+                        let successor = Successor { device, key: device, kind: EpochKind::Source };
+                        let signed = library.open_epoch(&scope, &stream, successor, assets.signer()).map_err(|error| error.to_string())?;
+                        assets.changed(kept.owner.clone(), &scope);
+                        let epoch = fastctx_content::v2::EpochFact::decode(&signed.fact)?.epoch;
+                        assets.opened_epoch(&kept.owner, &scope, &stream, epoch, &signed.fact).map_err(|error| error.to_string())?;
+                        return Ok(Reply::Epoch { descriptor: word_of(&signed) });
+                    }
                     None
                 }
                 (None, false) => {

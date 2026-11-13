@@ -163,7 +163,8 @@ async fn take_over(assets: &Assets, hub: &HubId, link: &Arc<Link>, key: &PublicK
     let library = &assets.library;
     let device = assets.device();
     let (scope_text, stream_text) = (scope.to_string(), stream.to_string());
-    if blocking(library, move |library| library.orderer(&scope_text, &stream_text)).await?.is_none_or(|orderer| orderer == device) {
+    let orderer = blocking(library, move |library| library.orderer(&scope_text, &stream_text)).await?;
+    if orderer == Some(device) {
         return Ok(false);
     }
     // Gone from here meanwhile, or never released to it: nothing is asked
@@ -174,7 +175,9 @@ async fn take_over(assets: &Assets, hub: &HubId, link: &Arc<Link>, key: &PublicK
     let adopted =
         assets.adopting.lock().expect("adopting").contains(scope) || super::release::adopting(&directory, hub.as_str(), scope, &device);
     let carried = if adopted { None } else { super::release::carried(&directory, hub.as_str(), scope, stream, &device) };
-    if carried.is_none() && !adopted {
+    // Ordered nowhere yet, only the account's adopting begins it here
+    // (NN14); otherwise it waits for its first frame where it was born.
+    if !adopted && (carried.is_none() || orderer.is_none()) {
         return Ok(false);
     }
     let scope_text = scope.to_string();

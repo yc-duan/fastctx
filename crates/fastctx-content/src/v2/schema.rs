@@ -164,9 +164,10 @@ CREATE TABLE IF NOT EXISTS refused_objects (
     PRIMARY KEY (stream, epoch, first, holding, hash)
 ) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS refused_objects_by_hash ON refused_objects (hash);
--- A predecessor's frame a hub found after a handover cut its epoch, kept
--- as it came, outside the stream (§8); its objects are held under its
--- holder. Empty on devices.
+-- A frame kept as it came, outside the stream, its objects held under its
+-- holder: on a hub, a predecessor's frame found after a handover cut its
+-- epoch (§8); on a device, the hub's frames past where a recovered hub
+-- stands, set aside (§28.31).
 -- Two signed frames of one place and body that follow other frames differ
 -- by their chain value, and both are kept (AV04).
 CREATE TABLE IF NOT EXISTS evidence (
