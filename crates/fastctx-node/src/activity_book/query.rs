@@ -26,6 +26,11 @@ pub(crate) async fn answer(
     let Some(target) = machine.filter(|machine| !node.is_here(machine)) else {
         return answer_here(node, None, query).await;
     };
+    // While it is away, from the copies here (plan 3-5).
+    let (asking, name, asked) = (node.clone(), target.name.clone(), query.clone());
+    if let Ok(Some(answer)) = fastctx_platform::task::spawn_blocking(move || super::copied::answer(&asking, &name, &asked)).await {
+        return Ok(answer);
+    }
     match node
         .call(acting, &target, Purpose::Hands, RemoteCall::Book { query })
         .await
@@ -187,7 +192,7 @@ fn hours(
     Ok(hours)
 }
 
-fn outcome(word: &str) -> Outcome {
+pub(super) fn outcome(word: &str) -> Outcome {
     match word {
         "running" => Outcome::Running,
         "done" => Outcome::Done,

@@ -112,6 +112,30 @@ pub(crate) fn read_here(node: &Node, scope: &fastctx_content::v2::HeldScope) -> 
         && reader_here(node, scope)
 }
 
+/// Whether the records' scope `scope` — an account's, or a body's — is read
+/// by one logged in here, pulled whole in its holding period: what a
+/// machine did and spent, read from here while it is away (plan 3-5).
+pub(crate) fn records_here(node: &Node, scope: &fastctx_content::v2::HeldScope) -> bool {
+    let account = scope.key.starts_with("a/") && scope.key.rsplit('/').next().is_some_and(|last| last.starts_with("records-"));
+    let body = scope.key.starts_with("b/") && scope.key.ends_with("/records");
+    (account || body) && scope.pulled == Some(scope.holding) && reader_here(node, scope)
+}
+
+/// Whether `machine` is away from every network this one shares with it:
+/// offline on each that lists it.
+pub(crate) fn away(node: &Node, machine: &fastctx_types::MachineName) -> bool {
+    let mut listed = false;
+    for link in node.links() {
+        if let Some(member) = link.view().member(machine) {
+            if member.online {
+                return false;
+            }
+            listed = true;
+        }
+    }
+    listed
+}
+
 /// Whether one the hub last said reads the scope is logged in here now as
 /// the same account, unlocked: the hub's own gate judged who reads it — a
 /// body's frozen members, an opener as the account it was, the holders of
@@ -168,6 +192,8 @@ fn reader_here(node: &Node, scope: &fastctx_content::v2::HeldScope) -> bool {
                 }
             }
         }
+        // An account's records: the account itself.
+        Readers::Account { account: whose } => account == whose,
         _ => false,
     };
     listed.of.iter().any(|reader| {

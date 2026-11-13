@@ -21,7 +21,7 @@ const READ: u32 = 1 << 20;
 /// machine itself asked then.
 pub(crate) async fn output(node: &Arc<Node>, machine: &MachineName, job: &JobId, path: &str) -> Option<Passing> {
     let library = node.assets.as_ref()?.library.clone();
-    let away = away(node, machine);
+    let away = crate::timeline::copy::away(node, machine);
     let asking = node.clone();
     let (job, path, machine) = (job.clone(), path.to_string(), machine.clone());
     let folder = node.world.path().join("passing");
@@ -113,17 +113,3 @@ pub(crate) async fn output(node: &Arc<Node>, machine: &MachineName, job: &JobId,
     .await
 }
 
-/// Whether `machine` is away from every network this one shares with it:
-/// offline on each that lists it.
-fn away(node: &Node, machine: &MachineName) -> bool {
-    let mut listed = false;
-    for link in node.links() {
-        if let Some(member) = link.view().member(machine) {
-            if member.online {
-                return false;
-            }
-            listed = true;
-        }
-    }
-    listed
-}

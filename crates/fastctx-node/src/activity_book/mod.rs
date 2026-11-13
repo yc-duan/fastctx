@@ -3,6 +3,7 @@
 //! it touched. Full deeds and existing hourly counts survive until explicit
 //! deletion. Its independent database keeps maintenance off the state writer.
 
+mod copied;
 mod incremental;
 mod changes;
 mod legacy;
