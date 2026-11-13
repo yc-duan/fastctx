@@ -1754,10 +1754,9 @@ impl fastctx_net::link::Node for Handler {
         let Some(link) = node.link_of(&self.hub) else { return };
         // Who came in, and the MCP commands given up, are kept on disk.
         let swept = self.changes.changed(link.view());
-        let (keeping, hub, seen) = (node.clone(), self.hub.clone(), link.view());
+        let (keeping, hub) = (node.clone(), self.hub.clone());
         fastctx_platform::task::spawn_blocking(move || {
             crate::admitted::notice(&keeping, &hub);
-            crate::timeline::shared_history::noted(&keeping, &hub, &seen.directory);
             if swept && let Err(error) = crate::mcp::store::sweep(&keeping, &hub) {
                 keeping.log.line(format_args!("collecting removed MCP commands: {error}"));
             }

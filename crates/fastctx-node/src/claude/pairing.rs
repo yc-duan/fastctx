@@ -331,6 +331,7 @@ pub(super) fn resident(
                 focus: Default::default(),
                 home,
                 callee: None,
+                born_shared: crate::timeline::born_shared::now(node),
             };
             node.residents.create(&node.world, about, None, crate::residents::idle(at))?;
             id

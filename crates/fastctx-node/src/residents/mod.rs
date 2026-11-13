@@ -585,6 +585,7 @@ impl Residents {
             focus: Default::default(),
             home: hints.home,
             callee: None,
+            born_shared: Default::default(),
         };
         let places = Places::born(None, about.born_at);
         let created = records::create(&world.conversation(&resident), &about, &places);

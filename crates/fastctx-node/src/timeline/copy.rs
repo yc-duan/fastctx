@@ -43,7 +43,7 @@ pub(crate) fn of(node: &Node, resident: &ResidentId, machine: Option<&Written>) 
         // or was born there, never another machine's of the same id (AU04),
         // nor one of a machine of that name on another network (AV03).
         if let Some(machine) = machine
-            && !(lives_on(&library, &scope.key, &machine.name) && of_network(node, &scope, machine))
+            && !(lives_on(&library, &scope, &machine.name) && of_network(node, &scope, machine))
         {
             continue;
         }
@@ -62,12 +62,12 @@ pub(crate) fn of(node: &Node, resident: &ResidentId, machine: Option<&Written>) 
 
 /// Whether the conversation of `scope` lives on `machine` as its copy here
 /// has it, or was born there.
-fn lives_on(library: &fastctx_content::v2::Library, scope: &str, machine: &fastctx_types::MachineName) -> bool {
-    if scope.starts_with(&format!("c/{machine}/")) {
+fn lives_on(library: &fastctx_content::v2::Library, scope: &fastctx_content::v2::HeldScope, machine: &fastctx_types::MachineName) -> bool {
+    if scope.key.starts_with(&format!("c/{}/{machine}/", scope.hub.as_deref().unwrap_or_default())) {
         return true;
     }
     library
-        .item(scope, fastctx_content::v2::ConversationMeta::STREAM, b"place")
+        .item(&scope.key, fastctx_content::v2::ConversationMeta::STREAM, b"place")
         .ok()
         .flatten()
         .and_then(|entry| serde_json::from_slice::<serde_json::Value>(&entry.body).ok())

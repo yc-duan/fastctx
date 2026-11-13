@@ -19,8 +19,11 @@ use std::sync::{Arc, OnceLock, Weak};
 
 /// The bodies, in the hub's control database.
 pub(crate) const SCHEMA: &str = "
+-- Each body the directory showed a machine shared whole as, kept from the
+-- first save that showed it (§29, 2.1): its machine's name and device key,
+-- and its members as they are or were frozen.
 CREATE TABLE IF NOT EXISTS asset_bodies (
-    id TEXT PRIMARY KEY, machine TEXT NOT NULL, members TEXT NOT NULL, revision INTEGER NOT NULL
+    id TEXT PRIMARY KEY, machine TEXT NOT NULL, members TEXT NOT NULL, revision INTEGER NOT NULL, key TEXT
 ) WITHOUT ROWID;
 -- Owners none of whose scopes anyone reads any more, since when.
 CREATE TABLE IF NOT EXISTS asset_unread (owner TEXT PRIMARY KEY, since INTEGER NOT NULL) WITHOUT ROWID;
@@ -54,6 +57,25 @@ fn live(directory: &Directory, machine: &MachineName) -> BTreeSet<String> {
         .chain(directory.shares.iter().filter(|share| share.machine == machine && share.active()).map(|share| &share.account))
         .filter_map(|account| member(directory, account))
         .collect()
+}
+
+/// A body's row as a directory save keeps it: its members where they
+/// changed, or the whole row for a body the save shows first.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct BodyChange {
+    pub(crate) id: String,
+    pub(crate) machine: String,
+    pub(crate) key: Option<String>,
+    pub(crate) members: String,
+}
+
+/// Brings `asset_bodies` up to this release: the machine's key, kept from now.
+pub(crate) fn migrate(c: &fastctx_storage::rusqlite::Connection) -> fastctx_storage::Result<()> {
+    let has_key = c.prepare("SELECT 1 FROM pragma_table_info('asset_bodies') WHERE name = 'key'")?.exists([])?;
+    if !has_key {
+        c.execute_batch("ALTER TABLE asset_bodies ADD COLUMN key TEXT")?;
+    }
+    Ok(())
 }
 
 pub(crate) struct Bodies {
@@ -111,21 +133,17 @@ impl Bodies {
 
     fn keep(&self, directory: &Directory, body: &str, machine: &MachineName) -> io::Result<()> {
         let members = serde_json::to_string(&live(directory, machine)).map_err(io::Error::other)?;
-        let (body, machine) = (body.to_string(), machine.to_string());
-        self.control
-            .write_now(256 + members.len(), move |c| {
-                c.prepare_cached("INSERT OR IGNORE INTO asset_bodies (id, machine, members, revision) VALUES (?1, ?2, ?3, 1)")?
-                    .execute(params![body, machine, members])?;
-                Ok(())
-            })
-            .map_err(io::Error::other)
+        let key = directory.member(machine).map(|member| member.key.to_string());
+        let change = BodyChange { id: body.to_string(), machine: machine.to_string(), key, members };
+        self.control.write_now(256 + change.members.len(), move |c| apply(c, &[change])).map_err(io::Error::other)
     }
 
     /// The members to keep of each body whose machine `directory` has, as
-    /// that body, where they differ from those kept: written in the
-    /// transaction that saves `directory`, so a stop never leaves a saved
-    /// directory with members it did not keep (§6.2).
-    pub(crate) fn changes(&self, directory: &Directory) -> io::Result<Vec<(String, String)>> {
+    /// that body, where they differ from those kept, and every body of a
+    /// machine `directory` shows shared whole that is not kept yet (§29, 2.1):
+    /// written in the transaction that saves `directory`, so a stop never
+    /// leaves a saved directory with members it did not keep (§6.2).
+    pub(crate) fn changes(&self, directory: &Directory) -> io::Result<Vec<BodyChange>> {
         let bodies: Vec<(String, String, String)> = self
             .control
             .read_now(|c| {
@@ -134,16 +152,23 @@ impl Bodies {
                 Ok(rows.collect::<std::result::Result<_, _>>()?)
             })
             .map_err(io::Error::other)?;
+        let known: BTreeSet<String> = bodies.iter().map(|(id, _, _)| id.clone()).collect();
         let mut changes = Vec::new();
         for (id, machine, kept) in bodies {
-            let Ok(name) = MachineName::try_from(machine) else { continue };
+            let Ok(name) = MachineName::try_from(machine.clone()) else { continue };
             if body_of(directory, &name).as_deref() != Some(id.as_str()) {
                 continue;
             }
             let now = serde_json::to_string(&live(directory, &name)).map_err(io::Error::other)?;
             if now != kept {
-                changes.push((id, now));
+                changes.push(BodyChange { id, machine, key: None, members: now });
             }
+        }
+        let shared: BTreeSet<&MachineName> = directory.shares.iter().filter(|share| share.active()).map(|share| &share.machine).collect();
+        for member in directory.members.iter().filter(|member| shared.contains(&member.name)) {
+            let Some(id) = body_of(directory, &member.name).filter(|id| !known.contains(id)) else { continue };
+            let members = serde_json::to_string(&live(directory, &member.name)).map_err(io::Error::other)?;
+            changes.push(BodyChange { id, machine: member.name.to_string(), key: Some(member.key.to_string()), members });
         }
         Ok(changes)
     }
@@ -158,6 +183,28 @@ impl Bodies {
         self.control
             .write_now(256 * changes.len(), move |c| apply(c, &changes))
             .map_err(io::Error::other)
+    }
+
+    /// Whether `machine`, as `directory` has it now, is the machine `body`
+    /// was kept as: the body it is now, or one kept under its name and its
+    /// device key (a key not kept, from before keys were, counts as its).
+    pub(crate) fn is_of(&self, directory: &Directory, body: &str, machine: &MachineName) -> io::Result<bool> {
+        if body_of(directory, machine).as_deref() == Some(body) {
+            return Ok(true);
+        }
+        let Some(member) = directory.member(machine) else { return Ok(false) };
+        let id = body.to_string();
+        let kept: Option<(String, Option<String>)> = self
+            .control
+            .read_now(move |c| {
+                Ok(c.prepare_cached("SELECT machine, key FROM asset_bodies WHERE id = ?1")?
+                    .query_row([&id], |row| Ok((row.get(0)?, row.get(1)?)))
+                    .optional()?)
+            })
+            .map_err(io::Error::other)?;
+        Ok(kept.is_some_and(|(name, key)| {
+            name == directory.canonical(machine).as_str() && key.is_none_or(|key| key == member.key.to_string())
+        }))
     }
 
     /// The machine `body` is, as kept when its first scope was described.
@@ -197,10 +244,16 @@ impl Bodies {
     }
 }
 
-/// Writes bodies' members, in the transaction `c` is in.
-pub(crate) fn apply(c: &fastctx_storage::rusqlite::Connection, changes: &[(String, String)]) -> fastctx_storage::Result<()> {
-    for (id, members) in changes {
-        c.prepare_cached("UPDATE asset_bodies SET members = ?2, revision = revision + 1 WHERE id = ?1")?.execute(params![id, members])?;
+/// Writes bodies' rows, in the transaction `c` is in: a body first shown
+/// whole, members that changed; a key kept once stays.
+pub(crate) fn apply(c: &fastctx_storage::rusqlite::Connection, changes: &[BodyChange]) -> fastctx_storage::Result<()> {
+    for change in changes {
+        c.prepare_cached(
+            "INSERT INTO asset_bodies (id, machine, members, revision, key) VALUES (?1, ?2, ?3, 1, ?4)
+             ON CONFLICT (id) DO UPDATE SET members = excluded.members, revision = asset_bodies.revision + 1,
+             key = COALESCE(asset_bodies.key, excluded.key)",
+        )?
+        .execute(params![change.id, change.machine, change.members, change.key])?;
     }
     Ok(())
 }

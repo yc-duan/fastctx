@@ -178,9 +178,11 @@ impl Readers {
     /// a machine on both holds apart (BB11).
     pub fn key_prefix(&self, hub: &str) -> String {
         match self {
-            Self::Conversation { born_on: Some(machine), .. } => format!("c/{machine}/"),
+            // Under the hub too: a device on two networks holds two machines
+            // of one name apart (§29, 2.8).
+            Self::Conversation { born_on: Some(machine), .. } => format!("c/{hub}/{machine}/"),
             Self::Conversation { openers, born_on: None } => {
-                format!("c/-/{}/", openers.first().map(|opener| opener.as_str()).unwrap_or_default())
+                format!("c/{hub}/-/{}/", openers.first().map(|opener| opener.as_str()).unwrap_or_default())
             }
             Self::Project { town } => format!("p/{town}/"),
             Self::Account { account } => format!("a/{hub}/{account}/"),

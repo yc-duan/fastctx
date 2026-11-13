@@ -83,6 +83,7 @@ fn resident(
             focus: Default::default(),
             home: None,
             callee: None,
+            born_shared: Default::default(),
         },
         town: in_town.map(town),
         here: true,

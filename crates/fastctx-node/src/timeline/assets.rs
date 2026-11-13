@@ -101,7 +101,8 @@ pub(super) fn placed(node: &Node, about: &About) -> Result<Option<Placed>, Failu
     // conversation's timeline goes on there once its ordering is handed
     // over (design §8, plan 3-4), never in a scope of its own here (BB08).
     let born_on = crate::record_ownership::origin(node, about);
-    let (readers, scope) = scope_for(node, &account.hub, &account.account, born_on, &about.id, about.born_at)?;
+    let born_shared = about.born_shared.get(account.hub.as_str()).cloned();
+    let (readers, scope) = scope_for(node, &account.hub, &account.account, born_on, &about.id, born_shared)?;
     let classes = fastctx_types::assets::classes_for(&readers, &scope);
     Ok(Some(Placed { scope, hub: account.hub.clone(), proposal: Proposal { hub: account.hub.to_string(), readers, classes }, network }))
 }
@@ -110,15 +111,19 @@ pub(super) fn placed(node: &Node, about: &About) -> Result<Option<Placed>, Failu
 /// born on `born_on`: one opened on a machine shared whole is the body's —
 /// read by its members, as they are or were frozen, and by the account that
 /// opened it (§6.2) — any other the conversation's. One that has a scope
-/// here already keeps it, however the machine is shared now.
+/// here already keeps it, however the machine is shared now. Whether it was
+/// shared whole is what the machine it was born on knew as it was born
+/// (`born_shared`, §29, 2.1), judged only for a birth of that machine's own:
+/// one born assisting an account has no `born_on` and stays its own.
 fn scope_for(
     node: &Node,
     hub: &fastctx_types::access::HubId,
     account: &fastctx_types::AccountName,
     born_on: Option<fastctx_types::MachineName>,
     id: &ResidentId,
-    born_at: jiff::Timestamp,
+    born_shared: Option<Option<String>>,
 ) -> Result<(Readers, String), Failure> {
+    let at_birth = born_on.as_ref().and(born_shared);
     let conversation = Readers::Conversation { openers: vec![account.clone()], born_on: born_on.clone() };
     let conversation_key = format!("{}{}", conversation.key_prefix(hub.as_str()), id);
     // One that has a scope here already keeps it, though the machine it was
@@ -139,9 +144,17 @@ fn scope_for(
                 })
             })
         };
-        // Born here, it is of a body this machine has been, never another
-        // machine's of the same id the account opened there (AV08).
-        let mine = born_on.as_ref().filter(|machine| node.is_me(machine)).map(|_| super::shared_history::bodies(node, hub));
+        // Of the body the machine it was born on was as it was born, never
+        // another machine's of the same id the account opened there (AV08,
+        // AW02); one born here before that was kept, of the body this
+        // machine is now.
+        let mine: Option<std::collections::BTreeSet<String>> = match &at_birth {
+            Some(body) => Some(body.iter().cloned().collect()),
+            None if born_on.as_ref().is_some_and(|machine| node.is_me(machine)) => {
+                Some(super::born_shared::body_here(node, hub).into_iter().collect())
+            }
+            None => None,
+        };
         let bodies: Vec<&str> = keys
             .iter()
             .filter(|key| opened_here(key))
@@ -164,16 +177,12 @@ fn scope_for(
         let machine = directory.canonical(&machine);
         (directory.body_of(machine), directory.shares.iter().any(|share| &share.machine == machine && share.active()))
     };
-    // Born here: the body this machine was as it was born, as noted then,
-    // however late its scope is made now (N02).
-    let (body, shared) = if node.is_me(&machine) {
-        match super::shared_history::at(node, hub, born_at) {
-            Some(Some(then)) => (Some(then), true),
-            Some(None) => return Ok((conversation, conversation_key)),
-            None => (body, shared),
-        }
-    } else {
-        (body, shared)
+    // The body its machine was as it was born, however late its scope is
+    // made now (N02); for one born before that was kept, as it is now.
+    let (body, shared) = match at_birth {
+        Some(Some(then)) => (Some(then), true),
+        Some(None) => return Ok((conversation, conversation_key)),
+        None => (body, shared),
     };
     let Some(body) = body else { return Ok((conversation, conversation_key)) };
     let readers = Readers::Body { body, opener: account.clone() };

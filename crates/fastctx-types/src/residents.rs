@@ -96,6 +96,12 @@ pub struct About {
     pub home: Option<std::path::PathBuf>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub callee: Option<String>,
+    /// What the machine it was born on was on each network as it was born,
+    /// by hub id: shared whole as a body, or not (design §29, 2.1). Judged
+    /// only for a birth of the machine's own; empty for one born before it
+    /// was kept.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub born_shared: std::collections::BTreeMap<String, Option<String>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

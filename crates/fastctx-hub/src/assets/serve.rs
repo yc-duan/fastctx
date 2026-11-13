@@ -77,12 +77,17 @@ fn first_epoch_gate(assets: &Assets, directory: &Indexed<'_>, kept: &Scope, scop
     if library.last_epoch(scope, stream).map_err(|error| error.to_string())?.is_some() {
         return Ok(());
     }
+    // A body's machine is the one it was kept as, though its owner changed
+    // since (§29, 2.1).
+    let of_its_body = |member: &fastctx_net::directory::Member| match (&of_body, &kept.bodies) {
+        (None, _) => true,
+        (Some(body), Some(bodies)) => bodies.is_of(directory.all, body, &member.name).unwrap_or(false),
+        (Some(body), None) => directory.all.body_of(&member.name).as_ref() == Some(body),
+    };
     let source = match library.last_epoch(scope, <fastctx_content::v2::Timeline as fastctx_content::v2::Kind>::STREAM).map_err(|error| error.to_string())? {
         Some((_, orderer)) => orderer,
         None => match born_on.as_ref().and_then(|machine| directory.all.member(machine)) {
-            Some(member) if of_body.as_ref().is_none_or(|body| directory.all.body_of(&member.name).as_ref() == Some(body)) => {
-                *member.key.as_bytes()
-            }
+            Some(member) if of_its_body(member) => *member.key.as_bytes(),
             _ if of_body.is_some() => return Err(format!("{stream} of {scope} is begun by its body's machine, which is not here")),
             _ => return Ok(()),
         },

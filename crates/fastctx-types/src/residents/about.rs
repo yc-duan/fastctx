@@ -32,6 +32,8 @@ pub(super) struct Stored {
     home: Option<std::path::PathBuf>,
     #[serde(default)]
     callee: Option<String>,
+    #[serde(default)]
+    born_shared: std::collections::BTreeMap<String, Option<String>>,
 }
 
 impl TryFrom<Stored> for About {
@@ -63,6 +65,7 @@ impl TryFrom<Stored> for About {
             mcp_off: stored.mcp_off,
             home: stored.home,
             callee: stored.callee,
+            born_shared: stored.born_shared,
         })
     }
 }

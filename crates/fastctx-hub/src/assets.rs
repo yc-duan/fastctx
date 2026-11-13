@@ -15,7 +15,7 @@ mod keys;
 pub(crate) mod mirror;
 pub(crate) mod told;
 pub(crate) mod hub_log;
-pub(crate) mod instance;
+pub(crate) mod restores;
 pub mod recovery;
 pub(crate) mod objects;
 mod owners;
@@ -42,7 +42,7 @@ use std::time::Duration;
 pub(crate) const BACKUP_MARKER: &str = "backup-marker";
 /// Why the assets are sealed when the hub's setting seals them at each
 /// start (design §17 (b)).
-const SEALED_AT_START: &str = "the hub seals them each time it starts, until the super administrator opens them";
+const SEALED_AT_START: &str = restores::AT_START;
 
 /// The asset side's tables in the hub's control database.
 pub(crate) fn schema() -> String {
@@ -53,6 +53,7 @@ pub(crate) fn schema() -> String {
 /// release, after `schema` made what was missing.
 pub(crate) fn migrate(c: &fastctx_storage::rusqlite::Connection) -> fastctx_storage::Result<()> {
     brought::migrate(c)?;
+    bodies::migrate(c)?;
     scopes::migrate(c)
 }
 
@@ -167,8 +168,8 @@ pub(crate) struct Assets {
     pub(crate) bodies: Arc<bodies::Bodies>,
     /// Where machines stand in syncing (design §28.9).
     pub(crate) standing: standing::Standing,
-    /// The source instance the hub's numbered sources write under (§29, 2.2).
-    instance: std::sync::atomic::AtomicU64,
+    /// How many times the hub was sealed for a recovery (§29, 2.2).
+    restores: std::sync::atomic::AtomicU64,
 }
 
 impl Assets {
@@ -183,7 +184,7 @@ impl Assets {
         let keys = Arc::new(keys::Keys::open(&dir.join("keys"))?);
         let witness = Arc::new(Witness::open(dir, id)?);
         let incarnation = incarnation(&control)?;
-        let source = instance::current(&control)?;
+        let restored = restores::count(&control)?;
         let owners = owners::Owners::new(dir.join("assets"), incarnation);
         let assets = Self {
             id: id.to_string(),
@@ -205,9 +206,12 @@ impl Assets {
             objects: objects::Objects::default(),
             bodies: Arc::new(bodies::Bodies::new(control.clone())),
             standing: standing::Standing::default(),
-            instance: std::sync::atomic::AtomicU64::new(source),
+            restores: std::sync::atomic::AtomicU64::new(restored),
         };
         if let Some(why) = assets.put_back(dir)? {
+            // Kept too, so the count of recoveries goes up once for this one
+            // (§29, 2.2).
+            assets.keep_seal(&why)?;
             assets.witness.freeze();
             *assets.sealed.lock().expect("seal") = Some(why);
             return Ok(assets);
@@ -226,15 +230,7 @@ impl Assets {
         // What was brought and kept, the seal it showed not yet written as
         // the hub stopped, seals it now as it would have (AL01).
         if let Some(why) = brought::put_back(&assets)? {
-            let (kept, at) = (why.clone(), jiff::Timestamp::now().as_millisecond());
-            assets
-                .control
-                .write_now(512, move |c| {
-                    c.prepare_cached("INSERT OR REPLACE INTO asset_seal (id, why, at) VALUES (1, ?1, ?2)")?
-                        .execute(fastctx_storage::rusqlite::params![kept, at])?;
-                    Ok(())
-                })
-                .map_err(io::Error::other)?;
+            assets.keep_seal(&why)?;
             assets.witness.freeze();
             *assets.sealed.lock().expect("seal") = Some(why);
             return Ok(assets);
@@ -901,17 +897,28 @@ impl Assets {
         // nothing of what is under way, so it is asked again until one does
         // (AF01); every cleanup also looks at the seal again as it ends.
         let mut pause = std::time::Duration::from_secs(1);
+        // The count of recoveries goes up as this one's seal is first kept
+        // (§29, 2.2).
         let keep = move |c: &fastctx_storage::rusqlite::Connection| {
             if replaces {
-                c.prepare_cached("INSERT OR REPLACE INTO asset_seal (id, why, at) VALUES (1, ?1, ?2)")?
-                    .execute(fastctx_storage::rusqlite::params![kept, at])?;
+                return Ok(Some(restores::seal_in(c, &kept, at)?));
             }
-            Ok(())
+            Ok(None)
         };
-        while let Err(error) = self.control.write_now(512, keep.clone()) {
-            eprintln!("sealing the hub's assets waits for its control database: {error}");
-            std::thread::sleep(pause);
-            pause = (pause * 2).min(BARRIER_PAUSE_MOST);
+        loop {
+            match self.control.write_now(512, keep.clone()) {
+                Ok(count) => {
+                    if let Some(count) = count {
+                        self.restores.store(count, std::sync::atomic::Ordering::SeqCst);
+                    }
+                    break;
+                }
+                Err(error) => {
+                    eprintln!("sealing the hub's assets waits for its control database: {error}");
+                    std::thread::sleep(pause);
+                    pause = (pause * 2).min(BARRIER_PAUSE_MOST);
+                }
+            }
         }
         self.witness.freeze();
         // Found put back, the hub is sealed for its recovery: a seal it put
@@ -939,14 +946,23 @@ impl Assets {
         self.sealed.lock().expect("seal").clone()
     }
 
-    /// The source instance the hub's numbered sources write under now.
-    pub(crate) fn instance(&self) -> u64 {
-        self.instance.load(std::sync::atomic::Ordering::SeqCst)
+    /// The least number the hub's sources hand out now (§29, 2.2).
+    pub(crate) fn number_floor(&self) -> u64 {
+        restores::floor(self.restores())
     }
 
-    /// The source instance drawn anew as the hub reopened.
-    pub(crate) fn renewed(&self, instance: u64) {
-        self.instance.store(instance, std::sync::atomic::Ordering::SeqCst);
+    /// How many times the hub was sealed for a recovery.
+    pub(crate) fn restores(&self) -> u64 {
+        self.restores.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// Keeps the seal `why` for a recovery, the count of recoveries going up
+    /// as it is first kept.
+    fn keep_seal(&self, why: &str) -> io::Result<()> {
+        let (kept, at) = (why.to_string(), jiff::Timestamp::now().as_millisecond());
+        let count = self.control.write_now(512, move |c| restores::seal_in(c, &kept, at)).map_err(io::Error::other)?;
+        self.restores.store(count, std::sync::atomic::Ordering::SeqCst);
+        Ok(())
     }
 
     /// Seals every asset as the hub starts, its setting says so (design §17

@@ -475,9 +475,10 @@ pub(crate) fn describe(
     }
     let bodies = matches!(readers, Readers::Body { .. }).then(|| assets.bodies.clone());
     if let Readers::Body { body, opener } = &readers {
-        // A body's scope is described by its machine, as that body, and
-        // opened by an account it acts for.
-        if super::bodies::body_of(directory.all, machine).as_deref() != Some(body.as_str()) {
+        // A body's scope is described by its machine, as that body — the
+        // body it is now, or one the hub kept it as before its owner changed
+        // (§29, 2.1) — and opened by an account it acts for.
+        if !assets.bodies.is_of(directory.all, body, machine).map_err(|error| error.to_string())? {
             return Err("a body's scope is described by the machine that is that body".into());
         }
         // Its log, opened by its owner, though none is logged in there (a

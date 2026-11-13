@@ -319,6 +319,7 @@ pub async fn ask_here(
         focus: Default::default(),
         home,
         callee: Some(started.callee.name.clone()),
+        born_shared: crate::timeline::born_shared::now(node),
     };
     let now = Now {
         activity: Activity::Busy,

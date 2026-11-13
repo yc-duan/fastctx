@@ -115,6 +115,7 @@ pub async fn fork(
         focus: source.focus,
         home: source.home,
         callee: None,
+        born_shared: crate::timeline::born_shared::now(node),
     };
     let mut now = crate::residents::idle(at);
     now.activity = fastctx_types::residents::Activity::Busy;

@@ -1233,6 +1233,7 @@ pub async fn open_here(
         focus: opened.focus,
         home: opened.home,
         callee: None,
+        born_shared: crate::timeline::born_shared::now(node),
     };
     let now = Now {
         activity: Activity::Idle,

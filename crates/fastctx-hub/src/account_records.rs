@@ -370,7 +370,11 @@ pub(crate) async fn ask_as(
                 {
                     return Err(words::kind_limit());
                 }
-                let version = before.map_or(0, |entry| entry.metadata.version).checked_add(1).ok_or(words::REVISION)?;
+                // Above every version written before the hub was last put
+                // back: a write on one the restore lost answers "changed"
+                // (§29, 2.2).
+                let version =
+                    before.map_or(0, |entry| entry.metadata.version).checked_add(1).ok_or(words::REVISION)?.max(hub.assets.number_floor());
                 let mut history_author = None;
                 if kind == fastctx_types::history::RECORD_KIND && !deleted {
                     let stored: fastctx_types::history::stored::Stored =

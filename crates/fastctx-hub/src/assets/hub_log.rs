@@ -70,12 +70,12 @@ fn look(assets: &Assets, path: &Path) -> Result<(), String> {
         .unwrap_or(0);
     // The leases keep the new objects until their records are taken.
     let (mut records, mut _leases, mut written) = (Vec::new(), Vec::new(), 0);
-    // A piece is named under the source instance too: a log put back by a
-    // recovery and written on again names its pieces anew (§29, 2.2).
-    let instance = assets.instance();
+    // A piece is named under how many times the hub was put back: a log put
+    // back with it and written on again names its pieces anew (§29, 2.2).
+    let restored = assets.restores();
     while written < A_LOOK {
         let Some(piece) = log_tail::next(path, &at, PIECE).map_err(|error| error.to_string())? else { break };
-        let item = format!("{instance:016x}/{}/{:016x}", piece.file, piece.offset).into_bytes();
+        let item = format!("{restored:016x}/{}/{:016x}", piece.file, piece.offset).into_bytes();
         // Written before a stop that kept no standing: on from its end, as
         // long as it was then, not as long as the file is now (AS11).
         if let Some(entry) = library.item(&key, HubLog::STREAM, &item).map_err(error)? {
@@ -89,7 +89,7 @@ fn look(assets: &Assets, path: &Path) -> Result<(), String> {
             continue;
         }
         time = log_tail::piece_time(&piece.bytes, time);
-        let order = format!("{time:016x}/{instance:016x}/{}/{:016x}", piece.file, piece.offset).into_bytes();
+        let order = format!("{time:016x}/{restored:016x}/{}/{:016x}", piece.file, piece.offset).into_bytes();
         let lease = library.put(&mut piece.bytes.as_slice(), "hub-log", LEASE).map_err(error)?;
         // How late its last line is, which says when it is old (N13).
         let last = log_tail::last_time(&piece.bytes).unwrap_or(time).max(time);

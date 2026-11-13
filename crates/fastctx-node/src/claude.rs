@@ -2210,6 +2210,7 @@ pub async fn open_here(
         focus: opened.focus,
         home: opened.home,
         callee: None,
+        born_shared: crate::timeline::born_shared::now(node),
     };
     // Its first turn takes a turn of its login like any other's: with none
     // free, it waits in line with its first words (`queued`).

@@ -363,6 +363,7 @@ async fn fork(
         focus: source.focus,
         home: source.home,
         callee: None,
+        born_shared: crate::timeline::born_shared::now(node),
     };
     let now = Now {
         activity: Activity::Idle,

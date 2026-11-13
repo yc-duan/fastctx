@@ -120,6 +120,7 @@ fn residents() -> Vec<ResidentNow> {
                 },
                 home: (i == 1).then(|| "C:/Users/ada/.codex-work".into()),
                 callee: None,
+                born_shared: Default::default(),
             },
             town: (i != 0).then(|| "project-0".parse().unwrap()),
             here: i != 2,

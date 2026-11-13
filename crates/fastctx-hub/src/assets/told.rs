@@ -70,23 +70,19 @@ fn place_of(bytes: &[u8]) -> Option<fastctx_content::Place> {
     Some(fastctx_content::Place { order: bytes_of(value["order"].as_str()?)?, item: bytes_of(value["item"].as_str()?)? })
 }
 
-/// The source instance and number of the machine log record an item keeps
-/// (§29, 2.2).
-fn audit_id(item: &[u8]) -> Option<(u64, u64)> {
-    super::instance::of_item(item)
+/// The item a machine log record is kept by: its number.
+fn audit_item(id: u64) -> Vec<u8> {
+    format!("{id:016x}").into_bytes()
 }
 
-/// Where a record is ordered: by its number, as the source numbers in time,
-/// then its instance — never by a clock that may go back.
-fn audit_order(instance: u64, id: u64) -> Vec<u8> {
-    format!("{id:016x}/{instance:016x}").into_bytes()
+fn audit_id(item: &[u8]) -> Option<u64> {
+    std::str::from_utf8(item).ok().and_then(|hex| u64::from_str_radix(hex, 16).ok())
 }
 
-/// The record `id` of the source instance `instance`, its body as `body`,
-/// as it goes in.
+/// The record `id`, its body as `body`, as it goes in.
 fn audit_record(
     library: &fastctx_content::v2::Library,
-    (instance, id): (u64, u64),
+    id: u64,
     body: Option<Vec<u8>>,
 ) -> Result<(KindRecord, Option<fastctx_content::v2::Lease>), String> {
     let (state, lease) = match body {
@@ -96,7 +92,7 @@ fn audit_record(
         }
         None => (State::Gone, None),
     };
-    let record = Item { item: super::instance::item(instance, id), order: audit_order(instance, id), state };
+    let record = Item { item: audit_item(id), order: audit_item(id), state };
     Ok((KindRecord { kind: MachineAudit::KIND, schema: 1, record }, lease))
 }
 
@@ -123,17 +119,14 @@ fn put_right(
     ids: &[u64],
 ) -> Result<bool, String> {
     let now = crate::store::log_store::readable_of(database, readers, ids).map_err(|error| error.to_string())?;
-    let current = assets.instance();
     let (mut records, mut _leases) = (Vec::new(), Vec::new());
     for entry in entries {
-        // Only what the source numbers now is put right by it: a record of
-        // an instance before a recovery is history (§28.34).
-        let Some((instance, id)) = audit_id(&entry.item).filter(|(instance, _)| *instance == current) else { continue };
+        let Some(id) = audit_id(&entry.item) else { continue };
         let body = now.get(&id).cloned();
         if body.as_deref().is_some_and(|body| holds(entry, body)) {
             continue;
         }
-        let (record, lease) = audit_record(library, (instance, id), body)?;
+        let (record, lease) = audit_record(library, id, body)?;
         records.push(record);
         _leases.extend(lease);
     }
@@ -183,14 +176,7 @@ pub(crate) fn audit(
         };
         library.keep_checkpoint(&again, marker).map_err(error)?;
         let page = library.view_page(&key, MachineAudit::STREAM, &anchor, LOOKED_AGAIN, u32::MAX).map_err(error)?;
-        let current = assets.instance();
-        let ids: Vec<u64> = page
-            .entries
-            .iter()
-            .filter_map(|entry| audit_id(&entry.item))
-            .filter(|(instance, _)| *instance == current)
-            .map(|(_, id)| id)
-            .collect();
+        let ids: Vec<u64> = page.entries.iter().filter_map(|entry| audit_id(&entry.item)).collect();
         let fixed = put_right(assets, &scope, &library, database, &readers, &page.entries, &ids)?;
         stopped = None;
         // The first page, nothing older; or one the log has as it is.
@@ -208,18 +194,15 @@ pub(crate) fn audit(
     loop {
         let _writing = writing(&key);
         let newest = library.view_page(&key, MachineAudit::STREAM, &Anchor::Latest, 1, u32::MAX).map_err(error)?;
-        // The source's numbers go on from the newest kept, of whichever
-        // instance: the library and the log are put back together.
-        let after = newest.entries.last().and_then(|entry| audit_id(&entry.item)).map(|(_, id)| id);
+        let after = newest.entries.last().and_then(|entry| audit_id(&entry.item));
         let rows = crate::store::log_store::readable_after(database, &readers, after, A_BATCH)
             .map_err(|error| error.to_string())?;
         if rows.is_empty() {
             return Ok(());
         }
-        let current = assets.instance();
         let (mut records, mut _leases) = (Vec::new(), Vec::new());
         for (id, body) in rows {
-            let (record, lease) = audit_record(&library, (current, id), Some(body))?;
+            let (record, lease) = audit_record(&library, id, Some(body))?;
             records.push(record);
             _leases.extend(lease);
         }

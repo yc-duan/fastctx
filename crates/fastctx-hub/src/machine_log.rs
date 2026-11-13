@@ -271,7 +271,9 @@ impl History {
             members.insert(member.key);
             accounts.extend(member.home.iter().cloned());
         }
-        self.next = self.next.checked_add(1).ok_or_else(|| io::Error::other("machine log numbering exhausted"))?;
+        // Above all the hub numbered before it was last put back (§29, 2.2).
+        let floor = self.database.as_ref().and_then(|database| crate::assets::restores::count(database).ok()).map_or(0, crate::assets::restores::floor);
+        self.next = self.next.max(floor).checked_add(1).ok_or_else(|| io::Error::other("machine log numbering exhausted"))?;
         let at = Timestamp::now();
         let accounts = accounts
             .into_iter()

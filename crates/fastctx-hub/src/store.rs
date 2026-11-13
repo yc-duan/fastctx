@@ -1074,7 +1074,7 @@ impl Store {
     /// Bodies' members as the directory about to be saved has them, where an
     /// edit may have changed them (design §6.2): a whole save, or one of the
     /// shares or the machines; an account's own edit keeps who it is.
-    fn body_changes(&self, edit: &BookEdit) -> io::Result<Vec<(String, String)>> {
+    fn body_changes(&self, edit: &BookEdit) -> io::Result<Vec<crate::assets::bodies::BodyChange>> {
         match &self.bodies {
             Some(bodies) if edit.may_change_bodies() => bodies.changes(&self.book.directory),
             _ => Ok(Vec::new()),
