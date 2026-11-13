@@ -14,7 +14,7 @@
 use super::session::{ask, blocking};
 use super::{Assets, Pinning};
 use crate::Node;
-use fastctx_content::v2::{EpochFact, HubVerifier as _, Signed};
+use fastctx_content::v2::{EpochFact, Holder, HubVerifier as _, Imported, RawFrame, Signed};
 use fastctx_net::link::Link;
 use fastctx_net::sign::PublicKey;
 use fastctx_types::access::HubId;
@@ -77,8 +77,13 @@ async fn take_over(assets: &Assets, hub: &HubId, link: &Arc<Link>, key: &PublicK
     if carried.is_none() && !adopted {
         return Ok(());
     }
+    let scope_text = scope.to_string();
+    let Some(holding) = blocking(library, move |library| library.holding(&scope_text)).await? else {
+        return Ok(());
+    };
     // What the predecessor wrote that the hub has not goes to it first:
-    // the release reaches no further than what the hub holds.
+    // the release reaches no further than what the hub holds. It is held
+    // here too, as a replica's: the epoch handed over begins where it ends.
     for frame in carried.iter().flat_map(|carried| &carried.tail) {
         let mut staged = 0;
         let Reply::Received { received } = super::apart::take(assets, link, scope, frame, &[], &mut staged).await? else {
@@ -86,6 +91,22 @@ async fn take_over(assets: &Assets, hub: &HubId, link: &Arc<Link>, key: &PublicK
         };
         if matches!(received, Received::Missing { .. } | Received::Prove { .. }) {
             return Err(format!("{stream} of {scope}: the predecessor's frames refer to objects that did not come here"));
+        }
+        let raw = RawFrame {
+            header: frame.header.0.clone(),
+            signature: frame.signature.0.clone(),
+            body: frame.body.0.clone(),
+            objects: Vec::new(),
+        };
+        let scope_text = scope.to_string();
+        let imported = blocking(library, move |library| {
+            library.import(&scope_text, raw, &super::session::DeviceKeys, Holder::Replica, holding)
+        })
+        .await?;
+        if !matches!(imported, Imported::Applied { .. } | Imported::Already) {
+            // Not caught up to where the hub took the predecessor's frames
+            // up to: asked again once it is.
+            return Err(format!("{stream} of {scope}: the predecessor's frames do not follow what is here ({imported:?})"));
         }
     }
     // Under the release it carried; or, none, as the account that opened it

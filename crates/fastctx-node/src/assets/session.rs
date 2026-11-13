@@ -1615,7 +1615,7 @@ impl fastctx_content::v2::HubVerifier for Trusted {
 }
 
 /// Checks a frame's signature against its ordering device's key.
-struct DeviceKeys;
+pub(super) struct DeviceKeys;
 
 impl fastctx_content::v2::Verifier for DeviceKeys {
     fn verify(&self, header: &Header, header_bytes: &[u8], signature: &[u8]) -> bool {
