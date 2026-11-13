@@ -11,7 +11,7 @@
 use crate::Node;
 use fastctx_content::v2::{ConversationPlan, HeldScope, Kind as _, Library};
 use fastctx_types::account_records::Record;
-use fastctx_types::plan::{KIND, Page};
+use fastctx_types::plan::Page;
 use fastctx_types::{MachineName, ResidentId};
 
 /// The plan of the conversation `resident` — the one on `machine` of the
@@ -30,27 +30,11 @@ pub(crate) fn plan(
     // The copy the account asking reads, not another's logged in here
     // (codex-847f57fd #3).
     let scope = copy_of(node, resident, machine, Some(hub), Some(account))?;
-    let record = record_in(library, &scope.key, ConversationPlan::STREAM, "plan")?
-        .filter(|record| record.metadata.kind == KIND && record.metadata.key == resident.as_str());
-    let Some(mut record) = record else { return Some(Page { owner: resident.clone(), metadata: None, body: None }) };
+    let record = record_in(library, &scope.key, ConversationPlan::STREAM, "plan")?;
     // Read as the hub's own answer is read (`Link::plan_read`), told as it
     // tells it (`hub owned_records::projection`).
     let link = node.links().into_iter().find(|link| link.membership().id.as_str() == hub)?;
-    let view = link.view();
-    let usable = |machine: &MachineName| {
-        view.directory.authorize(account, fastctx_net::authorization::Action::Work(machine)).is_ok()
-    };
-    if record.metadata.by.as_ref().is_some_and(|machine| !usable(machine)) {
-        record.metadata.by = None;
-    }
-    let mut body: Option<fastctx_types::plan::Body> =
-        if record.metadata.deleted { None } else { serde_json::from_value(record.body).ok() };
-    if let Some(body) = &mut body
-        && matches!(&body.author, fastctx_types::plan::Author::Resident { address } if !usable(&address.machine))
-    {
-        body.author = fastctx_types::plan::Author::Elsewhere;
-    }
-    Some(Page { owner: resident.clone(), metadata: Some(record.metadata), body })
+    Some(fastctx_client::records_copy::plan_as_told(&link.view().directory, account, resident, record))
 }
 
 /// The copy of the conversation `resident` — the one on `machine` of the
@@ -86,12 +70,7 @@ pub(crate) fn copy_of(
 
 /// The account record `item` of `stream` in the copy `scope`: none when it
 /// cannot be read, `Some(None)` when the copy holds no such record.
-pub(crate) fn record_in(library: &Library, scope: &str, stream: &str, item: &str) -> Option<Option<Record>> {
-    let item = fastctx_content::v2::item_of(item);
-    let Some(entry) = library.item(scope, stream, &item).ok()? else { return Some(None) };
-    let body = super::copy::whole_body(library, &entry)?;
-    Some(Some(serde_json::from_slice(&body).ok()?))
-}
+pub(crate) use fastctx_client::records_copy::record_in;
 
 /// Every account record of `stream` in the copy `scope`, in the order it
 /// holds them; none when one cannot be read.

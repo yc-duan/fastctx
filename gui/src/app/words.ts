@@ -531,6 +531,12 @@ export interface SettingsWords {
   phoneVendorBattery: string;
   phoneVendorDone: string;
   phoneVendorSet: string;
+  /** How much of the World the phone keeps on itself. */
+  phoneCopy: string;
+  phoneCopyLight: string;
+  phoneCopyWhole: string;
+  phoneCopyLightSaid: string;
+  phoneCopyWholeSaid: string;
   /** The sheet that walks through it once the phone is in a World. */
   phoneGuideTitle: string;
   phoneGuideWhy: string;
@@ -669,6 +675,11 @@ export const zhSettings: SettingsWords = {
   phoneVendorBattery: "去设置省电策略",
   phoneVendorDone: "我已设置好",
   phoneVendorSet: "已设置",
+  phoneCopy: "本机保存",
+  phoneCopyLight: "近期内容",
+  phoneCopyWhole: "全部内容",
+  phoneCopyLightSaid: "保存每段对话最近的部分和计划、笔记等，没网时也能看；更早的内容和较大的文件看到时再取。",
+  phoneCopyWholeSaid: "保存能看到的全部对话与文件，占用更多空间与流量；切回近期内容后，已保存的随对话清理时释放。",
   phoneGuideTitle: "让 Fastctx 在后台保持在线",
   phoneGuideWhy: "这样切到后台、锁屏之后，有人找你或对话做完时仍会提醒你，别的机器上也看得到这台手机在线。下面每一项点一下即可；有的手机还要在系统设置里打开一个开关。",
   phoneGuideDone: "完成",
@@ -812,6 +823,11 @@ export const enSettings: SettingsWords = {
   phoneVendorBattery: "Battery saver",
   phoneVendorDone: "I've set these",
   phoneVendorSet: "Set",
+  phoneCopy: "Kept on this phone",
+  phoneCopyLight: "Recent",
+  phoneCopyWhole: "Everything",
+  phoneCopyLightSaid: "Each conversation's recent part, its plan and notes are kept, readable without a network; older parts and larger files come when you open them.",
+  phoneCopyWholeSaid: "Every conversation and file you can read is kept, which takes more space and data; back on Recent, what is kept goes as conversations are cleared.",
   phoneGuideTitle: "Keep Fastctx online in the background",
   phoneGuideWhy: "Then, in the background or with the screen locked, it still tells you when someone needs you or a conversation finishes, and your other machines see this phone online. Tap each item below; some phones also need a switch in their own settings.",
   phoneGuideDone: "Done",

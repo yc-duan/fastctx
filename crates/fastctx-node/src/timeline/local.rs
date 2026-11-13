@@ -5,30 +5,18 @@
 //! network, from the content timeline (`reads`). Reads only read: nothing
 //! is produced for them.
 
-use super::reads::{Change, Changed, Entry, Read, likeness, shown};
 use crate::Node;
-use fastctx_content::v2::{Kind as _, Library, Timeline, ViewChange, view_sequence};
-use fastctx_content::{Anchor, Place};
+use fastctx_content::v2::{Kind as _, Timeline};
 use fastctx_types::ResidentId;
 use fastctx_types::ipc::Failure;
-use std::time::Duration;
 
 fn failure(error: impl std::fmt::Display) -> Failure {
     Failure::new(error.to_string())
 }
 
 /// Where a conversation's timeline is read in the asset library.
-pub(crate) struct Held {
-    library: Library,
-    scope: String,
-}
-
-impl Held {
-    /// The timeline of `scope` in `library`, read as it stands.
-    pub(crate) fn at(library: Library, scope: String) -> Self {
-        Self { library, scope }
-    }
-}
+pub(crate) use fastctx_client::timeline_copy::Copy as Held;
+pub(crate) use fastctx_client::timeline_copy::{changes, moved, object, page};
 
 /// The conversation's timeline in the asset library, when a reader reads it
 /// there: its scope held here, and its timeline made — by this machine's
@@ -52,63 +40,5 @@ pub(crate) fn held(node: &Node, resident: &ResidentId) -> Result<Option<Held>, F
             .orderer(&placed.scope, Timeline::STREAM)
             .map_err(failure)?
             .is_some_and(|orderer| orderer != kept.device());
-    Ok((made_here || made_elsewhere).then_some(Held { library, scope: placed.scope }))
-}
-
-/// An entry as a reader at `at` knows it: its sequence is the write number
-/// it took here, in the era read in, so an entry written again is told
-/// again (JJ04, §29 3.3 PH04).
-fn entry(at: u64, entry: fastctx_content::v2::Entry) -> Result<Entry, Failure> {
-    Ok(Entry {
-        shown: shown(&entry.body, &entry.objects)?,
-        likeness: likeness(&entry.body),
-        place: Place { order: entry.order, item: entry.item },
-        sequence: view_sequence(at, entry.local),
-    })
-}
-
-/// A page of the timeline as the asset library holds it.
-pub(crate) fn page(held: &Held, anchor: &Anchor, max_items: u32, max_bytes: u32) -> Result<Read, Failure> {
-    let page = held.library.view_page(&held.scope, Timeline::STREAM, anchor, max_items, max_bytes).map_err(failure)?;
-    Ok(Read {
-        revision: page.revision,
-        entries: page.entries.into_iter().map(|found| entry(page.through, found)).collect::<Result<_, Failure>>()?,
-        older: page.older,
-        newer: page.newer,
-        through: page.through,
-    })
-}
-
-/// What the timeline changed to after `after`, as the asset library holds
-/// it; none when the reader reads its pages again.
-pub(crate) fn changes(held: &Held, after: u64, max_items: u32, max_bytes: u32) -> Result<Option<Changed>, Failure> {
-    let Some(read) = held.library.view_changes(&held.scope, Timeline::STREAM, after, max_items, max_bytes).map_err(failure)?
-    else {
-        return Ok(None);
-    };
-    let changes = read
-        .changes
-        .into_iter()
-        .map(|change| {
-            Ok(match change {
-                ViewChange::Is(found) => Change::Is(entry(read.through, found)?),
-                ViewChange::Gone { item } => Change::Gone { item },
-            })
-        })
-        .collect::<Result<_, Failure>>()?;
-    Ok(Some(Changed { revision: read.revision, changes, through: read.through, more: read.more }))
-}
-
-/// Waits until the timeline in the asset library is past `after`.
-pub(crate) async fn moved(held: &Held, after: u64, within: Duration) -> Result<Option<u64>, Failure> {
-    held.library.view_moved(&held.scope, Timeline::STREAM, after, within).await.map_err(failure)
-}
-
-/// A range of an object the timeline refers to; none when it refers to no
-/// such object or the object is not here yet.
-pub(crate) fn object(held: &Held, hash: &[u8; 32], offset: u64, length: u32) -> Result<Option<Vec<u8>>, Failure> {
-    if !held.library.refers(&held.scope, hash).map_err(failure)? || held.library.size(hash).map_err(failure)?.is_none() {
-        return Ok(None);
-    }
-    held.library.read(hash, offset, length).map(Some).map_err(failure)
+    Ok((made_here || made_elsewhere).then(|| Held::at(library, placed.scope)))
 }

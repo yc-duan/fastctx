@@ -45,6 +45,7 @@ pub mod ipc;
 pub mod kernel;
 pub mod layers;
 pub mod layout;
+pub mod likeness;
 pub mod lines;
 pub mod logins;
 pub mod machine_log;

@@ -5,7 +5,7 @@
 //! content changed is another item in place of the one it was, and a history
 //! is compared with the timeline by identities alone.
 
-use fastctx_types::session::{Happened, SessionEvent};
+use fastctx_types::session::SessionEvent;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 
@@ -13,27 +13,13 @@ pub(super) type Identity = [u8; 32];
 
 /// What names an event apart from what it holds, when something does.
 pub(super) fn name(event: &SessionEvent) -> Option<String> {
-    match &event.happened {
-        Happened::Finished { item, .. } => Some(format!("item/{}", item.id)),
-        Happened::Heard { delivery: Some(delivery), .. } => {
-            Some(format!("delivery/{}", serde_json::to_string(delivery).unwrap_or_default()))
-        }
-        Happened::Heard { message: Some(message), .. } => Some(format!("words/{}", message.id)),
-        Happened::TurnStarted { turn } => Some(format!("started/{turn}")),
-        Happened::TurnEnded { turn, .. } => Some(format!("ended/{turn}")),
-        _ => None,
-    }
+    fastctx_types::likeness::event_name(event)
 }
 
 /// Pair an original live event with its durable preview, without numbering
-/// repeated occurrences. Both halves are SHA-256 prefixes of the original.
+/// repeated occurrences (`fastctx_types::likeness`).
 pub(crate) fn likeness(event: &SessionEvent, encoded: &[u8]) -> [u8; 32] {
-    let content = Sha256::digest(encoded);
-    let named = name(event).map_or_else(|| half(&content), |name| half(&Sha256::digest(name.as_bytes())));
-    let mut likeness = [0; 32];
-    likeness[..16].copy_from_slice(&named);
-    likeness[16..].copy_from_slice(&content[..16]);
-    likeness
+    fastctx_types::likeness::likeness(event, encoded)
 }
 
 fn half(digest: &[u8]) -> [u8; 16] {

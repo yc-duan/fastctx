@@ -1,13 +1,14 @@
 //! Timeline calls use the same routes and admission as watching a conversation.
 
-use super::reads::{self, Anchor, Change, Entry, Place, Shown};
+use super::reads::{self, Anchor, Change};
+use fastctx_client::timeline_copy::{decode, decode_place, encode_place, event, hex};
 use crate::Node;
 use base64::{Engine, engine::general_purpose::STANDARD};
 use fastctx_types::access::{Acting, Purpose, Written};
 use fastctx_types::ipc::Failure;
 use fastctx_types::remote::{RemoteCall, RemoteReply};
 use fastctx_types::timeline_pages::{
-    OBJECT_BYTES, TimelineAsk, TimelineChange, TimelineEvent, TimelineFrom, TimelinePlace, TimelineShown, TimelineTold,
+    OBJECT_BYTES, TimelineAsk, TimelineChange, TimelineFrom, TimelineTold,
 };
 use std::{sync::Arc, time::Duration};
 
@@ -104,68 +105,10 @@ pub(crate) async fn call(
     Err(refused.expect("a speaker was tried"))
 }
 
-/// Reads another machine's conversation from this machine's copy (§28.30).
+/// Reads another machine's conversation from this machine's copy (§28.30),
+/// as a phone reads its replica (`fastctx_client::timeline_copy`).
 async fn from_copy(held: &super::local::Held, request: TimelineAsk) -> Result<TimelineTold, Failure> {
-    use super::reads::{PAGE_BYTES, PAGE_ITEMS};
-    match request {
-        TimelineAsk::Moved { after, .. } => {
-            let revision = super::local::moved(held, after, Duration::from_secs(25)).await?;
-            Ok(TimelineTold::Moved { revision, initializing: Some(false) })
-        }
-        TimelineAsk::Page { from, max_events, max_bytes, .. } => {
-            let anchor = match from {
-                TimelineFrom::Latest => Anchor::Latest,
-                TimelineFrom::Before { place } => Anchor::Before(decode_place(place)?),
-                TimelineFrom::After { place } => Anchor::After(decode_place(place)?),
-            };
-            fastctx_platform::roles::in_place("reading a timeline page of a copy", || {
-                let read = super::local::page(held, &anchor, max_events.clamp(1, PAGE_ITEMS), max_bytes.min(PAGE_BYTES))?;
-                Ok(TimelineTold::Page {
-                    revision: read.revision,
-                    initializing: Some(false),
-                    events: read.entries.into_iter().map(event).collect::<Result<_, Failure>>()?,
-                    older: read.older.map(encode_place),
-                    newer: read.newer.map(encode_place),
-                    through: Some(read.through),
-                })
-            })
-        }
-        TimelineAsk::Changes { after, max_events, max_bytes, .. } => {
-            fastctx_platform::roles::in_place("reading a copy's changes", || {
-                let Some(read) =
-                    super::local::changes(held, after, max_events.clamp(1, PAGE_ITEMS), max_bytes.min(PAGE_BYTES))?
-                else {
-                    return Ok(TimelineTold::Reread);
-                };
-                Ok(TimelineTold::Changes {
-                    revision: read.revision,
-                    initializing: Some(false),
-                    changes: read
-                        .changes
-                        .into_iter()
-                        .map(|change| {
-                            Ok(match change {
-                                Change::Is(entry) => TimelineChange::Is { event: event(entry)? },
-                                Change::Gone { item } => TimelineChange::Gone { item: hex(&item) },
-                            })
-                        })
-                        .collect::<Result<_, Failure>>()?,
-                    through: read.through,
-                    more: read.more,
-                })
-            })
-        }
-        TimelineAsk::Object { object, offset, length, .. } => {
-            let hash: [u8; 32] = decode(&object)?
-                .try_into()
-                .map_err(|_| Failure::new("a timeline object name must be a SHA-256 hash"))?;
-            fastctx_platform::roles::in_place("reading a copy's object", || {
-                let bytes = super::local::object(held, &hash, offset, length.min(OBJECT_BYTES))?;
-                Ok(TimelineTold::Object { base64: bytes.map(|bytes| STANDARD.encode(bytes)) })
-            })
-        }
-        TimelineAsk::Running { .. } => Err(Failure::new("what runs now is read where the conversation lives")),
-    }
+    fastctx_client::timeline_copy::answer(held, request).await
 }
 
 /// Reads the timeline as it is kept. A reader of its end, or one waiting
@@ -260,58 +203,4 @@ pub(crate) async fn here(node: &Arc<Node>, request: TimelineAsk) -> Result<Timel
 
 fn failure(error: impl std::fmt::Display) -> Failure {
     Failure::new(error.to_string())
-}
-
-/// An event of the timeline as a reader is told it.
-fn event(entry: Entry) -> Result<TimelineEvent, Failure> {
-    let shown = match entry.shown {
-        Shown::Event(event) => TimelineShown::Event { event: serde_json::from_slice(&event).map_err(failure)? },
-        Shown::Oversized { bytes, slim, object } => TimelineShown::Oversized {
-            bytes,
-            slim: slim.map(|slim| serde_json::from_slice(&slim)).transpose().map_err(failure)?,
-            object: hex(&object.hash),
-        },
-    };
-    Ok(TimelineEvent { place: encode_place(entry.place), sequence: entry.sequence, likeness: entry.likeness, shown })
-}
-
-fn decode_place(place: TimelinePlace) -> Result<Place, Failure> {
-    let item = decode(&place.item)?;
-    if item.is_empty() {
-        return Err(Failure::new("a timeline item's identity is empty"));
-    }
-    Ok(Place { order: decode(&place.order)?, item })
-}
-
-fn encode_place(place: Place) -> TimelinePlace {
-    TimelinePlace { order: hex(&place.order), item: hex(&place.item) }
-}
-
-fn decode(text: &str) -> Result<Vec<u8>, Failure> {
-    let digit = |byte| match byte {
-        b'0'..=b'9' => Some(byte - b'0'),
-        b'a'..=b'f' => Some(byte - b'a' + 10),
-        _ => None,
-    };
-    if !text.len().is_multiple_of(2) || text.len() > fastctx_content::KEY_BYTES * 2 {
-        return Err(Failure::new("a timeline position or object name has the wrong length"));
-    }
-    let mut bytes = vec![0; text.len() / 2];
-    for (byte, pair) in bytes.iter_mut().zip(text.as_bytes().chunks_exact(2)) {
-        let (Some(high), Some(low)) = (digit(pair[0]), digit(pair[1])) else {
-            return Err(Failure::new("a timeline position or object name must be lowercase hexadecimal"));
-        };
-        *byte = high * 16 + low;
-    }
-    Ok(bytes)
-}
-
-fn hex(bytes: &[u8]) -> String {
-    const DIGITS: &[u8] = b"0123456789abcdef";
-    let mut text = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        text.push(DIGITS[(byte >> 4) as usize] as char);
-        text.push(DIGITS[(byte & 15) as usize] as char);
-    }
-    text
 }

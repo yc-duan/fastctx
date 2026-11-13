@@ -4,60 +4,17 @@
 //! timeline's index, whatever the history's length; its changes are the
 //! records written since, however much the timeline holds.
 
-use super::build::{EVENT, OVERSIZED};
 use crate::Node;
 use fastctx_content::State;
-pub(crate) use fastctx_content::{Anchor, ObjectRef, Place};
+pub(crate) use fastctx_content::{Anchor, Place};
 use fastctx_types::ResidentId;
 use fastctx_types::ipc::Failure;
 use std::time::Duration;
 
 /// The most a page holds, whatever is asked.
-pub(crate) const PAGE_ITEMS: u32 = 400;
-pub(crate) const PAGE_BYTES: u32 = 1024 * 1024;
+pub(crate) use fastctx_client::timeline_copy::{PAGE_BYTES, PAGE_ITEMS};
 
-pub(crate) enum Shown {
-    /// The event, as JSON.
-    Event(Vec<u8>),
-    /// An event too large for a page: its length as JSON, what is shown in
-    /// its place when something is (JSON), and the object that holds it whole.
-    Oversized { bytes: u64, slim: Option<Vec<u8>>, object: ObjectRef },
-}
-
-pub(crate) struct Entry {
-    pub place: Place,
-    /// The timeline's count of records as this one was written.
-    pub sequence: u64,
-    pub shown: Shown,
-    pub likeness: Option<[u8; 32]>,
-}
-
-pub(crate) struct Read {
-    /// The timeline's revision as the page was read; none while the
-    /// conversation's timeline has not been made.
-    pub revision: Option<u64>,
-    pub entries: Vec<Entry>,
-    pub older: Option<Place>,
-    pub newer: Option<Place>,
-    /// How many records the timeline held as the page was read.
-    pub through: u64,
-}
-
-pub(crate) enum Change {
-    /// The event stands at its place as shown from this record on.
-    Is(Entry),
-    /// The timeline holds the item no more.
-    Gone { item: Vec<u8> },
-}
-
-pub(crate) struct Changed {
-    pub revision: Option<u64>,
-    /// In the order they were written.
-    pub changes: Vec<Change>,
-    /// The count of records these reach to.
-    pub through: u64,
-    pub more: bool,
-}
+pub(crate) use fastctx_client::timeline_copy::{Change, Changed, Entry, Read, likeness, shown};
 
 fn failure(error: impl std::fmt::Display) -> Failure {
     Failure::new(error.to_string())
@@ -106,37 +63,6 @@ pub(crate) fn page(
         })
         .collect::<Result<_, Failure>>()?;
     Ok(Read { revision: page.revision, entries, older: page.older, newer: page.newer, through: page.through })
-}
-
-/// What a timeline record's body shows: the event, or what stands for one
-/// kept whole as an object.
-pub(super) fn likeness(body: &[u8]) -> Option<[u8; 32]> {
-    match body.split_first()? {
-        (&EVENT, encoded) => {
-            let event = serde_json::from_slice(encoded).ok()?;
-            Some(super::identity::likeness(&event, encoded))
-        }
-        (&OVERSIZED, told) => serde_json::from_slice::<serde_json::Value>(told)
-            .ok()
-            .and_then(|value| serde_json::from_value(value.get("likeness")?.clone()).ok()),
-        _ => None,
-    }
-}
-
-pub(super) fn shown(body: &[u8], objects: &[ObjectRef]) -> Result<Shown, Failure> {
-    match body.split_first() {
-        Some((&EVENT, event)) => Ok(Shown::Event(event.to_vec())),
-        Some((&OVERSIZED, told)) => {
-            let told: serde_json::Value = serde_json::from_slice(told).map_err(failure)?;
-            let object = *objects.first().ok_or_else(|| failure("an oversized event names no object"))?;
-            let slim = match &told["slim"] {
-                serde_json::Value::Null => None,
-                slim => Some(serde_json::to_vec(slim).map_err(failure)?),
-            };
-            Ok(Shown::Oversized { bytes: told["bytes"].as_u64().unwrap_or(object.size), slim, object })
-        }
-        _ => Err(failure("the timeline holds an item it cannot read")),
-    }
 }
 
 /// What the timeline's records brought after its first `after`: none when

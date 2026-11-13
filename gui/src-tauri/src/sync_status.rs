@@ -25,7 +25,11 @@ pub(crate) async fn sync_status(
     account: AccountName,
     hours: u32,
 ) -> Result<SyncStatusReply, String> {
+    // A computer asks its node; a phone, the hub over its own connection.
+    #[cfg(desktop)]
     let world = shell.connection.local_world()?;
+    #[cfg(mobile)]
+    let world = shell.connection.world();
     match world.call(Call::SyncStatus { hub, account, hours }).await.map_err(|error| error.to_string())?.0 {
         Reply::SyncStatus { local, hub, unreached } => Ok(SyncStatusReply { local, hub: hub.map(|status| *status), unreached }),
         other => Err(format!("the node answered something other than how syncing stands: {other:?}")),

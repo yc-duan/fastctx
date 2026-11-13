@@ -20,7 +20,7 @@ use fastctx_types::{AccountName, Call, MachineName, ProjectCall, Reply};
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 
-use super::{Device, failed};
+use super::{Device, Session, failed};
 use crate::Error;
 
 /// What every machine said of itself, kept whole by earlier releases: read
@@ -129,6 +129,34 @@ impl Device {
 
     /// Each machine the device's accounts may use, as its hub last told
     /// what is afoot on it.
+    /// The conversations of `machine`, away, as the copies this device's
+    /// replica holds for one logged in on `session`'s network have them.
+    #[cfg(feature = "replica")]
+    fn listed_here(&self, session: &Session, logins: &[AccountName], machine: &MachineName) -> Option<WhoReply> {
+        let replica = self.replica()?;
+        let library = replica.library();
+        let hub = session.link.membership().id.clone();
+        let view = session.link.view();
+        fastctx_platform::roles::in_place("listing a machine's conversations from the copies here", || {
+            let scopes: Vec<_> = library
+                .held_scopes()
+                .ok()?
+                .into_iter()
+                .filter(|scope| {
+                    scope.hub.as_deref() == Some(hub.as_str())
+                        && crate::timeline_copy::conversation_copy(scope)
+                        && crate::timeline_copy::read_by(&view.directory, scope, logins, None)
+                })
+                .collect();
+            crate::timeline_copy::listed(library, &scopes, machine)
+        })
+    }
+
+    #[cfg(not(feature = "replica"))]
+    fn listed_here(&self, _session: &Session, _logins: &[AccountName], _machine: &MachineName) -> Option<WhoReply> {
+        None
+    }
+
     fn afoot(&self) -> Vec<MachineWho> {
         let mut machines = Vec::new();
         for session in self.sessions() {
@@ -156,7 +184,13 @@ impl Device {
                         observation: None,
                         machine: name.clone(),
                         since: member.since,
-                        last: afoot.map(|afoot| Box::new(reply(afoot))),
+                        // Nothing told of it, the hub started again since it
+                        // left: what the copies here have of it (§28.32,
+                        // §28.39).
+                        last: match afoot {
+                            Some(afoot) => Some(Box::new(reply(afoot))),
+                            None => self.listed_here(&session, &logins, &name).map(Box::new),
+                        },
                     },
                     (true, Some(afoot)) => MachineWho::Answered { observation: None, reply: reply(afoot) },
                     (true, None) if !current => MachineWho::NoAnswer {

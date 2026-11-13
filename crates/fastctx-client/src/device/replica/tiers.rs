@@ -11,6 +11,19 @@ pub enum Tier {
     Whole,
 }
 
+impl Tier {
+    pub(super) fn code(self) -> u8 {
+        match self {
+            Self::Light => 0,
+            Self::Whole => 1,
+        }
+    }
+
+    pub(super) fn of_code(code: u8) -> Self {
+        if code == 1 { Self::Whole } else { Self::Light }
+    }
+}
+
 /// How a light device holds a stream.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Hold {

@@ -30,6 +30,7 @@ const RECORDS_A_TURN: u64 = 2048;
 pub(super) async fn ask(replica: &Replica, link: &Arc<Link>, request: Request) -> Result<Reply, String> {
     match link.assets(request).await? {
         Reply::Revoked { scope } => {
+            replica.note_revoked(&scope);
             let (key, device) = (scope.clone(), replica.device());
             blocking(&replica.library, move |library| library.revoke_keeping(&key, &device)).await?;
             Err(format!("{REVOKED}{scope}"))
@@ -233,7 +234,7 @@ pub(super) async fn pull(replica: &Replica, hub: &HubId, link: &Arc<Link>, key: 
             continue;
         }
         let earlier = covered.iter().any(|run| run.remade < at.remade);
-        match tiers::hold(replica.tier, &at.stream) {
+        match tiers::hold(replica.tier(), &at.stream) {
             Hold::Metadata if earlier || covered.iter().any(|run| run.through < at.next) => {
                 let (scope_text, stream_text, device) = (scope.to_string(), at.stream.clone(), replica.device());
                 blocking(library, move |library| library.drop_cached(&scope_text, &stream_text, &device)).await?;
@@ -284,7 +285,7 @@ pub(super) async fn hold(
     next: u64,
     remade: bool,
 ) -> Result<bool, String> {
-    match tiers::hold(replica.tier, stream) {
+    match tiers::hold(replica.tier(), stream) {
         // Described only: asked for as it is read.
         Hold::Metadata => return Ok(false),
         // Far behind, or its window of an earlier making: the window, anew.
@@ -297,7 +298,7 @@ pub(super) async fn hold(
     }
     // A recent stream close behind by count, catching up by its frames as
     // far as its bytes allow: past them, its window, then on from there.
-    let most = if tiers::hold(replica.tier, stream) == Hold::Recent { RECENT_BYTES } else { u64::MAX };
+    let most = if tiers::hold(replica.tier(), stream) == Hold::Recent { RECENT_BYTES } else { u64::MAX };
     let more = match frames(replica, link, scope, stream, holding, here, next, most).await? {
         Some(more) => more,
         None => {
@@ -315,7 +316,7 @@ pub(super) async fn hold(
         }
     };
     // Holding whole, what is below a window taken before comes too (PH03).
-    if replica.tier == Tier::Whole && !more {
+    if replica.tier() == Tier::Whole && !more {
         return backfill(replica, link, scope, stream, holding).await;
     }
     Ok(more)

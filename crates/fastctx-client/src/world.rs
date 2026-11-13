@@ -57,6 +57,14 @@ impl Error {
     pub fn is_refused(&self) -> bool {
         matches!(self, Error::Call(CallError::Failed(failure)) if failure.is_refused())
     }
+
+    /// Whether it is an answer that holds wherever it is asked — refused,
+    /// denied, or of a conversation deleted — not a hub or machine out of
+    /// reach: a copy is not read in its place (§28.39).
+    pub fn is_refusal(&self) -> bool {
+        matches!(self, Error::Call(CallError::Failed(failure))
+            if failure.is_refused() || failure.denial.is_some() || failure.is_deleted())
+    }
 }
 
 /// A World reached through a local node or an application's device identity.

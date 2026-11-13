@@ -61,8 +61,12 @@ struct Called {
 pub struct Replica {
     library: Library,
     device: [u8; 32],
-    tier: Tier,
+    /// The tier it holds as now: switched while it runs (`set_tier`).
+    tier: std::sync::atomic::AtomicU8,
     pins: pins::Pins,
+    /// The scopes a hub said the device reads no more since it started:
+    /// a reader is not sent to ask their machines instead (§28.39).
+    revoked: Mutex<BTreeSet<String>>,
     /// Each object a hub did not give, when it last did not and how often.
     unreached: Mutex<Unreached>,
     /// Objects longer than the tier fetches as they come.
@@ -122,8 +126,9 @@ impl Replica {
         Ok(Self {
             library,
             device,
-            tier,
+            tier: std::sync::atomic::AtomicU8::new(tier.code()),
             pins,
+            revoked: Mutex::default(),
             unreached: Mutex::default(),
             deferred: Mutex::default(),
             links: Mutex::default(),
@@ -139,7 +144,31 @@ impl Replica {
     }
 
     pub fn tier(&self) -> Tier {
-        self.tier
+        Tier::of_code(self.tier.load(std::sync::atomic::Ordering::SeqCst))
+    }
+
+    /// Holds as `tier` holds from now on: each hub is looked at whole at
+    /// once. What a lighter tier no longer holds stays until it is let go
+    /// with its holding period.
+    pub fn set_tier(&self, tier: Tier) {
+        if self.tier.swap(tier.code(), std::sync::atomic::Ordering::SeqCst) == tier.code() {
+            return;
+        }
+        let hubs: Vec<HubId> = self.links.lock().expect("links").keys().cloned().collect();
+        for hub in hubs {
+            self.called.lock().expect("called").entry(hub.clone()).or_default().whole = true;
+            self.wake(&hub).notify_one();
+        }
+    }
+
+    /// Whether a hub said the device reads `scope` no more since it started.
+    pub fn revoked(&self, scope: &str) -> bool {
+        self.revoked.lock().expect("revoked").contains(scope)
+    }
+
+    /// Keeps that a hub said the device reads `scope` no more.
+    pub(super) fn note_revoked(&self, scope: &str) {
+        self.revoked.lock().expect("revoked").insert(scope.to_string());
     }
 
     /// The library the copy is in, for reading.
@@ -325,6 +354,7 @@ impl Replica {
                 }
                 Push::Revoked { scope } => {
                     called.whole = true;
+                    self.note_revoked(&scope);
                     let (library, device) = (self.library.clone(), self.device());
                     tokio::task::spawn_blocking(move || library.revoke_keeping(&scope, &device));
                 }

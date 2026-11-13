@@ -14,13 +14,11 @@ use super::local::{self, Held};
 use crate::Node;
 use fastctx_content::v2::{Kind as _, Timeline};
 use fastctx_types::access::Written;
-use fastctx_types::assets::{Holders, Readers, conversation_classes};
 use fastctx_types::{AccountName, ResidentId};
 use fastctx_types::ipc::Failure;
-use fastctx_types::timeline_pages::{TimelineAsk, TimelineChange, TimelineTold};
 
 /// The mark of a place read from another machine.
-pub(super) const ELSEWHERE: u64 = 1 << 63;
+pub(super) use fastctx_client::timeline_copy::{ELSEWHERE, after, anew, marked, unmarked};
 
 fn failure(error: impl std::fmt::Display) -> Failure {
     Failure::new(error.to_string())
@@ -62,17 +60,7 @@ pub(crate) fn of(node: &Node, resident: &ResidentId, machine: Option<&Written>) 
 
 /// Whether the conversation of `scope` lives on `machine` as its copy here
 /// has it, or was born there.
-pub(crate) fn lives_on(library: &fastctx_content::v2::Library, scope: &fastctx_content::v2::HeldScope, machine: &fastctx_types::MachineName) -> bool {
-    if scope.key.starts_with(&format!("c/{}/{machine}/", scope.hub.as_deref().unwrap_or_default())) {
-        return true;
-    }
-    library
-        .item(&scope.key, fastctx_content::v2::ConversationMeta::STREAM, b"place")
-        .ok()
-        .flatten()
-        .and_then(|entry| serde_json::from_slice::<serde_json::Value>(&entry.body).ok())
-        .is_some_and(|place| place.get("machine").and_then(serde_json::Value::as_str) == Some(machine.as_str()))
-}
+pub(crate) use fastctx_client::timeline_copy::lives_on;
 
 /// Whether `scope` is of the network `machine` is named on: a name given with
 /// its hub's is that hub's machine alone; one without names the machine of
@@ -107,15 +95,7 @@ pub(crate) fn read_here(node: &Node, scope: &fastctx_content::v2::HeldScope) -> 
 /// `read_here`, as `only` reads it where given: the copy one account asks
 /// for is one that account reads, not another logged in here.
 pub(crate) fn read_here_as(node: &Node, scope: &fastctx_content::v2::HeldScope, only: Option<&AccountName>) -> bool {
-    let conversation = scope.key.starts_with("c/") || (scope.key.starts_with("b/") && !scope.key.ends_with("/log"));
-    conversation
-        && scope.pulled == Some(scope.holding)
-        && scope.allowed.as_deref().is_some_and(|allowed| {
-            allowed.lines().any(|class| {
-                conversation_classes().iter().any(|logged| logged.holders == Holders::Logged && logged.prefix == class)
-            })
-        })
-        && reader_here_as(node, scope, only)
+    fastctx_client::timeline_copy::conversation_copy(scope) && reader_here_as(node, scope, only)
 }
 
 /// Whether the records' scope `scope` — an account's, or a body's — is read
@@ -143,28 +123,7 @@ pub(crate) fn hub_away(node: &Node, scope: &fastctx_content::v2::HeldScope) -> b
 
 /// An item's whole body as written: its body, or the one object it is in
 /// when it was too large to be one (`{"in_object":true,…}`, AR03, M17).
-pub(crate) fn whole_body(library: &fastctx_content::v2::Library, entry: &fastctx_content::v2::Entry) -> Option<Vec<u8>> {
-    let value: serde_json::Value = serde_json::from_slice(&entry.body).ok()?;
-    if value.get("in_object").and_then(serde_json::Value::as_bool) != Some(true) {
-        return Some(entry.body.clone());
-    }
-    let [object] = entry.objects.as_slice() else { return None };
-    object_bytes(library, object)
-}
-
-/// The bytes of `object`, whole; none when they are not all here.
-pub(crate) fn object_bytes(library: &fastctx_content::v2::Library, object: &fastctx_content::ObjectRef) -> Option<Vec<u8>> {
-    let (mut bytes, mut at) = (Vec::new(), 0u64);
-    while at < object.size {
-        let piece = library.read(&object.hash, at, 1 << 20).ok()?;
-        if piece.is_empty() {
-            return None;
-        }
-        at += piece.len() as u64;
-        bytes.extend_from_slice(&piece);
-    }
-    Some(bytes)
-}
+pub(crate) use fastctx_client::records_copy::{object_bytes, whole_body};
 
 /// Whether `machine` is away from every network this one shares with it:
 /// offline on each that lists it.
@@ -198,74 +157,8 @@ fn reader_here_as(node: &Node, scope: &fastctx_content::v2::HeldScope, only: Opt
     let Some(link) = node.links().into_iter().find(|link| Some(link.membership().id.as_str()) == scope.hub.as_deref()) else {
         return false;
     };
-    let Some(descriptor) =
-        scope.description.as_deref().and_then(|bytes| serde_json::from_slice::<fastctx_types::assets::Descriptor>(bytes).ok())
-    else {
-        return false;
-    };
-    let Some(listed) = scope.readers.as_deref().and_then(|text| serde_json::from_str::<Listed>(text).ok()) else {
-        return false;
-    };
-    let logins = node.accounts_on(&link, &fastctx_types::access::Acting::Here);
-    let view = link.view();
-    let directory = &view.directory;
-    // A machine as the scope was described: its key and its owner as opened,
-    // so another machine taking its name is not it (AW04).
-    let as_described = |machine: &fastctx_types::MachineName| {
-        descriptor.born.get(&format!("machine:{machine}")).is_some_and(|was| {
-            directory.members.iter().find(|member| member.name == *machine).is_some_and(|member| {
-                let home = member.home.as_ref().map(|home| {
-                    let opened = directory.account(home).map(|account| account.opened.as_millisecond().to_string());
-                    format!("{home}@{}", opened.unwrap_or_default())
-                });
-                format!("{}:{}", member.key, home.unwrap_or_default()) == *was
-            })
-        })
-    };
-    let reads_now = |account: &AccountName| match &descriptor.readers {
-        Readers::Conversation { openers, born_on } => {
-            fastctx_net::record_ownership::allows(directory, account, openers, born_on.as_ref().filter(|machine| as_described(machine)))
-        }
-        Readers::Body { body, opener } => {
-            account == opener || {
-                let machine =
-                    directory.members.iter().find(|member| directory.body_of(&member.name).as_deref() == Some(body.as_str()));
-                match machine {
-                    // Its machine gone, its members frozen: as the hub listed
-                    // them once it was gone, never as it listed them before
-                    // (AW01).
-                    None => listed.frozen,
-                    Some(member) => {
-                        member.home.as_ref() == Some(account)
-                            || directory.shares.iter().any(|share| share.machine == member.name && share.active() && &share.account == account)
-                    }
-                }
-            }
-        }
-        // An account's records: the account itself.
-        Readers::Account { account: whose } => account == whose,
-        _ => false,
-    };
-    listed.of.iter().any(|reader| {
-        let Some((name, opened)) = reader.rsplit_once('@') else { return false };
-        let Ok(account) = AccountName::try_from(name.to_string()) else { return false };
-        only.is_none_or(|only| *only == account)
-            && logins.contains(&account)
-            && directory
-                .account(&account)
-                .is_some_and(|found| !found.locked && found.opened.as_millisecond().to_string() == opened)
-            && reads_now(&account)
-    })
-}
-
-/// Who the hub last listed as reading a scope held here (`Held.readers`,
-/// `Held.frozen`), as `assets::session` keeps it.
-#[derive(serde::Deserialize)]
-struct Listed {
-    #[serde(default)]
-    of: Vec<String>,
-    #[serde(default)]
-    frozen: bool,
+    let logins: Vec<AccountName> = node.accounts_on(&link, &fastctx_types::access::Acting::Here).into_iter().collect();
+    fastctx_client::timeline_copy::read_by(&link.view().directory, scope, &logins, only)
 }
 
 /// The record of the job `job`, as a copy here read by one logged in here
@@ -296,50 +189,3 @@ pub(crate) fn job(node: &Node, job: &fastctx_types::JobId) -> Option<fastctx_typ
     found
 }
 
-/// Where a reader asks to read on from, when it does.
-pub(super) fn after(request: &TimelineAsk) -> Option<u64> {
-    match request {
-        TimelineAsk::Moved { after, .. } | TimelineAsk::Changes { after, .. } => Some(*after),
-        _ => None,
-    }
-}
-
-/// The answer to a reader whose place is of another source: read anew.
-pub(super) fn anew(request: &TimelineAsk) -> TimelineTold {
-    match request {
-        TimelineAsk::Moved { .. } => TimelineTold::Moved { revision: Some(0), initializing: None },
-        _ => TimelineTold::Reread,
-    }
-}
-
-/// The request as the machine it lives on is asked it: unmarked.
-pub(super) fn unmarked(mut request: TimelineAsk) -> TimelineAsk {
-    if let TimelineAsk::Moved { after, .. } | TimelineAsk::Changes { after, .. } = &mut request {
-        *after &= !ELSEWHERE;
-    }
-    request
-}
-
-/// What the machine it lives on told, its places marked.
-pub(super) fn marked(mut told: TimelineTold) -> TimelineTold {
-    let mark = |place: &mut u64| *place |= ELSEWHERE;
-    match &mut told {
-        TimelineTold::Page { revision, events, through, .. } => {
-            revision.iter_mut().for_each(mark);
-            through.iter_mut().for_each(mark);
-            events.iter_mut().for_each(|event| mark(&mut event.sequence));
-        }
-        TimelineTold::Changes { revision, changes, through, .. } => {
-            revision.iter_mut().for_each(mark);
-            mark(through);
-            for change in changes {
-                if let TimelineChange::Is { event } = change {
-                    mark(&mut event.sequence);
-                }
-            }
-        }
-        TimelineTold::Moved { revision, .. } => revision.iter_mut().for_each(mark),
-        TimelineTold::Running { .. } | TimelineTold::Object { .. } | TimelineTold::Reread => {}
-    }
-    told
-}

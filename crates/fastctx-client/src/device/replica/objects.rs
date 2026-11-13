@@ -28,7 +28,7 @@ fn chunks(size: u64) -> u64 {
 /// whether more may be waiting than one look fetched.
 pub(super) async fn fetch(replica: &Replica, hub: &HubId, link: &Arc<Link>) -> (Vec<String>, bool) {
     let library = &replica.library;
-    let at_most = super::tiers::fetched_at_most(replica.tier);
+    let at_most = super::tiers::fetched_at_most(replica.tier());
     let skipped: Vec<[u8; 32]> = {
         let unreached = replica.unreached.lock().expect("unreached");
         let deferred = replica.deferred.lock().expect("deferred");

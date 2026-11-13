@@ -14,8 +14,11 @@ mod lines;
 mod mcp;
 mod project_memory;
 #[cfg(feature = "replica")]
+pub(crate) mod copy_reads;
+#[cfg(feature = "replica")]
 pub mod replica;
 mod store;
+mod sync_status;
 mod thumbnail;
 mod updates;
 mod upload;

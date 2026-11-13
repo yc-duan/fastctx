@@ -246,7 +246,7 @@ import { specimenRemote } from "./specimen/remote";
 import { specimenNameProblem } from "./specimen/names";
 import { specimenMachineLog } from "./specimen/machine-log";
 import type { RemoteSeams } from "./app/remote-world";
-import { specimenClaudeOffers, specimenComputer, specimenFiles, specimenOffers, specimenOutput, specimenPeek, specimenPhone, specimenPicture, specimenRead, specimenUpload } from "./specimen/seams";
+import { specimenClaudeOffers, specimenComputer, specimenFiles, specimenOffers, specimenOutput, specimenPeek, specimenCopy, specimenPhone, specimenPicture, specimenRead, specimenUpload } from "./specimen/seams";
 import { RemoteLines } from "./world/remote-lines";
 import { specimenLines } from "./specimen/run-facts";
 import { applyTheme, chooseTheme, currentTheme, themes } from "./theme";
@@ -256,6 +256,7 @@ import { PageScreen } from "./pages/view";
 import { forgetConversation, manage as manageResident, type Forgetting, type Managed, type Management } from "./world/management";
 import { FileSearch } from "./world/file-search";
 import { configurePhone, guideBackground, onPhone, phoneSeam, routeActivations, tellPhoneViewing } from "./app/phone";
+import { copySeam } from "./app/phone-copy";
 import { renewalState, renewHere, type VersionMismatch } from "./world/renewal";
 import { toolsFor } from "./pages/tools";
 import { enPages, zhPages } from "./pages/words";
@@ -3348,6 +3349,7 @@ function show(next: Place): void {
           },
         },
         phone: live ? (onPhone() ? phoneSeam : undefined) : params.has("phone") ? specimenPhone : undefined,
+        copy: live ? (onPhone() ? copySeam : undefined) : params.has("phone") ? specimenCopy : undefined,
         updates: {
           updates: appUpdates,
           words: updateWords,

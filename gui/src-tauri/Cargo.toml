@@ -54,6 +54,8 @@ tempfile = "3"
 rusqlite = { version = "0.41", features = ["bundled"] }
 
 [target.'cfg(target_os = "android")'.dependencies]
+# The copy this phone keeps of each hub's assets (`android/copy.rs`).
+fastctx-client = { path = "../../crates/fastctx-client", features = ["replica"] }
 jni = "0.21"
 tokio = { version = "1", features = ["rt-multi-thread", "time"] }
 

@@ -15,7 +15,20 @@ impl World {
         owner: ResidentId,
         machine: Option<MachineName>,
     ) -> Result<Page, Error> {
-        match self.ask(Call::PlanRead { hub, account, owner, machine }).await? {
+        #[cfg(feature = "replica")]
+        let copy = (hub.clone(), account.clone(), owner.clone(), machine.clone());
+        let read = self.ask(Call::PlanRead { hub, account, owner, machine }).await;
+        // The hub not reached — not a refusal — a device keeping a replica
+        // reads the plan it holds there (§28.39).
+        #[cfg(feature = "replica")]
+        if let Err(error) = &read
+            && !error.is_refusal()
+            && let Some(device) = self.device()
+            && let Some(page) = crate::device::copy_reads::plan(device, copy.0.as_ref(), copy.1.as_ref(), &copy.2, copy.3.as_ref())
+        {
+            return Ok(page);
+        }
+        match read? {
             Reply::Plan { result: plan::Result::Page { page } } => Ok(page),
             other => Err(Error::Unexpected(format!("{other:?}"))),
         }
