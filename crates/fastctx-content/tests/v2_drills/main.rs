@@ -10,6 +10,7 @@ mod changes;
 mod commit;
 mod defer;
 mod exchange;
+mod faults;
 mod hub;
 mod judged;
 mod letgo;
@@ -26,12 +27,13 @@ mod unaccepted;
 mod window;
 
 fn main() {
-    let drills: [(&str, fn()); 19] = [
+    let drills: [(&str, fn()); 20] = [
         ("aside", aside::run as fn()),
         ("changes", changes::run as fn()),
         ("commit", commit::run as fn()),
         ("defer", defer::run as fn()),
         ("exchange", exchange::run as fn()),
+        ("faults", faults::run as fn()),
         ("hub", hub::run as fn()),
         ("judged", judged::run as fn()),
         ("letgo", letgo::run as fn()),

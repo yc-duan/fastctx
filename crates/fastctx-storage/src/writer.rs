@@ -149,8 +149,9 @@ pub(super) fn run(
         let durable = first.durable();
         let mut batch = vec![first];
         let waiting = fastctx_platform::doing::waiting_outside(disk.clone(), super::ANSWER);
+        let name = path.file_name().unwrap_or_default().to_string_lossy();
         let result = synchronous(&connection, &mut full, durable).and_then(|()| {
-            commit(&mut connection, &queue, &metrics, &damage, &mut batch, full, &mut carried, guard.as_ref())
+            commit(&mut connection, &queue, &metrics, &damage, &mut batch, full, &mut carried, guard.as_ref(), &name)
         });
         if let Some(guard) = &guard {
             guard::lock(guard).committed(result.is_ok());
@@ -197,6 +198,7 @@ fn commit(
     full: bool,
     carried: &mut Option<Job>,
     guard: Option<&guard::Shared>,
+    name: &str,
 ) -> Result<()> {
     let _control = crate::authorization::transaction_control(true);
     let mut transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -251,8 +253,22 @@ fn commit(
         }
     }
     let flush = Instant::now();
+    // A lab fault (plan 3-6 five): the commit refused for want of space,
+    // nothing of the batch kept; or kept, and that not told.
+    if let Err(fault) = fastctx_platform::lab::fail_at("full-commit", name) {
+        drop(transaction);
+        return Err(Error::with_kind(ErrorKind::Full, fault.to_string()));
+    }
     let result = transaction.commit();
     metrics.commit(flush.elapsed());
+    if result.is_ok()
+        && let Err(fault) = fastctx_platform::lab::fail_at("commit-unknown", name)
+    {
+        return Err(Error::with_kind(
+            ErrorKind::OutcomeUnknown,
+            format!("the database could not confirm its commit, which may or may not stand: {fault}"),
+        ));
+    }
     result.map_err(|error| {
         // A commit that failed busy or for want of space left nothing behind;
         // any other may have reached the disk before it failed.

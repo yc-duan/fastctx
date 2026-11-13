@@ -184,6 +184,7 @@ impl Library {
                 None if held.len() + read <= ROW_BYTES => held.extend_from_slice(&window[..read]),
                 None => {
                     let (mut file, path) = self.incoming()?;
+                    fastctx_platform::lab::fail_at("full-object-write", "").map_err(io)?;
                     file.write_all(&held).map_err(io)?;
                     file.write_all(&window[..read]).map_err(io)?;
                     held = Vec::new();
@@ -219,15 +220,19 @@ impl Library {
         };
         match spilled {
             Some((file, incoming)) => {
+                fastctx_platform::lab::fail_at("object-sync", "").map_err(io)?;
                 file.sync_all().map_err(io)?;
                 drop(file);
                 let place = self.object_file(&object.hash, life);
                 fastctx_platform::durable_file::prepare_directory(place.parent().expect("an object's bucket"))
                     .map_err(io)?;
+                fastctx_platform::lab::fail_at("object-rename", "").map_err(io)?;
                 std::fs::rename(&incoming, &place).map_err(io)?;
+                fastctx_platform::lab::fail_at("object-directory-sync", "").map_err(io)?;
                 sync_parent(&place).map_err(io)?;
             }
             None => {
+                fastctx_platform::lab::fail_at("full-object-bytes", "").map_err(io)?;
                 let bytes = held;
                 self.0.bytes.write_now_at(Priority::Normal, bytes.len() + 64, move |db| {
                     db.prepare_cached("INSERT OR REPLACE INTO object_bytes (hash, life, bytes) VALUES (?1, ?2, ?3)")?
@@ -237,6 +242,7 @@ impl Library {
             }
         }
         let bytes = 256 + digests.len() * 32;
+        fastctx_platform::lab::fail_at("object-register", "").map_err(io)?;
         Ok(self.database().write_now_at(Priority::Normal, bytes, move |db| {
             let changed = db
                 .prepare_cached("UPDATE objects SET state = 1, placed = ?3 WHERE hash = ?1 AND life = ?2 AND state = 0")?

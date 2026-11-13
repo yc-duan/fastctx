@@ -250,6 +250,7 @@ impl Transfer {
             let _writing = library.writing();
             self.still()?;
             self.file.seek(SeekFrom::Start(index * CHUNK_BYTES)).map_err(io)?;
+            fastctx_platform::lab::fail_at("full-receive-write", "").map_err(io)?;
             self.file.write_all(bytes).map_err(io)?;
             self.written.push(index);
         }
@@ -267,12 +268,14 @@ impl Transfer {
         let library = self.library.clone();
         let _writing = library.writing();
         self.still()?;
+        fastctx_platform::lab::fail_at("receive-sync", "").map_err(io)?;
         self.file.sync_data().map_err(io)?;
         for index in self.written.drain(..) {
             self.durable[index as usize] = true;
         }
         self.since = Instant::now();
         let (id, part, ranges) = (self.id, self.part_name(), encode(&self.durable));
+        fastctx_platform::lab::fail_at("receive-range", "").map_err(io)?;
         self.library.database().write_relaxed_now_at(Priority::Normal, 64 + ranges.len(), move |db| {
             db.prepare_cached("UPDATE transfers SET ranges = ?2 WHERE id = ?1 AND part = ?3")?.execute(params![id, ranges, part])?;
             Ok(())
@@ -314,6 +317,7 @@ impl Transfer {
             })?;
             return Err(Error::Invalid("the received object does not hash to what it was asked as".into()));
         }
+        fastctx_platform::lab::fail_at("receive-finish-sync", "").map_err(io)?;
         self.file.sync_all().map_err(io)?;
         let (object, id, part) = (self.object, self.id, self.part_name());
         let manifest: Vec<u8> = self.digests.iter().flatten().copied().collect();
@@ -354,8 +358,10 @@ impl Transfer {
         drop(self.file);
         let place = library.object_file(&object.hash, life);
         fastctx_platform::durable_file::prepare_directory(place.parent().expect("an object's bucket")).map_err(io)?;
+        fastctx_platform::lab::fail_at("receive-rename", "").map_err(io)?;
         std::fs::rename(&self.part, &place).map_err(io)?;
         sync_parent(&place).map_err(io)?;
+        fastctx_platform::lab::fail_at("receive-register", "").map_err(io)?;
         Ok(library.database().write_now_at(Priority::Normal, 256 + manifest.len(), move |db| {
             let changed = db
                 .prepare_cached("UPDATE objects SET state = 1, placed = ?3 WHERE hash = ?1 AND life = ?2 AND state = 0")?
