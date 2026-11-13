@@ -721,6 +721,23 @@ impl Link {
         self.inner.status.borrow().clone()
     }
 
+    /// Waits until the link is online, at most `within`: whether it is. A
+    /// link stopped is not waited for.
+    pub async fn online_within(&self, within: std::time::Duration) -> bool {
+        let mut status = self.inner.status.subscribe();
+        let deadline = tokio::time::Instant::now() + within;
+        loop {
+            match &*status.borrow_and_update() {
+                Status::Online { .. } => return true,
+                Status::Stopped { .. } => return false,
+                Status::Connecting { .. } => {}
+            }
+            if !matches!(tokio::time::timeout_at(deadline, status.changed()).await, Ok(Ok(()))) {
+                return matches!(&*status.borrow(), Status::Online { .. });
+            }
+        }
+    }
+
     /// Whether the essential connection task ended unexpectedly. A removal
     /// or a local stop is a normal end.
     pub fn failed(&self) -> bool {

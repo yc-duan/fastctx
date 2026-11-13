@@ -9,6 +9,10 @@ use fastctx_types::{
 };
 use std::sync::Arc;
 
+/// How long a plan written while the hub is away waits for it, inside the
+/// half hour its family's work is done within.
+const OFFLINE_WAIT: std::time::Duration = std::time::Duration::from_secs(25 * 60);
+
 pub(super) async fn execute(node: &Arc<Node>, asked: Asked, resolved: Resolved) -> Result<Answer, Failure> {
     match asked {
         Asked::Local { peer, mut call } => {
@@ -47,6 +51,11 @@ pub(super) async fn execute(node: &Arc<Node>, asked: Asked, resolved: Resolved) 
                             .ok_or_else(|| Failure::refused("the plan's selected network is unavailable"))?;
                         let account = scope.account.clone();
                         let whose = machine.map(|machine| fastctx_types::Address { machine, resident: owner.clone() });
+                        // Written while the hub is away: kept here with the
+                        // call, and asked of the hub once it is back, within
+                        // the while a call's work is done in (design §20,
+                        // 3-3: an edit made offline, then back).
+                        link.online_within(OFFLINE_WAIT).await;
                         let result = link
                             .plan_write(
                                 &account,
