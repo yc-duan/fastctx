@@ -9,7 +9,7 @@
 
 /// The layout of the tables this build makes (`layout.rs`): changed with
 /// every change to them until the layout is settled (plan 3-3).
-pub(crate) const LAYOUT: &str = "2026-11-13.1";
+pub(crate) const LAYOUT: &str = "2026-11-13.2";
 
 /// Made before anything else as the library opens (`layout.rs`): where its
 /// layout is stamped. Nothing is written when it is there already.
@@ -76,12 +76,21 @@ CREATE TABLE IF NOT EXISTS streams (
     -- stream is in a later epoch, what waits needs a new one first.
     rejected_at INTEGER,
     rejected_epoch INTEGER,
-    -- How often the stream's index took in what is older than where readers
-    -- stood — a window, a backfill merged, records indexed again — so they
-    -- read it anew (`view.rs`).
+    -- How often the stream's index was made otherwise than by writing on —
+    -- cut back, rebuilt as the hub refused a frame, records indexed again —
+    -- so readers read it anew (`view.rs`).
     rebased INTEGER NOT NULL DEFAULT 0,
+    -- The last of the library's write numbers a row of the stream took:
+    -- where a reader of it stands (§29 3.3, PH04).
+    written INTEGER NOT NULL DEFAULT 0,
+    -- The write number at which floors of the stream were last let go: a
+    -- page asked before it is asked again (PH01).
+    reclaimed INTEGER NOT NULL DEFAULT 0,
     UNIQUE (scope, name)
 );
+-- The library's write numbers: one that only grows, a new one for each row
+-- written into the index, by a frame, a window, a page or a backfill alike.
+CREATE TABLE IF NOT EXISTS writes (id INTEGER PRIMARY KEY CHECK (id = 1), last INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS epochs (
     stream INTEGER NOT NULL,
     epoch INTEGER NOT NULL,
@@ -196,11 +205,14 @@ CREATE TABLE IF NOT EXISTS items (
     body BLOB,
     objects BLOB,
     holding INTEGER NOT NULL,
+    -- The write number the row took as it was written (`writes`).
+    local INTEGER NOT NULL,
     PRIMARY KEY (stream, place, item)
 ) WITHOUT ROWID;
 CREATE UNIQUE INDEX IF NOT EXISTS items_by_identity ON items (stream, item);
 CREATE INDEX IF NOT EXISTS items_floors ON items (stream, revision) WHERE state = 2;
 CREATE INDEX IF NOT EXISTS items_by_revision ON items (stream, holding, revision);
+CREATE INDEX IF NOT EXISTS items_by_write ON items (stream, holding, local);
 CREATE TABLE IF NOT EXISTS object_refs (
     scope INTEGER NOT NULL,
     holding INTEGER NOT NULL,
@@ -310,13 +322,50 @@ CREATE TABLE IF NOT EXISTS retention (
     floor INTEGER NOT NULL,
     head BLOB
 );
+-- What of a stream a light device holds whole (§29 3.3, PH02, PH07): from
+-- `low` (order key and identity; empty below everything) up to `high` (none
+-- above everything), as the hub answered at `through`, in a holding period,
+-- while the hub's stream was made `remade` times. A window or a page adds
+-- one; a window of another making lets the others go.
 CREATE TABLE IF NOT EXISTS coverage (
-    scope INTEGER NOT NULL,
-    low BLOB NOT NULL,
-    high BLOB NOT NULL,
+    stream INTEGER NOT NULL,
+    holding INTEGER NOT NULL,
+    remade INTEGER NOT NULL,
+    low_place BLOB NOT NULL,
+    low_item BLOB NOT NULL,
+    high_place BLOB,
+    high_item BLOB,
     through INTEGER NOT NULL,
-    PRIMARY KEY (scope, low)
+    PRIMARY KEY (stream, holding, low_place, low_item)
 ) WITHOUT ROWID;
+-- A window being installed (P12, H13): its rows are in, what it does not
+-- have below its head hidden a batch at a time from `after`, the tail
+-- moved to its head once all of it is. `standing` names its items (each a
+-- two-byte big-endian length and the identity): what is held of its keys
+-- from before its head and not among them is what it does not have.
+CREATE TABLE IF NOT EXISTS installing (
+    stream INTEGER PRIMARY KEY,
+    holding INTEGER NOT NULL,
+    next INTEGER NOT NULL,
+    head BLOB NOT NULL,
+    remade INTEGER NOT NULL,
+    low_place BLOB,
+    low_item BLOB,
+    standing BLOB NOT NULL,
+    after_place BLOB,
+    after_item BLOB
+);
+-- A stream taken whole again below its window in the same holding period
+-- (PH03, P11): frames from `at` (its chain at `at_head`) on, until `through`,
+-- where the chain is to be `head`, the window's head.
+CREATE TABLE IF NOT EXISTS backfills (
+    stream INTEGER PRIMARY KEY,
+    holding INTEGER NOT NULL,
+    through INTEGER NOT NULL,
+    head BLOB NOT NULL,
+    at INTEGER NOT NULL,
+    at_head BLOB NOT NULL
+);
 CREATE TABLE IF NOT EXISTS outbox (
     stream INTEGER PRIMARY KEY,
     uploaded INTEGER NOT NULL

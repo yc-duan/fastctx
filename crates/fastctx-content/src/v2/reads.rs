@@ -24,6 +24,9 @@ pub struct Entry {
     pub schema: u16,
     pub body: Vec<u8>,
     pub objects: Vec<ObjectRef>,
+    /// The write number the row took here (`items.rs`): what a reader on
+    /// this device knows it by; none where it is not read from the index.
+    pub local: u64,
 }
 
 /// The most entries one page gives.
@@ -39,6 +42,7 @@ fn entry(row: &fastctx_storage::rusqlite::Row<'_>) -> fastctx_storage::rusqlite:
             schema: row.get(4)?,
             body: row.get::<_, Option<Vec<u8>>>(5)?.unwrap_or_default(),
             objects: Vec::new(),
+            local: row.get::<_, i64>(7)? as u64,
         },
         row.get::<_, Option<Vec<u8>>>(6)?.unwrap_or_default(),
     ))
@@ -55,7 +59,7 @@ impl Library {
         Ok(self.database().read_now(move |db| {
             let Some((scope, _, Some(holding))) = held(db, &scope)? else { return Ok(Vec::new()) };
             let mut statement = db.prepare_cached(
-                "SELECT i.item, i.place, i.revision, i.kind, i.schema, i.body, i.objects FROM items i
+                "SELECT i.item, i.place, i.revision, i.kind, i.schema, i.body, i.objects, i.local FROM items i
                  JOIN streams s ON s.id = i.stream
                  WHERE s.scope = ?1 AND s.name = ?2 AND i.holding = ?3 AND i.state = ?4
                    AND (?5 = 0 OR (i.place, i.item) > (?6, ?7))
@@ -82,7 +86,7 @@ impl Library {
             let Some((scope, _, Some(holding))) = held(db, &scope)? else { return Ok(None) };
             let found = db
                 .prepare_cached(
-                    "SELECT i.item, i.place, i.revision, i.kind, i.schema, i.body, i.objects FROM items i
+                    "SELECT i.item, i.place, i.revision, i.kind, i.schema, i.body, i.objects, i.local FROM items i
                      JOIN streams s ON s.id = i.stream
                      WHERE s.scope = ?1 AND s.name = ?2 AND i.item = ?3 AND i.holding = ?4 AND i.state = ?5",
                 )?

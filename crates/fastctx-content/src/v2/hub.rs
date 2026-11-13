@@ -257,6 +257,7 @@ fn entry(item: &[u8], seen: Seen) -> fastctx_storage::Result<Option<Entry>> {
         schema,
         body: body.unwrap_or_default(),
         objects: unpack(&objects.unwrap_or_default()).map_err(invalid)?,
+        local: 0,
     }))
 }
 
@@ -341,6 +342,7 @@ pub(super) fn after(record: &KindRecord, revision: u64) -> Option<Entry> {
             schema: record.schema,
             body: body.clone(),
             objects: objects.clone(),
+            local: 0,
         }),
         State::Gone => None,
     }

@@ -39,6 +39,9 @@ prefix_items	crates/fastctx-content/src/v2/schema.rs
 cursors	crates/fastctx-content/src/v2/schema.rs
 retention	crates/fastctx-content/src/v2/schema.rs
 coverage	crates/fastctx-content/src/v2/schema.rs
+installing	crates/fastctx-content/src/v2/schema.rs
+backfills	crates/fastctx-content/src/v2/schema.rs
+writes	crates/fastctx-content/src/v2/schema.rs
 outbox	crates/fastctx-content/src/v2/schema.rs
 withheld	crates/fastctx-content/src/v2/schema.rs
 refused_records	crates/fastctx-content/src/v2/schema.rs

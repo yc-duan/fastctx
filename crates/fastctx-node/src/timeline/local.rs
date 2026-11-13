@@ -55,15 +55,15 @@ pub(crate) fn held(node: &Node, resident: &ResidentId) -> Result<Option<Held>, F
     Ok((made_here || made_elsewhere).then_some(Held { library, scope: placed.scope }))
 }
 
-/// An entry as a reader at `at` knows it: its sequence is its revision in
-/// the era read in, so an entry made anew at the same revision is told
-/// again (JJ04).
+/// An entry as a reader at `at` knows it: its sequence is the write number
+/// it took here, in the era read in, so an entry written again is told
+/// again (JJ04, §29 3.3 PH04).
 fn entry(at: u64, entry: fastctx_content::v2::Entry) -> Result<Entry, Failure> {
     Ok(Entry {
         shown: shown(&entry.body, &entry.objects)?,
         likeness: likeness(&entry.body),
         place: Place { order: entry.order, item: entry.item },
-        sequence: view_sequence(at, entry.revision),
+        sequence: view_sequence(at, entry.local),
     })
 }
 

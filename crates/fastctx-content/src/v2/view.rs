@@ -2,18 +2,20 @@
 //! a bounded page of its items by order key, what changed after where it
 //! read, and a wait until it moves. Reads only read.
 //!
-//! A reader's place in the stream is one number: the stream's sequence in
-//! its low 40 bits, and above them the stream's era (`streams.rebased`): a
-//! number the library gives from one counter that only grows, each time the
-//! stream is made, its scope is held anew, or its index is made otherwise
-//! than by going on from where readers stood — cut back, rebuilt as the hub
-//! refused a frame, a window or an older page taken in, records indexed
-//! again (JJ01, JJ02). Within one era the index only moves forward by
-//! sequence, so what changed after a number is the items whose revision is
-//! past it; another era, and the reader reads anew. No two states of a
-//! stream share a number, and the number only grows; the era has 23 bits, a
-//! library making that many is not one this counts on, and a place's top bit
-//! is never set here: a node marks with it the places another machine gave.
+//! A reader's place in the stream is one number: in its low 40 bits the last
+//! of the library's write numbers a row of the stream took (`items.rs`, §29
+//! 3.3 PH04), and above them the stream's era (`streams.rebased`): a number
+//! the library gives from one counter that only grows, each time the stream
+//! is made, its scope is held anew, or its index is made otherwise than by
+//! writing on — cut back, rebuilt as the hub refused a frame, records indexed
+//! again (JJ01, JJ02). Every row written takes a new write number, a frame's,
+//! a window's, an older page's or a backfill's alike, so what changed after
+//! a number is the rows written past it, in whatever order of revisions they
+//! came; another era, and the reader reads anew. No two states of a stream
+//! share a number, and the number only grows; the era has 23 bits, a library
+//! making that many is not one this counts on, and a place's top bit is
+//! never set here: a node marks with it the places another machine gave.
+//! Nothing written yet is a place whose low bits are naught.
 
 use super::Library;
 use super::items::IS;
@@ -65,19 +67,14 @@ pub struct ViewChanges {
 /// a reader of it stands now.
 fn standing(db: &Connection, scope: &str, name: &str) -> fastctx_storage::Result<Option<(i64, i64, u64)>> {
     let Some((scope_id, _, Some(holding))) = held(db, scope)? else { return Ok(None) };
-    let Some((stream, rebased)): Option<(i64, i64)> = db
-        .prepare_cached("SELECT id, rebased FROM streams WHERE scope = ?1 AND name = ?2")?
-        .query_row(params![scope_id, name], |row| Ok((row.get(0)?, row.get(1)?)))
+    let Some((stream, rebased, written)): Option<(i64, i64, i64)> = db
+        .prepare_cached("SELECT id, rebased, written FROM streams WHERE scope = ?1 AND name = ?2")?
+        .query_row(params![scope_id, name], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
         .optional()?
     else {
         return Ok(None);
     };
-    let next: u64 = db
-        .prepare_cached("SELECT sequence FROM cursors WHERE stream = ?1 AND holding = ?2")?
-        .query_row(params![stream, holding], |row| row.get::<_, i64>(0))
-        .optional()?
-        .map_or(0, |sequence| sequence as u64 + 1);
-    Ok(Some((stream, holding, place(tag(rebased), next))))
+    Ok(Some((stream, holding, place(tag(rebased), written as u64))))
 }
 
 /// The era as a place carries it: 23 bits, the top bit of a place being
@@ -86,11 +83,12 @@ fn tag(era: i64) -> u64 {
     (era as u64) & 0x7F_FFFF
 }
 
-/// What a reader at `at` knows an entry of revision `revision` as: the
-/// revision in the era it read in, so the same entry of the same revision
-/// is told again after the stream was made anew (JJ04).
-pub fn view_sequence(at: u64, revision: u64) -> u64 {
-    place(split(at).0, revision)
+/// What a reader at `at` knows an entry written here as `local` (its write
+/// number, `Entry::local`) as: that number in the era it read in, so an
+/// entry is told again as it is written again, and after the stream was
+/// made anew (JJ04).
+pub fn view_sequence(at: u64, local: u64) -> u64 {
+    place(split(at).0, local)
 }
 
 fn place(tag: u64, sequence: u64) -> u64 {
@@ -111,13 +109,14 @@ fn entry(row: &Row<'_>) -> fastctx_storage::rusqlite::Result<(Entry, Vec<u8>, i6
             schema: row.get(4)?,
             body: row.get::<_, Option<Vec<u8>>>(5)?.unwrap_or_default(),
             objects: Vec::new(),
+            local: row.get::<_, i64>(8)? as u64,
         },
         row.get::<_, Option<Vec<u8>>>(6)?.unwrap_or_default(),
         row.get(7)?,
     ))
 }
 
-const COLUMNS: &str = "item, place, revision, kind, schema, body, objects, state";
+const COLUMNS: &str = "item, place, revision, kind, schema, body, objects, state, local";
 
 /// The library's next era.
 fn next_era(db: &Connection) -> fastctx_storage::Result<i64> {
@@ -218,9 +217,10 @@ impl Library {
 
     /// What the index of `stream` of `scope` changed to after `from`, a
     /// reader's place, at most `max_items` of at most `max_bytes` of bodies,
-    /// one at least: none when the reader is to read anew — another holding
-    /// period, older records taken in since, or a place the stream never
-    /// reached. Call on a thread that may block.
+    /// one at least, in the order they were written here: none when the
+    /// reader is to read anew — another holding period, the index made
+    /// otherwise since, or a place the stream never reached. Call on a
+    /// thread that may block.
     pub fn view_changes(&self, scope: &str, stream: &str, from: u64, max_items: u32, max_bytes: u32) -> Result<Option<ViewChanges>> {
         let (scope, stream) = (scope.to_string(), stream.to_string());
         let (max_items, max_bytes) = (max_items.max(1) as usize, max_bytes as usize);
@@ -235,23 +235,25 @@ impl Library {
             if after == next {
                 return Ok(Some(read));
             }
-            let mut last = None::<u64>;
+            // The last row taken, its write number and revision.
+            let mut last = None::<(u64, u64)>;
             {
                 let mut statement = snapshot.prepare_cached(&format!(
-                    "SELECT {COLUMNS} FROM items WHERE stream = ?1 AND holding = ?2 AND revision >= ?3 ORDER BY revision, item"
+                    "SELECT {COLUMNS} FROM items WHERE stream = ?1 AND holding = ?2 AND local > ?3 ORDER BY local"
                 ))?;
                 let mut rows = statement.query(params![id, holding, after as i64])?;
                 let mut bytes = 0usize;
                 while let Some(row) = rows.next()? {
                     let (mut found, objects, state) = entry(row)?;
-                    // A batch ends between records, never within one revision.
+                    // A batch ends between records, never within one
+                    // revision: a frame's records are written together.
                     let full = read.changes.len() >= max_items || (!read.changes.is_empty() && bytes + found.body.len() > max_bytes);
-                    if full && last != Some(found.revision) {
+                    if full && last.is_none_or(|(_, revision)| revision != found.revision) {
                         read.more = true;
                         break;
                     }
                     bytes += found.body.len();
-                    last = Some(found.revision);
+                    last = Some((found.local, found.revision));
                     if state == IS {
                         found.objects = unpack(&objects).map_err(invalid)?;
                         read.changes.push(ViewChange::Is(found));
@@ -261,7 +263,7 @@ impl Library {
                 }
             }
             read.through = match (read.more, last) {
-                (true, Some(last)) => place(tag, last + 1),
+                (true, Some((local, _))) => place(tag, local),
                 _ => at,
             };
             Ok(Some(read))

@@ -154,6 +154,9 @@ impl Library {
                     ("parked", "stream, epoch, first, holding"),
                     ("evidence", "stream, epoch, first, digest, chain, holding"),
                     ("prefix_items", "stream, item, holding"),
+                    ("coverage", "stream, holding, low_place, low_item"),
+                    ("installing", "stream"),
+                    ("backfills", "stream"),
                 ] {
                     done += db
                         .prepare_cached(&format!(
