@@ -280,9 +280,17 @@ fn elsewhere(node: &Node) -> Vec<MachineWho> {
         machines.push(match (member.online, afoot) {
             (false, afoot) => MachineWho::Offline {
                 observation: None,
-                machine: name,
                 since: member.since,
-                last: afoot.map(|afoot| Box::new(reply(afoot))),
+                // Nothing told of it, the hub started again since it left:
+                // what the copies here have of it (§28.32).
+                last: match afoot {
+                    Some(afoot) => Some(Box::new(reply(afoot))),
+                    None => fastctx_platform::roles::in_place("listing a machine's conversations from the copies here", || {
+                        crate::timeline::listed::of(node, &name)
+                    })
+                    .map(Box::new),
+                },
+                machine: name,
             },
             (true, Some(afoot)) => MachineWho::Answered { observation: None, reply: reply(afoot) },
             (true, None) if !current => MachineWho::NoAnswer {

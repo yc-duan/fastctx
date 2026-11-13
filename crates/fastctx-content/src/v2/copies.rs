@@ -34,6 +34,11 @@ impl Library {
         })?)
     }
 
+    /// Every live scope held here.
+    pub fn held_scopes(&self) -> Result<Vec<HeldScope>> {
+        self.scopes_ending("")
+    }
+
     /// The live scopes held here whose key ends with `tail`.
     pub fn scopes_ending(&self, tail: &str) -> Result<Vec<HeldScope>> {
         let tail = tail.to_string();
@@ -41,7 +46,7 @@ impl Library {
             let mut statement = db.prepare_cached(
                 "SELECT key, holding, pulled, allowed FROM scopes
                  WHERE state = 'live' AND holding IS NOT NULL AND length(key) > length(?1)
-                   AND substr(key, length(key) - length(?1) + 1) = ?1
+                   AND (?1 = '' OR substr(key, length(key) - length(?1) + 1) = ?1)
                  ORDER BY key",
             )?;
             let rows = statement.query_map(params![tail], |row| {

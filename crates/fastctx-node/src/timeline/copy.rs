@@ -33,21 +33,9 @@ fn failure(error: impl std::fmt::Display) -> Failure {
 pub(crate) fn of(node: &Node, resident: &ResidentId) -> Result<Option<Held>, Failure> {
     let Some(kept) = node.assets.as_ref() else { return Ok(None) };
     let library = kept.library.clone();
-    let logged: Vec<String> = conversation_classes()
-        .into_iter()
-        .filter(|class| class.holders == Holders::Logged)
-        .map(|class| class.prefix)
-        .collect();
     let mut found = None;
     for scope in library.scopes_ending(&format!("/{resident}")).map_err(failure)? {
-        if !(scope.key.starts_with("c/") || scope.key.starts_with("b/")) || scope.pulled != Some(scope.holding) {
-            continue;
-        }
-        let read_here = scope
-            .allowed
-            .as_deref()
-            .is_some_and(|allowed| allowed.lines().any(|class| logged.iter().any(|logged| logged == class)));
-        if !read_here {
+        if !read_here(&scope) {
             continue;
         }
         let Some(at) = library.view_revision(&scope.key, Timeline::STREAM).map_err(failure)? else { continue };
@@ -61,6 +49,21 @@ pub(crate) fn of(node: &Node, resident: &ResidentId) -> Result<Option<Held>, Fai
         }
     }
     Ok(found.map(|scope| local::Held::at(library, scope)))
+}
+
+/// Whether `scope` is a conversation's copy held whole here as one logged
+/// in here reads it: a conversation's or a body's conversation's scope,
+/// pulled whole in its holding period, of which the hub lets this machine
+/// hold a class only those logged in hold.
+pub(crate) fn read_here(scope: &fastctx_content::v2::HeldScope) -> bool {
+    let conversation = scope.key.starts_with("c/") || (scope.key.starts_with("b/") && !scope.key.ends_with("/log"));
+    conversation
+        && scope.pulled == Some(scope.holding)
+        && scope.allowed.as_deref().is_some_and(|allowed| {
+            allowed.lines().any(|class| {
+                conversation_classes().iter().any(|logged| logged.holders == Holders::Logged && logged.prefix == class)
+            })
+        })
 }
 
 /// Where a reader asks to read on from, when it does.
