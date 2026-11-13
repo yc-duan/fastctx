@@ -64,7 +64,8 @@ pub use artifact::ConversationArtifact;
 pub use attachment::ConversationAttachment;
 pub use timer::ConversationTimer;
 pub use document::{
-    AccountNotice, AccountSettings, AccountSkill, ConversationGoal, ConversationHistory, ConversationPlan, ConversationSentinel,
+    AccountCollaboration, AccountNotice, AccountProfile, AccountSettings, AccountSkill, ConversationGoal, ConversationHistory,
+    ConversationPlan, ConversationSentinel,
     MachineAudit, ProjectLedger,
 };
 pub use hub_ordered::HUB_ORDERED;

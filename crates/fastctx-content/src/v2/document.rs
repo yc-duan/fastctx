@@ -116,6 +116,17 @@ hub_record!(
     /// as resolved (`account.notice`).
     AccountNotice, 27, "notices", object, "troubles"
 );
+hub_record!(
+    /// An account's own layer of configuration — its MCP servers, the values
+    /// their addresses are asked with among them — as the hub keeps it
+    /// (`account.profile`).
+    AccountProfile, 2, "profile", object, "directory"
+);
+hub_record!(
+    /// How an account's models work together, as the hub keeps it
+    /// (`account.collaboration`).
+    AccountCollaboration, 3, "collaboration", object, "directory"
+);
 
 /// A project's ledger (`project.ledger`, design §28.18): each entry the hub
 /// numbered, by its number, its signed bytes as they were handed — the
