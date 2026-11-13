@@ -367,13 +367,15 @@ pub enum Request {
     SyncStatus { account: crate::AccountName, hours: u32 },
 }
 
-/// A device's release of a stream it orders to the machine `to` (design
-/// §28.10): from its epoch `epoch`, having written as far as `next`, chained
-/// to `head`, on the hub that hears it; under its key.
+/// A device's release of a stream it orders to the machine `to`, whose
+/// device key is `to_key` (design §28.10): from its epoch `epoch`, having
+/// written as far as `next`, chained to `head`, on the hub that hears it;
+/// under its key.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Release {
     pub epoch: u64,
     pub to: String,
+    pub to_key: Bytes,
     pub next: u64,
     pub head: Bytes,
     pub signature: Bytes,
@@ -476,6 +478,10 @@ pub struct Entry {
 pub struct StreamAt {
     pub stream: String,
     pub next: u64,
+    /// The stream's last epoch on the hub: a device that knows an earlier
+    /// one takes its descriptors, its frames' heads moved or not (I09, LL05).
+    #[serde(default)]
+    pub epoch: u64,
 }
 
 impl Request {

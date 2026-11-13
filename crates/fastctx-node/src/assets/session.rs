@@ -377,7 +377,7 @@ async fn pass(node: &Arc<Node>, hub: &HubId, link: &Arc<Link>, network: &Network
         // Holding what the hub has of them, the streams to be ordered here
         // are taken over (design §8).
         let checked = match (&pulled, checked) {
-            (Ok((_, None)), Ok(())) => super::takeover::run(assets, hub, link, &key, scope).await,
+            (Ok((_, None)), Ok(())) => super::takeover::run(node, assets, hub, link, &key, scope).await,
             (_, checked) => checked,
         };
         // Every stream pulled and checked: the scope is pulled whole in its
@@ -684,8 +684,10 @@ async fn feed(
     else {
         return Err("the hub did not say what changed".into());
     };
-    // The hub was put back since: its numbers start again, and so does this.
+    // The hub was put back since: its numbers start again, and so does this;
+    // what was taken in the generation before counts no more (LL02).
     if stood.as_ref().is_some_and(|(was, _)| *was != generation) && after > 0 {
+        super::standing::stood(assets, hub, owner);
         after = 0;
         let Reply::Changes { generation: now, streams: all, top: at, top_at: when, more: further, .. } =
             page(0, None, None).await?
@@ -1331,9 +1333,21 @@ async fn pull(
         }
     }
     let mut failed: Option<String> = gave_back;
+    // A stream handed on since — this machine's own among them — though no
+    // frame of it moved: its descriptors are taken, as the change numbers
+    // would have (I09); a look whole begins where they leave off (LL05).
+    for at in &streams {
+        let (scope_text, stream_text) = (scope.to_string(), at.stream.clone());
+        let known = blocking(library, move |library| library.known_last_epoch(&scope_text, &stream_text)).await?;
+        if at.epoch > known.unwrap_or(0)
+            && let Err(why) = succession(assets, hub, link, key, scope, &at.stream).await
+        {
+            failed.get_or_insert(format!("{}: {why}", at.stream));
+        }
+    }
     // Isolated, the hub's frames do not come down to this disk.
     let streams = if isolated { Vec::new() } else { streams };
-    for wire::StreamAt { stream, next } in streams {
+    for wire::StreamAt { stream, next, .. } in streams {
         let at = local.get(&stream).copied().unwrap_or(0);
         if let Err(why) = pull_stream(assets, hub, link, key, scope, &stream, holding, at, next, None).await {
             if why.starts_with(REVOKED) {
@@ -1366,13 +1380,22 @@ async fn succession(assets: &Assets, hub: &HubId, link: &Arc<Link>, key: &Public
     else {
         return Err("the hub did not give the stream's succession".into());
     };
-    for fact in epochs {
+    let (device, last) = (assets.device(), epochs.len().saturating_sub(1));
+    for (index, fact) in epochs.into_iter().enumerate() {
         let signed = fastctx_content::v2::Signed { fact: fact.fact.0, signature: fact.word.0 };
         let scope_text = scope.to_string();
         let verifier = Pinning { assets, hub, key: *key };
         // The verifier borrows this machine's state: checked here, kept on the library's thread.
         if !fastctx_content::v2::HubVerifier::verify(&verifier, &signed.fact, &signed.signature) {
             return Err("an epoch's descriptor is not the hub's".into());
+        }
+        // The last epoch, this machine's own — handed over to it, the answer
+        // lost — is opened as a takeover opens it, once the stream here
+        // reaches where it begins; until then nothing of it is known here,
+        // and the stream is followed as a replica's (AP03).
+        if index == last && EpochFact::decode(&signed.fact).is_ok_and(|fact| fact.device == device) {
+            blocking(library, move |library| library.take_over(&scope_text, signed, &Trusted)).await?;
+            continue;
         }
         blocking(library, move |library| library.accept_epoch(&scope_text, signed, &Trusted)).await?;
     }

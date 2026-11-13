@@ -231,9 +231,11 @@ export class SyncPage implements Page {
       tone = " quiet";
     } else if (!device.online) {
       // Nothing left is said only where nothing is known to be left: no
-      // record, no file, no scope not yet pulled, nothing only about so (I04).
+      // record, no file, no scope not yet pulled, nothing only about so (I04),
+      // and the hub reckons it caught up — a library it never reported on,
+      // a shared one joined since, is not nothing (J04).
       const since = words.duration(Math.max(0, now - (device.since ?? device.reported)));
-      const unknown = !!device.about || device.unpulled > 0;
+      const unknown = !!device.about || device.unpulled > 0 || (!device.synced && !device.missing_objects);
       state = leftSaid
         ? words.away(since, leftSaid)
         : unknown

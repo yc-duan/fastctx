@@ -89,8 +89,9 @@ pub(crate) fn runs_changed(node: &crate::Node, resident: &ResidentId) {
 /// holding periods whole (GG02); one of another network finds nothing to
 /// do.
 pub(crate) fn joined_anew(node: &crate::Node) {
-    let here: Vec<ResidentId> =
-        node.residents.everyone().filter(|record| record.here && record.removed.is_none()).map(|record| record.id).collect();
+    // Archived ones too: their metadata and words go into the new holding
+    // period as well (J06).
+    let here: Vec<ResidentId> = node.residents.everyone().filter(|record| record.here).map(|record| record.id).collect();
     for resident in &here {
         tail::wanted(node, resident);
     }
@@ -145,6 +146,14 @@ fn rescan(node: &std::sync::Weak<crate::Node>) {
         tokio::time::sleep(RESCAN_AFTER).await;
         let Some(node) = node.upgrade() else { return };
         let lately = jiff::Timestamp::now() - jiff::SignedDuration::from_secs(RESCAN_ACTIVE.as_secs() as i64);
+        // Archived ones are brought too — their metadata and words, whose
+        // job may not have been written as the node stopped (J06) — and
+        // their histories not checked.
+        let archived: Vec<ResidentId> =
+            node.residents.everyone().filter(|record| record.here && record.removed.is_some()).map(|record| record.id).collect();
+        for resident in &archived {
+            tail::wanted(&node, resident);
+        }
         let here: Vec<(ResidentId, bool)> = node
             .residents
             .everyone()

@@ -107,6 +107,11 @@ async fn keep(node: &Arc<Node>, to: &ResidentId, delivery: &Delivery) -> Result<
     let Some(kept) = node.assets.as_ref() else { return Ok(()) };
     let Some((about, _)) = node.residents.about(to) else { return Ok(()) };
     let Some(placed) = placed(node, &about)? else { return Ok(()) };
+    // Let go to another machine with its export: the inbox keeps them
+    // alone (J08).
+    if crate::assets::release::released_away(node.world.conversation(to).path(), &placed.scope, &kept.device()) {
+        return Ok(());
+    }
     // Come from another machine, its scope is begun here by the hub's
     // description alone (AG10).
     let born_elsewhere = node.residents.birth_machine(to).is_some_and(|born| !node.is_me(&born));
@@ -151,13 +156,20 @@ pub(super) async fn produce(
     resident: &ResidentId,
     producing: &super::serial::Serial,
 ) -> Result<usize, Failure> {
-    let _held = producing.hold(resident).await;
+    // Held by each piece of blocking work too: one its job gave up on ends
+    // before the next build reads (LL16).
+    let held = producing.hold(resident).await;
     let Some(kept) = node.assets.as_ref() else { return Ok(0) };
     let Some((about, _)) = node.residents.about(resident) else { return Ok(0) };
     let Some(placed) = placed(node, &about)? else { return Ok(0) };
     let (library, scope) = (kept.library.clone(), placed.scope.clone());
-    let (asking, looked) = (library.clone(), scope.clone());
+    // Let go to another machine with its export: not written here (J08).
+    if crate::assets::release::released_away(node.world.conversation(resident).path(), &scope, &kept.device()) {
+        return Ok(0);
+    }
+    let (asking, looked, holds) = (library.clone(), scope.clone(), held.clone());
     let (holding, live, orderer, open) = fastctx_platform::task::blocking(move || {
+        let _held = holds;
         let page = asking.page(&looked, ConversationWords::STREAM, None, OPEN_AT_ONCE)?;
         let open: Vec<Entry> = page.into_iter().take_while(|entry| entry.order.first() == Some(&OPEN)).collect();
         Ok::<_, fastctx_content::Error>((
@@ -182,7 +194,9 @@ pub(super) async fn produce(
     }
     let ids: Vec<String> = open.iter().map(|entry| String::from_utf8_lossy(&entry.item).into_owned()).collect();
     let directory = node.world.conversation(resident);
+    let holds = held.clone();
     let crate::inbox::standing::Standing { asked: stood, others } = fastctx_platform::task::blocking(move || {
+        let _held = holds;
         crate::inbox::standing::words(&directory, &ids, |pending: &Pending| is_words(&pending.delivery))
     })
     .await
@@ -210,6 +224,7 @@ pub(super) async fn produce(
     }
     let signer = kept.signer();
     fastctx_platform::task::blocking(move || {
+        let _held = held;
         let writer = Writer::<ConversationWords>::new(&library, &scope, ConversationWords::STREAM)?.in_holding(holding);
         // Taken up from the inbox: each with its operation, as if it had
         // just arrived; one written meanwhile is not written again.

@@ -1212,15 +1212,20 @@ pub fn export_conversation(root: &std::path::Path, conversation: &str, to: Optio
     let world = WorldDir::under(root);
     world_format::check(&world)?;
     let (bundle, fingerprint) = conversation_store::transfer::exporting::export(root, conversation)?;
+    let directory = bundle.parent().map(std::path::Path::to_path_buf).unwrap_or_default();
     let release = match to {
         Some(to) => {
             let _owner = fastctx_platform::FileLock::try_acquire(&world.node_lock())?.ok_or_else(|| {
                 std::io::Error::new(std::io::ErrorKind::WouldBlock, "stop the source node before exporting a conversation")
             })?;
-            let directory = bundle.parent().map(std::path::Path::to_path_buf).unwrap_or_default();
             assets::release::export(&world, &directory, conversation, to)?
         }
-        None => None,
+        // Held there as a replica: what an earlier export released goes
+        // (AP07).
+        None => {
+            assets::release::clear(&directory)?;
+            None
+        }
     };
     Ok(ExportedConversation { bundle, fingerprint, release })
 }

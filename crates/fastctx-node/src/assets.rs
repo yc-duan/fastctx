@@ -147,12 +147,14 @@ impl Assets {
     /// and a listing under way when it was forgotten is not kept (CC07).
     pub(crate) fn forget_listing(&self, hub: &HubId) {
         let mut listed = self.listed.lock().expect("listed");
-        self.forgotten.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        listed.remove(hub);
-        drop(listed);
         // What was taken of a scope held no more counts against what is left
         // of the others no longer: the hub reckons more left, never less (H08).
-        self.taken.lock().expect("taken").retain(|(of, _), _| of != hub.as_str());
+        // The era moves under the same lock a taking checks it under (LL01).
+        let mut taken = self.taken.lock().expect("taken");
+        self.forgotten.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        taken.retain(|(of, _), _| of != hub.as_str());
+        drop(taken);
+        listed.remove(hub);
     }
 
     /// Opens the asset side in `dir` for the machine whose key is `device`.

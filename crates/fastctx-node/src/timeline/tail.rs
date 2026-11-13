@@ -357,6 +357,11 @@ pub(super) async fn produce(node: &Arc<Node>, resident: &ResidentId, whole: bool
             return Ok(Produced { handing: true, ..Produced::default() });
         }
     }
+    // Let go to another machine with its export: written there from where
+    // it ended, not here (J08).
+    if crate::assets::release::released_away(node.world.conversation(resident).path(), &placed.scope, &kept.device()) {
+        return Ok(Produced::default());
+    }
     // Ordered by another device — the conversation came here from it — the
     // timeline goes on here once the hub hands its ordering over (§8).
     let orderer = {
@@ -830,17 +835,25 @@ async fn run(node: &Arc<Node>, resident: &ResidentId) -> Outcome {
         return Outcome::Again { after: APART - since };
     }
     let produced = produce(node, resident, false).await;
-    // Its metadata beside it, made again from its directory (plan 3-4).
+    // Its metadata beside it, made again from its directory (plan 3-4); and
+    // where the user's words to it stand, followed from its inbox (§28.14).
+    // Either failing, the job comes again soon (AP14).
+    let mut beside_failed = false;
     match super::meta::produce(node, resident, &PRODUCING).await {
         Ok(0) => {}
         Ok(written) => node.log.line(format_args!("{resident}'s metadata: {written} written")),
-        Err(error) => node.log.line(format_args!("{resident}'s metadata: {error}")),
+        Err(error) => {
+            beside_failed = true;
+            node.log.line(format_args!("{resident}'s metadata: {error}"));
+        }
     }
-    // Where the user's words to it stand, followed from its inbox (§28.14).
     match super::words::produce(node, resident, &PRODUCING).await {
         Ok(0) => {}
         Ok(written) => node.log.line(format_args!("{resident}'s words: {written} written")),
-        Err(error) => node.log.line(format_args!("{resident}'s words: {error}")),
+        Err(error) => {
+            beside_failed = true;
+            node.log.line(format_args!("{resident}'s words: {error}"));
+        }
     }
     BROUGHT.lock().expect("brought timelines").insert(resident.clone(), Instant::now());
     match produced {
@@ -869,6 +882,9 @@ async fn run(node: &Arc<Node>, resident: &ResidentId) -> Outcome {
             }
             if active(node, resident) {
                 return Outcome::Again { after: ACTIVE_AGAIN };
+            }
+            if beside_failed {
+                return Outcome::Again { after: UNREAD_AGAIN };
             }
             // A host writes its record late, by no bound it tells, and says
             // nothing when it does (CC03): looked at again, less and less

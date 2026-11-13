@@ -64,10 +64,12 @@ pub(super) struct Counted<'a> {
 pub(super) fn took(assets: &Assets, hub: &HubId, counted: Option<&Counted<'_>>, bytes: u64) {
     assets.received.lock().expect("received").add(bytes);
     let Some(counted) = counted else { return };
+    // Checked under the lock the forgetting holds: what a listing forgotten
+    // meanwhile cleared is not put back (LL01).
+    let mut taken = assets.taken.lock().expect("taken");
     if assets.forgotten.load(std::sync::atomic::Ordering::SeqCst) != counted.era {
         return;
     }
-    let mut taken = assets.taken.lock().expect("taken");
     let entry = taken.entry((hub.as_str().to_string(), counted.owner.to_string())).or_insert_with(|| (counted.generation.to_string(), 0));
     if entry.0 != counted.generation {
         *entry = (counted.generation.to_string(), 0);

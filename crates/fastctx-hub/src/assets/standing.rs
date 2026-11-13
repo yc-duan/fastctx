@@ -140,6 +140,13 @@ pub(crate) fn keep(
     assets
         .control
         .write_now(256 + body.len(), move |c| {
+            // The name now another device's, what the old one's curve said
+            // goes with its report (AP11).
+            c.prepare_cached(
+                "DELETE FROM sync_lag WHERE machine = ?1 AND EXISTS
+                 (SELECT 1 FROM sync_reports WHERE machine = ?1 AND device IS NOT NULL AND device != ?2)",
+            )?
+            .execute(params![name, &device[..]])?;
             c.prepare_cached(
                 "INSERT INTO sync_reports (machine, device, report, at, seen) VALUES (?1, ?2, ?3, ?4, ?4)
                  ON CONFLICT (machine) DO UPDATE SET device = excluded.device, report = excluded.report, at = excluded.at, seen = excluded.at",
@@ -604,6 +611,14 @@ fn points(assets: &Assets, machines: &[MachineName], hours: u32, now: i64) -> io
     Ok((step, points))
 }
 
+/// The most points the pages kept hold between them, about 24 MiB.
+const POINTS_KEPT: usize = 1 << 20;
+
+/// What a page kept weighs: its points, each device about as much as one.
+fn weight(status: &SyncStatus) -> usize {
+    status.points.len() + status.devices.len()
+}
+
 /// `member`'s kind as the directory writes it.
 fn kind_of(member: &Member) -> String {
     serde_json::to_value(member.kind).ok().and_then(|value| value.as_str().map(str::to_string)).unwrap_or_default()
@@ -621,10 +636,13 @@ pub(crate) fn status(hub: &crate::Hub, from: &MachineName, account: &AccountName
     }
     let opened = directory.all.account(account).map_or(0, |found| found.opened.as_millisecond());
     let key = (account.clone(), opened, hours);
-    if let Some((_, status)) =
-        assets.standing.statuses.lock().expect("statuses").get(&key).filter(|(at, _)| at.elapsed() < STATUS_STANDS)
-    {
-        return Ok(Reply::SyncStatus { status: Box::new(status.clone()) });
+    let cached = assets.standing.statuses.lock().expect("statuses").get(&key).filter(|(at, _)| at.elapsed() < STATUS_STANDS).map(|(_, status)| status.clone());
+    if let Some(status) = cached {
+        // Logged out meanwhile, not even a page kept is given (AP12).
+        if !hub.store().indexed().logged_in(from, account) {
+            return Err(format!("{account} is not logged in on {from}"));
+        }
+        return Ok(Reply::SyncStatus { status: Box::new(status) });
     }
     let online: HashMap<MachineName, i64> =
         hub.sessions().iter().map(|(name, session)| (name.clone(), session.since.as_millisecond())).collect();
@@ -667,10 +685,13 @@ pub(crate) fn status(hub: &crate::Hub, from: &MachineName, account: &AccountName
     let totals = totals(assets, &directory, account);
     let status = SyncStatus { at: now, hours, step, devices, points, totals };
     {
-        // What stands no more goes, and never more than so many (AO03).
+        // What stands no more goes, and never more than so many pages, nor
+        // more than so many points between them (AO03, AP10): a page past
+        // what is left is reckoned again when asked.
         let mut statuses = assets.standing.statuses.lock().expect("statuses");
         statuses.retain(|_, (at, _)| at.elapsed() < STATUS_STANDS);
-        if statuses.len() < STATUSES_AT_MOST {
+        let held: usize = statuses.values().map(|(_, kept)| weight(kept)).sum();
+        if statuses.len() < STATUSES_AT_MOST && held + weight(&status) <= POINTS_KEPT {
             statuses.insert(key, (Instant::now(), status.clone()));
         }
     }

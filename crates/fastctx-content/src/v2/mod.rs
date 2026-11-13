@@ -64,7 +64,7 @@ pub use changes::{Changed, Changes};
 pub use snapshot::{Installed, Older, WINDOW_BYTES, WINDOW_ITEMS, Window};
 pub use view::{ViewChange, ViewChanges, ViewPage, view_sequence};
 pub use standing::{Fed, StreamBytes, Totals};
-pub use moves::{Authority, KeyCheck, Moved, Releasable, Release};
+pub use moves::{Authority, KeyCheck, Moved, Releasable, Release, Taken};
 pub use networks::Network;
 pub use scopes::Purged;
 pub use succession::{ENDS_AT_ONCE, HubVerifier, Standing};

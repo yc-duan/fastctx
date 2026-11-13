@@ -76,12 +76,24 @@ pub(crate) fn forget(assets: &Assets) -> io::Result<()> {
         .map_err(io::Error::other)
 }
 
-/// What `machine` brought by `at` was judged to show nothing put back.
-pub(super) fn judged(assets: &Assets, machine: &fastctx_types::MachineName, at: i64) {
+/// What `machine` brought this time — the head it saw and the receipts it
+/// reported — was judged to show nothing put back: those alone, not what
+/// another of its sessions brought that waits to be judged (AP09).
+pub(super) fn judged(assets: &Assets, machine: &fastctx_types::MachineName, seen: Option<(u64, [u8; 32])>, receipts: &[Head]) {
     let name = machine.to_string();
-    let _ = assets.control.write_now(256, move |c| {
-        c.prepare_cached("UPDATE recovery_heads SET judged = 1 WHERE machine = ?1 AND at <= ?2")?.execute(params![name, at])?;
-        c.prepare_cached("UPDATE recovery_receipts SET judged = 1 WHERE machine = ?1 AND at <= ?2")?.execute(params![name, at])?;
+    let receipts = receipts.to_vec();
+    let _ = assets.control.write_now(256 + receipts.len() * 128, move |c| {
+        if let Some((seq, head)) = seen {
+            c.prepare_cached("UPDATE recovery_heads SET judged = 1 WHERE machine = ?1 AND seq = ?2 AND head = ?3")?
+                .execute(params![name, seq as i64, &head[..]])?;
+        }
+        for head in &receipts {
+            c.prepare_cached(
+                "UPDATE recovery_receipts SET judged = 1
+                 WHERE machine = ?1 AND scope = ?2 AND change = ?3 AND prefix = ?4 AND parked = ?5 AND accumulated = ?6",
+            )?
+            .execute(params![name, head.scope, head.change as i64, &head.prefix[..], head.parked as i64, &head.accumulated[..]])?;
+        }
         Ok(())
     });
 }

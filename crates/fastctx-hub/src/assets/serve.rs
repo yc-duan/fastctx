@@ -351,8 +351,8 @@ pub(crate) fn ask(
         // behind it, is kept for the recovery.
         if let Request::Open { seen, reported, pinned, lineage, .. } = &request {
             let heard = seen.as_ref().and_then(|seen| heard_seen(assets, seen));
-            let receipts = reported.iter().filter_map(|receipt| receipt_head(receipt).ok()).filter(|(statement, _, word)| assets.keys().heard(statement, word).is_some()).map(|(_, head, _)| head).collect();
-            let kept_at = assets.brought(machine, heard, receipts);
+            let receipts: Vec<_> = reported.iter().filter_map(|receipt| receipt_head(receipt).ok()).filter(|(statement, _, word)| assets.keys().heard(statement, word).is_some()).map(|(_, head, _)| head).collect();
+            let _kept_at = assets.brought(machine, heard, receipts.clone());
             // Sealed only as it started when the machine came, the hub that
             // is shown it was put back seals for its recovery instead: the
             // super administrator can no longer open it as an ordinary
@@ -366,7 +366,7 @@ pub(crate) fn ask(
                     }
                     // Judged to show nothing: only what is judged so goes
                     // as the seal is opened (AO01).
-                    None => super::brought::judged(assets, machine, kept_at),
+                    None => super::brought::judged(assets, machine, heard, &receipts),
                 }
             }
         }
@@ -621,7 +621,11 @@ pub(crate) fn ask(
                 .map_err(|error| error.to_string())?
                 .into_iter()
                 .partition(|(stream, _)| scopes::holds(directory, machine, &kept, stream));
-            let streams = held.into_iter().map(|(stream, next)| wire::StreamAt { stream, next }).collect();
+            let mut streams = Vec::with_capacity(held.len());
+            for (stream, next) in held {
+                let epoch = library.last_epoch(&scope, &stream).map_err(|error| error.to_string())?.map_or(0, |(epoch, _)| epoch);
+                streams.push(wire::StreamAt { stream, next, epoch });
+            }
             let withheld = withheld.into_iter().map(|(stream, _)| stream).collect();
             Ok(Reply::Streams { streams, withheld })
         }
@@ -677,6 +681,7 @@ pub(crate) fn ask(
                         stream: stream.clone(),
                         epoch: given.epoch,
                         to: given.to.clone(),
+                        to_key: array(&given.to_key, "a device key")?,
                         next: given.next,
                         head: array(&given.head, "a chain value")?,
                     },
@@ -710,7 +715,12 @@ pub(crate) fn ask(
                     assets.opened_epoch(&kept.owner, &scope, &stream, epoch, &descriptor.fact).map_err(|error| error.to_string())?;
                     Ok(Reply::Epoch { descriptor: word_of(&descriptor) })
                 }
-                fastctx_content::v2::Moved::Superseded { epochs } => Ok(Reply::HandedOn { epochs: epochs.iter().map(word_of).collect() }),
+                fastctx_content::v2::Moved::Superseded { epochs } => {
+                    // Outside the hub's directory before the device hears of
+                    // them, as every other answer's (AP05).
+                    assets.witness_facts(&kept.owner, &scope, &stream, &epochs, &[]).map_err(|error| error.to_string())?;
+                    Ok(Reply::HandedOn { epochs: epochs.iter().map(word_of).collect() })
+                }
             }
         }
         Request::Window { scope, stream } => {

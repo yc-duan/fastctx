@@ -218,7 +218,14 @@ pub async fn control(node: &Arc<Node>, resident: &ResidentId, mut control: Contr
             done("Compaction started; its completion appears in the conversation.")
         }
         Control::Model { model, effort } => {
-            codex.select_model(&thread, model, effort).await.map_err(Failure::new)?;
+            codex.select_model(&thread, model.clone(), effort.clone()).await.map_err(Failure::new)?;
+            // What the conversation starts again with, as a Claude one's,
+            // which its metadata says (LL12).
+            if let Some(model) = model
+                && let Err(failure) = crate::session_options::set_model(node, resident, model, effort).await
+            {
+                node.log.line(format_args!("keeping the model {resident} starts again with: {}", failure.message));
+            }
             done("Selection saved for the next turn started through the World. The running turn keeps its settings.")
         }
         Control::Rename { name } => {

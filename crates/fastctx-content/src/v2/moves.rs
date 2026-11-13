@@ -30,9 +30,11 @@ use fastctx_storage::Priority;
 use fastctx_storage::rusqlite::{Connection, OptionalExtension, params};
 use std::sync::Arc;
 
-/// A predecessor's word that the machine `to` takes `stream` of `scope`
-/// over from its epoch `epoch` on the hub `hub`, the predecessor having
-/// written as far as `next`, chained to `head`.
+/// A predecessor's word that the machine `to`, whose device key is
+/// `to_key`, takes `stream` of `scope` over from its epoch `epoch` on the hub
+/// `hub`, the predecessor having written as far as `next`, chained to
+/// `head`. The key binds it: another device given the machine's name since
+/// cannot use it, and the machine renamed still can (AP01, AP13).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Release {
     pub hub: String,
@@ -40,6 +42,7 @@ pub struct Release {
     pub stream: String,
     pub epoch: u64,
     pub to: String,
+    pub to_key: [u8; 32],
     pub next: u64,
     pub head: [u8; 32],
 }
@@ -47,16 +50,30 @@ pub struct Release {
 impl Release {
     /// What the predecessor's device key signs.
     pub fn statement(&self) -> Vec<u8> {
-        let mut bytes = b"fastctx-release/1".to_vec();
+        let mut bytes = b"fastctx-release/2".to_vec();
         for text in [&self.hub, &self.scope, &self.stream, &self.to] {
             bytes.extend_from_slice(&(text.len() as u32).to_le_bytes());
             bytes.extend_from_slice(text.as_bytes());
         }
+        bytes.extend_from_slice(&self.to_key);
         bytes.extend_from_slice(&self.epoch.to_le_bytes());
         bytes.extend_from_slice(&self.next.to_le_bytes());
         bytes.extend_from_slice(&self.head);
         bytes
     }
+}
+
+/// What taking an epoch handed over did on a device.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Taken {
+    /// The epoch is this device's and open: it writes in it.
+    Opened,
+    /// Handed on since: taken as history alone.
+    History,
+    /// The stream here ends before the epoch begins: nothing of it is known
+    /// here yet, and the stream is followed as a replica's until it reaches
+    /// that start (AP03).
+    Behind,
 }
 
 /// How a signature by a device key is checked: the key, what is signed,
@@ -184,7 +201,7 @@ impl Library {
         // the transaction; the transaction holds the stream to that epoch.
         let basis = match authority {
             Authority::Release { release, signature, verify } => {
-                if release.scope != scope || release.stream != stream || release.to != machine {
+                if release.scope != scope || release.stream != stream || release.to_key != successor.key {
                     return Err(Error::Invalid("the release is of another stream or machine".into()));
                 }
                 let Some((last, key)) = self.last_epoch(scope, stream)? else {
@@ -212,11 +229,13 @@ impl Library {
                 db.prepare_cached("SELECT MAX(epoch) FROM hub_epochs WHERE stream = ?1")?.query_row([at.stream], |row| row.get(0))?;
             let Some(last) = last else { return Err(invalid("the stream has no epoch to hand over")) };
             let last = epoch_of(db, at.stream, last as u64)?.ok_or_else(|| invalid("a malformed epoch"))?;
-            // The same move asked again: answered the same while its epoch
-            // is the last, as handed on since once it is not (AN02).
+            // The same move asked again — from the same predecessor's epoch
+            // to the same device — answered the same while its epoch is the
+            // last, as handed on since once it is not (AN02); a later move
+            // to the same device from a later epoch is another (AP02).
             let made: Option<i64> = db
-                .prepare_cached("SELECT epoch FROM moves WHERE stream = ?1 AND machine = ?2 AND successor = ?3 ORDER BY epoch DESC LIMIT 1")?
-                .query_row(params![at.stream, machine, &successor.key[..]], |row| row.get(0))
+                .prepare_cached("SELECT epoch FROM moves WHERE stream = ?1 AND predecessor = ?2 AND successor = ?3")?
+                .query_row(params![at.stream, basis.from() as i64, &successor.key[..]], |row| row.get(0))
                 .optional()?;
             if let Some(made) = made {
                 let made = made as u64;
@@ -289,7 +308,7 @@ impl Library {
     /// epoch opened in one transaction (AG06). An epoch of the stream later
     /// than it is known here: it is taken as history, and nothing is opened
     /// (AN02). Whether the epoch was opened.
-    pub fn take_over(&self, scope: &str, signed: Signed, verifier: &dyn HubVerifier) -> Result<bool> {
+    pub fn take_over(&self, scope: &str, signed: Signed, verifier: &dyn HubVerifier) -> Result<Taken> {
         if !verifier.verify(&signed.fact, &signed.signature) {
             return Err(Error::Invalid("the epoch's descriptor is not the hub's".into()));
         }
@@ -310,7 +329,7 @@ impl Library {
             // order a stream it has not caught up with.
             let next: i64 = db.prepare_cached("SELECT next FROM streams WHERE id = ?1")?.query_row([stream], |row| row.get(0))?;
             if !later && (next as u64) < fact.start {
-                return Err(invalid("the stream here ends before the epoch handed over begins: it catches up first"));
+                return Ok(Taken::Behind);
             }
             match known_epoch(db, stream, fact.epoch)? {
                 Some(kept) if kept != fact => return Err(invalid("another descriptor for that epoch is here")),
@@ -321,7 +340,7 @@ impl Library {
                 }
             }
             if later {
-                return Ok(false);
+                return Ok(Taken::History);
             }
             let opened = db
                 .prepare_cached("UPDATE streams SET epoch = ?2 WHERE id = ?1 AND epoch < ?2")?
@@ -330,7 +349,7 @@ impl Library {
                 db.prepare_cached("INSERT INTO epochs (stream, epoch, descriptor) VALUES (?1, ?2, ?3)")?
                     .execute(params![stream, fact.epoch as i64, signed.fact])?;
             }
-            Ok(true)
+            Ok(Taken::Opened)
         })?)
     }
 
