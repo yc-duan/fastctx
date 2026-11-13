@@ -13,7 +13,7 @@ use fastctx_storage::rusqlite::{OptionalExtension, params};
 
 /// The streams the hub orders, in a conversation's scope or an account's:
 /// no device writes them.
-pub const HUB_ORDERED: [&str; 6] = ["plan", "history", "goals", "sentinels", "settings", "skills"];
+pub const HUB_ORDERED: [&str; 7] = ["plan", "history", "goals", "sentinels", "settings", "skills", "ledger"];
 
 impl Library {
     /// Frames of `records` for `stream` of `scope`, ordered by the hub, whose

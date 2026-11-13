@@ -909,6 +909,30 @@ async fn describe(
         })
         .await?;
     }
+    // And each project this machine keeps the bodies of: the hub writes its
+    // ledger there (design §28.18).
+    let view = link.view();
+    let projects: Vec<fastctx_types::access::TownId> = view
+        .directory
+        .projects
+        .iter()
+        .filter(|project| view.directory.member_keeps_project(&view.me, &project.town))
+        .map(|project| project.town.clone())
+        .collect();
+    drop(view);
+    for town in projects {
+        let readers = Readers::Project { town };
+        let scope = format!("{}ledger", readers.key_prefix(hub.as_str()));
+        let proposal = Proposal { hub: hub.to_string(), readers, classes: vec![StreamClass { prefix: String::new(), holders: wire::Holders::Readers }] };
+        let (network, proposal) = (network.clone(), serde_json::to_vec(&proposal).map_err(|error| error.to_string())?);
+        blocking(library, move |library| {
+            if library.holding(&scope)?.is_none() {
+                library.propose_on(&network, &scope, proposal)?;
+            }
+            Ok::<_, fastctx_content::Error>(())
+        })
+        .await?;
+    }
     for (scope, proposal) in blocking(library, |library| library.provisionals()).await? {
         let Some(proposal) = proposal else { continue };
         let Proposal { hub: meant, readers, classes } =
@@ -916,9 +940,14 @@ async fn describe(
         if meant != hub.as_str() {
             continue;
         }
-        let Reply::Described { descriptor } =
-            link.assets(Request::Describe { scope: scope.clone(), readers, classes }).await?
-        else {
+        let described = link.assets(Request::Describe { scope: scope.clone(), readers, classes }).await;
+        // A project's or an account's scope the hub does not describe for
+        // this machine — no account here reads it any more — holds up no
+        // conversation's.
+        if described.is_err() && (scope.starts_with("p/") || scope.starts_with("a/")) {
+            continue;
+        }
+        let Reply::Described { descriptor } = described? else {
             return Err("the hub did not describe the scope".into());
         };
         if !assets.heard(hub, key, &descriptor.fact.0, &descriptor.word.0) {

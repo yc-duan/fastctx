@@ -11,11 +11,12 @@ use super::Assets;
 use super::scopes;
 use fastctx_content::v2::{
     AccountSettings, AccountSkill, ConversationGoal, ConversationHistory, ConversationPlan, ConversationSentinel,
-    Header, Kind as _, KindRecord, Received, Signer, Taking, Verifier,
+    Header, Kind as _, KindRecord, LEASE, ProjectLedger, Received, Signer, Taking, Verifier,
 };
 use fastctx_content::{ObjectRef, Record as Item, State};
 use fastctx_net::sign::{Domain, PublicKey, Signature};
 use fastctx_types::AccountName;
+use fastctx_types::access::TownId;
 use fastctx_types::account_records::Record;
 use fastctx_types::assets::Readers;
 use std::sync::{Mutex, PoisonError};
@@ -217,6 +218,15 @@ async fn write_all(hub: &std::sync::Arc<crate::Hub>, account: AccountName, paths
 /// of them is written into them.
 pub(crate) async fn described(hub: std::sync::Arc<crate::Hub>, keys: Vec<String>) {
     for key in keys {
+        // A project's ledger scope: what its ledger holds goes in.
+        if let Some(town) = key
+            .strip_prefix("p/")
+            .and_then(|rest| rest.strip_suffix("/ledger"))
+            .and_then(|town| TownId::try_from(town.to_string()).ok())
+        {
+            ledger_of(hub.clone(), town).await;
+            continue;
+        }
         let Ok(Some(scope)) = scopes::scope(&hub.assets, &key) else { continue };
         let super::owners::Owner::Account(name, opened) = &scope.owner else { continue };
         let (Ok(account), Ok(opened)) =
@@ -243,6 +253,10 @@ pub(crate) async fn everything(hub: std::sync::Arc<crate::Hub>) {
         let paths = records_of(&hub, &account, opened, |_| true).await;
         write_all(&hub, account, paths).await;
     }
+    let towns: Vec<TownId> = hub.ledgers.lock().expect("never poisoned").towns.keys().cloned().collect();
+    for town in towns {
+        ledger_of(hub.clone(), town).await;
+    }
 }
 
 /// Whether `entry` is one of an account's own records that go into its
@@ -266,4 +280,73 @@ fn of_conversation(entry: &crate::account_records::storage::Entry, resident: &st
         "sentinel" => entry.conversation.as_deref() == Some(resident),
         _ => false,
     }
+}
+
+/// The key of the scope a project's ledger is kept in.
+pub(crate) fn project_scope(town: &TownId) -> String {
+    format!("{}ledger", Readers::Project { town: town.clone() }.key_prefix(""))
+}
+
+/// Writes the entry `seq` of `town`'s ledger, its signed bytes `bytes`, into
+/// the stream the hub orders in the project's scope (design §28.18), once
+/// the scope is described. Call on a thread that may block.
+pub(crate) fn ledger_entry(assets: &Assets, town: &TownId, seq: u64, bytes: &[u8]) -> Result<(), String> {
+    let scope_key = project_scope(town);
+    let Some(scope) = scopes::scope(assets, &scope_key)? else { return Ok(()) };
+    let library = scopes::library(assets, &scope)?;
+    let error = |error: fastctx_content::Error| error.to_string();
+    let _writing = WRITING.lock().unwrap_or_else(PoisonError::into_inner);
+    let item = seq.to_be_bytes().to_vec();
+    if library.item(&scope_key, ProjectLedger::STREAM, &item).map_err(error)?.is_some() {
+        return Ok(());
+    }
+    let lease = library.put(&mut &bytes[..], "ledger", LEASE).map_err(error)?;
+    let body = serde_json::to_vec(&serde_json::json!({ "seq": seq, "size": bytes.len() }))
+        .map_err(|error| error.to_string())?;
+    let records = vec![KindRecord {
+        kind: ProjectLedger::KIND,
+        schema: 1,
+        record: Item { item: item.clone(), order: item, state: State::Is { body, objects: vec![lease.object] } },
+    }];
+    let frames =
+        library.hub_frames(&scope_key, ProjectLedger::STREAM, records, &Service(assets.keys())).map_err(error)?;
+    let period = library.holding(&scope_key).map_err(error)?.ok_or("the scope is not held here")?;
+    let anything = |_: &ObjectRef| true;
+    let nothing = |_: &[u8; 32]| false;
+    let taking = Taking { period, readable: &anything, proven: &nothing };
+    for frame in frames {
+        match library.take(&scope_key, frame, &Keyed, &taking, super::serve::kinds(), assets.signer()).map_err(error)? {
+            Received::Applied { .. } => {}
+            _ => return Err(format!("the hub did not apply its own frame of the ledger of {town}")),
+        }
+    }
+    assets.changed(scope.owner.clone(), &scope_key);
+    let next = library
+        .streams(&scope_key)
+        .map_err(error)?
+        .into_iter()
+        .find(|(name, _)| name == ProjectLedger::STREAM)
+        .map_or(0, |(_, next)| next);
+    assets.moved_by_hub(&scope.owner, &scope_key, ProjectLedger::STREAM, next);
+    Ok(())
+}
+
+/// Writes what of `town`'s ledger the asset library lacks, in order.
+pub(crate) async fn ledger_of(hub: std::sync::Arc<crate::Hub>, town: TownId) {
+    let (assets, log) = (hub.assets.clone(), hub.log.clone());
+    let next = hub.ledgers.lock().expect("never poisoned").towns.get(&town).map_or(1, |ledger| ledger.next);
+    let paths: Vec<(u64, std::path::PathBuf)> = {
+        let ledgers = hub.ledgers.lock().expect("never poisoned");
+        (1..next).map(|seq| (seq, ledgers.entry_path(&town, seq))).collect()
+    };
+    let _ = fastctx_platform::task::spawn_blocking(move || {
+        for (seq, path) in paths {
+            let Ok(bytes) = fastctx_platform::disk::read(&path) else { continue };
+            if let Err(error) = ledger_entry(&assets, &town, seq, &bytes) {
+                log.line(format_args!("writing entry {seq} of {town} into the asset library: {error}"));
+                return;
+            }
+        }
+    })
+    .await;
 }

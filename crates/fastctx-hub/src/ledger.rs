@@ -102,6 +102,11 @@ pub struct Checked {
 }
 
 impl Ledgers {
+    /// Where the entry `seq` of `town` is kept.
+    pub(crate) fn entry_path(&self, town: &TownId, seq: u64) -> PathBuf {
+        self.dir.join(town.as_str()).join(format!("{seq:020}.json"))
+    }
+
     /// Reads every project's ledger under `hub`.
     pub fn open(hub: &Path, identity: &fastctx_net::ids::HubId) -> io::Result<Self> {
         let dir = hub.join("ledger");
@@ -431,6 +436,7 @@ pub(crate) async fn write_as(
         Err(failure) => return Err(format!("the hub could not keep the entry: {}", failure.error)),
     }
     let history = checked.prepared.history.as_ref().map(|stored| stored.revision.clone());
+    let checked_bytes = checked.prepared.bytes.clone();
     let (seq, tell) = {
         let store = hub.store();
         let directory = &store.book.directory;
@@ -447,6 +453,13 @@ pub(crate) async fn write_as(
         (seq, tell)
     };
     hub.log.line(format_args!("{from} wrote entry {seq} of {town}"));
+    // Into the asset library too, in the project's scope (design §28.18).
+    let (assets, log, mirrored, bytes) = (hub.assets.clone(), hub.log.clone(), town.clone(), checked_bytes);
+    fastctx_platform::task::spawn_blocking(move || {
+        if let Err(error) = crate::assets::mirror::ledger_entry(&assets, &mirrored, seq, &bytes) {
+            log.line(format_args!("writing entry {seq} of {mirrored} into the asset library: {error}"));
+        }
+    });
     for machine in tell {
         // A machine of a release before history reads only that the ledger
         // changed, and takes the history append as any entry.

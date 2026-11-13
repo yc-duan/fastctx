@@ -92,3 +92,55 @@ hub_record!(
     /// An account's skills and their index (`account.skill`).
     AccountSkill, 5, "skills"
 );
+
+/// A project's ledger (`project.ledger`, design §28.18): each entry the hub
+/// numbered, by its number, its signed bytes as they were handed — the
+/// author's signature with them — the one object; the body says its number
+/// and length. The project's notes, pages and record are files of these
+/// entries.
+pub struct ProjectLedger;
+
+impl Kind for ProjectLedger {
+    const KIND: u16 = 22;
+    const SCHEMA: u16 = 1;
+    const STREAM: &'static str = "ledger";
+    const HOLDING: Holding = Holding::Readers;
+    const ROLES: &'static [&'static str] = &["entry"];
+    const RETENTION: Option<u64> = None;
+    const DELETION: Deletion = Deletion::Tombstone;
+    /// Taken up from the hub's ledgers.
+    const IMPORT: Import = Import::From("ledger");
+    type Value = Vec<u8>;
+
+    fn encode(value: &Vec<u8>) -> Vec<u8> {
+        value.clone()
+    }
+
+    fn decode(body: &[u8]) -> Result<Vec<u8>, String> {
+        let value: serde_json::Value =
+            serde_json::from_slice(body).map_err(|error| format!("a ledger entry's record: {error}"))?;
+        value.get("seq").and_then(serde_json::Value::as_u64).ok_or("a ledger entry's record says its number")?;
+        Ok(body.to_vec())
+    }
+
+    /// The hub alone orders the stream: each entry is its one object, as
+    /// long as its record says.
+    fn authorize(_actor: &Actor<'_>, _before: Option<&Entry>, after: &KindRecord) -> Result<(), String> {
+        match &after.record.state {
+            State::Gone => Ok(()),
+            State::Is { body, objects } => {
+                let value: serde_json::Value =
+                    serde_json::from_slice(body).map_err(|error| format!("a ledger entry's record: {error}"))?;
+                let size = value.get("size").and_then(serde_json::Value::as_u64);
+                match objects.as_slice() {
+                    [entry] if Some(entry.size) == size => Ok(()),
+                    _ => Err("a ledger entry's record refers to its entry, as long as it says".into()),
+                }
+            }
+        }
+    }
+
+    fn subscription(scope: &str, _stream: &str) -> String {
+        format!("ledger:{scope}")
+    }
+}
