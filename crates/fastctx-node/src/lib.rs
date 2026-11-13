@@ -88,6 +88,7 @@ mod initializing;
 mod inspect;
 mod intake;
 mod job_accounts;
+mod job_assets;
 mod job_files;
 mod job_metadata;
 mod job_reader;
@@ -1000,6 +1001,7 @@ pub async fn run_prepared(
         // conversation to be ready itself. What is started with recovered
         // work below names its own kinds then.
         timeline::register(&node);
+        job_assets::start(&node);
         management::register(&node);
         record_changes::register(&node);
         record_writes::register(&node);

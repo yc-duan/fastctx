@@ -186,6 +186,11 @@ fn collect_due(node: &Arc<Node>, path: &Path) -> io::Result<bool> {
     if !crate::job_metadata::exists(&path.with_extension("delivered"))? {
         return Ok(true);
     }
+    // Its output in the asset library whole and taken by the hub first: the
+    // source goes after (plan 3-4 group 3).
+    if !crate::job_assets::kept_for_good(node, &job) {
+        return Ok(false);
+    }
     let Ok(_marked) = files.collect() else { return Ok(false) };
     crate::job_watch::collect(node, path)?;
     Ok(true)
