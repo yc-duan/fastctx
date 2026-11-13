@@ -1519,6 +1519,11 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
                 .map_err(|error| Failure::new(error.to_string()))?;
             Ok(Reply::DoctorCalls { calls: snapshot.calls, partial: snapshot.partial, next: snapshot.next })
         }
+        Call::AdoptConversation { resident } => {
+            users_voice(node, peer)?;
+            crate::assets::takeover::adopt(node, &resident).map_err(Failure::new)?;
+            Ok(Reply::Done)
+        }
         Call::SyncStatus { hub, account, hours } => {
             users_voice(node, peer)?;
             let assets = node.assets.as_ref().ok_or_else(|| Failure::new("the asset library is unavailable".to_string()))?;

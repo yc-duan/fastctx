@@ -40,7 +40,9 @@ impl Verifier for DeviceKeys {
 /// The kinds the hub takes records of, each judged by its own rule (design
 /// §11); a record of a kind not registered is refused.
 pub(crate) fn kinds() -> Arc<fastctx_content::v2::Kinds> {
-    let kinds = fastctx_content::v2::Kinds::new().register::<fastctx_content::v2::Timeline>();
+    let kinds = fastctx_content::v2::Kinds::new()
+        .register::<fastctx_content::v2::Timeline>()
+        .register::<fastctx_content::v2::ConversationMeta>();
     #[cfg(test)]
     let kinds = kinds.register::<super::drill_kinds::Plain>();
     Arc::new(kinds)
@@ -88,6 +90,20 @@ fn gated(assets: &Assets, directory: &Indexed<'_>, machine: &MachineName, key: &
     }
     assets.holds(key, machine);
     Ok(scope)
+}
+
+/// Whether an account that opened `scope` is logged in on `machine`: such
+/// an account may give what it opened to a machine of its own, the device it
+/// lived on lost (design §28.10).
+fn opened_here(directory: &Indexed<'_>, machine: &MachineName, scope: &Scope) -> bool {
+    use fastctx_types::assets::Readers;
+    let openers: Vec<&fastctx_types::AccountName> = match &scope.descriptor.readers {
+        Readers::Conversation { openers, .. } => openers.iter().collect(),
+        Readers::Account { account } => vec![account],
+        Readers::Body { opener, .. } => vec![opener],
+        Readers::Project { .. } => Vec::new(),
+    };
+    openers.into_iter().any(|account| directory.logged_in(machine, account))
 }
 
 /// The scope `key` and `stream` of it, through the read gate and the
@@ -633,7 +649,7 @@ pub(crate) fn ask(
             let word = assets.signer().sign(&signed.fact);
             Ok(Reply::Epoch { descriptor: wire::Fact { fact: signed.fact.into(), word: word.into() } })
         }
-        Request::Takeover { scope, stream, release } => {
+        Request::Takeover { scope, stream, release, adopt } => {
             let kept = held(assets, directory, machine, &scope, &stream)?;
             let library = scopes::library(assets, &kept)?;
             let device = *key.as_bytes();
@@ -648,20 +664,32 @@ pub(crate) fn ask(
                 return Ok(Reply::Epoch { descriptor: word_of(&current) });
             }
             // Only the device that orders it lets it go, to the machine its
-            // release names (design §28.10): holding the stream is not
-            // enough.
-            let Some(given) = release else {
-                return Err(format!("{stream} of {scope} is ordered by another device: taking it over needs that device's release"));
-            };
+            // release names; or the account that opened the scope gives it
+            // to a machine of its own, logged in here (design §28.10).
+            // Holding the stream is not enough.
             let me = directory.canonical(machine).to_string();
-            let release = fastctx_content::v2::Release {
-                hub: assets.id.clone(),
-                scope: scope.clone(),
-                stream: stream.clone(),
-                epoch: given.epoch,
-                to: given.to.clone(),
-                next: given.next,
-                head: array(&given.head, "a chain value")?,
+            let released = match (release, adopt) {
+                (Some(given), _) => Some((
+                    fastctx_content::v2::Release {
+                        hub: assets.id.clone(),
+                        scope: scope.clone(),
+                        stream: stream.clone(),
+                        epoch: given.epoch,
+                        to: given.to.clone(),
+                        next: given.next,
+                        head: array(&given.head, "a chain value")?,
+                    },
+                    given.signature.0,
+                )),
+                (None, true) => {
+                    if !opened_here(directory, machine, &kept) {
+                        return Err(format!("{scope} was opened by no account logged in on {me}: it is not this machine's to adopt"));
+                    }
+                    None
+                }
+                (None, false) => {
+                    return Err(format!("{stream} of {scope} is ordered by another device: taking it over needs that device's release, or the account that opened it adopting it here"));
+                }
             };
             let verify = |key: &[u8; 32], statement: &[u8], signature: &[u8]| {
                 let Ok(signature) = <[u8; 64]>::try_from(signature) else { return false };
@@ -669,7 +697,10 @@ pub(crate) fn ask(
                     .verify(fastctx_net::sign::Domain::AssetRelease, statement, &fastctx_net::sign::Signature::from_bytes(signature))
                     .is_ok()
             };
-            let authority = fastctx_content::v2::Authority::Release { release: &release, signature: &given.signature.0, verify: &verify };
+            let authority = match &released {
+                Some((release, signature)) => fastctx_content::v2::Authority::Release { release, signature, verify: &verify },
+                None => fastctx_content::v2::Authority::Adopt { from: last.map_or(0, |(epoch, _)| epoch) },
+            };
             let successor = Successor { device, key: device, kind: EpochKind::Source };
             match library.move_stream(&scope, &stream, &me, successor, authority, kinds(), assets.signer()).map_err(|error| error.to_string())? {
                 fastctx_content::v2::Moved::Handed { descriptor, .. } => {
@@ -866,12 +897,13 @@ fn covering(assets: &Assets, scope: &Scope, head: &Head) -> Result<Option<wire::
 
 #[cfg(test)]
 mod tests {
-    use fastctx_content::v2::{Kind, Timeline};
+    use fastctx_content::v2::{ConversationMeta, Kind, Timeline};
 
     /// A kind's number is its place in the registry, which only grows.
     #[test]
     fn kinds_are_numbered_as_registered() {
         let place = |id: &str| fastctx_sync::registry::REGISTRY.entries().iter().position(|kind| kind.id == id);
         assert_eq!(place("conversation.timeline"), Some(usize::from(Timeline::KIND)));
+        assert_eq!(place("conversation.metadata"), Some(usize::from(ConversationMeta::KIND)));
     }
 }

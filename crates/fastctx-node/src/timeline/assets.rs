@@ -74,6 +74,13 @@ pub(super) struct Placed {
     pub(super) network: Network,
 }
 
+/// The hub and scope `resident`'s timeline goes to, if it keeps its records
+/// with an account on a network this machine's assets are on.
+pub(crate) fn scope_of(node: &Node, resident: &ResidentId) -> Result<Option<(HubId, String)>, Failure> {
+    let Some((about, _)) = node.residents.about(resident) else { return Ok(None) };
+    Ok(placed(node, &about)?.map(|placed| (placed.hub, placed.scope)))
+}
+
 /// The name a conversation's producer keeps where it stands under.
 pub(super) fn checkpoint(resident: &ResidentId) -> String {
     format!("timeline/{resident}")

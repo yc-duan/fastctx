@@ -144,6 +144,7 @@ impl Call {
             | Self::DoctorCalls { .. }
             | Self::DoctorReadings
             | Self::SyncStatus { .. }
+            | Self::AdoptConversation { .. }
             | Self::Features
             | Self::Folders { .. }
             | Self::HandOver

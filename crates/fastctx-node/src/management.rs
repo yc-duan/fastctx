@@ -211,6 +211,7 @@ async fn manage_here(node: &Arc<Node>, id: &ResidentId, action: Management) -> R
                 Err(error) => step(&mut result, "records", Outcome::Failed, format!("Recording the removal: {error}")),
             }
             result.removed = node.residents.removed(id);
+            crate::timeline::described(node, id);
             if result.removed.is_some() {
                 crate::desk::removed(node, id);
                 crate::composer::removed(node, id);
@@ -258,6 +259,7 @@ async fn manage_here(node: &Arc<Node>, id: &ResidentId, action: Management) -> R
                 }
             }
             result.removed = node.residents.removed(id);
+            crate::timeline::described(node, id);
         }
         Management::Sleep | Management::Wake => {
             let sleeping = matches!(action, Management::Sleep);
@@ -369,6 +371,9 @@ async fn manage_here(node: &Arc<Node>, id: &ResidentId, action: Management) -> R
                 }
             };
             result.town = town.clone();
+            if changed {
+                crate::timeline::described(node, id);
+            }
             completed(
                 &mut result,
                 "context",
@@ -470,6 +475,7 @@ async fn manage_here(node: &Arc<Node>, id: &ResidentId, action: Management) -> R
                     .into(),
             );
             if changed {
+                crate::timeline::described(node, id);
                 match crate::focus::changed(node, id).await {
                     Ok(()) => {}
                     Err(error) => step(&mut result, "notification", Outcome::Failed, error.message),

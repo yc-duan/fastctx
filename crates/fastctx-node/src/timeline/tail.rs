@@ -830,6 +830,12 @@ async fn run(node: &Arc<Node>, resident: &ResidentId) -> Outcome {
         return Outcome::Again { after: APART - since };
     }
     let produced = produce(node, resident, false).await;
+    // Its metadata beside it, made again from its directory (plan 3-4).
+    match super::meta::produce(node, resident, &PRODUCING).await {
+        Ok(0) => {}
+        Ok(written) => node.log.line(format_args!("{resident}'s metadata: {written} written")),
+        Err(error) => node.log.line(format_args!("{resident}'s metadata: {error}")),
+    }
     BROUGHT.lock().expect("brought timelines").insert(resident.clone(), Instant::now());
     match produced {
         Ok(produced) if produced.handing => Outcome::Again { after: HANDING_AGAIN },

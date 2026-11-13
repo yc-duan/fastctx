@@ -14,6 +14,8 @@ mod drill;
 mod identity;
 mod later;
 mod local;
+mod meta;
+pub(crate) use assets::scope_of;
 pub(crate) use identity::likeness;
 mod names;
 mod order;
@@ -224,6 +226,13 @@ pub(crate) fn wanted(node: &Arc<crate::Node>, resident: &ResidentId) {
     // The timeline in the asset library is brought along, apart (`tail`).
     tail::wanted(node, resident);
     wanted_content(node, resident);
+}
+
+/// Asks for a conversation's metadata in the asset library to be made
+/// again, its directory having changed: archived, back, or moved to another
+/// project. Its timeline's job makes it.
+pub(crate) fn described(node: &crate::Node, resident: &ResidentId) {
+    tail::wanted(node, resident);
 }
 
 /// Asks for a conversation's timeline in the content database alone to be

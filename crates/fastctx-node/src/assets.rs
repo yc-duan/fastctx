@@ -127,6 +127,8 @@ pub(crate) struct Assets {
     /// Streams another device orders that came here with no release for
     /// this machine, told of once (`takeover`).
     pub(crate) unreleased: Mutex<std::collections::BTreeSet<(String, String)>>,
+    /// Scopes the account that opened them adopted here (`takeover`).
+    pub(crate) adopting: Mutex<std::collections::BTreeSet<String>>,
 }
 
 /// How far a hub's scopes this machine may hold were listed.
@@ -162,7 +164,7 @@ impl Assets {
         // frames, out of the index, until a release that knows them, which
         // takes them in now (§2.3).
         let kinds: Arc<dyn fastctx_content::v2::Authorizer> =
-            Arc::new(fastctx_content::v2::Kinds::new().register::<fastctx_content::v2::Timeline>());
+            Arc::new(fastctx_content::v2::Kinds::new().register::<fastctx_content::v2::Timeline>().register::<fastctx_content::v2::ConversationMeta>());
         library.know(kinds.clone());
         library.reconsider(kinds, true).map_err(|error| io::Error::other(error.to_string()))?;
         let path = dir.join("hubs.json");
@@ -197,6 +199,7 @@ impl Assets {
             reported: Mutex::new(HashMap::new()),
             more: Mutex::new(std::collections::BTreeSet::new()),
             unreleased: Mutex::new(std::collections::BTreeSet::new()),
+            adopting: Mutex::new(std::collections::BTreeSet::new()),
         })
     }
 

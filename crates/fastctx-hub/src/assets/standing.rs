@@ -60,6 +60,12 @@ const POINTS_AT_ONCE: usize = 4096;
 /// The statuses kept at most.
 const STATUSES_AT_MOST: usize = 64;
 
+/// A status reckoned: for the account as it was opened, over a span.
+type StatusKey = (AccountName, i64, u32);
+/// A report as kept: the machine's name, its device key, the report, when
+/// it came and when the machine was last seen.
+type ReportRow = (String, Vec<u8>, Vec<u8>, i64, Option<i64>);
+
 /// What the hub keeps in memory beside the tables.
 #[derive(Default)]
 pub(crate) struct Standing {
@@ -69,7 +75,7 @@ pub(crate) struct Standing {
     summaries: Mutex<BTreeMap<AccountName, AccountSync>>,
     /// Each account's status reckoned lately, by the account as it was
     /// opened and the span (AO07); none kept once it stands no more (AO03).
-    statuses: Mutex<HashMap<(AccountName, i64, u32), (Instant, SyncStatus)>>,
+    statuses: Mutex<HashMap<StatusKey, (Instant, SyncStatus)>>,
     /// What each owner library holds in all, at the change it was counted.
     totals: Mutex<HashMap<String, (u64, fastctx_content::v2::Totals)>>,
 }
@@ -160,7 +166,7 @@ struct Kept {
 /// name is now — the same key (AO06) — the latest of those kept under its
 /// names (AO05); and the names whose reports are of no machine now.
 fn kept(assets: &Assets, directory: &Indexed<'_>) -> io::Result<(BTreeMap<MachineName, Kept>, Vec<String>)> {
-    let rows: Vec<(String, Vec<u8>, Vec<u8>, i64, Option<i64>)> = assets
+    let rows: Vec<ReportRow> = assets
         .control
         .read_now(|c| {
             let mut statement = c.prepare_cached("SELECT machine, device, report, at, seen FROM sync_reports")?;

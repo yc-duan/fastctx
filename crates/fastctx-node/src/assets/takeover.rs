@@ -34,7 +34,8 @@ pub(crate) fn want(node: &Arc<Node>, hub: &HubId, scope: &str, stream: &str) {
     let Some(link) = node.link_of(hub) else { return };
     let directory = assets.conversation_dir(resident_of(scope));
     let wish = (scope.to_string(), stream.to_string());
-    if super::release::carried(&directory, hub.as_str(), scope, stream, link.name().as_str()).is_none() {
+    let adopted = assets.adopting.lock().expect("adopting").contains(scope);
+    if !adopted && super::release::carried(&directory, hub.as_str(), scope, stream, link.name().as_str()).is_none() {
         // Said once: the producer asks again and again while it waits.
         if assets.unreleased.lock().expect("unreleased").insert(wish) {
             node.log.line(format_args!(
@@ -71,12 +72,14 @@ async fn take_over(assets: &Assets, hub: &HubId, link: &Arc<Link>, key: &PublicK
     // Gone from here meanwhile, or never released to it: nothing is asked
     // (AG09).
     let directory = assets.conversation_dir(resident_of(scope));
-    let Some(carried) = super::release::carried(&directory, hub.as_str(), scope, stream, link.name().as_str()) else {
+    let carried = super::release::carried(&directory, hub.as_str(), scope, stream, link.name().as_str());
+    let adopted = assets.adopting.lock().expect("adopting").contains(scope);
+    if carried.is_none() && !adopted {
         return Ok(());
-    };
+    }
     // What the predecessor wrote that the hub has not goes to it first:
     // the release reaches no further than what the hub holds.
-    for frame in &carried.tail {
+    for frame in carried.iter().flat_map(|carried| &carried.tail) {
         let mut staged = 0;
         let Reply::Received { received } = super::apart::take(assets, link, scope, frame, &[], &mut staged).await? else {
             return Err("the hub did not take the predecessor's frame".into());
@@ -85,7 +88,14 @@ async fn take_over(assets: &Assets, hub: &HubId, link: &Arc<Link>, key: &PublicK
             return Err(format!("{stream} of {scope}: the predecessor's frames refer to objects that did not come here"));
         }
     }
-    let request = Request::Takeover { scope: scope.to_string(), stream: stream.to_string(), release: Some(carried.release.clone()) };
+    // Under the release it carried; or, none, as the account that opened it
+    // adopts it here.
+    let request = Request::Takeover {
+        scope: scope.to_string(),
+        stream: stream.to_string(),
+        release: carried.as_ref().map(|carried| carried.release.clone()),
+        adopt: carried.is_none(),
+    };
     let pinning = Pinning { assets, hub, key: *key };
     match ask(assets, link, request).await? {
         Reply::Epoch { descriptor } => {
@@ -117,3 +127,20 @@ async fn take_over(assets: &Assets, hub: &HubId, link: &Arc<Link>, key: &PublicK
         _ => Err("the hub did not hand the stream over".into()),
     }
 }
+
+/// The account that opened `resident`, logged in here, has it written on
+/// here from now on (design §28.10): each of its streams another device
+/// orders is taken over at the next pass with its hub.
+pub(crate) fn adopt(node: &Arc<Node>, resident: &fastctx_types::ResidentId) -> Result<(), String> {
+    let Some(assets) = node.assets.as_ref() else { return Err("the asset library is unavailable".into()) };
+    let Some((hub, scope)) = crate::timeline::scope_of(node, resident).map_err(|failure| failure.to_string())? else {
+        return Err(format!("{resident} keeps its records on no network here"));
+    };
+    assets.adopting.lock().expect("adopting").insert(scope.clone());
+    assets.unreleased.lock().expect("unreleased").retain(|(of, _)| *of != scope);
+    // Every stream of a conversation's scope: its timeline and its metadata.
+    want(node, &hub, &scope, <fastctx_content::v2::Timeline as fastctx_content::v2::Kind>::STREAM);
+    want(node, &hub, &scope, <fastctx_content::v2::ConversationMeta as fastctx_content::v2::Kind>::STREAM);
+    Ok(())
+}
+

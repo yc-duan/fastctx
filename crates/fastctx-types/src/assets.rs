@@ -324,15 +324,19 @@ pub enum Request {
     /// chained from `head` (§6.5).
     Epoch { scope: String, stream: String, next: u64, head: Bytes },
     /// This device takes over ordering `stream`, which another ordered: a
-    /// conversation came to live here (design §8, §28.10). Only under the
-    /// predecessor's `release` naming this machine: the hub hands it over
-    /// where the predecessor's frames it holds reach, and answers the new
-    /// epoch's descriptor, or says it was handed on since.
+    /// conversation came to live here (design §8, §28.10). Under the
+    /// predecessor's `release` naming this machine, or, with `adopt`, as the
+    /// account that opened the scope, logged in here, gives it to this
+    /// machine, the device it lived on lost: the hub hands it over where the
+    /// predecessor's frames it holds reach, and answers the new epoch's
+    /// descriptor, or says it was handed on since.
     Takeover {
         scope: String,
         stream: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         release: Option<Release>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        adopt: bool,
     },
     /// Puts an object of `scope` to the hub (§7.3), its chunks' digests
     /// given (none for one of a single chunk): the hub answers which chunks

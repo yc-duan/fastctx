@@ -41,6 +41,11 @@ pub enum Call {
     /// `hours` (design §28.9): what this machine sees itself, and what the
     /// hub reckons when it is reached. Never relayed through another machine.
     SyncStatus { hub: crate::access::HubId, account: crate::AccountName, hours: u32 },
+    /// The account that opened the conversation `resident`, logged in here,
+    /// has it written on here from now on, the device it lived on lost
+    /// (design §28.10): its streams that device ordered are taken over.
+    /// Never relayed through another machine.
+    AdoptConversation { resident: ResidentId },
     Plan {
         hub: Option<crate::HubName>,
         account: Option<crate::AccountName>,
@@ -1477,6 +1482,7 @@ impl Call {
             | Self::DoctorCalls { .. }
             | Self::DoctorReadings { .. }
             | Self::SyncStatus { .. }
+            | Self::AdoptConversation { .. }
             | Self::Features { .. }
             | Self::FindFiles { .. }
             | Self::Folders { .. }

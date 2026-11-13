@@ -190,6 +190,7 @@ async fn apply_inner(node: &Arc<Node>, id: &ResidentId, mut event: SessionEvent)
     // Its name, for those who list the World rather than watch it.
     if let Happened::Titled { title } = &event.happened {
         node.residents.change_now(&node.world, id, |now| now.title = Some(title.clone()))?;
+        crate::timeline::described(node, id);
     }
     if let Happened::Changed { change: SessionChange::ModelResponse { usage: Some(usage), .. }, .. } = &event.happened
         && let Some(session) = &about.session
