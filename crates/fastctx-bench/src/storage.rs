@@ -214,6 +214,9 @@ fn replica_catch_up_parts(dir: &Path, scale: Scale) -> Result<bool, String> {
     let at = dir.join("unknowing");
     std::fs::create_dir_all(&at).map_err(error)?;
     let (unknowing, _) = Library::open(&at).map_err(error)?;
+    // Told it knows no kind: with none told, a library takes every kind as
+    // known (codex-c8f08e64 #6).
+    unknowing.know(Arc::new(fastctx_content::v2::Kinds::new()));
     unknowing.install(SCOPE, b"bench".to_vec(), 1).map_err(error)?;
     let device_key = three.device.key();
     unknowing.accept_epoch(SCOPE, keys::first_epoch(SCOPE, Timeline::STREAM, device_key), &Trusted).map_err(error)?;

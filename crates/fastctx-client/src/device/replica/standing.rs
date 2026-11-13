@@ -82,34 +82,20 @@ pub(super) async fn feed(replica: &Replica, hub: &HubId, link: &Arc<Link>, key: 
     let page = |after: u64, before: Option<u64>, class: Option<u8>| {
         ask(replica, link, Request::Changes { owner: owner.to_string(), after, before, class, limit: CHANGES_AT_ONCE })
     };
-    let mut after = stood.as_ref().map_or(0, |(_, change)| *change);
-    let Reply::Changes { mut generation, mut streams, mut top, mut top_at, mut more, .. } = page(after, None, None).await? else {
+    let after = stood.as_ref().map_or(0, |(_, change)| *change);
+    let Reply::Changes { generation, streams, top, top_at, more, .. } = page(after, None, None).await? else {
         return Err("the hub did not say what changed".into());
     };
-    let renewed = stood.as_ref().is_some_and(|(was, _)| *was != generation);
-    if renewed {
+    if stood.as_ref().is_some_and(|(was, _)| *was != generation) {
         // The hub was put back since: its numbers start again, and a
-        // stream it orders may be shorter there than here, which no change
-        // number shows; a whole look sets such a stream aside (`pass::pull`).
+        // stream it orders may be shorter there, or other, than here, which
+        // no change number shows. A whole look sets such a stream aside
+        // (`pass::pull`) and only then stands in the new generation
+        // (codex-c8f08e64 #3).
         replica.call_whole(hub);
-        if after > 0 {
-            after = 0;
-            let Reply::Changes { generation: now, streams: all, top: at, top_at: when, more: further, .. } =
-                page(0, None, None).await?
-            else {
-                return Err("the hub did not say what changed".into());
-            };
-            (generation, streams, top, top_at, more) = (now, all, at, when, further);
-        }
+        return Ok(true);
     }
-    if generation.is_empty() {
-        return Ok(false);
-    }
-    if top <= after {
-        if renewed {
-            let (theirs, owner) = (hub.as_str().to_string(), owner.to_string());
-            blocking(library, move |library| library.fed(&theirs, &owner, &generation, top, top_at)).await?;
-        }
+    if generation.is_empty() || top <= after {
         return Ok(false);
     }
     let theirs = hub.as_str().to_string();
@@ -146,8 +132,10 @@ pub(super) async fn feed(replica: &Replica, hub: &HubId, link: &Arc<Link>, key: 
 /// Brings each of `streams`, as the hub said they stand, to where they
 /// stand here, as the device's tier holds each. A scope not held here yet,
 /// or not pulled whole in its holding period, or a stream first heard of,
-/// calls for a whole look instead. Whether some stream had more than one
-/// turn gave; the first failure goes into `failed`, the rest gone on with.
+/// calls for a whole look instead, and counts as more to take: the library
+/// is not stood in past it (codex-c8f08e64 #1). Whether some stream had
+/// more than one turn gave, or was left so; the first failure goes into
+/// `failed`, the rest gone on with.
 async fn catch_up(
     replica: &Replica,
     hub: &HubId,
@@ -164,19 +152,21 @@ async fn catch_up(
             let scope = changed.scope.clone();
             let Some(holding) = blocking(library, move |library| library.holding(&scope)).await? else {
                 replica.call_whole(hub);
-                return Ok(false);
+                return Ok(true);
             };
             // Its streams' past shows in no change number after the device's
             // need: a whole look pulls it by itself (design §28.1, E01).
             if unpulled.contains(&changed.scope) {
                 replica.call_whole(hub);
-                return Ok(false);
+                return Ok(true);
             }
             let (scope, stream) = (changed.scope.clone(), changed.stream.clone());
             let known = blocking(library, move |library| library.known_last_epoch(&scope, &stream)).await?;
             // A stream first heard of may stand for another the hub gives the
-            // device no more (§29, 2.4): a whole look lists what it withholds.
-            if known.is_none() {
+            // device no more (§29, 2.4): a whole look lists what it withholds,
+            // and the library is not stood in past it meanwhile.
+            let first_heard = known.is_none();
+            if first_heard {
                 replica.call_whole(hub);
             }
             if known.is_none_or(|known| known < changed.epoch) {
@@ -189,7 +179,8 @@ async fn catch_up(
                 .find(|(name, _)| *name == changed.stream)
                 .map_or(0, |(_, next)| next);
             let anew = read_anew(replica, &changed.scope, &changed.stream, changed.remade, changed.next).await?;
-            hold(replica, hub, link, key, &changed.scope, &changed.stream, holding, at, changed.next, anew).await
+            let went_on = hold(replica, hub, link, key, &changed.scope, &changed.stream, holding, at, changed.next, anew).await?;
+            Ok(went_on || first_heard)
         }
         .await;
         match done {

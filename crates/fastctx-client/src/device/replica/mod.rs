@@ -160,6 +160,15 @@ impl Replica {
         if self.tier.swap(tier.code(), std::sync::atomic::Ordering::SeqCst) == tier.code() {
             return;
         }
+        // Where it stood, and what it pulled whole, was as the other tier
+        // holds: a heavier one holds what that one never took, so the device
+        // stands nowhere until its whole looks of each library end anew
+        // (design §28.42). Not done, a look stands it again all the same.
+        for hub in self.library.joined().unwrap_or_default() {
+            let _ = self.library.forget_feeds(&hub);
+            let _ = self.library.forget_pulled(&hub);
+        }
+        self.reported.lock().expect("reported").clear();
         let hubs: Vec<HubId> = self.links.lock().expect("links").keys().cloned().collect();
         for hub in hubs {
             self.called.lock().expect("called").entry(hub.clone()).or_default().whole = true;
@@ -273,19 +282,35 @@ impl Replica {
         }
         let (theirs, device) = (hub.as_str().to_string(), self.device());
         let network = blocking(library, move |library| library.join(&theirs, &device, false)).await?;
-        let mut failed = pass::discover(self, hub, link, &key, &network).await.err();
+        // Where each owner library held here stands, asked before what the
+        // device may hold is listed: a scope begun after that is in the
+        // library's changes past the mark, and one begun before is listed,
+        // so none falls between (codex-c8f08e64 #2).
         let theirs = hub.as_str().to_string();
-        let held = blocking(library, move |library| library.live_scopes_of(&theirs)).await?;
-        // Where each owner library stands as the look begins: every scope of
-        // one gone through whole, the device stands there (design §28.1).
-        let owners: BTreeSet<String> = held.iter().filter_map(|(_, descriptor, _)| standing::owner_of(descriptor)).collect();
+        let owners: BTreeSet<String> = blocking(library, move |library| library.live_scopes_of(&theirs))
+            .await?
+            .iter()
+            .filter_map(|(_, descriptor, _)| standing::owner_of(descriptor))
+            .collect();
+        let mut failed = None;
         let marks = match standing::tops(self, link, &owners).await {
             Ok(marks) => Some(marks),
             Err(why) => {
-                failed.get_or_insert(format!("where the owner libraries stand: {why}"));
+                failed = Some(format!("where the owner libraries stand: {why}"));
                 None
             }
         };
+        // Stood in only on a listing whole and settled: a scope not listed is
+        // one the device may lack.
+        let listed_whole = match pass::discover(self, hub, link, &key, &network).await {
+            Ok(listed) => listed.is_some(),
+            Err(why) => {
+                failed.get_or_insert(why);
+                false
+            }
+        };
+        let theirs = hub.as_str().to_string();
+        let held = blocking(library, move |library| library.live_scopes_of(&theirs)).await?;
         let mut short = BTreeSet::new();
         let mut more = false;
         for (scope, descriptor, holding) in held {
@@ -308,7 +333,7 @@ impl Replica {
                 }
             }
         }
-        if let Some(marks) = marks {
+        if let Some(marks) = marks.filter(|_| listed_whole) {
             standing::stand(self, hub, marks, &short).await?;
         }
         let (fetched, left) = objects::fetch(self, hub, link).await;

@@ -152,6 +152,17 @@ impl Library {
         })?)
     }
 
+    /// No scope of `hub`'s network counts as pulled whole here any more: each
+    /// is pulled by itself again before its changes carry it (a tier made
+    /// heavier holds what the lighter one never took, design §28.42).
+    pub fn forget_pulled(&self, hub: &str) -> Result<()> {
+        let hub = hub.to_string();
+        Ok(self.database().write_now_at(Priority::Normal, 128, move |db| {
+            db.prepare_cached("UPDATE scopes SET pulled = NULL WHERE hub = ?1")?.execute([&hub])?;
+            Ok(())
+        })?)
+    }
+
     /// Whether every stream of `scope` was pulled whole in its holding period
     /// here: what orders each is known.
     pub fn is_pulled(&self, scope: &str) -> Result<bool> {

@@ -204,18 +204,23 @@ impl Library {
         let at_most = i64::try_from(at_most).unwrap_or(i64::MAX);
         let [node, mcp, hub_log] = super::running_logs();
         Ok(self.database().read_now(move |db| {
+            // From this hub's scopes down, not over every object wanted here:
+            // other hubs' and the long ones a light device leaves are not
+            // looked at (codex-c8f08e64 #5).
             let (count, bytes): (i64, i64) = db
                 .prepare_cached(
-                    "SELECT COUNT(*), COALESCE(SUM(size), 0) FROM wanted w WHERE w.size <= ?2
-                       AND NOT EXISTS (SELECT 1 FROM objects o WHERE o.hash = w.hash AND +o.state = 1)
-                       AND EXISTS (SELECT 1 FROM wanted_in i JOIN scopes s ON s.id = i.scope
-                                   WHERE i.hash = w.hash AND s.hub = ?1 AND s.holding IS NOT NULL
-                                     AND (EXISTS (SELECT 1 FROM object_refs r JOIN streams n ON n.id = r.stream
-                                                  WHERE r.hash = i.hash AND r.scope = s.id AND r.holding = s.holding AND r.count > 0
-                                                    AND n.name NOT IN (?3, ?4, ?5))
-                                          OR EXISTS (SELECT 1 FROM frame_objects f JOIN streams t ON t.id = f.stream
-                                                     WHERE f.hash = i.hash AND t.scope = s.id AND f.holding = s.holding
-                                                       AND t.name NOT IN (?3, ?4, ?5))))",
+                    "SELECT COUNT(*), COALESCE(SUM(w.size), 0) FROM wanted w
+                     WHERE w.hash IN (
+                         SELECT i.hash FROM scopes s JOIN wanted_in i ON i.scope = s.id
+                         WHERE s.hub = ?1 AND s.holding IS NOT NULL
+                           AND (EXISTS (SELECT 1 FROM object_refs r JOIN streams n ON n.id = r.stream
+                                        WHERE r.hash = i.hash AND r.scope = s.id AND r.holding = s.holding AND r.count > 0
+                                          AND n.name NOT IN (?3, ?4, ?5))
+                                OR EXISTS (SELECT 1 FROM frame_objects f JOIN streams t ON t.id = f.stream
+                                           WHERE f.hash = i.hash AND t.scope = s.id AND f.holding = s.holding
+                                             AND t.name NOT IN (?3, ?4, ?5))))
+                       AND w.size <= ?2
+                       AND NOT EXISTS (SELECT 1 FROM objects o WHERE o.hash = w.hash AND +o.state = 1)",
                 )?
                 .query_row(params![hub, at_most, node, mcp, hub_log], |row| Ok((row.get(0)?, row.get(1)?)))?;
             Ok((count.max(0) as u64, bytes.max(0) as u64))
