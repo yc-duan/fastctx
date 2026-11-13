@@ -291,7 +291,7 @@ impl Replica {
                     self.called.lock().expect("called").entry(hub.clone()).or_default().whole = true;
                 }
                 let at = here.get(stream).copied().unwrap_or(0);
-                match pass::hold(self, hub, link, &key, &scope, stream, holding, at, *next).await {
+                match pass::hold(self, hub, link, &key, &scope, stream, holding, at, *next, false).await {
                     Ok(went_on) => more |= went_on,
                     // A new epoch, or a scope let go: a whole look sorts it.
                     Err(_) => self.called.lock().expect("called").entry(hub.clone()).or_default().whole = true,

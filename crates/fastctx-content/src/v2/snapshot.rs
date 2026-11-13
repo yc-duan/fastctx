@@ -435,6 +435,21 @@ impl Library {
         })?)
     }
 
+    /// How many times each stream of `scope` was made again, as its changes
+    /// say (`stream_changes.remade`); a stream never made again is absent.
+    /// On a hub's owner library.
+    pub fn remade_of(&self, scope: &str) -> Result<std::collections::BTreeMap<String, u64>> {
+        let key = scope.to_string();
+        Ok(self.database().read_now(move |db| {
+            let Some((scope_id, _, Some(_))) = held(db, &key)? else { return Ok(Default::default()) };
+            let mut statement = db.prepare_cached(
+                "SELECT s.name, c.remade FROM streams s JOIN stream_changes c ON c.stream = s.id WHERE s.scope = ?1 AND c.remade > 0",
+            )?;
+            let rows = statement.query_map([scope_id], |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)? as u64)))?;
+            Ok(rows.collect::<std::result::Result<_, _>>()?)
+        })?)
+    }
+
     /// Up to `limit` items of `stream` of `scope` below `before` (its order
     /// key and identity), newest first, of at most `OLDER_BYTES` of bodies,
     /// as they stand now, with the sequence the stream is at; none when it

@@ -7,7 +7,7 @@
 //! what the hub lists the device may hold is installed under the hub's word
 //! and nothing else, and a scope it may hold no more is let go.
 
-use super::tiers::{self, Hold, RECENT_BEHIND, Tier};
+use super::tiers::{self, Hold, RECENT_BEHIND, RECENT_BYTES, Tier};
 use super::{REVOKED, Replica, blocking};
 use fastctx_content::v2::{
     Backfilled, Header, Holder, Imported, Installed, Network, RawFrame, Signed, Verifier, Window, hub_orders,
@@ -222,11 +222,33 @@ pub(super) async fn pull(replica: &Replica, hub: &HubId, link: &Arc<Link>, key: 
             succession(replica, hub, link, key, scope, &at.stream).await?;
         }
     }
+    // What this device holds as it was read, of an earlier making of the
+    // hub's stream, or pages of one that moved on since: pages let go of, to
+    // be read anew; a window taken again (codex-058517ed #10, #11).
+    let mut anew = BTreeSet::new();
+    for at in &streams {
+        let (scope_text, stream_text) = (scope.to_string(), at.stream.clone());
+        let covered = blocking(library, move |library| library.coverage(&scope_text, &stream_text)).await?;
+        if covered.is_empty() {
+            continue;
+        }
+        let earlier = covered.iter().any(|run| run.remade < at.remade);
+        match tiers::hold(replica.tier, &at.stream) {
+            Hold::Metadata if earlier || covered.iter().any(|run| run.through < at.next) => {
+                let (scope_text, stream_text, device) = (scope.to_string(), at.stream.clone(), replica.device());
+                blocking(library, move |library| library.drop_cached(&scope_text, &stream_text, &device)).await?;
+            }
+            Hold::Recent if earlier => {
+                anew.insert(at.stream.clone());
+            }
+            _ => {}
+        }
+    }
     let mut more = false;
     let mut failed = None;
     for at in &streams {
         let here = local.get(&at.stream).copied().unwrap_or(0);
-        match hold(replica, hub, link, key, scope, &at.stream, holding, here, at.next).await {
+        match hold(replica, hub, link, key, scope, &at.stream, holding, here, at.next, anew.contains(&at.stream)).await {
             Ok(went_on) => more |= went_on,
             Err(why) if why.starts_with(REVOKED) => return Err(why),
             Err(why) => {
@@ -260,18 +282,38 @@ pub(super) async fn hold(
     holding: i64,
     mut here: u64,
     next: u64,
+    remade: bool,
 ) -> Result<bool, String> {
     match tiers::hold(replica.tier, stream) {
         // Described only: asked for as it is read.
         Hold::Metadata => return Ok(false),
-        Hold::Recent if next.saturating_sub(here) > RECENT_BEHIND => {
-            if let Some(head) = window(replica, hub, link, key, scope, stream, holding).await? {
+        // Far behind, or its window of an earlier making: the window, anew.
+        Hold::Recent if remade || next.saturating_sub(here) > RECENT_BEHIND => {
+            if let Some(head) = window(replica, hub, link, key, scope, stream, holding, remade).await? {
                 here = here.max(head);
             }
         }
         _ => {}
     }
-    let more = frames(replica, link, scope, stream, holding, here, next).await?;
+    // A recent stream close behind by count, catching up by its frames as
+    // far as its bytes allow: past them, its window, then on from there.
+    let most = if tiers::hold(replica.tier, stream) == Hold::Recent { RECENT_BYTES } else { u64::MAX };
+    let more = match frames(replica, link, scope, stream, holding, here, next, most).await? {
+        Some(more) => more,
+        None => {
+            let at = window(replica, hub, link, key, scope, stream, holding, false).await?;
+            let (scope_text, stream_text) = (scope.to_string(), stream.to_string());
+            let here = match at {
+                Some(head) => head,
+                None => blocking(&replica.library, move |library| library.streams(&scope_text))
+                    .await?
+                    .into_iter()
+                    .find(|(name, _)| *name == stream_text)
+                    .map_or(here, |(_, next)| next),
+            };
+            frames(replica, link, scope, stream, holding, here, next, u64::MAX).await?.unwrap_or(true)
+        }
+    };
     // Holding whole, what is below a window taken before comes too (PH03).
     if replica.tier == Tier::Whole && !more {
         return backfill(replica, link, scope, stream, holding).await;
@@ -280,8 +322,19 @@ pub(super) async fn hold(
 }
 
 /// Installs the hub's window of `stream`, its word checked under the pinned
-/// key: where its frames go on from, when it was installed.
-async fn window(replica: &Replica, hub: &HubId, link: &Arc<Link>, key: &PublicKey, scope: &str, stream: &str, holding: i64) -> Result<Option<u64>, String> {
+/// key — `again` over one at its very head, of an earlier making: where its
+/// frames go on from, when it was installed.
+#[allow(clippy::too_many_arguments)]
+async fn window(
+    replica: &Replica,
+    hub: &HubId,
+    link: &Arc<Link>,
+    key: &PublicKey,
+    scope: &str,
+    stream: &str,
+    holding: i64,
+    again: bool,
+) -> Result<Option<u64>, String> {
     let Reply::Window { generation, next, head, bytes, remade, low, entries, word } =
         ask(replica, link, Request::Window { scope: scope.to_string(), stream: stream.to_string() }).await?
     else {
@@ -302,7 +355,7 @@ async fn window(replica: &Replica, hub: &HubId, link: &Arc<Link>, key: &PublicKe
         return Err("the window is not the hub's".into());
     }
     let library = &replica.library;
-    match blocking(library, move |library| library.install_window(window, holding, false)).await? {
+    match blocking(library, move |library| library.install_window(window, holding, again)).await? {
         Installed::Installed => Ok(Some(next)),
         Installed::Behind => Ok(None),
     }
@@ -327,10 +380,22 @@ pub(super) fn entry(entry: wire::Entry) -> Result<fastctx_content::v2::Entry, St
 }
 
 /// Takes the frames of `stream` of `scope` from `at` towards `next`, at most
-/// a turn's records; whether more are left.
-async fn frames(replica: &Replica, link: &Arc<Link>, scope: &str, stream: &str, holding: i64, mut at: u64, next: u64) -> Result<bool, String> {
+/// a turn's records; whether more are left, or none when `most` bytes of
+/// frames were taken before it got there.
+#[allow(clippy::too_many_arguments)]
+async fn frames(
+    replica: &Replica,
+    link: &Arc<Link>,
+    scope: &str,
+    stream: &str,
+    holding: i64,
+    mut at: u64,
+    next: u64,
+    most: u64,
+) -> Result<Option<bool>, String> {
     let library = &replica.library;
     let from = at;
+    let mut spent = 0u64;
     while at < next {
         let request = Request::Frames { scope: scope.to_string(), stream: stream.to_string(), from: at, limit: FRAMES_AT_ONCE };
         let Reply::Frames { mut frames, ticket } = ask(replica, link, request).await? else {
@@ -343,6 +408,7 @@ async fn frames(replica: &Replica, link: &Arc<Link>, scope: &str, stream: &str, 
         let began = at;
         let mut went = false;
         for frame in frames {
+            spent += (frame.header.0.len() + frame.signature.0.len() + frame.body.0.len()) as u64;
             let raw = RawFrame { header: frame.header.0, signature: frame.signature.0, body: frame.body.0, objects: Vec::new() };
             let scope_text = scope.to_string();
             match blocking(library, move |library| library.import(&scope_text, raw, &DeviceKeys, Holder::Replica, holding)).await? {
@@ -364,11 +430,14 @@ async fn frames(replica: &Replica, link: &Arc<Link>, scope: &str, stream: &str, 
         if !went {
             return Err(format!("{stream} of {scope}: the hub's frames from {began} take it no further"));
         }
+        if at < next && spent > most {
+            return Ok(None);
+        }
         if at < next && at.saturating_sub(from) >= RECORDS_A_TURN {
-            return Ok(true);
+            return Ok(Some(true));
         }
     }
-    Ok(false)
+    Ok(Some(false))
 }
 
 /// Takes what is below a window of `stream` held before, a turn at a time,

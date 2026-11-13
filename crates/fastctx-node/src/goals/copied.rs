@@ -53,10 +53,16 @@ fn answered(
     {
         return None;
     }
-    let hub = match (account, &written.hub) {
+    // The network named, as the account's and the machine's alike: two
+    // that differ are not answered from here (codex-847f57fd #14).
+    let named = match &written.hub {
+        Some(hub) => Some(crate::timeline::copy::hub_id_of(node, hub)?),
+        None => None,
+    };
+    let hub = match (account, named) {
+        (Some(account), Some(named)) if account.hub.to_string() != named => return None,
         (Some(account), _) => Some(account.hub.to_string()),
-        (None, Some(hub)) => Some(crate::timeline::copy::hub_id_of(node, hub)?),
-        (None, None) => None,
+        (None, named) => named,
     };
     let machine = &written.name;
     let scope = copy_of(node, resident, Some(machine), hub.as_deref(), account.map(|account| &account.account))?;

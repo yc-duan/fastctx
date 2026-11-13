@@ -90,6 +90,35 @@ impl Library {
         Ok(())
     }
 
+    /// Lets go of what a light device holds of `stream` of `scope` as it was
+    /// read, to be read anew from the hub (codex-058517ed #10, #11): its
+    /// items, frames, windows and pages, and what they covered, this
+    /// device's own unsent kept to commit again. Unlike `withhold` it goes on
+    /// being held; a page asked before is asked again (`reclaimed`).
+    pub fn drop_cached(&self, scope: &str, stream: &str, device: &[u8; 32]) -> Result<()> {
+        let (scope, stream, device) = (scope.to_string(), stream.to_string(), *device);
+        self.database().write_now_at(Priority::Normal, 1 << 20, move |db| {
+            let Some((scope_id, _, Some(holding))) = held(db, &scope)? else { return Err(invalid("the scope is not held here")) };
+            let found: Option<i64> = db
+                .prepare_cached("SELECT id FROM streams WHERE scope = ?1 AND name = ?2")?
+                .query_row(params![scope_id, stream], |row| row.get(0))
+                .optional()?;
+            let Some(stream_id) = found else { return Ok(()) };
+            keep_unsent(db, scope_id, holding, &device, Some(stream_id))?;
+            super::window::truncate_in(db, scope_id, holding, stream_id, None)?;
+            db.prepare_cached("DELETE FROM coverage WHERE stream = ?1 AND holding = ?2")?.execute(params![stream_id, holding])?;
+            for table in ["installing", "backfills", "retention"] {
+                db.prepare_cached(&format!("DELETE FROM {table} WHERE stream = ?1"))?.execute([stream_id])?;
+            }
+            let at = super::items::next_write(db)?;
+            db.prepare_cached("UPDATE streams SET reclaimed = ?2 WHERE id = ?1")?.execute(params![stream_id, at])?;
+            super::view::rebased(db, stream_id)?;
+            Ok(())
+        })?;
+        self.wrote();
+        Ok(())
+    }
+
     /// The streams of `scope` withheld here in its holding period now.
     pub fn withheld_streams(&self, scope: &str) -> Result<std::collections::BTreeSet<String>> {
         let scope = scope.to_string();

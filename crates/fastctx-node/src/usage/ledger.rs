@@ -455,9 +455,11 @@ fn last_mark(file: &Path) -> io::Result<Option<std::collections::BTreeMap<String
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(error),
     };
+    // Whole lines alone: a last line its newline did not reach was never
+    // written, as the ledger reads it (codex-847f57fd #18).
     Ok(bytes
-        .split(|byte| *byte == b'\n')
-        .filter(|line| line.windows(8).any(|window| window == b"\"shared\""))
+        .split_inclusive(|byte| *byte == b'\n')
+        .filter(|line| line.ends_with(b"\n") && line.windows(8).any(|window| window == b"\"shared\""))
         .filter_map(|line| match serde_json::from_slice::<Entry>(line) {
             Ok(Entry::Shared { hubs, .. }) => Some(hubs),
             _ => None,

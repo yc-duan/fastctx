@@ -27,6 +27,12 @@ pub(super) enum Hold {
 /// follow it frame by frame; past it, a window.
 pub(super) const RECENT_BEHIND: u64 = 200;
 
+/// How many bytes of frames a recent stream may take to catch up before a
+/// window is taken instead, whichever of this and `RECENT_BEHIND` comes
+/// first (design §3.3, §28.2; codex-058517ed #15): the bytes a hub counts of
+/// a frame, its header, signature and body.
+pub(super) const RECENT_BYTES: u64 = 1 << 20;
+
 /// How a device of `tier` holds the stream `stream`. A stream of a kind it
 /// does not know is described only.
 pub(super) fn hold(tier: Tier, stream: &str) -> Hold {

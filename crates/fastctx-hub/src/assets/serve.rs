@@ -810,9 +810,11 @@ pub(crate) fn ask(
                 .into_iter()
                 .partition(|(stream, _)| scopes::holds(directory, machine, &kept, stream));
             let mut streams = Vec::with_capacity(held.len());
+            let remade = library.remade_of(&scope).map_err(|error| error.to_string())?;
             for (stream, next) in held {
                 let epoch = library.last_epoch(&scope, &stream).map_err(|error| error.to_string())?.map_or(0, |(epoch, _)| epoch);
-                streams.push(wire::StreamAt { stream, next, epoch });
+                let remade = remade.get(&stream).copied().unwrap_or(0);
+                streams.push(wire::StreamAt { stream, next, epoch, remade });
             }
             let withheld = withheld.into_iter().map(|(stream, _)| stream).collect();
             Ok(Reply::Streams { streams, withheld })

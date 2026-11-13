@@ -569,6 +569,11 @@ pub struct StreamAt {
     /// one takes its descriptors, its frames' heads moved or not (I09, LL05).
     #[serde(default)]
     pub epoch: u64,
+    /// How many times the hub made the stream again (§28.2): a light
+    /// device's window or pages of an earlier making are taken anew though
+    /// the head did not move (codex-058517ed #10, #11).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub remade: u64,
 }
 
 impl Request {
