@@ -30,6 +30,7 @@ mod order;
 mod preview;
 pub(crate) mod reads;
 mod serial;
+pub(crate) mod shared_history;
 mod tail;
 pub(crate) mod timers;
 

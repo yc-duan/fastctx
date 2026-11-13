@@ -101,7 +101,7 @@ pub(super) fn placed(node: &Node, about: &About) -> Result<Option<Placed>, Failu
     // conversation's timeline goes on there once its ordering is handed
     // over (design §8, plan 3-4), never in a scope of its own here (BB08).
     let born_on = crate::record_ownership::origin(node, about);
-    let (readers, scope) = scope_for(node, &account.hub, &account.account, born_on, &about.id)?;
+    let (readers, scope) = scope_for(node, &account.hub, &account.account, born_on, &about.id, about.born_at)?;
     let classes = fastctx_types::assets::classes_for(&readers, &scope);
     Ok(Some(Placed { scope, hub: account.hub.clone(), proposal: Proposal { hub: account.hub.to_string(), readers, classes }, network }))
 }
@@ -117,6 +117,7 @@ fn scope_for(
     account: &fastctx_types::AccountName,
     born_on: Option<fastctx_types::MachineName>,
     id: &ResidentId,
+    born_at: jiff::Timestamp,
 ) -> Result<(Readers, String), Failure> {
     let conversation = Readers::Conversation { openers: vec![account.clone()], born_on: born_on.clone() };
     let conversation_key = format!("{}{}", conversation.key_prefix(hub.as_str()), id);
@@ -144,6 +145,17 @@ fn scope_for(
         let directory = &view.directory;
         let machine = directory.canonical(&machine);
         (directory.body_of(machine), directory.shares.iter().any(|share| &share.machine == machine && share.active()))
+    };
+    // Born here: the body this machine was as it was born, as noted then,
+    // however late its scope is made now (N02).
+    let (body, shared) = if node.is_me(&machine) {
+        match super::shared_history::at(node, hub, born_at) {
+            Some(Some(then)) => (Some(then), true),
+            Some(None) => return Ok((conversation, conversation_key)),
+            None => (body, shared),
+        }
+    } else {
+        (body, shared)
     };
     let Some(body) = body else { return Ok((conversation, conversation_key)) };
     let readers = Readers::Body { body, opener: account.clone() };
