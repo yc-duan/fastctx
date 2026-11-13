@@ -538,6 +538,12 @@ impl fastctx_net::link::Node for Handler {
         if let Err(error) = fastctx_net::arrivals::notice(&self.arrivals, &view) {
             eprintln!("World device: keeping who came into this device's accounts: {error}");
         }
+        #[cfg(feature = "replica")]
+        if let Some(device) = self.device.upgrade()
+            && let Some(replica) = device.replica.get()
+        {
+            replica.directory_changed(&link.membership().id);
+        }
         let projects: Vec<_> =
             view.projects.iter().map(|project| (project.town.clone(), project.name.clone())).collect();
         let renamed = self.projects.lock().expect("never poisoned").replace(projects.clone()) != Some(projects);

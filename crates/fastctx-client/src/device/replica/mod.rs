@@ -334,6 +334,15 @@ impl Replica {
         self.wake(hub).notify_one();
     }
 
+    /// `hub`'s directory changed: what the device may hold of a scope it
+    /// holds may have changed with it — a project's ledger under the
+    /// machines its account may use now (§29, 2.4) — so the next pass looks
+    /// whole, with what the hub withholds now (codex-5c30d5e9 R03).
+    pub(crate) fn directory_changed(&self, hub: &HubId) {
+        self.called.lock().expect("called").entry(hub.clone()).or_default().whole = true;
+        self.wake(hub).notify_one();
+    }
+
     /// The device left `hub`'s network: every scope of it held here goes,
     /// and its follower with it.
     pub(crate) async fn left(&self, hub: &HubId) -> Result<(), String> {

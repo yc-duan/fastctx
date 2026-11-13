@@ -8,7 +8,10 @@
 //! with what comes after, and numbers still read in the order they were made.
 //! The count is kept in the witness outside the directory as well, and goes
 //! on from the greater of the two: a restore takes the directory's back, not
-//! the witness's, so the same backup put back twice is counted twice.
+//! the witness's, so the same backup put back twice is counted twice. The
+//! hub reopened numbers in a count of its own too, so a copy taken while it
+//! was sealed, put back after, counts less than the witness and is counted
+//! anew (codex-5c30d5e9 R01): numbers skip, never repeat.
 
 use fastctx_storage::Database;
 use fastctx_storage::rusqlite::{Connection, OptionalExtension, params};
@@ -34,18 +37,32 @@ pub(crate) fn floor(count: u64) -> u64 {
     count << 32
 }
 
-/// Keeps the seal `why` for a recovery, in the transaction `c` is in: the
-/// count goes up only as a recovery's seal is first kept, not for one kept
-/// already, from the directory's count or `witnessed`, the witness's,
-/// whichever is more. The count after.
+/// Keeps the seal `why` for a recovery, in the transaction `c` is in. The
+/// count goes up, from the directory's count or `witnessed`, the witness's,
+/// whichever is more, as a recovery's seal is first kept — and as a seal is
+/// found kept already on a directory that counts less than the witness: a
+/// copy taken while sealed, put back after the hub reopened and numbered
+/// on. A seal kept already on a directory the witness counts no more than
+/// is this recovery's, kept across a restart, and is not counted again. The
+/// count after.
 pub(crate) fn seal_in(c: &Connection, why: &str, at: i64, witnessed: u64) -> fastctx_storage::Result<u64> {
     let was: Option<String> = c.prepare_cached("SELECT why FROM asset_seal WHERE id = 1")?.query_row([], |row| row.get(0)).optional()?;
     let mut count = read(c)?;
-    if was.as_deref().is_none_or(|was| was == AT_START) {
+    if was.as_deref().is_none_or(|was| was == AT_START) || witnessed > count {
         count = count.max(witnessed) + 1;
         c.prepare_cached("INSERT OR REPLACE INTO hub_meta (name, value) VALUES (?1, ?2)")?
             .execute(params![NAME, count.to_string().into_bytes()])?;
     }
     c.prepare_cached("INSERT OR REPLACE INTO asset_seal (id, why, at) VALUES (1, ?1, ?2)")?.execute(params![why, at])?;
+    Ok(count)
+}
+
+/// The hub reopened after a recovery, in the transaction `c` is in: what it
+/// numbers from now on is in a count of its own, past the directory's and
+/// `witnessed`, the witness's. The count after.
+pub(crate) fn reopen_in(c: &Connection, witnessed: u64) -> fastctx_storage::Result<u64> {
+    let count = read(c)?.max(witnessed) + 1;
+    c.prepare_cached("INSERT OR REPLACE INTO hub_meta (name, value) VALUES (?1, ?2)")?
+        .execute(params![NAME, count.to_string().into_bytes()])?;
     Ok(count)
 }

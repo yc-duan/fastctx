@@ -303,7 +303,8 @@ fn reopen_in(dir: &Path, store: &Store, assets: &Assets) -> anyhow::Result<usize
     hasher.update(old_head);
     let digest: [u8; 32] = hasher.finalize().into();
     let old_seq = kept.seq;
-    let (seq, head) = control.write_now(4096, move |c| {
+    let witnessed = assets.witness.recoveries();
+    let (seq, head, recoveries) = control.write_now(4096, move |c| {
         if old_seq > 0 {
             c.prepare_cached("INSERT OR IGNORE INTO closed_heads (seq, head) VALUES (?1, ?2)")?.execute(params![old_seq as i64, &old_head[..]])?;
         }
@@ -315,11 +316,13 @@ fn reopen_in(dir: &Path, store: &Store, assets: &Assets) -> anyhow::Result<usize
         .execute([])?;
         c.prepare_cached("DELETE FROM recovery_heads")?.execute([])?;
         c.prepare_cached("DELETE FROM recovery_receipts")?.execute([])?;
-        // Reopened: the seal for this recovery is done with.
+        // Reopened: the seal for this recovery is done with, and what the
+        // hub numbers from now on is in a count of its own (R01).
         c.prepare_cached("DELETE FROM asset_seal")?.execute([])?;
-        chain::append(c, "branch-closed", &digest)
+        let recoveries = super::restores::reopen_in(c, witnessed)?;
+        let (seq, head) = chain::append(c, "branch-closed", &digest)?;
+        Ok((seq, head, recoveries))
     })?;
-    let recoveries = super::restores::count(&control)?;
     assets.witness.reset(seq, &head, recoveries)?;
     match fastctx_platform::disk::remove_file(dir.join(BACKUP_MARKER)) {
         Ok(()) => {}

@@ -1,4 +1,7 @@
-//! Bounded upload frames for an immutable ledger append.
+//! Bounded upload frames for an immutable ledger append, and for an asset
+//! request too large for one control message: an `Open` that reports every
+//! receipt no checkpoint confirmed yet (sync v2 freeze spec, 11.2;
+//! codex-5c30d5e9 R02).
 
 use crate::wire::{self, Question, Up};
 
@@ -26,6 +29,7 @@ pub fn frames(
             | Question::SkillFiles { .. }
             | Question::AccountRecords { .. }
             | Question::OwnedRecords { .. }
+            | Question::Assets { .. }
     ) {
         return Err("this question is larger than one control message".into());
     }
@@ -52,4 +56,26 @@ pub fn frames(
         .enumerate()
         .map(|(index, text)| Up::QuestionPart { id, index: index as u32, total, text })
         .collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use fastctx_types::assets::Request;
+
+    #[test]
+    fn an_asset_request_past_one_control_message_goes_in_parts() {
+        let question = Question::Assets { request: Request::Streams { scope: "s".repeat(wire::MAX_CONTROL_FRAME + 1) } };
+        let frames = frames(7, question.clone(), None, true).expect("sent in parts");
+        assert!(frames.len() > 1, "{} frames", frames.len());
+        let mut text = String::new();
+        for frame in &frames {
+            let Up::QuestionPart { id, text: piece, .. } = frame else { panic!("a part") };
+            assert_eq!(*id, 7);
+            assert!(wire::encode(frame).len() <= wire::MAX_CONTROL_FRAME, "each part fits one control message");
+            text.push_str(piece);
+        }
+        let whole: Question = serde_json::from_str(&text).expect("the parts make the question");
+        assert_eq!(serde_json::to_string(&whole).unwrap(), serde_json::to_string(&question).unwrap());
+    }
 }

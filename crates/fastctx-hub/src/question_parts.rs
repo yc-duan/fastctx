@@ -85,8 +85,9 @@ impl Uploads {
                 | Question::SkillFiles { .. }
                 | Question::AccountRecords { .. }
                 | Question::OwnedRecords { .. }
+                | Question::Assets { .. }
         ) {
-            return Err("only ledger appends can be uploaded in parts".into());
+            return Err("only ledger appends and asset requests can be uploaded in parts".into());
         }
         Ok(Some(Complete { question, reservation: partial.text.into_reservation() }))
     }

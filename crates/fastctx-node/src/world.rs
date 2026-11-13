@@ -1757,6 +1757,21 @@ impl fastctx_net::link::Node for Handler {
         let (keeping, hub) = (node.clone(), self.hub.clone());
         fastctx_platform::task::spawn_blocking(move || {
             crate::admitted::notice(&keeping, &hub);
+            // What a reader holds of its account's records follows the
+            // directory — a project's ledger under the machines it may use
+            // now (§29, 2.4), a project taken back, the same machines again:
+            // those scopes are looked at whole at the next pass, with what
+            // the hub withholds of them now (codex-5c30d5e9 R03).
+            if let Some(assets) = keeping.assets.as_ref()
+                && let Ok(scopes) = assets.library.live_scopes_of(hub.as_str())
+            {
+                let records: Vec<String> =
+                    scopes.into_iter().map(|(key, _, _)| key).filter(|key| key.starts_with("a/")).collect();
+                if !records.is_empty() {
+                    assets.relook.lock().expect("relook").extend(records);
+                    crate::assets::wake(&keeping, &hub);
+                }
+            }
             if swept && let Err(error) = crate::mcp::store::sweep(&keeping, &hub) {
                 keeping.log.line(format_args!("collecting removed MCP commands: {error}"));
             }
