@@ -97,6 +97,7 @@ pub async fn talk_here(
     crate::attachments::resolve(node, to, &attachments).await?;
     let attachments = crate::attachments::place(node, to, attachments, files_on).await?;
     crate::placement::location::speaking(node, to, typed_on)?;
+    let id = id.map(|id| speech::talk_id(node, typed_on, id));
     let delivery = crate::attachments::delivery(typed_on, text, attachments, id);
     speech::tell_here(node, to, delivery, Owed::Nobody).await
 }

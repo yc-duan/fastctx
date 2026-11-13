@@ -36,14 +36,12 @@ pub fn delivery(
     from: &MachineName,
     text: String,
     attachments: Vec<Attachment>,
-    id: Option<&str>,
+    id: Option<fastctx_types::NoticeId>,
 ) -> fastctx_types::residents::Delivery {
     use fastctx_types::residents::{Delivery, Notice};
     use fastctx_types::session::{Speaker, attachments::AttachedMessage};
-    let id = match id {
-        Some(id) => crate::speech::fixed_id("talk", &[from.as_str(), id]),
-        None => crate::speech::new_id("talk"),
-    };
+    // Named by the sender's own id (`speech::talk_id`), or anew.
+    let id = id.unwrap_or_else(|| crate::speech::new_id("talk"));
     let notice = if attachments.is_empty() {
         Notice::Words {
             from: Speaker::User { machine: from.clone() },

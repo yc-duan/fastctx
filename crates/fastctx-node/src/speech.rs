@@ -1542,6 +1542,22 @@ pub fn new_id(prefix: &str) -> NoticeId {
 
 /// A notice id that is the same whenever it is made from the same parts:
 /// the same thing told again is known for what it is.
+/// The words a device sent under its own id `id`, typed on `typed_on`, as
+/// they are named for good: by the machine's key, which a new name keeps, so
+/// words sent again after a rename are the same words (K04); by its name
+/// where no network here knows the machine.
+pub(crate) fn talk_id(node: &Node, typed_on: &fastctx_types::MachineName, id: &str) -> NoticeId {
+    let key = node.links().iter().find_map(|link| {
+        let view = link.view();
+        let directory = &view.directory;
+        directory.member(directory.canonical(typed_on)).map(|member| member.key.to_string())
+    });
+    match key {
+        Some(key) => fixed_id("talk", &[&key, id]),
+        None => fixed_id("talk", &[typed_on.as_str(), id]),
+    }
+}
+
 pub fn fixed_id(prefix: &str, parts: &[&str]) -> NoticeId {
     use sha2::{Digest as _, Sha256};
     let mut hash = Sha256::new();
