@@ -156,7 +156,7 @@ async fn run(node: std::sync::Weak<Node>, hub: HubId, wake: Arc<tokio::sync::Not
                 }
                 return;
             }
-            Ok(Some((link, network))) if link.view().asset_sync == VERSION => {
+            Ok(Some((link, network))) if link.view().asset_sync >= VERSION => {
                 pass(&node, &hub, &link, &network).await.err()
             }
             Ok(Some(_)) => None,

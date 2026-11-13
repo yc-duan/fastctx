@@ -6,6 +6,9 @@
 //! count times 2^32, and the hub's own log names its pieces under the count.
 //! So nothing a device kept of the history the restore lost shares a name
 //! with what comes after, and numbers still read in the order they were made.
+//! The count is kept in the witness outside the directory as well, and goes
+//! on from the greater of the two: a restore takes the directory's back, not
+//! the witness's, so the same backup put back twice is counted twice.
 
 use fastctx_storage::Database;
 use fastctx_storage::rusqlite::{Connection, OptionalExtension, params};
@@ -33,12 +36,13 @@ pub(crate) fn floor(count: u64) -> u64 {
 
 /// Keeps the seal `why` for a recovery, in the transaction `c` is in: the
 /// count goes up only as a recovery's seal is first kept, not for one kept
-/// already. The count after.
-pub(crate) fn seal_in(c: &Connection, why: &str, at: i64) -> fastctx_storage::Result<u64> {
+/// already, from the directory's count or `witnessed`, the witness's,
+/// whichever is more. The count after.
+pub(crate) fn seal_in(c: &Connection, why: &str, at: i64, witnessed: u64) -> fastctx_storage::Result<u64> {
     let was: Option<String> = c.prepare_cached("SELECT why FROM asset_seal WHERE id = 1")?.query_row([], |row| row.get(0)).optional()?;
     let mut count = read(c)?;
     if was.as_deref().is_none_or(|was| was == AT_START) {
-        count += 1;
+        count = count.max(witnessed) + 1;
         c.prepare_cached("INSERT OR REPLACE INTO hub_meta (name, value) VALUES (?1, ?2)")?
             .execute(params![NAME, count.to_string().into_bytes()])?;
     }

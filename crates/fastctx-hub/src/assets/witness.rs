@@ -11,7 +11,9 @@
 //! an owner library is checked against when it opens.
 //!
 //! It only moves forward. Once the hub finds it was put back, the file is
-//! left as it is, the evidence of the history that was lost.
+//! left as it is, the evidence of the history that was lost — but for the
+//! count of recoveries, which it keeps past every restore of the directory
+//! (§29, 2.2): a backup put back twice is counted twice.
 
 use fastctx_platform::Permissions;
 use serde::{Deserialize, Serialize};
@@ -25,6 +27,15 @@ use std::sync::atomic::{AtomicBool, Ordering};
 pub(crate) struct Kept {
     pub seq: u64,
     pub head: String,
+    /// How many times the hub was sealed for a recovery, as far as this
+    /// file knows: kept outside the directory, so a count a restore took
+    /// back is not counted again (§29, 2.2).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub recoveries: u64,
+}
+
+fn is_zero(count: &u64) -> bool {
+    *count == 0
 }
 
 pub(crate) fn hex(bytes: &[u8]) -> String {
@@ -168,23 +179,47 @@ impl Witness {
         (kept.seq, unhex(&kept.head).unwrap_or([0; 32]))
     }
 
-    /// Leaves the file as it is from now on.
+    /// Leaves the file as it is from now on, but for the count of
+    /// recoveries.
     pub(crate) fn freeze(&self) {
         self.frozen.store(true, Ordering::SeqCst);
     }
 
-    /// The hub recovered and put its old history aside (design §17): the
-    /// file holds the chain head as it is now, older or not.
-    pub(crate) fn reset(&self, seq: u64, head: &[u8; 32]) -> io::Result<()> {
+    /// How many recoveries the file knows of.
+    pub(crate) fn recoveries(&self) -> u64 {
+        self.kept.lock().expect("witness").recoveries
+    }
+
+    /// The hub was sealed for its `count`th recovery: on the disk before it
+    /// returns, the file frozen or not. A count the file passed is left out.
+    pub(crate) fn recovered(&self, count: u64) -> io::Result<()> {
         let mut kept = self.kept.lock().expect("witness");
-        let next = Kept { seq, head: hex(head) };
+        if count <= kept.recoveries {
+            return Ok(());
+        }
+        let next = Kept { recoveries: count, ..kept.clone() };
+        self.write(&next)?;
+        *kept = next;
+        Ok(())
+    }
+
+    /// The hub recovered and put its old history aside (design §17): the
+    /// file holds the chain head as it is now, older or not, and the count
+    /// of recoveries it knew or `recoveries`, whichever is more.
+    pub(crate) fn reset(&self, seq: u64, head: &[u8; 32], recoveries: u64) -> io::Result<()> {
+        let mut kept = self.kept.lock().expect("witness");
+        let next = Kept { seq, head: hex(head), recoveries: kept.recoveries.max(recoveries) };
+        self.write(&next)?;
+        *kept = next;
+        Ok(())
+    }
+
+    fn write(&self, next: &Kept) -> io::Result<()> {
         if let Some(parent) = self.path.parent() {
             fastctx_platform::ensure_private_dir(parent)?;
         }
-        let bytes = serde_json::to_vec_pretty(&next).map_err(io::Error::other)?;
-        fastctx_platform::publish(&self.path, &bytes, Permissions::Private)?;
-        *kept = next;
-        Ok(())
+        let bytes = serde_json::to_vec_pretty(next).map_err(io::Error::other)?;
+        fastctx_platform::publish(&self.path, &bytes, Permissions::Private)
     }
 
     /// The chain reached (`seq`, `head`): written and on the disk before it
@@ -197,12 +232,8 @@ impl Witness {
         if seq <= kept.seq {
             return Ok(());
         }
-        let next = Kept { seq, head: hex(head) };
-        if let Some(parent) = self.path.parent() {
-            fastctx_platform::ensure_private_dir(parent)?;
-        }
-        let bytes = serde_json::to_vec_pretty(&next).map_err(io::Error::other)?;
-        fastctx_platform::publish(&self.path, &bytes, Permissions::Private)?;
+        let next = Kept { seq, head: hex(head), recoveries: kept.recoveries };
+        self.write(&next)?;
         *kept = next;
         Ok(())
     }

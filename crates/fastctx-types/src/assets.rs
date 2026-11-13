@@ -13,7 +13,12 @@ use crate::{AccountName, MachineName};
 use base64::{Engine, engine::general_purpose::STANDARD};
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error};
 
-/// The protocol version a side declares as `asset_sync`.
+/// The protocol version a side speaks. A hub declares as `asset_sync` the
+/// newest it speaks; a device opens in its own once the hub's is not older,
+/// and the hub answers in it where it still speaks it, refusing it where it
+/// does not. A later version is what any new reader class, holder class,
+/// receipt or message comes with: a hub sends a device nothing its version
+/// does not know (sync v2 freeze spec, 1).
 pub const VERSION: u32 = 1;
 
 /// The most a frame's body carried on the control connection holds (§7.1);

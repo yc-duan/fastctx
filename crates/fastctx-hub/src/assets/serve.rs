@@ -12,6 +12,7 @@ use fastctx_content::v2::{
     Verifier, applied_statement, parked_statement,
 };
 use fastctx_content::ObjectRef;
+use fastctx_net::authorization::Lookup as _;
 use fastctx_net::directory_index::Indexed;
 use fastctx_net::sign::{Domain, PublicKey, Signature};
 use fastctx_storage::rusqlite::{OptionalExtension, params};
@@ -84,12 +85,22 @@ fn first_epoch_gate(assets: &Assets, directory: &Indexed<'_>, kept: &Scope, scop
         (Some(body), Some(bodies)) => bodies.is_of(directory.all, body, &member.name).unwrap_or(false),
         (Some(body), None) => directory.all.body_of(&member.name).as_ref() == Some(body),
     };
+    // The machine it was born on by any name it had; one gone from the
+    // network begins nothing, and another reader does not begin it in its
+    // stead: the account that opened it adopts it (§29, 2.3; codex-5c30d5e9
+    // B07). A conversation born assisting an account names no machine, and
+    // whichever of its readers orders it first begins it.
     let source = match library.last_epoch(scope, <fastctx_content::v2::Timeline as fastctx_content::v2::Kind>::STREAM).map_err(|error| error.to_string())? {
         Some((_, orderer)) => orderer,
-        None => match born_on.as_ref().and_then(|machine| directory.all.member(machine)) {
-            Some(member) if of_its_body(member) => *member.key.as_bytes(),
+        None => match born_on.as_ref().map(|machine| directory.all.find_member(machine)) {
+            Some(Some(member)) if of_its_body(member) => *member.key.as_bytes(),
             _ if of_body.is_some() => return Err(format!("{stream} of {scope} is begun by its body's machine, which is not here")),
-            _ => return Ok(()),
+            Some(_) => {
+                return Err(format!(
+                    "{stream} of {scope} is begun by the machine it was born on, which is not here: the account that opened it adopts it"
+                ));
+            }
+            None => return Ok(()),
         },
     };
     // The device the frame says made it, whose signature `take` checks:
@@ -181,7 +192,9 @@ fn gated(assets: &Assets, directory: &Indexed<'_>, machine: &MachineName, key: &
 
 /// Whether an account that opened `scope` is logged in on `machine`: such
 /// an account may give what it opened to a machine of its own, the device it
-/// lived on lost (design §28.10).
+/// lived on lost (design §28.10). The account as it was opened, the
+/// descriptor's `born` says: one made again under its name since, though a
+/// member of the body now, did not open it.
 fn opened_here(directory: &Indexed<'_>, machine: &MachineName, scope: &Scope) -> bool {
     use fastctx_types::assets::Readers;
     let openers: Vec<&fastctx_types::AccountName> = match &scope.descriptor.readers {
@@ -191,7 +204,11 @@ fn opened_here(directory: &Indexed<'_>, machine: &MachineName, scope: &Scope) ->
         Readers::Working { account, .. } => vec![account],
         Readers::Project { .. } | Readers::Hub => Vec::new(),
     };
-    openers.into_iter().any(|account| directory.logged_in(machine, account))
+    let as_born = |account: &fastctx_types::AccountName| {
+        let opened = directory.account(account).map(|found| found.opened.as_millisecond().to_string());
+        opened.is_some_and(|opened| scope.descriptor.born.get(&format!("account:{account}")) == Some(&opened))
+    };
+    openers.into_iter().any(|account| directory.logged_in(machine, account) && as_born(account))
 }
 
 /// The scope `key` and `stream` of it, through the read gate and the

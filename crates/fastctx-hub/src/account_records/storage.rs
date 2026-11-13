@@ -143,12 +143,15 @@ impl Records {
             .clone()
     }
 
-    /// A deleted account's files stay archived under its former incarnation.
+    /// A deleted account's files stay archived under its former incarnation;
+    /// one a body's conversation keeps its records in stays loaded, as the
+    /// hub loads it as it starts (§29, 2.6), so its records are written on
+    /// where they are.
     pub fn settle(&self, directory: &fastctx_net::directory::Directory) {
-        self.accounts
-            .lock()
-            .expect("never poisoned")
-            .retain(|(name, opened), _| directory.account(name).is_some_and(|account| account.opened == *opened));
+        let kept = self.owners.lock().expect("never poisoned").body_openers();
+        self.accounts.lock().expect("never poisoned").retain(|(name, opened), _| {
+            directory.account(name).is_some_and(|account| account.opened == *opened) || kept.contains(&(name.clone(), *opened))
+        });
     }
 
     pub fn health(&self) -> serde_json::Value {

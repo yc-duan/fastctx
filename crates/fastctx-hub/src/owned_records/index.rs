@@ -26,6 +26,12 @@ impl Index {
         self.bodies = Some(bodies);
     }
 
+    /// The accounts, as opened, that conversations described into a body
+    /// keep their records with, removed or not (§29, 2.6).
+    pub(crate) fn body_openers(&self) -> std::collections::BTreeSet<(fastctx_types::AccountName, jiff::Timestamp)> {
+        self.bodies.as_ref().map(|bodies| bodies.conversation_openers()).unwrap_or_default()
+    }
+
     /// The body the conversation `identity` was described into.
     fn body(&self, identity: &Identity) -> Option<String> {
         self.bodies.as_ref()?.conversation(identity)

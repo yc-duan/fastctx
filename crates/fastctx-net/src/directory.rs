@@ -721,8 +721,8 @@ pub struct View {
     /// The hub keeps each account's layer (`Change::Layer`).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub layers: bool,
-    /// The second version's asset sync this hub speaks
-    /// (`fastctx_types::assets::VERSION`); zero where it speaks none.
+    /// The newest version of the second version's asset sync this hub
+    /// speaks (`fastctx_types::assets::VERSION`); zero where it speaks none.
     #[serde(default, skip_serializing_if = "is_none_u32")]
     pub asset_sync: u32,
     pub hub: HubId,

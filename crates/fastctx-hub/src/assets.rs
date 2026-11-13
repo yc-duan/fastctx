@@ -185,7 +185,10 @@ impl Assets {
         let keys = Arc::new(keys::Keys::open(&dir.join("keys"))?);
         let witness = Arc::new(Witness::open(dir, id)?);
         let incarnation = incarnation(&control)?;
-        let restored = restores::count(&control)?;
+        // The count the directory kept or the witness did, whichever is
+        // more, the witness brought up to it (§29, 2.2).
+        let restored = restores::count(&control)?.max(witness.recoveries());
+        witness.recovered(restored)?;
         let owners = owners::Owners::new(dir.join("assets"), incarnation);
         let assets = Self {
             id: id.to_string(),
@@ -900,9 +903,10 @@ impl Assets {
         let mut pause = std::time::Duration::from_secs(1);
         // The count of recoveries goes up as this one's seal is first kept
         // (§29, 2.2).
+        let witnessed = self.witness.recoveries();
         let keep = move |c: &fastctx_storage::rusqlite::Connection| {
             if replaces {
-                return Ok(Some(restores::seal_in(c, &kept, at)?));
+                return Ok(Some(restores::seal_in(c, &kept, at, witnessed)?));
             }
             Ok(None)
         };
@@ -911,6 +915,12 @@ impl Assets {
                 Ok(count) => {
                     if let Some(count) = count {
                         self.restores.store(count, std::sync::atomic::Ordering::SeqCst);
+                        // Kept past the directory: a failure here leaves the
+                        // witness behind, brought up again as the hub opens
+                        // or reopens, while it is sealed and numbers nothing.
+                        if let Err(error) = self.witness.recovered(count) {
+                            eprintln!("keeping the count of recoveries in the hub's witness: {error}");
+                        }
                     }
                     break;
                 }
@@ -960,10 +970,10 @@ impl Assets {
     /// Keeps the seal `why` for a recovery, the count of recoveries going up
     /// as it is first kept.
     fn keep_seal(&self, why: &str) -> io::Result<()> {
-        let (kept, at) = (why.to_string(), jiff::Timestamp::now().as_millisecond());
-        let count = self.control.write_now(512, move |c| restores::seal_in(c, &kept, at)).map_err(io::Error::other)?;
+        let (kept, at, witnessed) = (why.to_string(), jiff::Timestamp::now().as_millisecond(), self.witness.recoveries());
+        let count = self.control.write_now(512, move |c| restores::seal_in(c, &kept, at, witnessed)).map_err(io::Error::other)?;
         self.restores.store(count, std::sync::atomic::Ordering::SeqCst);
-        Ok(())
+        self.witness.recovered(count)
     }
 
     /// Seals every asset as the hub starts, its setting says so (design §17

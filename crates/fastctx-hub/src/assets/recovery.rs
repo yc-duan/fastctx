@@ -319,7 +319,8 @@ fn reopen_in(dir: &Path, store: &Store, assets: &Assets) -> anyhow::Result<usize
         c.prepare_cached("DELETE FROM asset_seal")?.execute([])?;
         chain::append(c, "branch-closed", &digest)
     })?;
-    assets.witness.reset(seq, &head)?;
+    let recoveries = super::restores::count(&control)?;
+    assets.witness.reset(seq, &head, recoveries)?;
     match fastctx_platform::disk::remove_file(dir.join(BACKUP_MARKER)) {
         Ok(()) => {}
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
