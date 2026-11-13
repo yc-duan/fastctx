@@ -43,7 +43,16 @@ impl Verifier for DeviceKeys {
 /// is ordered, the machine it was born on. Another reader of the scope
 /// cannot take a new stream first. Other scopes are not gated here.
 fn first_epoch_gate(assets: &Assets, directory: &Indexed<'_>, kept: &Scope, scope: &str, stream: &str, device: &[u8; 32]) -> Result<(), String> {
-    let wire::Readers::Conversation { born_on, .. } = &kept.descriptor.readers else { return Ok(()) };
+    // A conversation's scope, or a body's — a conversation opened on a
+    // machine shared whole, or that machine's log — begun on its machine.
+    let born_on = match &kept.descriptor.readers {
+        wire::Readers::Conversation { born_on, .. } => born_on.clone(),
+        wire::Readers::Body { body, .. } => match &kept.bodies {
+            Some(bodies) => bodies.machine(body).map_err(|error| error.to_string())?,
+            None => None,
+        },
+        _ => return Ok(()),
+    };
     let library = scopes::library(assets, kept)?;
     if library.last_epoch(scope, stream).map_err(|error| error.to_string())?.is_some() {
         return Ok(());

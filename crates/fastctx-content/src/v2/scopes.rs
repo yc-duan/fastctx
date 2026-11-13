@@ -47,6 +47,13 @@ pub(super) fn open_holding(db: &Connection, scope: i64, acl_revision: i64) -> fa
 impl Library {
     /// The current holding period of `scope` here, if it is held: what a
     /// write made now carries (`Commit::holding`).
+    /// Whether `scope` is known here at all: begun, described, held or let
+    /// go.
+    pub fn knows(&self, scope: &str) -> Result<bool> {
+        let scope = scope.to_string();
+        Ok(self.database().read_now(move |db| Ok(held(db, &scope)?.is_some()))?)
+    }
+
     pub fn holding(&self, scope: &str) -> Result<Option<i64>> {
         let scope = scope.to_string();
         Ok(self.database().read_now(move |db| Ok(held(db, &scope)?.and_then(|(_, _, holding)| holding)))?)

@@ -160,6 +160,18 @@ impl Bodies {
             .map_err(io::Error::other)
     }
 
+    /// The machine `body` is, as kept when its first scope was described.
+    pub(crate) fn machine(&self, body: &str) -> io::Result<Option<MachineName>> {
+        let id = body.to_string();
+        let machine: Option<String> = self
+            .control
+            .read_now(move |c| {
+                Ok(c.prepare_cached("SELECT machine FROM asset_bodies WHERE id = ?1")?.query_row([&id], |row| row.get(0)).optional()?)
+            })
+            .map_err(io::Error::other)?;
+        Ok(machine.and_then(|machine| MachineName::try_from(machine).ok()))
+    }
+
     /// The members of `body` now: as the directory has them while its
     /// machine is in it, else as they were frozen; an account deleted or
     /// made again counts for nothing.

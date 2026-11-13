@@ -101,10 +101,42 @@ pub(super) fn placed(node: &Node, about: &About) -> Result<Option<Placed>, Failu
     // conversation's timeline goes on there once its ordering is handed
     // over (design §8, plan 3-4), never in a scope of its own here (BB08).
     let born_on = crate::record_ownership::origin(node, about);
-    let readers = Readers::Conversation { openers: vec![account.account.clone()], born_on };
-    let scope = format!("{}{}", readers.key_prefix(account.hub.as_str()), about.id);
+    let (readers, scope) = scope_for(node, &account.hub, &account.account, born_on, &about.id)?;
     let classes = fastctx_types::assets::conversation_classes();
     Ok(Some(Placed { scope, hub: account.hub.clone(), proposal: Proposal { hub: account.hub.to_string(), readers, classes }, network }))
+}
+
+/// The readers and key of the scope of the conversation `id` of `account`
+/// born on `born_on`: one opened on a machine shared whole is the body's —
+/// read by its members, as they are or were frozen, and by the account that
+/// opened it (§6.2) — any other the conversation's. One that has a scope
+/// here already keeps it, however the machine is shared now.
+fn scope_for(
+    node: &Node,
+    hub: &fastctx_types::access::HubId,
+    account: &fastctx_types::AccountName,
+    born_on: Option<fastctx_types::MachineName>,
+    id: &ResidentId,
+) -> Result<(Readers, String), Failure> {
+    let conversation = Readers::Conversation { openers: vec![account.clone()], born_on: born_on.clone() };
+    let conversation_key = format!("{}{}", conversation.key_prefix(hub.as_str()), id);
+    let (Some(machine), Some(link), Some(assets)) = (born_on, node.link_of(hub), node.assets.as_ref()) else {
+        return Ok((conversation, conversation_key));
+    };
+    let (body, shared) = {
+        let view = link.view();
+        let directory = &view.directory;
+        let machine = directory.canonical(&machine);
+        (directory.body_of(machine), directory.shares.iter().any(|share| &share.machine == machine && share.active()))
+    };
+    let Some(body) = body else { return Ok((conversation, conversation_key)) };
+    let readers = Readers::Body { body, opener: account.clone() };
+    let body_key = format!("{}{}", readers.key_prefix(hub.as_str()), id);
+    let knows = |key: &str| assets.library.knows(key).map_err(|error| Failure::new(error.to_string()));
+    if knows(&body_key)? || (shared && !knows(&conversation_key)?) {
+        return Ok((readers, body_key));
+    }
+    Ok((conversation, conversation_key))
 }
 
 /// What the timeline here holds now, item by item.

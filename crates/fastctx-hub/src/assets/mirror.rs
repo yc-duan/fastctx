@@ -134,9 +134,19 @@ fn conversation_scope(
         .map_err(|error| error.to_string())?;
     for key in keys {
         let Some(scope) = scopes::scope(assets, &key)? else { continue };
-        let ours = matches!(&scope.owner, super::owners::Owner::Account(name, at) if name == account.as_str() && *at == opened.as_millisecond());
-        let opener = matches!(&scope.descriptor.readers, Readers::Conversation { openers, .. } if openers.contains(account));
-        if ours && opener {
+        // The account's own, or a body's it opened on a machine shared whole
+        // (§6.2), the account then as it was opened when described.
+        let ours = match (&scope.owner, &scope.descriptor.readers) {
+            (super::owners::Owner::Account(name, at), Readers::Conversation { openers, .. }) => {
+                name == account.as_str() && *at == opened.as_millisecond() && openers.contains(account)
+            }
+            (super::owners::Owner::Body(_), Readers::Body { opener, .. }) => {
+                opener == account
+                    && scope.descriptor.born.get(&format!("account:{account}")) == Some(&opened.as_millisecond().to_string())
+            }
+            _ => false,
+        };
+        if ours {
             return Ok(Some(key));
         }
     }

@@ -122,7 +122,7 @@ fn holdings(library: &Library) -> Result<u64, String> {
     use std::hash::{Hash as _, Hasher as _};
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     for (scope, _, holding) in library.live_scopes().map_err(|error| error.to_string())? {
-        if scope.starts_with("c/") {
+        if scope.starts_with("c/") || scope.starts_with("b/") {
             (scope, holding).hash(&mut hasher);
         }
     }
