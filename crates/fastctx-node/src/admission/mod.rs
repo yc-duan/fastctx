@@ -127,6 +127,13 @@ fn admit_inner(
         return Err(refuse("the attachment names a different holding machine".into()));
     }
     let view = crate::authorization::current_view(link)?;
+    // Its hub's assets sealed, nothing of an account's goes between machines
+    // until they are opened: not over a direct link either (design §28.41).
+    if let Some(why) = view.assets_sealed.as_ref()
+        && !view.same(&caller.machine, &here)
+    {
+        return Err(refuse(format!("{}{why}", fastctx_types::assets::SEALED_RELAY)));
+    }
     if let RemoteCall::ConversationDebt { requester, .. } | RemoteCall::WaitingJobs { owner: requester } = call
         && !view.same(&requester.machine, &caller.machine)
     {

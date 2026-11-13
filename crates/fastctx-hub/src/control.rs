@@ -1366,6 +1366,14 @@ fn canonical_address(hub: &Hub, address: fastctx_types::Address) -> fastctx_type
 /// The standing a call or a letter names, if the directory allows it: of
 /// the machines as they are named now.
 fn standing(hub: &Hub, store: &crate::store::Snapshot, message: &Envelope) -> Result<Standing, String> {
+    // Its assets sealed, the hub gives no account's content by any way
+    // until they are opened (design §17, §28.41): a share or a login taken
+    // back after the copy it was put back from is in its directory again,
+    // so it carries no new call or letter between machines meanwhile. One
+    // already under way goes on; an answer to work it took goes back.
+    if let Some(why) = hub.assets.sealed() {
+        return Err(format!("{}{why}", fastctx_types::assets::SEALED_RELAY));
+    }
     let (account, purpose) = message.standing()?;
     let directory = store.indexed();
     let from = directory.member(&message.from).ok_or("the sender is not a member of the hub")?;

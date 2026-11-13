@@ -1038,6 +1038,15 @@ async fn serving(
         workbench: Mutex::new("hub workbench", Rank::HUB_WORKBENCH, HashMap::new()),
     });
     let _ = hub.this.set(Arc::downgrade(&hub));
+    // Sealed while it runs, every machine is told at once (design §28.41).
+    let sealing = Arc::downgrade(&hub);
+    let _ = hub.assets.on_seal.set(Box::new(move || {
+        let Some(hub) = sealing.upgrade() else { return };
+        fastctx_platform::task::spawn_blocking(move || {
+            let machines = hub.sessions().keys().cloned().collect();
+            hub.views_changed_for(&machines);
+        });
+    }));
     hub.post.attach(Arc::downgrade(&hub));
     hub.assets.bodies.serve(&hub);
     let _watchdog = watchdog::Watchdog::start(&hub, watched.0, watched.1)?;

@@ -152,6 +152,10 @@ pub(crate) struct Assets {
     /// Set as the hub seals, for work already handed to the database's
     /// writer to see when it runs (AD02).
     sealing: Arc<std::sync::atomic::AtomicBool>,
+    /// Told as the hub seals for a recovery while it runs: every session is
+    /// given a view that says so, and its machines take no call from one
+    /// another meanwhile (design §28.41). Set once, as the hub starts.
+    pub(crate) on_seal: std::sync::OnceLock<Box<dyn Fn() + Send + Sync>>,
     /// The scopes of each owner library changed since the last checkpoint.
     changed: Mutex<BTreeMap<Owner, BTreeSet<String>>>,
     /// Scopes described since the hub's records were last written into
@@ -212,6 +216,7 @@ impl Assets {
             control: control.clone(),
             sealed: Mutex::new(None),
             sealing: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            on_seal: std::sync::OnceLock::new(),
             changed: Mutex::new(BTreeMap::new()),
             described: Mutex::new(Vec::new()),
             turn: Mutex::new(None),
@@ -951,6 +956,11 @@ impl Assets {
         // longer opens it, `fastctx hub reopen` does.
         if replaces {
             *sealed = Some(why.to_string());
+        }
+        // Told with the seal let go: the views it makes read it.
+        drop(sealed);
+        if replaces && let Some(told) = self.on_seal.get() {
+            told();
         }
     }
 

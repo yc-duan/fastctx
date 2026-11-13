@@ -32,6 +32,10 @@ pub const APART_FRAME_BYTES: u64 = 2 * 1024 * 1024;
 /// The bytes of each chunk an object travels in but its last (§7.3).
 pub const CHUNK_BYTES: u64 = 1024 * 1024;
 
+/// How a call or a letter between machines is refused while the hub's
+/// assets are sealed, the seal's reason after it (design §28.41).
+pub const SEALED_RELAY: &str = "the hub's assets are sealed, so nothing goes between machines until they are opened: ";
+
 /// Bytes, as base64 in JSON.
 #[derive(Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Bytes(pub Vec<u8>);
