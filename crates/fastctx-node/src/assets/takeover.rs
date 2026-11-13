@@ -159,9 +159,11 @@ pub(crate) fn adopt(node: &Arc<Node>, resident: &fastctx_types::ResidentId) -> R
     };
     assets.adopting.lock().expect("adopting").insert(scope.clone());
     assets.unreleased.lock().expect("unreleased").retain(|(of, _)| *of != scope);
-    // Every stream of a conversation's scope: its timeline and its metadata.
+    // Every stream of a conversation's scope: its timeline, its metadata
+    // and the user's words.
     want(node, &hub, &scope, <fastctx_content::v2::Timeline as fastctx_content::v2::Kind>::STREAM);
     want(node, &hub, &scope, <fastctx_content::v2::ConversationMeta as fastctx_content::v2::Kind>::STREAM);
+    want(node, &hub, &scope, <fastctx_content::v2::ConversationWords as fastctx_content::v2::Kind>::STREAM);
     Ok(())
 }
 

@@ -15,6 +15,7 @@ mod identity;
 mod later;
 mod local;
 mod meta;
+pub(crate) mod words;
 pub(crate) use assets::scope_of;
 pub(crate) use identity::likeness;
 mod names;
@@ -228,9 +229,9 @@ pub(crate) fn wanted(node: &Arc<crate::Node>, resident: &ResidentId) {
     wanted_content(node, resident);
 }
 
-/// Asks for a conversation's metadata in the asset library to be made
-/// again, its directory having changed: archived, back, or moved to another
-/// project. Its timeline's job makes it.
+/// Asks for a conversation's metadata and where the user's words to it stand
+/// in the asset library to be made again, its directory or its inbox having
+/// changed. Its timeline's job makes them.
 pub(crate) fn described(node: &crate::Node, resident: &ResidentId) {
     tail::wanted(node, resident);
 }

@@ -37,6 +37,7 @@ use crate::speech::{Owed, tell};
 pub(crate) mod answers;
 pub(crate) mod outgoing;
 pub(crate) mod presence;
+pub(crate) mod standing;
 pub(crate) mod storage;
 use storage::{Receipt, change, read_rows};
 

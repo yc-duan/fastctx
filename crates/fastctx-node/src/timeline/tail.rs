@@ -836,6 +836,12 @@ async fn run(node: &Arc<Node>, resident: &ResidentId) -> Outcome {
         Ok(written) => node.log.line(format_args!("{resident}'s metadata: {written} written")),
         Err(error) => node.log.line(format_args!("{resident}'s metadata: {error}")),
     }
+    // Where the user's words to it stand, followed from its inbox (§28.14).
+    match super::words::produce(node, resident, &PRODUCING).await {
+        Ok(0) => {}
+        Ok(written) => node.log.line(format_args!("{resident}'s words: {written} written")),
+        Err(error) => node.log.line(format_args!("{resident}'s words: {error}")),
+    }
     BROUGHT.lock().expect("brought timelines").insert(resident.clone(), Instant::now());
     match produced {
         Ok(produced) if produced.handing => Outcome::Again { after: HANDING_AGAIN },

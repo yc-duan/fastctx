@@ -42,7 +42,8 @@ impl Verifier for DeviceKeys {
 pub(crate) fn kinds() -> Arc<fastctx_content::v2::Kinds> {
     let kinds = fastctx_content::v2::Kinds::new()
         .register::<fastctx_content::v2::Timeline>()
-        .register::<fastctx_content::v2::ConversationMeta>();
+        .register::<fastctx_content::v2::ConversationMeta>()
+        .register::<fastctx_content::v2::ConversationWords>();
     #[cfg(test)]
     let kinds = kinds.register::<super::drill_kinds::Plain>();
     Arc::new(kinds)
@@ -897,7 +898,7 @@ fn covering(assets: &Assets, scope: &Scope, head: &Head) -> Result<Option<wire::
 
 #[cfg(test)]
 mod tests {
-    use fastctx_content::v2::{ConversationMeta, Kind, Timeline};
+    use fastctx_content::v2::{ConversationMeta, ConversationWords, Kind, Timeline};
 
     /// A kind's number is its place in the registry, which only grows.
     #[test]
@@ -905,5 +906,6 @@ mod tests {
         let place = |id: &str| fastctx_sync::registry::REGISTRY.entries().iter().position(|kind| kind.id == id);
         assert_eq!(place("conversation.timeline"), Some(usize::from(Timeline::KIND)));
         assert_eq!(place("conversation.metadata"), Some(usize::from(ConversationMeta::KIND)));
+        assert_eq!(place("conversation.words"), Some(usize::from(ConversationWords::KIND)));
     }
 }

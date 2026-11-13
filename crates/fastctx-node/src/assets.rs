@@ -164,7 +164,7 @@ impl Assets {
         // frames, out of the index, until a release that knows them, which
         // takes them in now (§2.3).
         let kinds: Arc<dyn fastctx_content::v2::Authorizer> =
-            Arc::new(fastctx_content::v2::Kinds::new().register::<fastctx_content::v2::Timeline>().register::<fastctx_content::v2::ConversationMeta>());
+            Arc::new(fastctx_content::v2::Kinds::new().register::<fastctx_content::v2::Timeline>().register::<fastctx_content::v2::ConversationMeta>().register::<fastctx_content::v2::ConversationWords>());
         library.know(kinds.clone());
         library.reconsider(kinds, true).map_err(|error| io::Error::other(error.to_string()))?;
         let path = dir.join("hubs.json");

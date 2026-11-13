@@ -925,4 +925,21 @@ pub(super) const KINDS: &[Registration] = &[
         Confirmed,
         GenericTombstone
     ),
+    kind!(
+        "conversation.words",
+        Asset,
+        Conversation,
+        SourceDevice,
+        SingleWriter,
+        UntilDeleted,
+        Complete,
+        "fastctx-node::speech",
+        Assets,
+        Json,
+        true,
+        false,
+        false,
+        Confirmed,
+        GenericTombstone
+    ),
 ];

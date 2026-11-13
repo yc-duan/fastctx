@@ -266,6 +266,12 @@ async fn receive_here_locked(
         }
     }
     let pending = Pending { delivery, readers, state: PendingState::Waiting, working, session: None, since: None };
+    // The user's words are kept in the asset library first, with their
+    // operation (design §28.14); the inbox delivers them.
+    let words = crate::timeline::words::is_words(&pending.delivery);
+    if words {
+        crate::timeline::words::said(node, to, &pending.delivery).await;
+    }
     let kept = {
         let (directory, pending) = (directory.clone(), pending.clone());
         fastctx_platform::task::spawn_blocking(move || crate::inbox::keep(&directory, &pending))
@@ -276,6 +282,9 @@ async fn receive_here_locked(
     if kept {
         node.idle_probes.touched(to);
         crate::goals::engine::input_changed(node, to);
+        if words {
+            crate::timeline::described(node, to);
+        }
     }
     if removed {
         let why = if deleting {

@@ -598,6 +598,7 @@ pub async fn unresolved(
         crate::composer::uncertain(node, id, &pending.delivery.id, why).await.map_err(std::io::Error::other)?;
         let kept = pending.clone();
         crate::delivery::local(directory, move |directory| crate::inbox::retain_uncertain(directory, &kept)).await?;
+        crate::timeline::described(node, id);
     }
     // The handover retains the exact payload and the uncertainty even when
     // no resident is owed an answer, as with a delivery to a user's session.
