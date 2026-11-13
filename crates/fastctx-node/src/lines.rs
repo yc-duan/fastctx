@@ -108,9 +108,11 @@ pub(crate) async fn open(
         // A job's output the copy here has whole, or what came of it while
         // its machine is away, is read here (plan 3-5); as history read it
         // (`Immutable`), only whole.
+        // History's notes on it are on its machine alone: read there
+        // (codex-847f57fd #6).
         let job = match &decoding {
             Decoding::Output { job } => Some((job, false)),
-            Decoding::Immutable { decoding: inner, .. } => match inner.as_ref() {
+            Decoding::Immutable { decoding: inner, annotation, .. } if annotation.as_deref().is_none_or(str::is_empty) => match inner.as_ref() {
                 Decoding::Output { job } => Some((job, true)),
                 _ => None,
             },

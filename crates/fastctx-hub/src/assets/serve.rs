@@ -121,8 +121,7 @@ fn first_epoch_gate(assets: &Assets, directory: &Indexed<'_>, kept: &Scope, scop
 /// Whether `device` may begin `stream`, a sentinel's wakes, of the
 /// conversation's scope `scope`: one of the conversation's sentinels as the
 /// hub keeps them (the `sentinels` stream it orders into the scope) lives
-/// on it. One whose sentinels all moved before it began its stream begins
-/// none; its wakes stay with it.
+/// on it, or lived on it before it moved on (`sentinel_homes`).
 fn sentinel_runs_gate(assets: &Assets, directory: &Indexed<'_>, kept: &Scope, scope: &str, stream: &str, device: &[u8; 32]) -> Result<(), String> {
     let hex: String = device[..8].iter().map(|byte| format!("{byte:02x}")).collect();
     if stream.strip_prefix("sentinel-runs/") != Some(hex.as_str()) {
@@ -150,7 +149,14 @@ fn sentinel_runs_gate(assets: &Assets, directory: &Indexed<'_>, kept: &Scope, sc
             _ => break,
         }
     }
-    Err(format!("{stream} of {scope} is begun by a machine one of the conversation's sentinels lives on"))
+    // Or lived on: its home before it moved on (freeze spec §六, now or ever).
+    for home in super::sentinel_homes::ever(assets, scope)? {
+        let found = fastctx_types::MachineName::try_from(home).ok().and_then(|home| directory.all.find_member(&home).map(|member| *member.key.as_bytes()));
+        if found.is_some_and(|key| key == *device) {
+            return Ok(());
+        }
+    }
+    Err(format!("{stream} of {scope} is begun by a machine one of the conversation's sentinels lives or lived on"))
 }
 
 /// A sentinel's account record as the scope holds it: its body, or the one

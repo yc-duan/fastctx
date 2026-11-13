@@ -29,7 +29,7 @@ pub(crate) async fn answer(node: &Arc<Node>, acting: &Acting, request: &HistoryC
 fn answered(node: &Node, acting: &Acting, request: &HistoryCall) -> Option<HistoryReply> {
     let Scope::Conversation { resident, machine } = request.scope() else { return None };
     let library = &node.assets.as_ref()?.library;
-    let scope = copy_of(node, resident, Some(machine), None)?;
+    let scope = copy_of(node, resident, Some(machine), None, None)?;
     if !crate::timeline::copy::hub_away(node, &scope) {
         return None;
     }

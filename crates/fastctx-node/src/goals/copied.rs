@@ -59,7 +59,7 @@ fn answered(
         (None, None) => None,
     };
     let machine = &written.name;
-    let scope = copy_of(node, resident, Some(machine), hub.as_deref())?;
+    let scope = copy_of(node, resident, Some(machine), hub.as_deref(), account.map(|account| &account.account))?;
     let machine_reached = node.is_me(machine) || !crate::timeline::copy::away(node, machine);
     if machine_reached && !crate::timeline::copy::hub_away(node, &scope) {
         return None;
@@ -114,7 +114,15 @@ fn answered(
 /// the hub described it; none where it names none, or several.
 fn opener(scope: &fastctx_content::v2::HeldScope) -> Option<HubAccount> {
     let descriptor: fastctx_types::assets::Descriptor = serde_json::from_slice(scope.description.as_deref()?).ok()?;
-    let fastctx_types::assets::Readers::Conversation { openers, .. } = &descriptor.readers else { return None };
-    let [opener] = openers.as_slice() else { return None };
+    let opener = match &descriptor.readers {
+        fastctx_types::assets::Readers::Conversation { openers, .. } => match openers.as_slice() {
+            [opener] => opener,
+            _ => return None,
+        },
+        // A body's conversation, its opener as the body was kept
+        // (codex-847f57fd #15).
+        fastctx_types::assets::Readers::Body { opener, .. } => opener,
+        _ => return None,
+    };
     Some(HubAccount { hub: scope.hub.clone()?.try_into().ok()?, account: opener.clone() })
 }

@@ -144,8 +144,10 @@ fn look(node: &Arc<Node>, hub: &HubId, home: Option<&AccountName>, waits: bool, 
 
 /// Lets go of the deeds of conversations deleted here, as the book let go
 /// of their rows and kept their keys (`activity_book::sealing`): in every
-/// records scope of `hub` this machine wrote one into, by the keys' number
-/// from where the last look stood.
+/// records scope of `hub` this machine wrote one into, each scope from the
+/// key where its own look last stood, once it is pulled whole — a scope
+/// held again later, its earlier items pulled back, has them let go of too
+/// (codex-847f57fd #4).
 fn forgotten(node: &Arc<Node>, hub: &HubId, stream: &str) -> Result<(), String> {
     let Some(assets) = node.assets.as_ref() else { return Ok(()) };
     let library = &assets.library;
@@ -154,30 +156,31 @@ fn forgotten(node: &Arc<Node>, hub: &HubId, stream: &str) -> Result<(), String> 
     }
     let name = format!("activity/{hub}");
     let mut at = standing(library, &name)?;
-    let after = at["forgotten"].as_i64().unwrap_or(0);
-    let keys: Vec<(i64, String)> = node
-        .book_database
-        .read_now(move |db| {
-            Ok(db
-                .prepare_cached("SELECT id, deed FROM book_forgotten WHERE id > ?1 ORDER BY id LIMIT 256")?
-                .query_map([after], |row| Ok((row.get(0)?, row.get(1)?)))?
-                .collect::<Result<Vec<_>, _>>()?)
-        })
-        .map_err(|error| error.to_string())?;
-    let Some((last, _)) = keys.last().cloned() else { return Ok(()) };
     let error = |error: fastctx_content::Error| error.to_string();
     let device = assets.device();
     let accounts = format!("a/{hub}/");
     for scope in library.held_scopes().map_err(error)? {
         let account = scope.key.starts_with(&accounts) && scope.key.rsplit('/').next().is_some_and(|last| last.starts_with("records-"));
         let body = scope.key.starts_with("b/") && scope.key.ends_with("/records") && scope.hub.as_deref() == Some(hub.as_str());
-        if !account && !body {
+        if !(account || body) || scope.pulled != Some(scope.holding) {
             continue;
         }
-        let Some(holding) = library.holding(&scope.key).map_err(error)? else { continue };
         if library.orderer(&scope.key, stream).map_err(error)?.is_some_and(|orderer| orderer != device) {
             continue;
         }
+        // Where this scope's look stood, in this holding period.
+        let kept = &at["forgotten"][&scope.key];
+        let after = if kept["holding"].as_i64() == Some(scope.holding) { kept["after"].as_i64().unwrap_or(0) } else { 0 };
+        let keys: Vec<(i64, String)> = node
+            .book_database
+            .read_now(move |db| {
+                Ok(db
+                    .prepare_cached("SELECT id, deed FROM book_forgotten WHERE id > ?1 ORDER BY id LIMIT 256")?
+                    .query_map([after], |row| Ok((row.get(0)?, row.get(1)?)))?
+                    .collect::<Result<Vec<_>, _>>()?)
+            })
+            .map_err(|error| error.to_string())?;
+        let Some((last, _)) = keys.last().cloned() else { continue };
         let mut writes = Vec::new();
         for (_, deed) in &keys {
             let item = fastctx_content::v2::item_of(deed);
@@ -188,12 +191,12 @@ fn forgotten(node: &Arc<Node>, hub: &HubId, stream: &str) -> Result<(), String> 
         if !writes.is_empty() {
             Writer::<AccountActivity>::new(library, &scope.key, stream)
                 .map_err(error)?
-                .in_holding(holding)
+                .in_holding(scope.holding)
                 .write_all(writes, Vec::new(), false, assets.signer())
                 .map_err(error)?;
         }
+        at["forgotten"][&scope.key] = serde_json::json!({ "holding": scope.holding, "after": last });
     }
-    at["forgotten"] = serde_json::json!(last);
     library.keep_checkpoint(&name, serde_json::to_vec(&at).map_err(|error| error.to_string())?).map_err(error)
 }
 

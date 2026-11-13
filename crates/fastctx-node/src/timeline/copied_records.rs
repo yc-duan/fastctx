@@ -27,7 +27,9 @@ pub(crate) fn plan(
     account: &fastctx_types::AccountName,
 ) -> Option<Page> {
     let library = &node.assets.as_ref()?.library;
-    let scope = copy_of(node, resident, machine, Some(hub))?;
+    // The copy the account asking reads, not another's logged in here
+    // (codex-847f57fd #3).
+    let scope = copy_of(node, resident, machine, Some(hub), Some(account))?;
     let record = record_in(library, &scope.key, ConversationPlan::STREAM, "plan")?
         .filter(|record| record.metadata.kind == KIND && record.metadata.key == resident.as_str());
     let Some(mut record) = record else { return Some(Page { owner: resident.clone(), metadata: None, body: None }) };
@@ -52,13 +54,19 @@ pub(crate) fn plan(
 }
 
 /// The copy of the conversation `resident` — the one on `machine` of the
-/// hub whose id is `hub`, where given — a reader here reads: none when no
-/// such copy is here, or two are.
-pub(crate) fn copy_of(node: &Node, resident: &ResidentId, machine: Option<&MachineName>, hub: Option<&str>) -> Option<HeldScope> {
+/// hub whose id is `hub`, where given — a reader here reads, `reader` where
+/// given: none when no such copy is here, or two are.
+pub(crate) fn copy_of(
+    node: &Node,
+    resident: &ResidentId,
+    machine: Option<&MachineName>,
+    hub: Option<&str>,
+    reader: Option<&fastctx_types::AccountName>,
+) -> Option<HeldScope> {
     let library = &node.assets.as_ref()?.library;
     let mut found = None;
     for scope in library.scopes_ending(&format!("/{resident}")).ok()? {
-        if !super::copy::read_here(node, &scope) {
+        if !super::copy::read_here_as(node, &scope, reader) {
             continue;
         }
         if hub.is_some_and(|hub| scope.hub.as_deref() != Some(hub)) {

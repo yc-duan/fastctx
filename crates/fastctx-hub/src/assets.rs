@@ -21,6 +21,7 @@ pub mod recovery;
 pub(crate) mod objects;
 mod owners;
 mod scopes;
+mod sentinel_homes;
 pub(crate) mod serve;
 pub(crate) mod standing;
 pub(crate) mod witness;
@@ -47,7 +48,7 @@ const SEALED_AT_START: &str = restores::AT_START;
 
 /// The asset side's tables in the hub's control database.
 pub(crate) fn schema() -> String {
-    format!("{}{}{}{}{}", chain::SCHEMA, scopes::SCHEMA, bodies::SCHEMA, standing::SCHEMA, ledger_views::SCHEMA)
+    format!("{}{}{}{}{}{}", chain::SCHEMA, scopes::SCHEMA, bodies::SCHEMA, standing::SCHEMA, ledger_views::SCHEMA, sentinel_homes::SCHEMA)
 }
 
 /// Brings the asset side's tables in the control database up to this

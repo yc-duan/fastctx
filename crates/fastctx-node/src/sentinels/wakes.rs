@@ -115,17 +115,20 @@ fn generation_wakes(node: &Arc<Node>, directory: &Path, most: usize) -> Result<u
     }) else {
         return Ok(0);
     };
-    let (hub_id, key) = {
+    let (hub_id, key, now_named) = {
         let view = link.view();
         let Some(me) = view.me() else { return Ok(0) };
         let key: String = me.key.as_bytes()[..8].iter().map(|byte| format!("{byte:02x}")).collect();
-        (link.membership().id.to_string(), key)
+        // The machine it lives on by the name it has now, renamed since
+        // (codex-847f57fd #12).
+        (link.membership().id.to_string(), key, view.directory.canonical(&machine).clone())
     };
     let stream = format!("{}/{key}", ConversationSentinelRun::STREAM);
     // The conversation's scope held here: the one of its network that lives
     // on its machine.
     let mut scopes = library.scopes_ending(&format!("/{resident}")).map_err(error)?.into_iter().filter(|scope| {
-        scope.hub.as_deref() == Some(hub_id.as_str()) && crate::timeline::copy::lives_on(library, scope, &machine)
+        scope.hub.as_deref() == Some(hub_id.as_str())
+            && (crate::timeline::copy::lives_on(library, scope, &machine) || crate::timeline::copy::lives_on(library, scope, &now_named))
     });
     let (Some(scope), None) = (scopes.next(), scopes.next()) else { return Ok(0) };
     let Some(holding) = writable(library, &scope.key, &stream, &kept.device())? else { return Ok(0) };

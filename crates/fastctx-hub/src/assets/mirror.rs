@@ -236,6 +236,13 @@ pub(crate) fn document(
     let library = scopes::library(assets, &scope)?;
     let error = |error: fastctx_content::Error| error.to_string();
     let _writing = writing(&scope_key);
+    // A sentinel's home, kept for good: where it lived may begin its stream
+    // of wakes after it moved on (codex-847f57fd #13).
+    if record.metadata.kind == "sentinel"
+        && let Some(home) = record.body["definition"]["home"].as_str()
+    {
+        super::sentinel_homes::record(assets, &scope_key, home)?;
+    }
     // This version or a later one written already: nothing. A deleted
     // record stays an item with its version, so a late older write cannot
     // bring it back (AR02).

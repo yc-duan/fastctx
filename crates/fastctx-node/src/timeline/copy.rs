@@ -101,6 +101,12 @@ fn of_network(node: &Node, scope: &fastctx_content::v2::HeldScope, machine: &Wri
 /// pulled whole in its holding period, of which the hub lets this machine
 /// hold a class only those logged in hold.
 pub(crate) fn read_here(node: &Node, scope: &fastctx_content::v2::HeldScope) -> bool {
+    read_here_as(node, scope, None)
+}
+
+/// `read_here`, as `only` reads it where given: the copy one account asks
+/// for is one that account reads, not another logged in here.
+pub(crate) fn read_here_as(node: &Node, scope: &fastctx_content::v2::HeldScope, only: Option<&AccountName>) -> bool {
     let conversation = scope.key.starts_with("c/") || (scope.key.starts_with("b/") && !scope.key.ends_with("/log"));
     conversation
         && scope.pulled == Some(scope.holding)
@@ -109,7 +115,7 @@ pub(crate) fn read_here(node: &Node, scope: &fastctx_content::v2::HeldScope) -> 
                 conversation_classes().iter().any(|logged| logged.holders == Holders::Logged && logged.prefix == class)
             })
         })
-        && reader_here(node, scope)
+        && reader_here_as(node, scope, only)
 }
 
 /// Whether the records' scope `scope` — an account's, or a body's — is read
@@ -184,6 +190,11 @@ pub(crate) fn away(node: &Node, machine: &fastctx_types::MachineName) -> bool {
 /// too: an opener or holder of the machine it was born on as the directory
 /// has them now, a body's members as they are while its machine is there.
 fn reader_here(node: &Node, scope: &fastctx_content::v2::HeldScope) -> bool {
+    reader_here_as(node, scope, None)
+}
+
+/// `reader_here`, of `only` alone where given.
+fn reader_here_as(node: &Node, scope: &fastctx_content::v2::HeldScope, only: Option<&AccountName>) -> bool {
     let Some(link) = node.links().into_iter().find(|link| Some(link.membership().id.as_str()) == scope.hub.as_deref()) else {
         return false;
     };
@@ -238,7 +249,8 @@ fn reader_here(node: &Node, scope: &fastctx_content::v2::HeldScope) -> bool {
     listed.of.iter().any(|reader| {
         let Some((name, opened)) = reader.rsplit_once('@') else { return false };
         let Ok(account) = AccountName::try_from(name.to_string()) else { return false };
-        logins.contains(&account)
+        only.is_none_or(|only| *only == account)
+            && logins.contains(&account)
             && directory
                 .account(&account)
                 .is_some_and(|found| !found.locked && found.opened.as_millisecond().to_string() == opened)
