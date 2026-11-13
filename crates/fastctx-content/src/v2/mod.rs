@@ -67,7 +67,7 @@ pub use heads::Head;
 pub use kind::{Actor, Deletion, Holding, Import, Kind, Kinds, Write, Writer};
 pub use timeline::{EVENT, OVERSIZED, Timeline};
 pub use activity::{AccountActivity, AccountUsage};
-pub use artifact::ConversationArtifact;
+pub use artifact::{ConversationArtifact, part_name};
 pub use draft::ConversationDraft;
 pub use attachment::ConversationAttachment;
 pub use timer::ConversationTimer;

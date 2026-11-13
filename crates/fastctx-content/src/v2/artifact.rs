@@ -4,7 +4,9 @@
 //! SHA-256, and its objects are those files, in that order: on every device
 //! that holds the conversation, and on the hub for good. A folder, once
 //! placed, never changes; it goes only with its conversation. Written by the
-//! machine the conversation lives on, which alone orders the stream.
+//! machine the conversation lives on, which alone orders the stream. A
+//! folder of more files than a record refers to, or whose list is longer
+//! than a record's body, is several records, its parts, written together.
 
 use super::kind::{Actor, Deletion, Holding, Import, Kind};
 use super::{Entry, KindRecord};
@@ -16,10 +18,19 @@ pub struct ConversationArtifact;
 /// A file a folder's body names: its name, size and SHA-256.
 type Listed = (String, u64, String);
 
-/// The key a folder's body says and the files it names.
+/// The name of part `part` of the folder `key`: the key itself for the
+/// first, the key and the part's number after a `/` — which no folder's key
+/// holds — for the rest (PP16, N16).
+pub fn part_name(key: &str, part: u64) -> String {
+    if part == 0 { key.to_string() } else { format!("{key}/{part}") }
+}
+
+/// The key a folder's body says, with its part, and the files it names.
 fn files(body: &[u8]) -> Result<(String, Vec<Listed>), String> {
     let value: serde_json::Value = serde_json::from_slice(body).map_err(|error| format!("an evidence folder: {error}"))?;
     let key = value.get("key").and_then(serde_json::Value::as_str).ok_or("an evidence folder says its key")?;
+    let part = value.get("part").and_then(serde_json::Value::as_u64).unwrap_or(0);
+    let key = part_name(key, part);
     let listed = value.get("files").and_then(serde_json::Value::as_array).ok_or("an evidence folder lists its files")?;
     let mut files = Vec::with_capacity(listed.len());
     for file in listed {
@@ -75,7 +86,7 @@ impl Kind for ConversationArtifact {
         }
         let (key, files) = files(body)?;
         if super::names::item_of(&key) != after.record.item {
-            return Err("an evidence folder is named by its key".into());
+            return Err("an evidence folder's part is named by its key and its number".into());
         }
         if files.len() != objects.len() {
             return Err("an evidence folder's objects are the files it lists".into());

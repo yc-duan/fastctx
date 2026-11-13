@@ -23,7 +23,7 @@ use tokio::sync::Notify;
 const FAMILY: &str = "timers";
 /// The most timers one owner's list gives: a sentinel or a conversation
 /// keeps a few, and one that kept more is shown the first of them.
-pub(crate) const OWNED: usize = 4096;
+const OWNED: usize = 4096;
 use super::claims::Claims;
 
 pub struct Store {
@@ -138,6 +138,38 @@ impl Store {
     pub async fn list(self: &Arc<Self>, owner: &Owner) -> io::Result<Vec<Timer>> {
         let owner = owner.clone();
         self.work(move |store| store.list_now(&owner)).await
+    }
+    /// Every one of an owner's timers, read `OWNED` at a time: what the
+    /// asset library holds of them is made from all of them (PP17).
+    pub async fn list_all(self: &Arc<Self>, owner: &Owner) -> io::Result<Vec<Timer>> {
+        let owner = owner.clone();
+        self.work(move |store| store.list_all_now(&owner)).await
+    }
+    fn list_all_now(&self, owner: &Owner) -> io::Result<Vec<Timer>> {
+        let category = serde_json::to_string(owner)?;
+        let (mut all, mut after) = (Vec::new(), String::new());
+        loop {
+            let page: Vec<(String, Timer)> = records::read(&self.directory, |rows| {
+                let mut query = rows.connection().prepare_cached("SELECT identity, body FROM conversation_records r WHERE family='timers' AND category=?1 AND identity > ?2 AND NOT EXISTS(SELECT 1 FROM node_conversation_transfers t WHERE t.name=r.conversation AND t.rejected=0) ORDER BY identity LIMIT ?3")?;
+                query
+                    .query_map(fastctx_storage::rusqlite::params![category, after, OWNED as i64], |row| {
+                        Ok((row.get::<_, String>(0)?, row.get::<_, Vec<u8>>(1)?))
+                    })?
+                    .map(|row| {
+                        let (identity, body) = row?;
+                        Ok((identity, records::decode(&body)?))
+                    })
+                    .collect()
+            })?;
+            let full = page.len() == OWNED;
+            if let Some((last, _)) = page.last() {
+                after = last.clone();
+            }
+            all.extend(page.into_iter().map(|(_, timer)| timer));
+            if !full {
+                return Ok(all);
+            }
+        }
     }
     fn list_now(&self, owner: &Owner) -> io::Result<Vec<Timer>> {
         let category = serde_json::to_string(owner)?;

@@ -15,6 +15,9 @@ use std::sync::Arc;
 /// The most folders, and bytes, one look writes.
 const FOLDERS: usize = 16;
 const BYTES: u64 = 256 << 20;
+/// The most a part's list of files holds, with room for the rest of its
+/// body.
+const PART_BYTES: usize = fastctx_content::RECORD_BYTES - 4096;
 
 fn failure(error: impl std::fmt::Display) -> Failure {
     Failure::new(error.to_string())
@@ -81,22 +84,38 @@ pub(super) async fn produce(
                 }
             }
             names.sort();
-            // As many files as a record refers to; the rest said so.
-            let omitted = names.len().saturating_sub(fastctx_content::RECORD_OBJECTS);
-            names.truncate(fastctx_content::RECORD_OBJECTS);
-            let (mut files, mut objects) = (Vec::new(), Vec::new());
+            // Every file, in parts of as many as a record refers to and a
+            // body holds, written together (PP16, N16).
+            let mut parts: Vec<(Vec<serde_json::Value>, Vec<fastctx_content::ObjectRef>)> = vec![(Vec::new(), Vec::new())];
+            let mut listed = 0usize;
             for (name, file_path) in names {
                 let mut file = fastctx_platform::disk::open(&file_path).map_err(failure)?;
                 let lease = library.put(&mut file, "artifacts", LEASE).map_err(failure)?;
                 let sha256: String = lease.object.hash.iter().map(|byte| format!("{byte:02x}")).collect();
-                files.push(serde_json::json!({ "name": name, "size": lease.object.size, "sha256": sha256 }));
+                let entry = serde_json::json!({ "name": name, "size": lease.object.size, "sha256": sha256 });
+                let size = entry.to_string().len() + 1;
+                let full = parts.last().is_some_and(|(files, _)| files.len() >= fastctx_content::RECORD_OBJECTS)
+                    || listed + size > PART_BYTES;
+                if full {
+                    parts.push((Vec::new(), Vec::new()));
+                    listed = 0;
+                }
+                listed += size;
+                let (files, objects) = parts.last_mut().expect("a part");
+                files.push(entry);
                 bytes += lease.object.size;
                 objects.push(lease.object);
                 leases.push(lease);
             }
-            let body = serde_json::to_vec(&serde_json::json!({ "key": key, "files": files, "omitted": omitted }))
+            let count = parts.len() as u64;
+            for (part, (files, objects)) in (0u64..).zip(parts) {
+                let body = serde_json::to_vec(
+                    &serde_json::json!({ "key": key, "part": part, "parts": count, "files": files, "omitted": 0 }),
+                )
                 .map_err(failure)?;
-            writes.push(Write::<ConversationArtifact> { order: item.clone(), item, value: Some(body), objects });
+                let item = fastctx_content::v2::item_of(&fastctx_content::v2::part_name(&key, part));
+                writes.push(Write::<ConversationArtifact> { order: item.clone(), item, value: Some(body), objects });
+            }
         }
         if writes.is_empty() {
             return Ok((0, more));

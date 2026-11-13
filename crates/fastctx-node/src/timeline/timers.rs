@@ -38,12 +38,10 @@ pub(super) async fn produce(
         return Ok(0);
     };
     let mut wanted = BTreeMap::new();
-    // A list as long as the table gives at most may leave some out: then
-    // none is let go on not being in it (OO24).
-    let mut whole = true;
+    // Every one of them, the table read a page at a time: none is left out,
+    // so none is let go for not being listed (OO24, PP17).
     for owner in [Owner::Conversation { resident: resident.clone() }, Owner::Goal { resident: resident.clone() }] {
-        let timers = store.list(&owner).await.map_err(failure)?;
-        whole &= timers.len() < crate::timers::store::OWNED;
+        let timers = store.list_all(&owner).await.map_err(failure)?;
         for timer in timers {
             wanted.insert(fastctx_content::v2::item_of(&timer.id), serde_json::to_vec(&timer).map_err(failure)?);
         }
@@ -80,7 +78,7 @@ pub(super) async fn produce(
                         value: Some(body),
                         objects: Vec::new(),
                     }),
-                    None if whole && mine.contains(&id) => writes.push(Write::<ConversationTimer> {
+                    None if mine.contains(&id) => writes.push(Write::<ConversationTimer> {
                         order: entry.item.clone(),
                         item: entry.item,
                         value: None,
