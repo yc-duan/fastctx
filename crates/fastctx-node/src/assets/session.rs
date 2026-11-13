@@ -958,10 +958,10 @@ async fn describe(
             continue;
         }
         let described = link.assets(Request::Describe { scope: scope.clone(), readers, classes }).await;
-        // A project's or an account's scope the hub does not describe for
-        // this machine — no account here reads it any more — holds up no
-        // conversation's.
-        if described.is_err() && (scope.starts_with("p/") || scope.starts_with("a/")) {
+        // A scope the hub does not describe for this machine that is no
+        // conversation's — a project's, an account's, a log's: no account
+        // here reads it any more — holds up no conversation's.
+        if described.is_err() && !scope.starts_with("c/") {
             continue;
         }
         let Reply::Described { descriptor } = described? else {

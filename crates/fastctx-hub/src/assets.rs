@@ -14,6 +14,7 @@ mod holdings;
 mod keys;
 pub(crate) mod mirror;
 pub(crate) mod told;
+pub(crate) mod hub_log;
 pub mod recovery;
 pub(crate) mod objects;
 mod owners;
@@ -1277,6 +1278,8 @@ pub(crate) async fn checkpoints(hub: Weak<crate::Hub>) {
     if let Some(running) = hub.upgrade() {
         fastctx_platform::task::spawn(mirror::everything(running));
     }
+    // And its own log, as it grows (design §14).
+    fastctx_platform::task::spawn(hub_log::follow(hub.clone()));
     loop {
         tokio::time::sleep(CHECKPOINT_EVERY).await;
         rounds = rounds.wrapping_add(1);

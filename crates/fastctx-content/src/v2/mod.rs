@@ -25,6 +25,7 @@ mod judged;
 mod kind;
 mod layout;
 mod letgo;
+mod logs;
 mod attachment;
 mod meta;
 mod words;
@@ -63,6 +64,7 @@ pub use document::{
     MachineAudit, ProjectLedger,
 };
 pub use hub_ordered::HUB_ORDERED;
+pub use logs::{HubLog, KEPT_PIECES, MachineLog, McpLog};
 pub use job::{JobFacts, JobOutput, OUTPUT_PARTS};
 pub use meta::{ConversationMeta, META_ITEMS};
 pub use words::{ConversationWords, WORDS_STATES};

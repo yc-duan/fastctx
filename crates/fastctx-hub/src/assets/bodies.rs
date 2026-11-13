@@ -13,7 +13,6 @@ use fastctx_net::directory::Directory;
 use fastctx_storage::Database;
 use fastctx_storage::rusqlite::{OptionalExtension, params};
 use fastctx_types::MachineName;
-use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
 use std::io;
 use std::sync::{Arc, OnceLock, Weak};
@@ -41,15 +40,7 @@ pub(crate) fn among(directory: &Directory, members: &BTreeSet<String>, account: 
 
 /// The body of `machine` as the directory has it now, if it has it.
 pub(crate) fn body_of(directory: &Directory, machine: &MachineName) -> Option<String> {
-    let member = directory.member(machine)?;
-    let home = member.home.as_ref()?;
-    let opened = directory.account(home)?.opened.as_millisecond();
-    let mut hasher = Sha256::new();
-    hasher.update(b"fastctx-body/1");
-    hasher.update(member.key.as_bytes());
-    hasher.update(home.as_str().as_bytes());
-    hasher.update(opened.to_le_bytes());
-    Some(super::witness::hex(&hasher.finalize()[..16]))
+    directory.body_of(machine)
 }
 
 /// The members of `machine`'s body as the directory has it now: its owner

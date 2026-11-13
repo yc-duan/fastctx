@@ -126,6 +126,11 @@ pub enum Readers {
     /// a machine shared whole, its owner and those it is shared with — and
     /// the account that opened it.
     Body { body: String, opener: AccountName },
+    /// The hub's own: its super administrators, as they are (§14).
+    Hub,
+    /// What an account does on a machine, read by the account for as long
+    /// as it can work on that machine (§14: its MCP commands' logs).
+    Working { account: AccountName, machine: MachineName },
 }
 
 /// Which devices may hold a class of a scope's streams (§2.3).
@@ -180,6 +185,8 @@ impl Readers {
             Self::Project { town } => format!("p/{town}/"),
             Self::Account { account } => format!("a/{hub}/{account}/"),
             Self::Body { body, .. } => format!("b/{body}/"),
+            Self::Hub => format!("h/{hub}/"),
+            Self::Working { account, machine } => format!("w/{hub}/{account}/{machine}/"),
         }
     }
 }

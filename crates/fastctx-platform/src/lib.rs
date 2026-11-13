@@ -44,6 +44,7 @@ pub mod legacy_text;
 pub mod limits;
 pub mod local_path;
 pub mod lock;
+pub mod log_tail;
 pub mod log_writer;
 pub mod materialize_directory;
 pub mod materialize_file;

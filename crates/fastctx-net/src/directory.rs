@@ -428,6 +428,22 @@ impl Directory {
         self.account(account).is_some_and(Account::is_super)
     }
 
+    /// The body `machine` is as this directory has it (design §6.2): its
+    /// key, its owner and when the owner's account was opened, as one name.
+    /// None for a machine with no owner here.
+    pub fn body_of(&self, machine: &MachineName) -> Option<String> {
+        use sha2::{Digest, Sha256};
+        let member = self.member(machine)?;
+        let home = member.home.as_ref()?;
+        let opened = self.account(home)?.opened.as_millisecond();
+        let mut hasher = Sha256::new();
+        hasher.update(b"fastctx-body/1");
+        hasher.update(member.key.as_bytes());
+        hasher.update(home.as_str().as_bytes());
+        hasher.update(opened.to_le_bytes());
+        Some(hasher.finalize()[..16].iter().map(|byte| format!("{byte:02x}")).collect())
+    }
+
     /// Managing a machine has the same authority as working on it
     /// (`world-network.md`, 共享机器与智能体协助).
     pub fn may_update(&self, account: &AccountName, machine: &MachineName) -> bool {

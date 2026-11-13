@@ -1002,6 +1002,7 @@ pub async fn run_prepared(
         // work below names its own kinds then.
         timeline::register(&node);
         job_assets::start(&node);
+        assets::logs::start(&node);
         management::register(&node);
         record_changes::register(&node);
         record_writes::register(&node);

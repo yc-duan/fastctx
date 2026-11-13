@@ -79,7 +79,10 @@ pub(crate) fn kinds() -> Arc<fastctx_content::v2::Kinds> {
         .register::<fastctx_content::v2::AccountSkill>()
         .register::<fastctx_content::v2::ProjectLedger>()
         .register::<fastctx_content::v2::MachineAudit>()
-        .register::<fastctx_content::v2::AccountNotice>();
+        .register::<fastctx_content::v2::AccountNotice>()
+        .register::<fastctx_content::v2::MachineLog>()
+        .register::<fastctx_content::v2::McpLog>()
+        .register::<fastctx_content::v2::HubLog>();
     #[cfg(test)]
     let kinds = kinds.register::<super::drill_kinds::Plain>();
     Arc::new(kinds)
@@ -138,7 +141,8 @@ fn opened_here(directory: &Indexed<'_>, machine: &MachineName, scope: &Scope) ->
         Readers::Conversation { openers, .. } => openers.iter().collect(),
         Readers::Account { account } => vec![account],
         Readers::Body { opener, .. } => vec![opener],
-        Readers::Project { .. } => Vec::new(),
+        Readers::Working { account, .. } => vec![account],
+        Readers::Project { .. } | Readers::Hub => Vec::new(),
     };
     openers.into_iter().any(|account| directory.logged_in(machine, account))
 }

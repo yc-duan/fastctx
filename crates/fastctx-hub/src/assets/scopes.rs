@@ -90,6 +90,8 @@ fn identities(directory: &Indexed<'_>, readers: &Readers) -> Result<BTreeMap<Str
         Readers::Project { town } => vec![format!("project:{town}")],
         Readers::Account { account } => vec![format!("account:{account}")],
         Readers::Body { opener, .. } => vec![format!("account:{opener}")],
+        Readers::Hub => Vec::new(),
+        Readers::Working { account, machine } => vec![format!("account:{account}"), format!("machine:{machine}")],
     };
     keys.into_iter()
         .map(|key| identity(directory, &key).map(|found| (key.clone(), found)).ok_or_else(|| format!("there is no {key}")))
@@ -150,6 +152,17 @@ pub(crate) fn reads_known(
                 && same(directory, born, &format!("account:{only}"))
                 && directory.account(account).is_some_and(|found| !found.locked)
         }
+        // The hub's super administrators, as they are now.
+        Readers::Hub => directory.all.is_super(account),
+        // The account while it can still work on the machine: the gate
+        // closes the moment it cannot.
+        Readers::Working { account: only, machine } => {
+            only == account
+                && same(directory, born, &format!("account:{only}"))
+                && same(directory, born, &format!("machine:{machine}"))
+                && directory.account(account).is_some_and(|found| !found.locked)
+                && principal(directory, machine).contains(account)
+        }
     })
 }
 
@@ -173,6 +186,12 @@ pub(crate) fn anyone_reads(directory: &Indexed<'_>, scope: &Scope) -> std::io::R
             }
             let bodies = scope.bodies.as_ref().ok_or_else(|| std::io::Error::other("a body's scope without its bodies"))?;
             !bodies.members(directory.all, body)?.is_empty()
+        }
+        Readers::Hub => directory.all.accounts.iter().any(|account| account.is_super()),
+        // Its account and machine still themselves: one that cannot work
+        // there for now may again.
+        Readers::Working { account, machine } => {
+            same(directory, born, &format!("account:{account}")) && same(directory, born, &format!("machine:{machine}"))
         }
     })
 }
@@ -208,6 +227,13 @@ fn sharers_read_known(directory: &Indexed<'_>, machine: &MachineName, scope: &Sc
     let descriptor = &scope.descriptor;
     let bodies = scope.bodies.as_deref();
     let machine = directory.canonical(machine).clone();
+    // What an account does on a machine is born on it: the machine holds it
+    // whoever else holds the machine.
+    if let Readers::Working { machine: on, .. } = &descriptor.readers
+        && directory.canonical(on) == &machine
+    {
+        return Ok(true);
+    }
     let shares: Vec<usize> = directory.shares_by_machine(&machine).to_vec();
     let all_read = |directory: &Indexed<'_>| -> std::io::Result<bool> {
         for &at in &shares {
@@ -344,7 +370,8 @@ fn owner_of(directory: &Indexed<'_>, readers: &Readers) -> Result<Owner, String>
                 .map(|project| project.owner.clone())
                 .ok_or_else(|| format!("there is no project {town}"))?
         }
-        Readers::Account { account } => account.clone(),
+        Readers::Account { account } | Readers::Working { account, .. } => account.clone(),
+        Readers::Hub => return Ok(Owner::Hub),
     };
     let opened = directory.account(&account).ok_or_else(|| format!("there is no account {account}"))?.opened;
     Ok(Owner::Account(account.to_string(), opened.as_millisecond()))
@@ -374,6 +401,11 @@ pub(crate) fn describe(
         && directory.canonical(born_on) != directory.canonical(machine)
     {
         return Err("a conversation born on a machine is described by that machine".into());
+    }
+    if let Readers::Working { machine: on, .. } = &readers
+        && directory.canonical(on) != directory.canonical(machine)
+    {
+        return Err("what an account does on a machine is described by that machine".into());
     }
     if let Some(kept) = scope(assets, key)? {
         // Read through the gate like any other answer.
