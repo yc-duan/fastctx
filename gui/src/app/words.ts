@@ -519,8 +519,23 @@ export interface SettingsWords {
   phonePowerSave: string;
   phoneMaker(maker: string): string;
   /** What to set by hand on a maker's phones, which no app can read. */
-  phoneVendor: Record<"honor" | "xiaomi" | "other", string[]>;
+  phoneVendor: Record<"honor" | "huawei" | "xiaomi" | "other", string[]>;
   phoneOpenApp: string;
+  /** The background connection: whether it runs, and what ended it. */
+  phoneKeep: string;
+  phoneKeepOn: string;
+  phoneKeepOff: string;
+  phoneKilled: string;
+  /** Straight to the maker's own pages, and the user's word they are set. */
+  phoneAutostart: string;
+  phoneVendorBattery: string;
+  phoneVendorDone: string;
+  phoneVendorSet: string;
+  /** The sheet that walks through it once the phone is in a World. */
+  phoneGuideTitle: string;
+  phoneGuideWhy: string;
+  phoneGuideDone: string;
+  phoneGuideLater: string;
   serviceOn: string;
   /** What a startup service does, when its state is pointed at. */
   serviceWhat: string;
@@ -627,7 +642,7 @@ export const zhSettings: SettingsWords = {
   phoneBattery: "电池优化",
   phoneBatteryOn: "不受限制",
   phoneBatteryOff: "受限制，通知可能延迟",
-  phoneOpenBattery: "电池设置",
+  phoneOpenBattery: "允许后台运行",
   phonePowerSave: "省电模式已开启",
   phoneMaker: (maker) => `${maker} 后台设置`,
   phoneVendor: {
@@ -637,10 +652,27 @@ export const zhSettings: SettingsWords = {
       "电池 › 更多电池设置：休眠时始终保持网络连接",
       "最近任务中下拉 Fastctx 卡片锁定",
     ],
-    xiaomi: ["应用详情 › 省电策略：无限制", "应用详情 › 自启动：开启", "最近任务中长按 Fastctx 卡片锁定"],
+    huawei: [
+      "设置 › 应用启动管理 › Fastctx：关闭自动管理，允许自启动、关联启动、后台活动",
+      "设置 › 电池优化 › 所有应用 › Fastctx：不允许",
+      "最近任务中下拉 Fastctx 卡片锁定",
+    ],
+    xiaomi: ["自启动：开启", "省电策略：无限制", "最近任务中长按 Fastctx 卡片锁定"],
     other: [],
   },
   phoneOpenApp: "应用详情",
+  phoneKeep: "后台保持在线",
+  phoneKeepOn: "正在运行",
+  phoneKeepOff: "没有在运行",
+  phoneKilled: "上次 Fastctx 在后台被系统结束了，所以显示离线。按下面几项设置好，切到后台也不会断。",
+  phoneAutostart: "去开启自启动",
+  phoneVendorBattery: "去设置省电策略",
+  phoneVendorDone: "我已设置好",
+  phoneVendorSet: "已设置",
+  phoneGuideTitle: "让 Fastctx 在后台保持在线",
+  phoneGuideWhy: "这样切到后台、锁屏之后，有人找你或对话做完时仍会提醒你，别的机器上也看得到这台手机在线。下面每一项点一下即可；有的手机还要在系统设置里打开一个开关。",
+  phoneGuideDone: "完成",
+  phoneGuideLater: "以后再说",
   serviceOn: "已开启",
   serviceWhat: "断网后自动重连",
   serviceOff: "未开启",
@@ -753,7 +785,7 @@ export const enSettings: SettingsWords = {
   phoneBattery: "Battery optimization",
   phoneBatteryOn: "Unrestricted",
   phoneBatteryOff: "Restricted; notifications may be delayed",
-  phoneOpenBattery: "Battery settings",
+  phoneOpenBattery: "Allow in background",
   phonePowerSave: "Power saving is on",
   phoneMaker: (maker) => `${maker} background settings`,
   phoneVendor: {
@@ -763,10 +795,27 @@ export const enSettings: SettingsWords = {
       "Battery › More battery settings: stay connected while asleep",
       "Pull Fastctx's card down in Recents to lock it",
     ],
-    xiaomi: ["App details › Battery saver: No restrictions", "App details › Autostart: on", "Long-press Fastctx's card in Recents to lock it"],
+    huawei: [
+      "Settings › App launch › Fastctx: turn off auto-manage; allow auto-launch, secondary launch and background activity",
+      "Settings › Battery optimization › All apps › Fastctx: Don't allow",
+      "Pull Fastctx's card down in Recents to lock it",
+    ],
+    xiaomi: ["Autostart: on", "Battery saver: No restrictions", "Long-press Fastctx's card in Recents to lock it"],
     other: [],
   },
   phoneOpenApp: "App details",
+  phoneKeep: "Stay online in the background",
+  phoneKeepOn: "Running",
+  phoneKeepOff: "Not running",
+  phoneKilled: "Last time the system ended Fastctx in the background, so it showed offline. With the settings below it stays connected in the background.",
+  phoneAutostart: "Turn on autostart",
+  phoneVendorBattery: "Battery saver",
+  phoneVendorDone: "I've set these",
+  phoneVendorSet: "Set",
+  phoneGuideTitle: "Keep Fastctx online in the background",
+  phoneGuideWhy: "Then, in the background or with the screen locked, it still tells you when someone needs you or a conversation finishes, and your other machines see this phone online. Tap each item below; some phones also need a switch in their own settings.",
+  phoneGuideDone: "Done",
+  phoneGuideLater: "Later",
   serviceOn: "On",
   serviceWhat: "Reconnects by itself after the network drops",
   serviceOff: "Off",

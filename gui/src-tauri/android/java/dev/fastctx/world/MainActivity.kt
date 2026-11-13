@@ -60,7 +60,7 @@ class MainActivity : TauriActivity() {
     override fun onResume() { super.onResume(); WorldRuntime.resume(this); WorldRuntime.visibleNative(true) }
     override fun onPause() {
         if (WorldRuntime.currentActivity.get() === this) {
-            WorldRuntime.focused = false
+            WorldRuntime.pause()
             WorldRuntime.visibleNative(false)
         }
         super.onPause()

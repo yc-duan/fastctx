@@ -8,10 +8,14 @@ import android.content.IntentFilter
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
+import android.net.wifi.WifiManager
 import android.os.PowerManager
 
 class WorldService : Service() {
     private var wake: PowerManager.WakeLock? = null
+    /** Wi-Fi kept awake with the processor: a phone asleep may otherwise let its Wi-Fi doze and the
+     *  connection go quiet past what the hub waits for. */
+    private var wifi: WifiManager.WifiLock? = null
     private var receiverRegistered = false
     private var ready = false
     private val power = object : BroadcastReceiver() {
@@ -26,6 +30,11 @@ class WorldService : Service() {
         WorldRuntime.ensure(applicationContext)
         WorldRuntime.serviceRunning = true
         wake = getSystemService(PowerManager::class.java).newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "World:connection").also {
+            it.setReferenceCounted(false)
+            it.acquire()
+        }
+        @Suppress("DEPRECATION")
+        wifi = applicationContext.getSystemService(WifiManager::class.java)?.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "World:connection")?.also {
             it.setReferenceCounted(false)
             it.acquire()
         }
@@ -55,6 +64,7 @@ class WorldService : Service() {
         WorldRuntime.serviceRunning = false
         if (receiverRegistered) unregisterReceiver(power)
         wake?.let { if (it.isHeld) it.release() }
+        wifi?.let { if (it.isHeld) it.release() }
         super.onDestroy()
     }
     override fun onBind(intent: Intent?): IBinder? = null
