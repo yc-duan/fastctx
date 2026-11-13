@@ -78,6 +78,34 @@ impl Library {
         })?)
     }
 
+    /// Up to `limit` live items of `stream` in reverse order, from the
+    /// current holding period: from the last, or before the entry `before`
+    /// (its order key and identity, as the last page ended).
+    pub fn page_before(&self, scope: &str, stream: &str, before: Option<(Vec<u8>, Vec<u8>)>, limit: usize) -> Result<Vec<Entry>> {
+        let (scope, stream) = (scope.to_string(), stream.to_string());
+        let limit = limit.min(PAGE) as i64;
+        Ok(self.database().read_now(move |db| {
+            let Some((scope, _, Some(holding))) = held(db, &scope)? else { return Ok(Vec::new()) };
+            let mut statement = db.prepare_cached(
+                "SELECT i.item, i.place, i.revision, i.kind, i.schema, i.body, i.objects, i.local FROM items i
+                 JOIN streams s ON s.id = i.stream
+                 WHERE s.scope = ?1 AND s.name = ?2 AND i.holding = ?3 AND i.state = ?4
+                   AND (?5 = 0 OR (i.place, i.item) < (?6, ?7))
+                 ORDER BY i.place DESC, i.item DESC LIMIT ?8",
+            )?;
+            let started = before.is_some();
+            let (place, item) = before.unwrap_or_default();
+            let rows = statement.query_map(params![scope, stream, holding, IS, started, place, item, limit], entry)?;
+            let mut entries = Vec::new();
+            for row in rows {
+                let (mut entry, objects) = row?;
+                entry.objects = unpack(&objects).map_err(crate::error::invalid)?;
+                entries.push(entry);
+            }
+            Ok(entries)
+        })?)
+    }
+
     /// One item of `stream` as the current period's index has it; `None`
     /// when it is not there or was deleted.
     pub fn item(&self, scope: &str, stream: &str, item: &[u8]) -> Result<Option<Entry>> {

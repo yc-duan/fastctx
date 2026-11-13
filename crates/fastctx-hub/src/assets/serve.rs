@@ -44,6 +44,12 @@ impl Verifier for DeviceKeys {
 /// is ordered, the machine it was born on. Another reader of the scope
 /// cannot take a new stream first. Other scopes are not gated here.
 fn first_epoch_gate(assets: &Assets, directory: &Indexed<'_>, kept: &Scope, scope: &str, stream: &str, device: &[u8; 32]) -> Result<(), String> {
+    // A sentinel's wakes, begun by the machine its stream names — which the
+    // kind's own rule holds every frame to — where one of the conversation's
+    // sentinels lives on it as the hub keeps them (§29, 2.7).
+    if stream.starts_with("sentinel-runs/") {
+        return sentinel_runs_gate(assets, directory, kept, scope, stream, device);
+    }
     // A conversation's scope, or a body's — a conversation opened on a
     // machine shared whole, or that machine's log — begun on its machine;
     // what an account does on a machine, on that machine; what a machine
@@ -112,6 +118,61 @@ fn first_epoch_gate(assets: &Assets, directory: &Indexed<'_>, kept: &Scope, scop
     Ok(())
 }
 
+/// Whether `device` may begin `stream`, a sentinel's wakes, of the
+/// conversation's scope `scope`: one of the conversation's sentinels as the
+/// hub keeps them (the `sentinels` stream it orders into the scope) lives
+/// on it. One whose sentinels all moved before it began its stream begins
+/// none; its wakes stay with it.
+fn sentinel_runs_gate(assets: &Assets, directory: &Indexed<'_>, kept: &Scope, scope: &str, stream: &str, device: &[u8; 32]) -> Result<(), String> {
+    let hex: String = device[..8].iter().map(|byte| format!("{byte:02x}")).collect();
+    if stream.strip_prefix("sentinel-runs/") != Some(hex.as_str()) {
+        return Err(format!("{stream} of {scope} is written by the machine it names"));
+    }
+    let library = scopes::library(assets, kept)?;
+    if library.last_epoch(scope, stream).map_err(|error| error.to_string())?.is_some() {
+        return Ok(());
+    }
+    let sentinels = <fastctx_content::v2::ConversationSentinel as fastctx_content::v2::Kind>::STREAM;
+    let mut after = None;
+    loop {
+        let page = library.page(scope, sentinels, after.take(), 256).map_err(|error| error.to_string())?;
+        let full = page.len() == 256;
+        for entry in &page {
+            let home = sentinel_record(&library, entry)
+                .and_then(|record| record["body"]["definition"]["home"].as_str().map(str::to_string))
+                .and_then(|home| fastctx_types::MachineName::try_from(home).ok());
+            if home.and_then(|home| directory.all.find_member(&home)).is_some_and(|member| member.key.as_bytes() == device) {
+                return Ok(());
+            }
+        }
+        match page.last() {
+            Some(last) if full => after = Some((last.order.clone(), last.item.clone())),
+            _ => break,
+        }
+    }
+    Err(format!("{stream} of {scope} is begun by a machine one of the conversation's sentinels lives on"))
+}
+
+/// A sentinel's account record as the scope holds it: its body, or the one
+/// object it is in (`mirror::fitted`).
+fn sentinel_record(library: &fastctx_content::v2::Library, entry: &fastctx_content::v2::Entry) -> Option<serde_json::Value> {
+    let value: serde_json::Value = serde_json::from_slice(&entry.body).ok()?;
+    if value.get("in_object").and_then(serde_json::Value::as_bool) != Some(true) {
+        return Some(value);
+    }
+    let [object] = entry.objects.as_slice() else { return None };
+    let (mut bytes, mut at) = (Vec::new(), 0u64);
+    while at < object.size {
+        let piece = library.read(&object.hash, at, 1 << 20).ok()?;
+        if piece.is_empty() {
+            return None;
+        }
+        at += piece.len() as u64;
+        bytes.extend_from_slice(&piece);
+    }
+    serde_json::from_slice(&bytes).ok()
+}
+
 /// The kinds the hub takes records of, each judged by its own rule (design
 /// §11); a record of a kind not registered is refused.
 pub(crate) fn kinds() -> Arc<fastctx_content::v2::Kinds> {
@@ -135,6 +196,7 @@ pub(crate) fn kinds() -> Arc<fastctx_content::v2::Kinds> {
         .register::<fastctx_content::v2::McpLog>()
         .register::<fastctx_content::v2::HubLog>()
         .register::<fastctx_content::v2::ConversationTimer>()
+        .register::<fastctx_content::v2::ConversationSentinelRun>()
         .register::<fastctx_content::v2::ConversationArtifact>()
         .register::<fastctx_content::v2::AccountProfile>()
         .register::<fastctx_content::v2::AccountCollaboration>()

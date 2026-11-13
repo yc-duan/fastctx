@@ -106,6 +106,7 @@ impl Replica {
                 .register::<fastctx_content::v2::McpLog>()
                 .register::<fastctx_content::v2::HubLog>()
                 .register::<fastctx_content::v2::ConversationTimer>()
+                .register::<fastctx_content::v2::ConversationSentinelRun>()
                 .register::<fastctx_content::v2::ConversationArtifact>()
                 .register::<fastctx_content::v2::AccountProfile>()
                 .register::<fastctx_content::v2::AccountCollaboration>()

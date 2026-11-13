@@ -27,8 +27,10 @@ pub(crate) async fn answer(
         return answer_here(node, None, query).await;
     };
     // While it is away, from the copies here (plan 3-5).
-    let (asking, name, asked) = (node.clone(), target.name.clone(), query.clone());
-    if let Ok(Some(answer)) = fastctx_platform::task::spawn_blocking(move || super::copied::answer(&asking, &name, &asked)).await {
+    let (asking, whose, written, asked) = (node.clone(), acting.clone(), target.clone(), query.clone());
+    if let Ok(Some(answer)) =
+        fastctx_platform::task::spawn_blocking(move || super::copied::answer(&asking, &whose, &written, &asked)).await
+    {
         return Ok(answer);
     }
     match node

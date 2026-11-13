@@ -392,8 +392,13 @@ async fn pass(node: &Arc<Node>, hub: &HubId, link: &Arc<Link>, network: &Network
         // holding period, and the change numbers carry it from now on.
         if *first && !untold && matches!(&pulled, Ok((_, None))) && checked.is_ok() {
             let (scope, holding) = (scope.clone(), *holding);
-            if let Err(why) = blocking(library, move |library| library.pulled(&scope, holding)).await {
-                failed.get_or_insert(why);
+            match blocking(library, move |library| library.pulled(&scope, holding)).await {
+                // Pulled whole, its copy is read here from now: what the
+                // interface lists of conversations is made again (plan 3-5).
+                Ok(_) => assets.metadata_moved.send_modify(|count| *count = count.wrapping_add(1)),
+                Err(why) => {
+                    failed.get_or_insert(why);
+                }
             }
         }
         let pulled = pulled.and_then(|(_, failed)| failed.map_or(Ok(()), Err));

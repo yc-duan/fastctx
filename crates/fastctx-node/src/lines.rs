@@ -37,6 +37,9 @@ struct Source {
     _watcher: Mutex<fastctx_watch::Watcher>,
     cancelled: Arc<AtomicBool>,
     requests: Mutex<Vec<Weak<AtomicBool>>>,
+    /// Whether a job's output written out from the copy here is whole, as
+    /// the copy said when it was written out; none for any other source.
+    copy_whole: Option<bool>,
     /// A job's output written out from the copy here (`copied`), gone with
     /// the source: last, so what reads it is let go first.
     _copied: Option<crate::attachments::kept_here::Passing>,
@@ -103,12 +106,22 @@ pub(crate) async fn open(
 ) -> std::result::Result<(Reply, Lease), Failure> {
     if let Some(machine) = machine.filter(|machine| !node.is_here(machine)) {
         // A job's output the copy here has whole, or what came of it while
-        // its machine is away, is read here (plan 3-5).
-        if let Decoding::Output { job } = &decoding
-            && let Some(copy) = copied::output(node, &machine.name, job, &path).await
+        // its machine is away, is read here (plan 3-5); as history read it
+        // (`Immutable`), only whole.
+        let job = match &decoding {
+            Decoding::Output { job } => Some((job, false)),
+            Decoding::Immutable { decoding: inner, .. } => match inner.as_ref() {
+                Decoding::Output { job } => Some((job, true)),
+                _ => None,
+            },
+            _ => None,
+        };
+        if let Some((job, immutable)) = job
+            && let Some((copy, whole)) = copied::output(node, &machine, job, &path).await
+            && (whole || !immutable)
         {
             let local = copy.path().to_string_lossy().into_owned();
-            return opened_here(node, from, Some((machine.name.clone(), path)), local, decoding, Some(copy)).await;
+            return opened_here(node, from, Some((machine.name.clone(), path)), local, decoding, Some((copy, whole))).await;
         }
         let (link, account) = node.speaking(&Acting::Here, &machine, Purpose::Hands).await.map_err(failed)?;
         let (reply, lease) = fastctx_net::lines::open(link, machine.name, account, path, decoding).await?;
@@ -133,8 +146,12 @@ async fn opened_here(
     standing_for: Option<(MachineName, String)>,
     path: String,
     decoding: Decoding,
-    copy: Option<crate::attachments::kept_here::Passing>,
+    copy: Option<(crate::attachments::kept_here::Passing, bool)>,
 ) -> std::result::Result<(Reply, Lease), Failure> {
+    let (copy, copy_whole) = match copy {
+        Some((copy, whole)) => (Some(copy), Some(whole)),
+        None => (None, None),
+    };
     let initializing = crate::initializing::take().await?;
     let (decoding, expected, policy, annotation) = match decoding {
         Decoding::Immutable { content, policy, annotation, decoding } => {
@@ -229,7 +246,10 @@ async fn opened_here(
             {
                 return Err(failed("the text source changed during indexing"));
             }
-            let complete = complete(record_path.as_deref()).map_err(failed)?;
+            let complete = match copy_whole {
+                Some(whole) => whole,
+                None => complete(record_path.as_deref()).map_err(failed)?,
+            };
             let extent = Extent { length: index.length, complete, version: 0 };
             let (projection, writes, writes_revision) =
                 projection::open(&read_path, snapshot.size, note_path.as_deref(), &cancel).map_err(failed)?;
@@ -263,6 +283,7 @@ async fn opened_here(
         _watcher: Mutex::new(watcher),
         cancelled: Arc::new(AtomicBool::new(false)),
         requests: Mutex::new(Vec::new()),
+        copy_whole,
         _copied: copy,
     });
     let mut random = [0; 16];
@@ -335,7 +356,10 @@ async fn refresh(
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Err(ending(err(error))),
                 Err(error) => return Err(passing(err(error))),
             };
-            let ended = complete(source.job_record.as_deref()).map_err(passing)?;
+            let ended = match source.copy_whole {
+                Some(whole) => whole,
+                None => complete(source.job_record.as_deref()).map_err(passing)?,
+            };
             let revision = projection::revision(source.notes_record.as_deref()).map_err(passing)?;
             if state.snapshot == snapshot
                 && state.extent.complete == ended

@@ -87,6 +87,18 @@ CREATE TABLE IF NOT EXISTS book_folding(deed TEXT PRIMARY KEY,applied INTEGER NO
 /// The longest script kept; the rest is the job's own record while it lasts.
 const SCRIPT: usize = 2000;
 
+/// What this machine was shared as when a deed was first kept (7965 P08):
+/// by hub id, the body it was on there while shared whole, or none; read by
+/// the copy of the book (`assets::activity`), so a deed goes where it went
+/// as it was done however late it is read. A deed kept before has none and
+/// goes as the sharing stands when it is read.
+const SHARING: &str = "ALTER TABLE book_deeds ADD COLUMN sharing TEXT;";
+
+/// The deeds of conversations deleted here, as their rows go
+/// (`sealing::purge`), by number: what the copy of the book lets go of in
+/// the records scopes it wrote them into (`assets::activity`).
+const FORGOTTEN: &str = "CREATE TABLE IF NOT EXISTS book_forgotten (id INTEGER PRIMARY KEY AUTOINCREMENT, deed TEXT NOT NULL);";
+
 /// One deed as a job's record stands now.
 struct Row {
     deed: String,
@@ -107,6 +119,8 @@ struct Row {
     looked: i64,
     copied: i64,
     touched: Vec<Touch>,
+    /// As `SHARING` keeps it, on the deed's first keeping alone.
+    sharing: Option<String>,
 }
 
 struct Touch {
@@ -224,6 +238,7 @@ fn row(node: &Node, record: &JobRecord, writes: &[WriteFact], steps: &[fastctx_t
         looked,
         copied,
         touched,
+        sharing: serde_json::to_string(&crate::timeline::born_shared::now(node)).ok(),
     }
 }
 
@@ -266,8 +281,8 @@ fn keep(connection: &rusqlite::Connection, row: &Row) -> fastctx_storage::Result
     }
     connection.execute(
         "INSERT INTO book_deeds (deed, job, began, ended, from_machine, session, agent, held, project, account,
-             script, outcome, code, output, went, looked, copied)
-         VALUES (?17, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
+             script, outcome, code, output, went, looked, copied, sharing)
+         VALUES (?17, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?18)
          ON CONFLICT(deed) DO UPDATE SET
              ended = COALESCE(excluded.ended, book_deeds.ended),
              outcome = CASE WHEN excluded.outcome = 'running' THEN book_deeds.outcome ELSE excluded.outcome END,
@@ -294,6 +309,7 @@ fn keep(connection: &rusqlite::Connection, row: &Row) -> fastctx_storage::Result
             row.looked,
             row.copied,
             row.deed,
+            row.sharing,
         ],
     )?;
     for touch in &row.touched {
@@ -340,6 +356,8 @@ pub(crate) fn open(world: &fastctx_types::layout::WorldDir) -> fastctx_storage::
                 fastctx_storage::versions::Migration { version: 1, sql: SCHEMA },
                 fastctx_storage::versions::Migration { version: 2, sql: SEALS },
                 fastctx_storage::versions::Migration { version: 3, sql: SEALED_ACCOUNTS },
+                fastctx_storage::versions::Migration { version: 4, sql: SHARING },
+                fastctx_storage::versions::Migration { version: 5, sql: FORGOTTEN },
             ],
         )
     })

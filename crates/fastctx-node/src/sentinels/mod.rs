@@ -17,6 +17,7 @@ pub(crate) mod submission;
 pub(crate) mod timers;
 mod transport;
 pub(crate) mod trial;
+pub(crate) mod wakes;
 pub(crate) use control::{control, list_all, overview_all, record_any, scope};
 use fastctx_sentinel::{ports::Credentials, records::Records};
 use fastctx_types::ipc::Failure;

@@ -121,6 +121,15 @@ pub(super) enum Entry {
         at: Timestamp,
         keys: Vec<String>,
     },
+    /// What this machine is shared as while the lines after it are written
+    /// (7965 P08): by hub id, the body it is on there while shared whole, or
+    /// none. Written before the first line of a day's file, and again before
+    /// a line written while it is shared otherwise, so the copy of the ledger
+    /// (`assets::activity`) sends each line where it went as it was written.
+    Shared {
+        at: Timestamp,
+        hubs: std::collections::BTreeMap<String, Option<String>>,
+    },
     /// Recovery metadata survives hourly folding until the 31-day replay horizon.
     Checkpoint {
         at: Timestamp,
@@ -142,6 +151,7 @@ impl Entry {
             | Self::Account { at, .. }
             | Self::Summary { at, .. }
             | Self::Checkpoint { at, .. }
+            | Self::Shared { at, .. }
             | Self::Receipts { at, .. } => *at,
         }
     }
@@ -227,6 +237,11 @@ pub(super) struct Book {
     pub history: super::history::History,
     /// The last day file the ledger's checkpoint holds (`super::checkpoint`).
     sealed: Option<PathBuf>,
+    /// What this machine is shared as now, given before each write
+    /// (`super::with_book`); none where no write marks it.
+    pub sharing: Option<std::collections::BTreeMap<String, Option<String>>>,
+    /// The last mark of each day's file written to, as read or written.
+    marked: HashMap<PathBuf, Option<std::collections::BTreeMap<String, Option<String>>>>,
 }
 impl Book {
     pub fn load(&mut self, path: &Path) -> io::Result<()> {
@@ -411,12 +426,43 @@ impl Book {
         }
         // Reload ambiguous writes from disk, not a half-updated index.
         self.valid = false;
+        // Marked first where the day's file was last marked otherwise, or
+        // not at all (7965 P08).
+        if let Some(sharing) = self.sharing.clone() {
+            let file = day_file(path, row.usage_at());
+            let marked = match self.marked.get(&file) {
+                Some(marked) => marked.clone(),
+                None => last_mark(&file)?,
+            };
+            if marked.as_ref() != Some(&sharing) {
+                append(path, &Entry::Shared { at: row.usage_at(), hubs: sharing.clone() })?;
+            }
+            self.marked.insert(file, Some(sharing));
+        }
         append(path, &row)?;
         self.apply(&row);
         self.history.invalidate(&day_file(path, row.usage_at()));
         self.valid = true;
         Ok(())
     }
+}
+
+/// The last mark in the day's file `file`; none when it holds none, or is
+/// not there.
+fn last_mark(file: &Path) -> io::Result<Option<std::collections::BTreeMap<String, Option<String>>>> {
+    let bytes = match fastctx_platform::disk::read(file) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    Ok(bytes
+        .split(|byte| *byte == b'\n')
+        .filter(|line| line.windows(8).any(|window| window == b"\"shared\""))
+        .filter_map(|line| match serde_json::from_slice::<Entry>(line) {
+            Ok(Entry::Shared { hubs, .. }) => Some(hubs),
+            _ => None,
+        })
+        .next_back())
 }
 
 pub(super) fn day_file(path: &Path, at: Timestamp) -> PathBuf {

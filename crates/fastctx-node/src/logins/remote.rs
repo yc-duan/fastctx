@@ -310,9 +310,18 @@ pub(crate) async fn usage(
     if node.is_here(&machine) {
         return here_usage(node, agent, dir, None, true).await;
     }
-    match ask(node, &machine, Purpose::Look, RemoteCall::AgentUsage { agent, dir }).await? {
-        RemoteReply::AgentUsage(report) => Ok(*report),
-        _ => Err(other(&machine)),
+    match ask(node, &machine, Purpose::Look, RemoteCall::AgentUsage { agent: agent.clone(), dir: dir.clone() }).await {
+        Ok(RemoteReply::AgentUsage(report)) => Ok(*report),
+        Ok(_) => Err(other(&machine)),
+        // The machine away: its use as the copies here hold it (plan 3-5).
+        Err(failure) => {
+            let (asking, name) = (node.clone(), machine.name.clone());
+            fastctx_platform::task::spawn_blocking(move || crate::usage::copied::report(&asking, &name, agent.as_str(), &dir))
+                .await
+                .ok()
+                .flatten()
+                .ok_or(failure)
+        }
     }
 }
 

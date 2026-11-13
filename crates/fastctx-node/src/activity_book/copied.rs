@@ -3,14 +3,13 @@
 //! machine did for it as `activity/<machine>` (`assets::activity`), a body's
 //! `records` scope what a machine shared whole did for its members. While
 //! the machine is away from every network both are on, its book is answered
-//! from them as it would answer this computer's own interface: what it did
-//! for the accounts logged in here, and for its own user where one of them
-//! owns it. Otherwise the machine is asked.
+//! from them as it would answer the accounts asking: what it did for them,
+//! and for its own user where one of them owns it. Otherwise the machine is
+//! asked.
 
 use crate::Node;
 use fastctx_content::v2::{AccountActivity, Entry, Kind as _, Library};
-use fastctx_types::MachineName;
-use fastctx_types::access::Acting;
+use fastctx_types::access::{Acting, Written};
 use fastctx_types::activity_book::{BookAnswer, BookQuery, Deed, Hour, Outcome, Touched};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -20,27 +19,41 @@ const MOST: usize = 2000;
 /// An hour, in milliseconds.
 const HOUR: i64 = 3_600_000;
 
-/// `machine`'s book as the copies here have it, while it is away; none when
-/// it is not, or no copy here has anything of it.
-pub(crate) fn answer(node: &Node, machine: &MachineName, query: &BookQuery) -> Option<BookAnswer> {
+/// `written`'s book as the copies here have it for `acting`, while it is
+/// away; none when it is not, its name alone could be two machines of two
+/// networks, a deed's body is not all here, or no copy here has anything of
+/// it.
+pub(crate) fn answer(node: &Node, acting: &Acting, written: &Written, query: &BookQuery) -> Option<BookAnswer> {
+    let machine = &written.name;
     if !crate::timeline::copy::away(node, machine) {
         return None;
     }
     let library = &node.assets.as_ref()?.library;
-    // Its stream by the key it has on each network that lists it, whose the
-    // accounts logged in here are, and whether one of them owns it.
-    let (mut streams, mut logins, mut owned) = (BTreeSet::new(), BTreeSet::new(), false);
+    // Its stream on the network it is named on, or on each that lists it
+    // as the same machine; whose the accounts asking are, and whether one
+    // of them owns it.
+    let (mut streams, mut logins, mut owned, mut keys) = (BTreeSet::new(), BTreeSet::new(), false, BTreeSet::new());
     for link in node.links() {
+        if written.hub.as_ref().is_some_and(|hub| link.hub_name() != *hub) {
+            continue;
+        }
         let view = link.view();
-        let accounts = node.accounts_on(&link, &Acting::Here);
+        let Some(member) = view.member(machine) else { continue };
+        let accounts = node.accounts_on(&link, acting);
         let hub = link.membership().id.to_string();
         logins.extend(accounts.iter().map(|account| format!("{hub}/{account}")));
-        if let Some(member) = view.member(machine) {
-            let named: String = member.key.as_bytes()[..8].iter().map(|byte| format!("{byte:02x}")).collect();
-            streams.insert(format!("{}/{named}", AccountActivity::STREAM));
-            owned |= member.home.as_ref().is_some_and(|home| accounts.contains(home));
-        }
+        let named: String = member.key.as_bytes()[..8].iter().map(|byte| format!("{byte:02x}")).collect();
+        keys.insert(named.clone());
+        streams.insert((hub, format!("{}/{named}", AccountActivity::STREAM)));
+        owned |= member.home.as_ref().is_some_and(|home| accounts.contains(home));
     }
+    if keys.len() > 1 {
+        return None;
+    }
+    // The window asked: what lies outside it is passed over as it is read.
+    let (from, to) = match query {
+        BookQuery::Deeds { from, to, .. } | BookQuery::Hours { from, to } => (*from, *to),
+    };
     let mut deeds: BTreeMap<String, Deed> = BTreeMap::new();
     let mut found = false;
     for scope in library.held_scopes().ok()? {
@@ -48,10 +61,10 @@ pub(crate) fn answer(node: &Node, machine: &MachineName, query: &BookQuery) -> O
             continue;
         }
         // A body's records hold its members' deeds alike: those of the
-        // accounts logged in here, and the machine's own user's where one of
-        // them owns it, as the machine itself would show them.
+        // accounts asking, and the machine's own user's where one of them
+        // owns it, as the machine itself would show them.
         let body = scope.key.starts_with("b/");
-        for stream in &streams {
+        for (_, stream) in streams.iter().filter(|(hub, _)| scope.hub.as_deref() == Some(hub.as_str())) {
             let mut after = None;
             loop {
                 let page = library.page(&scope.key, stream, after.clone(), 500).ok()?;
@@ -60,13 +73,14 @@ pub(crate) fn answer(node: &Node, machine: &MachineName, query: &BookQuery) -> O
                 after = Some((last.order.clone(), last.item.clone()));
                 let full = page.len() == 500;
                 for entry in page {
-                    let Some(value) = read(library, &entry) else { continue };
+                    // A deed whose body is not all here: no whole answer.
+                    let value = read(library, &entry)?;
                     let account = value.get("account").and_then(serde_json::Value::as_str).unwrap_or_default();
                     if body && !(logins.contains(account) || (account.is_empty() && owned)) {
                         continue;
                     }
                     let key = value.get("deed").and_then(serde_json::Value::as_str).unwrap_or_default().to_string();
-                    if let Some(deed) = deed_of(&value) {
+                    if let Some(deed) = deed_of(&value).filter(|deed| deed.began >= from && deed.began < to) {
                         deeds.insert(key, deed);
                     }
                 }
@@ -80,17 +94,17 @@ pub(crate) fn answer(node: &Node, machine: &MachineName, query: &BookQuery) -> O
         return None;
     }
     Some(match query {
-        BookQuery::Deeds { from, to, limit } => {
-            let mut list: Vec<Deed> = deeds.into_values().filter(|deed| deed.began >= *from && deed.began < *to).collect();
+        BookQuery::Deeds { limit, .. } => {
+            let mut list: Vec<Deed> = deeds.into_values().collect();
             list.sort_by(|a, b| b.began.cmp(&a.began));
             let limit = (*limit as usize).min(MOST);
             let more = list.len() > limit;
             list.truncate(limit);
             BookAnswer::Deeds { machine: machine.clone(), deeds: list, more }
         }
-        BookQuery::Hours { from, to } => {
+        BookQuery::Hours { .. } => {
             let mut hours: BTreeMap<(i64, String, String, bool), Hour> = BTreeMap::new();
-            for deed in deeds.values().filter(|deed| deed.began >= *from && deed.began < *to) {
+            for deed in deeds.values() {
                 let began = deed.began.as_millisecond();
                 let at = began - began.rem_euclid(HOUR);
                 let agent = deed.agent.as_ref().map(|agent| agent.to_string()).unwrap_or_default();

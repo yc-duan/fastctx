@@ -3,6 +3,7 @@ pub(crate) mod accounts;
 mod allowance;
 mod calls;
 mod checkpoint;
+pub(crate) mod copied;
 pub(crate) use calls::calls;
 mod claude;
 mod codex;
@@ -96,7 +97,11 @@ pub(crate) fn set_resets_in_place(node: &Node, agent: &str, dir: &Path, on: bool
 fn with_book<T>(node: &Node, path: &Path, f: impl FnOnce(&mut Book) -> io::Result<T>) -> io::Result<T> {
     let book = node.usage.books.lock().expect("never poisoned").entry(path.to_path_buf()).or_default().clone();
     let mut book = book.lock().expect("never poisoned");
-    let result = book.load(path).and_then(|()| f(&mut book));
+    let result = book.load(path).and_then(|()| {
+        // What a write is marked as made under (7965 P08).
+        book.sharing = Some(crate::timeline::born_shared::now(node));
+        f(&mut book)
+    });
     let mut failures = node.usage.failures.lock().expect("never poisoned");
     match &result {
         Ok(_) => {

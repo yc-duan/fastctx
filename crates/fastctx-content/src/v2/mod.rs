@@ -48,6 +48,7 @@ mod schema;
 mod scopes;
 mod snapshot;
 mod stamps;
+mod sentinel_run;
 mod timer;
 mod standing;
 mod succession;
@@ -71,6 +72,7 @@ pub use activity::{AccountActivity, AccountUsage};
 pub use artifact::{ConversationArtifact, part_name};
 pub use draft::ConversationDraft;
 pub use attachment::ConversationAttachment;
+pub use sentinel_run::ConversationSentinelRun;
 pub use timer::ConversationTimer;
 pub use document::{
     AccountCollaboration, AccountNotice, AccountProfile, AccountSettings, AccountSkill, ConversationGoal, ConversationHistory,

@@ -390,6 +390,8 @@ fn deeds(
             bytes,
             move |db| {
                 for deed in &found {
+                    // Kept for the copy of the book to let go of too.
+                    db.execute("INSERT INTO book_forgotten(deed) SELECT deed FROM book_deeds WHERE deed=?1", [deed])?;
                     for table in BY_DEED {
                         db.execute(&format!("DELETE FROM {table} WHERE deed=?1"), [deed])?;
                     }

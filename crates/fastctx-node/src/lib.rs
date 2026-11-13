@@ -1005,6 +1005,7 @@ pub async fn run_prepared(
         job_assets::start(&node);
         assets::logs::start(&node);
         assets::activity::start(&node);
+        sentinels::wakes::start(&node);
         management::register(&node);
         record_changes::register(&node);
         record_writes::register(&node);

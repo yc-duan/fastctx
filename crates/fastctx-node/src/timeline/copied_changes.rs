@@ -11,7 +11,6 @@ use fastctx_content::v2::{Kind as _, MachineAudit};
 use fastctx_net::link::Link;
 use fastctx_types::AccountName;
 use fastctx_types::machine_log::{Page, Record};
-use std::collections::VecDeque;
 
 /// The most records one page carries, as the hub's own page at most.
 const PAGE: usize = 256;
@@ -30,30 +29,30 @@ pub(crate) fn page(node: &Node, link: &Link, account: &AccountName, before: Opti
         .into_iter()
         .filter(|scope| scope.key.starts_with(&prefix) && super::copy::records_here(node, scope))
         .max_by_key(|scope| scope.key[prefix.len()..].parse::<i64>().unwrap_or(i64::MIN))?;
-    // Its records by number, oldest first: the last page's worth before
-    // `before` kept.
-    let (mut newest, mut older, mut after) = (VecDeque::new(), false, None);
+    // Its records by number, newest first, from before `before`: a page's
+    // worth, and whether any is older.
+    let (mut records, mut older) = (Vec::new(), false);
+    let mut from = before.map(|before| {
+        let item = format!("{before:016x}").into_bytes();
+        (item.clone(), item)
+    });
     'pages: loop {
-        let entries = library.page(&scope.key, MachineAudit::STREAM, after.take(), 500).ok()?;
-        let full = entries.len() == 500;
+        let entries = library.page_before(&scope.key, MachineAudit::STREAM, from.take(), PAGE + 1).ok()?;
+        let full = entries.len() > PAGE;
         for entry in &entries {
             let body = super::copy::whole_body(library, entry)?;
             let Ok(record) = serde_json::from_slice::<Record>(&body) else { continue };
-            if before.is_some_and(|before| record.id >= before) {
+            if records.len() == PAGE {
+                older = true;
                 break 'pages;
             }
-            newest.push_back(record);
-            if newest.len() > PAGE {
-                newest.pop_front();
-                older = true;
-            }
+            records.push(record);
         }
         match entries.last() {
-            Some(last) if full => after = Some((last.order.clone(), last.item.clone())),
+            Some(last) if full => from = Some((last.order.clone(), last.item.clone())),
             _ => break,
         }
     }
-    let records: Vec<Record> = newest.into_iter().rev().collect();
     let next_before = if older { records.last().map(|record| record.id) } else { None };
     Some(Page { records, next_before })
 }

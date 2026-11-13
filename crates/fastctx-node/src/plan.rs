@@ -113,8 +113,9 @@ async fn work(
                 // The hub not reached: the plan as the copy here holds it (plan 3-5).
                 Err(error) if !matches!(link.status(), fastctx_net::link::Status::Online { .. }) => {
                     let (asking, resident, machine) = (node.clone(), whose.resident.clone(), whose.machine.clone());
+                    let (hub, reader) = (link.membership().id.to_string(), account.clone());
                     fastctx_platform::task::spawn_blocking(move || {
-                        crate::timeline::copied_records::plan(&asking, &resident, Some(&machine))
+                        crate::timeline::copied_records::plan(&asking, &resident, Some(&machine), &hub, &reader)
                     })
                     .await
                     .ok()

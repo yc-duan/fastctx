@@ -26,8 +26,10 @@ pub(crate) async fn user(
     };
     match asked(node, resident.clone(), machine.clone(), account.clone(), request.clone()).await {
         // A read the machine or the hub did not answer, not reached: as the
-        // copy here holds it (plan 3-5).
-        Err(failure) => super::copied::answer(node, &resident, &machine.name, account.as_ref(), &request).await.ok_or(failure),
+        // copy here holds it (plan 3-5); a refusal stands.
+        Err(failure) if !failure.is_refused() && failure.denial.is_none() => {
+            super::copied::answer(node, &resident, &machine, account.as_ref(), &request).await.ok_or(failure)
+        }
         answered => answered,
     }
 }

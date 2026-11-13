@@ -62,7 +62,7 @@ pub(crate) fn of(node: &Node, resident: &ResidentId, machine: Option<&Written>) 
 
 /// Whether the conversation of `scope` lives on `machine` as its copy here
 /// has it, or was born there.
-pub(super) fn lives_on(library: &fastctx_content::v2::Library, scope: &fastctx_content::v2::HeldScope, machine: &fastctx_types::MachineName) -> bool {
+pub(crate) fn lives_on(library: &fastctx_content::v2::Library, scope: &fastctx_content::v2::HeldScope, machine: &fastctx_types::MachineName) -> bool {
     if scope.key.starts_with(&format!("c/{}/{machine}/", scope.hub.as_deref().unwrap_or_default())) {
         return true;
     }
@@ -121,6 +121,11 @@ pub(crate) fn records_here(node: &Node, scope: &fastctx_content::v2::HeldScope) 
     (account || body) && scope.pulled == Some(scope.holding) && reader_here(node, scope)
 }
 
+/// The id of the hub named `hub` among those this machine is on.
+pub(crate) fn hub_id_of(node: &Node, hub: &fastctx_types::HubName) -> Option<String> {
+    node.links().into_iter().find(|link| link.hub_name() == *hub).map(|link| link.membership().id.to_string())
+}
+
 /// Whether the hub of the held scope `scope` is not reached now: no link to
 /// it is online.
 pub(crate) fn hub_away(node: &Node, scope: &fastctx_content::v2::HeldScope) -> bool {
@@ -138,6 +143,11 @@ pub(crate) fn whole_body(library: &fastctx_content::v2::Library, entry: &fastctx
         return Some(entry.body.clone());
     }
     let [object] = entry.objects.as_slice() else { return None };
+    object_bytes(library, object)
+}
+
+/// The bytes of `object`, whole; none when they are not all here.
+pub(crate) fn object_bytes(library: &fastctx_content::v2::Library, object: &fastctx_content::ObjectRef) -> Option<Vec<u8>> {
     let (mut bytes, mut at) = (Vec::new(), 0u64);
     while at < object.size {
         let piece = library.read(&object.hash, at, 1 << 20).ok()?;

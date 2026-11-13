@@ -55,6 +55,7 @@ pub(super) fn hold(tier: Tier, stream: &str) -> Hold {
         ("node", Hold::Recent),             // machine.log
         ("mcp", Hold::Recent),              // mcp.log
         ("hub", Hold::Recent),              // hub.log
+        ("sentinel-runs", Hold::Recent),    // conversation.sentinel-run
         ("attachments", Hold::Metadata),    // conversation.attachment
         ("artifacts", Hold::Metadata),      // conversation.artifact
         ("output", Hold::Metadata),         // job.output

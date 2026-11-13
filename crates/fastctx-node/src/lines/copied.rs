@@ -3,34 +3,43 @@
 //! its output as pieces of the `output` stream, one object each, and its end
 //! once it ended. Read from here when the copy has the part whole — its end
 //! says nothing of it is missing and the pieces reach its length — or when
-//! the machine it ran on is away, as far as the pieces run on unbroken.
-//! Written out under the world's `passing/` for as long as it is read, and
-//! opened there as this machine's file.
+//! the machine it ran on is away, as far as the pieces run on unbroken,
+//! said to be not whole then. Written out under the world's `passing/` for
+//! as long as it is read, and opened there as this machine's file.
 
 use crate::Node;
 use crate::attachments::kept_here::Passing;
 use fastctx_content::v2::{JobFacts, JobOutput, Kind as _};
-use fastctx_types::{JobId, MachineName};
+use fastctx_types::JobId;
+use fastctx_types::access::Written;
 use std::sync::Arc;
 
 /// The bytes of one part of a job's output most read out at a time.
 const READ: u32 = 1 << 20;
 
-/// The output at `path` of `job`, run on `machine`, from the copy here:
+/// The output at `path` of `job`, run on `written` (of the network it
+/// names, where it names one), from the copy here, and whether it is whole:
 /// whole, or what came of it while the machine is away; none otherwise, the
 /// machine itself asked then.
-pub(crate) async fn output(node: &Arc<Node>, machine: &MachineName, job: &JobId, path: &str) -> Option<Passing> {
+pub(crate) async fn output(node: &Arc<Node>, written: &Written, job: &JobId, path: &str) -> Option<(Passing, bool)> {
     let library = node.assets.as_ref()?.library.clone();
-    let away = crate::timeline::copy::away(node, machine);
+    let machine = written.name.clone();
+    let away = crate::timeline::copy::away(node, &machine);
+    let hub = match &written.hub {
+        Some(hub) => Some(crate::timeline::copy::hub_id_of(node, hub)?),
+        None => None,
+    };
     let asking = node.clone();
-    let (job, path, machine) = (job.clone(), path.to_string(), machine.clone());
+    let (job, path) = (job.clone(), path.to_string());
     let folder = node.world.path().join("passing");
-    fastctx_platform::task::blocking(move || -> Option<Passing> {
+    fastctx_platform::task::blocking(move || -> Option<(Passing, bool)> {
         // The one scope read here that holds the job: two that do say
         // nothing of which (as the record's own copy does, §28.34).
         let mut found = None;
         for scope in library.held_scopes().ok()? {
-            if !crate::timeline::copy::read_here(&asking, &scope) {
+            if !crate::timeline::copy::read_here(&asking, &scope)
+                || hub.as_ref().is_some_and(|hub| scope.hub.as_deref() != Some(hub.as_str()))
+            {
                 continue;
             }
             let Ok(Some(entry)) = library.item(&scope.key, JobFacts::STREAM, job.as_str().as_bytes()) else { continue };
@@ -101,14 +110,13 @@ pub(crate) async fn output(node: &Arc<Node>, machine: &MachineName, job: &JobId,
                 break;
             }
         }
-        // Said whole, it is read from here only when it is.
-        if let Some(length) = length
-            && at != length
-            && !away
-        {
+        // Said whole, it is read from here only when it is; nothing of it
+        // here, and not ended, is no answer.
+        let whole = length.is_some_and(|length| at == length);
+        if (!whole && !away) || (at == 0 && length.is_none()) {
             return None;
         }
-        Some(passing)
+        Some((passing, whole))
     })
     .await
 }

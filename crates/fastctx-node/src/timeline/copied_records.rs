@@ -14,27 +14,54 @@ use fastctx_types::account_records::Record;
 use fastctx_types::plan::{KIND, Page};
 use fastctx_types::{MachineName, ResidentId};
 
-/// The plan of the conversation `resident` — the one on `machine`, where
-/// given — as the copy a reader here reads holds it; none when no such copy
+/// The plan of the conversation `resident` — the one on `machine` of the
+/// hub `hub`, where given — as the copy a reader here reads holds it, shown
+/// to `account` of that hub as the hub shows it: which machine wrote it
+/// only where the account may work on that machine; none when no such copy
 /// is here, or two are.
-pub(crate) fn plan(node: &Node, resident: &ResidentId, machine: Option<&MachineName>) -> Option<Page> {
+pub(crate) fn plan(
+    node: &Node,
+    resident: &ResidentId,
+    machine: Option<&MachineName>,
+    hub: &str,
+    account: &fastctx_types::AccountName,
+) -> Option<Page> {
     let library = &node.assets.as_ref()?.library;
-    let scope = copy_of(node, resident, machine)?;
+    let scope = copy_of(node, resident, machine, Some(hub))?;
     let record = record_in(library, &scope.key, ConversationPlan::STREAM, "plan")?
         .filter(|record| record.metadata.kind == KIND && record.metadata.key == resident.as_str());
-    let Some(record) = record else { return Some(Page { owner: resident.clone(), metadata: None, body: None }) };
-    // Read as the hub's own answer is read (`Link::plan_read`).
-    let body = if record.metadata.deleted { None } else { serde_json::from_value(record.body).ok() };
+    let Some(mut record) = record else { return Some(Page { owner: resident.clone(), metadata: None, body: None }) };
+    // Read as the hub's own answer is read (`Link::plan_read`), told as it
+    // tells it (`hub owned_records::projection`).
+    let link = node.links().into_iter().find(|link| link.membership().id.as_str() == hub)?;
+    let view = link.view();
+    let usable = |machine: &MachineName| {
+        view.directory.authorize(account, fastctx_net::authorization::Action::Work(machine)).is_ok()
+    };
+    if record.metadata.by.as_ref().is_some_and(|machine| !usable(machine)) {
+        record.metadata.by = None;
+    }
+    let mut body: Option<fastctx_types::plan::Body> =
+        if record.metadata.deleted { None } else { serde_json::from_value(record.body).ok() };
+    if let Some(body) = &mut body
+        && matches!(&body.author, fastctx_types::plan::Author::Resident { address } if !usable(&address.machine))
+    {
+        body.author = fastctx_types::plan::Author::Elsewhere;
+    }
     Some(Page { owner: resident.clone(), metadata: Some(record.metadata), body })
 }
 
-/// The copy of the conversation `resident` — the one on `machine`, where
-/// given — a reader here reads: none when no such copy is here, or two are.
-pub(crate) fn copy_of(node: &Node, resident: &ResidentId, machine: Option<&MachineName>) -> Option<HeldScope> {
+/// The copy of the conversation `resident` — the one on `machine` of the
+/// hub whose id is `hub`, where given — a reader here reads: none when no
+/// such copy is here, or two are.
+pub(crate) fn copy_of(node: &Node, resident: &ResidentId, machine: Option<&MachineName>, hub: Option<&str>) -> Option<HeldScope> {
     let library = &node.assets.as_ref()?.library;
     let mut found = None;
     for scope in library.scopes_ending(&format!("/{resident}")).ok()? {
         if !super::copy::read_here(node, &scope) {
+            continue;
+        }
+        if hub.is_some_and(|hub| scope.hub.as_deref() != Some(hub)) {
             continue;
         }
         if let Some(machine) = machine

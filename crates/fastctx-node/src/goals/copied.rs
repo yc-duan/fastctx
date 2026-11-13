@@ -10,19 +10,20 @@
 use crate::Node;
 use crate::timeline::copied_records::{copy_of, record_in};
 use fastctx_content::v2::{ConversationGoal, Kind as _};
-use fastctx_types::access::HubAccount;
+use fastctx_types::access::{Acting, HubAccount, Written};
 use fastctx_types::goals::{Goal, GoalPast, Request, Updated, View};
-use fastctx_types::{Address, MachineName, ResidentId};
+use fastctx_types::{Address, ResidentId};
 use std::sync::Arc;
 
 /// `request`, a read of the goal of the conversation `resident` on
-/// `machine`, as the copy here holds it; none when it is not a read the
-/// copy answers, both the machine and the hub are reached, or no such copy
-/// is here.
+/// `machine` (of the hub it names, where it names one), asked by `account`
+/// where given, as the copy here holds it; none when it is not a read the
+/// copy answers, both the machine and the hub are reached, `account` is not
+/// logged in here, or no such copy is here.
 pub(crate) async fn answer(
     node: &Arc<Node>,
     resident: &ResidentId,
-    machine: &MachineName,
+    machine: &Written,
     account: Option<&HubAccount>,
     request: &Request,
 ) -> Option<Updated> {
@@ -40,12 +41,25 @@ pub(crate) async fn answer(
 fn answered(
     node: &Node,
     resident: &ResidentId,
-    machine: &MachineName,
+    written: &Written,
     account: Option<&HubAccount>,
     request: &Request,
 ) -> Option<Updated> {
     let library = &node.assets.as_ref()?.library;
-    let scope = copy_of(node, resident, Some(machine))?;
+    // Asked as an account: one logged in here, and the copy that account's
+    // network holds; otherwise the network the machine is named on, if any.
+    if let Some(account) = account
+        && !node.serves(&Acting::Here, &account.hub, &account.account)
+    {
+        return None;
+    }
+    let hub = match (account, &written.hub) {
+        (Some(account), _) => Some(account.hub.to_string()),
+        (None, Some(hub)) => Some(crate::timeline::copy::hub_id_of(node, hub)?),
+        (None, None) => None,
+    };
+    let machine = &written.name;
+    let scope = copy_of(node, resident, Some(machine), hub.as_deref())?;
     let machine_reached = node.is_me(machine) || !crate::timeline::copy::away(node, machine);
     if machine_reached && !crate::timeline::copy::hub_away(node, &scope) {
         return None;
@@ -62,10 +76,7 @@ fn answered(
                 return None;
             }
             let goal: Goal = serde_json::from_value(record.body).ok()?;
-            if goal.resident.resident != *resident
-                || goal.resident.machine != *machine
-                || account.is_some_and(|account| goal.account != *account)
-            {
+            if goal.resident.resident != *resident || goal.resident.machine != *machine {
                 return None;
             }
             Some((record.metadata.version, goal))
@@ -74,9 +85,14 @@ fn answered(
     };
     match request {
         Request::Read => {
-            let account = account.cloned().or_else(|| goal.as_ref().map(|(_, goal)| goal.account.clone()))?;
+            // Whose goal it is, as the hub's answer says: the account it is
+            // kept under, the one that opened the conversation.
+            let owner = match &goal {
+                Some((_, goal)) => goal.account.clone(),
+                None => opener(&scope)?,
+            };
             let (version, goal) = goal.map_or((None, None), |(version, goal)| (Some(version), Some(goal)));
-            Some(Updated::Goal { view: Box::new(View { account, version, goal, pending: None }) })
+            Some(Updated::Goal { view: Box::new(View { account: owner, version, goal, pending: None }) })
         }
         Request::Past => {
             let owner = Address { machine: machine.clone(), resident: resident.clone() };
@@ -92,4 +108,13 @@ fn answered(
         }
         _ => None,
     }
+}
+
+/// The one account that opened the conversation whose copy `scope` is, as
+/// the hub described it; none where it names none, or several.
+fn opener(scope: &fastctx_content::v2::HeldScope) -> Option<HubAccount> {
+    let descriptor: fastctx_types::assets::Descriptor = serde_json::from_slice(scope.description.as_deref()?).ok()?;
+    let fastctx_types::assets::Readers::Conversation { openers, .. } = &descriptor.readers else { return None };
+    let [opener] = openers.as_slice() else { return None };
+    Some(HubAccount { hub: scope.hub.clone()?.try_into().ok()?, account: opener.clone() })
 }

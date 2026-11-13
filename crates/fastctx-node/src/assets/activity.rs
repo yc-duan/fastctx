@@ -26,6 +26,7 @@ use fastctx_types::assets::Readers;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Weak};
 use std::time::Duration;
+use super::usage_marks::{Marked, marked_run, marks_at, marks_through};
 
 /// The most a body holds as it is.
 const BODY_MOST: usize = fastctx_content::RECORD_BYTES - 4096;
@@ -137,7 +138,63 @@ fn look(node: &Arc<Node>, hub: &HubId, home: Option<&AccountName>, waits: bool, 
     let shared = Shared { body: crate::timeline::born_shared::shared_body(node, hub), owner };
     came_into_force(node, hub, shared.body.as_deref())?;
     deeds(node, hub, home, waits, &shared, &format!("{}/{machine}", AccountActivity::STREAM))?;
+    forgotten(node, hub, &format!("{}/{machine}", AccountActivity::STREAM))?;
     usage(node, hub, home, waits, &shared, &format!("{}/{machine}", AccountUsage::STREAM))
+}
+
+/// Lets go of the deeds of conversations deleted here, as the book let go
+/// of their rows and kept their keys (`activity_book::sealing`): in every
+/// records scope of `hub` this machine wrote one into, by the keys' number
+/// from where the last look stood.
+fn forgotten(node: &Arc<Node>, hub: &HubId, stream: &str) -> Result<(), String> {
+    let Some(assets) = node.assets.as_ref() else { return Ok(()) };
+    let library = &assets.library;
+    if node.book_database.fault().is_some() {
+        return Ok(());
+    }
+    let name = format!("activity/{hub}");
+    let mut at = standing(library, &name)?;
+    let after = at["forgotten"].as_i64().unwrap_or(0);
+    let keys: Vec<(i64, String)> = node
+        .book_database
+        .read_now(move |db| {
+            Ok(db
+                .prepare_cached("SELECT id, deed FROM book_forgotten WHERE id > ?1 ORDER BY id LIMIT 256")?
+                .query_map([after], |row| Ok((row.get(0)?, row.get(1)?)))?
+                .collect::<Result<Vec<_>, _>>()?)
+        })
+        .map_err(|error| error.to_string())?;
+    let Some((last, _)) = keys.last().cloned() else { return Ok(()) };
+    let error = |error: fastctx_content::Error| error.to_string();
+    let device = assets.device();
+    let accounts = format!("a/{hub}/");
+    for scope in library.held_scopes().map_err(error)? {
+        let account = scope.key.starts_with(&accounts) && scope.key.rsplit('/').next().is_some_and(|last| last.starts_with("records-"));
+        let body = scope.key.starts_with("b/") && scope.key.ends_with("/records") && scope.hub.as_deref() == Some(hub.as_str());
+        if !account && !body {
+            continue;
+        }
+        let Some(holding) = library.holding(&scope.key).map_err(error)? else { continue };
+        if library.orderer(&scope.key, stream).map_err(error)?.is_some_and(|orderer| orderer != device) {
+            continue;
+        }
+        let mut writes = Vec::new();
+        for (_, deed) in &keys {
+            let item = fastctx_content::v2::item_of(deed);
+            if library.item(&scope.key, stream, &item).map_err(error)?.is_some() {
+                writes.push(Write::<AccountActivity> { order: item.clone(), item, value: None, objects: Vec::new() });
+            }
+        }
+        if !writes.is_empty() {
+            Writer::<AccountActivity>::new(library, &scope.key, stream)
+                .map_err(error)?
+                .in_holding(holding)
+                .write_all(writes, Vec::new(), false, assets.signer())
+                .map_err(error)?;
+        }
+    }
+    at["forgotten"] = serde_json::json!(last);
+    library.keep_checkpoint(&name, serde_json::to_vec(&at).map_err(|error| error.to_string())?).map_err(error)
 }
 
 /// Where this machine is first seen shared whole as `body` on `hub`, all
@@ -294,9 +351,13 @@ struct Deed {
     account: String,
     complete: bool,
     body: serde_json::Value,
+    /// What the machine was shared as when the book first kept it (7965
+    /// P08); none for a deed kept before that was kept.
+    sharing: Option<Marked>,
 }
 
-const DEED_COLUMNS: &str = "d.deed, d.job, d.began, d.ended, d.from_machine, d.session, d.agent, d.held, d.project, d.account, d.script, d.outcome, d.code, d.output, d.went, d.looked, d.copied, EXISTS(SELECT 1 FROM book_complete c WHERE c.deed = d.deed)";
+
+const DEED_COLUMNS: &str = "d.deed, d.job, d.began, d.ended, d.from_machine, d.session, d.agent, d.held, d.project, d.account, d.script, d.outcome, d.code, d.output, d.went, d.looked, d.copied, EXISTS(SELECT 1 FROM book_complete c WHERE c.deed = d.deed), d.sharing";
 
 fn deed_of(row: &fastctx_storage::rusqlite::Row<'_>) -> fastctx_storage::rusqlite::Result<Deed> {
     let key: String = row.get(0)?;
@@ -320,7 +381,8 @@ fn deed_of(row: &fastctx_storage::rusqlite::Row<'_>) -> fastctx_storage::rusqlit
         "looked": row.get::<_, i64>(15)?,
         "copied": row.get::<_, i64>(16)?,
     });
-    Ok(Deed { key, began, account, complete: row.get(17)?, body })
+    let sharing = row.get::<_, Option<String>>(18)?.and_then(|text| serde_json::from_str(&text).ok());
+    Ok(Deed { key, began, account, complete: row.get(17)?, body, sharing })
 }
 
 /// Writes the deeds since the last look, and those still read, of the
@@ -388,7 +450,14 @@ fn deeds(node: &Arc<Node>, hub: &HubId, home: Option<&AccountName>, waits: bool,
             (last_began, last_deed) = (deed.began, deed.key.clone());
         }
         let before_shared = (deed.began, deed.key.clone()) <= private;
-        let target = match shared.body.as_deref().filter(|_| !before_shared) {
+        // A body's as the machine was shared whole when the book kept it,
+        // however it is shared now; one kept before that was kept goes as
+        // the sharing stands now, its accounts' own up to the mark.
+        let body = match &deed.sharing {
+            Some(sharing) => sharing.get(hub.as_str()).cloned().flatten(),
+            None => shared.body.clone().filter(|_| !before_shared),
+        };
+        let target = match body.as_deref() {
             Some(body) => body_scope(node, library, hub, body, shared.owner, stream)?,
             None => {
                 let Some(account) = routed(&deed.account, hub, home) else {
@@ -465,6 +534,7 @@ fn usage(node: &Arc<Node>, hub: &HubId, home: Option<&AccountName>, waits: bool,
     let mut at = standing(library, &name)?;
     if any_held_anew(library, &mut at)? {
         at["files"] = serde_json::json!({});
+        at["marks"] = serde_json::json!({});
     }
     let error = |error: fastctx_content::Error| error.to_string();
     let (mut budget, mut anew) = (USAGE_BYTES, false);
@@ -491,9 +561,14 @@ fn usage(node: &Arc<Node>, hub: &HubId, home: Option<&AccountName>, waits: bool,
         // Whole lines only: the rest is read when it is whole.
         let Some(end) = bytes.iter().rposition(|&byte| byte == b'\n') else { continue };
         let mut bytes = &bytes[..=end];
+        // As the ledger marked it shared as each line was written (7965
+        // P08): the piece goes on to where that changes for this network.
+        let started = marks_at(&at, &file, &path, offset)?;
+        let (run, marked) = marked_run(started.clone(), bytes, hub.as_str());
+        bytes = &bytes[..run];
         // Up to where the file stood as this machine cleared for a share:
-        // its accounts' own, never the body's.
-        let mark = at["private"][&file].as_u64().filter(|mark| *mark > offset);
+        // its accounts' own, never the body's — where nothing is marked.
+        let mark = at["private"][&file].as_u64().filter(|mark| *mark > offset && marked.is_none());
         if let Some(mark) = mark
             && ((mark - offset) as usize) < bytes.len()
         {
@@ -501,8 +576,13 @@ fn usage(node: &Arc<Node>, hub: &HubId, home: Option<&AccountName>, waits: bool,
             let Some(end) = kept.iter().rposition(|&byte| byte == b'\n') else { continue };
             bytes = &kept[..=end];
         }
-        // Shared whole now: the piece, any account's lines, goes to the body.
-        if let (Some(body), None) = (shared.body.as_deref(), mark) {
+        // A body's as marked; where nothing is, shared whole now: the piece,
+        // any account's lines, goes to the body.
+        let to_body = match &marked {
+            Some(marked) => marked.clone(),
+            None => shared.body.clone().filter(|_| mark.is_none()),
+        };
+        if let Some(body) = to_body.as_deref() {
             let Some((scope, holding)) = body_scope(node, library, hub, body, shared.owner, stream)? else { continue };
             if held_anew(&mut at, &scope, holding) {
                 anew = true;
@@ -538,6 +618,7 @@ fn usage(node: &Arc<Node>, hub: &HubId, home: Option<&AccountName>, waits: bool,
                     .map_err(error)?;
             }
             at["files"][&file] = serde_json::json!(offset + bytes.len() as u64);
+            at["marks"][&file] = serde_json::json!(marks_through(started, bytes));
             budget = budget.saturating_sub(bytes.len() as u64);
             continue;
         }
@@ -548,6 +629,10 @@ fn usage(node: &Arc<Node>, hub: &HubId, home: Option<&AccountName>, waits: bool,
             let mut unowned = false;
             for line in bytes.split_inclusive(|&byte| byte == b'\n') {
                 let Ok(value) = serde_json::from_slice::<serde_json::Value>(line) else { continue };
+                // A mark of how the machine is shared is no account's line.
+                if value.get("kind").and_then(serde_json::Value::as_str) == Some("shared") {
+                    continue;
+                }
                 let account = match value.get("who").filter(|who| !who.is_null()) {
                     Some(who) => {
                         let (Some(of), Some(name)) = (who["hub"].as_str(), who["account"].as_str()) else { continue };
@@ -622,10 +707,13 @@ fn usage(node: &Arc<Node>, hub: &HubId, home: Option<&AccountName>, waits: bool,
             continue;
         }
         at["files"][&file] = serde_json::json!(offset + bytes.len() as u64);
+        at["marks"][&file] = serde_json::json!(marks_through(started, bytes));
         budget = budget.saturating_sub(bytes.len() as u64);
     }
     if anew {
         at["files"] = serde_json::json!({});
+        at["marks"] = serde_json::json!({});
     }
     library.keep_checkpoint(&name, serde_json::to_vec(&at).map_err(|error| error.to_string())?).map_err(error)
 }
+
