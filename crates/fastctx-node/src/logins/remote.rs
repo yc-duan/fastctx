@@ -315,8 +315,8 @@ pub(crate) async fn usage(
         Ok(_) => Err(other(&machine)),
         // The machine away: its use as the copies here hold it (plan 3-5).
         Err(failure) => {
-            let (asking, name) = (node.clone(), machine.name.clone());
-            fastctx_platform::task::spawn_blocking(move || crate::usage::copied::report(&asking, &name, agent.as_str(), &dir))
+            let (asking, written) = (node.clone(), machine.clone());
+            fastctx_platform::task::spawn_blocking(move || crate::usage::copied::report(&asking, &written, agent.as_str(), &dir))
                 .await
                 .ok()
                 .flatten()

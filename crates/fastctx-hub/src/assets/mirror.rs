@@ -277,6 +277,7 @@ pub(super) fn apply(
     }
     let scope_key = scope.descriptor.scope.as_str();
     let error = |error: fastctx_content::Error| error.to_string();
+    under_key_in_use(assets, scope, library, stream)?;
     let frames = library.hub_frames(scope_key, stream, records, &Service(assets.keys())).map_err(error)?;
     let period = library.holding(scope_key).map_err(error)?.ok_or("the scope is not held here")?;
     let anything = |_: &ObjectRef| true;
@@ -303,6 +304,40 @@ pub(super) fn apply(
     Ok(())
 }
 
+
+/// A stream the hub orders, last ordered under a key of the hub's own that
+/// it has retired since: handed over to the key in use, a new epoch from
+/// where the stream stands, in the hub's chain before any device hears of
+/// it (design §27: a key rotation opens a new epoch under the new key;
+/// codex-98a2db95). A stream another device orders is not the hub's to
+/// take. Called with the scope's writing held.
+fn under_key_in_use(
+    assets: &Assets,
+    scope: &scopes::Scope,
+    library: &fastctx_content::v2::Library,
+    stream: &str,
+) -> Result<(), String> {
+    let scope_key = scope.descriptor.scope.as_str();
+    let error = |error: fastctx_content::Error| error.to_string();
+    let current = assets.keys().frame_key();
+    let Some((epoch, orderer)) = library.last_epoch(scope_key, stream).map_err(error)? else { return Ok(()) };
+    if orderer == current || !assets.keys().holds(&orderer) {
+        return Ok(());
+    }
+    let (next, head) = library
+        .standing(scope_key)
+        .map_err(error)?
+        .into_iter()
+        .find(|(name, _, _)| name == stream)
+        .map_or((0, [0; 32]), |(_, sequence, head)| (sequence + 1, head));
+    let successor = fastctx_content::v2::Successor { device: current, key: current, kind: fastctx_content::v2::EpochKind::Source };
+    let cutoff = fastctx_content::v2::Cutoff { next, head };
+    let (signed, _) = library
+        .handover_from(scope_key, stream, successor, cutoff, Some(epoch), super::serve::kinds(), assets.signer())
+        .map_err(error)?;
+    let opened = fastctx_content::v2::EpochFact::decode(&signed.fact)?.epoch;
+    assets.opened_epoch(&scope.owner, scope_key, stream, opened, &signed.fact).map_err(|error| error.to_string())
+}
 
 /// The records of `account` (opened at `opened`) that `wanted` picks, read
 /// from where the hub keeps them.

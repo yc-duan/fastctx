@@ -1784,8 +1784,18 @@ async fn cursors(
         }
         let (scope_text, stream_text) = (scope.to_string(), standing.stream.clone());
         let shared = blocking(library, move |library| library.shared_end(&scope_text, &stream_text, &ends)).await?;
+        // What differs is kept aside, whole, before the stream is cut back:
+        // it may be the last copy of what the hub signed before it was put
+        // back (codex-795fd27c #1); rows no frame holds go with the cut.
         let (scope_text, stream_text) = (scope.to_string(), standing.stream);
-        blocking(library, move |library| library.truncate(&scope_text, &stream_text, shared)).await?;
+        blocking(library, move |library| {
+            let from = shared.map_or(0, |through| through + 1);
+            if library.set_aside(&scope_text, &stream_text, from, "differs from the hub's history past where both agree")? > from {
+                library.truncate(&scope_text, &stream_text, shared)?;
+            }
+            Ok(())
+        })
+        .await?;
         cut = true;
     }
     Ok(cut)

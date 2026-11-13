@@ -42,11 +42,12 @@ pub(crate) fn report(
 }
 
 /// `agent`'s ledger at `ledger`, read whole now and kept nowhere: one put
-/// back together from copies (`super::copied`), everyone's use in it.
-pub(super) fn report_of(agent: &str, ledger: &Path, owner: bool) -> io::Result<UsageReport> {
+/// back together from copies (`super::copied`), everyone's use in it, or
+/// `only`'s alone.
+pub(super) fn report_of(agent: &str, ledger: &Path, only: Option<&HubAccount>, owner: bool) -> io::Result<UsageReport> {
     let mut book = super::ledger::Book::default();
     book.load_at(ledger, Timestamp::now())?;
-    made(agent, ledger, &mut book, None, owner)
+    made(agent, ledger, &mut book, only, owner)
 }
 
 /// The report of the ledger at `ledger`, loaded as `book`.

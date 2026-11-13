@@ -198,9 +198,19 @@ pub(super) async fn pull(replica: &Replica, hub: &HubId, link: &Arc<Link>, key: 
             }
             let (scope_text, stream_text) = (scope.to_string(), standing.stream.clone());
             let shared = blocking(library, move |library| library.shared_end(&scope_text, &stream_text, &ends)).await?;
+            // What differs is kept aside, whole, before the stream is cut
+            // back: it may be the last copy of what the hub signed before it
+            // was put back (codex-795fd27c #1); a window's rows go with the cut.
             let (scope_text, stream_text) = (scope.to_string(), standing.stream.clone());
-            blocking(library, move |library| library.truncate(&scope_text, &stream_text, shared)).await?;
-            local.insert(standing.stream, shared.map_or(0, |through| through + 1));
+            let from = shared.map_or(0, |through| through + 1);
+            blocking(library, move |library| {
+                if library.set_aside(&scope_text, &stream_text, from, "differs from the hub's history past where both agree")? > from {
+                    library.truncate(&scope_text, &stream_text, shared)?;
+                }
+                Ok(())
+            })
+            .await?;
+            local.insert(standing.stream, from);
         }
     }
     for at in &streams {

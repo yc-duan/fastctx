@@ -12,6 +12,7 @@ use crate::Node;
 use fastctx_content::v2::{ConversationSentinelRun, Kind as _, LEASE, Library, Write, Writer};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Weak};
+use sha2::Digest as _;
 use std::time::Duration;
 
 /// How often the sentinels here are looked at.
@@ -94,16 +95,26 @@ fn generation_wakes(node: &Arc<Node>, directory: &Path, most: usize) -> Result<u
     let state: serde_json::Value =
         serde_json::from_slice(&fastctx_platform::disk::read(last).map_err(|error| error.to_string())?).map_err(|error| error.to_string())?;
     let definition = &state["definition"];
-    let (Some(id), Some(generation), Some(hub), Some(resident), Some(machine)) = (
+    let (Some(id), Some(generation), Some(account), Some(resident), Some(machine)) = (
         definition["id"].as_str(),
         definition["generation"].as_u64(),
-        definition["hub"].as_str(),
+        definition["account"].as_str().and_then(|account| fastctx_types::AccountName::try_from(account.to_string()).ok()),
         definition["owner"]["resident"].as_str(),
         definition["owner"]["machine"].as_str().and_then(|machine| fastctx_types::MachineName::try_from(machine.to_string()).ok()),
     ) else {
         return Ok(0);
     };
-    let Some(link) = node.links().into_iter().find(|link| link.hub_name().as_str() == hub) else { return Ok(0) };
+    // The network it was kept for: the one whose id, with its account, its
+    // keeping is named by (`fastctx_sentinel` `scope_key`) — never another
+    // of the same name met since (codex-847f57fd #2).
+    let kept_as = directory.parent().and_then(Path::parent).and_then(Path::file_name).and_then(|name| name.to_str()).map(str::to_string);
+    let Some(link) = node.links().into_iter().find(|link| {
+        let scope = fastctx_types::access::HubAccount { hub: link.membership().id.clone(), account: account.clone() };
+        let named = serde_json::to_vec(&scope).map(|bytes| sha2::Sha256::digest(bytes).iter().map(|byte| format!("{byte:02x}")).collect::<String>());
+        named.ok().is_some_and(|named| Some(named) == kept_as)
+    }) else {
+        return Ok(0);
+    };
     let (hub_id, key) = {
         let view = link.view();
         let Some(me) = view.me() else { return Ok(0) };
