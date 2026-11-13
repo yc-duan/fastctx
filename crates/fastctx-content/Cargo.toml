@@ -12,6 +12,12 @@ publish = false
 name = "content_drill"
 harness = false
 
+[[test]]
+name = "v2_drills"
+path = "tests/v2_drills/main.rs"
+harness = false
+required-features = ["drill"]
+
 [features]
 # The library's raw commit, for the drills alone.
 drill = []
