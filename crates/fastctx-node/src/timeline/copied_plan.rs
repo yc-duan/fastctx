@@ -1,8 +1,12 @@
-//! A conversation's plan as the copy here holds it, read while the hub is
-//! not reached (plan 3-5, design §28.27). The hub orders the plan into the
-//! conversation's scope as its account record (`hub assets::mirror`), so a
-//! machine that holds the conversation holds its plan as the hub last
-//! decided it; written by the hub alone, it is read here, never written.
+//! A conversation's records the hub orders — its plan, notes, goals and
+//! sentinels — as the copy here holds them, read while the hub is not
+//! reached (plan 3-5, design §28.27). The hub orders each into the
+//! conversation's scope as its account record (`hub assets::mirror`
+//! `placed`: the plan as `plan` of the `plan` stream, a note by its name in
+//! `history`, `goal` and `goal_past` in `goals`, a sentinel by its id in
+//! `sentinels`), so a machine that holds the conversation holds them as the
+//! hub last decided; written by the hub alone, they are read here, never
+//! written.
 
 use crate::Node;
 use fastctx_content::v2::{ConversationPlan, Entry, Kind as _, Library};
@@ -14,6 +18,25 @@ use fastctx_types::{MachineName, ResidentId};
 /// given — as the copy a reader here reads holds it; none when no such copy
 /// is here, or two are.
 pub(crate) fn page(node: &Node, resident: &ResidentId, machine: Option<&MachineName>) -> Option<Page> {
+    let record = record(node, resident, machine, ConversationPlan::STREAM, "plan")?
+        .filter(|record| record.metadata.kind == KIND && record.metadata.key == resident.as_str());
+    let Some(record) = record else { return Some(Page { owner: resident.clone(), metadata: None, body: None }) };
+    // Read as the hub's own answer is read (`Link::plan_read`).
+    let body = if record.metadata.deleted { None } else { serde_json::from_value(record.body).ok() };
+    Some(Page { owner: resident.clone(), metadata: Some(record.metadata), body })
+}
+
+/// The account record `item` of `stream` in the copy of the conversation
+/// `resident` — the one on `machine`, where given — a reader here reads:
+/// none when no such copy is here or two are, `Some(None)` when the copy
+/// holds no such record.
+pub(crate) fn record(
+    node: &Node,
+    resident: &ResidentId,
+    machine: Option<&MachineName>,
+    stream: &str,
+    item: &str,
+) -> Option<Option<Record>> {
     let library = &node.assets.as_ref()?.library;
     let mut found = None;
     for scope in library.scopes_ending(&format!("/{resident}")).ok()? {
@@ -30,16 +53,8 @@ pub(crate) fn page(node: &Node, resident: &ResidentId, machine: Option<&MachineN
         }
     }
     let scope = found?;
-    for entry in library.page(&scope, ConversationPlan::STREAM, None, 16).ok()? {
-        let Some(record) = record_of(library, &entry) else { continue };
-        if record.metadata.kind != KIND || record.metadata.key != resident.as_str() {
-            continue;
-        }
-        // Read as the hub's own answer is read (`Link::plan_read`).
-        let body = if record.metadata.deleted { None } else { serde_json::from_value(record.body).ok() };
-        return Some(Page { owner: resident.clone(), metadata: Some(record.metadata), body });
-    }
-    Some(Page { owner: resident.clone(), metadata: None, body: None })
+    let item = fastctx_content::v2::item_of(item);
+    Some(library.item(&scope, stream, &item).ok()?.and_then(|entry| record_of(library, &entry)))
 }
 
 /// The account record an item of the hub's holds: its body, or the one
