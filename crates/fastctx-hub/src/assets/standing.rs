@@ -27,7 +27,7 @@ pub(crate) const SCHEMA: &str = "
 -- Each machine's latest report of where it stands, when it came, and when
 -- the machine was last seen online.
 CREATE TABLE IF NOT EXISTS sync_reports (
-    machine TEXT PRIMARY KEY, report BLOB NOT NULL, at INTEGER NOT NULL, seen INTEGER
+    machine TEXT PRIMARY KEY, device BLOB NOT NULL, report BLOB NOT NULL, at INTEGER NOT NULL, seen INTEGER
 ) WITHOUT ROWID;
 -- How far behind each machine stood in each owner library: a point a
 -- minute (grain 0) for a day, then a point an hour (grain 1) for thirty days.
@@ -55,6 +55,10 @@ const STATUS_STANDS: Duration = Duration::from_secs(60);
 const OWNERS_AT_MOST: usize = 4096;
 /// How often the machines are sampled.
 const EVERY: Duration = Duration::from_secs(60);
+/// The points written in one write.
+const POINTS_AT_ONCE: usize = 4096;
+/// The statuses kept at most.
+const STATUSES_AT_MOST: usize = 64;
 
 /// What the hub keeps in memory beside the tables.
 #[derive(Default)]
@@ -63,8 +67,9 @@ pub(crate) struct Standing {
     tops: Mutex<HashMap<String, Top>>,
     /// What each account's machines amount to, as last sampled.
     summaries: Mutex<BTreeMap<AccountName, AccountSync>>,
-    /// Each account's status reckoned lately, by span.
-    statuses: Mutex<HashMap<(AccountName, u32), (Instant, SyncStatus)>>,
+    /// Each account's status reckoned lately, by the account as it was
+    /// opened and the span (AO07); none kept once it stands no more (AO03).
+    statuses: Mutex<HashMap<(AccountName, i64, u32), (Instant, SyncStatus)>>,
     /// What each owner library holds in all, at the change it was counted.
     totals: Mutex<HashMap<String, (u64, fastctx_content::v2::Totals)>>,
 }
@@ -85,9 +90,17 @@ impl Standing {
     /// A stream of the library `owner` moved: its latest change is read
     /// again when next asked.
     pub(crate) fn moved(&self, owner: &str) {
-        if let Some(top) = self.tops.lock().expect("tops").get_mut(owner) {
-            top.moves += 1;
-        }
+        // One not read yet is marked moved all the same: a read under way
+        // as it moved is read again (AO02).
+        let mut tops = self.tops.lock().expect("tops");
+        let top = tops.entry(owner.to_string()).or_insert_with(|| Top {
+            change: 0,
+            at: 0,
+            generation: String::new(),
+            moves: 0,
+            read_at: u64::MAX,
+        });
+        top.moves += 1;
     }
 
     /// What the accounts logged in on `me` amount to.
@@ -107,6 +120,7 @@ pub(crate) fn keep(
     assets: &Assets,
     directory: &Indexed<'_>,
     machine: &MachineName,
+    device: &[u8; 32],
     mut report: SyncReport,
 ) -> Result<Reply, String> {
     if report.owners.len() > OWNERS_AT_MOST {
@@ -114,15 +128,20 @@ pub(crate) fn keep(
     }
     report.unpulled_scopes.truncate(UNPULLED_NAMED);
     let body = serde_json::to_vec(&report).map_err(|error| error.to_string())?;
-    let (name, at) = (directory.canonical(machine).to_string(), now());
+    let (name, at, device) = (directory.canonical(machine).to_string(), now(), *device);
+    // The names the machine had go: its report is under its name now (AO05).
+    let was: Vec<String> = directory.member(machine).map(|member| member.was.iter().map(ToString::to_string).collect()).unwrap_or_default();
     assets
         .control
         .write_now(256 + body.len(), move |c| {
             c.prepare_cached(
-                "INSERT INTO sync_reports (machine, report, at, seen) VALUES (?1, ?2, ?3, ?3)
-                 ON CONFLICT (machine) DO UPDATE SET report = excluded.report, at = excluded.at, seen = excluded.at",
+                "INSERT INTO sync_reports (machine, device, report, at, seen) VALUES (?1, ?2, ?3, ?4, ?4)
+                 ON CONFLICT (machine) DO UPDATE SET device = excluded.device, report = excluded.report, at = excluded.at, seen = excluded.at",
             )?
-            .execute(params![name, body, at])?;
+            .execute(params![name, &device[..], body, at])?;
+            for old in &was {
+                c.prepare_cached("DELETE FROM sync_reports WHERE machine = ?1")?.execute([old])?;
+            }
             Ok(())
         })
         .map_err(|error| error.to_string())?;
@@ -137,34 +156,51 @@ struct Kept {
     seen: Option<i64>,
 }
 
-/// Every machine's latest report, under its name now.
-fn kept(assets: &Assets, directory: &Indexed<'_>) -> io::Result<BTreeMap<MachineName, Kept>> {
-    let rows: Vec<(String, Vec<u8>, i64, Option<i64>)> = assets
+/// Every machine's latest report, under its name now, of the machine its
+/// name is now — the same key (AO06) — the latest of those kept under its
+/// names (AO05); and the names whose reports are of no machine now.
+fn kept(assets: &Assets, directory: &Indexed<'_>) -> io::Result<(BTreeMap<MachineName, Kept>, Vec<String>)> {
+    let rows: Vec<(String, Vec<u8>, Vec<u8>, i64, Option<i64>)> = assets
         .control
         .read_now(|c| {
-            let mut statement = c.prepare_cached("SELECT machine, report, at, seen FROM sync_reports")?;
-            let rows = statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)))?;
+            let mut statement = c.prepare_cached("SELECT machine, device, report, at, seen FROM sync_reports")?;
+            let rows = statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)))?;
             Ok(rows.collect::<Result<_, _>>()?)
         })
         .map_err(io::Error::other)?;
-    let mut kept = BTreeMap::new();
-    for (machine, report, at, seen) in rows {
-        let (Ok(name), Ok(report)) = (MachineName::try_from(machine), serde_json::from_slice::<SyncReport>(&report)) else {
+    let mut kept: BTreeMap<MachineName, Kept> = BTreeMap::new();
+    let mut gone = Vec::new();
+    for (machine, device, report, at, seen) in rows {
+        let (Ok(name), Ok(report)) = (MachineName::try_from(machine.clone()), serde_json::from_slice::<SyncReport>(&report)) else {
+            gone.push(machine);
             continue;
         };
-        kept.insert(directory.canonical(&name).clone(), Kept { report, at, seen });
+        let Some(member) = directory.member(&name).filter(|member| member.key.as_bytes()[..] == device[..]) else {
+            gone.push(machine);
+            continue;
+        };
+        let now = member.name.clone();
+        if kept.get(&now).is_some_and(|other| other.at >= at) {
+            continue;
+        }
+        kept.insert(now, Kept { report, at, seen });
     }
-    Ok(kept)
+    Ok((kept, gone))
 }
 
 /// `owner`'s latest change; none when it has no library or no change yet.
 fn top(assets: &Assets, owner: &str) -> Option<Top> {
     let moves = {
-        let tops = assets.standing.tops.lock().expect("tops");
+        let mut tops = assets.standing.tops.lock().expect("tops");
         match tops.get(owner) {
             Some(top) if top.moves == top.read_at => return Some(top.clone()),
             Some(top) => top.moves,
-            None => 0,
+            // Marked before it is read: a move while it is read leaves it
+            // to be read again (AO02).
+            None => {
+                tops.insert(owner.to_string(), Top { change: 0, at: 0, generation: String::new(), moves: 0, read_at: u64::MAX });
+                0
+            }
         }
     };
     let owned = Owner::from_key(owner)?;
@@ -185,9 +221,10 @@ fn top(assets: &Assets, owner: &str) -> Option<Top> {
 /// How far behind its library's latest change `standing` is.
 fn behind(top: Option<&Top>, standing: &OwnerStanding) -> u64 {
     let Some(top) = top else { return 0 };
-    // Of another generation, it is as far behind as can be told, never caught up.
+    // Of another generation, it is as far behind as can be told; never
+    // caught up for it (`Reckoned::exact`).
     if standing.generation != top.generation {
-        return (top.at - standing.at).max(1) as u64;
+        return (top.at - standing.at).max(CAUGHT_UP as i64) as u64;
     }
     if standing.change >= top.change {
         return 0;
@@ -209,18 +246,25 @@ fn counts(owner: &str) -> bool {
     Owner::from_key(owner).is_some()
 }
 
-/// How far behind `kept` stands in what `account` reads, and whether it
-/// stands anywhere in the account's own library that has one.
-fn reckon(
-    assets: &Assets,
-    directory: &Indexed<'_>,
-    account: &AccountName,
-    kept: &Kept,
-) -> (u64, bool) {
+/// Where a machine stands as reckoned: how far behind it is, whether it
+/// stands in every library of the account that holds anything, and whether
+/// it stands at the very latest change of each library it follows, in its
+/// generation.
+struct Reckoned {
+    behind: u64,
+    whole: bool,
+    exact: bool,
+}
+
+/// How `kept` stands in what `account` reads.
+fn reckon(assets: &Assets, directory: &Indexed<'_>, account: &AccountName, kept: &Kept) -> Reckoned {
     let mut worst = 0;
+    let mut exact = true;
     for standing in &kept.report.owners {
         if counts(&standing.owner) {
-            worst = worst.max(behind(top(assets, &standing.owner).as_ref(), standing));
+            let top = top(assets, &standing.owner);
+            worst = worst.max(behind(top.as_ref(), standing));
+            exact &= top.is_none_or(|top| top.generation == standing.generation && standing.change >= top.change);
         }
     }
     // The account's own library and those of its bodies, where they hold
@@ -229,11 +273,22 @@ fn reckon(
     let whole = libraries_of(assets, directory, account)
         .into_iter()
         .all(|owner| kept.report.owners.iter().any(|standing| standing.owner == owner) || top(assets, &owner).is_none());
-    (worst, whole)
+    Reckoned { behind: worst, whole, exact }
 }
 
-fn synced(kept: &Kept, behind: u64, whole: bool) -> bool {
-    whole && behind < CAUGHT_UP && kept.report.unpulled == 0 && kept.report.missing_objects == 0
+/// How long a report of a machine online stands for where it is: it reports
+/// at least every five minutes.
+const FRESH: i64 = 6 * MINUTE;
+
+/// Whether a machine is caught up: in every library it is to stand in, with
+/// nothing first pulled or missing, at the very latest change of each — or,
+/// online and reporting as it goes, within a minute of it, in the same
+/// generation. Offline, only the very latest counts: a change made just
+/// after where it stood is one it does not have, however soon after (I03).
+fn synced(kept: &Kept, reckoned: &Reckoned, online: bool, now: i64) -> bool {
+    let settled = reckoned.whole && kept.report.unpulled == 0 && kept.report.missing_objects == 0;
+    let going = online && now - kept.at <= FRESH && reckoned.behind < CAUGHT_UP;
+    settled && (reckoned.exact || going)
 }
 
 /// The members `account` is logged in on, managed machines aside.
@@ -264,9 +319,7 @@ fn sample(hub: &crate::Hub) -> io::Result<()> {
     let online: BTreeSet<MachineName> = hub.sessions().keys().cloned().collect();
     let store = hub.store();
     let directory = store.indexed();
-    let kept = kept(assets, &directory)?;
-    let gone: Vec<String> =
-        kept.keys().filter(|machine| directory.member(machine).is_none()).map(ToString::to_string).collect();
+    let (kept, gone) = kept(assets, &directory)?;
     let seen: Vec<String> = kept.keys().filter(|machine| online.contains(*machine)).map(ToString::to_string).collect();
     let mut points = Vec::new();
     for (machine, kept) in kept.iter().filter(|(machine, _)| directory.member(machine).is_some()) {
@@ -279,12 +332,14 @@ fn sample(hub: &crate::Hub) -> io::Result<()> {
     let mut summaries = BTreeMap::new();
     for account in &directory.all.accounts {
         let (mut devices, mut caught_up, mut worst) = (0, 0, 0);
+        // Every machine of the account counts, one that never reported among
+        // those not caught up (I05).
         for member in machines_of(&directory, &account.name) {
-            let Some(kept) = kept.get(&member.name) else { continue };
             devices += 1;
-            let (behind, whole) = reckon(assets, &directory, &account.name, kept);
-            worst = worst.max(behind);
-            caught_up += u32::from(synced(kept, behind, whole));
+            let Some(kept) = kept.get(&member.name) else { continue };
+            let reckoned = reckon(assets, &directory, &account.name, kept);
+            worst = worst.max(reckoned.behind);
+            caught_up += u32::from(synced(kept, &reckoned, online.contains(&member.name), now));
         }
         if devices > 0 {
             summaries.insert(
@@ -293,17 +348,28 @@ fn sample(hub: &crate::Hub) -> io::Result<()> {
             );
         }
     }
+    // The points go a batch at a time: however many machines and libraries,
+    // no one write is past what the writer takes (AO04).
+    for batch in points.chunks(POINTS_AT_ONCE) {
+        let batch = batch.to_vec();
+        assets
+            .control
+            .write_now(512 + batch.len() * 128, move |c| {
+                let mut point = c.prepare_cached(
+                    "INSERT INTO sync_lag (machine, owner, grain, at, behind, online) VALUES (?1, ?2, 0, ?3, ?4, ?5)
+                     ON CONFLICT (machine, grain, at, owner) DO UPDATE SET
+                     behind = MAX(behind, excluded.behind), online = MAX(online, excluded.online)",
+                )?;
+                for (machine, owner, behind, on) in &batch {
+                    point.execute(params![machine, owner, minute, behind, on])?;
+                }
+                Ok(())
+            })
+            .map_err(io::Error::other)?;
+    }
     assets
         .control
-        .write_now(512 + points.len() * 128, move |c| {
-            let mut point = c.prepare_cached(
-                "INSERT INTO sync_lag (machine, owner, grain, at, behind, online) VALUES (?1, ?2, 0, ?3, ?4, ?5)
-                 ON CONFLICT (machine, grain, at, owner) DO UPDATE SET
-                 behind = MAX(behind, excluded.behind), online = MAX(online, excluded.online)",
-            )?;
-            for (machine, owner, behind, on) in &points {
-                point.execute(params![machine, owner, minute, behind, on])?;
-            }
+        .write_now(512 + (seen.len() + gone.len()) * 64, move |c| {
             let mut saw = c.prepare_cached("UPDATE sync_reports SET seen = ?2 WHERE machine = ?1")?;
             for machine in &seen {
                 saw.execute(params![machine, now])?;
@@ -462,7 +528,8 @@ fn libraries_of(assets: &Assets, directory: &Indexed<'_>, account: &AccountName)
         })
         .unwrap_or_default();
     for body in bodies {
-        if assets.bodies.members(directory.all, &body).is_ok_and(|members| members.contains(account.as_str())) {
+        // Members are named with when their account was opened (I02).
+        if assets.bodies.members(directory.all, &body).is_ok_and(|members| super::bodies::among(directory.all, &members, account)) {
             owners.push(Owner::Body(body).key());
         }
     }
@@ -546,7 +613,8 @@ pub(crate) fn status(hub: &crate::Hub, from: &MachineName, account: &AccountName
     if !directory.logged_in(from, account) {
         return Err(format!("{account} is not logged in on {from}"));
     }
-    let key = (account.clone(), hours);
+    let opened = directory.all.account(account).map_or(0, |found| found.opened.as_millisecond());
+    let key = (account.clone(), opened, hours);
     if let Some((_, status)) =
         assets.standing.statuses.lock().expect("statuses").get(&key).filter(|(at, _)| at.elapsed() < STATUS_STANDS)
     {
@@ -554,13 +622,14 @@ pub(crate) fn status(hub: &crate::Hub, from: &MachineName, account: &AccountName
     }
     let online: HashMap<MachineName, i64> =
         hub.sessions().iter().map(|(name, session)| (name.clone(), session.since.as_millisecond())).collect();
-    let kept = kept(assets, &directory).map_err(|error| error.to_string())?;
+    let (kept, _) = kept(assets, &directory).map_err(|error| error.to_string())?;
     let now = now();
     let members = machines_of(&directory, account);
     let mut devices = Vec::new();
     for member in &members {
         let report = kept.get(&member.name);
-        let (behind, whole) = report.map_or((0, false), |kept| reckon(assets, &directory, account, kept));
+        let reckoned = report.map(|kept| reckon(assets, &directory, account, kept));
+        let behind = reckoned.as_ref().map_or(0, |reckoned| reckoned.behind);
         let (left, about) = report.map_or((Vec::new(), false), |kept| {
             left(assets, &directory, &member.name, account, kept)
         });
@@ -581,7 +650,9 @@ pub(crate) fn status(hub: &crate::Hub, from: &MachineName, account: &AccountName
             unsent_frames: facts.map_or(0, |facts| facts.unsent_frames),
             unsent_bytes: facts.map_or(0, |facts| facts.unsent_bytes),
             rate: facts.map_or(0, |facts| facts.rate),
-            synced: report.is_some_and(|kept| synced(kept, behind, whole)),
+            synced: report
+                .zip(reckoned.as_ref())
+                .is_some_and(|(kept, reckoned)| synced(kept, reckoned, online.contains_key(&member.name), now)),
         });
     }
     let machines: Vec<MachineName> = members.iter().map(|member| member.name.clone()).collect();
@@ -589,6 +660,18 @@ pub(crate) fn status(hub: &crate::Hub, from: &MachineName, account: &AccountName
         points(assets, &machines, hours, now).map_err(|error| error.to_string())?;
     let totals = totals(assets, &directory, account);
     let status = SyncStatus { at: now, hours, step, devices, points, totals };
-    assets.standing.statuses.lock().expect("statuses").insert(key, (Instant::now(), status.clone()));
+    {
+        // What stands no more goes, and never more than so many (AO03).
+        let mut statuses = assets.standing.statuses.lock().expect("statuses");
+        statuses.retain(|_, (at, _)| at.elapsed() < STATUS_STANDS);
+        if statuses.len() < STATUSES_AT_MOST {
+            statuses.insert(key, (Instant::now(), status.clone()));
+        }
+    }
+    // Logged out of the machine as it was reckoned, the page is not given
+    // (AO08).
+    if !hub.store().indexed().logged_in(from, account) {
+        return Err(format!("{account} is not logged in on {from}"));
+    }
     Ok(Reply::SyncStatus { status: Box::new(status) })
 }

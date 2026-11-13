@@ -31,11 +31,12 @@ CREATE TABLE IF NOT EXISTS hub_gap_facts (
 -- the history it set aside; nothing else is taken for it.
 CREATE TABLE IF NOT EXISTS recovery_heads (
     seq INTEGER NOT NULL, head BLOB NOT NULL, machine TEXT NOT NULL, at INTEGER NOT NULL,
+    judged INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (seq, head)
 ) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS recovery_receipts (
     scope TEXT NOT NULL, change INTEGER NOT NULL, prefix BLOB NOT NULL, parked INTEGER NOT NULL, accumulated BLOB NOT NULL,
-    machine TEXT NOT NULL, at INTEGER NOT NULL,
+    machine TEXT NOT NULL, at INTEGER NOT NULL, judged INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (scope, change, prefix, parked, accumulated)
 ) WITHOUT ROWID;
 -- Why every asset is sealed for a recovery, once the hub found it was put

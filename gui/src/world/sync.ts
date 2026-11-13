@@ -78,6 +78,8 @@ export interface LocalSync {
   unsent_bytes: number;
   /** Since when it is cut off from the hub, if it is. */
   cut_off?: number;
+  /** Why what it has not sent could not be counted. */
+  unread?: string;
 }
 
 export interface SyncStatusReply {

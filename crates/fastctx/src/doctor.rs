@@ -9,6 +9,10 @@ pub enum Doctor {
         /// The source Fastctx root, containing world/.
         #[arg(long)]
         dir: std::path::PathBuf,
+        /// The machine it goes to: the streams this machine orders in it are
+        /// released to that machine, which orders them from then on.
+        #[arg(long)]
+        to: Option<String>,
     },
     /// Let a conversation go from a stopped node once another machine
     /// imported its export, setting its directory aside.
@@ -52,10 +56,13 @@ pub enum Doctor {
 
 pub fn run(command: Doctor) -> anyhow::Result<()> {
     let (call, json) = match command {
-        Doctor::ExportConversation { conversation, dir } => {
-            let exported = fastctx_node::export_conversation(&dir, &conversation)?;
+        Doctor::ExportConversation { conversation, dir, to } => {
+            let exported = fastctx_node::export_conversation(&dir, &conversation, to.as_deref())?;
             println!("{}", exported.bundle.display());
             println!("fingerprint {}", exported.fingerprint);
+            if let Some(release) = &exported.release {
+                println!("released {}", release.display());
+            }
             return Ok(());
         }
         Doctor::ReleaseConversation { conversation, fingerprint, dir } => {

@@ -52,6 +52,9 @@ pub enum Domain {
     /// A machine saying it cleared what a share that waits for it may not
     /// see, at a holding revision (sync v2 design §6.3).
     ShareCleared,
+    /// A device letting a stream it orders go to another machine (sync v2
+    /// design §28.10).
+    AssetRelease,
 }
 
 impl Domain {
@@ -72,6 +75,7 @@ impl Domain {
             Domain::SyncHubKeyRotation => "fastctx-sync/hub-key-rotation/v1",
             Domain::AssetHub => "fastctx-asset/hub/v1",
             Domain::ShareCleared => "fastctx-share/cleared/v1",
+            Domain::AssetRelease => "fastctx-asset/release/v1",
         }
     }
 }

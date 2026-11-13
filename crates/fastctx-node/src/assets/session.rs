@@ -37,10 +37,11 @@ const CHANGES_AT_ONCE: u32 = 256;
 const CLASSES: [u8; 4] = [0, 1, 2, 3];
 /// Frames uploaded or taken at once.
 const FRAMES_AT_ONCE: usize = 16;
-/// How many frames of one stream a pass takes at most: a very long stream
-/// behind holds up no other for longer, and goes on the next pass, which
-/// comes at once (H05).
-const FRAMES_A_TURN: u64 = 512;
+/// How far along one stream a call takes it at most, in records (its
+/// sequence numbers): a very long stream behind holds up no other for
+/// longer, and goes on the next pass, which comes at once (H05). A pass may
+/// come to one stream twice, from a page and again by its class (I07).
+const RECORDS_A_TURN: u64 = 512;
 /// What a stream not yet caught up when its turn ended says: not a failure.
 const GOES_ON: &str = "goes on next pass: ";
 /// Receipts reported in one page.
@@ -426,7 +427,7 @@ async fn pass(node: &Arc<Node>, hub: &HubId, link: &Arc<Link>, network: &Network
     }
     if !whole && isolated.is_none() {
         for owner in &stood {
-            if let Err(why) = feed(assets, hub, link, &key, owner).await {
+            if let Err(why) = feed(assets, hub, link, &key, owner, &unpulled).await {
                 failed.get_or_insert(format!("what changed in {owner}: {why}"));
             }
         }
@@ -447,6 +448,10 @@ async fn pass(node: &Arc<Node>, hub: &HubId, link: &Arc<Link>, network: &Network
         node.log.line(format_args!(
             "assets with {hub}: this machine is shared whole on {other}; nothing of {hub}'s comes to it"
         ));
+        // Where it stands goes to the hub all the same (KK05).
+        if let Err(why) = super::standing::report(assets, hub, link).await {
+            node.log.line(format_args!("assets with {hub}: telling where this machine stands: {why}"));
+        }
         return failed.map_or(Ok(()), Err);
     }
     for failed in super::objects::fetch(assets, hub, link).await {
@@ -657,7 +662,14 @@ async fn tops(
 /// machine last stood in it (design §28.1): newest first, a page at a time,
 /// and by the classes of streams, small state first, when there is more
 /// than a page; where it stands moves only once all of it is caught up.
-async fn feed(assets: &Assets, hub: &HubId, link: &Arc<Link>, key: &PublicKey, owner: &str) -> Result<(), String> {
+async fn feed(
+    assets: &Assets,
+    hub: &HubId,
+    link: &Arc<Link>,
+    key: &PublicKey,
+    owner: &str,
+    unpulled: &std::collections::BTreeSet<String>,
+) -> Result<(), String> {
     let library = &assets.library;
     let stood = {
         let (theirs, owner) = (hub.as_str().to_string(), owner.to_string());
@@ -689,7 +701,11 @@ async fn feed(assets: &Assets, hub: &HubId, link: &Arc<Link>, key: &PublicKey, o
         }
         return Ok(());
     }
-    let mut failed = catch_up(assets, hub, link, key, owner, streams).await;
+    // What is taken counts toward this library, in this generation, while
+    // this machine's listing is not forgotten (KK04).
+    let era = assets.forgotten.load(std::sync::atomic::Ordering::SeqCst);
+    let counted = super::standing::Counted { owner, generation: &generation, era };
+    let mut failed = catch_up(assets, hub, link, key, &counted, unpulled, streams).await;
     // More than a page: class by class, each newest first.
     if more {
         for class in CLASSES {
@@ -698,7 +714,7 @@ async fn feed(assets: &Assets, hub: &HubId, link: &Arc<Link>, key: &PublicKey, o
                 let Reply::Changes { streams, through, more, .. } = page(after, before, Some(class)).await? else {
                     return Err("the hub did not say what changed".into());
                 };
-                if let Some(why) = catch_up(assets, hub, link, key, owner, streams).await {
+                if let Some(why) = catch_up(assets, hub, link, key, &counted, unpulled, streams).await {
                     failed.get_or_insert(why);
                 }
                 if !more {
@@ -726,7 +742,8 @@ async fn catch_up(
     hub: &HubId,
     link: &Arc<Link>,
     key: &PublicKey,
-    owner: &str,
+    counted: &super::standing::Counted<'_>,
+    unpulled: &std::collections::BTreeSet<String>,
     streams: Vec<wire::ChangedStream>,
 ) -> Option<String> {
     let library = &assets.library;
@@ -740,6 +757,20 @@ async fn catch_up(
                 assets.forget_listing(hub);
                 return Ok(());
             };
+            // Not pulled whole in its holding period yet, it is pulled by
+            // itself; its frames are not this library's to take here, nor
+            // to count as taken (I01).
+            if unpulled.contains(&changed.scope) {
+                return Ok(());
+            }
+            // Handed over and not written in yet, the stream moved no head:
+            // its new epoch is taken all the same, this machine's own
+            // stream handed away included (I09).
+            let (scope, stream) = (changed.scope.clone(), changed.stream.clone());
+            let known = blocking(library, move |library| library.known_last_epoch(&scope, &stream)).await?;
+            if changed.epoch > 0 && known.is_none_or(|known| known < changed.epoch) {
+                succession(assets, hub, link, key, &changed.scope, &changed.stream).await?;
+            }
             let (scope, stream) = (changed.scope.clone(), changed.stream.clone());
             if blocking(library, move |library| library.orderer(&scope, &stream)).await? == Some(device) {
                 return Ok(());
@@ -750,7 +781,7 @@ async fn catch_up(
                 .into_iter()
                 .find(|(name, _)| *name == changed.stream)
                 .map_or(0, |(_, next)| next);
-            pull_stream(assets, hub, link, key, &changed.scope, &changed.stream, holding, at, changed.next, Some(owner)).await
+            pull_stream(assets, hub, link, key, &changed.scope, &changed.stream, holding, at, changed.next, Some(counted)).await
         }
         .await;
         if let Err(why) = done
@@ -1327,30 +1358,11 @@ async fn pull(
     Ok((ahead, failed))
 }
 
-/// Takes the frames of the replica `stream` of `scope` from `at`, where it
-/// stands here, to `next`, where the hub said it stands: the stream's
-/// epochs and gaps first, under the hub's word.
-#[allow(clippy::too_many_arguments)]
-async fn pull_stream(
-    assets: &Assets,
-    hub: &HubId,
-    link: &Arc<Link>,
-    key: &PublicKey,
-    scope: &str,
-    stream: &str,
-    holding: i64,
-    mut at: u64,
-    next: u64,
-    owner: Option<&str>,
-) -> Result<(), String> {
+/// Takes the hub's signed epochs and gap facts of `stream` of `scope`.
+async fn succession(assets: &Assets, hub: &HubId, link: &Arc<Link>, key: &PublicKey, scope: &str, stream: &str) -> Result<(), String> {
     let library = &assets.library;
-    let stream = stream.to_string();
-    if at >= next {
-        return Ok(());
-    }
-    let from = at;
     let Reply::Succession { epochs, gaps } =
-        ask(assets, link, Request::Succession { scope: scope.to_string(), stream: stream.clone() }).await?
+        ask(assets, link, Request::Succession { scope: scope.to_string(), stream: stream.to_string() }).await?
     else {
         return Err("the hub did not give the stream's succession".into());
     };
@@ -1373,6 +1385,32 @@ async fn pull_stream(
         let scope_text = scope.to_string();
         blocking(library, move |library| library.accept_gap(&scope_text, signed, &Trusted)).await?;
     }
+    Ok(())
+}
+
+/// Takes the frames of the replica `stream` of `scope` from `at`, where it
+/// stands here, to `next`, where the hub said it stands: the stream's
+/// epochs and gaps first, under the hub's word.
+#[allow(clippy::too_many_arguments)]
+async fn pull_stream(
+    assets: &Assets,
+    hub: &HubId,
+    link: &Arc<Link>,
+    key: &PublicKey,
+    scope: &str,
+    stream: &str,
+    holding: i64,
+    mut at: u64,
+    next: u64,
+    counted: Option<&super::standing::Counted<'_>>,
+) -> Result<(), String> {
+    let library = &assets.library;
+    let stream = stream.to_string();
+    if at >= next {
+        return Ok(());
+    }
+    let from = at;
+    succession(assets, hub, link, key, scope, &stream).await?;
     while at < next {
         let request = Request::Frames {
             scope: scope.to_string(),
@@ -1407,7 +1445,7 @@ async fn pull_stream(
                 Imported::Applied { next: reached, .. } => {
                     at = reached;
                     went = true;
-                    super::standing::took(assets, hub, owner, bytes);
+                    super::standing::took(assets, hub, counted, bytes);
                 }
                 Imported::Already => {}
                 Imported::Gap { from, .. } => {
@@ -1428,7 +1466,7 @@ async fn pull_stream(
             return Err(format!("{stream} of {scope}: the hub's frames from {began} take it no further"));
         }
         // Its turn is over: the rest comes the next pass, at once.
-        if at < next && at.saturating_sub(from) >= FRAMES_A_TURN {
+        if at < next && at.saturating_sub(from) >= RECORDS_A_TURN {
             assets.more.lock().expect("more").insert(hub.clone());
             return Err(format!("{GOES_ON}{stream} of {scope} at {at} of {next}"));
         }

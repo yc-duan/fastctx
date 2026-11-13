@@ -48,6 +48,7 @@ pub(crate) fn schema() -> String {
 /// Brings the asset side's tables in the control database up to this
 /// release, after `schema` made what was missing.
 pub(crate) fn migrate(c: &fastctx_storage::rusqlite::Connection) -> fastctx_storage::Result<()> {
+    brought::migrate(c)?;
     scopes::migrate(c)
 }
 
@@ -704,7 +705,8 @@ impl Assets {
     /// What `machine` brought while every asset was sealed, as far as the
     /// hub's word stands behind it: the head it saw and the receipts it
     /// held, kept for the recovery (design §17).
-    pub(crate) fn brought(&self, machine: &fastctx_types::MachineName, seen: Option<(u64, [u8; 32])>, receipts: Vec<Head>) {
+    /// When it was kept: what `judged` marks as judged.
+    pub(crate) fn brought(&self, machine: &fastctx_types::MachineName, seen: Option<(u64, [u8; 32])>, receipts: Vec<Head>) -> i64 {
         let (name, at) = (machine.to_string(), jiff::Timestamp::now().as_millisecond());
         let _ = self.control.write_now(256 + receipts.len() * 128, move |c| {
             if let Some((seq, head)) = seen {
@@ -728,6 +730,7 @@ impl Assets {
             }
             Ok(())
         });
+        at
     }
 
     /// `machine` opened an asset session: it speaks this asset sync, and so

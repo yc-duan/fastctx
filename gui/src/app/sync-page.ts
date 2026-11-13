@@ -178,15 +178,19 @@ export class SyncPage implements Page {
     const now = this.options.now();
     const ownCard = `<section class="sync-here">
       <h3 class="sync-heading">${escape(words.hereTitle)}</h3>
-      <p class="sync-fact">${escape(here.unsent_frames ? words.unsent(here.unsent_frames, bytesSaid(here.unsent_bytes)) : words.nothingUnsent)}</p>
+      ${here.unread
+        ? `<p class="sync-fact" title="${escape(here.unread)}">${escape(words.failed)}</p>`
+        : `<p class="sync-fact">${escape(here.unsent_frames ? words.unsent(here.unsent_frames, bytesSaid(here.unsent_bytes)) : words.nothingUnsent)}</p>`}
       ${here.cut_off ? `<p class="sync-fact caution">${escape(words.cutOff(words.duration(now - here.cut_off)))}</p>` : ""}
     </section>`;
     if (!status) {
       return `<p class="feature-note"${reply.unreached ? ` title="${escape(reply.unreached)}"` : ""}>${escape(words.unreached)}</p>${ownCard}`;
     }
-    const reported = status.devices.filter((device) => device.reported !== undefined);
-    const synced = reported.filter((device) => device.synced).length;
-    const summary = !reported.length ? words.noneReported : synced === reported.length ? words.allSynced(reported.length) : words.someSynced(synced, reported.length);
+    // Every device of the account counts, one that never reported among those
+    // not caught up: "all caught up" is said of every card below (I05).
+    const devices = status.devices;
+    const synced = devices.filter((device) => device.synced).length;
+    const summary = !devices.length ? words.noneReported : synced === devices.length ? words.allSynced(devices.length) : words.someSynced(synced, devices.length);
     const inks = new Map(status.devices.map((device, index) => [device.machine, INKS[Math.min(index, INKS.length - 1)]!]));
     const cards = status.devices.map((device) => this.card(device, inks.get(device.machine)!, device.machine === here.machine, now)).join("");
     const span = this.span;
@@ -199,7 +203,7 @@ export class SyncPage implements Page {
     const legend = lines.length > 1 ? `<ul class="sync-legend">${lines.map((line) => `<li><span class="sync-key" style="--ink:${line.ink}" aria-hidden="true"></span>${escape(line.name)}</li>`).join("")}</ul>` : "";
     const totals = status.totals;
     return `<section class="sync-top">
-        <p class="sync-summary${synced === reported.length && reported.length ? " synced" : ""}">${escape(summary)}</p>
+        <p class="sync-summary${synced === devices.length && devices.length ? " synced" : ""}">${escape(summary)}</p>
       </section>
       <section class="sync-cards">${cards}</section>
       <section class="sync-line">
@@ -208,7 +212,7 @@ export class SyncPage implements Page {
         ${chart}
       </section>
       <section class="sync-hub">
-        <h3 class="sync-heading">${escape(words.hubTitle)}</h3>
+        <h3 class="sync-heading" title="${escape(words.hubSaid)}">${escape(words.hubTitle)}</h3>
         <p class="sync-totals"><span>${escape(words.conversations(totals.conversations))}</span><span>${escape(words.hubFiles(totals.files, bytesSaid(totals.file_bytes)))}</span><span>${escape(words.records(bytesSaid(totals.record_bytes)))}</span></p>
       </section>
       ${ownCard}`;
@@ -226,7 +230,17 @@ export class SyncPage implements Page {
       state = words.neverReported;
       tone = " quiet";
     } else if (!device.online) {
-      state = words.away(words.duration(Math.max(0, now - (device.since ?? device.reported))), leftSaid);
+      // Nothing left is said only where nothing is known to be left: no
+      // record, no file, no scope not yet pulled, nothing only about so (I04).
+      const since = words.duration(Math.max(0, now - (device.since ?? device.reported)));
+      const unknown = !!device.about || device.unpulled > 0;
+      state = leftSaid
+        ? words.away(since, leftSaid)
+        : unknown
+          ? words.awayUnknown(since)
+          : device.missing_objects > 0
+            ? words.awayFiles(since, device.missing_objects)
+            : words.away(since, null);
       tone = " away";
     } else if (device.synced) {
       state = words.synced;

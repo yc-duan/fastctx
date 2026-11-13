@@ -60,16 +60,40 @@ pub(super) fn put_back(assets: &Assets) -> io::Result<Option<String>> {
 }
 
 /// Forgets what was brought while the hub was sealed as it started, once
-/// the super administrator opened it (AM01): judged then to show nothing
-/// put back, it is not judged again at every start after; what a machine
-/// brings later is kept and judged anew.
+/// the super administrator opened it (AM01): what was judged to show
+/// nothing put back is not judged again at every start after. What a machine
+/// brought that is not judged yet — its judgment waiting for the seal the
+/// opening holds — stays, to be judged at the next start if the hub stops
+/// first (AO01).
 pub(crate) fn forget(assets: &Assets) -> io::Result<()> {
     assets
         .control
         .write_now(256, |c| {
-            c.prepare_cached("DELETE FROM recovery_heads")?.execute([])?;
-            c.prepare_cached("DELETE FROM recovery_receipts")?.execute([])?;
+            c.prepare_cached("DELETE FROM recovery_heads WHERE judged = 1")?.execute([])?;
+            c.prepare_cached("DELETE FROM recovery_receipts WHERE judged = 1")?.execute([])?;
             Ok(())
         })
         .map_err(io::Error::other)
+}
+
+/// What `machine` brought by `at` was judged to show nothing put back.
+pub(super) fn judged(assets: &Assets, machine: &fastctx_types::MachineName, at: i64) {
+    let name = machine.to_string();
+    let _ = assets.control.write_now(256, move |c| {
+        c.prepare_cached("UPDATE recovery_heads SET judged = 1 WHERE machine = ?1 AND at <= ?2")?.execute(params![name, at])?;
+        c.prepare_cached("UPDATE recovery_receipts SET judged = 1 WHERE machine = ?1 AND at <= ?2")?.execute(params![name, at])?;
+        Ok(())
+    });
+}
+
+/// Brings the tables of what was brought up to this release: whether each
+/// was judged.
+pub(super) fn migrate(c: &fastctx_storage::rusqlite::Connection) -> fastctx_storage::Result<()> {
+    for table in ["recovery_heads", "recovery_receipts"] {
+        let marked = c.prepare(&format!("SELECT 1 FROM pragma_table_info('{table}') WHERE name = 'judged'"))?.exists([])?;
+        if !marked {
+            c.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN judged INTEGER NOT NULL DEFAULT 0;"))?;
+        }
+    }
+    Ok(())
 }

@@ -140,6 +140,10 @@ pub struct LocalSync {
     /// Since when it is cut off from the hub, if it is.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cut_off: Option<i64>,
+    /// Why what it has not sent could not be counted, when it could not:
+    /// then the counts say nothing (KK06).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unread: Option<String>,
 }
 
 fn is_zero(value: &u32) -> bool {

@@ -42,7 +42,7 @@ pub(crate) fn run(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
     drop(service);
     drop(database);
 
-    let exported = crate::export_conversation(&home_root, id.as_str())?;
+    let exported = crate::export_conversation(&home_root, id.as_str(), None)?;
     let arriving = away.conversation(&id);
     disk::create_dir_all(arriving.path())?;
     disk::copy(&exported.bundle, arriving.path().join(bundle::FILE))?;
@@ -93,7 +93,7 @@ pub(crate) fn run(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
     })?;
     drop(service);
     drop(away_database);
-    let back = crate::export_conversation(&away_root, id.as_str())?;
+    let back = crate::export_conversation(&away_root, id.as_str(), None)?;
     assert_ne!(back.fingerprint, exported.fingerprint);
     disk::create_dir_all(directory.path())?;
     disk::copy(&back.bundle, directory.path().join(bundle::FILE))?;

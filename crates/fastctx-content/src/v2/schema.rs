@@ -467,6 +467,19 @@ pub(crate) const HUB_SCHEMA: &str = "
 -- The frames applied after a change number of the library, for what a
 -- device has yet to take (standing.rs, design §28.9).
 CREATE INDEX IF NOT EXISTS frames_by_feed ON frames (feed) WHERE feed IS NOT NULL;
+-- Each stream's moves to another machine (design §28.10): the epoch it was
+-- handed over from and the one it was handed over in, to which machine and
+-- device key, and by what — a release or an adoption.
+CREATE TABLE IF NOT EXISTS moves (
+    stream INTEGER NOT NULL,
+    predecessor INTEGER NOT NULL,
+    epoch INTEGER NOT NULL,
+    machine TEXT NOT NULL,
+    successor BLOB NOT NULL,
+    basis TEXT NOT NULL CHECK (basis IN ('release', 'adopt')),
+    at INTEGER NOT NULL,
+    PRIMARY KEY (stream, predecessor)
+) WITHOUT ROWID;
 -- Each stream's latest change under the library's own change number, one
 -- row a stream: what a device asks after where it stands (changes.rs).
 CREATE TABLE IF NOT EXISTS stream_changes (

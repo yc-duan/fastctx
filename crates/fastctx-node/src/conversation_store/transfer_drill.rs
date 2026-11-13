@@ -45,7 +45,7 @@ pub(crate) fn run(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
         rows.connection().execute("INSERT INTO node_record_state VALUES('legacy-discovery-complete',1)", [])?;
         Ok(())
     })?;
-    let bundle_path = crate::export_conversation(root.join("source").as_path(), id.as_str())?.bundle;
+    let bundle_path = crate::export_conversation(root.join("source").as_path(), id.as_str(), None)?.bundle;
     let manifest = {
         let exported = Connection::open_with_flags(&bundle_path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
         let tables = source.read_now(schema::tables)?;

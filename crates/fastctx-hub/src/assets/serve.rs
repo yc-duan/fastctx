@@ -335,17 +335,22 @@ pub(crate) fn ask(
         if let Request::Open { seen, reported, pinned, lineage, .. } = &request {
             let heard = seen.as_ref().and_then(|seen| heard_seen(assets, seen));
             let receipts = reported.iter().filter_map(|receipt| receipt_head(receipt).ok()).filter(|(statement, _, word)| assets.keys().heard(statement, word).is_some()).map(|(_, head, _)| head).collect();
-            assets.brought(machine, heard, receipts);
+            let kept_at = assets.brought(machine, heard, receipts);
             // Sealed only as it started when the machine came, the hub that
             // is shown it was put back seals for its recovery instead: the
             // super administrator can no longer open it as an ordinary
             // start. Opened meanwhile, it is sealed all the same: what the
             // machine brought stands either way (AJ01).
-            if Assets::is_start_seal(&why)
-                && let Some(found) = put_back(assets, directory, machine, seen.as_ref(), reported, pinned.as_ref(), lineage)?
-            {
-                assets.seal(&found);
-                return Ok(Reply::Sealed { why: found });
+            if Assets::is_start_seal(&why) {
+                match put_back(assets, directory, machine, seen.as_ref(), reported, pinned.as_ref(), lineage)? {
+                    Some(found) => {
+                        assets.seal(&found);
+                        return Ok(Reply::Sealed { why: found });
+                    }
+                    // Judged to show nothing: only what is judged so goes
+                    // as the seal is opened (AO01).
+                    None => super::brought::judged(assets, machine, kept_at),
+                }
             }
         }
         return Ok(Reply::Sealed { why });
@@ -583,11 +588,12 @@ pub(crate) fn ask(
                     bytes: row.bytes,
                     remade: row.remade,
                     at: row.at,
+                    epoch: row.epoch,
                 });
             }
             Ok(Reply::Changes { generation: page.generation, streams, top: page.top, top_at: page.top_at, through: page.through, more: page.more })
         }
-        Request::Report { report } => super::standing::keep(assets, directory, machine, report),
+        Request::Report { report } => super::standing::keep(assets, directory, machine, key.as_bytes(), report),
         // Answered beside the hub's sessions, where who is online is known.
         Request::SyncStatus { .. } => Err("a sync status is asked of the hub itself".into()),
         Request::Streams { scope } => {
@@ -627,7 +633,7 @@ pub(crate) fn ask(
             let word = assets.signer().sign(&signed.fact);
             Ok(Reply::Epoch { descriptor: wire::Fact { fact: signed.fact.into(), word: word.into() } })
         }
-        Request::Takeover { scope, stream, next, head, gap } => {
+        Request::Takeover { scope, stream, release } => {
             let kept = held(assets, directory, machine, &scope, &stream)?;
             let library = scopes::library(assets, &kept)?;
             let device = *key.as_bytes();
@@ -641,27 +647,39 @@ pub(crate) fn ask(
                 assets.witness_facts(&kept.owner, &scope, &stream, std::slice::from_ref(&current), &[]).map_err(|error| error.to_string())?;
                 return Ok(Reply::Epoch { descriptor: word_of(&current) });
             }
-            // Any device that may hold the stream takes its ordering over
-            // (design §8): where a conversation lives is the machine's own
-            // to say, and the device it leaves orders it no further than the
-            // cut. Never inside what the hub applied.
+            // Only the device that orders it lets it go, to the machine its
+            // release names (design §28.10): holding the stream is not
+            // enough.
+            let Some(given) = release else {
+                return Err(format!("{stream} of {scope} is ordered by another device: taking it over needs that device's release"));
+            };
+            let me = directory.canonical(machine).to_string();
+            let release = fastctx_content::v2::Release {
+                hub: assets.id.clone(),
+                scope: scope.clone(),
+                stream: stream.clone(),
+                epoch: given.epoch,
+                to: given.to.clone(),
+                next: given.next,
+                head: array(&given.head, "a chain value")?,
+            };
+            let verify = |key: &[u8; 32], statement: &[u8], signature: &[u8]| {
+                let Ok(signature) = <[u8; 64]>::try_from(signature) else { return false };
+                fastctx_net::sign::PublicKey::from_bytes(*key)
+                    .verify(fastctx_net::sign::Domain::AssetRelease, statement, &fastctx_net::sign::Signature::from_bytes(signature))
+                    .is_ok()
+            };
+            let authority = fastctx_content::v2::Authority::Release { release: &release, signature: &given.signature.0, verify: &verify };
             let successor = Successor { device, key: device, kind: EpochKind::Source };
-            let cutoff = Cutoff { next, head: array(&head, "a chain value")? };
-            let (signed, _) = library
-                .handover_from(&scope, &stream, successor, cutoff, last.map(|(epoch, _)| epoch), kinds(), assets.signer())
-                .map_err(|error| error.to_string())?;
-            // What of the predecessor's tail will never come is skipped by
-            // the hub's word, when there is any to skip.
-            if let Some(why) = gap {
-                let reached = library.streams(&scope).map_err(|error| error.to_string())?.into_iter().find(|(name, _)| *name == stream).map_or(0, |(_, next)| next);
-                if reached < next {
-                    library.gap(&scope, &stream, &why, kinds(), assets.signer()).map_err(|error| error.to_string())?;
+            match library.move_stream(&scope, &stream, &me, successor, authority, kinds(), assets.signer()).map_err(|error| error.to_string())? {
+                fastctx_content::v2::Moved::Handed { descriptor, .. } => {
+                    assets.changed(kept.owner.clone(), &scope);
+                    let epoch = fastctx_content::v2::EpochFact::decode(&descriptor.fact)?.epoch;
+                    assets.opened_epoch(&kept.owner, &scope, &stream, epoch, &descriptor.fact).map_err(|error| error.to_string())?;
+                    Ok(Reply::Epoch { descriptor: word_of(&descriptor) })
                 }
+                fastctx_content::v2::Moved::Superseded { epochs } => Ok(Reply::HandedOn { epochs: epochs.iter().map(word_of).collect() }),
             }
-            assets.changed(kept.owner.clone(), &scope);
-            let epoch = fastctx_content::v2::EpochFact::decode(&signed.fact)?.epoch;
-            assets.opened_epoch(&kept.owner, &scope, &stream, epoch, &signed.fact).map_err(|error| error.to_string())?;
-            Ok(Reply::Epoch { descriptor: word_of(&signed) })
         }
         Request::Window { scope, stream } => {
             let kept = held(assets, directory, machine, &scope, &stream)?;

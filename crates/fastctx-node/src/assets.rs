@@ -12,6 +12,7 @@
 mod apart;
 pub(crate) mod membership;
 mod objects;
+pub(crate) mod release;
 mod session;
 pub(crate) mod standing;
 pub(crate) mod takeover;
@@ -118,11 +119,14 @@ pub(crate) struct Assets {
     /// The bytes taken of each hub's owner library since this machine last
     /// stood anew in it, what it took lately, and what it last told each
     /// hub of where it stands (`standing`).
-    pub(crate) taken: Mutex<HashMap<(String, String), u64>>,
+    pub(crate) taken: Mutex<HashMap<(String, String), (String, u64)>>,
     pub(crate) received: Mutex<standing::Received>,
     pub(crate) reported: Mutex<HashMap<HubId, (fastctx_types::sync_status::SyncReport, std::time::Instant)>>,
     /// The hubs a pass of which left a stream to go on with at once (H05).
     pub(crate) more: Mutex<std::collections::BTreeSet<HubId>>,
+    /// Streams another device orders that came here with no release for
+    /// this machine, told of once (`takeover`).
+    pub(crate) unreleased: Mutex<std::collections::BTreeSet<(String, String)>>,
 }
 
 /// How far a hub's scopes this machine may hold were listed.
@@ -192,7 +196,21 @@ impl Assets {
             received: Mutex::new(standing::Received::default()),
             reported: Mutex::new(HashMap::new()),
             more: Mutex::new(std::collections::BTreeSet::new()),
+            unreleased: Mutex::new(std::collections::BTreeSet::new()),
         })
+    }
+
+    /// The asset library of `world` while its node is stopped, for what is
+    /// done to it then: a conversation exported (`release`).
+    pub(crate) fn open_stopped(world: &fastctx_types::layout::WorldDir) -> io::Result<Library> {
+        Library::open(&world.assets()).map(|(library, _)| library).map_err(|error| io::Error::other(error.to_string()))
+    }
+
+    /// The directory of the conversation `resident` lives in here.
+    pub(crate) fn conversation_dir(&self, resident: &str) -> std::path::PathBuf {
+        // `path` is the hubs file in the asset directory, in the world's.
+        let world = self.path.parent().and_then(std::path::Path::parent).unwrap_or(&self.path);
+        world.join("conversations").join(resident)
     }
 
     pub(crate) fn session(&self) -> u64 {

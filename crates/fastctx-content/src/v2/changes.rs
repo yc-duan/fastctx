@@ -36,6 +36,9 @@ pub struct Changed {
     pub remade: u64,
     /// When it changed, in the hub's milliseconds.
     pub at: i64,
+    /// The stream's last epoch the hub signed: one handed over and not
+    /// written in yet moves no head, and is known by this (I09).
+    pub epoch: u64,
 }
 
 /// One page of what changed, newest first.
@@ -159,7 +162,8 @@ impl Library {
             let below = before.map_or(top + 1, |before| before as i64);
             let class = class.map(i64::from);
             let mut statement = db.prepare_cached(
-                "SELECT c.change, s.key, t.name, c.next, c.head, c.bytes, c.remade, c.at FROM stream_changes c
+                "SELECT c.change, s.key, t.name, c.next, c.head, c.bytes, c.remade, c.at,
+                 COALESCE((SELECT MAX(e.epoch) FROM hub_epochs e WHERE e.stream = c.stream), 0) FROM stream_changes c
                  JOIN streams t ON t.id = c.stream JOIN scopes s ON s.id = t.scope
                  WHERE c.change > ?1 AND c.change < ?2 AND (?3 IS NULL OR c.class = ?3)
                  ORDER BY c.change DESC LIMIT ?4",
@@ -174,11 +178,12 @@ impl Library {
                     row.get::<_, i64>(5)?,
                     row.get::<_, i64>(6)?,
                     row.get(7)?,
+                    row.get::<_, i64>(8)?,
                 ))
             })?;
             let mut changed = Vec::new();
             for row in rows {
-                let (change, scope, stream, next, head, bytes, remade, at) = row?;
+                let (change, scope, stream, next, head, bytes, remade, at, epoch) = row?;
                 let head: [u8; 32] = head.try_into().map_err(|_| invalid("a malformed stream head"))?;
                 changed.push(Changed {
                     change: change as u64,
@@ -189,6 +194,7 @@ impl Library {
                     bytes: bytes as u64,
                     remade: remade as u64,
                     at,
+                    epoch: epoch as u64,
                 });
             }
             let more = changed.len() == limit && limit > 0;

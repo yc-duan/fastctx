@@ -21,6 +21,10 @@ export interface SyncWords {
   catching(left: string): string;
   eta(left: string): string;
   away(since: string, left: string | null): string;
+  /** Offline with files to catch up on and no text, or what is left not
+   *  known. */
+  awayFiles(since: string, files: number): string;
+  awayUnknown(since: string): string;
   neverReported: string;
   behindBy(behind: string): string;
   unpulled(scopes: number): string;
@@ -40,6 +44,8 @@ export interface SyncWords {
   axisTime(at: Date, span: "day" | "week"): string;
   /** What the hub holds of the account. */
   hubTitle: string;
+  /** What the hub's totals count. */
+  hubSaid: string;
   conversations(n: number): string;
   hubFiles(n: number, size: string): string;
   records(size: string): string;
@@ -95,6 +101,8 @@ export const zhSync: SyncWords = {
   catching: (left) => `正在补，还剩 ${left}`,
   eta: (left) => `约 ${left}`,
   away: (since, left) => (left ? `离线 ${since}，回来后约要补 ${left}` : `离线 ${since}，没有落下`),
+  awayFiles: (since, files) => `离线 ${since}，回来后要补 ${files} 个文件`,
+  awayUnknown: (since) => `离线 ${since}，回来后还要补`,
   neverReported: "还没报过同步到哪",
   behindBy: (behind) => `比最新晚 ${behind}`,
   unpulled: (scopes) => `${scopes} 段还没取全`,
@@ -111,6 +119,7 @@ export const zhSync: SyncWords = {
   at: (at, span) => (span === "day" ? `${pad(at.getHours())}:${pad(at.getMinutes())}` : `${at.getMonth() + 1} 月 ${at.getDate()} 日 ${pad(at.getHours())}:00`),
   axisTime: (at, span) => (span === "day" ? `${pad(at.getHours())}:00` : ["周日", "周一", "周二", "周三", "周四", "周五", "周六"][at.getDay()]!),
   hubTitle: "中枢那份",
+  hubSaid: "这个账号与它所在的共有体在中枢一共存着的",
   conversations: (n) => `${n} 段对话`,
   hubFiles: (n, size) => `${n} 个文件，${size}`,
   records: (size) => `文字 ${size}`,
@@ -139,6 +148,8 @@ export const enSync: SyncWords = {
   catching: (left) => `Catching up, ${left} to go`,
   eta: (left) => `about ${left}`,
   away: (since, left) => (left ? `Offline ${since}, about ${left} to catch up on return` : `Offline ${since}, nothing missed`),
+  awayFiles: (since, files) => `Offline ${since}, ${files} ${files === 1 ? "file" : "files"} to catch up on return`,
+  awayUnknown: (since) => `Offline ${since}, more to catch up on return`,
   neverReported: "Has not told where it stands",
   behindBy: (behind) => `${behind} behind the latest`,
   unpulled: (scopes) => `${scopes} not taken whole yet`,
@@ -155,6 +166,7 @@ export const enSync: SyncWords = {
   at: (at, span) => (span === "day" ? `${pad(at.getHours())}:${pad(at.getMinutes())}` : `${at.toLocaleDateString("en", { month: "short", day: "numeric" })} ${pad(at.getHours())}:00`),
   axisTime: (at, span) => (span === "day" ? `${pad(at.getHours())}:00` : at.toLocaleDateString("en", { weekday: "short" })),
   hubTitle: "On the hub",
+  hubSaid: "What the hub keeps of this account and of the bodies it is a member of, together",
   conversations: (n) => `${n} ${n === 1 ? "conversation" : "conversations"}`,
   hubFiles: (n, size) => `${n} ${n === 1 ? "file" : "files"}, ${size}`,
   records: (size) => `${size} of text`,

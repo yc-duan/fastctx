@@ -34,6 +34,11 @@ fn member(directory: &Directory, account: &fastctx_types::AccountName) -> Option
     directory.account(account).map(|found| format!("{account}@{}", found.opened.as_millisecond()))
 }
 
+/// Whether `account`, as it is now, is among `members` of a body.
+pub(crate) fn among(directory: &Directory, members: &BTreeSet<String>, account: &fastctx_types::AccountName) -> bool {
+    member(directory, account).is_some_and(|account| members.contains(&account))
+}
+
 /// The body of `machine` as the directory has it now, if it has it.
 pub(crate) fn body_of(directory: &Directory, machine: &MachineName) -> Option<String> {
     let member = directory.member(machine)?;

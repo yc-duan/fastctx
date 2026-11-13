@@ -330,76 +330,8 @@ impl Library {
             if at.epoch == last.epoch && cutoff.next == at.next && cutoff.head != at.head {
                 return Err(invalid("the cutoff does not follow what is applied"));
             }
-            let epoch = last.epoch + 1;
-            let fact = descriptor(&key, &name, epoch, &successor, cutoff.next, Some(last.epoch), &cutoff.head);
-            let signature = signer.sign(&fact);
-            db.prepare_cached(
-                "INSERT INTO hub_epochs (stream, epoch, device, key, start, kind, predecessor, follows, fact, signature)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
-            )?
-            .execute(params![
-                at.stream,
-                epoch as i64,
-                &successor.device[..],
-                &successor.key[..],
-                cutoff.next as i64,
-                successor.kind.name(),
-                last.epoch as i64,
-                &cutoff.head[..],
-                fact,
-                signature
-            ])?;
-            // The predecessor's parked frames past the cut are evidence now;
-            // their objects were shown when they were parked. Their headers
-            // are read first, and only those cut brought in whole, one by one.
-            let parked: Vec<Vec<u8>> = {
-                let mut statement =
-                    db.prepare_cached("SELECT header FROM parked WHERE stream = ?1 AND epoch = ?2 AND holding = ?3 ORDER BY first")?;
-                let rows = statement.query_map(params![at.stream, last.epoch as i64, holding], |row| row.get(0))?;
-                rows.collect::<std::result::Result<_, _>>()?
-            };
-            for header_bytes in parked {
-                let header = Header::decode(&header_bytes).map_err(invalid)?;
-                let end = header.first + u64::from(header.count);
-                if end < cutoff.next || (end == cutoff.next && header.chain() == cutoff.head) {
-                    continue;
-                }
-                let (frame_signature, body): (Vec<u8>, Vec<u8>) = db
-                    .prepare_cached("SELECT signature, body FROM parked WHERE stream = ?1 AND epoch = ?2 AND first = ?3 AND holding = ?4")?
-                    .query_row(params![at.stream, header.epoch as i64, header.first as i64, holding], |row| {
-                        Ok((row.get(0)?, row.get(1)?))
-                    })?;
-                let why = if end > cutoff.next {
-                    "it goes past where a handover cut its epoch"
-                } else {
-                    "it does not end where a handover cut its epoch"
-                };
-                let objects: Vec<ObjectRef> = {
-                    let records = super::frame::open(&header, &body).map_err(invalid)?;
-                    let mut seen = BTreeSet::new();
-                    records
-                        .iter()
-                        .filter_map(|record| match &record.record.state {
-                            crate::record::State::Is { objects, .. } => Some(objects.clone()),
-                            crate::record::State::Gone => None,
-                        })
-                        .flatten()
-                        .filter(|object| seen.insert(object.hash))
-                        .collect()
-                };
-                let shown: BTreeSet<[u8; 32]> = objects.iter().map(|object| object.hash).collect();
-                let frame = RawFrame { header: header_bytes, signature: frame_signature, body, objects: Vec::new() };
-                keep_evidence(db, (at.stream, holding), &header, &frame, why, &objects, &shown)?;
-                let place = params![at.stream, header.epoch as i64, header.first as i64, holding];
-                for table in ["parked_objects", "parked"] {
-                    db.prepare_cached(&format!("DELETE FROM {table} WHERE stream = ?1 AND epoch = ?2 AND first = ?3 AND holding = ?4"))?
-                        .execute(place)?;
-                }
-            }
-            advance(db, &mut at)?;
-            let mut drained = Drained::default();
-            let more = drain(db, scope_id, holding, &mut at, authorizer.as_ref(), signer.as_ref(), &mut drained)?;
-            Ok(((Signed { fact, signature }, drained), more, holding))
+            let (signed, drained, more) = cut_over(db, (&key, &name, scope_id, holding), &mut at, &last, &successor, cutoff, authorizer.as_ref(), signer.as_ref())?;
+            Ok(((signed, drained), more, holding))
         })?;
         if more {
             self.drain_on(scope, stream, holding, &authorizing, &signing, &mut drained)?;
@@ -515,4 +447,95 @@ impl Library {
             Ok(epoch_of(db, stream_id, last as u64)?.map(|epoch| (epoch.epoch, epoch.key)))
         })?)
     }
+}
+
+/// Hands `stream` over at `cutoff` in the transaction `db` is in, the checks
+/// made: the new epoch for `successor` signed and kept, the predecessor's
+/// parked frames past the cut kept as evidence, the prefix moved on and
+/// what was parked behind it applied as far as one batch goes. The new
+/// epoch's descriptor, what was applied, and whether more waits.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn cut_over(
+    db: &Connection,
+    (key, name, scope_id, holding): (&str, &str, i64, i64),
+    at: &mut Prefix,
+    last: &Epoch,
+    successor: &Successor,
+    cutoff: Cutoff,
+    authorizer: &dyn Authorizer,
+    signer: &dyn HubSigner,
+) -> fastctx_storage::Result<(Signed, Drained, bool)> {
+    let epoch = last.epoch + 1;
+    let fact = descriptor(key, name, epoch, successor, cutoff.next, Some(last.epoch), &cutoff.head);
+    let signature = signer.sign(&fact);
+    db.prepare_cached(
+        "INSERT INTO hub_epochs (stream, epoch, device, key, start, kind, predecessor, follows, fact, signature)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+    )?
+    .execute(params![
+        at.stream,
+        epoch as i64,
+        &successor.device[..],
+        &successor.key[..],
+        cutoff.next as i64,
+        successor.kind.name(),
+        last.epoch as i64,
+        &cutoff.head[..],
+        fact,
+        signature
+    ])?;
+    // The predecessor's parked frames past the cut are evidence now;
+    // their objects were shown when they were parked. Their headers
+    // are read first, and only those cut brought in whole, one by one.
+    let parked: Vec<Vec<u8>> = {
+        let mut statement =
+            db.prepare_cached("SELECT header FROM parked WHERE stream = ?1 AND epoch = ?2 AND holding = ?3 ORDER BY first")?;
+        let rows = statement.query_map(params![at.stream, last.epoch as i64, holding], |row| row.get(0))?;
+        rows.collect::<std::result::Result<_, _>>()?
+    };
+    for header_bytes in parked {
+        let header = Header::decode(&header_bytes).map_err(invalid)?;
+        let end = header.first + u64::from(header.count);
+        if end < cutoff.next || (end == cutoff.next && header.chain() == cutoff.head) {
+            continue;
+        }
+        let (frame_signature, body): (Vec<u8>, Vec<u8>) = db
+            .prepare_cached("SELECT signature, body FROM parked WHERE stream = ?1 AND epoch = ?2 AND first = ?3 AND holding = ?4")?
+            .query_row(params![at.stream, header.epoch as i64, header.first as i64, holding], |row| {
+                Ok((row.get(0)?, row.get(1)?))
+            })?;
+        let why = if end > cutoff.next {
+            "it goes past where a handover cut its epoch"
+        } else {
+            "it does not end where a handover cut its epoch"
+        };
+        let objects: Vec<ObjectRef> = {
+            let records = super::frame::open(&header, &body).map_err(invalid)?;
+            let mut seen = BTreeSet::new();
+            records
+                .iter()
+                .filter_map(|record| match &record.record.state {
+                    crate::record::State::Is { objects, .. } => Some(objects.clone()),
+                    crate::record::State::Gone => None,
+                })
+                .flatten()
+                .filter(|object| seen.insert(object.hash))
+                .collect()
+        };
+        let shown: BTreeSet<[u8; 32]> = objects.iter().map(|object| object.hash).collect();
+        let frame = RawFrame { header: header_bytes, signature: frame_signature, body, objects: Vec::new() };
+        keep_evidence(db, (at.stream, holding), &header, &frame, why, &objects, &shown)?;
+        let place = params![at.stream, header.epoch as i64, header.first as i64, holding];
+        for table in ["parked_objects", "parked"] {
+            db.prepare_cached(&format!("DELETE FROM {table} WHERE stream = ?1 AND epoch = ?2 AND first = ?3 AND holding = ?4"))?
+                .execute(place)?;
+        }
+    }
+    advance(db, at)?;
+    let mut drained = Drained::default();
+    let more = drain(db, scope_id, holding, at, authorizer, signer, &mut drained)?;
+    // Handed over, the stream changed though no frame moved it: holders
+    // asking what changed hear of the new epoch (I09).
+    super::changes::moved(db, at.stream, 0, false)?;
+    Ok((Signed { fact, signature }, drained, more))
 }

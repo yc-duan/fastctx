@@ -1,14 +1,15 @@
-//! A stream another device ordered, taken over by this one (design §8):
-//! a conversation came to live here, and its timeline is ordered here from
-//! now on. Asked for by what would write to the stream (`want`), done by the
-//! hub's session once this machine holds what the hub has of the stream
-//! (`run`): the hub hands it over at the end of what is here, and the new
-//! epoch it signs is where this machine's writes go on.
+//! A stream another device ordered, taken over by this one (design §8,
+//! §28.10): a conversation came to live here, carrying from the device it
+//! left a release of each stream that device ordered, and the frames of it
+//! the hub had not taken (`release`). Asked for by what would write to the
+//! stream (`want`), done by the hub's session once this machine holds what
+//! the hub has of the stream (`run`): the predecessor's frames go to the hub
+//! first, then the release; the epoch the hub signs for this machine is
+//! taken and opened in one transaction, or, handed on since, taken as
+//! history alone.
 //!
-//! The device it leaves orders it no further than that cut. What it wrote
-//! past what reached the hub is not carried: a timeline is made again from
-//! its conversation's history, which came here with it, and the first
-//! reading here writes whatever of it the hub lacks.
+//! Without a release nothing is asked: holding the stream, this machine is
+//! one more replica of it, and what would write to it waits.
 
 use super::session::{ask, blocking};
 use super::{Assets, Pinning};
@@ -17,15 +18,33 @@ use fastctx_content::v2::{EpochFact, HubVerifier as _, Signed};
 use fastctx_net::link::Link;
 use fastctx_net::sign::PublicKey;
 use fastctx_types::access::HubId;
-use fastctx_types::assets::{Reply, Request};
+use fastctx_types::assets::{Received, Reply, Request};
 use std::sync::Arc;
 
-/// Asks for `stream` of `scope` with `hub` to be ordered here from now on.
+/// The conversation a scope of a conversation is of: the last part of its
+/// key.
+fn resident_of(scope: &str) -> &str {
+    scope.rsplit('/').next().unwrap_or(scope)
+}
+
+/// Asks for `stream` of `scope` with `hub` to be ordered here from now on,
+/// when the conversation carries the release for this machine.
 pub(crate) fn want(node: &Arc<Node>, hub: &HubId, scope: &str, stream: &str) {
     let Some(assets) = node.assets.as_ref() else { return };
-    let added = assets.takeovers.lock().expect("takeovers").insert((scope.to_string(), stream.to_string()));
-    if added {
-        node.log.line(format_args!("{scope}/{stream} is to be ordered here: asking {hub} to hand it over"));
+    let Some(link) = node.link_of(hub) else { return };
+    let directory = assets.conversation_dir(resident_of(scope));
+    let wish = (scope.to_string(), stream.to_string());
+    if super::release::carried(&directory, hub.as_str(), scope, stream, link.name().as_str()).is_none() {
+        // Said once: the producer asks again and again while it waits.
+        if assets.unreleased.lock().expect("unreleased").insert(wish) {
+            node.log.line(format_args!(
+                "{scope}/{stream} is ordered by another device and came with no release for this machine: held as a replica"
+            ));
+        }
+        return;
+    }
+    if assets.takeovers.lock().expect("takeovers").insert(wish) {
+        node.log.line(format_args!("{scope}/{stream} came released to this machine: asking {hub} to hand it over"));
     }
     super::wake(node, hub);
 }
@@ -49,41 +68,52 @@ async fn take_over(assets: &Assets, hub: &HubId, link: &Arc<Link>, key: &PublicK
     if blocking(library, move |library| library.orderer(&scope_text, &stream_text)).await?.is_none_or(|orderer| orderer == device) {
         return Ok(());
     }
-    // Where the stream stands here: its next sequence and the chain value
-    // its last frame leaves.
-    let scope_text = scope.to_string();
-    let next = blocking(library, move |library| library.streams(&scope_text))
-        .await?
-        .into_iter()
-        .find(|(name, _)| name == stream)
-        .map_or(0, |(_, next)| next);
-    let scope_text = scope.to_string();
-    let head = blocking(library, move |library| library.standing(&scope_text))
-        .await?
-        .into_iter()
-        .find(|(name, sequence, _)| name == stream && sequence + 1 == next)
-        .map_or([0u8; 32], |(_, _, head)| head);
-    let request = Request::Takeover { scope: scope.to_string(), stream: stream.to_string(), next, head: head.into(), gap: None };
-    let Reply::Epoch { descriptor } = ask(assets, link, request).await? else {
-        return Err("the hub did not hand the stream over".into());
+    // Gone from here meanwhile, or never released to it: nothing is asked
+    // (AG09).
+    let directory = assets.conversation_dir(resident_of(scope));
+    let Some(carried) = super::release::carried(&directory, hub.as_str(), scope, stream, link.name().as_str()) else {
+        return Ok(());
     };
-    let signed = Signed { fact: descriptor.fact.0, signature: descriptor.word.0 };
-    if !(Pinning { assets, hub, key: *key }).verify(&signed.fact, &signed.signature) {
-        return Err("the descriptor of the epoch handed over is not the hub's".into());
-    }
-    let fact = EpochFact::decode(&signed.fact)?;
-    if fact.scope != scope || fact.stream != stream || fact.device != device || fact.start != next {
-        return Err("the hub handed over another epoch than the one asked for".into());
-    }
-    let (scope_text, stream_text, epoch, descriptor) = (scope.to_string(), stream.to_string(), fact.epoch, signed.fact.clone());
-    blocking(library, move |library| {
-        library.accept_epoch(&scope_text, signed, &super::session::Trusted)?;
-        // Already in it, as a pass that heard of it before has it: nothing
-        // moves.
-        match library.new_epoch(&scope_text, &stream_text, epoch, descriptor) {
-            Err(fastctx_content::Error::Invalid(why)) if why.contains("moves forward") => Ok(()),
-            done => done,
+    // What the predecessor wrote that the hub has not goes to it first:
+    // the release reaches no further than what the hub holds.
+    for frame in &carried.tail {
+        let mut staged = 0;
+        let Reply::Received { received } = super::apart::take(assets, link, scope, frame, &[], &mut staged).await? else {
+            return Err("the hub did not take the predecessor's frame".into());
+        };
+        if matches!(received, Received::Missing { .. } | Received::Prove { .. }) {
+            return Err(format!("{stream} of {scope}: the predecessor's frames refer to objects that did not come here"));
         }
-    })
-    .await
+    }
+    let request = Request::Takeover { scope: scope.to_string(), stream: stream.to_string(), release: Some(carried.release.clone()) };
+    let pinning = Pinning { assets, hub, key: *key };
+    match ask(assets, link, request).await? {
+        Reply::Epoch { descriptor } => {
+            let signed = Signed { fact: descriptor.fact.0, signature: descriptor.word.0 };
+            if !pinning.verify(&signed.fact, &signed.signature) {
+                return Err("the descriptor of the epoch handed over is not the hub's".into());
+            }
+            let fact = EpochFact::decode(&signed.fact)?;
+            if fact.scope != scope || fact.stream != stream || fact.device != device {
+                return Err("the hub handed over another epoch than the one asked for".into());
+            }
+            // Taken and opened in one transaction (AG06); one the hub handed
+            // on since is history here (AN02).
+            let scope_text = scope.to_string();
+            blocking(library, move |library| library.take_over(&scope_text, signed, &super::session::Trusted)).await?;
+            Ok(())
+        }
+        Reply::HandedOn { epochs } => {
+            for fact in epochs {
+                let signed = Signed { fact: fact.fact.0, signature: fact.word.0 };
+                if !pinning.verify(&signed.fact, &signed.signature) {
+                    return Err("an epoch's descriptor is not the hub's".into());
+                }
+                let scope_text = scope.to_string();
+                blocking(library, move |library| library.accept_epoch(&scope_text, signed, &super::session::Trusted)).await?;
+            }
+            Ok(())
+        }
+        _ => Err("the hub did not hand the stream over".into()),
+    }
 }

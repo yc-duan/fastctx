@@ -49,13 +49,30 @@ impl Received {
     }
 }
 
-/// `bytes` of frames of `owner`'s library of `hub` were taken (none: of a
-/// scope pulled by itself).
-pub(super) fn took(assets: &Assets, hub: &HubId, owner: Option<&str>, bytes: u64) {
+/// What frames taken while catching up an owner library count toward: the
+/// library, the generation it was caught up in, and the listing era of this
+/// machine it began in — forgotten since, what it takes counts no more
+/// (KK04).
+pub(super) struct Counted<'a> {
+    pub owner: &'a str,
+    pub generation: &'a str,
+    pub era: u64,
+}
+
+/// `bytes` of frames were taken, of an owner library caught up as `counted`
+/// says (none: of a scope pulled by itself).
+pub(super) fn took(assets: &Assets, hub: &HubId, counted: Option<&Counted<'_>>, bytes: u64) {
     assets.received.lock().expect("received").add(bytes);
-    if let Some(owner) = owner {
-        *assets.taken.lock().expect("taken").entry((hub.as_str().to_string(), owner.to_string())).or_default() += bytes;
+    let Some(counted) = counted else { return };
+    if assets.forgotten.load(std::sync::atomic::Ordering::SeqCst) != counted.era {
+        return;
     }
+    let mut taken = assets.taken.lock().expect("taken");
+    let entry = taken.entry((hub.as_str().to_string(), counted.owner.to_string())).or_insert_with(|| (counted.generation.to_string(), 0));
+    if entry.0 != counted.generation {
+        *entry = (counted.generation.to_string(), 0);
+    }
+    entry.1 += bytes;
 }
 
 /// This machine stands anew in `owner`'s library of `hub`: what it took
@@ -67,16 +84,20 @@ pub(super) fn stood(assets: &Assets, hub: &HubId, owner: &str) {
 /// What this machine says of where it stands with `hub`.
 async fn facts(assets: &Assets, hub: &HubId) -> Result<SyncReport, String> {
     let library = &assets.library;
-    let theirs = hub.as_str().to_string();
+    let (theirs, device) = (hub.as_str().to_string(), assets.device());
     let (feeds, unpulled, lacking, unsent) = blocking(library, move |library| {
-        Ok((library.feeds_of(&theirs)?, library.unpulled_of(&theirs)?, library.lacking_of(&theirs)?, library.unsent_of(&theirs)?))
+        Ok((library.feeds_of(&theirs)?, library.unpulled_of(&theirs)?, library.lacking_of(&theirs)?, library.unsent_of(&theirs, &device)?))
     })
     .await?;
     let taken = assets.taken.lock().expect("taken").clone();
     let owners = feeds
         .into_iter()
         .map(|fed| OwnerStanding {
-            taken: taken.get(&(hub.as_str().to_string(), fed.owner.clone())).copied().unwrap_or(0),
+            // Only what was taken in the generation it stands in (KK04).
+            taken: taken
+                .get(&(hub.as_str().to_string(), fed.owner.clone()))
+                .filter(|(generation, _)| *generation == fed.generation)
+                .map_or(0, |(_, bytes)| *bytes),
             owner: fed.owner,
             generation: fed.generation,
             change: fed.change,
@@ -131,14 +152,18 @@ pub(crate) async fn status(
     hours: u32,
 ) -> (LocalSync, Option<Box<SyncStatus>>, Option<String>) {
     let hub = link.membership().id;
-    let theirs = hub.as_str().to_string();
-    let unsent = blocking(&assets.library, move |library| library.unsent_of(&theirs)).await.unwrap_or((0, 0));
+    let (theirs, device) = (hub.as_str().to_string(), assets.device());
+    // Not counted, it is said so: never as nothing to send (KK06).
+    let (unsent, unread) = match blocking(&assets.library, move |library| library.unsent_of(&theirs, &device)).await {
+        Ok(unsent) => (unsent, None),
+        Err(why) => ((0, 0), Some(why)),
+    };
     let cut_off = match link.status() {
         fastctx_net::link::Status::Online { .. } => None,
         fastctx_net::link::Status::Connecting { since, .. } => Some(since.as_millisecond()),
         fastctx_net::link::Status::Stopped { .. } => Some(jiff::Timestamp::now().as_millisecond()),
     };
-    let local = LocalSync { machine: link.name(), unsent_frames: unsent.0, unsent_bytes: unsent.1, cut_off };
+    let local = LocalSync { machine: link.name(), unsent_frames: unsent.0, unsent_bytes: unsent.1, cut_off, unread };
     if cut_off.is_some() {
         return (local, None, Some("the hub is not reached".into()));
     }

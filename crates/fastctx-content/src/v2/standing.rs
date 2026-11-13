@@ -9,7 +9,7 @@
 use super::Library;
 use super::changes::class_of;
 use crate::Result;
-use fastctx_storage::rusqlite::OptionalExtension;
+use fastctx_storage::rusqlite::{OptionalExtension, params};
 
 /// The bytes of one stream's frames, as both ends count a frame: header,
 /// signature and body.
@@ -105,7 +105,10 @@ impl Library {
                 .prepare_cached("SELECT COUNT(DISTINCT scope) FROM streams WHERE name LIKE 'timeline%'")?
                 .query_row([], |row| row.get(0))?;
             let (files, file_bytes): (i64, i64) = db
-                .prepare_cached("SELECT COUNT(*), COALESCE(SUM(size), 0) FROM objects WHERE state = 1 AND unreferenced IS NULL")?
+                .prepare_cached(
+                    "SELECT COUNT(*), COALESCE(SUM(o.size), 0) FROM objects o WHERE o.state = 1
+                     AND EXISTS (SELECT 1 FROM object_refs r WHERE r.hash = o.hash AND r.count > 0)",
+                )?
                 .query_row([], |row| Ok((row.get(0)?, row.get(1)?)))?;
             let record_bytes: i64 =
                 db.prepare_cached("SELECT COALESCE(SUM(bytes), 0) FROM stream_changes")?.query_row([], |row| row.get(0))?;
@@ -144,26 +147,47 @@ impl Library {
             let (count, bytes): (i64, i64) = db
                 .prepare_cached(
                     "SELECT COUNT(*), COALESCE(SUM(size), 0) FROM wanted WHERE hash IN
-                     (SELECT i.hash FROM scopes s JOIN wanted_in i ON i.scope = s.id WHERE s.hub = ?1)",
+                     (SELECT i.hash FROM scopes s JOIN wanted_in i ON i.scope = s.id WHERE s.hub = ?1)
+                     AND hash NOT IN (SELECT hash FROM objects WHERE state = 1)",
                 )?
                 .query_row([&hub], |row| Ok((row.get(0)?, row.get(1)?)))?;
             Ok((count.max(0) as u64, bytes.max(0) as u64))
         })?)
     }
 
-    /// The frames this device made in `hub`'s scopes that are not sent yet:
-    /// how many, and their bytes.
-    pub fn unsent_of(&self, hub: &str) -> Result<(u64, u64)> {
-        let hub = hub.to_string();
+    /// The frames this device, `device`, made in `hub`'s scopes that are not
+    /// sent yet: of the streams it orders, in their holding period now, from
+    /// where the hub's taking goes on — the start, before the first receipt
+    /// (AO10, KK03). How many, and their bytes.
+    pub fn unsent_of(&self, hub: &str, device: &[u8; 32]) -> Result<(u64, u64)> {
+        let (hub, device) = (hub.to_string(), *device);
         Ok(self.database().read_now(move |db| {
-            let (count, bytes): (i64, i64) = db
-                .prepare_cached(
-                    "SELECT COUNT(*), COALESCE(SUM(length(f.header) + length(f.signature) + length(f.body)), 0)
-                     FROM scopes c JOIN streams s ON s.scope = c.id JOIN outbox o ON o.stream = s.id
-                     JOIN frames f ON f.stream = s.id AND f.first >= o.uploaded WHERE c.hub = ?1",
-                )?
-                .query_row([&hub], |row| Ok((row.get(0)?, row.get(1)?)))?;
-            Ok((count.max(0) as u64, bytes.max(0) as u64))
+            let scopes: Vec<(i64, i64)> = {
+                let mut statement = db.prepare_cached(
+                    "SELECT id, holding FROM scopes WHERE hub = ?1 AND state IN ('live', 'provisional') AND holding IS NOT NULL",
+                )?;
+                let rows = statement.query_map([&hub], |row| Ok((row.get(0)?, row.get(1)?)))?;
+                rows.collect::<std::result::Result<_, _>>()?
+            };
+            let (mut count, mut bytes) = (0u64, 0u64);
+            for (scope, holding) in scopes {
+                for (stream, _, _) in super::device::own(db, scope, holding, &device)? {
+                    let uploaded: i64 = db
+                        .prepare_cached("SELECT uploaded FROM outbox WHERE stream = ?1")?
+                        .query_row([stream], |row| row.get(0))
+                        .optional()?
+                        .unwrap_or(0);
+                    let (frames, size): (i64, i64) = db
+                        .prepare_cached(
+                            "SELECT COUNT(*), COALESCE(SUM(length(header) + length(signature) + length(body)), 0)
+                             FROM frames WHERE stream = ?1 AND holding = ?2 AND first >= ?3",
+                        )?
+                        .query_row(params![stream, holding, uploaded], |row| Ok((row.get(0)?, row.get(1)?)))?;
+                    count += frames.max(0) as u64;
+                    bytes += size.max(0) as u64;
+                }
+            }
+            Ok((count, bytes))
         })?)
     }
 }

@@ -1196,14 +1196,33 @@ pub struct ExportedConversation {
     /// The export's name between machines: the one taking it keeps it, and
     /// this machine lets the conversation go by it.
     pub fingerprint: String,
+    /// Where the release of the streams this machine orders in the
+    /// conversation is, to the machine named (design §28.10); none when none
+    /// was named, or it orders none.
+    pub release: Option<std::path::PathBuf>,
 }
 
 /// Exports every conversation-owned table into its directory while the node is
 /// stopped. Copy that directory with its host records before starting the target.
-pub fn export_conversation(root: &std::path::Path, conversation: &str) -> std::io::Result<ExportedConversation> {
-    world_format::check(&WorldDir::under(root))?;
+/// With `to`, the machine it goes to, the streams this machine orders in the
+/// conversation are released to that machine beside it: there they are
+/// ordered from then on (design §28.10); without, they are held there as a
+/// replica.
+pub fn export_conversation(root: &std::path::Path, conversation: &str, to: Option<&str>) -> std::io::Result<ExportedConversation> {
+    let world = WorldDir::under(root);
+    world_format::check(&world)?;
     let (bundle, fingerprint) = conversation_store::transfer::exporting::export(root, conversation)?;
-    Ok(ExportedConversation { bundle, fingerprint })
+    let release = match to {
+        Some(to) => {
+            let _owner = fastctx_platform::FileLock::try_acquire(&world.node_lock())?.ok_or_else(|| {
+                std::io::Error::new(std::io::ErrorKind::WouldBlock, "stop the source node before exporting a conversation")
+            })?;
+            let directory = bundle.parent().map(std::path::Path::to_path_buf).unwrap_or_default();
+            assets::release::export(&world, &directory, conversation, to)?
+        }
+        None => None,
+    };
+    Ok(ExportedConversation { bundle, fingerprint, release })
 }
 
 /// Lets a conversation go from this stopped node once another machine took

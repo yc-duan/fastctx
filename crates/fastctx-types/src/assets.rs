@@ -323,13 +323,17 @@ pub enum Request {
     /// one of its frames: what remains is committed again from `next`,
     /// chained from `head` (§6.5).
     Epoch { scope: String, stream: String, next: u64, head: Bytes },
-    /// This device takes over ordering `stream`, which another ordered
-    /// (design §8): a conversation came to live here, say. The hub hands it
-    /// over at `next`, chained from `head` — the furthest of the stream this
-    /// device holds, the hub's applied prefix or past it — and answers the
-    /// new epoch's descriptor. With `gap`, why what lies between the hub's
-    /// prefix and `next` will never come: the hub signs it skipped.
-    Takeover { scope: String, stream: String, next: u64, head: Bytes, gap: Option<String> },
+    /// This device takes over ordering `stream`, which another ordered: a
+    /// conversation came to live here (design §8, §28.10). Only under the
+    /// predecessor's `release` naming this machine: the hub hands it over
+    /// where the predecessor's frames it holds reach, and answers the new
+    /// epoch's descriptor, or says it was handed on since.
+    Takeover {
+        scope: String,
+        stream: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        release: Option<Release>,
+    },
     /// Puts an object of `scope` to the hub (§7.3), its chunks' digests
     /// given (none for one of a single chunk): the hub answers which chunks
     /// it lacks and the ticket a data connection sends them under. With
@@ -357,6 +361,18 @@ pub enum Request {
     /// How `account`'s machines stand, over the last `hours` (design §28.9):
     /// asked by a machine the account is logged in on.
     SyncStatus { account: crate::AccountName, hours: u32 },
+}
+
+/// A device's release of a stream it orders to the machine `to` (design
+/// §28.10): from its epoch `epoch`, having written as far as `next`, chained
+/// to `head`, on the hub that hears it; under its key.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Release {
+    pub epoch: u64,
+    pub to: String,
+    pub next: u64,
+    pub head: Bytes,
+    pub signature: Bytes,
 }
 
 /// Where a listing of what a machine may hold goes on from: the place, in
@@ -430,6 +446,9 @@ pub struct ChangedStream {
     #[serde(default)]
     pub remade: u64,
     pub at: i64,
+    /// The stream's last epoch the hub signed (design §28.10, I09).
+    #[serde(default)]
+    pub epoch: u64,
 }
 
 /// An item as a hub's index has it: identity, order key, the revision that
@@ -663,6 +682,9 @@ pub enum Reply {
     SyncStatus { status: Box<crate::sync_status::SyncStatus> },
     /// The new epoch's descriptor and the hub's word on it.
     Epoch { descriptor: Fact },
+    /// A move asked again that was handed on since: the epochs after the one
+    /// the machine took over in, which it takes as history alone.
+    HandedOn { epochs: Vec<Fact> },
     /// The chunks the hub lacks of an object put, sent under `ticket`; none
     /// when it holds the object whole and nothing is to be proven.
     Put {

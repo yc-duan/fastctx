@@ -42,7 +42,7 @@ pub enum Standing {
     Differs(Vec<(u64, [u8; 32])>),
 }
 
-fn stream_of(db: &Connection, scope: i64, name: &str) -> fastctx_storage::Result<i64> {
+pub(super) fn stream_of(db: &Connection, scope: i64, name: &str) -> fastctx_storage::Result<i64> {
     if let Some(id) = db
         .prepare_cached("SELECT id FROM streams WHERE scope = ?1 AND name = ?2")?
         .query_row(params![scope, name], |row| row.get(0))
