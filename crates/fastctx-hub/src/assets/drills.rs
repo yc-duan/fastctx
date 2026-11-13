@@ -6,6 +6,7 @@
 mod adopt;
 mod assets;
 mod handback;
+mod identify;
 mod rotation;
 mod runs;
 mod serve;

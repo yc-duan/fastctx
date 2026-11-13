@@ -22,6 +22,11 @@ fn copy(from: &Path, to: &Path) {
     for entry in fastctx_platform::disk::read_dir(from).unwrap() {
         let entry = entry.unwrap();
         let target = to.join(entry.file_name());
+        // A database's index of its log is made again as it opens, and may be
+        // held locked by a handle let go a moment ago: no copy needs it.
+        if entry.file_name().to_string_lossy().ends_with("-shm") {
+            continue;
+        }
         // A database's side files go when its last handle closes, which a
         // handle let go does a moment later: one gone meanwhile is not copied.
         if entry.file_type().unwrap().is_dir() { copy(&entry.path(), &target) } else if let Err(error) = fastctx_platform::disk::copy(entry.path(), &target) {
