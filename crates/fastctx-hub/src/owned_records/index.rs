@@ -98,6 +98,13 @@ impl Index {
 
     /// The conversations whose records `account` reads.
     pub(crate) fn readable(&self, directory: &Directory, account: &AccountName) -> Vec<Conversation> {
+        self.readable_at(directory, account).into_iter().map(|(conversation, _)| conversation).collect()
+    }
+
+    /// The same, each with when its opener's account was opened as it opened
+    /// it: a body's outlives the opener, and one made again under the name
+    /// is another (§29, 2.6).
+    pub(crate) fn readable_at(&self, directory: &Directory, account: &AccountName) -> Vec<(Conversation, Timestamp)> {
         let mut keys = self.accounts.get(account).cloned().unwrap_or_default();
         // A body's conversations, its machine gone from the directory or not.
         if let Some(bodies) = &self.bodies {
@@ -131,7 +138,7 @@ impl Index {
             .filter_map(|identity| {
                 let conversation = self.conversations.get(&identity)?;
                 (self.live(directory, &identity) && self.reads(directory, account, &identity, conversation))
-                    .then(|| super::verified(directory, conversation))
+                    .then(|| (super::verified(directory, conversation), identity.1))
             })
             .collect()
     }

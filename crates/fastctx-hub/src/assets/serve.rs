@@ -871,7 +871,12 @@ pub(crate) fn ask(
                 .older(&scope, &stream, before, limit as usize)
                 .map_err(|error| error.to_string())?
                 .ok_or_else(|| format!("{stream} of {scope} is not on the hub"))?;
-            Ok(Reply::Older { through: older.through, entries: older.entries.into_iter().map(wire_entry).collect(), more: older.more })
+            Ok(Reply::Older {
+                through: older.through,
+                entries: older.entries.into_iter().map(wire_entry).collect(),
+                more: older.more,
+                remade: older.remade,
+            })
         }
         Request::Succession { scope, stream } => {
             let kept = held(assets, directory, machine, &scope, &stream)?;

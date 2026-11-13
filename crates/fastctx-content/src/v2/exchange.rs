@@ -151,6 +151,15 @@ impl Library {
                 return Err(invalid("the holding period the frame was asked for in has ended"));
             }
             let stream = stream_id(db, scope_id, &header.stream)?;
+            // A window being installed into the stream takes no frame
+            // meanwhile: what it hides is judged against its head alone
+            // (§29 3.3, P12). The driver goes on with the install first.
+            let installing: bool = db
+                .prepare_cached("SELECT EXISTS (SELECT 1 FROM installing WHERE stream = ?1)")?
+                .query_row([stream], |row| row.get(0))?;
+            if installing {
+                return Err(invalid("a window of the stream is being installed"));
+            }
             if let Err(epoch) = super::succession::may_import(db, stream, &header)? {
                 return Ok(Imported::Epoch(epoch));
             }

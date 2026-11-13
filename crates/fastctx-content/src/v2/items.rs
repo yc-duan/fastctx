@@ -187,7 +187,9 @@ pub(super) fn unrefer(db: &Connection, scope: i64, holding: i64, stream: i64, ha
 
 /// Drops the floors of `stream` the current period has caught up with:
 /// every record up to `through` is applied, so the item stands as it is.
-/// A page asked before they went is asked again (`reclaimed`, PH01).
+/// A page asked before they went is asked again (`reclaimed`, PH01); a
+/// reader that had not read them yet reads the stream anew, so none misses
+/// what a floor told gone.
 pub(super) fn floors_passed(db: &Connection, stream: i64, through: u64) -> fastctx_storage::Result<()> {
     let gone = db
         .prepare_cached("DELETE FROM items WHERE stream = ?1 AND state = 2 AND revision <= ?2")?
@@ -195,6 +197,7 @@ pub(super) fn floors_passed(db: &Connection, stream: i64, through: u64) -> fastc
     if gone > 0 {
         let at = next_write(db)?;
         db.prepare_cached("UPDATE streams SET reclaimed = ?2 WHERE id = ?1")?.execute(params![stream, at])?;
+        super::view::rebased(db, stream)?;
     }
     Ok(())
 }

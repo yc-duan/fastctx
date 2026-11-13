@@ -353,6 +353,9 @@ async fn backfill(replica: &Replica, link: &Arc<Link>, scope: &str, stream: &str
                 Backfilled::Whole => return Ok(false),
                 Backfilled::Already => {}
                 Backfilled::Gap { from } => at = from,
+                Backfilled::Restarted => {
+                    return Err(format!("{stream} of {scope}: the frames below its window do not chain to its head; taken again"));
+                }
             }
         }
         if at.saturating_sub(begun.at) >= RECORDS_A_TURN {
@@ -415,7 +418,7 @@ pub(super) async fn older(
         before: before.clone().map(|(place, item)| (Bytes::from(place), Bytes::from(item))),
         limit,
     };
-    let Reply::Older { through, entries, more } = ask(replica, link, request).await? else {
+    let Reply::Older { through, entries, more, remade } = ask(replica, link, request).await? else {
         return Err("the hub did not give the page".into());
     };
     let older = fastctx_content::v2::Older {
@@ -425,6 +428,7 @@ pub(super) async fn older(
         before,
         entries: entries.into_iter().map(entry).collect::<Result<_, _>>()?,
         more,
+        remade,
     };
     blocking(library, move |library| library.install_older(older, holding, asked)).await
 }

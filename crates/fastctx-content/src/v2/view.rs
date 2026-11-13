@@ -137,7 +137,7 @@ fn next_era(db: &Connection) -> fastctx_storage::Result<i64> {
 /// did.
 pub(super) fn rebased(db: &Connection, stream: i64) -> fastctx_storage::Result<()> {
     let era = next_era(db)?;
-    db.prepare_cached("UPDATE streams SET rebased = ?2 WHERE id = ?1")?.execute(params![stream, era])?;
+    db.prepare_cached(&format!("UPDATE streams SET rebased = ?2, written = {WRITTEN_NOW} WHERE id = ?1"))?.execute(params![stream, era])?;
     Ok(())
 }
 
@@ -145,9 +145,15 @@ pub(super) fn rebased(db: &Connection, stream: i64) -> fastctx_storage::Result<(
 /// anew. In the transaction that did.
 pub(super) fn held_anew(db: &Connection, scope: i64) -> fastctx_storage::Result<()> {
     let era = next_era(db)?;
-    db.prepare_cached("UPDATE streams SET rebased = ?2 WHERE scope = ?1")?.execute(params![scope, era])?;
+    db.prepare_cached(&format!("UPDATE streams SET rebased = ?2, written = {WRITTEN_NOW} WHERE scope = ?1"))?.execute(params![scope, era])?;
     Ok(())
 }
+
+/// Where a stream stands in its era made anew: the last write number of a
+/// row of it in its scope's holding period now, naught where none is — a
+/// stream held anew, or cut back to nothing, holds nothing yet.
+const WRITTEN_NOW: &str = "COALESCE((SELECT MAX(i.local) FROM items i WHERE i.stream = streams.id
+    AND i.holding = (SELECT holding FROM scopes WHERE id = streams.scope)), 0)";
 
 impl Library {
     /// Where a reader of `stream` of `scope` stands now; none when it is not
@@ -246,9 +252,14 @@ impl Library {
                 while let Some(row) = rows.next()? {
                     let (mut found, objects, state) = entry(row)?;
                     // A batch ends between records, never within one
-                    // revision: a frame's records are written together.
+                    // revision: a frame's records are written together. A
+                    // window's floors share theirs, so they end a batch, and
+                    // none goes far past its bounds.
                     let full = read.changes.len() >= max_items || (!read.changes.is_empty() && bytes + found.body.len() > max_bytes);
-                    if full && last.is_none_or(|(_, revision)| revision != found.revision) {
+                    let splits = last.is_none_or(|(_, revision)| revision != found.revision)
+                        || state == super::items::FLOOR
+                        || read.changes.len() >= max_items.saturating_mul(4);
+                    if full && splits {
                         read.more = true;
                         break;
                     }

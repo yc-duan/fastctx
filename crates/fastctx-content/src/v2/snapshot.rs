@@ -75,6 +75,8 @@ pub struct Older {
     pub entries: Vec<Entry>,
     /// Whether the hub holds more below the last.
     pub more: bool,
+    /// How many times the hub's stream was indexed again as it answered.
+    pub remade: u64,
 }
 
 /// What installing a window did.
@@ -451,9 +453,14 @@ impl Library {
             else {
                 return Ok(None);
             };
+            let remade: i64 = db
+                .prepare_cached("SELECT remade FROM stream_changes WHERE stream = ?1")?
+                .query_row([stream_id], |row| row.get(0))
+                .optional()?
+                .unwrap_or(0);
             let (entries, more) =
                 newest(db, stream_id, holding, before.as_ref(), limit.clamp(1, super::reads::PAGE), OLDER_BYTES)?;
-            Ok(Some(Older { scope: key, stream: name, through: next as u64, before, entries, more }))
+            Ok(Some(Older { scope: key, stream: name, through: next as u64, before, entries, more, remade: remade as u64 }))
         })?)
     }
 
@@ -470,6 +477,18 @@ impl Library {
     /// stream's records again, or its library is of another generation
     /// (§28.1, G01).
     pub fn install_window(&self, window: Window, holding: i64, again: bool) -> Result<Installed> {
+        self.install_window_until(window, holding, again, None)
+    }
+
+    /// As `install_window`, stopping after `batches` of what it hides as a
+    /// device stopped then would: for the drills, which go on with
+    /// `resume_installs`.
+    #[cfg(feature = "drill")]
+    pub fn install_window_stopping(&self, window: Window, holding: i64, batches: usize) -> Result<Installed> {
+        self.install_window_until(window, holding, false, Some(batches))
+    }
+
+    fn install_window_until(&self, window: Window, holding: i64, again: bool, stop: Option<usize>) -> Result<Installed> {
         let bytes = window.entries.iter().map(|entry| entry.body.len() + 256).sum::<usize>() + 4096;
         let begun = self.database().write_now_at(Priority::Normal, bytes, move |db| {
             let Some((scope_id, state, Some(held_in))) = held(db, &window.scope)? else {
@@ -489,6 +508,9 @@ impl Library {
             }
             let at = Applying { scope: scope_id, stream, holding };
             want(db, scope_id, &window.scope, &window.entries)?;
+            // A backfill below an earlier window goes: below this one is
+            // taken from its own head, if at all.
+            db.prepare_cached("DELETE FROM backfills WHERE stream = ?1")?.execute([stream])?;
             let mut standing = HashSet::new();
             for entry in &window.entries {
                 standing.insert(entry.item.clone());
@@ -518,7 +540,7 @@ impl Library {
         })?;
         let Some(stream) = begun else { return Ok(Installed::Behind) };
         self.wrote();
-        self.finish_install(stream)?;
+        self.finish_install(stream, stop)?;
         Ok(Installed::Installed)
     }
 
@@ -530,15 +552,21 @@ impl Library {
             Ok(streams.collect::<std::result::Result<Vec<_>, _>>()?)
         })?;
         for stream in &streams {
-            self.finish_install(*stream)?;
+            self.finish_install(*stream, None)?;
         }
         Ok(streams.len())
     }
 
     /// Hides what the window being installed into `stream` has not, a batch
-    /// a transaction, then moves the tail to its head.
-    fn finish_install(&self, stream: i64) -> Result<()> {
+    /// a transaction, then moves the tail to its head; stopping after `stop`
+    /// batches, if given, with what is left kept.
+    fn finish_install(&self, stream: i64, stop: Option<usize>) -> Result<()> {
+        let mut batches = 0usize;
         loop {
+            if stop.is_some_and(|stop| batches >= stop) {
+                return Ok(());
+            }
+            batches += 1;
             let done = self.database().write_now_at(Priority::Normal, 64 * 1024, move |db| {
                 let Some(installing) = installing(db, stream)? else { return Ok(true) };
                 let holding: Option<(String, Option<i64>)> = db
@@ -570,9 +598,12 @@ impl Library {
                 // All of it in: frames go on from its head; what is below it
                 // is not here.
                 let (next, head) = (installing.next as i64, installing.head.clone());
+                // Frames do not come into the stream while it is installed
+                // (`exchange.rs`); a cursor past the head is never moved back.
                 db.prepare_cached(
                     "INSERT INTO cursors (stream, holding, sequence, head) VALUES (?1, ?2, ?3, ?4)
-                     ON CONFLICT (stream, holding) DO UPDATE SET sequence = excluded.sequence, head = excluded.head",
+                     ON CONFLICT (stream, holding) DO UPDATE SET sequence = excluded.sequence, head = excluded.head
+                     WHERE excluded.sequence > cursors.sequence",
                 )?
                 .execute(params![stream, installing.holding, next - 1, head])?;
                 db.prepare_cached("UPDATE streams SET next = MAX(next, ?2), head = ?3 WHERE id = ?1")?
@@ -624,6 +655,15 @@ impl Library {
             if reclaimed as u64 > asked {
                 return Ok(OlderTaken::Stale);
             }
+            // Of another making of the hub's stream than what is covered
+            // here: what it shows absent or present says nothing of this
+            // index (§29 3.3).
+            let other: bool = db
+                .prepare_cached("SELECT EXISTS (SELECT 1 FROM coverage WHERE stream = ?1 AND holding = ?2 AND remade != ?3)")?
+                .query_row(params![stream, holding, older.remade as i64], |row| row.get(0))?;
+            if other {
+                return Ok(OlderTaken::Stale);
+            }
             let began: Option<i64> =
                 db.prepare_cached("SELECT floor FROM retention WHERE stream = ?1")?.query_row([stream], |row| row.get(0)).optional()?;
             if began.is_some_and(|began| (older.through as i64) < began) {
@@ -660,12 +700,7 @@ impl Library {
                     break;
                 }
             }
-            let remade: i64 = db
-                .prepare_cached("SELECT remade FROM coverage WHERE stream = ?1 AND holding = ?2 ORDER BY through DESC LIMIT 1")?
-                .query_row(params![stream, holding], |row| row.get(0))
-                .optional()?
-                .unwrap_or(0);
-            cover(db, stream, holding, remade, low.as_ref(), older.before.as_ref(), older.through)?;
+            cover(db, stream, holding, older.remade as i64, low.as_ref(), older.before.as_ref(), older.through)?;
             Ok(OlderTaken::Taken)
         })?;
         if taken == OlderTaken::Taken {

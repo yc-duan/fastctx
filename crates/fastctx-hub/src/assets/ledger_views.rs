@@ -1,20 +1,28 @@
 //! Each project's ledger as each of its readers may know it, written into
-//! that reader's own records (§29, 2.4): a stream `ledger/<project>` the hub
-//! orders, an entry by its number, its projection the one object. No ledger
-//! goes whole into a project's scope any more: an entry names machines not
-//! every reader of the project may know of.
+//! that reader's own records (§29, 2.4): a stream the hub orders, an entry
+//! by its number, its projection the one object. No ledger goes whole into
+//! a project's scope any more: an entry names machines not every reader of
+//! the project may know of.
 //!
-//! Each projection keeps the machines it was made by. A look, after each
-//! entry the hub takes and every minute, writes the entries a projection
-//! lacks, makes a projection again when its machines changed — writing only
-//! the entries that come out otherwise — and takes it away from an account
-//! that no longer reads the project.
+//! The stream is named by the project and by the machines the projection
+//! was made by, as a digest: `ledger/<project>/<digest>`. A reader holds
+//! the stream of the machines it may work on now, and of a project it reads
+//! now, alone (`holds`): one whose machines changed holds the new stream
+//! and lets the old go, its frames and objects with it; one that no longer
+//! reads the project holds none. So what was told under rights since taken
+//! away is never told again, on a new device either.
+//!
+//! A look, after each entry the hub takes (that project's alone) and every
+//! minute (all), writes into each reader's stream the entries it lacks; a
+//! stream made anew is written from the first, an entry already there as
+//! it is not written again.
 
 use super::{Assets, scopes, told};
 use fastctx_content::v2::{Kind as _, KindRecord, LEASE, ProjectLedger};
 use fastctx_content::{Record as Item, State};
-use fastctx_types::AccountName;
+use fastctx_net::directory::Directory;
 use fastctx_types::access::TownId;
+use fastctx_types::{AccountName, MachineName};
 use jiff::Timestamp;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
@@ -32,26 +40,65 @@ CREATE TABLE IF NOT EXISTS asset_ledger_views (
 ) WITHOUT ROWID;
 ";
 
-/// The stream of `town`'s ledger in a reader's records.
-pub(crate) fn stream(town: &TownId) -> String {
-    format!("{}/{town}", ProjectLedger::STREAM)
+/// The digest's hex digits a stream is named by.
+const NAMED_BY: usize = 16;
+
+/// The stream of `town`'s ledger in a reader's records, for the machines
+/// whose digest is `machines`.
+pub(crate) fn stream(town: &TownId, machines: &[u8]) -> String {
+    let named: String = machines.iter().map(|byte| format!("{byte:02x}")).collect::<String>().chars().take(NAMED_BY).collect();
+    format!("{}/{town}/{named}", ProjectLedger::STREAM)
+}
+
+/// Whether `account` holds the stream `name` (after `ledger/`) of its
+/// records: of a project it reads now, made by the machines it may work on
+/// now (§29, 2.4).
+pub(crate) fn holds(directory: &Directory, account: &AccountName, name: &str) -> bool {
+    let Some((town, _)) = name.split_once('/') else { return false };
+    let Ok(town) = TownId::try_from(town.to_string()) else { return false };
+    if directory.authorize(account, fastctx_net::authorization::Action::Project(&town)).is_err() {
+        return false;
+    }
+    let usable = crate::ledger::for_reader::usable(directory, account, None);
+    stream(&town, &crate::ledger::for_reader::digest(&usable)) == format!("{}/{name}", ProjectLedger::STREAM)
 }
 
 /// Entries written in one frame at most.
 const AT_ONCE: usize = 64;
 
-/// One look at a time; one asked for meanwhile is made after it.
+/// One look at a time; what is asked for meanwhile is looked at after it:
+/// some projects, or all (`None`).
 static LOOKING: Mutex<()> = Mutex::new(());
 static AGAIN: AtomicBool = AtomicBool::new(false);
+static ASKED: Mutex<Option<BTreeSet<TownId>>> = Mutex::new(Some(BTreeSet::new()));
 
-/// Looks again, off the caller's thread.
+/// Looks again at every project, off the caller's thread.
 pub(crate) fn look(hub: &Arc<crate::Hub>) {
+    ask(hub, None);
+}
+
+/// Looks again at `town`, which took an entry, off the caller's thread.
+pub(crate) fn look_at(hub: &Arc<crate::Hub>, town: &TownId) {
+    ask(hub, Some(town.clone()));
+}
+
+fn ask(hub: &Arc<crate::Hub>, town: Option<TownId>) {
+    {
+        let mut asked = ASKED.lock().expect("asked");
+        match (asked.as_mut(), town) {
+            (Some(towns), Some(town)) => {
+                towns.insert(town);
+            }
+            _ => *asked = None,
+        }
+    }
     let hub = hub.clone();
     fastctx_platform::task::spawn_blocking(move || {
         AGAIN.store(true, Ordering::SeqCst);
         let Ok(_looking) = LOOKING.try_lock() else { return };
         while AGAIN.swap(false, Ordering::SeqCst) {
-            if let Err(error) = look_now(&hub) {
+            let only = ASKED.lock().expect("asked").replace(BTreeSet::new());
+            if let Err(error) = look_now(&hub, only.as_ref()) {
                 hub.log.line(format_args!("writing the projects' ledgers into their readers' records: {error}"));
             }
         }
@@ -63,124 +110,129 @@ pub(crate) fn look(hub: &Arc<crate::Hub>) {
 struct Reader {
     account: AccountName,
     opened: Timestamp,
-    usable: BTreeSet<fastctx_types::MachineName>,
+    usable: Arc<BTreeSet<MachineName>>,
     digest: Vec<u8>,
 }
 
 type Kept = BTreeMap<(String, i64, String), (Vec<u8>, u64)>;
 
-/// The accounts in the directory, by name and when opened in milliseconds.
-type Present = BTreeMap<(String, i64), Timestamp>;
-
-fn look_now(hub: &crate::Hub) -> Result<(), String> {
+/// Looks at the projects `only` names, or at all: each reader's stream gets
+/// what it lacks. One reader's failure holds up no other's; the first is
+/// told.
+fn look_now(hub: &crate::Hub, only: Option<&BTreeSet<TownId>>) -> Result<(), String> {
     let assets = &hub.assets;
-    let towns: BTreeMap<TownId, u64> =
-        hub.ledgers.lock().expect("never poisoned").towns.iter().map(|(town, ledger)| (town.clone(), ledger.next)).collect();
-    let (readers, accounts): (BTreeMap<TownId, Vec<Reader>>, Present) = {
+    let towns: BTreeMap<TownId, u64> = hub
+        .ledgers
+        .lock()
+        .expect("never poisoned")
+        .towns
+        .iter()
+        .filter(|(town, _)| only.is_none_or(|only| only.contains(*town)))
+        .map(|(town, ledger)| (town.clone(), ledger.next))
+        .collect();
+    let readers: BTreeMap<TownId, Vec<Reader>> = {
         let store = hub.store();
         let directory = &store.book.directory;
-        let accounts: Vec<_> = directory
-            .accounts
-            .iter()
-            .map(|account| {
-                let usable = crate::ledger::for_reader::usable(directory, &account.name, None);
-                let digest = crate::ledger::for_reader::digest(&usable);
-                (account, usable, digest)
-            })
-            .collect();
-        let readers = towns
-            .keys()
-            .map(|town| {
-                let of = accounts
-                    .iter()
-                    .filter(|(account, ..)| {
-                        directory.authorize(&account.name, fastctx_net::authorization::Action::Project(town)).is_ok()
+        // The machines each reader may work on, once a look whatever it
+        // reads: only accounts that read one of these projects are asked.
+        let mut usable: BTreeMap<AccountName, (Arc<BTreeSet<MachineName>>, Vec<u8>)> = BTreeMap::new();
+        let mut readers = BTreeMap::new();
+        for town in towns.keys() {
+            let mut of = Vec::new();
+            for account in &directory.accounts {
+                if directory.authorize(&account.name, fastctx_net::authorization::Action::Project(town)).is_err() {
+                    continue;
+                }
+                let (machines, digest) = usable
+                    .entry(account.name.clone())
+                    .or_insert_with(|| {
+                        let machines = crate::ledger::for_reader::usable(directory, &account.name, None);
+                        let digest = crate::ledger::for_reader::digest(&machines);
+                        (Arc::new(machines), digest)
                     })
-                    .map(|(account, usable, digest)| Reader {
-                        account: account.name.clone(),
-                        opened: account.opened,
-                        usable: usable.clone(),
-                        digest: digest.clone(),
-                    })
-                    .collect();
-                (town.clone(), of)
-            })
-            .collect();
-        let present = directory
-            .accounts
-            .iter()
-            .map(|account| ((account.name.to_string(), account.opened.as_millisecond()), account.opened))
-            .collect();
-        (readers, present)
+                    .clone();
+                of.push(Reader { account: account.name.clone(), opened: account.opened, usable: machines, digest });
+            }
+            readers.insert(town.clone(), of);
+        }
+        readers
     };
     let mut kept = kept(assets)?;
+    let hub_id = hub.store().hub.id.clone();
+    let mut failed: Option<String> = None;
     for (town, next) in &towns {
         for reader in readers.get(town).into_iter().flatten() {
             let key = (reader.account.to_string(), reader.opened.as_millisecond(), town.to_string());
             let row = kept.remove(&key);
-            let from = match &row {
-                Some((machines, through)) if *machines == reader.digest => through + 1,
-                _ => 1,
-            };
-            if from >= *next && row.is_some() {
-                continue;
-            }
-            let Some((scope, library)) = told::scope_of(assets, &reader.account, reader.opened)? else { continue };
-            let usable = |machine: &fastctx_types::MachineName| reader.usable.contains(machine);
-            let history = |revision: &mut fastctx_types::history::HistoryRevision| {
-                crate::history_projection::revision(hub, &hub.store().book.directory, &reader.account, revision)
-            };
-            let hub_id = hub.store().hub.id.clone();
-            let mut records = Vec::new();
-            for seq in from..*next {
-                let path = hub.ledgers.lock().expect("never poisoned").entry_path(town, seq);
-                let signed = crate::ledger::read_entry(&path).map_err(|error| format!("entry {seq} of {town}: {error}"))?;
-                let entry = fastctx_net::ledger::open(&signed, &hub_id, town)?;
-                let projection = crate::ledger::for_reader::entry(seq, &entry, &usable, &history);
-                if let Some(record) = record(&scope, &library, town, &projection)? {
-                    records.push(record);
-                }
-                if records.len() == AT_ONCE {
-                    write(assets, &scope, &library, town, std::mem::take(&mut records))?;
-                }
-            }
-            write(assets, &scope, &library, town, records)?;
-            keep(assets, &key, &reader.digest, next.saturating_sub(1))?;
-        }
-    }
-    // What is kept and read no more: its reader no longer reads the
-    // project, or the project is gone; nothing of a reader gone with it.
-    for (key, (_, through)) in kept {
-        let (account, opened, town) = &key;
-        if let Some(opened) = accounts.get(&(account.clone(), *opened))
-            && let (Ok(name), Ok(town)) = (AccountName::try_from(account.as_str()), TownId::try_from(town.clone()))
-            && let Some((scope, library)) = told::scope_of(assets, &name, *opened)?
-        {
-            let gone: Vec<_> = (1..=through)
-                .filter_map(|seq| {
-                    let item = seq.to_be_bytes().to_vec();
-                    let held = library.item(&scope.descriptor.scope, &stream(&town), &item).ok().flatten();
-                    held.map(|_| KindRecord {
-                        kind: ProjectLedger::KIND,
-                        schema: ProjectLedger::SCHEMA,
-                        record: Item { item: item.clone(), order: item, state: State::Gone },
-                    })
-                })
-                .collect();
-            for part in gone.chunks(AT_ONCE) {
-                write(assets, &scope, &library, &town, part.to_vec())?;
+            if let Err(error) = project_for(hub, &hub_id, town, *next, reader, row, &key) {
+                failed.get_or_insert(format!("{} of {town}: {error}", reader.account));
             }
         }
-        forget(assets, &key)?;
     }
-    Ok(())
+    // What is kept and read no more: its reader no longer reads the project,
+    // or the project is gone. Its stream is held by none (`holds`); what is
+    // kept of it here goes.
+    for (key, _) in kept.into_iter().filter(|((_, _, town), _)| {
+        only.is_none_or(|only| TownId::try_from(town.clone()).is_ok_and(|town| only.contains(&town)))
+    }) {
+        if let Err(error) = forget(assets, &key) {
+            failed.get_or_insert(error);
+        }
+    }
+    match failed {
+        Some(error) => Err(error),
+        None => Ok(()),
+    }
+}
+
+/// Writes into `reader`'s stream of `town` the entries up to `next` it
+/// lacks.
+fn project_for(
+    hub: &crate::Hub,
+    hub_id: &fastctx_net::ids::HubId,
+    town: &TownId,
+    next: u64,
+    reader: &Reader,
+    row: Option<(Vec<u8>, u64)>,
+    key: &(String, i64, String),
+) -> Result<(), String> {
+    let assets = &hub.assets;
+    let from = match &row {
+        Some((machines, through)) if *machines == reader.digest => through + 1,
+        // Its machines changed: a stream of their own, from the first.
+        _ => 1,
+    };
+    if from >= next && row.is_some() {
+        return Ok(());
+    }
+    let Some((scope, library)) = told::scope_of(assets, &reader.account, reader.opened)? else { return Ok(()) };
+    let name = stream(town, &reader.digest);
+    let usable = |machine: &MachineName| reader.usable.contains(machine);
+    // A history revision's author as the first version tells it to one who
+    // may work only on those machines; the projection depends on them alone.
+    let history = |revision: &mut fastctx_types::history::HistoryRevision| revision.author.stamp.for_reader(&usable);
+    let mut records = Vec::new();
+    for seq in from..next {
+        let path = hub.ledgers.lock().expect("never poisoned").entry_path(town, seq);
+        let signed = crate::ledger::read_entry(&path).map_err(|error| format!("entry {seq}: {error}"))?;
+        let entry = fastctx_net::ledger::open(&signed, hub_id, town)?;
+        let projection = crate::ledger::for_reader::entry(seq, &entry, &usable, &history);
+        if let Some(record) = record(&scope, &library, &name, &projection)? {
+            records.push(record);
+        }
+        if records.len() == AT_ONCE {
+            write(assets, &scope, &library, &name, std::mem::take(&mut records))?;
+        }
+    }
+    write(assets, &scope, &library, &name, records)?;
+    keep(assets, key, &reader.digest, next.saturating_sub(1))
 }
 
 /// The record of `projection`, when the library does not hold it as it is.
 fn record(
     scope: &scopes::Scope,
     library: &fastctx_content::v2::Library,
-    town: &TownId,
+    stream: &str,
     projection: &fastctx_net::ledger::Projection,
 ) -> Result<Option<KindRecord>, String> {
     let bytes = serde_json::to_vec(projection).map_err(|error| error.to_string())?;
@@ -189,7 +241,7 @@ fn record(
         .map_err(|error| error.to_string())?;
     let item = projection.seq.to_be_bytes().to_vec();
     let error = |error: fastctx_content::Error| error.to_string();
-    if library.item(&scope.descriptor.scope, &stream(town), &item).map_err(error)?.is_some_and(|held| held.body == body) {
+    if library.item(&scope.descriptor.scope, stream, &item).map_err(error)?.is_some_and(|held| held.body == body) {
         return Ok(None);
     }
     let lease = library.put(&mut &bytes[..], "ledger", LEASE).map_err(error)?;
@@ -200,16 +252,16 @@ fn record(
     }))
 }
 
-/// Writes `records` into `town`'s stream of the reader's records.
+/// Writes `records` into `stream` of the reader's records.
 fn write(
     assets: &Assets,
     scope: &scopes::Scope,
     library: &fastctx_content::v2::Library,
-    town: &TownId,
+    stream: &str,
     records: Vec<KindRecord>,
 ) -> Result<(), String> {
     let _writing = super::mirror::writing(&scope.descriptor.scope);
-    super::mirror::apply(assets, scope, library, &stream(town), records)
+    super::mirror::apply(assets, scope, library, stream, records)
 }
 
 fn kept(assets: &Assets) -> Result<Kept, String> {

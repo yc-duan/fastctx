@@ -456,7 +456,7 @@ pub(crate) async fn write_as(
     hub.log.line(format_args!("{from} wrote entry {seq} of {town}"));
     // Into the asset library too, as each reader of the project may know it
     // (§29, 2.4).
-    crate::assets::ledger_views::look(hub);
+    crate::assets::ledger_views::look_at(hub, &town);
     for machine in tell {
         // A machine of a release before history reads only that the ledger
         // changed, and takes the history append as any entry.

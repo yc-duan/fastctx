@@ -177,7 +177,12 @@ impl Plan {
                 // The author's own signature while nothing in it is told
                 // otherwise; else the hub's, the entry named as the asking
                 // machine's, which a reader checks the same way.
-                let entry = if super::for_reader::filter(&mut opened.files, usable, &|_| {}) {
+                // Its envelope too: the machine that wrote it, and those it
+                // names, only where the reader may work.
+                let files_changed = super::for_reader::filter(&mut opened.files, usable, &|_| {});
+                let envelope_hides =
+                    !usable(&opened.author) || opened.machines.as_ref().is_some_and(|machines| machines.iter().any(|machine| !usable(machine)));
+                let entry = if files_changed || envelope_hides {
                     opened.author = asking.clone();
                     opened.machines = None;
                     sign(opened)

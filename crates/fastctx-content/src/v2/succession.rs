@@ -164,6 +164,25 @@ fn gap_ending(db: &Connection, stream: i64, end: u64) -> fastctx_storage::Result
     Ok(None)
 }
 
+/// Where `at` (a sequence and the chain value there) stands past each gap
+/// fact that starts there with that value and begins below `below`; no
+/// cursor moves. What is taken below a window goes by it (§29 3.3).
+pub(super) fn gaps_past(db: &Connection, stream: i64, mut at: (u64, [u8; 32]), below: u64) -> fastctx_storage::Result<(u64, [u8; 32])> {
+    while at.0 < below {
+        let gap: Option<Vec<u8>> = db
+            .prepare_cached("SELECT fact FROM known_gaps WHERE stream = ?1 AND from_sequence = ?2")?
+            .query_row(params![stream, at.0 as i64], |row| row.get(0))
+            .optional()?;
+        let Some(gap) = gap else { return Ok(at) };
+        let gap = GapFact::decode(&gap).map_err(invalid)?;
+        if gap.start != at.1 {
+            return Ok(at);
+        }
+        at = (gap.to + 1, gap.follows);
+    }
+    Ok(at)
+}
+
 /// Moves the cursor at `next` with chain value `head` past each gap fact
 /// that starts there with that value; where it stands then.
 pub(super) fn skip_gaps(

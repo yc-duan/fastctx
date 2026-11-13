@@ -125,23 +125,59 @@ struct Shared<'a> {
     owner: Option<&'a AccountName>,
 }
 
+/// One look, or one mark, at a time: a look keeps the standing it read, so
+/// a mark made meanwhile would be written over.
+static LOOKING: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 /// One look at what was done here for the accounts of `hub`.
 fn look(node: &Arc<Node>, hub: &HubId, home: Option<&AccountName>, waits: bool, owner: Option<&AccountName>) -> Result<(), String> {
     let Some(assets) = node.assets.as_ref() else { return Ok(()) };
+    let _looking = LOOKING.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let machine: String = assets.device()[..8].iter().map(|byte| format!("{byte:02x}")).collect();
     let shared = Shared { body: crate::timeline::born_shared::shared_body(node, hub), owner };
+    came_into_force(node, hub, shared.body.as_deref())?;
     deeds(node, hub, home, waits, &shared, &format!("{}/{machine}", AccountActivity::STREAM))?;
     usage(node, hub, home, waits, &shared, &format!("{}/{machine}", AccountUsage::STREAM))
 }
 
+/// Where this machine is first seen shared whole as `body` on `hub`, all
+/// done here up to now is marked its accounts' own (§29, 2.5): what was
+/// written after it cleared and before its share came into force too. One
+/// written after the share and before this look is taken as its accounts'
+/// as well, the safe way.
+fn came_into_force(node: &Node, hub: &HubId, body: Option<&str>) -> Result<(), String> {
+    let Some(assets) = node.assets.as_ref() else { return Ok(()) };
+    let library = &assets.library;
+    let name = format!("activity/{hub}");
+    let seen = standing(library, &name)?["shared_as"].as_str().map(str::to_string);
+    if seen.as_deref() == body {
+        return Ok(());
+    }
+    if body.is_some() {
+        mark(node, hub)?;
+    }
+    let mut at = standing(library, &name)?;
+    at["shared_as"] = body.map_or(serde_json::Value::Null, |body| serde_json::json!(body));
+    library.keep_checkpoint(&name, serde_json::to_vec(&at).map_err(|error| error.to_string())?).map_err(|error| error.to_string())
+}
+
 /// Marks where the book and each usage file stand for `hub` now, as this
 /// machine clears for a share: nothing up to here goes to a body (§29, 2.5).
-/// A mark only moves on. Call on a thread that may block.
+/// A mark only moves on; where anything could not be looked at, none is
+/// made and the machine does not clear. Call on a thread that may block.
 pub(crate) fn mark_private(node: &Node, hub: &HubId) -> Result<(), String> {
+    let _looking = LOOKING.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    mark(node, hub)
+}
+
+fn mark(node: &Node, hub: &HubId) -> Result<(), String> {
     let Some(assets) = node.assets.as_ref() else { return Ok(()) };
     let library = &assets.library;
     let error = |error: fastctx_content::Error| error.to_string();
-    if node.book_database.fault().is_none() {
+    if let Some(fault) = node.book_database.fault() {
+        return Err(format!("what this machine did cannot be read to mark it its accounts' own: {fault}"));
+    }
+    {
         let last: Option<(i64, String)> = node
             .book_database
             .read_now(|db| {
@@ -166,7 +202,8 @@ pub(crate) fn mark_private(node: &Node, hub: &HubId) -> Result<(), String> {
     let mut at = standing(library, &name)?;
     let mut moved = false;
     for (file, path) in usage_files(node)? {
-        let Ok(metadata) = fastctx_platform::disk::metadata(&path) else { continue };
+        let metadata =
+            fastctx_platform::disk::metadata(&path).map_err(|error| format!("looking at {}: {error}", path.display()))?;
         if at["private"][&file].as_u64().is_none_or(|was| was < metadata.len()) {
             at["private"][&file] = serde_json::json!(metadata.len());
             moved = true;
@@ -186,11 +223,15 @@ fn usage_files(node: &Node) -> Result<Vec<(String, std::path::PathBuf)>, String>
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(error) => return Err(format!("looking at {}: {error}", root.display())),
     };
+    // Every one, or an error: a file passed by would be marked nobody's.
     let mut files = Vec::new();
-    for ledger in ledgers.flatten() {
+    for ledger in ledgers {
+        let ledger = ledger.map_err(|error| format!("looking at {}: {error}", root.display()))?;
         let Some(dir) = ledger.file_name().to_str().map(str::to_string) else { continue };
-        let Ok(days) = fastctx_platform::disk::read_dir(ledger.path()) else { continue };
-        for day in days.flatten() {
+        let days = fastctx_platform::disk::read_dir(ledger.path())
+            .map_err(|error| format!("looking at {}: {error}", ledger.path().display()))?;
+        for day in days {
+            let day = day.map_err(|error| format!("looking at {}: {error}", ledger.path().display()))?;
             let Some(date) = day.file_name().to_str().and_then(|name| name.strip_suffix(".jsonl")).map(str::to_string) else {
                 continue;
             };
@@ -468,7 +509,18 @@ fn usage(node: &Arc<Node>, hub: &HubId, home: Option<&AccountName>, waits: bool,
                 break 'files;
             }
             let item = format!("{file}/{offset:016x}").into_bytes();
-            if library.item(&scope, stream, &item).map_err(error)?.is_none() {
+            let written = library.item(&scope, stream, &item).map_err(error)?;
+            // Written before a stop that kept no standing: it ends where it
+            // ended then, the rest a piece of its own (M15).
+            if let Some(source) = written
+                .as_ref()
+                .and_then(|entry| serde_json::from_slice::<serde_json::Value>(&entry.body).ok())
+                .and_then(|body| body.get("source").and_then(serde_json::Value::as_u64))
+                .filter(|source| *source > 0 && (*source as usize) < bytes.len())
+            {
+                bytes = &bytes[..source as usize];
+            }
+            if written.is_none() {
                 let lease = library.put(&mut &bytes[..], "usage", LEASE).map_err(error)?;
                 let body = serde_json::to_vec(
                     &serde_json::json!({ "file": file, "offset": offset, "length": bytes.len(), "source": bytes.len() }),

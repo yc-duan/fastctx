@@ -7,7 +7,10 @@
 //! they reach where the window began, the chain is to be the window's head,
 //! which the hub's word stood behind. Only then does the stream hold its
 //! history whole (`retention` from naught). History shows below the window
-//! as it comes; the tail goes on meanwhile.
+//! as it comes; the tail goes on meanwhile. The frames are kept as an
+//! imported frame is, so a kind known later is taken from them and a stream
+//! rebuilt from its frames keeps its history; the cursor the tail goes by
+//! is never moved here.
 
 use super::Library;
 use super::exchange::RawFrame;
@@ -32,6 +35,9 @@ pub enum Backfilled {
     Already,
     /// Frames before it are wanted first, from `from`.
     Gap { from: u64 },
+    /// The frames taken do not chain to the window's head: taken again from
+    /// the first.
+    Restarted,
 }
 
 /// Where a backfill of a stream stands: the frame it takes next and the
@@ -139,7 +145,7 @@ impl Library {
                 return Err(invalid("no backfill of that stream in this holding period"));
             };
             let at_head: [u8; 32] = at_head.try_into().map_err(|_| invalid("a malformed backfill"))?;
-            let (at, previous) = super::succession::skip_gaps(db, stream, holding, (at as u64, at_head))?;
+            let (at, previous) = super::succession::gaps_past(db, stream, (at as u64, at_head), through as u64)?;
             if header.first < at {
                 return Ok(Backfilled::Already);
             }
@@ -168,6 +174,33 @@ impl Library {
                 }
             }
             let chain = header.chain();
+            // Kept as an imported frame is (`exchange.rs`), beside those of
+            // the tail.
+            db.prepare_cached(
+                "INSERT OR IGNORE INTO frames (stream, epoch, first, holding, count, head, header, signature, body, change)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, NULL)",
+            )?
+            .execute(params![
+                stream,
+                header.epoch as i64,
+                header.first as i64,
+                holding,
+                header.count,
+                &chain[..],
+                frame.header,
+                frame.signature,
+                frame.body
+            ])?;
+            for record in &records {
+                if let State::Is { objects, .. } = &record.record.state {
+                    for object in objects {
+                        db.prepare_cached(
+                            "INSERT OR IGNORE INTO frame_objects (stream, epoch, first, holding, hash) VALUES (?1, ?2, ?3, ?4, ?5)",
+                        )?
+                        .execute(params![stream, header.epoch as i64, header.first as i64, holding, &object.hash[..]])?;
+                    }
+                }
+            }
             let applying = Applying { scope: scope_id, stream, holding };
             for (offset, record) in records.iter().enumerate() {
                 if knows(record.kind, record.schema) {
@@ -176,7 +209,8 @@ impl Library {
                     super::pending::keep(db, stream, record.kind, record.schema, header.epoch, header.first, &chain)?;
                 }
             }
-            let (end, chain) = super::succession::skip_gaps(db, stream, holding, (header.first + u64::from(header.count), chain))?;
+            let (end, chain) =
+                super::succession::gaps_past(db, stream, (header.first + u64::from(header.count), chain), through as u64)?;
             if end < through as u64 {
                 db.prepare_cached("UPDATE backfills SET at = ?2, at_head = ?3 WHERE stream = ?1")?
                     .execute(params![stream, end as i64, &chain[..]])?;
@@ -184,10 +218,10 @@ impl Library {
             }
             if end != through as u64 || chain[..] != head[..] {
                 // Not the history the window stood on: taken again from the
-                // first.
+                // first, as written now.
                 db.prepare_cached("UPDATE backfills SET at = 0, at_head = ?2 WHERE stream = ?1")?
                     .execute(params![stream, &[0u8; 32][..]])?;
-                return Err(invalid("the frames below the window do not chain to its head"));
+                return Ok(Backfilled::Restarted);
             }
             db.prepare_cached("UPDATE retention SET floor = 0 WHERE stream = ?1")?.execute([stream])?;
             db.prepare_cached("DELETE FROM backfills WHERE stream = ?1")?.execute([stream])?;
@@ -210,7 +244,7 @@ impl Library {
             .execute(params![stream, holding, remade, next])?;
             Ok(Backfilled::Whole)
         })?;
-        if !matches!(taken, Backfilled::Already | Backfilled::Gap { .. }) {
+        if !matches!(taken, Backfilled::Already | Backfilled::Gap { .. } | Backfilled::Restarted) {
             self.wrote();
         }
         Ok(taken)

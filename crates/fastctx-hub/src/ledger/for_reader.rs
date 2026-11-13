@@ -91,7 +91,8 @@ pub(crate) fn filter(
                     attributed.push((revision.path("md"), revision.author.clone()));
                 }
             }),
-            ["memory", _, "evidence", name] if name.ends_with(".json") => rewrite(bytes, |evidence: &mut Evidence| {
+            // Evidence may be named under folders of its own: every depth.
+            ["memory", _, "evidence", .., name] if name.ends_with(".json") => rewrite(bytes, |evidence: &mut Evidence| {
                 evidence.author.for_reader(usable);
                 if evidence.location.as_ref().is_some_and(|location| !usable(&location.machine)) {
                     evidence.location = None;

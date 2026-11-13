@@ -318,6 +318,14 @@ pub(crate) fn holds(directory: &Indexed<'_>, machine: &MachineName, scope: &Scop
     if !sharers_read(directory, machine, scope) || !keeps_ledger(directory, machine, scope) {
         return false;
     }
+    // A project's ledger in an account's records: of a project it reads
+    // now, under the machines it may work on now (§29, 2.4).
+    if let Readers::Account { account } = &descriptor.readers
+        && let Some(name) = stream.strip_prefix("ledger/")
+        && !super::ledger_views::holds(directory.all, account, name)
+    {
+        return false;
+    }
     match class.holders {
         Holders::Readers => readable(directory, machine, scope),
         Holders::Logged if own_log(directory, machine, scope) => true,
@@ -557,10 +565,13 @@ pub(crate) fn describe(
         })
         .map_err(|error| error.to_string())?
         .ok_or("the library the scope belongs in is being deleted; describe it again later")?;
-    assets.witness.advanced(seq, &head).map_err(|error| error.to_string())?;
+    // Kept in memory as it is in the database, whether or not the witness
+    // takes the head now: described again, the kept scope is answered with
+    // nothing written (§29, 2.6).
     if let Some((body, opener, opened, resident)) = &into_body {
         assets.bodies.kept_conversation(body, opener, *opened, resident);
     }
+    assets.witness.advanced(seq, &head).map_err(|error| error.to_string())?;
     // Signed now, bound to the head the descriptor went into: a device that
     // saw it carries a head a hub put back to before it does not hold.
     let word = assets.signer().sign(&bytes);

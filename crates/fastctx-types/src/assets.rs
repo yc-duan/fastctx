@@ -767,7 +767,16 @@ pub enum Reply {
     },
     /// Items below a key as they stood when asked, with the sequence the
     /// stream's next frame took then, and whether more are below.
-    Older { through: u64, entries: Vec<Entry>, more: bool },
+    Older {
+        through: u64,
+        entries: Vec<Entry>,
+        more: bool,
+        /// How many times the stream was indexed again as the hub answered
+        /// (§29 3.3): a page of another making than the device's window is
+        /// asked for again.
+        #[serde(default, skip_serializing_if = "is_zero")]
+        remade: u64,
+    },
     /// The report was kept.
     Reported,
     /// How the account's machines stand.
