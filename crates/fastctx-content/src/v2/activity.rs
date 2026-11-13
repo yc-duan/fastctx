@@ -94,7 +94,7 @@ impl Kind for AccountUsage {
             return Err("an account's usage is not let go".into());
         };
         if let Some(before) = before {
-            return if before.body == *body && before.objects == *objects {
+            return if before.body == *body && before.objects == *objects && before.order == after.record.order {
                 Ok(())
             } else {
                 Err("a piece of usage, once written, stays as it is".into())

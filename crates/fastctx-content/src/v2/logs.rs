@@ -29,7 +29,7 @@ fn piece(before: Option<&Entry>, after: &KindRecord) -> Result<(), String> {
         return Err("a piece of a log is not let go: a device lets the oldest frames go".into());
     };
     if let Some(before) = before {
-        return if before.body == *body && before.objects == *objects {
+        return if before.body == *body && before.objects == *objects && before.order == after.record.order {
             Ok(())
         } else {
             Err("a piece of a log, once written, stays as it is".into())

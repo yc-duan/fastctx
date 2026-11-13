@@ -29,11 +29,25 @@ fn object(body: &[u8]) -> Result<Vec<u8>, String> {
     }
 }
 
+/// Whether a body says the record itself is its one object: a record
+/// larger than a body holds (AR03).
+fn in_object(body: &[u8]) -> bool {
+    serde_json::from_slice::<serde_json::Value>(body)
+        .ok()
+        .and_then(|value| value.get("in_object").and_then(serde_json::Value::as_bool))
+        .unwrap_or(false)
+}
+
 fn judged(after: &KindRecord, check: fn(&[u8]) -> Result<Vec<u8>, String>) -> Result<(), String> {
     match &after.record.state {
         State::Gone => Ok(()),
-        State::Is { body, objects } if objects.is_empty() => check(body).map(|_| ()),
-        State::Is { .. } => Err("a record of the hub's refers to no object".into()),
+        State::Is { body, objects } => {
+            check(body)?;
+            match (objects.len(), in_object(body)) {
+                (0, false) | (1, true) => Ok(()),
+                _ => Err("a record of the hub's is its body, or the one object its body says it is in".into()),
+            }
+        }
     }
 }
 
@@ -53,7 +67,8 @@ macro_rules! hub_record {
             const SCHEMA: u16 = 1;
             const STREAM: &'static str = $stream;
             const HOLDING: Holding = Holding::Readers;
-            const ROLES: &'static [&'static str] = &[];
+            /// A record larger than a body holds is its one object (AR03).
+            const ROLES: &'static [&'static str] = &["record"];
             const RETENTION: Option<u64> = None;
             const DELETION: Deletion = Deletion::Tombstone;
             /// Taken up from where the hub keeps them.

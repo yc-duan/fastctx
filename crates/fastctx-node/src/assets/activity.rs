@@ -67,7 +67,13 @@ fn routed(account: &str, hub: &HubId, home: Option<&AccountName>) -> Option<Acco
 /// The records' scope of `account` and its holding, when this machine
 /// writes `stream` there now; proposed while it is not held.
 fn writable(node: &Node, library: &Library, hub: &HubId, account: &AccountName, stream: &str) -> Result<Option<(String, i64)>, String> {
-    let Some(scope) = proposed(node, hub, Readers::Account { account: account.clone() }, "records", Holders::Readers)? else {
+    let Some(opened) = node.link_of(hub).and_then(|link| link.view().directory.account(account).map(|found| found.opened))
+    else {
+        return Ok(None);
+    };
+    let name = fastctx_types::assets::records_key("", account, opened.as_millisecond());
+    let name = name.rsplit('/').next().unwrap_or_default().to_string();
+    let Some(scope) = proposed(node, hub, Readers::Account { account: account.clone() }, &name, Holders::Readers)? else {
         return Ok(None);
     };
     let error = |error: fastctx_content::Error| error.to_string();

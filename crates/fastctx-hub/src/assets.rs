@@ -1280,6 +1280,15 @@ pub(crate) async fn checkpoints(hub: Weak<crate::Hub>) {
     }
     // And its own log, as it grows (design §14).
     fastctx_platform::task::spawn(hub_log::follow(hub.clone()));
+    // What failed to be written is tried again every minute (AR15).
+    let again = hub.clone();
+    fastctx_platform::task::spawn(async move {
+        loop {
+            tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+            let Some(running) = again.upgrade() else { return };
+            mirror::again(running).await;
+        }
+    });
     loop {
         tokio::time::sleep(CHECKPOINT_EVERY).await;
         rounds = rounds.wrapping_add(1);

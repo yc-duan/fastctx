@@ -914,9 +914,12 @@ async fn describe(
     // once, described as any scope begun here is.
     let logins: Vec<fastctx_types::AccountName> = link.view().me().map(|me| me.logins.iter().cloned().collect()).unwrap_or_default();
     for account in logins {
+        // By when it was opened: one made again under the name has its own
+        // (AR04, NN05).
+        let Some(opened) = link.view().directory.account(&account).map(|found| found.opened) else { continue };
+        let scope = wire::records_key(hub.as_str(), &account, opened.as_millisecond());
         let readers = Readers::Account { account };
-        let scope = format!("{}records", readers.key_prefix(hub.as_str()));
-        let proposal = Proposal { hub: hub.to_string(), readers, classes: vec![StreamClass { prefix: String::new(), holders: wire::Holders::Readers }] };
+        let proposal = Proposal { hub: hub.to_string(), readers, classes: wire::records_classes() };
         let (network, proposal) = (network.clone(), serde_json::to_vec(&proposal).map_err(|error| error.to_string())?);
         blocking(library, move |library| {
             if library.holding(&scope)?.is_none() {
@@ -1524,8 +1527,11 @@ async fn discard_unaccepted(
         }
         let checkpoint = crate::timeline::checkpoint_of(scope.rsplit('/').next().unwrap_or(scope));
         let (scope_text, stream_text) = (scope.to_string(), stream.clone());
-        discarded |=
-            blocking(library, move |library| library.discard_unaccepted(&scope_text, &stream_text, &device, Some(&checkpoint))).await?;
+        let signed = fastctx_content::v2::Signed { fact: first.fact.0.clone(), signature: first.word.0.clone() };
+        discarded |= blocking(library, move |library| {
+            library.discard_unaccepted(&scope_text, &stream_text, &device, Some(&checkpoint), Some(signed))
+        })
+        .await?;
     }
     Ok(discarded)
 }

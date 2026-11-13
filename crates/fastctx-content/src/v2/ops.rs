@@ -187,6 +187,16 @@ impl Library {
         })?)
     }
 
+    /// The digest of the request `op` was kept for here, if it was.
+    pub fn op_digest(&self, op: &str) -> Result<Option<[u8; 32]>> {
+        let op = op.to_string();
+        Ok(self.database().read_now(move |db| {
+            let digest: Option<Vec<u8>> =
+                db.prepare_cached("SELECT digest FROM ops WHERE op = ?1")?.query_row([&op], |row| row.get(0)).optional()?;
+            Ok(digest.and_then(|digest| <[u8; 32]>::try_from(digest.as_slice()).ok()))
+        })?)
+    }
+
     /// Where the words of `op` stand, if it carried words.
     pub fn delivery(&self, op: &str) -> Result<Option<Delivery>> {
         let op = op.to_string();

@@ -269,12 +269,18 @@ async fn receive_here_locked(
     // The user's words are kept in the asset library first, with their
     // operation (design §28.14); the inbox delivers them.
     let words = crate::timeline::words::is_words(&pending.delivery);
-    if words
-        && let crate::timeline::words::Said::Crossed = crate::timeline::words::said(node, to, &pending.delivery).await?
-    {
-        // Crossed into the host already — here, or where the conversation
-        // lived before — the same words said again go in no more (MM01).
-        return Ok(Landed::Waiting { why: None, answered: answered(node, to, &about) });
+    if words {
+        match crate::timeline::words::said(node, to, &pending.delivery).await? {
+            crate::timeline::words::Said::Go => {}
+            // Crossed into the host already — here, or where the
+            // conversation lived before — the same words said again go in
+            // no more (MM01).
+            crate::timeline::words::Said::Crossed => {
+                return Ok(Landed::Waiting { why: None, answered: answered(node, to, &about) });
+            }
+            // Not known to have reached it: said so, as it is (NN01, NN04).
+            crate::timeline::words::Said::Uncertain(why) => return Ok(Landed::Uncertain { why }),
+        }
     }
     let kept = {
         let (directory, pending) = (directory.clone(), pending.clone());

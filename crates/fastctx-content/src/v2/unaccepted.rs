@@ -64,14 +64,28 @@ impl Library {
     /// the hub never took, with where its producer `checkpoint` stood, in one
     /// transaction: the stream empty here, its frames and index rows gone,
     /// read anew. Whether it did: written to meanwhile so the hub took some,
-    /// it is not.
+    /// it is not. `first`, the hub's first epoch of the stream — another
+    /// device's, its signature checked by the caller — is known here in the
+    /// same transaction, so no producer writes the stream again in between
+    /// (NN13).
     pub fn discard_unaccepted(
         &self,
         scope: &str,
         stream: &str,
         device: &[u8; 32],
         checkpoint: Option<&str>,
+        first: Option<super::Signed>,
     ) -> Result<bool> {
+        let first = match first {
+            Some(signed) => {
+                let fact = super::facts::EpochFact::decode(&signed.fact).map_err(crate::error::Error::Invalid)?;
+                if fact.scope != scope || fact.stream != stream {
+                    return Err(crate::error::Error::Invalid("the epoch is of another stream".into()));
+                }
+                Some((fact, signed))
+            }
+            None => None,
+        };
         if !REMADE.contains(&stream) {
             return Ok(false);
         }
@@ -96,6 +110,18 @@ impl Library {
             db.prepare_cached("DELETE FROM outbox WHERE stream = ?1")?.execute([stream_id])?;
             if let Some(name) = &checkpoint {
                 db.prepare_cached("DELETE FROM checkpoints WHERE name = ?1")?.execute([name])?;
+            }
+            if let Some((fact, signed)) = &first {
+                db.prepare_cached(
+                    "INSERT OR IGNORE INTO known_epochs (stream, epoch, predecessor, fact, signature) VALUES (?1, ?2, ?3, ?4, ?5)",
+                )?
+                .execute(params![
+                    stream_id,
+                    fact.epoch as i64,
+                    fact.predecessor.map(|epoch| epoch as i64),
+                    signed.fact,
+                    signed.signature
+                ])?;
             }
             Ok(true)
         })?;

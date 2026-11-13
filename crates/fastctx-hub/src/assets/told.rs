@@ -1,19 +1,24 @@
 //! What the hub tells an account, written into its records' scope (design
 //! §14, §28.20): the machine changes it reads (`machine.audit`, stream
-//! `audit`), each record as the machine log keeps it, by its number; and the
+//! `audit`), each record as the machine log keeps it, by its number; the
 //! troubles it hears of (`account.notice`, stream `notices`), as raised and
 //! as resolved; and the account's own settings the directory keeps — its
 //! layer of configuration (`account.profile`, stream `profile`) and how its
 //! models work together (`account.collaboration`, stream `collaboration`) —
-//! each as it stands. The machine log is followed forward by number as it grows,
-//! each account from the newest record its scope holds; a scope described
-//! later is caught up the same way. The hub keeps the machine log for good
-//! and its troubles a week, for views; an account's scope keeps both until
-//! the account is deleted. Only the account opened when a record was made
-//! reads it: a later one of the same name owns another scope.
+//! each as it stands. The machine log is followed forward by number as it
+//! grows, each account from the newest record its scope holds, and the last
+//! few it holds looked at again against the log, which a write whose end
+//! was not known may have replaced (AR11); a scope described later is caught
+//! up the same way. Only the records the account itself reads go in: what a
+//! super administrator reads of the whole network stays with the log's own
+//! reading, which judges who is one now (AR09, L13). The hub keeps the
+//! machine log for good and its troubles a week, for views; an account's
+//! scope keeps both until the account is deleted. Only the account opened
+//! when a record was made reads it: a later one of the same name owns
+//! another scope.
 
 use super::Assets;
-use super::mirror::{account_scope, apply, writing};
+use super::mirror::{account_scope, apply, fitted, writing};
 use super::owners::Owner;
 use super::scopes;
 use fastctx_content::v2::{AccountCollaboration, AccountNotice, AccountProfile, Kind as _, KindRecord, MachineAudit};
@@ -22,9 +27,16 @@ use fastctx_types::AccountName;
 use fastctx_types::trouble::{Trouble, TroubleKind};
 use jiff::Timestamp;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
-/// The most records written in one go.
+/// The most records written in one go, the scope held for that long only.
 const A_BATCH: usize = 256;
+/// How many of the newest records a scope holds are looked at again.
+const LOOKED_AGAIN: u32 = 32;
+
+/// Whether a write of what the hub tells failed since the last look: then
+/// the next minute's look writes it all again (AR15).
+static FAILED: AtomicBool = AtomicBool::new(false);
 
 /// The scope of `account`'s records, held here, when the account opened at
 /// `opened` owns it.
@@ -33,7 +45,7 @@ fn scope_of(
     account: &AccountName,
     opened: Timestamp,
 ) -> Result<Option<(scopes::Scope, fastctx_content::v2::Library)>, String> {
-    let Some(scope) = scopes::scope(assets, &account_scope(assets, account))? else { return Ok(None) };
+    let Some(scope) = scopes::scope(assets, &account_scope(assets, account, opened))? else { return Ok(None) };
     if !matches!(&scope.owner, Owner::Account(name, at) if name == account.as_str() && *at == opened.as_millisecond())
     {
         return Ok(None);
@@ -47,44 +59,87 @@ fn audit_item(id: u64) -> Vec<u8> {
     format!("{id:016x}").into_bytes()
 }
 
+fn audit_id(item: &[u8]) -> Option<u64> {
+    std::str::from_utf8(item).ok().and_then(|hex| u64::from_str_radix(hex, 16).ok())
+}
+
+/// The record `id`, its body as `body`, as it goes in.
+fn audit_record(
+    library: &fastctx_content::v2::Library,
+    id: u64,
+    body: Option<Vec<u8>>,
+) -> Result<(KindRecord, Option<fastctx_content::v2::Lease>), String> {
+    let (state, lease) = match body {
+        Some(body) => {
+            let (body, objects, lease) = fitted(library, body)?;
+            (State::Is { body, objects }, lease)
+        }
+        None => (State::Gone, None),
+    };
+    let record = Item { item: audit_item(id), order: audit_item(id), state };
+    Ok((KindRecord { kind: MachineAudit::KIND, schema: 1, record }, lease))
+}
+
+/// Whether `entry` holds `body` as it is, or as its one object.
+fn holds(entry: &fastctx_content::v2::Entry, body: &[u8]) -> bool {
+    match entry.objects.first() {
+        None => entry.body == body,
+        Some(object) => {
+            use sha2::Digest as _;
+            object.size == body.len() as u64 && object.hash == <[u8; 32]>::from(sha2::Sha256::digest(body))
+        }
+    }
+}
+
 /// Writes the machine changes `account`, opened at `opened`, reads that its
-/// scope lacks, oldest first; `whole` for a super administrator, who reads
-/// every record but those of conversations and projects. Call on a thread
-/// that may block.
+/// scope lacks, oldest first, and puts right the newest it holds where the
+/// log has them otherwise now. Call on a thread that may block.
 pub(crate) fn audit(
     assets: &Assets,
     database: &fastctx_storage::Database,
     account: &AccountName,
     opened: Timestamp,
-    whole: bool,
 ) -> Result<(), String> {
     let Some((scope, library)) = scope_of(assets, account, opened)? else { return Ok(()) };
     let key = scope.descriptor.scope.clone();
     let error = |error: fastctx_content::Error| error.to_string();
-    let mut readers = vec![crate::store::log_store::account(account, opened)];
-    if whole {
-        readers.push("whole".into());
+    let readers = vec![crate::store::log_store::account(account, opened)];
+    // The newest it holds, as the log has them now (AR11).
+    {
+        let _writing = writing(&key);
+        let newest =
+            library.view_page(&key, MachineAudit::STREAM, &Anchor::Latest, LOOKED_AGAIN, u32::MAX).map_err(error)?;
+        let ids: Vec<u64> = newest.entries.iter().filter_map(|entry| audit_id(&entry.item)).collect();
+        let now = crate::store::log_store::readable_of(database, &readers, &ids).map_err(|error| error.to_string())?;
+        let (mut records, mut _leases) = (Vec::new(), Vec::new());
+        for entry in &newest.entries {
+            let Some(id) = audit_id(&entry.item) else { continue };
+            let body = now.get(&id).cloned();
+            if body.as_deref().is_some_and(|body| holds(entry, body)) {
+                continue;
+            }
+            let (record, lease) = audit_record(&library, id, body)?;
+            records.push(record);
+            _leases.extend(lease);
+        }
+        apply(assets, &scope, &library, MachineAudit::STREAM, records)?;
     }
-    let _writing = writing();
-    let newest = library.view_page(&key, MachineAudit::STREAM, &Anchor::Latest, 1, u32::MAX).map_err(error)?;
-    let mut after = newest
-        .entries
-        .last()
-        .and_then(|entry| std::str::from_utf8(&entry.item).ok().and_then(|hex| u64::from_str_radix(hex, 16).ok()));
     loop {
+        let _writing = writing(&key);
+        let newest = library.view_page(&key, MachineAudit::STREAM, &Anchor::Latest, 1, u32::MAX).map_err(error)?;
+        let after = newest.entries.last().and_then(|entry| audit_id(&entry.item));
         let rows = crate::store::log_store::readable_after(database, &readers, after, A_BATCH)
             .map_err(|error| error.to_string())?;
-        let Some(&(last, _)) = rows.last() else { return Ok(()) };
-        let records = rows
-            .into_iter()
-            .map(|(id, body)| KindRecord {
-                kind: MachineAudit::KIND,
-                schema: 1,
-                record: Item { item: audit_item(id), order: audit_item(id), state: State::Is { body, objects: Vec::new() } },
-            })
-            .collect();
+        if rows.is_empty() {
+            return Ok(());
+        }
+        let (mut records, mut _leases) = (Vec::new(), Vec::new());
+        for (id, body) in rows {
+            let (record, lease) = audit_record(&library, id, Some(body))?;
+            records.push(record);
+            _leases.extend(lease);
+        }
         apply(assets, &scope, &library, MachineAudit::STREAM, records)?;
-        after = Some(last);
     }
 }
 
@@ -92,6 +147,14 @@ pub(crate) fn audit(
 /// hub that kept none of its troubles counts them from one again.
 fn notice_item(trouble: &Trouble) -> Vec<u8> {
     format!("{:016x}{:016x}", trouble.at.as_millisecond().max(0), trouble.id).into_bytes()
+}
+
+/// Whether a notice kept says its trouble was resolved: once resolved it
+/// stays so, whatever late word of its raising comes after (AR12, L15).
+fn resolved(body: &[u8]) -> bool {
+    serde_json::from_slice::<serde_json::Value>(body)
+        .ok()
+        .is_some_and(|value| value.get("resolved").is_some_and(|resolved| !resolved.is_null()))
 }
 
 /// Writes `troubles`, which the account opened at `opened` hears of, into
@@ -106,13 +169,15 @@ pub(crate) fn notices(
     let Some((scope, library)) = scope_of(assets, account, opened)? else { return Ok(()) };
     let key = scope.descriptor.scope.clone();
     let error = |error: fastctx_content::Error| error.to_string();
-    let _writing = writing();
     for batch in troubles.chunks(A_BATCH) {
+        let _writing = writing(&key);
         let mut records = Vec::new();
         for trouble in batch.iter().filter(|trouble| trouble.kind != TroubleKind::Violations) {
             let item = notice_item(trouble);
             let body = serde_json::to_vec(trouble).map_err(|error| error.to_string())?;
-            if library.item(&key, AccountNotice::STREAM, &item).map_err(error)?.is_some_and(|entry| entry.body == body) {
+            if let Some(entry) = library.item(&key, AccountNotice::STREAM, &item).map_err(error)?
+                && (entry.body == body || (resolved(&entry.body) && trouble.resolved.is_none()))
+            {
                 continue;
             }
             records.push(KindRecord {
@@ -145,18 +210,21 @@ pub(crate) fn settings(assets: &Assets, account: &AccountName, opened: Timestamp
     let Some((scope, library)) = scope_of(assets, account, opened)? else { return Ok(()) };
     let key = scope.descriptor.scope.clone();
     let error = |error: fastctx_content::Error| error.to_string();
-    let _writing = writing();
+    let _writing = writing(&key);
     for (stream, kind, body) in [
         (AccountProfile::STREAM, AccountProfile::KIND, &kept.0),
         (AccountCollaboration::STREAM, AccountCollaboration::KIND, &kept.1),
     ] {
         let item = stream.as_bytes().to_vec();
         let now = library.item(&key, stream, &item).map_err(error)?;
-        let state = match (body, now) {
-            (Some(body), Some(entry)) if entry.body == *body => continue,
+        let (state, _lease) = match (body, now) {
+            (Some(body), Some(entry)) if holds(&entry, body) => continue,
             (None, None) => continue,
-            (Some(body), _) => State::Is { body: body.clone(), objects: Vec::new() },
-            (None, Some(_)) => State::Gone,
+            (Some(body), _) => {
+                let (body, objects, lease) = fitted(&library, body.clone())?;
+                (State::Is { body, objects }, lease)
+            }
+            (None, Some(_)) => (State::Gone, None),
         };
         let record = KindRecord { kind, schema: 1, record: Item { item: item.clone(), order: item, state } };
         apply(assets, &scope, &library, stream, vec![record])?;
@@ -172,6 +240,7 @@ pub(crate) fn told(hub: &crate::Hub, trouble: Trouble, to: Vec<(AccountName, Tim
         for (account, opened) in to {
             if let Err(error) = notices(&assets, &account, opened, std::slice::from_ref(&trouble)) {
                 log.line(format_args!("writing trouble {} for {account} into the asset library: {error}", trouble.id));
+                FAILED.store(true, Ordering::SeqCst);
             }
         }
     });
@@ -180,81 +249,81 @@ pub(crate) fn told(hub: &crate::Hub, trouble: Trouble, to: Vec<(AccountName, Tim
 /// Writes what the hub tells `account`, opened at `opened`, that its scope
 /// lacks: as the scope is described.
 pub(crate) async fn caught_up(hub: &Arc<crate::Hub>, account: &AccountName, opened: Timestamp) {
-    let (whole, database, kept) = {
+    let (database, kept) = {
         let store = hub.store();
         let directory = &store.book.directory;
         let kept = directory.account(account).filter(|found| found.opened == opened).map(kept_of);
-        (directory.is_super(account), store.shelf.0.clone(), kept)
+        (store.shelf.0.clone(), kept)
     };
-    let troubles = hub.troubles.told_to(account, opened);
-    let (assets, log, account) = (hub.assets.clone(), hub.log.clone(), account.clone());
+    let accounts = vec![(account.clone(), opened, kept.unwrap_or_default())];
+    let troubles = vec![hub.troubles.told_to(account, opened)];
+    pass(hub, database, accounts, Some(troubles)).await;
+}
+
+/// One look at every account's scope: its settings and audit, and, when
+/// given, its troubles.
+async fn pass(
+    hub: &Arc<crate::Hub>,
+    database: fastctx_storage::Database,
+    accounts: Vec<(AccountName, Timestamp, Kept)>,
+    troubles: Option<Vec<Vec<Trouble>>>,
+) {
+    let (assets, log) = (hub.assets.clone(), hub.log.clone());
     let _ = fastctx_platform::task::spawn_blocking(move || {
-        if let Err(error) = audit(&assets, &database, &account, opened, whole) {
-            log.line(format_args!("writing the machine log of {account} into the asset library: {error}"));
-        }
-        if let Err(error) = notices(&assets, &account, opened, &troubles) {
-            log.line(format_args!("writing the troubles of {account} into the asset library: {error}"));
-        }
-        if let Some(kept) = kept
-            && let Err(error) = settings(&assets, &account, opened, &kept)
-        {
-            log.line(format_args!("writing the settings of {account} into the asset library: {error}"));
+        for (at, (account, opened, kept)) in accounts.iter().enumerate() {
+            let mut failed = Vec::new();
+            if let Err(error) = settings(&assets, account, *opened, kept) {
+                failed.push(format!("settings: {error}"));
+            }
+            if let Err(error) = audit(&assets, &database, account, *opened) {
+                failed.push(format!("machine log: {error}"));
+            }
+            if let Some(troubles) = troubles.as_ref().and_then(|troubles| troubles.get(at))
+                && let Err(error) = notices(&assets, account, *opened, troubles)
+            {
+                failed.push(format!("troubles: {error}"));
+            }
+            if !failed.is_empty() {
+                log.line(format_args!("writing what the hub tells {account} into the asset library: {}", failed.join("; ")));
+                FAILED.store(true, Ordering::SeqCst);
+            }
         }
     })
     .await;
 }
 
-/// Follows the machine log for as long as the hub runs: each time it grows,
-/// each account's scope is written on from what it holds, and its settings
-/// as they stand — every change of them is logged. Once at the start, every
-/// account's troubles too.
+/// The accounts as the directory has them now, with what it keeps of each.
+type Accounts = Vec<(AccountName, Timestamp, Kept)>;
+
+fn accounts_now(hub: &crate::Hub) -> (fastctx_storage::Database, Accounts) {
+    let store = hub.store();
+    let accounts =
+        store.book.directory.accounts.iter().map(|account| (account.name.clone(), account.opened, kept_of(account))).collect();
+    (store.shelf.0.clone(), accounts)
+}
+
+/// Writes again what failed to be written since the last minute (AR15).
+pub(crate) async fn again(hub: &Arc<crate::Hub>) {
+    if !FAILED.swap(false, Ordering::SeqCst) {
+        return;
+    }
+    let (database, accounts) = accounts_now(hub);
+    let troubles = accounts.iter().map(|(account, opened, _)| hub.troubles.told_to(account, *opened)).collect();
+    pass(hub, database, accounts, Some(troubles)).await;
+}
+
+/// Follows the machine log for as long as the hub runs: each time it
+/// changes, each account's scope is written on from what it holds, and its
+/// settings as they stand — every change of them is logged. Once at the
+/// start, every account's troubles too.
 pub(crate) async fn follow(hub: &Arc<crate::Hub>) -> std::io::Result<()> {
-    let mut seen = None;
     let mut first = true;
     loop {
         let notified = hub.machine_log_changed.notified();
-        let (accounts, database) = {
-            let store = hub.store();
-            let directory = &store.book.directory;
-            let accounts: Vec<(AccountName, Timestamp, bool, Kept)> = directory
-                .accounts
-                .iter()
-                .map(|account| (account.name.clone(), account.opened, directory.is_super(&account.name), kept_of(account)))
-                .collect();
-            (accounts, store.shelf.0.clone())
-        };
-        let troubles: Vec<Vec<Trouble>> = if first {
-            accounts.iter().map(|(account, opened, _, _)| hub.troubles.told_to(account, *opened)).collect()
-        } else {
-            Vec::new()
-        };
-        let (assets, log) = (hub.assets.clone(), hub.log.clone());
-        let newest = fastctx_platform::task::spawn_blocking(move || {
-            let mut newest = crate::store::log_store::newest(&database).ok().flatten();
-            for (account, opened, _, kept) in &accounts {
-                if let Err(error) = settings(&assets, account, *opened, kept) {
-                    log.line(format_args!("writing the settings of {account} into the asset library: {error}"));
-                }
-            }
-            if newest.is_some() && newest != seen {
-                for (account, opened, whole, _) in &accounts {
-                    if let Err(error) = audit(&assets, &database, account, *opened, *whole) {
-                        log.line(format_args!("writing the machine log of {account} into the asset library: {error}"));
-                        // Looked at again as the log next grows.
-                        newest = seen;
-                    }
-                }
-            }
-            for ((account, opened, _, _), troubles) in accounts.iter().zip(&troubles) {
-                if let Err(error) = notices(&assets, account, *opened, troubles) {
-                    log.line(format_args!("writing the troubles of {account} into the asset library: {error}"));
-                }
-            }
-            newest
-        })
-        .await
-        .unwrap_or(seen);
-        seen = newest;
+        let (database, accounts) = accounts_now(hub);
+        let troubles = first
+            .then(|| accounts.iter().map(|(account, opened, _)| hub.troubles.told_to(account, *opened)).collect());
+        pass(hub, database, accounts, troubles).await;
         first = false;
         notified.await;
     }

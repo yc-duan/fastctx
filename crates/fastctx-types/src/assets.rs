@@ -191,6 +191,38 @@ impl Readers {
     }
 }
 
+/// The classes of a conversation's scope (§2.3): a host assisting one of
+/// its readers holds what it works with, not the plan, notes, goals and
+/// sentinels the hub keeps of it (L12).
+pub fn conversation_classes() -> Vec<StreamClass> {
+    let mut classes = vec![StreamClass { prefix: String::new(), holders: Holders::Readers }];
+    classes.extend(
+        ["plan", "history", "goals", "sentinels"]
+            .into_iter()
+            .map(|prefix| StreamClass { prefix: prefix.to_string(), holders: Holders::Logged }),
+    );
+    classes
+}
+
+/// The classes of an account's records' scope: held where the account is
+/// logged in, but what a machine did and spent for it, which a machine
+/// working for it writes, held there too (L12).
+pub fn records_classes() -> Vec<StreamClass> {
+    let mut classes = vec![StreamClass { prefix: String::new(), holders: Holders::Logged }];
+    classes.extend(
+        ["activity", "usage"]
+            .into_iter()
+            .map(|prefix| StreamClass { prefix: prefix.to_string(), holders: Holders::Readers }),
+    );
+    classes
+}
+
+/// The key of the scope an account's records are kept in on `hub`: by when
+/// it was opened too, so one made again under the same name has its own.
+pub fn records_key(hub: &str, account: &AccountName, opened_ms: i64) -> String {
+    format!("{}records-{opened_ms}", Readers::Account { account: account.clone() }.key_prefix(hub))
+}
+
 impl Descriptor {
     /// The class `stream` falls in: the longest prefix that names it.
     pub fn class(&self, stream: &str) -> Option<&StreamClass> {

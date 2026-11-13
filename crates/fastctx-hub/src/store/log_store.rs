@@ -116,17 +116,6 @@ pub(crate) fn put(c: &Connection, row: &Row) -> fastctx_storage::Result<()> {
     Ok(())
 }
 
-/// The number of the newest record kept, if any.
-pub(crate) fn newest(database: &Database) -> std::io::Result<Option<u64>> {
-    database
-        .read_now(|c| {
-            let id: Option<i64> =
-                c.prepare_cached("SELECT id FROM machine_log ORDER BY id DESC LIMIT 1")?.query_row([], |r| r.get(0)).optional()?;
-            Ok(id.map(|id| (id as u64) ^ (1_u64 << 63)))
-        })
-        .map_err(shelf::other)
-}
-
 /// The records any of `readers` reads numbered after `after`, oldest first,
 /// at most `limit`: each by its number, as its JSON.
 pub(crate) fn readable_after(
@@ -156,6 +145,37 @@ pub(crate) fn readable_after(
                 rows.push(((id as u64) ^ (1_u64 << 63), body));
             }
             Ok(rows)
+        })
+        .map_err(shelf::other)
+}
+
+/// The records numbered `ids` that any of `readers` reads, each by its
+/// number, as its JSON; a number none of them reads, or no record has now,
+/// is not among them.
+pub(crate) fn readable_of(
+    database: &Database,
+    readers: &[String],
+    ids: &[u64],
+) -> std::io::Result<std::collections::HashMap<u64, Vec<u8>>> {
+    let (readers, ids) = (readers.to_vec(), ids.to_vec());
+    database
+        .read_now(move |c| {
+            let mut found = std::collections::HashMap::new();
+            let mut stmt = c.prepare_cached(
+                "SELECT l.record FROM machine_log_readers r JOIN machine_log l ON l.id=r.id WHERE r.reader=?1 AND r.id=?2",
+            )?;
+            for id in ids {
+                for reader in &readers {
+                    let record: Option<Vec<u8>> =
+                        stmt.query_row(params![reader, sql_id(id)], |r| r.get(0)).optional()?;
+                    if let Some(record) = record {
+                        let record = shelf::decode::<VisibleRecord>(&record)?.record;
+                        found.insert(id, serde_json::to_vec(&record).map_err(|e| Error::new(e.to_string()))?);
+                        break;
+                    }
+                }
+            }
+            Ok(found)
         })
         .map_err(shelf::other)
 }

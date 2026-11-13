@@ -533,8 +533,11 @@ pub(crate) fn tell(hub: &Hub, account: &AccountName, opened: Timestamp, metadata
     // goes there too (design §28.17).
     if crate::assets::mirror::mirrored(&metadata.kind) {
         let path = hub.account_records.account(account, opened).path(&metadata.kind, &metadata.key);
-        if let Err(error) = storage::read(&path).and_then(|record| crate::assets::mirror::document(&hub.assets, account, &record)) {
+        if let Err(error) =
+            storage::read(&path).and_then(|record| crate::assets::mirror::document(&hub.assets, account, opened, &record))
+        {
             hub.log.line(format_args!("writing {} {} into the asset library: {error}", metadata.kind, metadata.key));
+            crate::assets::mirror::failed(account, opened, path);
         }
     }
     let store = hub.store();

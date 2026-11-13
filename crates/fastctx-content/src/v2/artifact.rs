@@ -40,7 +40,9 @@ impl Kind for ConversationArtifact {
     const SCHEMA: u16 = 1;
     const STREAM: &'static str = "artifacts";
     const HOLDING: Holding = Holding::Readers;
-    const ROLES: &'static [&'static str] = &["file"];
+    /// Each object is one of the folder's files, as many as a record
+    /// refers to.
+    const ROLES: &'static [&'static str] = &["file"; crate::record::RECORD_OBJECTS];
     const RETENTION: Option<u64> = None;
     const DELETION: Deletion = Deletion::Tombstone;
     /// Taken up from the conversation's `artifacts/`.
@@ -61,7 +63,7 @@ impl Kind for ConversationArtifact {
     fn authorize(_actor: &Actor<'_>, before: Option<&Entry>, after: &KindRecord) -> Result<(), String> {
         let State::Is { body, objects } = &after.record.state else { return Ok(()) };
         if let Some(before) = before {
-            return if before.body == *body && before.objects == *objects {
+            return if before.body == *body && before.objects == *objects && before.order == after.record.order {
                 Ok(())
             } else {
                 Err("an evidence folder, once placed, stays as it is".into())

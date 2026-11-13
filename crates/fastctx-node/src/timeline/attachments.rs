@@ -43,25 +43,44 @@ pub(crate) fn placed_here(node: &Node, resident: &ResidentId) {
 /// reference of one kept elsewhere (MM17) — and its original when kept
 /// here: the node keeps it as `content.<ext>`, or where its receipt says,
 /// never whatever else lies beside it (MM18).
-fn kept(directory: &Path) -> std::io::Result<Vec<(String, Attachment, Option<PathBuf>)>> {
+/// The attachments kept of `room`, and whether any could not be read now:
+/// then they are looked at again (L07). Those its index holds — referred
+/// to, or inherited from the conversation it was forked from — come in
+/// too, described, with their original where it lies here (NN10, L06).
+/// An attachment kept: its slot, its receipt and its original when here.
+type Found = (String, Attachment, Option<PathBuf>);
+
+fn kept(room: &fastctx_types::layout::ConversationDir) -> std::io::Result<(Vec<Found>, bool)> {
+    let directory = room.attachments();
     let mut found = Vec::new();
-    let entries = match fastctx_platform::disk::read_dir(directory) {
-        Ok(entries) => entries,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(found),
+    let mut unread = false;
+    let entries = match fastctx_platform::disk::read_dir(&directory) {
+        Ok(entries) => Some(entries),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
         Err(error) => return Err(error),
     };
-    for entry in entries {
+    for entry in entries.into_iter().flatten() {
         let entry = entry?;
         let folder = entry.path();
         let Some(slot) = folder.file_name().and_then(|name| name.to_str()).map(str::to_string) else { continue };
         let (bytes, referenced) = match fastctx_platform::disk::read(folder.join("receipt.json")) {
             Ok(bytes) => (bytes, false),
+            Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
+                unread = true;
+                continue;
+            }
             Err(_) => match fastctx_platform::disk::read(folder.join("reference.json")) {
                 Ok(bytes) => (bytes, true),
-                Err(_) => continue,
+                Err(error) => {
+                    unread |= error.kind() != std::io::ErrorKind::NotFound;
+                    continue;
+                }
             },
         };
-        let Ok(attachment) = serde_json::from_slice::<Attachment>(&bytes) else { continue };
+        let Ok(attachment) = serde_json::from_slice::<Attachment>(&bytes) else {
+            unread = true;
+            continue;
+        };
         let named = Path::new(&attachment.path).file_name().map(|name| folder.join(name));
         let original = if referenced {
             None
@@ -77,8 +96,19 @@ fn kept(directory: &Path) -> std::io::Result<Vec<(String, Attachment, Option<Pat
         };
         found.push((slot, attachment, original));
     }
+    // What the index holds that no folder here keeps: by its id, the
+    // original where its receipt says it lies, if that is here.
+    let known: std::collections::HashSet<String> = found.iter().map(|(slot, _, _)| slot.clone()).collect();
+    for attachment in crate::attachments::index::listed(room)? {
+        let slot = attachment.id.to_string();
+        if known.contains(&slot) || found.iter().any(|(id, _, _)| *id == slot) {
+            continue;
+        }
+        let original = Some(PathBuf::from(&attachment.path)).filter(|path| fastctx_platform::disk::is_file(path));
+        found.push((slot, attachment, original));
+    }
     found.sort_by(|a, b| a.0.cmp(&b.0));
-    Ok(found)
+    Ok((found, unread))
 }
 
 /// Brings `resident`'s attachments into the asset library: those it lacks,
@@ -127,14 +157,15 @@ pub(super) async fn produce(
     // A machine assisting another account keeps no original but pictures:
     // the others are described alone here (`world-network.md`).
     let pictures_only = crate::assists::assisting(node, &about.acting);
-    let (signer, directory) = (assets.signer(), room.attachments());
+    let signer = assets.signer();
     let written = fastctx_platform::task::blocking(move || {
         let _held = held;
         let writer = Writer::<ConversationAttachment>::new(&library, &scope, ConversationAttachment::STREAM)
             .map_err(failure)?
             .in_holding(holding);
         let (mut writes, mut leases, mut written) = (Vec::new(), Vec::new(), 0);
-        for (slot, attachment, original) in kept(&directory).map_err(failure)? {
+        let (found, unread) = kept(&room).map_err(failure)?;
+        for (slot, attachment, original) in found {
             let item = slot.into_bytes();
             if library.item(&scope, ConversationAttachment::STREAM, &item).map_err(failure)?.is_some() {
                 continue;
@@ -173,9 +204,13 @@ pub(super) async fn produce(
             written += writes.len();
             writer.write_all(writes, leases, false, signer).map_err(failure)?;
         }
-        Ok::<_, Failure>(written)
+        Ok::<_, Failure>((written, unread))
     })
     .await?;
-    LOOKED.lock().expect("looked attachments").insert(resident.clone(), (placed_count, holding));
+    let (written, unread) = written;
+    // Looked at whole only when everything could be read (L07).
+    if !unread {
+        LOOKED.lock().expect("looked attachments").insert(resident.clone(), (placed_count, holding));
+    }
     Ok(written)
 }

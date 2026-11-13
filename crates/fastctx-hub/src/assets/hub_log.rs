@@ -50,7 +50,7 @@ fn look(assets: &Assets, path: &Path) -> Result<(), String> {
     let Some(scope) = scopes::scope(assets, &key)? else { return Ok(()) };
     let library = scopes::library(assets, &scope)?;
     let error = |error: fastctx_content::Error| error.to_string();
-    let _writing = writing();
+    let _writing = writing(&key);
     let mut at: Tail = library
         .checkpoint(STANDING)
         .map_err(error)?
@@ -60,7 +60,8 @@ fn look(assets: &Assets, path: &Path) -> Result<(), String> {
             offset: value["offset"].as_u64().unwrap_or(0),
         })
         .unwrap_or_default();
-    let (mut records, mut leases, mut written) = (Vec::new(), Vec::new(), 0);
+    // The leases keep the new objects until their records are taken.
+    let (mut records, mut _leases, mut written) = (Vec::new(), Vec::new(), 0);
     while written < A_LOOK {
         let Some(piece) = log_tail::next(path, &at, PIECE).map_err(|error| error.to_string())? else { break };
         let item = format!("{}/{:016x}", piece.file, piece.offset).into_bytes();
@@ -82,7 +83,7 @@ fn look(assets: &Assets, path: &Path) -> Result<(), String> {
                 schema: 1,
                 record: Item { item, order, state: State::Is { body, objects: vec![lease.object] } },
             });
-            leases.push(lease);
+            _leases.push(lease);
         }
         written += piece.bytes.len();
         at = Tail { offset: piece.offset + piece.bytes.len() as u64, file: piece.file };
@@ -91,7 +92,6 @@ fn look(assets: &Assets, path: &Path) -> Result<(), String> {
         return Ok(());
     }
     apply(assets, &scope, &library, HubLog::STREAM, records)?;
-    drop(leases);
     let standing = serde_json::to_vec(&serde_json::json!({ "file": at.file, "offset": at.offset }))
         .map_err(|error| error.to_string())?;
     library.keep_checkpoint(STANDING, standing).map_err(error)

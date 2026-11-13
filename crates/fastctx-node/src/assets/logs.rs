@@ -74,7 +74,12 @@ pub(super) fn proposed(node: &Node, hub: &HubId, readers: Readers, name: &str, h
         return Ok(Some(key));
     }
     let Some(network) = crate::assets::membership::network(node, hub) else { return Ok(None) };
-    let proposal = Proposal { hub: hub.to_string(), readers, classes: vec![StreamClass { prefix: String::new(), holders }] };
+    // An account's records' scope is proposed alike wherever it is.
+    let classes = match &readers {
+        Readers::Account { .. } => fastctx_types::assets::records_classes(),
+        _ => vec![StreamClass { prefix: String::new(), holders }],
+    };
+    let proposal = Proposal { hub: hub.to_string(), readers, classes };
     let proposal = serde_json::to_vec(&proposal).map_err(|error| error.to_string())?;
     library.propose_on(&network, &key, proposal).map_err(error)?;
     Ok(None)

@@ -71,6 +71,9 @@ pub(super) async fn produce(
                 }
             }
             names.sort();
+            // As many files as a record refers to; the rest said so.
+            let omitted = names.len().saturating_sub(fastctx_content::RECORD_OBJECTS);
+            names.truncate(fastctx_content::RECORD_OBJECTS);
             let (mut files, mut objects) = (Vec::new(), Vec::new());
             for (name, file_path) in names {
                 let mut file = fastctx_platform::disk::open(&file_path).map_err(failure)?;
@@ -81,7 +84,8 @@ pub(super) async fn produce(
                 objects.push(lease.object);
                 leases.push(lease);
             }
-            let body = serde_json::to_vec(&serde_json::json!({ "key": key, "files": files })).map_err(failure)?;
+            let body = serde_json::to_vec(&serde_json::json!({ "key": key, "files": files, "omitted": omitted }))
+                .map_err(failure)?;
             writes.push(Write::<ConversationArtifact> { order: item.clone(), item, value: Some(body), objects });
         }
         if writes.is_empty() {

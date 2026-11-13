@@ -19,10 +19,69 @@ use fastctx_types::AccountName;
 use fastctx_types::access::TownId;
 use fastctx_types::account_records::Record;
 use fastctx_types::assets::Readers;
-use std::sync::{Mutex, PoisonError};
+use std::collections::BTreeSet;
+use std::sync::{Condvar, LazyLock, Mutex, PoisonError};
 
-/// The hub's writes into the streams it orders, one at a time.
-static WRITING: Mutex<()> = Mutex::new(());
+/// The scopes the hub is writing into now: its writes into one scope are
+/// made one at a time, those into others meanwhile (AR13).
+static WRITING: LazyLock<(Mutex<BTreeSet<String>>, Condvar)> = LazyLock::new(Default::default);
+
+/// The hub writing into one scope: let go as it is dropped.
+pub(super) struct Writing(String);
+
+impl Drop for Writing {
+    fn drop(&mut self) {
+        let (held, freed) = &*WRITING;
+        held.lock().unwrap_or_else(PoisonError::into_inner).remove(&self.0);
+        freed.notify_all();
+    }
+}
+
+/// Waits until no other write into `scope` is being made, and holds it.
+pub(super) fn writing(scope: &str) -> Writing {
+    let (held, freed) = &*WRITING;
+    let mut writing = held.lock().unwrap_or_else(PoisonError::into_inner);
+    while writing.contains(scope) {
+        writing = freed.wait(writing).unwrap_or_else(PoisonError::into_inner);
+    }
+    writing.insert(scope.to_string());
+    Writing(scope.to_string())
+}
+
+/// The longest body written as it is; a record larger is its own object,
+/// its body saying so (AR03).
+const BODY_MOST: usize = fastctx_content::RECORD_BYTES - 4096;
+
+/// An item's identity for `name`: as it is when it fits, otherwise a digest
+/// of it, the whole name staying in the body (AR03).
+pub(super) fn item_of(name: &str) -> Vec<u8> {
+    if name.len() <= fastctx_content::KEY_BYTES {
+        return name.as_bytes().to_vec();
+    }
+    use sha2::Digest as _;
+    let digest: String = sha2::Sha256::digest(name.as_bytes()).iter().map(|byte| format!("{byte:02x}")).collect();
+    format!("#{}", &digest[..fastctx_content::KEY_BYTES - 1]).into_bytes()
+}
+
+/// A body as it goes in a record, the objects it refers to, and the lease
+/// that keeps a new one until the record is taken.
+pub(super) type Fitted = (Vec<u8>, Vec<ObjectRef>, Option<fastctx_content::v2::Lease>);
+
+/// `body` as it goes in a record: as it is, or, larger than a body holds,
+/// as its one object with what is said of it — its metadata — in the body.
+pub(super) fn fitted(library: &fastctx_content::v2::Library, body: Vec<u8>) -> Result<Fitted, String> {
+    if body.len() <= BODY_MOST {
+        return Ok((body, Vec::new(), None));
+    }
+    let metadata = serde_json::from_slice::<serde_json::Value>(&body).ok().and_then(|value| value.get("metadata").cloned());
+    let lease = library.put(&mut body.as_slice(), "mirror", LEASE).map_err(|error| error.to_string())?;
+    let mut said = serde_json::json!({ "in_object": true, "bytes": body.len() });
+    if let Some(metadata) = metadata {
+        said["metadata"] = metadata;
+    }
+    let said = serde_json::to_vec(&said).map_err(|error| error.to_string())?;
+    Ok((said, vec![lease.object], Some(lease)))
+}
 
 /// The hub's service key, signing frames as the stream's ordering device.
 struct Service<'a>(&'a super::keys::Keys);
@@ -53,20 +112,35 @@ impl Verifier for Keyed {
     }
 }
 
-/// The scope of the conversation `resident`, as the hub described it.
-fn conversation_scope(assets: &Assets, resident: &str) -> Result<Option<String>, String> {
+/// The scope of the conversation `resident` of `account` (opened at
+/// `opened`), as the hub described it: one that account opened and owns,
+/// never another's that ends the same (AR01).
+fn conversation_scope(
+    assets: &Assets,
+    account: &AccountName,
+    opened: jiff::Timestamp,
+    resident: &str,
+) -> Result<Option<String>, String> {
     let ending = format!("/{resident}");
-    assets
+    let keys: Vec<String> = assets
         .control
         .read_now(move |c| {
-            use fastctx_storage::rusqlite::OptionalExtension as _;
-            Ok(c.prepare_cached("SELECT key FROM asset_scopes WHERE substr(key, -?2) = ?1 ORDER BY key LIMIT 1")?
-                .query_row(fastctx_storage::rusqlite::params![ending, ending.len() as i64], |row| {
-                    row.get::<_, String>(0)
-                })
-                .optional()?)
+            let mut statement = c.prepare_cached("SELECT key FROM asset_scopes WHERE substr(key, -?2) = ?1 ORDER BY key LIMIT 64")?;
+            let rows = statement.query_map(fastctx_storage::rusqlite::params![ending, ending.len() as i64], |row| {
+                row.get::<_, String>(0)
+            })?;
+            Ok(rows.collect::<Result<Vec<_>, _>>()?)
         })
-        .map_err(|error| error.to_string())
+        .map_err(|error| error.to_string())?;
+    for key in keys {
+        let Some(scope) = scopes::scope(assets, &key)? else { continue };
+        let ours = matches!(&scope.owner, super::owners::Owner::Account(name, at) if name == account.as_str() && *at == opened.as_millisecond());
+        let opener = matches!(&scope.descriptor.readers, Readers::Conversation { openers, .. } if openers.contains(account));
+        if ours && opener {
+            return Ok(Some(key));
+        }
+    }
+    Ok(None)
 }
 
 /// The version of the account record a document's item holds.
@@ -74,9 +148,11 @@ fn version_of(body: &[u8]) -> Option<u64> {
     serde_json::from_slice::<serde_json::Value>(body).ok()?.get("metadata")?.get("version")?.as_u64()
 }
 
-/// The key of the scope an account's records are kept in on this hub.
-pub(crate) fn account_scope(assets: &Assets, account: &AccountName) -> String {
-    format!("{}records", Readers::Account { account: account.clone() }.key_prefix(assets.id.as_str()))
+/// The key of the scope an account's records are kept in on this hub: by
+/// when it was opened too, so one made again under the name has its own
+/// (AR04, NN05).
+pub(crate) fn account_scope(assets: &Assets, account: &AccountName, opened: jiff::Timestamp) -> String {
+    fastctx_types::assets::records_key(assets.id.as_str(), account, opened.as_millisecond())
 }
 
 /// Where a record goes: the conversation it is of, or none for the
@@ -126,42 +202,47 @@ pub(crate) fn mirrored(kind: &str) -> bool {
 /// Writes `record`, an account record of `account` the hub accepted, into
 /// the stream the hub orders in the scope it is of. Call on a thread that
 /// may block.
-pub(crate) fn document(assets: &Assets, account: &AccountName, record: &Record) -> Result<(), String> {
+pub(crate) fn document(
+    assets: &Assets,
+    account: &AccountName,
+    opened: jiff::Timestamp,
+    record: &Record,
+) -> Result<(), String> {
     let Some((resident, stream, item, number)) = placed(record) else { return Ok(()) };
-    let item = item.as_str();
+    let item = item_of(&item);
     let scope_key = match &resident {
-        Some(resident) => match conversation_scope(assets, resident)? {
+        Some(resident) => match conversation_scope(assets, account, opened, resident)? {
             Some(key) => key,
             None => return Ok(()),
         },
-        None => account_scope(assets, account),
+        None => account_scope(assets, account, opened),
     };
     let Some(scope) = scopes::scope(assets, &scope_key)? else { return Ok(()) };
     let library = scopes::library(assets, &scope)?;
     let error = |error: fastctx_content::Error| error.to_string();
-    let _writing = WRITING.lock().unwrap_or_else(PoisonError::into_inner);
-    // This version or a later one written already: nothing.
-    if let Some(entry) = library.item(&scope_key, stream, item.as_bytes()).map_err(error)?
+    let _writing = writing(&scope_key);
+    // This version or a later one written already: nothing. A deleted
+    // record stays an item with its version, so a late older write cannot
+    // bring it back (AR02).
+    if let Some(entry) = library.item(&scope_key, stream, &item).map_err(error)?
         && version_of(&entry.body).is_some_and(|version| version >= record.metadata.version)
     {
         return Ok(());
     }
-    let state = if record.metadata.deleted {
-        State::Gone
-    } else {
-        State::Is { body: serde_json::to_vec(record).map_err(|error| error.to_string())?, objects: Vec::new() }
-    };
+    // The lease keeps a new object until the record is taken, for as long
+    // as leases last.
+    let (body, objects, _lease) = fitted(&library, serde_json::to_vec(record).map_err(|error| error.to_string())?)?;
     let records = vec![KindRecord {
         kind: number,
         schema: 1,
-        record: Item { item: item.as_bytes().to_vec(), order: item.as_bytes().to_vec(), state },
+        record: Item { item: item.clone(), order: item, state: State::Is { body, objects } },
     }];
     apply(assets, &scope, &library, stream, records)
 }
 
 /// Takes `records`, which the hub writes into `stream` of `scope`, into the
 /// scope's library as frames the hub orders, and tells the devices holding
-/// it. Called with `WRITING` held.
+/// it. Called with the scope's writing held (`writing`).
 pub(super) fn apply(
     assets: &Assets,
     scope: &scopes::Scope,
@@ -171,6 +252,11 @@ pub(super) fn apply(
 ) -> Result<(), String> {
     if records.is_empty() {
         return Ok(());
+    }
+    // A sealed hub writes nothing new until it is opened again (AR08);
+    // what is left is written then.
+    if let Some(why) = assets.sealed() {
+        return Err(format!("the hub is sealed: {why}"));
     }
     let scope_key = scope.descriptor.scope.as_str();
     let error = |error: fastctx_content::Error| error.to_string();
@@ -196,10 +282,6 @@ pub(super) fn apply(
     Ok(())
 }
 
-/// The hub's writes into the streams it orders, one at a time.
-pub(super) fn writing() -> std::sync::MutexGuard<'static, ()> {
-    WRITING.lock().unwrap_or_else(PoisonError::into_inner)
-}
 
 /// The records of `account` (opened at `opened`) that `wanted` picks, read
 /// from where the hub keeps them.
@@ -219,18 +301,52 @@ async fn records_of(
         .collect()
 }
 
+/// The records whose writing into the asset library failed — a full disk,
+/// a sealed hub — tried again every minute while the hub runs (AR15); after
+/// it starts, everything is looked at anyway.
+type Failed = BTreeSet<(String, i64, std::path::PathBuf)>;
+static FAILED: LazyLock<Mutex<Failed>> = LazyLock::new(Mutex::default);
+
+/// Writing the record at `path` of `account` failed: tried again.
+pub(crate) fn failed(account: &AccountName, opened: jiff::Timestamp, path: std::path::PathBuf) {
+    FAILED.lock().unwrap_or_else(PoisonError::into_inner).insert((account.to_string(), opened.as_millisecond(), path));
+}
+
+/// Tries again what failed to be written, and what the hub tells accounts
+/// that failed (`told`).
+pub(crate) async fn again(hub: std::sync::Arc<crate::Hub>) {
+    let failed = std::mem::take(&mut *FAILED.lock().unwrap_or_else(PoisonError::into_inner));
+    let mut by_account: std::collections::BTreeMap<(String, i64), Vec<std::path::PathBuf>> = Default::default();
+    for (account, opened, path) in failed {
+        by_account.entry((account, opened)).or_default().push(path);
+    }
+    for ((account, opened), paths) in by_account {
+        let (Ok(account), Ok(opened)) = (AccountName::try_from(account), jiff::Timestamp::from_millisecond(opened)) else {
+            continue;
+        };
+        write_all(&hub, account, opened, paths).await;
+    }
+    super::told::again(&hub).await;
+}
+
 /// Writes each record at `paths`, of `account`, into the asset library.
-async fn write_all(hub: &std::sync::Arc<crate::Hub>, account: AccountName, paths: Vec<std::path::PathBuf>) {
+async fn write_all(
+    hub: &std::sync::Arc<crate::Hub>,
+    account: AccountName,
+    opened: jiff::Timestamp,
+    paths: Vec<std::path::PathBuf>,
+) {
     if paths.is_empty() {
         return;
     }
     let (assets, log) = (hub.assets.clone(), hub.log.clone());
     let _ = fastctx_platform::task::spawn_blocking(move || {
         for path in paths {
-            let written =
-                crate::account_records::storage::read(&path).and_then(|record| document(&assets, &account, &record));
+            let written = crate::account_records::storage::read(&path)
+                .and_then(|record| document(&assets, &account, opened, &record));
             if let Err(error) = written {
                 log.line(format_args!("writing an account record of {account} into the asset library: {error}"));
+                failed(&account, opened, path);
             }
         }
     })
@@ -257,14 +373,14 @@ pub(crate) async fn described(hub: std::sync::Arc<crate::Hub>, keys: Vec<String>
         else {
             continue;
         };
-        let paths = if key == account_scope(&hub.assets, &account) {
+        let paths = if key == account_scope(&hub.assets, &account, opened) {
             super::told::caught_up(&hub, &account, opened).await;
             records_of(&hub, &account, opened, placed_account).await
         } else {
             let resident = key.rsplit('/').next().unwrap_or_default().to_string();
             records_of(&hub, &account, opened, |entry| of_conversation(entry, &resident)).await
         };
-        write_all(&hub, account, paths).await;
+        write_all(&hub, account, opened, paths).await;
     }
 }
 
@@ -275,7 +391,7 @@ pub(crate) async fn everything(hub: std::sync::Arc<crate::Hub>) {
         hub.store().book.directory.accounts.iter().map(|owner| (owner.name.clone(), owner.opened)).collect();
     for (account, opened) in accounts {
         let paths = records_of(&hub, &account, opened, |_| true).await;
-        write_all(&hub, account, paths).await;
+        write_all(&hub, account, opened, paths).await;
     }
     let towns: Vec<TownId> = hub.ledgers.lock().expect("never poisoned").towns.keys().cloned().collect();
     for town in towns {
@@ -319,7 +435,7 @@ pub(crate) fn ledger_entry(assets: &Assets, town: &TownId, seq: u64, bytes: &[u8
     let Some(scope) = scopes::scope(assets, &scope_key)? else { return Ok(()) };
     let library = scopes::library(assets, &scope)?;
     let error = |error: fastctx_content::Error| error.to_string();
-    let _writing = WRITING.lock().unwrap_or_else(PoisonError::into_inner);
+    let _writing = writing(&scope_key);
     let item = seq.to_be_bytes().to_vec();
     if library.item(&scope_key, ProjectLedger::STREAM, &item).map_err(error)?.is_some() {
         return Ok(());

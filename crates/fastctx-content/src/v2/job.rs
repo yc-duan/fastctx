@@ -97,7 +97,7 @@ impl Kind for JobOutput {
             return Err("a job's output is not let go".into());
         };
         if let Some(before) = before {
-            return if before.body == *body && before.objects == *objects {
+            return if before.body == *body && before.objects == *objects && before.order == after.record.order {
                 Ok(())
             } else {
                 Err("a piece of output, once written, stays as it is".into())

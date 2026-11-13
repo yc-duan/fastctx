@@ -57,11 +57,19 @@ pub(crate) struct Released {
 /// Takes away what an earlier export left beside the conversation: its
 /// package, and an adopting not done, which was this machine's (AQ02).
 pub(crate) fn clear(directory: &Path) -> io::Result<()> {
-    for file in [FILE, ADOPTED] {
-        match fastctx_platform::disk::remove_file(directory.join(file)) {
-            Err(error) if error.kind() != io::ErrorKind::NotFound => return Err(error),
-            _ => {}
-        }
+    clear_package(directory)?;
+    match fastctx_platform::disk::remove_file(directory.join(ADOPTED)) {
+        Err(error) if error.kind() != io::ErrorKind::NotFound => Err(error),
+        _ => Ok(()),
+    }
+}
+
+/// Takes away a package used up here, and its objects; an adopting not done
+/// stays (NN12).
+pub(crate) fn clear_package(directory: &Path) -> io::Result<()> {
+    match fastctx_platform::disk::remove_file(directory.join(FILE)) {
+        Err(error) if error.kind() != io::ErrorKind::NotFound => return Err(error),
+        _ => {}
     }
     match fastctx_platform::disk::remove_dir_all(directory.join(OBJECTS)) {
         Err(error) if error.kind() != io::ErrorKind::NotFound => Err(error),
@@ -79,21 +87,36 @@ pub(crate) fn export(world: &WorldDir, directory: &Path, conversation: &str, to:
         clear(directory)?;
         return Ok(None);
     };
-    // Made whole before what an earlier export left goes: one that fails
-    // leaves that one as it was (K06).
+    // Made whole beside it before what an earlier export left goes: one
+    // that fails at any step leaves that one as it was (K06, NN15, L03).
     let to_key = member_key(world, &hub, to)?;
     let package = package(&library, &key, &hub, &scope, to, to_key)?;
-    clear(directory)?;
     if package.streams.is_empty() {
+        clear(directory)?;
         return Ok(None);
     }
-    let folder = directory.join(OBJECTS);
-    for object in package.streams.iter().flat_map(|released| &released.objects) {
-        copy_out(&library, &object.0, &folder)?;
+    let (folder, path) = (directory.join(OBJECTS), directory.join(FILE));
+    let (new_folder, new_path) = (directory.join(format!("{OBJECTS}.new")), directory.join(format!("{FILE}.new")));
+    let made = (|| -> io::Result<()> {
+        match fastctx_platform::disk::remove_dir_all(&new_folder) {
+            Err(error) if error.kind() != io::ErrorKind::NotFound => return Err(error),
+            _ => {}
+        }
+        fastctx_platform::disk::create_dir_all(&new_folder)?;
+        for object in package.streams.iter().flat_map(|released| &released.objects) {
+            copy_out(&library, &object.0, &new_folder)?;
+        }
+        let bytes = serde_json::to_vec_pretty(&package).map_err(io::Error::other)?;
+        fastctx_platform::publish(&new_path, &bytes, fastctx_platform::Permissions::Private)
+    })();
+    if let Err(error) = made {
+        let _ = fastctx_platform::disk::remove_dir_all(&new_folder);
+        let _ = fastctx_platform::disk::remove_file(&new_path);
+        return Err(error);
     }
-    let bytes = serde_json::to_vec_pretty(&package).map_err(io::Error::other)?;
-    let path = directory.join(FILE);
-    fastctx_platform::publish(&path, &bytes, fastctx_platform::Permissions::Private)?;
+    clear(directory)?;
+    fastctx_platform::disk::rename(&new_folder, &folder)?;
+    fastctx_platform::disk::rename(&new_path, &path)?;
     Ok(Some(path))
 }
 

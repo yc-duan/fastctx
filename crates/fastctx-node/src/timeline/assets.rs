@@ -18,7 +18,7 @@ use crate::assets::Proposal;
 use fastctx_content::v2::{EVENT, Entry, Kind as _, LEASE, Library, Network, OVERSIZED, PAGE, Timeline, Write, Writer};
 use fastctx_content::RECORD_BYTES;
 use fastctx_types::access::HubId;
-use fastctx_types::assets::{Holders, Readers, StreamClass};
+use fastctx_types::assets::Readers;
 use fastctx_types::ipc::Failure;
 use fastctx_types::ResidentId;
 use fastctx_types::residents::About;
@@ -103,7 +103,7 @@ pub(super) fn placed(node: &Node, about: &About) -> Result<Option<Placed>, Failu
     let born_on = crate::record_ownership::origin(node, about);
     let readers = Readers::Conversation { openers: vec![account.account.clone()], born_on };
     let scope = format!("{}{}", readers.key_prefix(account.hub.as_str()), about.id);
-    let classes = vec![StreamClass { prefix: String::new(), holders: Holders::Readers }];
+    let classes = fastctx_types::assets::conversation_classes();
     Ok(Some(Placed { scope, hub: account.hub.clone(), proposal: Proposal { hub: account.hub.to_string(), readers, classes }, network }))
 }
 

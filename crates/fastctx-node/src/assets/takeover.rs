@@ -70,7 +70,9 @@ pub(super) async fn run(
 ) -> Result<(), String> {
     let asked: Vec<String> =
         assets.takeovers.lock().expect("takeovers").iter().filter(|(of, _)| of == scope).map(|(_, stream)| stream.clone()).collect();
-    if asked.is_empty() {
+    // An adopting not done is looked at again, its streams found since among
+    // them (NN11, L05).
+    if asked.is_empty() && !assets.adopting.lock().expect("adopting").contains(scope) {
         return Ok(());
     }
     let resident = resident_of(scope);
@@ -90,17 +92,25 @@ pub(super) async fn run(
     // those begun later by the device it was taken from among them (MM09,
     // MM15).
     let (scope_text, device) = (scope.to_string(), assets.device());
-    let all_here = blocking(&assets.library, move |library| {
+    let theirs: Vec<String> = blocking(&assets.library, move |library| {
         let own: std::collections::BTreeSet<String> = library.own_streams(&scope_text, &device)?.into_iter().collect();
         Ok(library
             .streams(&scope_text)?
             .into_iter()
-            .all(|(stream, _)| own.contains(&stream) || fastctx_content::v2::hub_orders(&stream)))
+            .map(|(stream, _)| stream)
+            .filter(|stream| !own.contains(stream) && !fastctx_content::v2::hub_orders(stream))
+            .collect())
     })
     .await?;
-    if all_here {
+    if theirs.is_empty() {
         assets.adopting.lock().expect("adopting").remove(scope);
         super::release::adopted(&directory);
+    } else if assets.adopting.lock().expect("adopting").contains(scope) {
+        // Streams found since the adopting began are taken over too.
+        let mut takeovers = assets.takeovers.lock().expect("takeovers");
+        for stream in theirs {
+            takeovers.insert((scope.to_string(), stream));
+        }
     }
     // A package whose every stream is ordered here now is used up: it goes,
     // and does not travel on with the conversation (J08).
@@ -113,7 +123,7 @@ pub(super) async fn run(
             mine &= blocking(library, move |library| library.orderer(&scope_text, &stream)).await?.is_some_and(|orderer| orderer == device);
         }
         if mine {
-            let _ = super::release::clear(&directory);
+            let _ = super::release::clear_package(&directory);
         }
     }
     if taken && let Ok(resident) = fastctx_types::ResidentId::try_from(resident) {

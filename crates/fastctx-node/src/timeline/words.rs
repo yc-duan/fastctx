@@ -29,9 +29,15 @@ const SETTLED: u8 = 1;
 /// The most words on their way read in one page.
 const OPEN_AT_ONCE: usize = 500;
 
-/// How long after they were said words nowhere in the inbox are taken as
-/// let go.
+/// How long words are seen nowhere in the inbox, by this node as it runs,
+/// before they are taken as let go: not from when they were said, which an
+/// old notice may be long past (NN03).
 const GONE_AFTER: std::time::Duration = std::time::Duration::from_secs(10 * 60);
+
+/// When this node first saw each of the words on their way nowhere in the
+/// inbox.
+static MISSING: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<String, std::time::Instant>>> =
+    std::sync::LazyLock::new(Default::default);
 
 fn failure(error: impl std::fmt::Display) -> Failure {
     Failure::new(error.to_string())
@@ -95,6 +101,9 @@ enum Wrote {
     /// Held here already — taken from the machine they were said to before,
     /// or kept here before — as having crossed into the host (MM01).
     Crossed,
+    /// Held here already as not known to have reached the host, or kept by
+    /// the machine they were said to before (NN01, NN04).
+    Uncertain(String),
 }
 
 /// What keeping the user's words in the asset library says of handing them
@@ -105,6 +114,9 @@ pub(crate) enum Said {
     /// They crossed into the host already, here or where the conversation
     /// lived before: they are not handed over again.
     Crossed,
+    /// Whether they reached the host is not known: they are not handed over
+    /// again, and the user says whether to send them anew (NN01, NN04).
+    Uncertain(String),
 }
 
 /// Keeps the user's words `delivery` for `to` in the asset library, with
@@ -119,6 +131,7 @@ pub(crate) async fn said(node: &Arc<Node>, to: &ResidentId, delivery: &Delivery)
     }
     match keep(node, to, delivery).await {
         Ok(Wrote::Crossed) => Ok(Said::Crossed),
+        Ok(Wrote::Uncertain(why)) => Ok(Said::Uncertain(why)),
         Ok(_) => Ok(Said::Go),
         Err(failure) if failure.message.contains(fastctx_content::v2::OP_REUSED) => {
             Err(Failure::refused(format!("{}: those words were sent before as other words under that id", delivery.id)))
@@ -148,7 +161,13 @@ async fn keep(node: &Arc<Node>, to: &ResidentId, delivery: &Delivery) -> Result<
     let proposal = serde_json::to_vec(&placed.proposal).map_err(failure)?;
     let (op, value) = (op_of(delivery)?, body("kept", delivery, None)?);
     let (item, order) = (delivery.id.as_str().as_bytes().to_vec(), order(false, delivery.at));
+    let refused = || fastctx_content::Error::Invalid(fastctx_content::v2::OP_REUSED.to_string());
     let wrote = fastctx_platform::task::blocking(move || {
+        // Kept here before under this number as other words: refused,
+        // whatever else holds (AR16, NN02, L01).
+        if library.op_digest(&op.id)?.is_some_and(|digest| digest != op.digest) {
+            return Err(refused());
+        }
         let holding = match library.holding(&scope)? {
             Some(holding) => holding,
             None if born_elsewhere => return Ok(Wrote::Skipped),
@@ -163,20 +182,44 @@ async fn keep(node: &Arc<Node>, to: &ResidentId, delivery: &Delivery) -> Result<
         }
         // Held here already: crossed into the host, they go no further;
         // still kept or let go, they go on.
+        let ours = library.op_digest(&op.id)?.is_some();
         if let Some(entry) = library.item(&scope, ConversationWords::STREAM, &item)? {
-            let state = serde_json::from_slice::<serde_json::Value>(&entry.body)
-                .ok()
-                .and_then(|body| body.get("state").and_then(serde_json::Value::as_str).map(str::to_string))
-                .unwrap_or_default();
-            if matches!(state.as_str(), "delivering" | "delivered" | "uncertain") {
-                return Ok(Wrote::Crossed);
+            let held: Option<Body> = serde_json::from_slice(&entry.body).ok();
+            let (state, why) = held.as_ref().map_or((String::new(), None), |held| (held.state.clone(), held.why.clone()));
+            // Kept elsewhere under this number as other words: refused too.
+            if !ours
+                && let Some(held) = &held
+                && Sha256::digest(serde_json::to_vec(&held.delivery.notice).unwrap_or_default()).as_slice() != op.digest
+            {
+                return Err(refused());
+            }
+            match state.as_str() {
+                "delivering" | "delivered" => return Ok(Wrote::Crossed),
+                "uncertain" => {
+                    return Ok(Wrote::Uncertain(
+                        why.unwrap_or_else(|| "whether these words reached the agent is not known".into()),
+                    ));
+                }
+                // Kept by the machine the conversation lived on before,
+                // which may have handed them over already: never handed
+                // over again on not seeing them there (NN01, §3 N02).
+                "kept" if !ours => {
+                    return Ok(Wrote::Uncertain(
+                        "these words were kept where the conversation lived before, which may have handed them over"
+                            .into(),
+                    ));
+                }
+                _ => {}
             }
         }
         if library.orderer(&scope, ConversationWords::STREAM)?.is_some_and(|orderer| orderer != device) {
             return Ok(Wrote::Wanted);
         }
         let writer = Writer::<ConversationWords>::new(&library, &scope, ConversationWords::STREAM)?.in_holding(holding);
-        writer.write(item, order, Some(&value), Vec::new(), Vec::new(), Some((op, true)), signer)?;
+        // Kept here before and let go since, said again as the same words:
+        // on their way again, its operation as it was (NN03).
+        let operation = if ours { None } else { Some((op, true)) };
+        writer.write(item, order, Some(&value), Vec::new(), Vec::new(), operation, signer)?;
         Ok::<_, fastctx_content::Error>(Wrote::Written)
     })
     .await
@@ -256,15 +299,21 @@ pub(super) async fn produce(
     .map_err(failure)?;
     let mut writes = Vec::new();
     let mut ways = Vec::new();
-    let now = jiff::Timestamp::now();
     for (entry, stood) in open.iter().zip(stood) {
         let said: Body = serde_json::from_slice(&entry.body).map_err(failure)?;
         // Nothing of them in the inbox yet is not their being let go: kept
         // here just now, the inbox keeps them next (MM03, K02). Only long
-        // after, they are taken as let go.
-        if stood == Stood::Gone && now.duration_since(said.delivery.at).unsigned_abs() < GONE_AFTER {
-            continue;
+        // after this node first saw them missing, they are taken as let go;
+        // their sender, keeping them until they landed, sends them again
+        // meanwhile, and said again they are on their way again (NN03).
+        let id = said.delivery.id.to_string();
+        if stood == Stood::Gone {
+            let first = *MISSING.lock().expect("missing words").entry(id.clone()).or_insert_with(std::time::Instant::now);
+            if first.elapsed() < GONE_AFTER {
+                continue;
+            }
         }
+        MISSING.lock().expect("missing words").remove(&id);
         let (state, settled) = state_of(stood);
         if state == said.state {
             continue;

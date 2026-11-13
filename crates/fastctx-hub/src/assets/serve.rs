@@ -42,7 +42,7 @@ impl Verifier for DeviceKeys {
 /// conversation's timeline — where it lives now — or, before anything of it
 /// is ordered, the machine it was born on. Another reader of the scope
 /// cannot take a new stream first. Other scopes are not gated here.
-fn first_epoch_gate(assets: &Assets, directory: &Indexed<'_>, kept: &Scope, scope: &str, stream: &str, key: &PublicKey) -> Result<(), String> {
+fn first_epoch_gate(assets: &Assets, directory: &Indexed<'_>, kept: &Scope, scope: &str, stream: &str, device: &[u8; 32]) -> Result<(), String> {
     let wire::Readers::Conversation { born_on, .. } = &kept.descriptor.readers else { return Ok(()) };
     let library = scopes::library(assets, kept)?;
     if library.last_epoch(scope, stream).map_err(|error| error.to_string())?.is_some() {
@@ -55,7 +55,10 @@ fn first_epoch_gate(assets: &Assets, directory: &Indexed<'_>, kept: &Scope, scop
             None => return Ok(()),
         },
     };
-    if source != *key.as_bytes() {
+    // The device the frame says made it, whose signature `take` checks:
+    // one handing on its predecessor's first frame hands on the
+    // predecessor's (AR06).
+    if source != *device {
         return Err(format!("{stream} of {scope} is begun by the machine the conversation lives on"));
     }
     Ok(())
@@ -449,13 +452,16 @@ pub(crate) fn ask(
         Request::Take { scope, frame, proven: _, staged } => {
             let kept = gated(assets, directory, machine, &scope)?;
             // The streams the hub orders itself take no device's frames
-            // (design §28.17).
-            if Header::decode(&frame.header.0).is_ok_and(|header| fastctx_content::v2::hub_orders(&header.stream)) {
+            // (design §28.17); its own, given back after a recovery, it
+            // takes as its own (AR07).
+            if Header::decode(&frame.header.0).is_ok_and(|header| {
+                fastctx_content::v2::hub_orders(&header.stream) && header.key != assets.keys().frame_key()
+            }) {
                 return Err("the hub orders that stream itself".into());
             }
             // A stream's first epoch is opened by its source alone (AQ07).
             if let Ok(header) = Header::decode(&frame.header.0) {
-                first_epoch_gate(assets, directory, &kept, &scope, &header.stream, key)?;
+                first_epoch_gate(assets, directory, &kept, &scope, &header.stream, &header.device)?;
             }
             // A body too large for the control connection was staged apart
             // under its ticket (§7.1), and stays there while the frame
@@ -711,6 +717,10 @@ pub(crate) fn ask(
             Ok(Reply::Epoch { descriptor: wire::Fact { fact: signed.fact.into(), word: word.into() } })
         }
         Request::Takeover { scope, stream, release, adopt } => {
+            // A stream the hub orders is handed to no device (AR05, L17).
+            if fastctx_content::v2::hub_orders(&stream) {
+                return Err("the hub orders that stream itself".into());
+            }
             let kept = held(assets, directory, machine, &scope, &stream)?;
             let library = scopes::library(assets, &kept)?;
             let device = *key.as_bytes();

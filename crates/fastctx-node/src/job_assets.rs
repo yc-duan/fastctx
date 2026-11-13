@@ -73,44 +73,87 @@ fn resident_of(node: &Node, job: &JobRecord) -> Option<ResidentId> {
 
 /// Starts looking at the jobs here every few seconds.
 pub(crate) fn start(node: &Arc<Node>) {
+    // Since when the jobs here are written at all, kept as the node starts
+    // — before any job of this release can end — so none is taken for one
+    // of before it (L04).
+    if let Some(kept) = node.assets.as_ref()
+        && kept.library.checkpoint(SINCE).is_ok_and(|since| since.is_none())
+        && let Err(error) = kept.library.keep_checkpoint(SINCE, jiff::Timestamp::now().to_string().into_bytes())
+    {
+        node.log.line(format_args!("keeping since when the jobs here are written: {error}"));
+    }
     let weak: Weak<Node> = Arc::downgrade(node);
     fastctx_platform::task::spawn(async move {
+        // The first look takes in every job since then, as does one after a
+        // scope is held anew (NN07, L04).
+        let mut whole = true;
+        let mut held = 0u64;
         loop {
-            tokio::time::sleep(EVERY).await;
             let Some(node) = weak.upgrade() else { return };
-            if node.assets.is_none() {
-                continue;
+            if node.assets.is_some() {
+                let working = node.clone();
+                let looked = fastctx_platform::task::blocking(move || look(&working, whole, held)).await;
+                match looked {
+                    Ok(now) => {
+                        whole = false;
+                        held = now;
+                    }
+                    Err(error) => node.log.line(format_args!("writing the jobs here into the asset library: {error}")),
+                }
             }
-            let working = node.clone();
-            if let Err(error) = fastctx_platform::task::blocking(move || look(&working)).await {
-                node.log.line(format_args!("writing the jobs here into the asset library: {error}"));
-            }
+            drop(node);
+            tokio::time::sleep(EVERY).await;
         }
     });
 }
 
 /// The jobs begun here and not finished, by job, with where their records
-/// are.
-fn open_jobs(library: &Library) -> BTreeMap<String, PathBuf> {
-    library.checkpoint(OPEN).ok().flatten().and_then(|bytes| serde_json::from_slice(&bytes).ok()).unwrap_or_default()
+/// are; one that cannot be read now is not taken for none (NN08).
+fn open_jobs(library: &Library) -> Result<BTreeMap<String, PathBuf>, String> {
+    match library.checkpoint(OPEN).map_err(|error| error.to_string())? {
+        Some(bytes) => serde_json::from_slice(&bytes).map_err(|error| format!("the open jobs: {error}")),
+        None => Ok(BTreeMap::new()),
+    }
+}
+
+/// What the conversations' scopes held here are held as, in one number: it
+/// changes as one is held anew.
+fn holdings(library: &Library) -> Result<u64, String> {
+    use std::hash::{Hash as _, Hasher as _};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    for (scope, _, holding) in library.live_scopes().map_err(|error| error.to_string())? {
+        if scope.starts_with("c/") {
+            (scope, holding).hash(&mut hasher);
+        }
+    }
+    Ok(hasher.finish())
 }
 
 /// One look at the jobs running or ended within the day, and those begun
-/// here and not finished since (MM21).
-fn look(node: &Arc<Node>) -> Result<(), String> {
-    let Some(kept) = node.assets.as_ref() else { return Ok(()) };
+/// here and not finished since (MM21); `whole`, or a scope held anew since
+/// `held`, every job since the jobs here are written (NN07, L04). What the
+/// scopes are held as now.
+fn look(node: &Arc<Node>, whole: bool, held: u64) -> Result<u64, String> {
+    let Some(kept) = node.assets.as_ref() else { return Ok(held) };
     let library = &kept.library;
     let error = |error: fastctx_content::Error| error.to_string();
-    if library.checkpoint(SINCE).map_err(error)?.is_none() {
-        library.keep_checkpoint(SINCE, jiff::Timestamp::now().to_string().into_bytes()).map_err(error)?;
-    }
-    let since = jiff::Timestamp::now() - jiff::SignedDuration::from_hours(24);
+    let written_since = library
+        .checkpoint(SINCE)
+        .map_err(error)?
+        .and_then(|bytes| String::from_utf8(bytes).ok())
+        .and_then(|text| text.parse::<jiff::Timestamp>().ok());
+    let now_held = holdings(library)?;
+    let day = jiff::Timestamp::now() - jiff::SignedDuration::from_hours(24);
+    let since = match written_since {
+        Some(written) if whole || now_held != held => written.min(day),
+        _ => day,
+    };
     let mut jobs: BTreeMap<String, (JobRecord, PathBuf)> = crate::job_index::recent(&node.world, since)
         .map_err(|error| error.to_string())?
         .into_iter()
         .map(|(job, path)| (job.id.to_string(), (job, path)))
         .collect();
-    let mut open = open_jobs(library);
+    let mut open = open_jobs(library)?;
     for (id, path) in &open {
         if !jobs.contains_key(id)
             && let Ok(job) = fastctx_hands::run::record::read(path)
@@ -131,13 +174,14 @@ fn look(node: &Arc<Node>) -> Result<(), String> {
             }
         }
     }
-    // A job whose record is gone is open no more.
+    // A job whose record is gone is open no more; one that cannot be
+    // looked at now stays (NN08).
     let before = open.len();
-    open.retain(|_, path| fastctx_platform::disk::is_file(path));
+    open.retain(|_, path| !matches!(fastctx_platform::disk::metadata(path), Err(error) if error.kind() == std::io::ErrorKind::NotFound));
     if moved || open.len() != before {
         library.keep_checkpoint(OPEN, serde_json::to_vec(&open).map_err(|error| error.to_string())?).map_err(error)?;
     }
-    failed.map_or(Ok(()), Err)
+    failed.map_or(Ok(now_held), Err)
 }
 
 /// The scope `resident`'s jobs go in, when this machine orders its job
@@ -168,13 +212,13 @@ fn writable(node: &Arc<Node>, library: &Library, resident: &ResidentId) -> Resul
     Ok(Some((scope, holding)))
 }
 
-/// How long a part of a job's output is: its file gone, nothing more of it
-/// comes; one that cannot be looked at now is looked at again, never taken
-/// as empty (AQ11, MM23, K09).
-fn length_of(path: &str) -> Result<u64, String> {
+/// How long a part of a job's output is; none when its file is gone, so
+/// nothing more of it comes; one that cannot be looked at now is looked at
+/// again, never taken as empty (AQ11, MM23, K09).
+fn length_of(path: &str) -> Result<Option<u64>, String> {
     match fastctx_platform::disk::metadata(path) {
-        Ok(metadata) => Ok(metadata.len()),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(0),
+        Ok(metadata) => Ok(Some(metadata.len())),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(error) => Err(format!("looking at {path}: {error}")),
     }
 }
@@ -225,10 +269,22 @@ fn write_job(node: &Arc<Node>, resident: &ResidentId, job: &JobRecord) -> Result
     // Its output, what came since.
     let output = Writer::<JobOutput>::new(library, &scope, JobOutput::STREAM).map_err(error)?.in_holding(holding);
     let mut whole = true;
+    // The parts whose file went before all of it was written: the end says
+    // so, never that they were written whole (NN09).
+    let mut missing = Vec::new();
     for (part, path) in [("output", Some(job.output.as_str())), ("stderr", job.stderr.as_deref())] {
         let Some(path) = path else { continue };
-        let length = length_of(path)?;
         let at = if part == "output" { &mut standing.output } else { &mut standing.stderr };
+        let length = match length_of(path)? {
+            Some(length) => length,
+            None => {
+                let kept = job.output_lost.as_ref().map_or(0, |lost| lost.kept_bytes);
+                if part == "output" && kept > *at {
+                    missing.push(part);
+                }
+                *at
+            }
+        };
         let mut budget = A_PART;
         while *at < length && budget > 0 {
             let item = format!("{}/{part}/{:016x}", job.id, *at).into_bytes();
@@ -283,6 +339,7 @@ fn write_job(node: &Arc<Node>, resident: &ResidentId, job: &JobRecord) -> Result
                 "end": true,
                 "output": standing.output,
                 "stderr": standing.stderr,
+                "missing": missing,
             }))
             .map_err(|error| error.to_string())?;
             output

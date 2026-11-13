@@ -261,6 +261,9 @@ pub(crate) fn may_hold_known(directory: &Indexed<'_>, machine: &MachineName, sco
     if !readable_known(directory, machine, scope)? || !sharers_read_known(directory, machine, scope)? {
         return Ok(false);
     }
+    if !keeps_ledger(directory, machine, scope) {
+        return Ok(false);
+    }
     let descriptor = &scope.descriptor;
     for class in &descriptor.classes {
         match class.holders {
@@ -286,7 +289,7 @@ pub(crate) fn may_hold_known(directory: &Indexed<'_>, machine: &MachineName, sco
 pub(crate) fn holds(directory: &Indexed<'_>, machine: &MachineName, scope: &Scope, stream: &str) -> bool {
     let descriptor = &scope.descriptor;
     let Some(class) = descriptor.class(stream) else { return false };
-    if !sharers_read(directory, machine, scope) {
+    if !sharers_read(directory, machine, scope) || !keeps_ledger(directory, machine, scope) {
         return false;
     }
     match class.holders {
@@ -295,6 +298,18 @@ pub(crate) fn holds(directory: &Indexed<'_>, machine: &MachineName, scope: &Scop
             member.logins.iter().any(|account| reads(directory, account, &descriptor.readers, &descriptor.born, scope.bodies.as_deref()))
         }),
     }
+}
+
+/// Whether `machine` may hold a project's ledger, its entries whole as
+/// their authors signed them: only a machine that keeps the project's
+/// bodies does, as the ledger was copied before (L11, NN06). Any other
+/// scope is not judged here.
+fn keeps_ledger(directory: &Indexed<'_>, machine: &MachineName, scope: &Scope) -> bool {
+    let Readers::Project { town } = &scope.descriptor.readers else { return true };
+    if !scope.descriptor.scope.ends_with("/ledger") {
+        return true;
+    }
+    directory.all.member_keeps_project(directory.canonical(machine), town)
 }
 
 /// The scope `key`, if the hub described it.
