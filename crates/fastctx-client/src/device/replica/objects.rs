@@ -31,25 +31,26 @@ pub(super) async fn fetch(replica: &Replica, hub: &HubId, link: &Arc<Link>) -> (
     let at_most = super::tiers::fetched_at_most(replica.tier());
     let skipped: Vec<[u8; 32]> = {
         let unreached = replica.unreached.lock().expect("unreached");
-        let deferred = replica.deferred.lock().expect("deferred");
         unreached
             .iter()
             .filter(|((of, _), (at, failed))| of == hub && at.elapsed() < ASK_AGAIN * 2u32.pow((*failed).min(6)))
             .map(|((_, hash), _)| *hash)
-            .chain(deferred.iter().copied())
             .collect()
     };
+    // Only those the tier fetches as they come are listed: a run of longer
+    // ones neither holds up the short ones after them nor makes the look
+    // come round at once for nothing (codex-f92d833e phone #7).
     let theirs = hub.as_str().to_string();
-    let wanted = match blocking(library, move |library| library.wanted_of_hub(&theirs, FETCHED_AT_ONCE, &skipped)).await {
+    let wanted = match blocking(library, move |library| library.wanted_within(&theirs, FETCHED_AT_ONCE, &skipped, at_most)).await {
         Ok(wanted) => wanted,
         Err(why) => return (vec![format!("listing the objects wanted: {why}")], false),
     };
     let more = wanted.len() == FETCHED_AT_ONCE;
     let mut failed = Vec::new();
     for (scope, object) in wanted {
-        if object.size > at_most {
-            // Fetched as it is read (`Replica::fetch`).
-            replica.deferred.lock().expect("deferred").insert(object.hash);
+        // A tier made lighter meanwhile holds at once (#13): the longer ones
+        // are fetched as they are read (`Replica::fetch`).
+        if object.size > super::tiers::fetched_at_most(replica.tier()) {
             continue;
         }
         if let Err(why) = fetch_now(replica, hub, link, &scope, object).await {
@@ -65,7 +66,6 @@ pub(super) async fn fetch_now(replica: &Replica, hub: &HubId, link: &Arc<Link>, 
     match fetch_one(replica, link, scope, object).await {
         Ok(()) => {
             replica.unreached.lock().expect("unreached").remove(&(hub.clone(), object.hash));
-            replica.deferred.lock().expect("deferred").remove(&object.hash);
             let hash = object.hash;
             blocking(library, move |library| library.unwant(&hash)).await
         }

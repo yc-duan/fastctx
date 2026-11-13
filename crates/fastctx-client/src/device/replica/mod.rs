@@ -18,7 +18,7 @@ pub use tiers::Tier;
 use fastctx_net::ids::HubId;
 use fastctx_net::link::{Link, Status};
 use fastctx_types::assets::Push;
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::io;
 use std::path::Path;
 use std::sync::{Arc, Mutex, Weak};
@@ -69,8 +69,6 @@ pub struct Replica {
     revoked: Mutex<BTreeSet<String>>,
     /// Each object a hub did not give, when it last did not and how often.
     unreached: Mutex<Unreached>,
-    /// Objects longer than the tier fetches as they come.
-    deferred: Mutex<HashSet<[u8; 32]>>,
     /// The link followed for each hub: a follower of any other goes.
     links: Mutex<BTreeMap<HubId, Weak<Link>>>,
     called: Mutex<BTreeMap<HubId, Called>>,
@@ -130,7 +128,6 @@ impl Replica {
             pins,
             revoked: Mutex::default(),
             unreached: Mutex::default(),
-            deferred: Mutex::default(),
             links: Mutex::default(),
             called: Mutex::default(),
             wakes: Mutex::default(),
@@ -261,9 +258,6 @@ impl Replica {
     /// Looks at every scope held of `hub`: whether more is left to take.
     async fn pass_whole(&self, hub: &HubId, link: &Arc<Link>) -> Result<bool, String> {
         let library = &self.library;
-        // Long objects put off are looked at again once a whole look: those
-        // no record wants any more do not stay.
-        self.deferred.lock().expect("deferred").clear();
         let key = pass::open(self, hub, link).await?;
         if !self.current(hub, link) {
             return Err("the link is no longer the one followed".into());
@@ -379,7 +373,6 @@ impl Replica {
     pub(crate) async fn left(&self, hub: &HubId) -> Result<(), String> {
         self.links.lock().expect("links").remove(hub);
         self.unreached.lock().expect("unreached").retain(|(of, _), _| of != hub);
-        self.deferred.lock().expect("deferred").clear();
         if let Some(wake) = self.wakes.lock().expect("wakes").remove(hub) {
             wake.notify_one();
         }
@@ -408,7 +401,7 @@ impl Replica {
     /// Takes in the page of `stream` of `scope` below `before` (the top when
     /// none), as it is read (§29 3.4).
     pub async fn older(
-        &self,
+        self: &Arc<Self>,
         hub: &HubId,
         scope: &str,
         stream: &str,
@@ -417,8 +410,12 @@ impl Replica {
     ) -> Result<OlderTaken, String> {
         let link = self.link(hub)?;
         let taken = pass::older(self, &link, scope, stream, before, limit).await?;
-        // What the page refers to comes with it, as far as the tier fetches.
-        let _ = objects::fetch(self, hub, &link).await;
+        // What the page refers to comes after it, as far as the tier
+        // fetches, the page read meanwhile (codex-f92d833e phone #6).
+        let (replica, hub) = (self.clone(), hub.clone());
+        tokio::spawn(async move {
+            let _ = objects::fetch(&replica, &hub, &link).await;
+        });
         Ok(taken)
     }
 

@@ -150,7 +150,15 @@ impl Library {
     /// current holding period, as `wanted_of` gives them for those scopes,
     /// in one look however many scopes there are.
     pub fn wanted_of_hub(&self, hub: &str, limit: usize, skipped: &[[u8; 32]]) -> Result<Vec<(String, crate::record::ObjectRef)>> {
+        self.wanted_within(hub, limit, skipped, u64::MAX)
+    }
+
+    /// `wanted_of_hub`, of those at most `at_most` bytes long alone: a light
+    /// device lists what it fetches as records come, the longer ones not at
+    /// all (they are fetched as they are read).
+    pub fn wanted_within(&self, hub: &str, limit: usize, skipped: &[[u8; 32]], at_most: u64) -> Result<Vec<(String, crate::record::ObjectRef)>> {
         let hub = hub.to_string();
+        let at_most = i64::try_from(at_most).unwrap_or(i64::MAX);
         let skipped: std::collections::HashSet<[u8; 32]> = skipped.iter().copied().collect();
         let enough = limit + skipped.len();
         Ok(self.database().read_now(move |db| {
@@ -164,9 +172,10 @@ impl Library {
                         OR EXISTS (SELECT 1 FROM frame_objects f JOIN streams t ON t.id = f.stream
                                    WHERE f.hash = i.hash AND t.scope = s.id AND f.holding = s.holding))
                    AND NOT EXISTS (SELECT 1 FROM objects o WHERE o.hash = i.hash AND +o.state = 1)
+                   AND w.size <= ?3
                  GROUP BY w.hash ORDER BY MAX(w.priority) DESC, w.hash LIMIT ?2",
             )?;
-            let rows = statement.query_map(params![hub, enough as i64], |row| {
+            let rows = statement.query_map(params![hub, enough as i64, at_most], |row| {
                 Ok((row.get::<_, Vec<u8>>(0)?, row.get::<_, i64>(1)?, row.get::<_, String>(2)?))
             })?;
             let mut wanted = Vec::new();

@@ -51,8 +51,11 @@ fn chosen(device: &Device) -> Tier {
 pub(super) async fn start(world: World) {
     let Some(device) = world.device().cloned() else { return };
     let tier = chosen(&device);
-    match tokio::task::spawn_blocking(move || device.replicate(tier)).await {
-        Ok(Ok(_)) => {}
+    let started = device.clone();
+    match tokio::task::spawn_blocking(move || started.replicate(tier)).await {
+        // A tier chosen while the copy was opening holds from now on
+        // (codex-f92d833e phone #12).
+        Ok(Ok(replica)) => replica.set_tier(chosen(&device)),
         Ok(Err(error)) => eprintln!("keeping this phone's copy of the World: {error}"),
         Err(error) => eprintln!("keeping this phone's copy of the World: {error}"),
     }
