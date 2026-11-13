@@ -38,12 +38,13 @@ pub enum Domain {
     /// An old hub proving to the place its hub moves to that it holds the
     /// move's key, bound to one TLS connection.
     Handover,
+    /// A device's word on a frame header it orders (sync v2 design §5).
+    /// The first version's other sync domains — hub-source-batch,
+    /// accepted-operation, producer-release, epoch-handover,
+    /// exposure-receipt — signed nothing and are retired as the second
+    /// version froze (§29 1): their names are never taken again.
     SyncSourceBatch,
-    SyncHubSourceBatch,
-    SyncAcceptedOperation,
-    SyncProducerRelease,
-    SyncEpochHandover,
-    SyncExposureReceipt,
+    /// The old service key's word that a new one follows it (§6.1).
     SyncHubKeyRotation,
     /// What a hub's service key says of assets (design §6.1): receipts,
     /// epoch descriptors, gap facts, checkpoints, each bound to the hub's
@@ -67,11 +68,6 @@ impl Domain {
             Domain::Peer => "peer",
             Domain::Handover => "handover",
             Domain::SyncSourceBatch => "fastctx-sync/source-batch/v1",
-            Domain::SyncHubSourceBatch => "fastctx-sync/hub-source-batch/v1",
-            Domain::SyncAcceptedOperation => "fastctx-sync/accepted-operation/v1",
-            Domain::SyncProducerRelease => "fastctx-sync/producer-release/v1",
-            Domain::SyncEpochHandover => "fastctx-sync/epoch-handover/v1",
-            Domain::SyncExposureReceipt => "fastctx-sync/exposure-receipt/v1",
             Domain::SyncHubKeyRotation => "fastctx-sync/hub-key-rotation/v1",
             Domain::AssetHub => "fastctx-asset/hub/v1",
             Domain::ShareCleared => "fastctx-share/cleared/v1",
