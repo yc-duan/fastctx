@@ -217,7 +217,7 @@ fn reopen_in(dir: &Path, store: &Store, assets: &Assets) -> anyhow::Result<Reope
     // What devices handed back is taken back first, and the account
     // records in it written back, each step noted as it is done: only then
     // is the history set aside and the seal taken off (§28.38).
-    let taken_back = super::handback::take_back(dir, assets, assets.restores() + 1)?;
+    let taken_back = super::handback::take_back(dir, &store.book.directory, assets, assets.restores() + 1)?;
     let control = store.shelf.0.clone();
     let (fork, _) = control.read_now(chain::latest)?.unwrap_or((0, [0; 32]));
     let kept = assets.witness.kept();

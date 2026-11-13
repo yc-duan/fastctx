@@ -53,63 +53,80 @@ async fn keep_mark(assets: &Assets, name: &str, mark: &Mark) -> Result<(), Strin
 
 /// Hands back to the hub `hub`, sealed for the recovery it reopens as
 /// `recovery`, what this machine holds of the streams it orders past where
-/// it stands. Stops, to go on at the next try, as the hub answers anything
-/// but where it stands and what it made of a frame.
+/// it stands. A scope whose handing back fails is gone past, the others
+/// handed back all the same (codex-f92d833e #1); it goes on at the next
+/// try. Stops as the hub answers anything but where it stands and what it
+/// made of a frame: no longer sealed, or another seal.
 pub(super) async fn hand_back(assets: &Assets, hub: &HubId, link: &Arc<Link>, recovery: u64) -> Result<(), String> {
     let key = hub.as_str().to_string();
     let held = blocking(&assets.library, move |library| library.live_scopes_of(&key)).await?;
+    let mut failed = None;
     for (scope, _, holding) in held {
-        let key = scope.clone();
-        let standing = blocking(&assets.library, move |library| library.standing(&key)).await?;
-        let mut asking = Vec::new();
-        let mut from = Vec::new();
-        for (stream, sequence, head) in standing.into_iter().filter(|(stream, ..)| hub_orders(stream)) {
-            match read_mark(assets, &mark_name(recovery, &scope, &stream)).await? {
-                Some(Mark::Done { .. }) => {}
-                Some(Mark::At { next, head }) => {
-                    if next <= sequence {
-                        from.push((stream, next, head));
-                    }
-                }
-                None => asking.push(wire::Cursor { stream, sequence, head: head.into() }),
-            }
-        }
-        if !asking.is_empty() {
-            let Reply::Standing { streams } = ask(assets, link, Request::Cursors { scope: scope.clone(), holding, streams: asking }).await? else {
-                return Ok(());
-            };
-            for standing in streams {
-                let name = mark_name(recovery, &scope, &standing.stream);
-                if standing.agrees {
-                    keep_mark(assets, &name, &Mark::Done { why: "the hub holds where this machine stands".into() }).await?;
-                    continue;
-                }
-                let ends: Vec<(u64, [u8; 32])> = standing.ends.iter().filter_map(|(end, head)| Some((*end, head.array()?))).collect();
-                // The hub holds nothing of the stream up to where this
-                // machine stands: it goes on from the stream's start.
-                if ends.is_empty() {
-                    from.push((standing.stream, 0, [0; 32]));
-                    continue;
-                }
-                let (key, stream, looked) = (scope.clone(), standing.stream.clone(), ends.clone());
-                match blocking(&assets.library, move |library| library.shared_end(&key, &stream, &looked)).await? {
-                    Some(end) => {
-                        let head = ends.iter().find(|(at, _)| *at == end).map_or([0; 32], |(_, head)| *head);
-                        from.push((standing.stream, end + 1, head));
-                    }
-                    None => {
-                        keep_mark(assets, &name, &Mark::Done { why: "what this machine holds forks before the hub's tail".into() }).await?;
-                    }
-                }
-            }
-        }
-        for (stream, next, head) in from {
-            if !stream_back(assets, link, recovery, &scope, &stream, (next, head)).await? {
-                return Ok(());
+        match scope_back(assets, link, recovery, &scope, holding).await {
+            Ok(true) => {}
+            Ok(false) => return Ok(()),
+            Err(why) => {
+                failed.get_or_insert(format!("{scope}: {why}"));
             }
         }
     }
-    Ok(())
+    failed.map_or(Ok(()), Err)
+}
+
+/// Hands back what this machine holds of the streams the hub orders of
+/// `scope` past where the hub stands; whether the hub went on answering.
+async fn scope_back(assets: &Assets, link: &Arc<Link>, recovery: u64, scope: &str, holding: i64) -> Result<bool, String> {
+    let scope = scope.to_string();
+    let key = scope.clone();
+    let standing = blocking(&assets.library, move |library| library.standing(&key)).await?;
+    let mut asking = Vec::new();
+    let mut from = Vec::new();
+    for (stream, sequence, head) in standing.into_iter().filter(|(stream, ..)| hub_orders(stream)) {
+        match read_mark(assets, &mark_name(recovery, &scope, &stream)).await? {
+            Some(Mark::Done { .. }) => {}
+            Some(Mark::At { next, head }) => {
+                if next <= sequence {
+                    from.push((stream, next, head));
+                }
+            }
+            None => asking.push(wire::Cursor { stream, sequence, head: head.into() }),
+        }
+    }
+    if !asking.is_empty() {
+        let Reply::Standing { streams } = ask(assets, link, Request::Cursors { scope: scope.clone(), holding, streams: asking }).await? else {
+            return Ok(false);
+        };
+        for standing in streams {
+            let name = mark_name(recovery, &scope, &standing.stream);
+            if standing.agrees {
+                keep_mark(assets, &name, &Mark::Done { why: "the hub holds where this machine stands".into() }).await?;
+                continue;
+            }
+            let ends: Vec<(u64, [u8; 32])> = standing.ends.iter().filter_map(|(end, head)| Some((*end, head.array()?))).collect();
+            // The hub holds nothing of the stream up to where this
+            // machine stands: it goes on from the stream's start.
+            if ends.is_empty() {
+                from.push((standing.stream, 0, [0; 32]));
+                continue;
+            }
+            let (key, stream, looked) = (scope.clone(), standing.stream.clone(), ends.clone());
+            match blocking(&assets.library, move |library| library.shared_end(&key, &stream, &looked)).await? {
+                Some(end) => {
+                    let head = ends.iter().find(|(at, _)| *at == end).map_or([0; 32], |(_, head)| *head);
+                    from.push((standing.stream, end + 1, head));
+                }
+                None => {
+                    keep_mark(assets, &name, &Mark::Done { why: "what this machine holds forks before the hub's tail".into() }).await?;
+                }
+            }
+        }
+    }
+    for (stream, next, head) in from {
+        if !stream_back(assets, link, recovery, &scope, &stream, (next, head)).await? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 /// Hands back the frames of `stream` of `scope` from `at` (the next
@@ -168,11 +185,10 @@ async fn stream_back(assets: &Assets, link: &Arc<Link>, recovery: u64, scope: &s
                     previous = header.chain();
                     keep_mark(assets, &name, &Mark::At { next, head: previous }).await?;
                 }
-                Reply::HandedBack { kept: false, why } => {
-                    let why = why.unwrap_or_else(|| "the hub did not keep it".into());
-                    keep_mark(assets, &name, &Mark::Done { why }).await?;
-                    return Ok(true);
-                }
+                // Not kept now, it may be at the next try — an object it
+                // refers to handed back by another machine meanwhile — so
+                // it is handed back again then (codex-f92d833e #6).
+                Reply::HandedBack { kept: false, .. } => return Ok(true),
                 _ => return Ok(false),
             }
         }

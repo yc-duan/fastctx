@@ -13,6 +13,7 @@ use crate::error::{Error, invalid};
 use crate::{ObjectRef, Result};
 use fastctx_storage::Priority;
 use fastctx_storage::rusqlite::{OptionalExtension, params};
+use sha2::Digest as _;
 use std::collections::BTreeSet;
 
 /// Where a hub's library holds a stream as it is: the epoch it is in, the
@@ -81,29 +82,35 @@ impl Library {
     ) -> Result<std::result::Result<(), String>> {
         let read = read_handed_back(scope, frame)?;
         let referred: BTreeSet<([u8; 32], u64)> = read.objects.iter().map(|object| (object.hash, object.size)).collect();
+        // Nothing is written before all is checked: each object given is one
+        // the frame refers to, at its length, and each it refers to not given
+        // is here already (codex-f92d833e #4).
+        let mut given = BTreeSet::new();
+        for bytes in objects {
+            let hash: [u8; 32] = sha2::Sha256::digest(bytes).into();
+            if !referred.contains(&(hash, bytes.len() as u64)) {
+                return Ok(Err("an object given is not one the frame refers to".to_string()));
+            }
+            given.insert(hash);
+        }
+        for object in &read.objects {
+            if given.contains(&object.hash) {
+                continue;
+            }
+            match self.size(&object.hash)? {
+                Some(size) if size == object.size => {}
+                Some(_) => return Ok(Err("an object it refers to is here with another length".into())),
+                None => return Ok(Err(format!("an object it refers to is missing ({} bytes)", object.size))),
+            }
+        }
         let mut leases = Vec::with_capacity(objects.len());
         let mut wrong = None;
         for bytes in objects {
-            let lease = self.put(&mut bytes.as_slice(), "handed back", super::LEASE)?;
-            let fits = referred.contains(&(lease.object.hash, lease.object.size));
-            leases.push(lease);
-            if !fits {
-                wrong = Some("an object given is not one the frame refers to".to_string());
-                break;
-            }
-        }
-        if wrong.is_none() {
-            for object in &read.objects {
-                match self.size(&object.hash)? {
-                    Some(size) if size == object.size => {}
-                    Some(_) => {
-                        wrong = Some("an object it refers to is here with another length".into());
-                        break;
-                    }
-                    None => {
-                        wrong = Some(format!("an object it refers to is missing ({} bytes)", object.size));
-                        break;
-                    }
+            match self.put(&mut bytes.as_slice(), "handed back", super::LEASE) {
+                Ok(lease) => leases.push(lease),
+                Err(error) => {
+                    wrong = Some(error.to_string());
+                    break;
                 }
             }
         }

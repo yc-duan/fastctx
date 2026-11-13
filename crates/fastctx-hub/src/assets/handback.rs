@@ -23,7 +23,7 @@ use fastctx_net::sign::{Domain, PublicKey, Signature};
 use fastctx_storage::rusqlite::{OptionalExtension, params};
 use fastctx_types::MachineName;
 use fastctx_types::assets::{self as wire, Bytes, Reply};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 /// The tables of what was handed back and taken back, in the hub's control
 /// database. `recovery_frames` lasts until the hub reopens; the results and
@@ -151,8 +151,11 @@ pub(super) fn cursors(
         if !hub_orders(&cursor.stream) {
             return Err(format!("{} is not a stream the hub orders", cursor.stream));
         }
+        // A scope the hub put back does not hold — one born since its copy
+        // — has nothing of it to hand back: told so, the device goes on with
+        // the next (codex-f92d833e #1).
         let Some(scope) = gate(assets, directory, machine, key, &cursor.stream)? else {
-            return Err(format!("there is no scope {key}"));
+            return Ok(Reply::Standing { streams: Vec::new() });
         };
         let library = match &library {
             Some(library) => library,
@@ -172,16 +175,27 @@ pub(super) fn cursors(
     Ok(Reply::Standing { streams: standing })
 }
 
+/// How many kinds of refusal — scope, stream and why — one recovery
+/// counts at most; past them, refusals already counted still count.
+const REFUSALS_MOST: i64 = 4096;
+
 fn refused(assets: &Assets, recovery: u64, scope: &str, stream: &str, why: &'static str) -> Result<Reply, String> {
     let (scope, stream) = (scope.to_string(), stream.to_string());
     assets
         .control
         .write_now(256, move |c| {
-            c.prepare_cached(
-                "INSERT INTO recovery_refusals (recovery, scope, stream, why, count) VALUES (?1, ?2, ?3, ?4, 1)
-                 ON CONFLICT (recovery, scope, stream, why) DO UPDATE SET count = count + 1",
-            )?
-            .execute(params![recovery as i64, scope, stream, why])?;
+            let at = params![recovery as i64, scope, stream, why];
+            let counted = c
+                .prepare_cached("UPDATE recovery_refusals SET count = count + 1 WHERE recovery = ?1 AND scope = ?2 AND stream = ?3 AND why = ?4")?
+                .execute(at)?;
+            if counted == 0 {
+                let kinds: i64 =
+                    c.prepare_cached("SELECT COUNT(*) FROM recovery_refusals WHERE recovery = ?1")?.query_row([recovery as i64], |row| row.get(0))?;
+                if kinds < REFUSALS_MOST {
+                    c.prepare_cached("INSERT INTO recovery_refusals (recovery, scope, stream, why, count) VALUES (?1, ?2, ?3, ?4, 1)")?
+                        .execute(params![recovery as i64, scope, stream, why])?;
+                }
+            }
             Ok(())
         })
         .map_err(|error| error.to_string())?;
@@ -203,11 +217,14 @@ pub(super) fn hand_back(
     frame: wire::Frame,
     objects: Vec<(Bytes, Bytes)>,
 ) -> Result<Reply, String> {
+    // Of a stream the hub does not order, or a scope it does not hold, the
+    // refusal is not counted: no name a machine makes up is kept
+    // (codex-f92d833e #3).
     if !hub_orders(&stream) {
-        return refused(assets, recovery, &key, &stream, NOT_HUBS);
+        return Ok(Reply::HandedBack { kept: false, why: Some(NOT_HUBS.to_string()) });
     }
     let Some(scope) = gate(assets, directory, machine, &key, &stream)? else {
-        return refused(assets, recovery, &key, &stream, NO_SCOPE);
+        return Ok(Reply::HandedBack { kept: false, why: Some(NO_SCOPE.to_string()) });
     };
     if frame.apart > 0 {
         return Err("a frame handed back carries its body with it".into());
@@ -287,7 +304,8 @@ pub(super) fn hand_back(
             c.prepare_cached(
                 "INSERT OR IGNORE INTO recovery_frames
                  (recovery, owner, scope, stream, epoch, first, count, previous, chain, bytes, machine, at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11,
+                         MAX(?12, (SELECT COALESCE(MAX(at), 0) + 1 FROM recovery_frames WHERE recovery = ?1)))",
             )?
             .execute(params![
                 recovery as i64,
@@ -354,13 +372,19 @@ fn noted_of(assets: &Assets, recovery: u64) -> anyhow::Result<BTreeMap<(String, 
 /// its frames in order. Of two as long, the one whose frames came first.
 fn longest(frames: &[Noted], epoch: u64, next: u64, head: [u8; 32]) -> Vec<Noted> {
     // Each frame's farthest end and the frame it goes on to, found from the
-    // ends back: a frame is followed only by frames later in sequence. At a
+    // ends back: a frame is followed only by frames later in sequence, found
+    // by where they start and what they follow (codex-f92d833e #10). At a
     // fork, of two that reach as far, the one handed back first.
     let mut order: Vec<&Noted> = frames.iter().filter(|frame| frame.epoch == epoch).collect();
     order.sort_by_key(|frame| std::cmp::Reverse(frame.first));
-    let pick = |candidates: &mut dyn Iterator<Item = &&Noted>, best: &BTreeMap<[u8; 32], (u64, Option<[u8; 32]>)>| {
+    let mut following: HashMap<(u64, [u8; 32]), Vec<&Noted>> = HashMap::new();
+    for frame in &order {
+        following.entry((frame.first, frame.previous)).or_default().push(frame);
+    }
+    let by_chain: HashMap<[u8; 32], &Noted> = order.iter().map(|frame| (frame.chain, *frame)).collect();
+    let pick = |candidates: Option<&Vec<&Noted>>, best: &HashMap<[u8; 32], (u64, Option<[u8; 32]>)>| {
         let mut chosen: Option<(u64, i64, [u8; 32])> = None;
-        for candidate in candidates {
+        for candidate in candidates.into_iter().flatten() {
             let reach = best[&candidate.chain].0;
             if chosen.is_none_or(|(most, at, _)| reach > most || (reach == most && candidate.at < at)) {
                 chosen = Some((reach, candidate.at, candidate.chain));
@@ -368,20 +392,28 @@ fn longest(frames: &[Noted], epoch: u64, next: u64, head: [u8; 32]) -> Vec<Noted
         }
         chosen
     };
-    let mut best: BTreeMap<[u8; 32], (u64, Option<[u8; 32]>)> = BTreeMap::new();
+    let mut best: HashMap<[u8; 32], (u64, Option<[u8; 32]>)> = HashMap::new();
     for frame in &order {
         let end = frame.first + frame.count;
-        let chosen = pick(&mut order.iter().filter(|next| next.first == end && next.previous == frame.chain), &best);
+        let chosen = pick(following.get(&(end, frame.chain)), &best);
         best.insert(frame.chain, (chosen.map_or(end, |(reach, ..)| reach), chosen.map(|(.., chain)| chain)));
     }
     let mut chain = Vec::new();
-    let mut at = pick(&mut order.iter().filter(|frame| frame.first == next && frame.previous == head), &best).map(|(.., chain)| chain);
+    let mut at = pick(following.get(&(next, head)), &best).map(|(.., chain)| chain);
     while let Some(value) = at {
-        let Some(frame) = order.iter().find(|frame| frame.chain == value) else { break };
+        let Some(frame) = by_chain.get(&value) else { break };
         chain.push((*frame).clone());
         at = best[&value].1;
     }
     chain
+}
+
+/// How many branches of `frames` are left beside the chain `chosen`: the
+/// frames not chosen that follow none of the others not chosen.
+fn branches(frames: &[Noted], chosen: &[Noted]) -> i64 {
+    let chosen: std::collections::HashSet<[u8; 32]> = chosen.iter().map(|frame| frame.chain).collect();
+    let left: std::collections::HashSet<[u8; 32]> = frames.iter().filter(|frame| !chosen.contains(&frame.chain)).map(|frame| frame.chain).collect();
+    frames.iter().filter(|frame| left.contains(&frame.chain) && !left.contains(&frame.previous)).count() as i64
 }
 
 /// Takes back, as the hub sealed for the recovery `recovery` reopens, the
@@ -390,7 +422,12 @@ fn longest(frames: &[Noted], epoch: u64, next: u64, head: [u8; 32]) -> Vec<Noted
 /// the hub's own taking, where it stopped noted as it goes, so a reopening
 /// cut short goes on from there. The account records the frames hold are
 /// written back after (`handback_repair`). Lines for the report.
-pub(super) fn take_back(dir: &std::path::Path, assets: &Assets, recovery: u64) -> anyhow::Result<Vec<String>> {
+pub(super) fn take_back(
+    dir: &std::path::Path,
+    directory: &fastctx_net::directory::Directory,
+    assets: &Assets,
+    recovery: u64,
+) -> anyhow::Result<Vec<String>> {
     let noted = noted_of(assets, recovery)?;
     let mut lines = Vec::new();
     for ((owner_key, key, stream), frames) in &noted {
@@ -433,7 +470,7 @@ pub(super) fn take_back(dir: &std::path::Path, assets: &Assets, recovery: u64) -
             None => {
                 let chain = longest(frames, tail.epoch, tail.next, tail.head);
                 let (end, head) = chain.last().map_or((tail.next, tail.head), |frame| (frame.first + frame.count, frame.chain));
-                let branches = (frames.len() - chain.len()) as i64;
+                let branches = branches(frames, &chain);
                 let (owner_key, k, s, tail_head) = (owner_key.clone(), key.clone(), stream.clone(), tail.head);
                 let tail_next = tail.next;
                 assets.control.write_now(512, move |c| {
@@ -454,7 +491,7 @@ pub(super) fn take_back(dir: &std::path::Path, assets: &Assets, recovery: u64) -
             Some(why) => format!("{key} {stream}: took back {applied} frame(s) handed back, then stopped: {why}"),
         });
     }
-    lines.extend(super::handback_repair::repair(dir, assets, recovery)?);
+    lines.extend(super::handback_repair::repair(dir, directory, assets, recovery)?);
     Ok(lines)
 }
 
@@ -572,6 +609,10 @@ mod tests {
         ];
         let chain: Vec<u8> = longest(&frames, 0, 5, [1; 32]).iter().map(|frame| frame.chain[0]).collect();
         assert_eq!(chain, vec![4, 5]);
+        // Beside it, the branch from the tail two frames long and the two
+        // frames that go on from nothing kept: three branches, four frames.
+        let chosen = longest(&frames, 0, 5, [1; 32]);
+        assert_eq!(super::branches(&frames, &chosen), 3);
     }
 
     #[test]
