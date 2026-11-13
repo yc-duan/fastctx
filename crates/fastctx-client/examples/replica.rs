@@ -72,7 +72,9 @@ async fn run() -> Result<(), String> {
         let addresses = tokio::net::lookup_host(hub.as_str()).await.map_err(error)?.collect();
         let account = fastctx_types::AccountName::try_from(account.clone()).map_err(|error| error.to_string())?;
         let name = asked.name.clone().map(fastctx_types::MachineName::try_from).transpose().map_err(|error| error.to_string())?;
-        if device.state().hubs.is_empty() {
+        // Logged in as asked: unless a network the device is on has that
+        // account logged in already (codex-058517ed #25).
+        if !device.state().hubs.iter().any(|hub| hub.logins.contains(&account)) {
             device.login(addresses, account, password, name).await.map_err(|error| error.to_string())?;
         }
     }

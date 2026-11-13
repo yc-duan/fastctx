@@ -55,8 +55,11 @@ pub(super) async fn open(replica: &Replica, hub: &HubId, link: &Arc<Link>) -> Re
     };
     let key = replica.pins.pin_following(hub, &offered, &rotations)?;
     if closed {
-        // The hub set the history the device saw aside as it recovered.
+        // The hub set the history the device saw aside as it recovered:
+        // the next pass looks at every scope whole, where each stream is
+        // checked against the hub's (codex-058517ed #8).
         replica.pins.forget_seen(hub).map_err(|error| error.to_string())?;
+        replica.called.lock().expect("called").entry(hub.clone()).or_default().whole = true;
     }
     Ok(key)
 }
@@ -169,6 +172,35 @@ pub(super) async fn pull(replica: &Replica, hub: &HubId, link: &Arc<Link>, key: 
             })
             .await?;
             local.insert(stream, next);
+        }
+    }
+    // Where each stream stands, checked with the hub: one that differs —
+    // the hub put back and written on another way, as long as here or
+    // longer — is cut back to the last place both hold, or let go of whole
+    // where none is, a window from before the hub's history included, and
+    // taken again (design §7.5; codex-058517ed #8, #9).
+    let (scope_text, device) = (scope.to_string(), replica.device());
+    let standing = blocking(library, move |library| library.replica_standing(&scope_text, &device)).await?;
+    if !standing.is_empty() {
+        let cursors =
+            standing.into_iter().map(|(stream, sequence, head)| wire::Cursor { stream, sequence, head: head.into() }).collect();
+        let Reply::Standing { streams: checked } =
+            ask(replica, link, Request::Cursors { scope: scope.to_string(), holding, streams: cursors }).await?
+        else {
+            return Err("the hub did not check the cursors".into());
+        };
+        for standing in checked.into_iter().filter(|standing| !standing.agrees) {
+            let ends: Vec<(u64, [u8; 32])> =
+                standing.ends.iter().filter_map(|(end, head)| head.array().map(|head| (*end, head))).collect();
+            // The hub holds nothing of it: the hub lags, nothing here is cut.
+            if ends.is_empty() {
+                continue;
+            }
+            let (scope_text, stream_text) = (scope.to_string(), standing.stream.clone());
+            let shared = blocking(library, move |library| library.shared_end(&scope_text, &stream_text, &ends)).await?;
+            let (scope_text, stream_text) = (scope.to_string(), standing.stream.clone());
+            blocking(library, move |library| library.truncate(&scope_text, &stream_text, shared)).await?;
+            local.insert(standing.stream, shared.map_or(0, |through| through + 1));
         }
     }
     for at in &streams {
