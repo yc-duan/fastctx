@@ -88,7 +88,8 @@ pub(crate) fn kinds() -> Arc<fastctx_content::v2::Kinds> {
         .register::<fastctx_content::v2::AccountProfile>()
         .register::<fastctx_content::v2::AccountCollaboration>()
         .register::<fastctx_content::v2::AccountActivity>()
-        .register::<fastctx_content::v2::AccountUsage>();
+        .register::<fastctx_content::v2::AccountUsage>()
+        .register::<fastctx_content::v2::ConversationDraft>();
     #[cfg(test)]
     let kinds = kinds.register::<super::drill_kinds::Plain>();
     Arc::new(kinds)

@@ -12,6 +12,7 @@ mod collect;
 mod commit;
 mod device;
 mod document;
+mod draft;
 mod exchange;
 mod facts;
 mod frame;
@@ -63,6 +64,7 @@ pub use kind::{Actor, Deletion, Holding, Import, Kind, Kinds, Write, Writer};
 pub use timeline::{EVENT, OVERSIZED, Timeline};
 pub use activity::{AccountActivity, AccountUsage};
 pub use artifact::ConversationArtifact;
+pub use draft::ConversationDraft;
 pub use attachment::ConversationAttachment;
 pub use timer::ConversationTimer;
 pub use document::{

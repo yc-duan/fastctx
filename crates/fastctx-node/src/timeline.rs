@@ -17,6 +17,7 @@ mod local;
 mod artifacts;
 mod attachments;
 mod beside;
+pub(crate) mod draft;
 mod meta;
 pub(crate) mod words;
 pub(crate) use assets::{checkpoint_of, scope_of};

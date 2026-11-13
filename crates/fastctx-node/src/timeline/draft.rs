@@ -1,0 +1,102 @@
+//! A conversation's input-box draft in the asset library (design §28.24,
+//! plan 3-4 group 4): the composer here merges every device's edits, so what
+//! goes in is its view as it stands — the text, the attachments and uploads
+//! with it, and the epoch a send moves on — one item, written where it
+//! changed. Looked at by the timeline's job, which each committed change of
+//! the composer asks for, and once for each conversation after the node
+//! starts.
+
+use super::beside::{Beside, writable};
+use crate::Node;
+use fastctx_content::v2::{ConversationDraft, Kind as _, Write, Writer};
+use fastctx_types::ResidentId;
+use fastctx_types::ipc::Failure;
+use std::collections::HashSet;
+use std::sync::{Arc, LazyLock, Mutex};
+
+/// The conversations whose composer changed since their draft was written,
+/// and those whose draft was looked at since the node began.
+static CHANGED: LazyLock<Mutex<HashSet<ResidentId>>> = LazyLock::new(Mutex::default);
+static LOOKED: LazyLock<Mutex<HashSet<ResidentId>>> = LazyLock::new(Mutex::default);
+
+/// The one item a draft is.
+const ITEM: &[u8] = b"draft";
+
+fn failure(error: impl std::fmt::Display) -> Failure {
+    Failure::new(error.to_string())
+}
+
+/// `resident`'s composer changed: its draft is written again.
+pub(crate) fn changed(node: &Node, resident: &ResidentId) {
+    CHANGED.lock().expect("changed drafts").insert(resident.clone());
+    super::tail::wanted(node, resident);
+}
+
+/// Brings `resident`'s draft in the asset library to its composer here;
+/// how many items were written.
+pub(super) async fn produce(
+    node: &Arc<Node>,
+    resident: &ResidentId,
+    producing: &super::serial::Serial,
+) -> Result<usize, Failure> {
+    let changed = CHANGED.lock().expect("changed drafts").remove(resident);
+    if !changed && LOOKED.lock().expect("looked drafts").contains(resident) {
+        return Ok(0);
+    }
+    let held = producing.hold(resident).await;
+    let Some(Beside { library, scope, holding }) = writable(node, resident, ConversationDraft::STREAM, &held).await?
+    else {
+        // Looked at again once it may be written.
+        if changed {
+            CHANGED.lock().expect("changed drafts").insert(resident.clone());
+        }
+        return Ok(0);
+    };
+    let read = crate::composer::here(node, &node.machine(), resident, fastctx_types::composer::Request::Read).await;
+    let composer = match read {
+        Ok(updated) => updated.composer,
+        Err(error) => {
+            CHANGED.lock().expect("changed drafts").insert(resident.clone());
+            return Err(error);
+        }
+    };
+    let draft = &composer.draft;
+    let body = serde_json::to_vec(&serde_json::json!({
+        "epoch": draft.epoch,
+        "revision": composer.revision,
+        "text": draft.text,
+        "attachments": draft.attachments,
+        "uploads": draft.uploads,
+        "files_on": draft.files_on,
+    }))
+    .map_err(failure)?;
+    let signer = node.assets.as_ref().map(|assets| assets.signer()).ok_or_else(|| failure("no asset library"))?;
+    let written = fastctx_platform::task::blocking(move || {
+        let _held = held;
+        if library.item(&scope, ConversationDraft::STREAM, ITEM).map_err(failure)?.is_some_and(|entry| entry.body == body) {
+            return Ok(0);
+        }
+        Writer::<ConversationDraft>::new(&library, &scope, ConversationDraft::STREAM)
+            .map_err(failure)?
+            .in_holding(holding)
+            .write_all(
+                vec![Write { item: ITEM.to_vec(), order: ITEM.to_vec(), value: Some(body), objects: Vec::new() }],
+                Vec::new(),
+                false,
+                signer,
+            )
+            .map_err(failure)?;
+        Ok::<_, Failure>(1)
+    })
+    .await;
+    match written {
+        Ok(written) => {
+            LOOKED.lock().expect("looked drafts").insert(resident.clone());
+            Ok(written)
+        }
+        Err(error) => {
+            CHANGED.lock().expect("changed drafts").insert(resident.clone());
+            Err(error)
+        }
+    }
+}

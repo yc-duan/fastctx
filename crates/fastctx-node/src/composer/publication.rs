@@ -21,6 +21,10 @@ pub(super) fn cache(snapshots: &Snapshots, runtime: &tokio::runtime::Handle, id:
 pub(super) fn invalidate(node: &Node, runtime: &tokio::runtime::Handle, id: &ResidentId, revision: u64) {
     replace(&node.composers.snapshots, runtime, id, Cached { revision, view: None });
     failures::committed(node, id, revision);
+    // Committed: its draft in the asset library is written again (§28.24),
+    // asked for on the runtime, as this may run on the database's writer.
+    let _entered = runtime.enter();
+    crate::timeline::draft::changed(node, id);
 }
 
 fn replace(snapshots: &Snapshots, runtime: &tokio::runtime::Handle, id: &ResidentId, next: Cached) -> bool {

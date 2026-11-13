@@ -226,7 +226,7 @@ pub(super) const KINDS: &[Registration] = &[
         "conversation.draft",
         Asset,
         Conversation,
-        Hub,
+        SourceDevice,
         Yrs,
         UntilDeleted,
         Complete,

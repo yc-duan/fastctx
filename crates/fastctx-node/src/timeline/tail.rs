@@ -877,6 +877,15 @@ async fn run(node: &Arc<Node>, resident: &ResidentId) -> Outcome {
             node.log.line(format_args!("{resident}'s timers: {error}"));
         }
     }
+    // Its input-box draft, as the composer here has it (§28.24).
+    match super::draft::produce(node, resident, &PRODUCING).await {
+        Ok(0) => {}
+        Ok(written) => node.log.line(format_args!("{resident}'s draft: {written} written")),
+        Err(error) => {
+            beside_failed = true;
+            node.log.line(format_args!("{resident}'s draft: {error}"));
+        }
+    }
     match super::artifacts::produce(node, resident, &PRODUCING).await {
         Ok(0) => {}
         Ok(written) => node.log.line(format_args!("{resident}'s evidence folders: {written} written")),
