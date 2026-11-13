@@ -238,6 +238,9 @@ pub fn classes_for(readers: &Readers, key: &str) -> Vec<StreamClass> {
         // whole, held where they are logged in; a conversation opened on
         // it, as any conversation.
         Readers::Body { .. } if key.ends_with("/log") => whole(Holders::Logged),
+        // What a machine shared whole did and spent, for any account: held
+        // as an account's records are (§29, 2.5).
+        Readers::Body { .. } if key.ends_with("/records") => records_classes(),
         Readers::Body { .. } => conversation_classes(),
         Readers::Account { .. } => records_classes(),
         Readers::Project { .. } => whole(Holders::Readers),

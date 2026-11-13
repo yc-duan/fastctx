@@ -8,6 +8,13 @@
 //! while its journal is still read; a piece of usage once. Where each look
 //! stands is kept beside, by network; a scope held anew is written again
 //! whole, what is there as it is left alone.
+//!
+//! A machine shared whole holds no account's records' scope, so while it is
+//! shared what it did and spent goes into its body's `records` scope instead,
+//! read by the body's members (design §29, 2.5). What was done before a share
+//! came into force stays its accounts' own: as the machine clears for a share,
+//! where the book and each usage file stand is marked, and nothing before the
+//! mark goes to the body.
 
 use super::logs::proposed;
 use crate::Node;
@@ -50,8 +57,11 @@ pub(crate) fn start(node: &Arc<Node>) {
                 // user's to wait (OO17).
                 let home = me.home.clone().filter(|home| me.managed || me.logins.contains(home));
                 let waits = me.home.is_some() && home.is_none();
+                let owner = me.home.clone();
                 drop(view);
-                if let Err(error) = fastctx_platform::task::blocking(move || look(&working, &hub, home.as_ref(), waits)).await {
+                if let Err(error) =
+                    fastctx_platform::task::blocking(move || look(&working, &hub, home.as_ref(), waits, owner.as_ref())).await
+                {
                     node.log.line(format_args!("writing what was done here into the asset library: {error}"));
                 }
             }
@@ -92,12 +102,103 @@ fn writable(node: &Node, library: &Library, hub: &HubId, account: &AccountName, 
     Ok(Some((scope, holding)))
 }
 
+/// The body's `records` scope this machine, shared whole as `body` and owned
+/// by `owner`, writes `stream` in now, and its holding; proposed while it is
+/// not held.
+fn body_scope(node: &Node, library: &Library, hub: &HubId, body: &str, owner: Option<&AccountName>, stream: &str) -> Result<Option<(String, i64)>, String> {
+    let Some(owner) = owner else { return Ok(None) };
+    let readers = Readers::Body { body: body.to_string(), opener: owner.clone() };
+    let Some(scope) = proposed(node, hub, readers, "records")? else { return Ok(None) };
+    let error = |error: fastctx_content::Error| error.to_string();
+    let Some(holding) = library.holding(&scope).map_err(error)? else { return Ok(None) };
+    let device = node.assets.as_ref().map(|assets| assets.device()).unwrap_or_default();
+    if library.orderer(&scope, stream).map_err(error)?.is_some_and(|orderer| orderer != device) {
+        return Ok(None);
+    }
+    Ok(Some((scope, holding)))
+}
+
+/// Where this look writes: the body this machine is shared whole as on
+/// `hub` now, and its owner.
+struct Shared<'a> {
+    body: Option<String>,
+    owner: Option<&'a AccountName>,
+}
+
 /// One look at what was done here for the accounts of `hub`.
-fn look(node: &Arc<Node>, hub: &HubId, home: Option<&AccountName>, waits: bool) -> Result<(), String> {
+fn look(node: &Arc<Node>, hub: &HubId, home: Option<&AccountName>, waits: bool, owner: Option<&AccountName>) -> Result<(), String> {
     let Some(assets) = node.assets.as_ref() else { return Ok(()) };
     let machine: String = assets.device()[..8].iter().map(|byte| format!("{byte:02x}")).collect();
-    deeds(node, hub, home, waits, &format!("{}/{machine}", AccountActivity::STREAM))?;
-    usage(node, hub, home, waits, &format!("{}/{machine}", AccountUsage::STREAM))
+    let shared = Shared { body: crate::timeline::born_shared::shared_body(node, hub), owner };
+    deeds(node, hub, home, waits, &shared, &format!("{}/{machine}", AccountActivity::STREAM))?;
+    usage(node, hub, home, waits, &shared, &format!("{}/{machine}", AccountUsage::STREAM))
+}
+
+/// Marks where the book and each usage file stand for `hub` now, as this
+/// machine clears for a share: nothing up to here goes to a body (§29, 2.5).
+/// A mark only moves on. Call on a thread that may block.
+pub(crate) fn mark_private(node: &Node, hub: &HubId) -> Result<(), String> {
+    let Some(assets) = node.assets.as_ref() else { return Ok(()) };
+    let library = &assets.library;
+    let error = |error: fastctx_content::Error| error.to_string();
+    if node.book_database.fault().is_none() {
+        let last: Option<(i64, String)> = node
+            .book_database
+            .read_now(|db| {
+                use fastctx_storage::rusqlite::OptionalExtension as _;
+                Ok(db
+                    .prepare_cached("SELECT began, deed FROM book_deeds ORDER BY began DESC, deed DESC LIMIT 1")?
+                    .query_row([], |row| Ok((row.get(0)?, row.get(1)?)))
+                    .optional()?)
+            })
+            .map_err(|error| error.to_string())?;
+        if let Some((began, deed)) = last {
+            let name = format!("activity/{hub}");
+            let mut at = standing(library, &name)?;
+            let was = (at["private"]["began"].as_i64().unwrap_or(i64::MIN), at["private"]["deed"].as_str().unwrap_or_default().to_string());
+            if (began, deed.clone()) > was {
+                at["private"] = serde_json::json!({ "began": began, "deed": deed });
+                library.keep_checkpoint(&name, serde_json::to_vec(&at).map_err(|error| error.to_string())?).map_err(error)?;
+            }
+        }
+    }
+    let name = format!("usage/{hub}");
+    let mut at = standing(library, &name)?;
+    let mut moved = false;
+    for (file, path) in usage_files(node)? {
+        let Ok(metadata) = fastctx_platform::disk::metadata(&path) else { continue };
+        if at["private"][&file].as_u64().is_none_or(|was| was < metadata.len()) {
+            at["private"][&file] = serde_json::json!(metadata.len());
+            moved = true;
+        }
+    }
+    if moved {
+        library.keep_checkpoint(&name, serde_json::to_vec(&at).map_err(|error| error.to_string())?).map_err(error)?;
+    }
+    Ok(())
+}
+
+/// Every usage file here, as `<ledger>/<date>` with its path, in order.
+fn usage_files(node: &Node) -> Result<Vec<(String, std::path::PathBuf)>, String> {
+    let root = node.world.path().join("usage");
+    let ledgers = match fastctx_platform::disk::read_dir(&root) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(format!("looking at {}: {error}", root.display())),
+    };
+    let mut files = Vec::new();
+    for ledger in ledgers.flatten() {
+        let Some(dir) = ledger.file_name().to_str().map(str::to_string) else { continue };
+        let Ok(days) = fastctx_platform::disk::read_dir(ledger.path()) else { continue };
+        for day in days.flatten() {
+            let Some(date) = day.file_name().to_str().and_then(|name| name.strip_suffix(".jsonl")).map(str::to_string) else {
+                continue;
+            };
+            files.push((format!("{dir}/{date}"), day.path()));
+        }
+    }
+    files.sort();
+    Ok(files)
 }
 
 /// Where a look stands, kept beside: by network.
@@ -183,7 +284,7 @@ fn deed_of(row: &fastctx_storage::rusqlite::Row<'_>) -> fastctx_storage::rusqlit
 
 /// Writes the deeds since the last look, and those still read, of the
 /// accounts of `hub`.
-fn deeds(node: &Arc<Node>, hub: &HubId, home: Option<&AccountName>, waits: bool, stream: &str) -> Result<(), String> {
+fn deeds(node: &Arc<Node>, hub: &HubId, home: Option<&AccountName>, waits: bool, shared: &Shared<'_>, stream: &str) -> Result<(), String> {
     let Some(assets) = node.assets.as_ref() else { return Ok(()) };
     let library = &assets.library;
     if node.book_database.fault().is_some() {
@@ -198,6 +299,9 @@ fn deeds(node: &Arc<Node>, hub: &HubId, home: Option<&AccountName>, waits: bool,
     let (began, after) = (at["began"].as_i64().unwrap_or(i64::MIN), at["deed"].as_str().unwrap_or_default().to_string());
     let open: BTreeSet<String> =
         at["open"].as_array().into_iter().flatten().filter_map(|deed| deed.as_str().map(str::to_string)).collect();
+    // Up to where the book stood as this machine cleared for a share: its
+    // accounts' own, never the body's.
+    let private = (at["private"]["began"].as_i64().unwrap_or(i64::MIN), at["private"]["deed"].as_str().unwrap_or_default().to_string());
     let (found, touched) = node
         .book_database
         .read_now(move |db| {
@@ -242,19 +346,28 @@ fn deeds(node: &Arc<Node>, hub: &HubId, home: Option<&AccountName>, waits: bool,
         if deed.began > last_began || (deed.began == last_began && deed.key > last_deed) {
             (last_began, last_deed) = (deed.began, deed.key.clone());
         }
-        let Some(account) = routed(&deed.account, hub, home) else {
-            // The machine's own user's, its owner not logged in now: looked at
-            // again, not passed by (OO17).
-            if deed.account.is_empty() && waits {
-                still_open.insert(deed.key.clone());
+        let before_shared = (deed.began, deed.key.clone()) <= private;
+        let target = match shared.body.as_deref().filter(|_| !before_shared) {
+            Some(body) => body_scope(node, library, hub, body, shared.owner, stream)?,
+            None => {
+                let Some(account) = routed(&deed.account, hub, home) else {
+                    // The machine's own user's, its owner not logged in now:
+                    // looked at again, not passed by (OO17).
+                    if deed.account.is_empty() && waits {
+                        still_open.insert(deed.key.clone());
+                    }
+                    continue;
+                };
+                writable(node, library, hub, &account, stream)?
             }
-            continue;
         };
-        let Some((scope, holding)) = writable(node, library, hub, &account, stream)? else {
+        let Some((scope, holding)) = target else {
             // Its scope not held yet: looked at again.
             still_open.insert(deed.key.clone());
             continue;
         };
+        // Whose it is, as a body's records hold several accounts'.
+        deed.body["account"] = serde_json::json!(deed.account);
         anew |= held_anew(&mut at, &scope, holding);
         if !deed.complete {
             still_open.insert(deed.key.clone());
@@ -303,27 +416,10 @@ fn deeds(node: &Arc<Node>, hub: &HubId, home: Option<&AccountName>, waits: bool,
 
 /// Writes the usage lines since the last look of the accounts of `hub`,
 /// each account's lines of a piece as one object.
-fn usage(node: &Arc<Node>, hub: &HubId, home: Option<&AccountName>, waits: bool, stream: &str) -> Result<(), String> {
+fn usage(node: &Arc<Node>, hub: &HubId, home: Option<&AccountName>, waits: bool, shared: &Shared<'_>, stream: &str) -> Result<(), String> {
     let Some(assets) = node.assets.as_ref() else { return Ok(()) };
     let library = &assets.library;
-    let root = node.world.path().join("usage");
-    let ledgers = match fastctx_platform::disk::read_dir(&root) {
-        Ok(entries) => entries,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-        Err(error) => return Err(format!("looking at {}: {error}", root.display())),
-    };
-    let mut files = Vec::new();
-    for ledger in ledgers.flatten() {
-        let Some(dir) = ledger.file_name().to_str().map(str::to_string) else { continue };
-        let Ok(days) = fastctx_platform::disk::read_dir(ledger.path()) else { continue };
-        for day in days.flatten() {
-            let Some(date) = day.file_name().to_str().and_then(|name| name.strip_suffix(".jsonl")).map(str::to_string) else {
-                continue;
-            };
-            files.push((format!("{dir}/{date}"), day.path()));
-        }
-    }
-    files.sort();
+    let files = usage_files(node)?;
     let name = format!("usage/{hub}");
     let mut at = standing(library, &name)?;
     if any_held_anew(library, &mut at)? {
@@ -354,6 +450,45 @@ fn usage(node: &Arc<Node>, hub: &HubId, home: Option<&AccountName>, waits: bool,
         // Whole lines only: the rest is read when it is whole.
         let Some(end) = bytes.iter().rposition(|&byte| byte == b'\n') else { continue };
         let mut bytes = &bytes[..=end];
+        // Up to where the file stood as this machine cleared for a share:
+        // its accounts' own, never the body's.
+        let mark = at["private"][&file].as_u64().filter(|mark| *mark > offset);
+        if let Some(mark) = mark
+            && ((mark - offset) as usize) < bytes.len()
+        {
+            let kept = &bytes[..(mark - offset) as usize];
+            let Some(end) = kept.iter().rposition(|&byte| byte == b'\n') else { continue };
+            bytes = &kept[..=end];
+        }
+        // Shared whole now: the piece, any account's lines, goes to the body.
+        if let (Some(body), None) = (shared.body.as_deref(), mark) {
+            let Some((scope, holding)) = body_scope(node, library, hub, body, shared.owner, stream)? else { continue };
+            if held_anew(&mut at, &scope, holding) {
+                anew = true;
+                break 'files;
+            }
+            let item = format!("{file}/{offset:016x}").into_bytes();
+            if library.item(&scope, stream, &item).map_err(error)?.is_none() {
+                let lease = library.put(&mut &bytes[..], "usage", LEASE).map_err(error)?;
+                let body = serde_json::to_vec(
+                    &serde_json::json!({ "file": file, "offset": offset, "length": bytes.len(), "source": bytes.len() }),
+                )
+                .map_err(|error| error.to_string())?;
+                Writer::<AccountUsage>::new(library, &scope, stream)
+                    .map_err(error)?
+                    .in_holding(holding)
+                    .write_all(
+                        vec![Write { order: item.clone(), item, value: Some(body), objects: vec![lease.object] }],
+                        vec![lease],
+                        false,
+                        assets.signer(),
+                    )
+                    .map_err(error)?;
+            }
+            at["files"][&file] = serde_json::json!(offset + bytes.len() as u64);
+            budget = budget.saturating_sub(bytes.len() as u64);
+            continue;
+        }
         // Each account's lines; and whether any is the machine's own user's
         // with its owner not logged in now, which waits (OO17).
         let split = |bytes: &[u8]| {

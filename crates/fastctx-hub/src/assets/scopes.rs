@@ -201,12 +201,18 @@ pub(crate) fn readable(directory: &Indexed<'_>, machine: &MachineName, scope: &S
     readable_known(directory, machine, scope).unwrap_or(false)
 }
 
-/// Whether `scope` is the log of the body `machine` is now: its own, which
+/// Whether `key` names a body's scope of its machine's own: its log, and what
+/// it did and spent (§29, 2.5).
+pub(crate) fn machines_own(key: &str) -> bool {
+    key.ends_with("/log") || key.ends_with("/records")
+}
+
+/// Whether `scope` is a scope of the body `machine` is now of its own: one
 /// it writes and holds whoever is logged in there — none, on a machine its
 /// owner manages (PP10, N08).
 fn own_log(directory: &Indexed<'_>, machine: &MachineName, scope: &Scope) -> bool {
     matches!(&scope.descriptor.readers, Readers::Body { body, .. }
-        if scope.descriptor.scope.ends_with("/log")
+        if machines_own(&scope.descriptor.scope)
             && super::bodies::body_of(directory.all, machine).as_deref() == Some(body.as_str()))
 }
 
@@ -484,14 +490,14 @@ pub(crate) fn describe(
         // Its log, opened by its owner, though none is logged in there (a
         // machine its owner manages, PP10, N08).
         let owner = directory.member(machine).and_then(|member| member.home.clone());
-        let own_log = key.ends_with("/log") && owner.as_ref() == Some(opener);
+        let own_log = machines_own(key) && owner.as_ref() == Some(opener);
         if !own_log && !principal.contains(opener) {
             return Err("a body's opener is an account this machine acts for".into());
         }
         assets.bodies.known(directory.all, body, directory.canonical(machine)).map_err(|error| error.to_string())?;
     }
     let own_log = matches!(&readers, Readers::Body { body, .. }
-        if key.ends_with("/log") && super::bodies::body_of(directory.all, machine).as_deref() == Some(body.as_str()));
+        if machines_own(key) && super::bodies::body_of(directory.all, machine).as_deref() == Some(body.as_str()));
     if !own_log && !principal.iter().any(|account| reads(directory, account, &readers, &born, bodies.as_deref())) {
         return Err("none of this machine's accounts reads that scope".into());
     }

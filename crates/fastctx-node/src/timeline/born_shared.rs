@@ -22,6 +22,11 @@ pub(crate) fn now(node: &Node) -> BTreeMap<String, Option<String>> {
         .collect()
 }
 
+/// The body this machine is on `hub` while it is shared whole there now.
+pub(crate) fn shared_body(node: &Node, hub: &fastctx_types::access::HubId) -> Option<String> {
+    now(node).remove(hub.as_str()).flatten()
+}
+
 /// The body this machine is on `hub` now, shared whole or not.
 pub(crate) fn body_here(node: &Node, hub: &fastctx_types::access::HubId) -> Option<String> {
     let link = node.link_of(hub)?;

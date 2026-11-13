@@ -52,16 +52,19 @@ pub(super) const KINDS: &[Registration] = &[
         Confirmed,
         HandlerWithTombstone
     ),
+    // The hub's directory is its control state, given to devices as views
+    // over the control channel, never synced as an asset (design §29, 2.7).
+    // Kept in place: a kind's number is its place in this list.
     kind!(
         "account.directory",
-        Asset,
+        Runtime,
         Account,
         Hub,
         SingleWriter,
-        UntilDeleted,
-        Complete,
+        UntilResolved,
+        LocalOnly,
         "fastctx-hub::store",
-        Assets,
+        Foundation,
         Json,
         false,
         false,
@@ -171,23 +174,29 @@ pub(super) const KINDS: &[Registration] = &[
         Confirmed,
         GenericTombstone
     ),
+    // Where a host record was read up to is the timeline producer's
+    // checkpoint, kept on the machine that reads it; what it produces is
+    // `conversation.timeline` (design §29, 2.7). Kept in place: a kind's
+    // number is its place in this list.
     kind!(
         "conversation.timeline-observation",
-        Asset,
+        Runtime,
         Conversation,
-        SourceDevice,
-        SingleWriter,
-        UntilDeleted,
-        Recent,
+        Local,
+        LocalOwner,
+        UntilResolved,
+        LocalOnly,
         "fastctx-node::timeline",
-        Migration,
-        SourceRecords,
+        Foundation,
+        Bytes,
         true,
         false,
         false,
         Confirmed,
         GenericTombstone
     ),
+    // A sentinel's runs: an asset of the conversation's scope, in the stream
+    // `sentinel-runs/<home>` its home machine orders (design §29, 2.7).
     kind!(
         "conversation.sentinel-run",
         Asset,
