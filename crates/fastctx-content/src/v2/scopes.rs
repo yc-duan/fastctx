@@ -133,8 +133,10 @@ impl Library {
                 }
                 // So does what only evidence of the period held; its holds go
                 // before it does.
+                // The same rows, in the same order, as the evidence deleted
+                // below: a frame's variants by chain go together (AW03).
                 let evidence = "SELECT holder FROM evidence WHERE stream IN (SELECT id FROM streams WHERE scope = ?1) AND holding = ?2
-                                ORDER BY stream, epoch, first, digest LIMIT ?3";
+                                ORDER BY stream, epoch, first, digest, chain, holding LIMIT ?3";
                 db.prepare_cached(&format!(
                     "UPDATE objects SET unreferenced = ?4 WHERE state = 1 AND hash IN
                      (SELECT hash FROM object_holds WHERE kind = 'evidence' AND holder IN ({evidence}))"
@@ -150,7 +152,7 @@ impl Library {
                     ("parked_objects", "stream, epoch, first, holding, hash"),
                     ("refused_objects", "stream, epoch, first, holding, hash"),
                     ("parked", "stream, epoch, first, holding"),
-                    ("evidence", "stream, epoch, first, digest, holding"),
+                    ("evidence", "stream, epoch, first, digest, chain, holding"),
                     ("prefix_items", "stream, item, holding"),
                 ] {
                     done += db

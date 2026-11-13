@@ -1068,7 +1068,8 @@ async fn discover(
             // pulled whole again, its streams each judged anew (HH04).
             // Who logged in here reads it rides along: a copy is read here
             // only for them (AV01).
-            let (holds, readers) = (held.holds.join("\n"), held.readers.join("\n"));
+            let holds = held.holds.join("\n");
+            let readers = serde_json::json!({ "of": held.readers, "frozen": held.frozen }).to_string();
             let listed = here.as_ref().map(|listing| (listing.allowed.as_deref(), listing.readers.as_deref()));
             if listed != Some((Some(holds.as_str()), Some(readers.as_str()))) {
                 let scope = held.scope.clone();

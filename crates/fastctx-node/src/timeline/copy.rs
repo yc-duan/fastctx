@@ -118,20 +118,38 @@ fn reader_here(node: &Node, scope: &fastctx_content::v2::HeldScope) -> bool {
     else {
         return false;
     };
+    let Some(listed) = scope.readers.as_deref().and_then(|text| serde_json::from_str::<Listed>(text).ok()) else {
+        return false;
+    };
     let logins = node.accounts_on(&link, &fastctx_types::access::Acting::Here);
     let view = link.view();
     let directory = &view.directory;
+    // A machine as the scope was described: its key and its owner as opened,
+    // so another machine taking its name is not it (AW04).
+    let as_described = |machine: &fastctx_types::MachineName| {
+        descriptor.born.get(&format!("machine:{machine}")).is_some_and(|was| {
+            directory.members.iter().find(|member| member.name == *machine).is_some_and(|member| {
+                let home = member.home.as_ref().map(|home| {
+                    let opened = directory.account(home).map(|account| account.opened.as_millisecond().to_string());
+                    format!("{home}@{}", opened.unwrap_or_default())
+                });
+                format!("{}:{}", member.key, home.unwrap_or_default()) == *was
+            })
+        })
+    };
     let reads_now = |account: &AccountName| match &descriptor.readers {
         Readers::Conversation { openers, born_on } => {
-            fastctx_net::record_ownership::allows(directory, account, openers, born_on.as_ref())
+            fastctx_net::record_ownership::allows(directory, account, openers, born_on.as_ref().filter(|machine| as_described(machine)))
         }
         Readers::Body { body, opener } => {
             account == opener || {
                 let machine =
                     directory.members.iter().find(|member| directory.body_of(&member.name).as_deref() == Some(body.as_str()));
                 match machine {
-                    // Its machine gone, its members frozen: as the hub listed them.
-                    None => true,
+                    // Its machine gone, its members frozen: as the hub listed
+                    // them once it was gone, never as it listed them before
+                    // (AW01).
+                    None => listed.frozen,
                     Some(member) => {
                         member.home.as_ref() == Some(account)
                             || directory.shares.iter().any(|share| share.machine == member.name && share.active() && &share.account == account)
@@ -141,7 +159,7 @@ fn reader_here(node: &Node, scope: &fastctx_content::v2::HeldScope) -> bool {
         }
         _ => false,
     };
-    scope.readers.as_deref().unwrap_or_default().lines().any(|reader| {
+    listed.of.iter().any(|reader| {
         let Some((name, opened)) = reader.rsplit_once('@') else { return false };
         let Ok(account) = AccountName::try_from(name.to_string()) else { return false };
         logins.contains(&account)
@@ -150,6 +168,16 @@ fn reader_here(node: &Node, scope: &fastctx_content::v2::HeldScope) -> bool {
                 .is_some_and(|found| !found.locked && found.opened.as_millisecond().to_string() == opened)
             && reads_now(&account)
     })
+}
+
+/// Who the hub last listed as reading a scope held here (`Held.readers`,
+/// `Held.frozen`), as `assets::session` keeps it.
+#[derive(serde::Deserialize)]
+struct Listed {
+    #[serde(default)]
+    of: Vec<String>,
+    #[serde(default)]
+    frozen: bool,
 }
 
 /// The record of the job `job`, as a copy here read by one logged in here

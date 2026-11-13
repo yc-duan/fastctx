@@ -58,7 +58,8 @@ pub(crate) fn list(
                     .map(|class| class.prefix.clone())
                     .collect();
                 let readers = readers_here(directory, machine, &scope);
-                scopes.push(Held { scope: key, descriptor: scope.fact.clone(), holds, readers });
+                let frozen = frozen(directory, &scope);
+                scopes.push(Held { scope: key, descriptor: scope.fact.clone(), holds, readers, frozen });
             }
         }
         through = Some(at);
@@ -86,6 +87,17 @@ fn readers_here(directory: &Indexed<'_>, machine: &MachineName, scope: &scopes::
         .filter(|account| scopes::reads(directory, account, &descriptor.readers, &descriptor.born, scope.bodies.as_deref()))
         .filter_map(|account| directory.account(account).map(|found| format!("{account}@{}", found.opened.as_millisecond())))
         .collect()
+}
+
+/// Whether `scope` is a body's whose machine is gone from the network now, its
+/// members as they were frozen.
+fn frozen(directory: &Indexed<'_>, scope: &scopes::Scope) -> bool {
+    let (Readers::Body { body, .. }, Some(bodies)) = (&scope.descriptor.readers, &scope.bodies) else { return false };
+    match bodies.machine(body) {
+        Ok(Some(machine)) => directory.all.member(&machine).is_none_or(|member| directory.all.body_of(&member.name).as_deref() != Some(body.as_str())),
+        Ok(None) => true,
+        Err(_) => false,
+    }
 }
 
 /// An answer of what `machine` may hold, made by the directory as it stood

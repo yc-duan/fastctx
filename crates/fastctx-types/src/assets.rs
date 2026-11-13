@@ -470,6 +470,11 @@ pub struct Held {
     /// AV02, AV09). Listed for a scope with a class only those logged in hold.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub readers: Vec<String>,
+    /// Whether `readers` were listed while the body the scope is in had its
+    /// machine gone from the network, its members frozen: only such a
+    /// listing stands for a body whose machine is gone (AW01).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub frozen: bool,
 }
 
 /// The old service key's word that the new one follows it (§6.1),
