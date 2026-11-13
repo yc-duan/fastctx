@@ -59,9 +59,19 @@ async fn keep_mark(assets: &Assets, name: &str, mark: &Mark) -> Result<(), Strin
 /// made of a frame: no longer sealed, or another seal.
 pub(super) async fn hand_back(assets: &Assets, hub: &HubId, link: &Arc<Link>, recovery: u64) -> Result<(), String> {
     let key = hub.as_str().to_string();
-    let held = blocking(&assets.library, move |library| library.live_scopes_of(&key)).await?;
+    let mut held = blocking(&assets.library, move |library| library.live_scopes_of(&key)).await?;
+    // A conversation's records first, an account's next, the hub's own log
+    // last: what was written past the copy comes back before what the hub
+    // makes again anyway.
+    held.sort_by_key(|(scope, _, _)| match scope.split('/').next() {
+        Some("c" | "b") => 0,
+        Some("a") => 1,
+        Some("h") => 3,
+        _ => 2,
+    });
     let mut failed = None;
     for (scope, _, holding) in held {
+        let _handing = fastctx_platform::doing::waiting_outside(format!("handing back {scope}"), std::time::Duration::from_secs(60));
         match scope_back(assets, link, recovery, &scope, holding).await {
             Ok(true) => {}
             Ok(false) => return Ok(()),

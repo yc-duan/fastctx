@@ -29,8 +29,16 @@ use std::time::Duration;
 const AGAIN: Duration = Duration::from_secs(30);
 /// How long the hub's answer to one request is waited for before the node
 /// says it waits, and a pass with the hub goes on before the node says so.
-const ANSWERED_WITHIN: Duration = Duration::from_secs(120);
+const ANSWERED_WITHIN: Duration = Duration::from_secs(30);
 const PASSED_WITHIN: Duration = Duration::from_secs(120);
+/// How long one step of a pass goes on before the node says which step.
+const STEP_WITHIN: Duration = Duration::from_secs(60);
+
+/// A step of a pass with `hub`, told by the node watching itself as it goes
+/// on past its time (`stuck`).
+fn phase(hub: &HubId, step: &str) -> fastctx_platform::doing::OutsideWait {
+    fastctx_platform::doing::waiting_outside(format!("{step}, in a pass with {hub}"), STEP_WITHIN)
+}
 /// How often every scope of a hub is looked at whole — every stream asked,
 /// every cursor checked — when nothing called for it sooner (design §28.1).
 const LOOK_WHOLE: Duration = Duration::from_secs(24 * 60 * 60);
@@ -46,6 +54,11 @@ const FRAMES_AT_ONCE: usize = 16;
 /// longer, and goes on the next pass, which comes at once (H05). A pass may
 /// come to one stream twice, from a page and again by its class (I07).
 const RECORDS_A_TURN: u64 = 512;
+/// How many frames of one stream go up in one pass: what is left goes at
+/// once in the next, the other scopes gone through meanwhile — a hub put
+/// back lacking a long stream of this machine's (its log) holds up no
+/// other scope's pull while that stream goes up again.
+const FRAMES_UP_A_TURN: usize = 256;
 /// What a stream not yet caught up when its turn ended says: not a failure.
 const GOES_ON: &str = "goes on next pass: ";
 /// Receipts reported in one page.
@@ -228,6 +241,8 @@ pub(super) async fn blocking<T: Send + 'static>(
     work: impl FnOnce(&Library) -> fastctx_content::Result<T> + Send + 'static,
 ) -> Result<T, String> {
     let library = library.clone();
+    // Waited for past its time, a lock held elsewhere say, the node says so.
+    let _waiting = fastctx_platform::doing::waiting_outside("work on the asset library", ANSWERED_WITHIN);
     fastctx_platform::task::spawn_blocking(move || work(&library))
         .await
         .map_err(|error| error.to_string())?
@@ -248,8 +263,14 @@ async fn pass(node: &Arc<Node>, hub: &HubId, link: &Arc<Link>, network: &Network
     // begins: only a pass that went through every scope at it may say it
     // cleared at it.
     let waited = waiting_revision(link);
-    let key = open(assets, hub, link, session).await?;
-    let mut failed = describe(assets, hub, link, &key, network).await.err();
+    let key = {
+        let _phase = phase(hub, "opening the session");
+        open(assets, hub, link, session).await?
+    };
+    let mut failed = {
+        let _phase = phase(hub, "describing the scopes made here");
+        describe(assets, hub, link, &key, network).await.err()
+    };
     // What wanted a stream taken over as its descriptors came is made again
     // (MM14).
     let taken: Vec<String> = std::mem::take(&mut *assets.taken_over.lock().expect("taken over"));
@@ -263,6 +284,7 @@ async fn pass(node: &Arc<Node>, hub: &HubId, link: &Arc<Link>, network: &Network
     let isolated = shared_elsewhere(node, hub);
     let mut listed = None;
     if isolated.is_none() {
+        let _phase = phase(hub, "listing what this machine may hold");
         match discover(assets, hub, link, &key, network).await {
             Ok(whole) => listed = whole,
             Err(why) => {
@@ -319,7 +341,12 @@ async fn pass(node: &Arc<Node>, hub: &HubId, link: &Arc<Link>, network: &Network
     // after from then on.
     let fresh: std::collections::BTreeSet<String> =
         if whole { owners.clone() } else { owners.difference(&stood).cloned().collect() };
-    let marks = if isolated.is_none() && !fresh.is_empty() { tops(assets, link, &fresh).await.ok() } else { None };
+    let marks = if isolated.is_none() && !fresh.is_empty() {
+        let _phase = phase(hub, "asking where the owner libraries stand");
+        tops(assets, link, &fresh).await.ok()
+    } else {
+        None
+    };
     // Not told where they stand, nothing of this look counts as done: no
     // scope is marked pulled whole and no whole look is taken as made, so
     // the next pass asks again (HH02).
@@ -332,20 +359,26 @@ async fn pass(node: &Arc<Node>, hub: &HubId, link: &Arc<Link>, network: &Network
     let mut short: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     // A scope that fails holds up none after it; the pass reports the first.
     for (scope, holding, first) in &scopes {
+        let _phase = phase(hub, &format!("going through {scope}"));
         // Each step goes on whatever the one before met; a revoked scope
         // goes no further.
+        let step = phase(hub, &format!("going up {scope}"));
         let uploaded = upload(assets, hub, link, &key, session, scope).await;
+        drop(step);
         if uploaded.is_ok() {
             assets.uploads.lock().expect("uploads").remove(scope);
         }
+        let step = phase(hub, &format!("coming down {scope}"));
         let pulled = match &uploaded {
             Err(why) if why.starts_with(REVOKED) => Err(why.clone()),
             _ => pull(assets, hub, link, &key, session, scope, *holding, isolated.is_some()).await,
         };
+        drop(step);
         // What the hub lacks of this machine's own streams, found as they
         // were pulled — the hub put back (§17) — goes up again this very
         // pass, from where the hub is.
         let uploaded = if uploaded.is_ok() && assets.uploads.lock().expect("uploads").contains(scope) {
+            let _step = phase(hub, &format!("going up again {scope}"));
             let again = upload(assets, hub, link, &key, session, scope).await;
             if again.is_ok() {
                 assets.uploads.lock().expect("uploads").remove(scope);
@@ -379,11 +412,13 @@ async fn pass(node: &Arc<Node>, hub: &HubId, link: &Arc<Link>, network: &Network
         // Where each stream stands is checked whatever a stream's frames
         // met: a frame that does not chain to what is here is what checking
         // finds the shared place for.
+        let step = phase(hub, &format!("checking where {scope} stands"));
         let checked = match &pulled {
             Err(why) if why.starts_with(REVOKED) => Err(why.clone()),
             Err(_) => Ok(false),
             Ok((ahead, _)) => cursors(assets, link, scope, *holding, ahead).await,
         };
+        drop(step);
         // What checking cut back comes again from the hub this very pass
         // (HH05).
         let (pulled, checked) = match checked {
@@ -393,10 +428,12 @@ async fn pass(node: &Arc<Node>, hub: &HubId, link: &Arc<Link>, network: &Network
         };
         // Holding what the hub has of them, the streams to be ordered here
         // are taken over (design §8).
+        let step = phase(hub, &format!("taking over the streams of {scope}"));
         let checked = match (&pulled, checked) {
             (Ok((_, None)), Ok(())) => super::takeover::run(node, assets, hub, link, &key, scope).await,
             (_, checked) => checked,
         };
+        drop(step);
         // Every stream pulled and checked: the scope is pulled whole in its
         // holding period, and the change numbers carry it from now on.
         if *first && !untold && matches!(&pulled, Ok((_, None))) && checked.is_ok() {
@@ -455,20 +492,26 @@ async fn pass(node: &Arc<Node>, hub: &HubId, link: &Arc<Link>, network: &Network
             // as the pass began, it would be passed over for good.
             let theirs = hub.as_str().to_string();
             let unpulled = blocking(library, move |library| library.unpulled_of(&theirs)).await?;
+            let _phase = phase(hub, &format!("taking what changed in {owner}"));
             if let Err(why) = feed(assets, hub, link, &key, owner, &unpulled).await {
                 failed.get_or_insert(format!("what changed in {owner}: {why}"));
             }
         }
     }
     // What ended holding periods left goes a pass at a time.
+    let purging = phase(hub, "purging what ended");
     if let Err(why) = blocking(library, |library| library.purge()).await {
         failed.get_or_insert(format!("purging what ended: {why}"));
     }
+    drop(purging);
     if failed.is_none()
         && whole
         && let Some(revision) = waited
         && waiting_revision(link) == Some(revision)
-        && let Err(why) = cleared(node, assets, hub, link, revision).await
+        && let Err(why) = {
+            let _step = phase(hub, "clearing what this machine no longer holds");
+            cleared(node, assets, hub, link, revision).await
+        }
     {
         failed = Some(why);
     }
@@ -482,10 +525,13 @@ async fn pass(node: &Arc<Node>, hub: &HubId, link: &Arc<Link>, network: &Network
         }
         return failed.map_or(Ok(()), Err);
     }
+    let step = phase(hub, "fetching objects");
     for failed in super::objects::fetch(assets, hub, link).await {
         node.log.line(format_args!("assets with {hub}: {failed}; asked again later"));
     }
+    drop(step);
     // Where this machine stands goes to the hub as it changes (design §28.9).
+    let _step = phase(hub, "telling where this machine stands");
     if let Err(why) = super::standing::report(assets, hub, link).await {
         node.log.line(format_args!("assets with {hub}: telling where this machine stands: {why}"));
     }
@@ -1185,8 +1231,10 @@ async fn upload(
     // A stream that fails holds up none after it; the scope reports the first.
     let mut failed: Option<String> = waiting_failed;
     for (stream, from) in blocking(library, move |library| library.uploads(&key_text, &device)).await? {
+        let _step = phase(hub, &format!("going up {stream} of {scope} from {from}"));
         let done: Result<(), String> = async {
             let mut from = from;
+            let mut gone = 0usize;
             loop {
                 let (scope_text, stream_text) = (scope.to_string(), stream.clone());
                 let frames =
@@ -1195,6 +1243,11 @@ async fn upload(
                 if frames.is_empty() {
                     break;
                 }
+                if gone >= FRAMES_UP_A_TURN {
+                    assets.more.lock().expect("more").insert(hub.clone());
+                    return Err(format!("{GOES_ON}{stream} of {scope} going up from {from}"));
+                }
+                gone += frames.len();
                 for frame in frames {
                     let header = Header::decode(&frame.header).map_err(|error| error.to_string())?;
                     let frame = wire::Frame::whole(frame.header, frame.signature, frame.body);
