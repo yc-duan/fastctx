@@ -1885,6 +1885,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "fastctx-content"
+version = "1.0.1-beta.17"
+dependencies = [
+ "fastctx-platform",
+ "fastctx-storage",
+ "serde_json",
+ "sha2 0.10.9",
+ "tokio",
+ "zstd",
+]
+
+[[package]]
 name = "fastctx-gui"
 version = "1.0.1-beta.17"
 dependencies = [
@@ -1983,6 +1995,7 @@ dependencies = [
  "tokio-tungstenite",
  "toml 0.9.12+spec-1.1.0",
  "unicode-normalization",
+ "xxhash-rust",
 ]
 
 [[package]]
@@ -1992,6 +2005,7 @@ dependencies = [
  "anyhow",
  "arc-swap",
  "bytes",
+ "fastctx-content",
  "fastctx-jobs",
  "fastctx-net",
  "fastctx-platform",
@@ -8536,6 +8550,12 @@ dependencies = [
  "libc",
  "rustix",
 ]
+
+[[package]]
+name = "xxhash-rust"
+version = "0.8.19"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "550a2b930b62486a393c52d5c3b84bff264b28aa437ed64694d31e93b1757af7"
 
 [[package]]
 name = "yasna"

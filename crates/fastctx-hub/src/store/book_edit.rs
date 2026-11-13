@@ -33,4 +33,12 @@ impl BookEdit {
     pub(crate) fn is_full(&self) -> bool {
         matches!(self, Self::Full)
     }
+
+    /// Whether the edit may change who a body's members are (design §6.2):
+    /// a whole save, or one of the shares or of the machines' homes. A share
+    /// taken back is such an edit, and its body's members are kept as it
+    /// leaves them, for when its machine leaves too.
+    pub(crate) fn may_change_bodies(&self) -> bool {
+        self.is_full() || self.list("shares").0 || self.list("members").0
+    }
 }

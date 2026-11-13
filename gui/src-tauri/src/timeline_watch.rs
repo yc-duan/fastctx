@@ -217,7 +217,9 @@ pub(crate) struct Reader {
 }
 pub(crate) struct Opened {
     pub reader: Shared,
-    pub watching: Watching,
+    /// None when the machine it lives on was not reached: what is shown is
+    /// this machine's copy, and the watch is opened again as a broken one is.
+    pub watching: Option<Watching>,
     pub window: Window,
 }
 struct Page {
@@ -236,12 +238,18 @@ pub(crate) async fn open(
     resident: ResidentId,
     machine: Option<Written>,
 ) -> Result<Option<Opened>, NotWatched> {
-    let mut watching = match world.watch_live(resident.clone(), machine.clone()).await {
-        Ok(watching) => watching,
+    // Not reached, neither gone nor refused: the node may hold the
+    // conversation whole here and read it from its copy (design §28.30).
+    let (mut watching, unwatched) = match world.watch_live(resident.clone(), machine.clone()).await {
+        Ok(watching) => (Some(watching), None),
         Err(error) if older(&error) => return Ok(None),
-        Err(error) => return Err(error.into()),
+        Err(error) if error.is_deleted() || error.is_refused() => return Err(error.into()),
+        Err(error) => (None, Some(error)),
     };
-    let pending = ready(&mut watching).await?;
+    let pending = match watching.as_mut() {
+        Some(watching) => ready(watching).await?,
+        None => timeline_window::Window::default(),
+    };
     let (transcript, _) = Transcript::new(&[])?;
     let mut reader = Reader {
         world: world.clone(),
@@ -262,9 +270,15 @@ pub(crate) async fn open(
     };
     let mut page = match reader.fetch_typed(TimelineFrom::Latest, PAGE_EVENTS).await {
         Ok(page) => page,
-        Err(error) if older(&error) => return Ok(None),
-        Err(error) => return Err(error.into()),
+        Err(error) if older(&error) && unwatched.is_none() => return Ok(None),
+        Err(error) => return Err(unwatched.unwrap_or(error).into()),
     };
+    // Unwatched, only a copy that holds the conversation opens it.
+    if let Some(error) = unwatched
+        && page.revision.is_none()
+    {
+        return Err(error.into());
+    }
     if page.revision.is_some() {
         reader.complete_edge(&mut page, true).await.map_err(NotWatched::from)?;
     }

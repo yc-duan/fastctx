@@ -355,7 +355,7 @@ async fn watch(
         let transcript = reader.lock().await.transcript.clone();
         shell.transcripts.insert(id, transcript);
         shell.timeline_readers.insert(id, reader.clone());
-        let mut initial = Some(opened.watching);
+        let mut initial = opened.watching;
         let readers = shell.timeline_readers.clone();
         if let Err(error) = shell.follow_delivery(
             page,

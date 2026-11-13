@@ -1072,11 +1072,11 @@ impl Store {
     /// Commits settings and their audit records together, including a batch
     /// of arrangements. Neither durable baseline advances on failure.
     /// Bodies' members as the directory about to be saved has them, where an
-    /// edit may have changed them (design §6.2): only a whole save may, an
-    /// account's or a machine's own edit keeping who it is and may do.
+    /// edit may have changed them (design §6.2): a whole save, or one of the
+    /// shares or the machines; an account's own edit keeps who it is.
     fn body_changes(&self, edit: &BookEdit) -> io::Result<Vec<(String, String)>> {
         match &self.bodies {
-            Some(bodies) if edit.is_full() => bodies.changes(&self.book.directory),
+            Some(bodies) if edit.may_change_bodies() => bodies.changes(&self.book.directory),
             _ => Ok(Vec::new()),
         }
     }

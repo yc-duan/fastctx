@@ -41,13 +41,34 @@ pub(crate) async fn call(
     request: TimelineAsk,
 ) -> Result<TimelineTold, Failure> {
     let local = machine.is_none() && node.residents.about(request.resident()).is_some();
+    // A place read from another machine, asked of this machine's library:
+    // read anew (§28.30).
+    let marked = super::copy::after(&request).is_some_and(|after| after & super::copy::ELSEWHERE != 0);
+    if local || machine.as_ref().is_some_and(|machine| node.is_here(machine)) {
+        return if marked { Ok(super::copy::anew(&request)) } else { here(node, request).await };
+    }
+    // Held here whole for one logged in here: read here, the machine it
+    // lives on asked nothing. What it is running now only it has.
+    if !matches!(request, TimelineAsk::Running { .. }) {
+        let resident = request.resident().clone();
+        let copy = fastctx_platform::roles::in_place("finding a conversation's copy", || super::copy::of(node, &resident))?;
+        if let Some(held) = copy {
+            return if marked { Ok(super::copy::anew(&request)) } else { from_copy(&held, request).await };
+        }
+    }
     let machine = match machine {
         Some(machine) => machine,
         None => crate::talk::locate(node, request.resident()).await?,
     };
-    if local || node.is_here(&machine) {
-        return here(node, request).await;
+    if node.is_here(&machine) {
+        return if marked { Ok(super::copy::anew(&request)) } else { here(node, request).await };
     }
+    // Asked of the machine it lives on, a place read here means nothing
+    // there.
+    if super::copy::after(&request).is_some_and(|after| after != 0 && !marked) {
+        return Ok(super::copy::anew(&request));
+    }
+    let request = super::copy::unmarked(request);
     let mut refused = None;
     for (link, account) in node.speakers(&Acting::Here, &machine, Purpose::Agents).map_err(failure)? {
         let facts = link.call(&machine.name, &account, Purpose::Look, RemoteCall::Facts).await.map_err(failure)?;
@@ -72,13 +93,77 @@ pub(crate) async fn call(
         .await
         .map_err(failure)?;
         match reply {
-            Ok(RemoteReply::Timeline(told)) => return Ok(told),
+            Ok(RemoteReply::Timeline(told)) => return Ok(super::copy::marked(told)),
             Err(error) if error.not_run => refused = Some(error),
             Err(error) => return Err(error),
             _ => return Err(Failure::new("the machine answered something other than a timeline reading")),
         }
     }
     Err(refused.expect("a speaker was tried"))
+}
+
+/// Reads another machine's conversation from this machine's copy (§28.30).
+async fn from_copy(held: &super::local::Held, request: TimelineAsk) -> Result<TimelineTold, Failure> {
+    use super::reads::{PAGE_BYTES, PAGE_ITEMS};
+    match request {
+        TimelineAsk::Moved { after, .. } => {
+            let revision = super::local::moved(held, after, Duration::from_secs(25)).await?;
+            Ok(TimelineTold::Moved { revision, initializing: Some(false) })
+        }
+        TimelineAsk::Page { from, max_events, max_bytes, .. } => {
+            let anchor = match from {
+                TimelineFrom::Latest => Anchor::Latest,
+                TimelineFrom::Before { place } => Anchor::Before(decode_place(place)?),
+                TimelineFrom::After { place } => Anchor::After(decode_place(place)?),
+            };
+            fastctx_platform::roles::in_place("reading a timeline page of a copy", || {
+                let read = super::local::page(held, &anchor, max_events.clamp(1, PAGE_ITEMS), max_bytes.min(PAGE_BYTES))?;
+                Ok(TimelineTold::Page {
+                    revision: read.revision,
+                    initializing: Some(false),
+                    events: read.entries.into_iter().map(event).collect::<Result<_, Failure>>()?,
+                    older: read.older.map(encode_place),
+                    newer: read.newer.map(encode_place),
+                    through: Some(read.through),
+                })
+            })
+        }
+        TimelineAsk::Changes { after, max_events, max_bytes, .. } => {
+            fastctx_platform::roles::in_place("reading a copy's changes", || {
+                let Some(read) =
+                    super::local::changes(held, after, max_events.clamp(1, PAGE_ITEMS), max_bytes.min(PAGE_BYTES))?
+                else {
+                    return Ok(TimelineTold::Reread);
+                };
+                Ok(TimelineTold::Changes {
+                    revision: read.revision,
+                    initializing: Some(false),
+                    changes: read
+                        .changes
+                        .into_iter()
+                        .map(|change| {
+                            Ok(match change {
+                                Change::Is(entry) => TimelineChange::Is { event: event(entry)? },
+                                Change::Gone { item } => TimelineChange::Gone { item: hex(&item) },
+                            })
+                        })
+                        .collect::<Result<_, Failure>>()?,
+                    through: read.through,
+                    more: read.more,
+                })
+            })
+        }
+        TimelineAsk::Object { object, offset, length, .. } => {
+            let hash: [u8; 32] = decode(&object)?
+                .try_into()
+                .map_err(|_| Failure::new("a timeline object name must be a SHA-256 hash"))?;
+            fastctx_platform::roles::in_place("reading a copy's object", || {
+                let bytes = super::local::object(held, &hash, offset, length.min(OBJECT_BYTES))?;
+                Ok(TimelineTold::Object { base64: bytes.map(|bytes| STANDARD.encode(bytes)) })
+            })
+        }
+        TimelineAsk::Running { .. } => Err(Failure::new("what runs now is read where the conversation lives")),
+    }
 }
 
 /// Reads the timeline as it is kept. A reader of its end, or one waiting

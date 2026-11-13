@@ -23,6 +23,13 @@ pub(crate) struct Held {
     scope: String,
 }
 
+impl Held {
+    /// The timeline of `scope` in `library`, read as it stands.
+    pub(crate) fn at(library: Library, scope: String) -> Self {
+        Self { library, scope }
+    }
+}
+
 /// The conversation's timeline in the asset library, when a reader reads it
 /// there: its scope held here, and its timeline made — by this machine's
 /// producer at least once, or come from the device that orders it.
