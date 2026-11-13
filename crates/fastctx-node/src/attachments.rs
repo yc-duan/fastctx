@@ -1133,6 +1133,9 @@ pub async fn place(
             }
         });
     }
+    // Into the asset library with the conversation's other attachments
+    // (design §28.16).
+    crate::timeline::attached(node, resident);
     Ok(given)
 }
 

@@ -855,6 +855,15 @@ async fn run(node: &Arc<Node>, resident: &ResidentId) -> Outcome {
             node.log.line(format_args!("{resident}'s words: {error}"));
         }
     }
+    // The files attached to it, their originals as objects (§28.16).
+    match super::attachments::produce(node, resident, &PRODUCING).await {
+        Ok(0) => {}
+        Ok(written) => node.log.line(format_args!("{resident}'s attachments: {written} written")),
+        Err(error) => {
+            beside_failed = true;
+            node.log.line(format_args!("{resident}'s attachments: {error}"));
+        }
+    }
     BROUGHT.lock().expect("brought timelines").insert(resident.clone(), Instant::now());
     match produced {
         Ok(produced) if produced.handing => Outcome::Again { after: HANDING_AGAIN },
