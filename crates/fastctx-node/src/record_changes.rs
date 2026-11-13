@@ -31,6 +31,11 @@ const PAGES: Family = family("call/pages");
 const PAGE_ACT: Family = family("call/page-act");
 const PAGE_EXECUTE: Family = family("call/page-execute");
 const PLANS: Family = family("call/plans");
+/// A plan written, done again after a stop that cut it short: it waits for
+/// the hub when written offline, and asked again under the same base it is
+/// at worst refused as written over (QQ15); apart from the other plan calls,
+/// which do not wait behind it (QQ16).
+const PLAN_WRITES: Family = Family { again: true, ..family("call/plan-writes") };
 const PROJECTS: Family = family("call/projects");
 const COPIES: Family = family("call/copies");
 
@@ -53,7 +58,7 @@ enum Answer {
 }
 
 pub(crate) fn register(node: &Arc<Node>) {
-    for family in [PAGES, PAGE_ACT, PAGE_EXECUTE, PLANS, PROJECTS, COPIES] {
+    for family in [PAGES, PAGE_ACT, PAGE_EXECUTE, PLANS, PLAN_WRITES, PROJECTS, COPIES] {
         submitted::register_resolved(node, family, |node, asked, resolved| async move {
             work::execute(&node, asked, resolved).await
         });
@@ -165,7 +170,8 @@ fn local_family(call: &Call) -> Result<Family, Failure> {
     match call {
         Call::Page(fastctx_types::pages::PageCall::Act { .. }) => Ok(PAGE_ACT),
         Call::Page(call) if pages::changes(call) => Ok(PAGES),
-        Call::Plan { .. } | Call::PlanWrite { .. } => Ok(PLANS),
+        Call::Plan { .. } => Ok(PLANS),
+        Call::PlanWrite { .. } => Ok(PLAN_WRITES),
         Call::Project(_) => Ok(PROJECTS),
         Call::PrepareCopies { .. } => Ok(COPIES),
         _ => Err(Failure::not_run("this call is not a submitted record change")),

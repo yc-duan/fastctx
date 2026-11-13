@@ -84,7 +84,7 @@ pub(super) async fn run(
     if !fastctx_platform::disk::is_file(directory.join("about")) {
         assets.takeovers.lock().expect("takeovers").retain(|(of, _)| of != scope);
         assets.adopting.lock().expect("adopting").remove(scope);
-        super::release::adopted(&directory);
+        super::release::adopted(&directory, &assets.device());
         return Ok(());
     }
     let mut taken = false;
@@ -113,9 +113,12 @@ pub(super) async fn run(
     // And so in two looks running, each over the streams as the hub listed
     // them just then: a stream the device it was taken from began as it let
     // the others go is seen by the second (PP06).
+    let adopting = assets.adopting.lock().expect("adopting").contains(scope);
     let settled = {
         let mut quiet = QUIET.lock().expect("quiet adoptings");
-        if theirs.is_empty() && whole {
+        // Counted only while adopting: another's leaving it is no look of
+        // this one (QQ13).
+        if adopting && theirs.is_empty() && whole {
             let looks = quiet.entry(scope.to_string()).or_insert(0);
             *looks += 1;
             *looks >= 2
@@ -127,7 +130,7 @@ pub(super) async fn run(
     if settled {
         QUIET.lock().expect("quiet adoptings").remove(scope);
         assets.adopting.lock().expect("adopting").remove(scope);
-        super::release::adopted(&directory);
+        super::release::adopted(&directory, &assets.device());
     } else if assets.adopting.lock().expect("adopting").contains(scope) {
         // Streams found since the adopting began are taken over too.
         let mut takeovers = assets.takeovers.lock().expect("takeovers");

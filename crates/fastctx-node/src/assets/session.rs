@@ -551,6 +551,12 @@ async fn cleared(
         node.log.line(format_args!("whole access to this machine through {hub} waits: {left}"));
         return Ok(());
     }
+    // Nor while an original is written out to be read: it goes as its
+    // reading ends (QQ18).
+    if crate::attachments::kept_here::passing(node) {
+        node.log.line(format_args!("whole access to this machine through {hub} waits: an attachment is being read"));
+        return Ok(());
+    }
     // Said only if, after all that, still nothing of another network's is
     // here and no other network came meanwhile.
     if elsewhere(assets, hub).await?.is_some() || waiting_revision(link) != Some(revision) {
@@ -1372,7 +1378,7 @@ async fn pull(
     // stream from another machine all along — a conversation come from it,
     // begun here in vain — goes: it is made again once the stream is handed
     // over here, and followed as a replica's till then (AH01, LL11).
-    let local = if discard_unaccepted(assets, hub, link, key, scope, &theirs).await? {
+    let mut local: std::collections::BTreeMap<String, u64> = if discard_unaccepted(assets, hub, link, key, scope, &theirs).await? {
         let scope_text = scope.to_string();
         blocking(library, move |library| library.streams(&scope_text)).await?.into_iter().collect()
     } else {
@@ -1381,6 +1387,7 @@ async fn pull(
     let (scope_text, device) = (scope.to_string(), assets.device());
     let own: std::collections::BTreeSet<String> =
         blocking(library, move |library| library.own_streams(&scope_text, &device)).await?.into_iter().collect();
+    let mut cut_back = Vec::new();
     for (stream, at) in &local {
         let hub_at = theirs.get(stream).copied();
         if own.contains(stream) {
@@ -1400,10 +1407,12 @@ async fn pull(
             // gone from the hub's sources since (AT02); it is cut back at
             // one of its own frames' ends (AT03).
             let (scope_text, stream_text, from) = (scope.to_string(), stream.clone(), hub_at.unwrap_or(0));
-            blocking(library, move |library| {
+            let next = blocking(library, move |library| {
                 library.set_aside(&scope_text, &stream_text, from, "the hub, put back, holds the stream only before this")
             })
             .await?;
+            // Pulled on from where it was cut back to, this very pass (QQ04).
+            cut_back.push((stream.clone(), next));
         } else if *at > hub_at.unwrap_or(0) {
             // A replica's frames the hub lost, all of the stream or its
             // tail, given again; a stream that fails holds up no other.
@@ -1418,6 +1427,7 @@ async fn pull(
             }
         }
     }
+    local.extend(cut_back);
     let mut failed: Option<String> = gave_back;
     // A stream handed on since — this machine's own among them — though no
     // frame of it moved: its descriptors are taken, as the change numbers

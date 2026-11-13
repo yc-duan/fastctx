@@ -107,6 +107,10 @@ pub(super) fn held_end(db: &Connection, stream: i64, holding: i64, end: u64) -> 
         if let Some(head) = held_frame(db, stream, holding, at)? {
             break head;
         }
+        // Where what was kept of the stream begins, its start let go (QQ05).
+        if let Some(head) = kept_from(db, stream, at)? {
+            break head;
+        }
         let Some(gap) = gap_ending(db, stream, at)? else { return Ok(None) };
         let from = gap.from;
         gaps.push(gap);
@@ -125,6 +129,19 @@ pub(super) fn held_end(db: &Connection, stream: i64, holding: i64, end: u64) -> 
         value = gap.follows;
     }
     Ok(Some(value))
+}
+
+/// The chain where the stream's kept frames begin, when they begin right
+/// after `end`: the start let go before it.
+fn kept_from(db: &Connection, stream: i64, end: u64) -> fastctx_storage::Result<Option<[u8; 32]>> {
+    let kept: Option<(i64, Option<Vec<u8>>)> = db
+        .prepare_cached("SELECT floor, head FROM retention WHERE stream = ?1")?
+        .query_row([stream], |row| Ok((row.get(0)?, row.get(1)?)))
+        .optional()?;
+    Ok(kept
+        .filter(|(floor, _)| *floor as u64 == end + 1)
+        .and_then(|(_, head)| head)
+        .and_then(|head| <[u8; 32]>::try_from(head.as_slice()).ok()))
 }
 
 fn held_frame(db: &Connection, stream: i64, holding: i64, end: u64) -> fastctx_storage::Result<Option<[u8; 32]>> {

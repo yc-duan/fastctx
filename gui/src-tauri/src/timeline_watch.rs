@@ -742,8 +742,34 @@ pub(crate) async fn stream(reader: Shared, mut initial: Option<Watching>, pieces
         if pieces.send(Piece::interrupted(&interruption)).is_err() {
             return;
         }
-        tokio::select! { () = reader.closed() => return, () = again.pause(&world, machine.as_ref()) => {} }
+        // The machine it lives on away, what this machine's copy of it gains
+        // meanwhile is shown all the same (AU11, O06).
+        tokio::select! {
+            () = reader.closed() => return,
+            () = again.pause(&world, machine.as_ref()) => {}
+            piece = follow_copy(&reader, &world, &resident, &machine) => {
+                if let Some(piece) = piece && pieces.send(piece).is_err() {
+                    return;
+                }
+            }
+        }
     }
+}
+
+/// What the reading gains as the node answers it while no live watch is
+/// open: a wait for the timeline to move, which the node answers from its
+/// copy when the machine it lives on is away; none, waiting for ever, when
+/// it does not move or cannot be read.
+async fn follow_copy(reader: &Shared, world: &World, resident: &ResidentId, machine: &Option<Written>) -> Option<Piece> {
+    let after = reader.lock().await.state.revision;
+    let moved = world.timeline(machine.clone(), TimelineAsk::Moved { resident: resident.clone(), after }).await;
+    if let Ok(TimelineTold::Moved { revision: Some(revision), .. }) = moved
+        && revision != after
+        && let Ok(Some(piece)) = reader.advanced().await
+    {
+        return Some(piece);
+    }
+    std::future::pending().await
 }
 
 /// How long a watch opened again quietly may take before the page is told

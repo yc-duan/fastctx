@@ -142,7 +142,13 @@ pub(crate) fn job(node: &Node, job: &fastctx_types::JobId) -> Option<fastctx_typ
         let Ok(Some(entry)) = library.item(&scope.key, fastctx_content::v2::JobFacts::STREAM, job.as_str().as_bytes()) else {
             continue;
         };
-        let Ok(record) = serde_json::from_slice::<fastctx_types::run::JobRecord>(&entry.body) else { continue };
+        // A script too large for the record is said, not given (QQ12).
+        let Ok(mut value) = serde_json::from_slice::<serde_json::Value>(&entry.body) else { continue };
+        if let Some(omitted) = value.get("script").filter(|script| script.is_object()).cloned() {
+            let bytes = omitted.get("bytes").and_then(serde_json::Value::as_u64).unwrap_or(0);
+            value["script"] = serde_json::Value::String(format!("(a script of {bytes} bytes, not kept with the record)"));
+        }
+        let Ok(record) = serde_json::from_value::<fastctx_types::run::JobRecord>(value) else { continue };
         if found.replace(record).is_some() {
             return None;
         }

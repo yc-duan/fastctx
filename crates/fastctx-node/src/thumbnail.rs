@@ -89,7 +89,24 @@ pub(crate) async fn attachment(
     {
         return crate::attachments::preview(node, receipt);
     }
-    here(node, ThumbnailRequest { path: String::new(), max }, Some(attachment)).await
+    let upload = match &attachment {
+        fastctx_types::attachments::AttachmentSource::Upload(receipt) => Some(receipt.file.clone()),
+        _ => None,
+    };
+    match here(node, ThumbnailRequest { path: String::new(), max }, Some(attachment)).await {
+        // Its own copy here gone: drawn from the asset library here (QQ17).
+        Err(failure) => match upload {
+            Some(file) => match crate::attachments::kept_here::original(node, &file).await {
+                Some(passing) => {
+                    let path = crate::world::native(passing.path());
+                    here(node, ThumbnailRequest { path, max }, None).await
+                }
+                None => Err(failure),
+            },
+            None => Err(failure),
+        },
+        drawn => drawn,
+    }
 }
 
 pub(crate) async fn history(

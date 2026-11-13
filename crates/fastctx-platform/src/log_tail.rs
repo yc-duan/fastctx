@@ -116,10 +116,11 @@ pub fn piece_time(bytes: &[u8], before: i64) -> i64 {
     first_time(bytes).unwrap_or(before).max(0)
 }
 
-/// The time the last line of `bytes` that begins with one begins with: how
-/// late a piece reaches (N13).
+/// The latest time any line of `bytes` begins with: how late a piece
+/// reaches, its lines' times in whatever order a clock set back left them
+/// (N13, O09).
 pub fn last_time(bytes: &[u8]) -> Option<i64> {
-    bytes.split(|&byte| byte == b'\n').rev().find_map(first_time)
+    bytes.split(|&byte| byte == b'\n').filter_map(first_time).max()
 }
 
 /// The time an order key made as `{time:016x}/...` is ordered by.

@@ -55,7 +55,11 @@ pub async fn look(node: &Arc<Node>, acting: &Acting, works_here: bool, ids: Vec<
         }
         // A command of a conversation whose machine is away: as the copy
         // here holds its record (§28.33).
-        if !one.found.iter().any(|looked| matches!(looked, Looked::Job { .. }))
+        // Asked by this machine's own user only: a caller acting for some
+        // accounts reads no copy kept for another's (QQ02).
+        if matches!(acting, Acting::Here)
+            && works_here
+            && !one.found.iter().any(|looked| matches!(looked, Looked::Job { .. }))
             && let Ok(job) = JobId::try_from(id.as_str())
             && let Some(record) = fastctx_platform::roles::in_place("looking a job up in the copies here", || {
                 crate::timeline::copy::job(node, &job)

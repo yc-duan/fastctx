@@ -215,6 +215,11 @@ fn readable_known(directory: &Indexed<'_>, machine: &MachineName, scope: &Scope)
     if own_log(directory, machine, scope) {
         return Ok(true);
     }
+    // A project's ledger, described before, is read by none until it is
+    // kept apart by machine (O10).
+    if matches!(&scope.descriptor.readers, Readers::Project { .. }) {
+        return Ok(false);
+    }
     let descriptor = &scope.descriptor;
     for account in principal(directory, machine) {
         if reads_known(directory, &account, &descriptor.readers, &descriptor.born, scope.bodies.as_deref())? {
@@ -320,12 +325,11 @@ pub(crate) fn holds(directory: &Indexed<'_>, machine: &MachineName, scope: &Scop
 /// their authors signed them: only a machine that keeps the project's
 /// bodies does, as the ledger was copied before (L11, NN06). Any other
 /// scope is not judged here.
-fn keeps_ledger(directory: &Indexed<'_>, machine: &MachineName, scope: &Scope) -> bool {
-    let Readers::Project { town } = &scope.descriptor.readers else { return true };
-    if !scope.descriptor.scope.ends_with("/ledger") {
-        return true;
-    }
-    directory.all.member_keeps_project(directory.canonical(machine), town)
+fn keeps_ledger(_directory: &Indexed<'_>, _machine: &MachineName, scope: &Scope) -> bool {
+    // A project's ledger names where its machines are, which not every
+    // reader of the project may know: one described before is held by none
+    // until its entries are kept apart by machine (M09, N17, O10).
+    !matches!(&scope.descriptor.readers, Readers::Project { .. })
 }
 
 /// The scope `key`, if the hub described it.

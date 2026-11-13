@@ -104,15 +104,11 @@ pub(crate) fn export(world: &WorldDir, directory: &Path, conversation: &str, to:
     for object in package.streams.iter().flat_map(|released| &released.objects) {
         copy_out(&library, &object.0, &folder)?;
     }
-    // What this machine was adopting goes with the earlier export (AQ02),
-    // before the new package is there: stopped between the two, it still
-    // orders the stream itself, as it did (N06).
-    match fastctx_platform::disk::remove_file(directory.join(ADOPTED)) {
-        Err(error) if error.kind() != io::ErrorKind::NotFound => return Err(error),
-        _ => {}
-    }
     let bytes = serde_json::to_vec_pretty(&package).map_err(io::Error::other)?;
     fastctx_platform::publish(&path, &bytes, fastctx_platform::Permissions::Private)?;
+    // What this machine was adopting goes with the earlier export (AQ02). A
+    // stop before it went leaves both: the newer of the two says (N06, QQ14).
+    let _ = fastctx_platform::disk::remove_file(directory.join(ADOPTED));
     let named: std::collections::BTreeSet<String> =
         package.streams.iter().flat_map(|released| &released.objects).map(|object| hex(&object.0)).collect();
     if let Ok(entries) = fastctx_platform::disk::read_dir(&folder) {
@@ -287,7 +283,17 @@ pub(crate) fn adopting(directory: &Path, hub: &str, scope: &str, me: &[u8; 32]) 
 }
 
 /// Adopting is over: each stream taken over, or the conversation gone.
-pub(crate) fn adopted(directory: &Path) {
+pub(crate) fn adopted(directory: &Path, me: &[u8; 32]) {
+    // A package this machine made to let the conversation go before it was
+    // adopted back is done with too: left beside it, it would say this
+    // machine let it go once the adopting mark is gone (O08).
+    let outbound = fastctx_platform::disk::read(directory.join(FILE))
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<Package>(&bytes).ok())
+        .is_some_and(|package| package.from_key.0.as_slice() == me.as_slice() && package.to_key.0.as_slice() != me.as_slice());
+    if outbound {
+        let _ = clear_package(directory);
+    }
     let _ = fastctx_platform::disk::remove_file(directory.join(ADOPTED));
 }
 
@@ -301,13 +307,23 @@ pub(crate) fn released_away(directory: &Path, scope: &str, me: &[u8; 32]) -> boo
         .ok()
         .and_then(|bytes| serde_json::from_slice::<Adopting>(&bytes).ok())
         .is_some_and(|adopting| adopting.scope == scope && adopting.by == hex(me));
-    !adopted
-        && fastctx_platform::disk::read(directory.join(FILE))
-            .ok()
-            .and_then(|bytes| serde_json::from_slice::<Package>(&bytes).ok())
-            .is_some_and(|package| {
-                package.scope == scope && package.from_key.0.as_slice() == me.as_slice() && package.to_key.0.as_slice() != me.as_slice()
-            })
+    let outbound = fastctx_platform::disk::read(directory.join(FILE))
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<Package>(&bytes).ok())
+        .is_some_and(|package| {
+            package.scope == scope && package.from_key.0.as_slice() == me.as_slice() && package.to_key.0.as_slice() != me.as_slice()
+        });
+    if !outbound {
+        return false;
+    }
+    if !adopted {
+        return true;
+    }
+    // Both here: the later says — an export after the adopting began lets
+    // the conversation go; an adopting after the export takes it back (N06,
+    // QQ14).
+    let made = |name: &str| fastctx_platform::disk::metadata(directory.join(name)).and_then(|metadata| metadata.modified()).ok();
+    matches!((made(FILE), made(ADOPTED)), (Some(package), Some(adopting)) if package > adopting)
 }
 
 /// The streams the package beside the conversation releases to this

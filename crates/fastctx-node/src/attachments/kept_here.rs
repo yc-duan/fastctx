@@ -64,6 +64,11 @@ pub(crate) async fn original(node: &Arc<Node>, file: &UploadFile) -> Option<Pass
     .await
 }
 
+/// Whether any original is written out to be read now.
+pub(crate) fn passing(node: &Node) -> bool {
+    fastctx_platform::disk::read_dir(node.world.path().join("passing")).is_ok_and(|mut entries| entries.next().is_some())
+}
+
 /// What a stop left of originals written out to read: none is read any
 /// more as the node starts (PP21).
 pub(crate) fn clear_left(node: &Node) {
