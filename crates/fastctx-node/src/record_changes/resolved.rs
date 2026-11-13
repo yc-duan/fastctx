@@ -68,7 +68,7 @@ impl Resolved {
                 }
             }
             Self::Plan(target) => target.check(node, caller)?,
-            Self::PlanWrite { scope } => check_scope(node, caller, scope)?,
+            Self::PlanWrite { scope } => check_written_offline(node, caller, scope)?,
             Self::ProjectNew { owner: Some(owner) } => check_scope(node, caller, owner)?,
             Self::ProjectNew { owner: None } => {}
             Self::ProjectEdit { town } => {
@@ -102,6 +102,25 @@ impl Resolved {
         Ok(())
     }
 }
+/// As `check_scope`, for a plan written while the hub is away: judged by the
+/// view the hub gave last, the hub judging it again as it writes it (design
+/// §20, 3-3: an edit made offline, then back).
+fn check_written_offline(node: &Node, caller: &Caller, scope: &HubAccount) -> Result<(), Failure> {
+    let link =
+        node.link_of(&scope.hub).ok_or_else(|| Failure::refused("the selected account's network is unavailable"))?;
+    let view = match crate::authorization::current_view(&link) {
+        Ok(view) => view,
+        Err(failure) if crate::authorization::view_pending(&failure) => link.view(),
+        Err(failure) => return Err(failure),
+    };
+    if !node.serves(&crate::around::acting_of(node, caller), &scope.hub, &scope.account)
+        || view.account(&scope.account).is_none_or(|account| account.locked)
+    {
+        return Err(Failure::refused("the caller no longer serves the selected account"));
+    }
+    Ok(())
+}
+
 pub(super) fn check_scope(node: &Node, caller: &Caller, scope: &HubAccount) -> Result<(), Failure> {
     let link =
         node.link_of(&scope.hub).ok_or_else(|| Failure::refused("the selected account's network is unavailable"))?;

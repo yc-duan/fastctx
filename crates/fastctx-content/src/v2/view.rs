@@ -11,8 +11,9 @@
 //! again (JJ01, JJ02). Within one era the index only moves forward by
 //! sequence, so what changed after a number is the items whose revision is
 //! past it; another era, and the reader reads anew. No two states of a
-//! stream share a number, and the number only grows; the era has 24 bits, a
-//! library making that many is not one this counts on.
+//! stream share a number, and the number only grows; the era has 23 bits, a
+//! library making that many is not one this counts on, and a place's top bit
+//! is never set here: a node marks with it the places another machine gave.
 
 use super::Library;
 use super::items::IS;
@@ -79,8 +80,10 @@ fn standing(db: &Connection, scope: &str, name: &str) -> fastctx_storage::Result
     Ok(Some((stream, holding, place(tag(rebased), next))))
 }
 
+/// The era as a place carries it: 23 bits, the top bit of a place being
+/// the mark a node puts on places read from another machine (AU07).
 fn tag(era: i64) -> u64 {
-    (era as u64) & 0xFF_FFFF
+    (era as u64) & 0x7F_FFFF
 }
 
 /// What a reader at `at` knows an entry of revision `revision` as: the

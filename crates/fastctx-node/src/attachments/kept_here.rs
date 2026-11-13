@@ -31,6 +31,7 @@ pub(crate) async fn original(node: &Arc<Node>, file: &UploadFile) -> Option<Pass
     let hash = hash_of(&file.sha256)?;
     let (library, size) = (assets.library.clone(), file.size);
     let folder = node.world.path().join("passing");
+    let asking = node.clone();
     fastctx_platform::task::blocking(move || -> Option<Passing> {
         if library.size(&hash).ok()?? != size {
             return None;
@@ -39,7 +40,7 @@ pub(crate) async fn original(node: &Arc<Node>, file: &UploadFile) -> Option<Pass
         // such refers to it now. Bytes still on the disk after the scope was
         // let go, or kept for another's, are read by no one (N12).
         let readable = library.held_scopes().ok()?.iter().any(|scope| {
-            crate::timeline::copy::read_here(scope) && library.refers(&scope.key, &hash).unwrap_or(false)
+            crate::timeline::copy::read_here(&asking, scope) && library.refers(&scope.key, &hash).unwrap_or(false)
         });
         if !readable {
             return None;

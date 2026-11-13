@@ -26,6 +26,15 @@ pub(super) async fn execute(node: &Arc<Node>, asked: Asked, resolved: Resolved) 
                     _ => None,
                 };
                 crate::server::named_town(node, &caller, town).await?;
+                // A plan written while the hub is away is kept with the call
+                // and written once the hub is back and gave its view, within
+                // the while a call's work is done in (design §20, 3-3).
+                if let (Call::PlanWrite { .. }, Resolved::PlanWrite { scope }) = (call.as_ref(), &resolved)
+                    && let Some(link) = node.link_of(&scope.hub)
+                    && link.online_within(OFFLINE_WAIT).await
+                {
+                    let _ = crate::authorization::awaited_view(&link).await;
+                }
                 resolved.check(node, &caller)?;
                 super::local_check(node, &caller, &call, &resolved)?;
                 let reply = match *call {
@@ -51,11 +60,6 @@ pub(super) async fn execute(node: &Arc<Node>, asked: Asked, resolved: Resolved) 
                             .ok_or_else(|| Failure::refused("the plan's selected network is unavailable"))?;
                         let account = scope.account.clone();
                         let whose = machine.map(|machine| fastctx_types::Address { machine, resident: owner.clone() });
-                        // Written while the hub is away: kept here with the
-                        // call, and asked of the hub once it is back, within
-                        // the while a call's work is done in (design §20,
-                        // 3-3: an edit made offline, then back).
-                        link.online_within(OFFLINE_WAIT).await;
                         let result = link
                             .plan_write(
                                 &account,

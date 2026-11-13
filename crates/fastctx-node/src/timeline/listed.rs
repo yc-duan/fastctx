@@ -17,7 +17,7 @@ pub(crate) fn of(node: &Node, machine: &MachineName) -> Option<WhoReply> {
     let library = &kept.library;
     let mut residents = Vec::new();
     for scope in library.held_scopes().ok()? {
-        if !super::copy::read_here(&scope) {
+        if !super::copy::read_here(node, &scope) {
             continue;
         }
         let Ok(items) = library.page(&scope.key, ConversationMeta::STREAM, None, 16) else { continue };

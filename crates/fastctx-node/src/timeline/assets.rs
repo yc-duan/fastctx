@@ -127,14 +127,28 @@ fn scope_for(
     if let Some(assets) = node.assets.as_ref() {
         let tail = format!("/{id}");
         let keys = assets.library.keys_ending(&tail).map_err(|error| Failure::new(error.to_string()))?;
-        let body = keys.iter().find_map(|key| key.strip_prefix("b/").and_then(|rest| rest.strip_suffix(tail.as_str())));
-        if let Some(body) = body.filter(|body| !body.contains('/')) {
+        if keys.contains(&conversation_key) {
+            return Ok((conversation, conversation_key));
+        }
+        // A body's this account opened, as the hub described it, and only
+        // one: another's of the same id is not this conversation (AU05).
+        let opened_here = |key: &String| {
+            assets.library.held_listing(key).ok().flatten().is_some_and(|(description, _)| {
+                serde_json::from_slice::<fastctx_types::assets::Descriptor>(&description).is_ok_and(|described| {
+                    matches!(&described.readers, Readers::Body { opener, .. } if opener == account)
+                })
+            })
+        };
+        let bodies: Vec<&str> = keys
+            .iter()
+            .filter(|key| opened_here(key))
+            .filter_map(|key| key.strip_prefix("b/").and_then(|rest| rest.strip_suffix(tail.as_str())))
+            .filter(|body| !body.contains('/'))
+            .collect();
+        if let [body] = bodies.as_slice() {
             let readers = Readers::Body { body: body.to_string(), opener: account.clone() };
             let key = format!("{}{}", readers.key_prefix(hub.as_str()), id);
             return Ok((readers, key));
-        }
-        if keys.contains(&conversation_key) {
-            return Ok((conversation, conversation_key));
         }
     }
     let (Some(machine), Some(link), Some(assets)) = (born_on, node.link_of(hub), node.assets.as_ref()) else {

@@ -154,19 +154,30 @@ pub(crate) fn audit(
     // after so many pages; where it ended is kept, and the next look, a
     // minute on, goes on from there (AT07).
     let again = format!("audit/again/{key}");
-    let mut anchor = match library.checkpoint(&again).map_err(error)?.and_then(|bytes| place_of(&bytes)) {
+    let kept = library.checkpoint(&again).map_err(error)?;
+    // Where a look stopped, or was stopped: the page it was at is looked at
+    // first, and, put right then already, does not end this look (AU06).
+    let resumed = kept.is_some();
+    let mut anchor = match kept.as_deref().and_then(place_of) {
         Some(place) => Anchor::Before(place),
         None => Anchor::Latest,
     };
     let mut stopped = None;
-    for _ in 0..VERIFIED_PAGES {
+    for page_at in 0..VERIFIED_PAGES {
         let _writing = writing(&key);
+        // Kept before the page is put right: stopped between the two, the
+        // next look begins here.
+        let marker = match &anchor {
+            Anchor::Before(place) => place_bytes(place),
+            _ => b"{\"latest\":true}".to_vec(),
+        };
+        library.keep_checkpoint(&again, marker).map_err(error)?;
         let page = library.view_page(&key, MachineAudit::STREAM, &anchor, LOOKED_AGAIN, u32::MAX).map_err(error)?;
         let ids: Vec<u64> = page.entries.iter().filter_map(|entry| audit_id(&entry.item)).collect();
         let fixed = put_right(assets, &scope, &library, database, &readers, &page.entries, &ids)?;
         stopped = None;
         // The first page, nothing older; or one the log has as it is.
-        let Some(oldest) = page.older.clone().filter(|_| fixed) else { break };
+        let Some(oldest) = page.older.clone().filter(|_| fixed || (resumed && page_at == 0)) else { break };
         anchor = Anchor::Before(oldest.clone());
         stopped = Some(oldest);
     }
