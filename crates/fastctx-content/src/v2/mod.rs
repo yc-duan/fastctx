@@ -59,7 +59,8 @@ pub use kind::{Actor, Deletion, Holding, Import, Kind, Kinds, Write, Writer};
 pub use timeline::{EVENT, OVERSIZED, Timeline};
 pub use attachment::ConversationAttachment;
 pub use document::{
-    AccountSettings, AccountSkill, ConversationGoal, ConversationHistory, ConversationPlan, ConversationSentinel, ProjectLedger,
+    AccountNotice, AccountSettings, AccountSkill, ConversationGoal, ConversationHistory, ConversationPlan, ConversationSentinel,
+    MachineAudit, ProjectLedger,
 };
 pub use hub_ordered::HUB_ORDERED;
 pub use job::{JobFacts, JobOutput, OUTPUT_PARTS};

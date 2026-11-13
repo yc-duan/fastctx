@@ -13,6 +13,7 @@ pub(crate) mod drill_kinds;
 mod holdings;
 mod keys;
 pub(crate) mod mirror;
+pub(crate) mod told;
 pub mod recovery;
 pub(crate) mod objects;
 mod owners;

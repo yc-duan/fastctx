@@ -361,6 +361,19 @@ impl Troubles {
         found.into_iter().skip(skip).map(|kept| kept.trouble.clone()).collect()
     }
 
+    /// The troubles kept that the account `account`, opened at `opened`,
+    /// hears of, oldest first.
+    pub(crate) fn told_to(&self, account: &AccountName, opened: Timestamp) -> Vec<Trouble> {
+        let kept = self.kept.load();
+        kept.by_account
+            .get(account)
+            .into_iter()
+            .flatten()
+            .filter(|kept| kept.told.iter().any(|(told, at)| told == account && *at == opened))
+            .map(|kept| kept.trouble.clone())
+            .collect()
+    }
+
     /// The troubles of `kinds` told of a machine since `since`: the machine's
     /// key, the kind and when.
     pub(crate) fn of_kinds_since(
@@ -523,6 +536,7 @@ impl Troubles {
 
     /// Writes `kept` down, and lets go of the rows of `gone`.
     fn keep(&self, hub: &Hub, kept: &Kept, gone: Vec<u64>) {
+        crate::assets::told::told(hub, kept.trouble.clone(), kept.told.clone());
         let mut changes = Changes::default();
         match body(kept) {
             Ok(body) => changes.put.push(Put {

@@ -77,7 +77,9 @@ pub(crate) fn kinds() -> Arc<fastctx_content::v2::Kinds> {
         .register::<fastctx_content::v2::ConversationSentinel>()
         .register::<fastctx_content::v2::AccountSettings>()
         .register::<fastctx_content::v2::AccountSkill>()
-        .register::<fastctx_content::v2::ProjectLedger>();
+        .register::<fastctx_content::v2::ProjectLedger>()
+        .register::<fastctx_content::v2::MachineAudit>()
+        .register::<fastctx_content::v2::AccountNotice>();
     #[cfg(test)]
     let kinds = kinds.register::<super::drill_kinds::Plain>();
     Arc::new(kinds)

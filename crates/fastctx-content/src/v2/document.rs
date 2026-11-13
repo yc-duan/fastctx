@@ -5,7 +5,9 @@
 //! for a conversation's plan, notes, goals and sentinels, in the account's
 //! scope for its skills and settings — each by its key. A body is the
 //! account record itself: its version, who wrote it and when, and what it
-//! says.
+//! says. What the hub tells an account goes into its scope the same way: the
+//! machine changes it reads (`machine.audit`) and the troubles it hears of
+//! (`account.notice`), each a JSON object by its number.
 
 use super::kind::{Actor, Deletion, Holding, Import, Kind};
 use super::{Entry, KindRecord};
@@ -19,18 +21,30 @@ fn record(body: &[u8]) -> Result<Vec<u8>, String> {
     }
 }
 
-fn judged(after: &KindRecord) -> Result<(), String> {
+fn object(body: &[u8]) -> Result<Vec<u8>, String> {
+    match serde_json::from_slice::<serde_json::Value>(body) {
+        Ok(value) if value.is_object() => Ok(body.to_vec()),
+        Ok(_) => Err("what the hub tells is a JSON object".into()),
+        Err(error) => Err(format!("what the hub tells is not JSON: {error}")),
+    }
+}
+
+fn judged(after: &KindRecord, check: fn(&[u8]) -> Result<Vec<u8>, String>) -> Result<(), String> {
     match &after.record.state {
         State::Gone => Ok(()),
-        State::Is { body, objects } if objects.is_empty() => record(body).map(|_| ()),
+        State::Is { body, objects } if objects.is_empty() => check(body).map(|_| ()),
         State::Is { .. } => Err("a record of the hub's refers to no object".into()),
     }
 }
 
 /// A kind of the hub's records: its name, its number in the registry
-/// (`fastctx_sync::registry`, whose order only grows) and its stream.
+/// (`fastctx_sync::registry`, whose order only grows), its stream, how a
+/// body is checked and where the hub takes them up from.
 macro_rules! hub_record {
     ($(#[$doc:meta])* $name:ident, $number:literal, $stream:literal) => {
+        hub_record!($(#[$doc])* $name, $number, $stream, record, "account-records");
+    };
+    ($(#[$doc:meta])* $name:ident, $number:literal, $stream:literal, $check:ident, $import:literal) => {
         $(#[$doc])*
         pub struct $name;
 
@@ -42,8 +56,8 @@ macro_rules! hub_record {
             const ROLES: &'static [&'static str] = &[];
             const RETENTION: Option<u64> = None;
             const DELETION: Deletion = Deletion::Tombstone;
-            /// Taken up from the hub's account records.
-            const IMPORT: Import = Import::From("account-records");
+            /// Taken up from where the hub keeps them.
+            const IMPORT: Import = Import::From($import);
             type Value = Vec<u8>;
 
             fn encode(value: &Vec<u8>) -> Vec<u8> {
@@ -51,13 +65,13 @@ macro_rules! hub_record {
             }
 
             fn decode(body: &[u8]) -> Result<Vec<u8>, String> {
-                record(body)
+                $check(body)
             }
 
             /// The hub alone orders the stream (`HUB_ORDERED`): what is
-            /// judged is that each record is an account record.
+            /// judged is that each record is as its kind's are.
             fn authorize(_actor: &Actor<'_>, _before: Option<&Entry>, after: &KindRecord) -> Result<(), String> {
-                judged(after)
+                judged(after, $check)
             }
 
             fn subscription(scope: &str, _stream: &str) -> String {
@@ -91,6 +105,16 @@ hub_record!(
 hub_record!(
     /// An account's skills and their index (`account.skill`).
     AccountSkill, 5, "skills"
+);
+hub_record!(
+    /// The machine changes an account reads, as the hub logged them, by
+    /// their number (`machine.audit`).
+    MachineAudit, 30, "audit", object, "machine-log"
+);
+hub_record!(
+    /// The troubles an account hears of, by their number, as raised and
+    /// as resolved (`account.notice`).
+    AccountNotice, 27, "notices", object, "troubles"
 );
 
 /// A project's ledger (`project.ledger`, design §28.18): each entry the hub

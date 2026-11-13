@@ -1083,10 +1083,10 @@ async fn serving(
     tokio::pin!(replaced);
     // These workers enqueue durable work before awaiting it. Recreating them
     // on every accept would abandon their waits and duplicate that work.
-    let expiring_log = machine_log::expire(&hub);
+    let telling = assets::told::follow(&hub);
     let expiring_assists = assists::expire(&hub);
     let stopping = shutdown_signal();
-    tokio::pin!(expiring_log, expiring_assists, stopping);
+    tokio::pin!(telling, expiring_assists, stopping);
     let admission = admission::Admission::new();
     let switched = loop {
         tokio::select! {
@@ -1109,7 +1109,7 @@ async fn serving(
                 hub.log.line(format_args!("the program this hub runs from is {version} now: stopping for its service to start it on that"));
                 break false;
             }
-            expired = &mut expiring_log => expired?,
+            told = &mut telling => told?,
             ended = &mut expiring_assists => ended?,
             Ok(()) = &mut switch => break true,
             why = &mut settled => {

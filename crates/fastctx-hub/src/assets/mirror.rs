@@ -156,26 +156,49 @@ pub(crate) fn document(assets: &Assets, account: &AccountName, record: &Record) 
         schema: 1,
         record: Item { item: item.as_bytes().to_vec(), order: item.as_bytes().to_vec(), state },
     }];
-    let frames = library.hub_frames(&scope_key, stream, records, &Service(assets.keys())).map_err(error)?;
-    let period = library.holding(&scope_key).map_err(error)?.ok_or("the scope is not held here")?;
+    apply(assets, &scope, &library, stream, records)
+}
+
+/// Takes `records`, which the hub writes into `stream` of `scope`, into the
+/// scope's library as frames the hub orders, and tells the devices holding
+/// it. Called with `WRITING` held.
+pub(super) fn apply(
+    assets: &Assets,
+    scope: &scopes::Scope,
+    library: &fastctx_content::v2::Library,
+    stream: &str,
+    records: Vec<KindRecord>,
+) -> Result<(), String> {
+    if records.is_empty() {
+        return Ok(());
+    }
+    let scope_key = scope.descriptor.scope.as_str();
+    let error = |error: fastctx_content::Error| error.to_string();
+    let frames = library.hub_frames(scope_key, stream, records, &Service(assets.keys())).map_err(error)?;
+    let period = library.holding(scope_key).map_err(error)?.ok_or("the scope is not held here")?;
     let anything = |_: &ObjectRef| true;
     let nothing = |_: &[u8; 32]| false;
     let taking = Taking { period, readable: &anything, proven: &nothing };
     for frame in frames {
-        match library.take(&scope_key, frame, &Keyed, &taking, super::serve::kinds(), assets.signer()).map_err(error)? {
+        match library.take(scope_key, frame, &Keyed, &taking, super::serve::kinds(), assets.signer()).map_err(error)? {
             Received::Applied { .. } => {}
             _ => return Err(format!("the hub did not apply its own frame of {stream} in {scope_key}")),
         }
     }
-    assets.changed(scope.owner.clone(), &scope_key);
+    assets.changed(scope.owner.clone(), scope_key);
     let next = library
-        .streams(&scope_key)
+        .streams(scope_key)
         .map_err(error)?
         .into_iter()
         .find(|(name, _)| name == stream)
         .map_or(0, |(_, next)| next);
-    assets.moved_by_hub(&scope.owner, &scope_key, stream, next);
+    assets.moved_by_hub(&scope.owner, scope_key, stream, next);
     Ok(())
+}
+
+/// The hub's writes into the streams it orders, one at a time.
+pub(super) fn writing() -> std::sync::MutexGuard<'static, ()> {
+    WRITING.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
 /// The records of `account` (opened at `opened`) that `wanted` picks, read
@@ -235,6 +258,7 @@ pub(crate) async fn described(hub: std::sync::Arc<crate::Hub>, keys: Vec<String>
             continue;
         };
         let paths = if key == account_scope(&hub.assets, &account) {
+            super::told::caught_up(&hub, &account, opened).await;
             records_of(&hub, &account, opened, placed_account).await
         } else {
             let resident = key.rsplit('/').next().unwrap_or_default().to_string();
@@ -308,27 +332,7 @@ pub(crate) fn ledger_entry(assets: &Assets, town: &TownId, seq: u64, bytes: &[u8
         schema: 1,
         record: Item { item: item.clone(), order: item, state: State::Is { body, objects: vec![lease.object] } },
     }];
-    let frames =
-        library.hub_frames(&scope_key, ProjectLedger::STREAM, records, &Service(assets.keys())).map_err(error)?;
-    let period = library.holding(&scope_key).map_err(error)?.ok_or("the scope is not held here")?;
-    let anything = |_: &ObjectRef| true;
-    let nothing = |_: &[u8; 32]| false;
-    let taking = Taking { period, readable: &anything, proven: &nothing };
-    for frame in frames {
-        match library.take(&scope_key, frame, &Keyed, &taking, super::serve::kinds(), assets.signer()).map_err(error)? {
-            Received::Applied { .. } => {}
-            _ => return Err(format!("the hub did not apply its own frame of the ledger of {town}")),
-        }
-    }
-    assets.changed(scope.owner.clone(), &scope_key);
-    let next = library
-        .streams(&scope_key)
-        .map_err(error)?
-        .into_iter()
-        .find(|(name, _)| name == ProjectLedger::STREAM)
-        .map_or(0, |(_, next)| next);
-    assets.moved_by_hub(&scope.owner, &scope_key, ProjectLedger::STREAM, next);
-    Ok(())
+    apply(assets, &scope, &library, ProjectLedger::STREAM, records)
 }
 
 /// Writes what of `town`'s ledger the asset library lacks, in order.

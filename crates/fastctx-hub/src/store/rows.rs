@@ -30,9 +30,6 @@ pub(crate) struct Changes {
     /// Whether the machine log is written whole: what it held is deleted first.
     pub(crate) log_cleared: bool,
     pub(crate) log_after: Option<u64>,
-    /// Machine log records kept before this moment, in seconds since 1970,
-    /// are deleted.
-    pub(crate) expired: Option<jiff::Timestamp>,
     /// Whether these are control facts — the directory readers are judged
     /// by — which take their place in the hub's chain (design §6.1).
     pub(crate) control: bool,
@@ -57,7 +54,6 @@ impl Changes {
             && self.log.is_empty()
             && !self.log_cleared
             && self.log_after.is_none()
-            && self.expired.is_none()
             && self.bodies.is_empty()
     }
 

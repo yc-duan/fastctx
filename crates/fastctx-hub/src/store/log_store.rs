@@ -2,7 +2,7 @@
 //! Account incarnation and device key are part of every visibility lookup.
 
 use super::shelf;
-use crate::machine_log::{Kept, RETENTION, notification};
+use crate::machine_log::{Kept, notification};
 use fastctx_storage::{
     Database, Error,
     rusqlite::{Connection, OptionalExtension, params},
@@ -116,26 +116,46 @@ pub(crate) fn put(c: &Connection, row: &Row) -> fastctx_storage::Result<()> {
     Ok(())
 }
 
-/// Removes one bounded batch, together with its visibility indexes.
-pub(crate) fn expire(connection: &Connection, cutoff: Timestamp) -> fastctx_storage::Result<usize> {
-    Ok(connection.prepare_cached("DELETE FROM machine_log WHERE id IN (SELECT id FROM machine_log WHERE (at,nano) <= (?1,?2) ORDER BY at,nano LIMIT 512)")?
-        .execute(params![cutoff.as_second(), cutoff.subsec_nanosecond()])?)
-}
-
-pub(crate) fn expires(database: &Database) -> std::io::Result<Option<Timestamp>> {
+/// The number of the newest record kept, if any.
+pub(crate) fn newest(database: &Database) -> std::io::Result<Option<u64>> {
     database
         .read_now(|c| {
-            let first: Option<(i64, i32)> = c
-                .prepare_cached("SELECT at,nano FROM machine_log ORDER BY at,nano LIMIT 1")?
-                .query_row([], |r| Ok((r.get(0)?, r.get(1)?)))
-                .optional()?;
-            first
-                .map(|(sec, nano)| {
-                    Timestamp::new(sec, nano)
-                        .and_then(|at| at.checked_add(RETENTION))
-                        .map_err(|e| Error::new(e.to_string()))
-                })
-                .transpose()
+            let id: Option<i64> =
+                c.prepare_cached("SELECT id FROM machine_log ORDER BY id DESC LIMIT 1")?.query_row([], |r| r.get(0)).optional()?;
+            Ok(id.map(|id| (id as u64) ^ (1_u64 << 63)))
+        })
+        .map_err(shelf::other)
+}
+
+/// The records any of `readers` reads numbered after `after`, oldest first,
+/// at most `limit`: each by its number, as its JSON.
+pub(crate) fn readable_after(
+    database: &Database,
+    readers: &[String],
+    after: Option<u64>,
+    limit: usize,
+) -> std::io::Result<Vec<(u64, Vec<u8>)>> {
+    let readers = readers.to_vec();
+    database
+        .read_now(move |c| {
+            let from = after.map_or(i64::MIN, sql_id);
+            let mut found = std::collections::BTreeMap::new();
+            let mut stmt = c.prepare_cached(
+                "SELECT r.id,l.record FROM machine_log_readers r JOIN machine_log l ON l.id=r.id WHERE r.reader=?1 AND r.id>?2 ORDER BY r.id LIMIT ?3",
+            )?;
+            for reader in &readers {
+                for row in stmt.query_map(params![reader, from, limit as i64], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, Vec<u8>>(1)?)))? {
+                    let (id, record) = row?;
+                    found.entry(id).or_insert(record);
+                }
+            }
+            let mut rows = Vec::new();
+            for (id, record) in found.into_iter().take(limit) {
+                let record = shelf::decode::<VisibleRecord>(&record)?.record;
+                let body = serde_json::to_vec(&record).map_err(|e| Error::new(e.to_string()))?;
+                rows.push(((id as u64) ^ (1_u64 << 63), body));
+            }
+            Ok(rows)
         })
         .map_err(shelf::other)
 }
@@ -146,11 +166,10 @@ pub(crate) fn updated(
     was: &str,
     now: &str,
 ) -> std::io::Result<bool> {
-    let cutoff = Timestamp::now().checked_sub(RETENTION).map_err(std::io::Error::other)?;
     database
         .read_now(|c| {
-            Ok(c.prepare_cached("SELECT 1 FROM machine_log_updated u JOIN machine_log l ON l.id=u.id WHERE machine=?1 AND was=?2 AND now=?3 AND (l.at,l.nano)>(?4,?5) LIMIT 1")?
-                .query_row(params![key.to_string(), was, now, cutoff.as_second(), cutoff.subsec_nanosecond()], |_| Ok(()))
+            Ok(c.prepare_cached("SELECT 1 FROM machine_log_updated WHERE machine=?1 AND was=?2 AND now=?3 LIMIT 1")?
+                .query_row(params![key.to_string(), was, now], |_| Ok(()))
                 .optional()?
                 .is_some())
         })
@@ -169,7 +188,6 @@ pub(crate) fn read(
     readers: &[String],
     before: Option<u64>,
     reads: Reads,
-    now: Timestamp,
 ) -> Result<Page, String> {
     database.read_now(|c| {
         let mut page = Page {records:Vec::new(),next_before:None};
@@ -180,14 +198,13 @@ pub(crate) fn read(
             Some(before) => sql_id(before - 1),
             None => i64::MAX,
         };
-        let cutoff = now.checked_sub(RETENTION).map_err(|e|Error::new(e.to_string()))?;
         loop {
             let mut records = std::collections::BTreeMap::new();
             let mut more = false;
             for reader in readers {
-                let mut stmt = c.prepare_cached("SELECT r.id,l.record FROM machine_log_readers r JOIN machine_log l ON l.id=r.id WHERE reader=?1 AND r.id<=?2 AND (l.needs & ?3)=l.needs AND (l.at,l.nano)>(?4,?5) ORDER BY r.id DESC LIMIT 256")?;
+                let mut stmt = c.prepare_cached("SELECT r.id,l.record FROM machine_log_readers r JOIN machine_log l ON l.id=r.id WHERE reader=?1 AND r.id<=?2 AND (l.needs & ?3)=l.needs ORDER BY r.id DESC LIMIT 256")?;
                 let mut count = 0;
-                for row in stmt.query_map(params![reader,cursor,mask(reads),cutoff.as_second(),cutoff.subsec_nanosecond()],|r|Ok((r.get::<_,i64>(0)?,r.get::<_,Vec<u8>>(1)?)))? {
+                for row in stmt.query_map(params![reader,cursor,mask(reads)],|r|Ok((r.get::<_,i64>(0)?,r.get::<_,Vec<u8>>(1)?)))? {
                     let (id, record) = row?;
                     records.entry(id).or_insert(record);
                     count += 1;
@@ -218,7 +235,6 @@ pub(crate) fn read(
 pub(crate) fn notices(
     database: &Database,
     accounts: &[(AccountName, Timestamp)],
-    now: Timestamp,
 ) -> std::io::Result<Vec<fastctx_types::sharing::Notice>> {
     if accounts.is_empty() {
         return Ok(Vec::new());
@@ -236,13 +252,10 @@ pub(crate) fn notices(
                 ids.insert(id?);
             }
         }
-        let cutoff = now.checked_sub(RETENTION).map_err(|e|Error::new(e.to_string()))?;
-        let mut still = c.prepare_cached("SELECT record FROM machine_log WHERE id = ?1 AND (at, nano) > (?2, ?3)")?;
+        let mut still = c.prepare_cached("SELECT record FROM machine_log WHERE id = ?1")?;
         let mut rows = Vec::new();
         for id in ids.into_iter().rev().take(most) {
-            let record = still
-                .query_row(params![id, cutoff.as_second(), i64::from(cutoff.subsec_nanosecond())], |row| row.get::<_, Vec<u8>>(0))
-                .optional()?;
+            let record = still.query_row(params![id], |row| row.get::<_, Vec<u8>>(0)).optional()?;
             rows.extend(record);
         }
         let mut notices = Vec::new();
