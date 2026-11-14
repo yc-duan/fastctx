@@ -17,7 +17,6 @@ use serde_json::{Value, json};
 use super::{content, subagents, tools};
 
 pub mod follow;
-mod large;
 
 /// What the host still stores, with unreadable records reported separately.
 #[derive(Debug)]
@@ -281,90 +280,39 @@ pub(crate) fn scan(
     let mut line = Vec::new();
     loop {
         line.clear();
-        let (mut read, mut ended) = bounded_line(reader, &mut line)?;
+        let read = reader.read_until(b'\n', &mut line)?;
         if read == 0 {
             break;
         }
-        // A line too large to hold whole is read on in parts, cut as it
-        // goes (`large`); its bytes are hashed as they pass, and the hash
-        // taken only where a line held whole would have been.
-        let mut large: Option<(Option<Vec<u8>>, Option<xxhash_rust::xxh3::Xxh3>)> = None;
-        if !ended && line.len() >= large::LARGE {
-            let mut cut = large::Cut::new();
-            cut.feed(&line);
-            let mut hashed = taken.as_deref().cloned();
-            if let Some(hashed) = hashed.as_mut() {
-                hashed.update(&line);
-            }
-            loop {
-                let available = reader.fill_buf()?;
-                if available.is_empty() {
-                    break;
-                }
-                let (part, through) = match available.iter().position(|byte| *byte == b'\n') {
-                    Some(at) => (&available[..=at], true),
-                    None => (available, false),
-                };
-                cut.feed(part);
-                if let Some(hashed) = hashed.as_mut() {
-                    hashed.update(part);
-                }
-                let length = part.len();
-                reader.consume(length);
-                read += length;
-                if through {
-                    ended = true;
-                    break;
-                }
-            }
-            large = Some((cut.finish(), hashed));
-        }
-        if !whole && !ended {
+        if !whole && line.last() != Some(&b'\n') {
             break;
         }
         scanned.number += 1;
         let number = scanned.number;
-        let parsed = match &mut large {
-            None if line.iter().all(u8::is_ascii_whitespace) => {
+        if line.iter().all(u8::is_ascii_whitespace) {
+            scanned.consumed += read as u64;
+            if let Some(taken) = taken.as_deref_mut() {
+                taken.update(&line);
+            }
+            continue;
+        }
+        let value: Value = match serde_json::from_slice(&line) {
+            Ok(value) => value,
+            Err(error) if line.last() != Some(&b'\n') && error.is_eof() => break,
+            Err(error) => {
+                scanned.problems.push(format!("line {number}: invalid JSON at column {}", error.column()));
                 scanned.consumed += read as u64;
                 if let Some(taken) = taken.as_deref_mut() {
                     taken.update(&line);
                 }
                 continue;
             }
-            None => serde_json::from_slice::<Value>(&line).map_err(Some),
-            Some((Some(kept), _)) => serde_json::from_slice::<Value>(kept).map_err(Some),
-            Some((None, _)) => Err(None),
-        };
-        let mut hash = |taken: &mut Option<&mut xxhash_rust::xxh3::Xxh3>| {
-            if let Some(taken) = taken.as_deref_mut() {
-                match &mut large {
-                    Some((_, hashed)) => {
-                        if let Some(hashed) = hashed.take() {
-                            *taken = hashed;
-                        }
-                    }
-                    None => taken.update(&line),
-                }
-            }
-        };
-        let value: Value = match parsed {
-            Ok(value) => value,
-            Err(Some(error)) if !ended && error.is_eof() => break,
-            Err(None) if !ended => break,
-            Err(error) => {
-                scanned.problems.push(match error {
-                    Some(error) => format!("line {number}: invalid JSON at column {}", error.column()),
-                    None => format!("line {number}: {read} bytes, too large to read"),
-                });
-                scanned.consumed += read as u64;
-                hash(&mut taken);
-                continue;
-            }
         };
         let start = scanned.consumed;
         scanned.consumed += read as u64;
-        hash(&mut taken);
+        if let Some(taken) = taken.as_deref_mut() {
+            taken.update(&line);
+        }
         let row = Row { line: number, start, value };
         if matches!(row.kind(), Some("custom-title" | "ai-title")) {
             if let Err(error) = scanned.titles.row(&row.value) {
@@ -1199,34 +1147,4 @@ fn bookkeeping(kind: &str) -> bool {
             | "fork-context-ref"
             | "relocated"
     )
-}
-
-/// Reads a line into `line`, at most `large::LARGE` bytes of it: how many
-/// bytes it read and whether the line ended (its newline among them).
-fn bounded_line(reader: &mut impl BufRead, line: &mut Vec<u8>) -> io::Result<(usize, bool)> {
-    let mut read = 0;
-    loop {
-        let available = match reader.fill_buf() {
-            Ok(available) => available,
-            Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
-            Err(error) => return Err(error),
-        };
-        if available.is_empty() {
-            return Ok((read, false));
-        }
-        let room = large::LARGE.saturating_sub(line.len());
-        let window = &available[..available.len().min(room)];
-        if let Some(at) = window.iter().position(|byte| *byte == b'\n') {
-            line.extend_from_slice(&window[..=at]);
-            reader.consume(at + 1);
-            return Ok((read + at + 1, true));
-        }
-        let length = window.len();
-        line.extend_from_slice(window);
-        reader.consume(length);
-        read += length;
-        if line.len() >= large::LARGE {
-            return Ok((read, false));
-        }
-    }
 }
