@@ -5,11 +5,13 @@
 //! for it. The writer's connection keeps a log hook instead: past the
 //! threshold it wakes a thread of this database, which folds what it can
 //! with its own connection without stopping the writer or any reader
-//! (PASSIVE); past four times the threshold — a fold that cannot keep up, or
-//! readers holding the log back — the writer folds it itself, as SQLite's
-//! own would, so the log never grows without bound. The thread runs only
-//! while there is folding to do, and the writer waits for it to end before
-//! it lets the file go. The writer's truncation when idle is as it was.
+//! (PASSIVE); past four times the threshold — a fold that cannot keep up —
+//! the writer folds it itself, as SQLite's own would at the threshold. A
+//! reader holding an old snapshot holds the log back from either, as it
+//! would SQLite's own. The thread runs only while there is folding to do;
+//! its connection is closed before it is gone, and the writer waits for it
+//! to be gone before it lets the file go, unwinding too. The writer's
+//! truncation when idle is as it was.
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Condvar, Mutex};
@@ -40,16 +42,21 @@ impl Shared {
         }
         state.wanted = true;
         if state.worker.is_some() {
+            // Running, or leaving: one leaving starts another for this.
             self.woken.notify_one();
             return;
         }
+        self.start(&mut state);
+    }
+
+    /// Starts a thread while `state` is held. Not started, the writer's own
+    /// fold at four times the threshold still folds the log.
+    fn start(self: &Arc<Self>, state: &mut State) {
         let shared = self.clone();
-        // Not started, the writer's own fold at four times the threshold
-        // still bounds the log.
         state.worker = std::thread::Builder::new().name("sqlite-checkpoint".into()).spawn(move || shared.work()).ok();
     }
 
-    fn work(&self) {
+    fn work(self: Arc<Self>) {
         let connection = rusqlite::Connection::open_with_flags(
             &self.path,
             rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
@@ -66,9 +73,7 @@ impl Shared {
                 state = self.woken.wait_timeout(state, LINGER).expect("never poisoned").0;
             }
             if state.closed || !state.wanted {
-                // Ended, or nothing more came: the next want starts another.
-                state.worker = None;
-                return;
+                break;
             }
             state.wanted = false;
             drop(state);
@@ -77,6 +82,16 @@ impl Shared {
                 // is no matter: the next commit past the threshold asks again.
                 let _ = connection.query_row("PRAGMA wal_checkpoint(PASSIVE)", [], |row| row.get::<_, i64>(0));
             }
+        }
+        // Closed before the thread is known to be gone: whoever waits for it
+        // waits for the connection too.
+        drop(connection);
+        let mut state = self.state.lock().expect("never poisoned");
+        if state.wanted && !state.closed {
+            // Asked again while it was leaving.
+            self.start(&mut state);
+        } else {
+            state.worker = None;
         }
     }
 }
@@ -92,28 +107,36 @@ impl Drop for Closing {
     }
 }
 
-/// What the writer's thread keeps to wait, once its connection is closed,
-/// for the folding thread to end.
-pub(crate) struct Joining(Arc<Shared>);
+/// Held by the writer's thread past its connection: dropped, it closes the
+/// folding and waits for its thread to be gone, then lets `held` go — the
+/// file's keeper, which says no other handle of this process has the file.
+pub(crate) struct Ending<K> {
+    shared: Arc<Shared>,
+    held: Option<K>,
+}
 
-impl Joining {
-    pub(crate) fn join(self) {
-        let worker = {
-            let mut state = self.0.state.lock().expect("never poisoned");
-            state.closed = true;
-            self.0.woken.notify_one();
-            state.worker.take()
-        };
-        if let Some(worker) = worker {
+impl<K> Drop for Ending<K> {
+    fn drop(&mut self) {
+        loop {
+            let worker = {
+                let mut state = self.shared.state.lock().expect("never poisoned");
+                state.closed = true;
+                self.shared.woken.notify_one();
+                state.worker.take()
+            };
+            let Some(worker) = worker else { break };
             let _ = worker.join();
         }
+        drop(self.held.take());
     }
 }
 
 /// Puts the log hook on the writer's `connection` of the database at `path`,
-/// folding past `threshold` pages beside it; what its thread waits on to
-/// end.
-pub(crate) fn install(connection: &mut rusqlite::Connection, path: &Path, threshold: u32) -> rusqlite::Result<Joining> {
+/// folding past `threshold` pages beside it; what the writer's thread holds
+/// until it ends, `held` let go after the folding thread is gone. An error
+/// leaves the connection not to be used: SQLite may keep a hook whose state
+/// was freed (`wal_hook` sets the hook before it hands over its closure).
+pub(crate) fn install<K>(connection: &mut rusqlite::Connection, path: &Path, threshold: u32, held: K) -> rusqlite::Result<Ending<K>> {
     let shared = Arc::new(Shared { path: path.to_path_buf(), state: Mutex::new(State::default()), woken: Condvar::new() });
     let (closing, threshold) = (Closing(shared.clone()), i32::try_from(threshold.max(1)).unwrap_or(i32::MAX));
     let hard = threshold.saturating_mul(4);
@@ -127,5 +150,5 @@ pub(crate) fn install(connection: &mut rusqlite::Connection, path: &Path, thresh
         }
         Ok(())
     }))?;
-    Ok(Joining(shared))
+    Ok(Ending { shared, held: Some(held) })
 }
