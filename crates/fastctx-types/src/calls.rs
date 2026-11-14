@@ -1481,8 +1481,6 @@ impl Call {
             | Self::Data { .. }
             | Self::DoctorCalls { .. }
             | Self::DoctorReadings { .. }
-            | Self::SyncStatus { .. }
-            | Self::AdoptConversation { .. }
             | Self::Features { .. }
             | Self::FindFiles { .. }
             | Self::Folders { .. }
@@ -1585,7 +1583,9 @@ impl Call {
             | Self::WorldNow { .. }
             | Self::Write { .. } => None,
             Self::Timeline { .. } => Some(Purpose::AssetSync),
-            Self::Topics { .. } | Self::RemoteTopics { .. } => Some(Purpose::Observation),
+            Self::Topics { .. } | Self::RemoteTopics { .. } | Self::SyncStatus { .. } => Some(Purpose::Observation),
+            // Takes over the streams the lost device ordered (design §28.10).
+            Self::AdoptConversation { .. } => Some(Purpose::AssetSync),
         }
     }
 }
@@ -1625,7 +1625,6 @@ impl Reply {
             | Self::Data { .. }
             | Self::DoctorCalls { .. }
             | Self::DoctorReadings { .. }
-            | Self::SyncStatus { .. }
             | Self::Done { .. }
             | Self::Entered { .. }
             | Self::EntryAdded { .. }
@@ -1695,7 +1694,7 @@ impl Reply {
             | Self::WorldNow { .. }
             | Self::Written { .. } => None,
             Self::Timeline(_) => Some(Purpose::AssetSync),
-            Self::Topics(_) | Self::RemoteTopics(_) => Some(Purpose::Observation),
+            Self::Topics(_) | Self::RemoteTopics(_) | Self::SyncStatus { .. } => Some(Purpose::Observation),
         }
     }
 }

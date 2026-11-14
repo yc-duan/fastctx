@@ -21,3 +21,8 @@ asset_unread	runtime.assets	crates/fastctx-hub/src/assets/bodies.rs
 asset_deleting	runtime.assets	crates/fastctx-hub/src/assets/bodies.rs
 sync_reports	runtime.assets	crates/fastctx-hub/src/assets/standing.rs
 sync_lag	runtime.assets	crates/fastctx-hub/src/assets/standing.rs
+recovery_frames	runtime.assets	crates/fastctx-hub/src/assets/handback.rs
+recovery_results	runtime.assets	crates/fastctx-hub/src/assets/handback.rs
+recovery_refusals	runtime.assets	crates/fastctx-hub/src/assets/handback.rs
+book_forgotten	runtime.assets	crates/fastctx-node/src/activity_book/mod.rs
+sentinel_homes	runtime.assets	crates/fastctx-hub/src/assets/sentinel_homes.rs

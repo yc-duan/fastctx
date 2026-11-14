@@ -1277,6 +1277,56 @@ pub fn encode(frame: &impl Serialize) -> Vec<u8> {
     serde_json::to_vec(frame).expect("frames always serialize")
 }
 
+/// Each change new to the world protocol states its routing purpose here;
+/// the changes that predate it have none. The match stays exhaustive so a
+/// new change cannot pass without one.
+impl Change {
+    pub fn change_purpose(&self) -> Option<fastctx_types::sync::transfer::Purpose> {
+        use fastctx_types::sync::transfer::Purpose;
+        match self {
+            // The hub's assets sealed at each start, and opened (design §17 (b)).
+            Self::AssetSeal { .. } | Self::OpenAssets { .. } => Some(Purpose::AssetSync),
+            Self::AcceptRole { .. }
+            | Self::Assist { .. }
+            | Self::Collab { .. }
+            | Self::DeleteAccount { .. }
+            | Self::DeleteProject { .. }
+            | Self::Direct { .. }
+            | Self::Dissolve { .. }
+            | Self::Group { .. }
+            | Self::History { .. }
+            | Self::Intake { .. }
+            | Self::Layer { .. }
+            | Self::Logout { .. }
+            | Self::MemorySettings { .. }
+            | Self::MoveProject { .. }
+            | Self::OpenAccount { .. }
+            | Self::OpenProject { .. }
+            | Self::PasswordFinish { .. }
+            | Self::PasswordStart { .. }
+            | Self::Plan { .. }
+            | Self::Profile { .. }
+            | Self::Relay { .. }
+            | Self::Remove { .. }
+            | Self::Rename { .. }
+            | Self::RenameGroup { .. }
+            | Self::RevokeToken { .. }
+            | Self::Rollout { .. }
+            | Self::SetAccount { .. }
+            | Self::SetRole { .. }
+            | Self::Settings { .. }
+            | Self::Share { .. }
+            | Self::ShareProject { .. }
+            | Self::StopActing { .. }
+            | Self::Subagents { .. }
+            | Self::Token { .. }
+            | Self::Transfer { .. }
+            | Self::UpdateDue { .. }
+            | Self::Updates { .. } => None,
+        }
+    }
+}
+
 impl Question {
     pub fn question_purpose(&self) -> Option<fastctx_types::sync::transfer::Purpose> {
         use fastctx_types::sync::transfer::Purpose;

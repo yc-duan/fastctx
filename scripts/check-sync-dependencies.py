@@ -18,7 +18,9 @@ LOCAL = {
 STORAGE_USERS = {
     "fastctx-sync", "fastctx-content", "fastctx-hub", "fastctx-node", "fastctx-net", "fastctx-jobs",
 }
-CONTENT_USERS = {"fastctx-hub", "fastctx-node", "fastctx-client"}
+# The bench measures the storage core's rows of design §18 on the library
+# itself; it ships in no program.
+CONTENT_USERS = {"fastctx-hub", "fastctx-node", "fastctx-client", "fastctx-bench"}
 # Who may open SQLite itself, past the storage layer: none other may make a
 # connection of its own to any database, an asset library's among them.
 RUSQLITE_USERS = {"fastctx-storage", "fastctx-gui"}

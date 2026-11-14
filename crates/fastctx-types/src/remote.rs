@@ -928,7 +928,7 @@ impl RemoteCall {
     pub fn transfer_purpose(&self) -> Option<crate::sync::transfer::Purpose> {
         use crate::sync::transfer::Purpose;
         match self {
-            Self::Timeline { .. } => Some(Purpose::Observation),
+            Self::Timeline { .. } | Self::Topics { .. } => Some(Purpose::Observation),
             Self::AddAgentLogin { .. }
             | Self::AgentActivity { .. }
             | Self::AgentCalls { .. }
@@ -1003,7 +1003,6 @@ impl RemoteCall {
             | Self::SetAgentTitle { .. }
             | Self::Since { .. }
             | Self::Stats { .. }
-            | Self::Topics { .. }
             | Self::Stop { .. }
             | Self::StopJob { .. }
             | Self::StopOn { .. }
@@ -1028,7 +1027,7 @@ impl RemoteReply {
     pub fn answer_purpose(&self) -> Option<crate::sync::transfer::Purpose> {
         use crate::sync::transfer::Purpose;
         match self {
-            Self::Timeline { .. } => Some(Purpose::Observation),
+            Self::Timeline { .. } | Self::Topics { .. } => Some(Purpose::Observation),
             Self::AgentActivity { .. }
             | Self::AgentCalls { .. }
             | Self::AgentChangePreview { .. }
@@ -1085,7 +1084,6 @@ impl RemoteReply {
             | Self::Set { .. }
             | Self::Since { .. }
             | Self::Stats { .. }
-            | Self::Topics { .. }
             | Self::Stopped { .. }
             | Self::Thumbnail { .. }
             | Self::Update { .. }

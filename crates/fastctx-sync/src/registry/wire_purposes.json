@@ -593,5 +593,117 @@
     "purpose": "AssetSync",
     "capability": "asset_sync",
     "mapping": "crates/fastctx-types/src/assets.rs"
+  },
+  {
+    "type": "crates/fastctx-net/src/wire.rs::Change",
+    "variant": "AssetSeal",
+    "purpose": "AssetSync",
+    "capability": "asset_sync.transport",
+    "mapping": "crates/fastctx-net/src/wire.rs"
+  },
+  {
+    "type": "crates/fastctx-net/src/wire.rs::Change",
+    "variant": "OpenAssets",
+    "purpose": "AssetSync",
+    "capability": "asset_sync.transport",
+    "mapping": "crates/fastctx-net/src/wire.rs"
+  },
+  {
+    "type": "crates/fastctx-types/src/assets.rs::Request",
+    "variant": "Changes",
+    "purpose": "AssetSync",
+    "capability": "asset_sync",
+    "mapping": "crates/fastctx-types/src/assets.rs"
+  },
+  {
+    "type": "crates/fastctx-types/src/assets.rs::Request",
+    "variant": "HandBack",
+    "purpose": "AssetSync",
+    "capability": "asset_sync",
+    "mapping": "crates/fastctx-types/src/assets.rs"
+  },
+  {
+    "type": "crates/fastctx-types/src/assets.rs::Request",
+    "variant": "Older",
+    "purpose": "AssetSync",
+    "capability": "asset_sync",
+    "mapping": "crates/fastctx-types/src/assets.rs"
+  },
+  {
+    "type": "crates/fastctx-types/src/assets.rs::Request",
+    "variant": "Report",
+    "purpose": "AssetSync",
+    "capability": "asset_sync",
+    "mapping": "crates/fastctx-types/src/assets.rs"
+  },
+  {
+    "type": "crates/fastctx-types/src/assets.rs::Request",
+    "variant": "SyncStatus",
+    "purpose": "AssetSync",
+    "capability": "asset_sync",
+    "mapping": "crates/fastctx-types/src/assets.rs"
+  },
+  {
+    "type": "crates/fastctx-types/src/assets.rs::Request",
+    "variant": "Takeover",
+    "purpose": "AssetSync",
+    "capability": "asset_sync",
+    "mapping": "crates/fastctx-types/src/assets.rs"
+  },
+  {
+    "type": "crates/fastctx-types/src/assets.rs::Request",
+    "variant": "Window",
+    "purpose": "AssetSync",
+    "capability": "asset_sync",
+    "mapping": "crates/fastctx-types/src/assets.rs"
+  },
+  {
+    "type": "crates/fastctx-types/src/calls.rs::Call",
+    "variant": "AdoptConversation",
+    "purpose": "AssetSync",
+    "capability": "node_ipc",
+    "mapping": "crates/fastctx-types/src/calls.rs"
+  },
+  {
+    "type": "crates/fastctx-types/src/calls.rs::Call",
+    "variant": "RemoteTopics",
+    "purpose": "Observation",
+    "capability": "node_ipc",
+    "mapping": "crates/fastctx-types/src/calls.rs"
+  },
+  {
+    "type": "crates/fastctx-types/src/calls.rs::Call",
+    "variant": "SyncStatus",
+    "purpose": "Observation",
+    "capability": "node_ipc",
+    "mapping": "crates/fastctx-types/src/calls.rs"
+  },
+  {
+    "type": "crates/fastctx-types/src/calls.rs::Reply",
+    "variant": "RemoteTopics",
+    "purpose": "Observation",
+    "capability": "node_ipc",
+    "mapping": "crates/fastctx-types/src/calls.rs"
+  },
+  {
+    "type": "crates/fastctx-types/src/calls.rs::Reply",
+    "variant": "SyncStatus",
+    "purpose": "Observation",
+    "capability": "node_ipc",
+    "mapping": "crates/fastctx-types/src/calls.rs"
+  },
+  {
+    "type": "crates/fastctx-types/src/remote.rs::RemoteCall",
+    "variant": "Topics",
+    "purpose": "Observation",
+    "capability": "timeline_reads",
+    "mapping": "crates/fastctx-types/src/remote.rs"
+  },
+  {
+    "type": "crates/fastctx-types/src/remote.rs::RemoteReply",
+    "variant": "Topics",
+    "purpose": "Observation",
+    "capability": "timeline_reads",
+    "mapping": "crates/fastctx-types/src/remote.rs"
   }
 ]

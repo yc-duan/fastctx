@@ -61,6 +61,16 @@ ASSET_OPENERS = {
     "crates/fastctx-node/src/assets.rs",
     "crates/fastctx-hub/src/assets/owners.rs",
     "crates/fastctx-client/src/device/replica/mod.rs",
+    # The hub's asset drills, in tests only: a conversation adopted after its
+    # device was lost (design §28.10), the libraries sealed and reopened, an
+    # image found out by its receipts (§17), sentinel runs, the serving.
+    "crates/fastctx-hub/src/assets/drills/adopt.rs",
+    "crates/fastctx-hub/src/assets/drills/assets.rs",
+    "crates/fastctx-hub/src/assets/drills/identify.rs",
+    "crates/fastctx-hub/src/assets/drills/runs.rs",
+    "crates/fastctx-hub/src/assets/drills/serve.rs",
+    # The bench of design §18's storage-core rows; it ships in no program.
+    "crates/fastctx-bench/src/storage.rs",
 }
 ASSET_OPENING = re.compile(
     r"\b(?:Content|Objects|Library)\s*>?\s*::\s*open(?:_hub)?\b|\b(?:OBJECTS_DIRECTORY|OBJECTS_FILE|BYTES_FILE)\b"
