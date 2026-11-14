@@ -29,6 +29,8 @@ mod contract;
 pub mod control_error;
 mod control_start;
 mod controls;
+#[cfg(feature = "drill")]
+pub mod drill;
 pub mod follow;
 mod history;
 pub mod identify;

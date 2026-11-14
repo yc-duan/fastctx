@@ -8,6 +8,10 @@ license.workspace = true
 repository.workspace = true
 publish = false
 
+[features]
+# Opens the Codex app-server client and follower to the bench (§18).
+drill = []
+
 [dependencies]
 base64 = "0.22"
 tempfile = "3"
