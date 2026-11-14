@@ -47,11 +47,22 @@ struct Row {
 }
 
 /// The library's next write number, in the transaction `db` is in.
+///
+/// The single-row writes each record makes say `OR FAIL`: a constraint of
+/// one row is checked before anything of it is written, so failing leaves
+/// what aborting would, and SQLite then keeps no statement journal for
+/// them, where it would copy each page they touch once more for every
+/// record of a frame (§28.43: a replica's catch-up took 17% longer).
 pub(super) fn next_write(db: &Connection) -> fastctx_storage::Result<i64> {
+    if let Some(last) = db
+        .prepare_cached("UPDATE OR FAIL writes SET last = last + 1 WHERE id = 1 RETURNING last")?
+        .query_row([], |row| row.get(0))
+        .optional()?
+    {
+        return Ok(last);
+    }
     Ok(db
-        .prepare_cached(
-            "INSERT INTO writes (id, last) VALUES (1, 1) ON CONFLICT (id) DO UPDATE SET last = last + 1 RETURNING last",
-        )?
+        .prepare_cached("INSERT INTO writes (id, last) VALUES (1, 1) RETURNING last")?
         .query_row([], |row| row.get(0))?)
 }
 
@@ -63,7 +74,7 @@ pub(super) fn last_write(db: &Connection) -> fastctx_storage::Result<i64> {
 /// A write number for a row of `stream`, which its stream notes.
 pub(super) fn written(db: &Connection, stream: i64) -> fastctx_storage::Result<i64> {
     let local = next_write(db)?;
-    db.prepare_cached("UPDATE streams SET written = ?2 WHERE id = ?1")?.execute(params![stream, local])?;
+    db.prepare_cached("UPDATE OR FAIL streams SET written = ?2 WHERE id = ?1")?.execute(params![stream, local])?;
     Ok(local)
 }
 
@@ -143,7 +154,7 @@ fn replace(db: &Connection, at: Applying, existing: Option<Row>, revision: u64, 
     };
     let local = written(db, at.stream)?;
     db.prepare_cached(
-        "INSERT INTO items (stream, place, item, revision, state, kind, schema, body, objects, holding, local)
+        "INSERT OR FAIL INTO items (stream, place, item, revision, state, kind, schema, body, objects, holding, local)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
     )?
     .execute(params![

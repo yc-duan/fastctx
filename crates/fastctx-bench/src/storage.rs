@@ -199,6 +199,18 @@ fn replica_catch_up_parts(dir: &Path, scale: Scale) -> Result<bool, String> {
     let count = scale.of(300_000);
     three.produce(count, 960, |_| 1024, 19)?;
     three.ship()?;
+    // What a device catching up asks of its hub: the frames from where it
+    // stands, a page of 64 at a time.
+    let started = Instant::now();
+    let (mut from, mut read) = (0u64, 0usize);
+    loop {
+        let page = Three::frames_of(&three.hub, from, 64)?;
+        let Some(last) = page.last() else { break };
+        let header = fastctx_content::v2::Header::decode(&last.header).map_err(error)?;
+        from = header.first + header.count as u64;
+        read += page.len();
+    }
+    stats::rate("replica-catch-up-parts", "frames read out of the hub, 64 a page", read as f64, "frames", started.elapsed(), 0.0, serde_json::json!({}));
     let frames = Three::frames_of(&three.hub, 0, usize::MAX)?;
     let started = Instant::now();
     let mut records = 0usize;
