@@ -10,6 +10,7 @@ publish = false
 
 [dependencies]
 fastctx-content = { path = "../fastctx-content", features = ["drill"] }
+fastctx-hosts = { path = "../fastctx-hosts" }
 fastctx-net = { path = "../fastctx-net" }
 serde_json = { workspace = true }
 tokio = { workspace = true, features = ["rt", "time"] }

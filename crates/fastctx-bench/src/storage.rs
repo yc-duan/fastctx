@@ -38,9 +38,9 @@ impl Scale {
     }
 }
 
-const SCOPE: &str = "c/w-bench/m1/claude-5a1ce000";
+pub(crate) const SCOPE: &str = "c/w-bench/m1/claude-5a1ce000";
 
-fn error(error: impl std::fmt::Display) -> String {
+pub(crate) fn error(error: impl std::fmt::Display) -> String {
     error.to_string()
 }
 
@@ -55,22 +55,27 @@ pub(crate) fn run(row: &str, dir: &Path, scale: Scale) -> Result<bool, String> {
         "durable-attachment" => durable_attachment(dir),
         "commit-to-readable" => commit_to_readable(dir),
         "replica-catch-up-parts" => replica_catch_up_parts(dir, scale),
+        "first-screen-cold" => first_screen_cold(dir, scale),
+        // Under 32 MiB the whole prefix is checked at each advance: begun at
+        // 28, the record stays under it through its thousand lines.
+        "advance-small" => crate::advance::advance(dir, scale, 28 << 20, "advance-small"),
+        "advance-large" => crate::advance::advance(dir, scale, 1 << 30, "advance-large"),
         other => Err(format!("no row {other}")),
     }
 }
 
 /// A producer, a hub and a replica, each with the scope installed, and the
 /// keys they sign with.
-struct Three {
-    producer: Library,
+pub(crate) struct Three {
+    pub(crate) producer: Library,
     hub: Library,
     replica: Library,
-    device: Arc<dyn Signer>,
+    pub(crate) device: Arc<dyn Signer>,
     hub_key: Arc<dyn HubSigner>,
     kinds: Arc<dyn Authorizer>,
 }
 
-fn three(dir: &Path) -> Result<Three, String> {
+pub(crate) fn three(dir: &Path) -> Result<Three, String> {
     let open = |name: &str, hub: bool| -> Result<Library, String> {
         let at = dir.join(name);
         std::fs::create_dir_all(&at).map_err(error)?;
@@ -343,6 +348,63 @@ fn first_screen(dir: &Path, scale: Scale) -> Result<bool, String> {
     let met = latest.report("first-screen", "storage core: the latest page, warm", Some(20.0), serde_json::json!({ "events": count, "per_page": 101 }));
     down.report("first-screen", "storage core: a page further down, warm", None, serde_json::json!({ "events": count, "per_page": 101 }));
     Ok(met)
+}
+
+/// `first-screen` with nothing of the library in memory (§18: once cold):
+/// the same conversation made and closed, then 20 times the machine's page
+/// cache dropped, the library opened and its first page read — the latest,
+/// and one further down. Only on Linux, as root (`/proc/sys/vm/drop_caches`),
+/// as the reference machine runs it; elsewhere it says it cannot.
+fn first_screen_cold(dir: &Path, scale: Scale) -> Result<bool, String> {
+    let count = scale.of(300_000);
+    {
+        let three = three(dir)?;
+        three.produce(count, 400, |seeded| seeded.between(1024, 4096), 20)?;
+        three.ship()?;
+        three.import()?;
+    }
+    let mut seeded = Seeded::new(22);
+    let (mut opened, mut latest, mut down) = (Samples::default(), Samples::default(), Samples::default());
+    for _ in 0..20 {
+        drop_caches()?;
+        let started = Instant::now();
+        let (library, _) = Library::open(&dir.join("replica")).map_err(error)?;
+        library.know(keys::kinds());
+        opened.push(started.elapsed());
+        let started = Instant::now();
+        match library.view_page(SCOPE, Timeline::STREAM, &Anchor::Latest, 101, 4 << 20) {
+            Ok(read) if read.entries.len() == 101 => latest.push(started.elapsed()),
+            _ => latest.failed += 1,
+        }
+        drop(library);
+        drop_caches()?;
+        let (library, _) = Library::open(&dir.join("replica")).map_err(error)?;
+        library.know(keys::kinds());
+        let number = seeded.between(200, count) as u64;
+        let key = number.to_be_bytes().to_vec();
+        let started = Instant::now();
+        match library.view_page(SCOPE, Timeline::STREAM, &Anchor::Before(Place { order: key.clone(), item: key }), 101, 4 << 20) {
+            Ok(read) if !read.entries.is_empty() => down.push(started.elapsed()),
+            _ => down.failed += 1,
+        }
+    }
+    let shape = serde_json::json!({ "events": count, "per_page": 101, "rounds": 20 });
+    opened.report("first-screen-cold", "storage core: the library opened, cold", None, shape.clone());
+    let met = latest.report("first-screen-cold", "storage core: the latest page, cold", Some(20.0), shape.clone());
+    down.report("first-screen-cold", "storage core: a page further down, cold", None, shape);
+    Ok(met)
+}
+
+/// Empties the machine's page cache, what is written first put on the disk.
+fn drop_caches() -> Result<(), String> {
+    if !cfg!(target_os = "linux") {
+        return Err("a cold cache is measured on Linux only, as root (the reference machine)".into());
+    }
+    let done = std::process::Command::new("sh")
+        .args(["-c", "sync && echo 3 > /proc/sys/vm/drop_caches"])
+        .status()
+        .map_err(error)?;
+    if done.success() { Ok(()) } else { Err("dropping the page cache needs root".into()) }
 }
 
 /// Bytes from a fixed seed, as a reader gives them.

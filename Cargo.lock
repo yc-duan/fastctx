@@ -1336,6 +1336,7 @@ name = "fastctx-bench"
 version = "1.0.1-beta.17"
 dependencies = [
  "fastctx-content",
+ "fastctx-hosts",
  "fastctx-net",
  "serde_json",
  "tokio",

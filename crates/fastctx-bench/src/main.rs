@@ -5,6 +5,7 @@
 //! failed, the target and whether it was met. Run built for release, on a
 //! machine doing nothing else, or under the reference machine's limits.
 
+mod advance;
 mod fixture;
 mod keys;
 mod stats;
@@ -13,7 +14,9 @@ mod storage;
 use std::path::PathBuf;
 
 const USAGE: &str = "usage: fastctx-bench <row|storage> --dir <scratch directory> [--small]
-rows: first-screen hub-frames replica-catch-up object-loop durable-word durable-attachment commit-to-readable";
+rows: first-screen hub-frames replica-catch-up object-loop durable-word durable-attachment commit-to-readable
+follower rows: advance-small advance-large
+diagnostic rows: replica-catch-up-parts first-screen-cold (Linux, as root)";
 
 fn main() {
     let mut args = std::env::args().skip(1);
