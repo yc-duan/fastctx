@@ -37,6 +37,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     performance(root)?;
     tokio::runtime::Builder::new_current_thread().enable_all().build()?.block_on(concurrency(root))?;
     relaxed(root)?;
+    checkpoints(root)?;
     crashes(root)?;
     corruption(root)?;
     println!("storage drill passed");
@@ -210,6 +211,57 @@ async fn concurrency(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
     println!(
         "priority/cancellation: interactive followed {preceding} background writes; cancelled caller retained its committed row and notification"
     );
+    Ok(())
+}
+
+/// The log folded beside the writer (§28.43): a burst of commits past a
+/// small threshold leaves the log bounded and every row there, the database
+/// opens again with all of them, and once it is let go its files can be
+/// removed — no thread of it still holds them.
+fn checkpoints(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    let path = root.join("checkpoints.sqlite3");
+    let shape = fastctx_storage::Shape { checkpoint_pages: Some(16), ..Default::default() };
+    let count = |database: &Database| -> Result<i64, Error> {
+        database.read_now(|db| Ok(db.query_row("SELECT COUNT(*) FROM events", [], |row| row.get(0))?))
+    };
+    {
+        let database = Database::open_shaped(&path, SCHEMA, shape)?;
+        for id in 0..2_000i64 {
+            let body = "x".repeat(2_000);
+            database.write_relaxed_now_at(Priority::Normal, 2_048, move |db| {
+                db.execute("INSERT INTO events(id,body) VALUES(?1,?2)", (id, body))?;
+                Ok(())
+            })?;
+        }
+        let log = std::fs::metadata(format!("{}-wal", path.display()))?.len();
+        if log > 4 << 20 {
+            return Err(format!("the log grew to {log} bytes past a threshold of 16 pages").into());
+        }
+        if count(&database)? != 2_000 {
+            return Err("rows went missing with the log folded beside the writer".into());
+        }
+    }
+    {
+        let database = Database::open_shaped(&path, SCHEMA, shape)?;
+        if count(&database)? != 2_000 {
+            return Err("rows went missing across a reopening".into());
+        }
+    }
+    let started = Instant::now();
+    loop {
+        let removed = ["", "-wal", "-shm"].iter().all(|suffix| {
+            let file = format!("{}{suffix}", path.display());
+            std::fs::remove_file(&file).is_ok() || !Path::new(&file).exists()
+        });
+        if removed {
+            break;
+        }
+        if started.elapsed() > Duration::from_secs(5) {
+            return Err("a let-go database's files were still held after five seconds".into());
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    println!("checkpoints beside the writer: ok");
     Ok(())
 }
 

@@ -4,6 +4,7 @@
 
 pub mod authorization;
 mod blocking;
+mod checkpointer;
 pub mod documents;
 mod error;
 pub mod format_upgrade;
@@ -285,6 +286,9 @@ impl Database {
         let damage = Arc::new(integrity::Damage::new(path.to_path_buf(), &readings));
         let metrics = Arc::new(metrics::Metrics::new(readings));
         let unsettled = Arc::new(AtomicBool::new(false));
+        // After `wal_autocheckpoint`, whose fold inside the commit the hook
+        // takes the place of; that one stays if the hook cannot be put on.
+        let joining = checkpointer::install(&mut connection, path, shape.checkpoint_pages.unwrap_or(1000)).ok();
         let (queue, measurements, noticed, file, held, relaxed) = (
             writes.clone(),
             metrics.clone(),
@@ -295,7 +299,11 @@ impl Database {
         );
         std::thread::Builder::new().name("sqlite-writer".into()).spawn(move || {
             writer::run(connection, queue, measurements, noticed, file, relaxed, guard);
-            // The connection, and with it the last checkpoint, is done.
+            // The connection, and with it the last checkpoint, is done; so is
+            // the thread that folded the log beside it.
+            if let Some(joining) = joining {
+                joining.join();
+            }
             drop(held);
         })?;
         integrity::watch(Arc::downgrade(&damage), path.to_path_buf())?;
