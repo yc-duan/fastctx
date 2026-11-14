@@ -62,6 +62,8 @@ pub(crate) fn run(row: &str, dir: &Path, scale: Scale) -> Result<bool, String> {
         "advance-large" => crate::advance::advance(dir, scale, 1 << 30, "advance-large"),
         "first-import" => crate::imports::first_import(dir, scale),
         "large-value" => crate::imports::large_value(dir, scale),
+        "codex-advance" => crate::codex::advance(dir, scale),
+        "codex-relist" => crate::codex::relist(dir, scale),
         other => Err(format!("no row {other}")),
     }
 }

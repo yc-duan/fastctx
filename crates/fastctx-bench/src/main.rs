@@ -6,6 +6,7 @@
 //! machine doing nothing else, or under the reference machine's limits.
 
 mod advance;
+mod codex;
 mod fixture;
 mod imports;
 mod keys;
@@ -16,10 +17,19 @@ use std::path::PathBuf;
 
 const USAGE: &str = "usage: fastctx-bench <row|storage> --dir <scratch directory> [--small]
 rows: first-screen hub-frames replica-catch-up object-loop durable-word durable-attachment commit-to-readable
-follower rows: advance-small advance-large first-import large-value
+follower rows: advance-small advance-large first-import large-value codex-advance codex-relist
 diagnostic rows: replica-catch-up-parts first-screen-cold (Linux, as root)";
 
 fn main() {
+    // Started by the Codex follower's client as its app-server (`codex.rs`).
+    let all: Vec<String> = std::env::args().skip(1).collect();
+    if all.first().map(String::as_str) == Some("app-server") {
+        if let Err(failure) = codex::serve(&all) {
+            eprintln!("the fake app-server: {failure}");
+            std::process::exit(1);
+        }
+        return;
+    }
     let mut args = std::env::args().skip(1);
     let Some(row) = args.next() else {
         eprintln!("{USAGE}");
