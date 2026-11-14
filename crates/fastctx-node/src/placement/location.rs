@@ -54,15 +54,18 @@ impl Locations {
     }
 }
 
+/// Where the user speaks to `id` from. The same machine as the last words,
+/// as nearly always, costs a read, not a sync and a rename on each.
 pub(crate) fn speaking(node: &Node, id: &ResidentId, machine: &MachineName) -> Result<(), Failure> {
     let room = node.world.conversation(id);
     fastctx_platform::ensure_private_dir(room.path()).map_err(failure)?;
     let path = room.path().join("working-from.json");
-    fastctx_platform::publish(
+    fastctx_platform::publish_changed(
         &path,
         &serde_json::to_vec(machine).map_err(failure)?,
         fastctx_platform::Permissions::Private,
     )
+    .map(|_| ())
     .map_err(failure)
 }
 
