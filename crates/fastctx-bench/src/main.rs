@@ -7,6 +7,7 @@
 
 mod advance;
 mod fixture;
+mod imports;
 mod keys;
 mod stats;
 mod storage;
@@ -15,7 +16,7 @@ use std::path::PathBuf;
 
 const USAGE: &str = "usage: fastctx-bench <row|storage> --dir <scratch directory> [--small]
 rows: first-screen hub-frames replica-catch-up object-loop durable-word durable-attachment commit-to-readable
-follower rows: advance-small advance-large
+follower rows: advance-small advance-large first-import large-value
 diagnostic rows: replica-catch-up-parts first-screen-cold (Linux, as root)";
 
 fn main() {

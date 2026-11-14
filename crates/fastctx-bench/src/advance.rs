@@ -67,11 +67,17 @@ pub(crate) fn advance(dir: &Path, scale: Scale, prefix: u64, row_name: &str) -> 
     let holding = three.producer.holding(SCOPE).map_err(error)?.ok_or("not held")?;
     let earlier = HashSet::new();
     let accept = |_| true;
-    // The first reading is the whole record, as a follower's first is.
+    // The first reading is the whole record, as a follower's first is, and
+    // as the background check of a whole history reads it (§18, the whole
+    // prefix checked: its reading and parsing, one thread, so its time is
+    // its CPU's; what the check then compares with the library and writes is
+    // not in it).
     let mut seen: HashSet<String> = HashSet::new();
+    let started = Instant::now();
     let first = follow::tail(&path, &follow::Seam::default(), &earlier, &accept, false, &|_| false)
         .map_err(error)?
         .map_err(|why| format!("the first reading restarted: {why}"))?;
+    crate::stats::rate(row_name, "the whole record read and parsed once", prefix as f64 / f64::from(1 << 20), "MiB", started.elapsed(), 0.0, json!({ "events": first.transcript.events.len() }));
     seen.extend(first.prefix_ids.iter().cloned());
     let mut seam = first.seam.ok_or("no seam after the first reading")?;
     let mut number = 0u64;

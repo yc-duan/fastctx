@@ -60,6 +60,8 @@ pub(crate) fn run(row: &str, dir: &Path, scale: Scale) -> Result<bool, String> {
         // 28, the record stays under it through its thousand lines.
         "advance-small" => crate::advance::advance(dir, scale, 28 << 20, "advance-small"),
         "advance-large" => crate::advance::advance(dir, scale, 1 << 30, "advance-large"),
+        "first-import" => crate::imports::first_import(dir, scale),
+        "large-value" => crate::imports::large_value(dir, scale),
         other => Err(format!("no row {other}")),
     }
 }
