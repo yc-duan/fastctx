@@ -108,7 +108,16 @@ impl From<Failure> for TurnRefusal {
 
 /// Only immutable birth properties justify abandoning an unsubmitted input.
 pub(crate) fn check_turn(node: &Node, id: &fastctx_types::ResidentId, about: &About) -> Result<(), TurnRefusal> {
-    let Acting::Accounts { accounts } = &about.acting else { return Ok(()) };
+    let Acting::Accounts { accounts } = &about.acting else {
+        // The machine's own turns are held by the login's Fable line alone.
+        if let Some(line) = crate::usage::fable_line(node, about) {
+            let options = crate::session_options::read(node, id)?;
+            if line.applies(options.model.as_deref().or(about.model.as_deref())) {
+                return Err(Failure::not_run(line.said(None)).into());
+            }
+        }
+        return Ok(());
+    };
     if accounts.is_empty() {
         return Err(crate::authorization::no_subject().into());
     }
@@ -127,7 +136,7 @@ pub(crate) fn check_turn(node: &Node, id: &fastctx_types::ResidentId, about: &Ab
         match crate::usage::used_up(node, about, account, model) {
             None => return Ok(()),
             Some(used) => {
-                spent.get_or_insert(used.said(account));
+                spent.get_or_insert(used.said(Some(account)));
             }
         }
     }

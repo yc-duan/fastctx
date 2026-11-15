@@ -10,6 +10,21 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 const DAY: SignedDuration = SignedDuration::from_hours(24);
+const WEEK: SignedDuration = SignedDuration::from_hours(7 * 24);
+/// A login's week where its owner set none, in quota dollars (用户
+/// 2026-11-15: 默认3000刀).
+pub(crate) const DEFAULT_WEEK: Usd = Usd(3_000_000_000);
+/// The part of a login's week Fable may use, all who use it together, the
+/// owner too, in percent (用户 2026-11-15: 线，我们定50%): Fable's own
+/// allowance in the vendor's accounting, which no reading tells.
+const FABLE_LINE: u64 = 50;
+
+/// What a request used of the quota, in dollars: its API price, as Claude
+/// Code reckons it, and for Fable two and a half times that (用户
+/// 2026-11-15: fable是2.5倍; 其他模型严格按照api价格).
+fn quota(charge: &super::recent::Charge) -> Usd {
+    if charge.fable { Usd(charge.usd.0.saturating_mul(5) / 2) } else { charge.usd }
+}
 
 #[derive(Clone)]
 pub(crate) enum UsedUp {
@@ -18,11 +33,14 @@ pub(crate) enum UsedUp {
     FiveHour { share: u8, until: Option<Timestamp> },
     Unavailable,
     Fable { allowance: Usd, until: Timestamp },
+    /// The whole login's Fable reached its line: everyone's Fable waits,
+    /// the owner's too.
+    FableLine { allowance: Usd, until: Timestamp },
 }
 impl UsedUp {
     pub(super) fn until(&self) -> Timestamp {
         match self {
-            Self::Weekly { until, .. } | Self::Daily { until, .. } | Self::Fable { until, .. } => *until,
+            Self::Weekly { until, .. } | Self::Daily { until, .. } | Self::Fable { until, .. } | Self::FableLine { until, .. } => *until,
             Self::FiveHour { until, .. } => until.unwrap_or(Timestamp::MAX),
             Self::Unavailable => Timestamp::MAX,
         }
@@ -31,12 +49,25 @@ impl UsedUp {
         (self.until() != Timestamp::MAX).then(|| self.until())
     }
     pub(super) fn fable(&self) -> bool {
-        matches!(self, Self::Fable { .. })
+        matches!(self, Self::Fable { .. } | Self::FableLine { .. })
     }
     pub(crate) fn applies(&self, model: Option<&str>) -> bool {
         !self.fable() || model.is_some_and(fastctx_hosts::claude::pricing::is_fable)
     }
-    pub(crate) fn said(&self, account: &HubAccount) -> String {
+    /// What the hold says, to the account it holds, or to everyone who uses
+    /// the login where it holds them all.
+    pub(crate) fn said(&self, account: Option<&HubAccount>) -> String {
+        let dollars = |usd: &Usd| usd.0 as f64 / 1_000_000.0;
+        if let Self::FableLine { allowance, until } = self {
+            return format!(
+                "this login's Fable has used its line, half the login's week (${:.2}), shared by everyone who uses it; Fable waits until {}, its other models go on",
+                dollars(allowance),
+                until.strftime("%Y-%m-%d %H:%M UTC")
+            );
+        }
+        let Some(account) = account else {
+            return "this login's usage holds this conversation; what is for it waits".into();
+        };
         if matches!(self, Self::Unavailable) {
             return "this login's usage ledger cannot be checked; assistance is paused until accounting recovers"
                 .into();
@@ -46,7 +77,6 @@ impl UsedUp {
                 "this login's five-hour window is past the {share}% assistance limit; assistance waits for a new reading because its reset time is unknown"
             );
         }
-        let dollars = |usd: &Usd| usd.0 as f64 / 1_000_000.0;
         if let Self::Fable { allowance, until } = self {
             return format!(
                 "the Fable allowance of ${:.2} this login gives {} is used up until {}; its other models go on",
@@ -69,7 +99,7 @@ impl UsedUp {
             Self::FiveHour { share, .. } => {
                 format!("this login's five-hour window is past the {share}% it assists {} up to", account.account)
             }
-            Self::Fable { .. } | Self::Unavailable => unreachable!(),
+            Self::Fable { .. } | Self::FableLine { .. } | Self::Unavailable => unreachable!(),
         };
         format!("{what} until {}; what is for it waits until then", self.until().strftime("%Y-%m-%d %H:%M UTC"))
     }
@@ -95,7 +125,54 @@ pub(super) fn login(node: &Node, about: &About) -> Option<PathBuf> {
 
 /// With a model, considers only restrictions on that next request. Without one,
 /// prefers an all-model hold; its expiry will expose any remaining Fable hold.
+/// The whole login's Fable line holds every account, its owner's too.
 pub(crate) fn used_up(node: &Node, about: &About, account: &HubAccount, model: Option<&str>) -> Option<UsedUp> {
+    let mut reached: Vec<UsedUp> = assisted(node, about, account, model).into_iter().collect();
+    reached.extend(fable_line(node, about));
+    choose(reached, model)
+}
+
+/// The hold that matters of those reached: with a model, those on it; without
+/// one, an all-model hold before a Fable one.
+fn choose(mut reached: Vec<UsedUp>, model: Option<&str>) -> Option<UsedUp> {
+    if model.is_some() {
+        reached.retain(|used| used.applies(model));
+    } else if reached.iter().any(|used| !used.fable()) {
+        reached.retain(|used| !used.fable());
+    }
+    reached.into_iter().max_by_key(UsedUp::until)
+}
+
+/// Whether the whole Claude Code login a conversation is in has used its Fable
+/// line this week: the Fable all who use it spent, in quota dollars, against
+/// half the week its owner set.
+pub(crate) fn fable_line(node: &Node, about: &About) -> Option<UsedUp> {
+    if about.host.agent.as_str() != "claude" {
+        return None;
+    }
+    let dir = login(node, about)?;
+    let allowance = Usd(super::week(node, "claude", &dir).unwrap_or(DEFAULT_WEEK).0 / 100 * FABLE_LINE);
+    let path = super::ledger(node, "claude", &dir);
+    let now = Timestamp::now();
+    super::with_book(node, &path, |book| {
+        let week = super::readings::week(book.reading.as_ref(), now);
+        let fable: Vec<_> = book.recent.iter().filter(|charge| charge.fable && charge.at <= now).map(|charge| (charge.at, quota(charge))).collect();
+        let until = if week.window {
+            let spent = fable.iter().filter(|(at, _)| *at >= week.start).fold(Usd::ZERO, |sum, (_, usd)| sum.saturating_add(*usd));
+            (spent >= allowance).then_some(week.end)
+        } else {
+            rolling(&fable, allowance, WEEK, now)
+        };
+        Ok(until.map(|until| UsedUp::FableLine { allowance, until }))
+    })
+    .unwrap_or_else(|error| {
+        node.log.line(format_args!("reading the Fable a Claude login used: {error}"));
+        None
+    })
+}
+
+/// What the account's assistance in the login holds it to.
+fn assisted(node: &Node, about: &About, account: &HubAccount, model: Option<&str>) -> Option<UsedUp> {
     let assist = match assistance(node, about, account) {
         Ok(assist) => assist?,
         Err(error) => {
@@ -104,12 +181,15 @@ pub(crate) fn used_up(node: &Node, about: &About, account: &HubAccount, model: O
         }
     };
     let agent = about.host.agent.as_str();
-    if assist.five_hour.is_none() && (agent != "claude" || (assist.weekly.is_none() && assist.daily.is_none())) {
+    if assist.five_hour.is_none() && (agent != "claude" || (assist.weekly.is_none() && assist.daily.is_none() && assist.share.is_none())) {
         return None;
     }
-    let path = super::ledger(node, agent, &login(node, about)?);
+    let dir = login(node, about)?;
+    // A share is of the week the login's owner set, in quota dollars.
+    let share = assist.share.map(|share| Usd(super::week(node, agent, &dir).unwrap_or(DEFAULT_WEEK).0 / 100 * u64::from(share)));
+    let path = super::ledger(node, agent, &dir);
     let now = Timestamp::now();
-    let mut reached = super::with_book(node, &path, |book| {
+    let reached = super::with_book(node, &path, |book| {
         let mut reached = Vec::new();
         // Every five-hour allowance still in its period is held to the line,
         // as Codex's several buckets are; one past its reset says nothing of
@@ -154,18 +234,29 @@ pub(crate) fn used_up(node: &Node, about: &About, account: &HubAccount, model: O
             .collect();
         costs.sort_by_key(|charge| charge.at);
         let all: Vec<_> = costs.iter().map(|charge| (charge.at, charge.usd)).collect();
-        if let Some(allowance) = assist.weekly {
-            let weekly = |costs: &[(Timestamp, Usd)], cap| {
-                if week.window {
-                    let spent = costs
-                        .iter()
-                        .filter(|(at, _)| *at >= week.start)
-                        .fold(Usd::ZERO, |sum, (_, usd)| sum.saturating_add(*usd));
-                    (spent >= cap).then_some(week.end)
-                } else {
-                    rolling(costs, cap, SignedDuration::from_hours(7 * 24), now)
-                }
-            };
+        let weekly = |costs: &[(Timestamp, Usd)], cap| {
+            if week.window {
+                let spent = costs
+                    .iter()
+                    .filter(|(at, _)| *at >= week.start)
+                    .fold(Usd::ZERO, |sum, (_, usd)| sum.saturating_add(*usd));
+                (spent >= cap).then_some(week.end)
+            } else {
+                rolling(costs, cap, WEEK, now)
+            }
+        };
+        if let Some(allowance) = share {
+            // Held in quota dollars: what each request used of the quota.
+            let used: Vec<_> = costs.iter().map(|charge| (charge.at, quota(charge))).collect();
+            if let Some(until) = weekly(&used, allowance) {
+                reached.push(UsedUp::Weekly { allowance, until });
+            }
+            let fable: Vec<_> = costs.iter().filter(|charge| charge.fable).map(|charge| (charge.at, quota(charge))).collect();
+            let allowance = Usd(allowance.0 / 2);
+            if let Some(until) = weekly(&fable, allowance) {
+                reached.push(UsedUp::Fable { allowance, until });
+            }
+        } else if let Some(allowance) = assist.weekly {
             if let Some(until) = weekly(&all, allowance) {
                 reached.push(UsedUp::Weekly { allowance, until });
             }
@@ -187,12 +278,7 @@ pub(crate) fn used_up(node: &Node, about: &About, account: &HubAccount, model: O
         node.log.line(format_args!("reading what {} spent of a Claude login: {error}", account.account));
         vec![UsedUp::Unavailable]
     });
-    if model.is_some() {
-        reached.retain(|used| used.applies(model));
-    } else if reached.iter().any(|used| !used.fable()) {
-        reached.retain(|used| !used.fable());
-    }
-    reached.into_iter().max_by_key(UsedUp::until)
+    choose(reached, model)
 }
 
 fn rolling(costs: &[(Timestamp, Usd)], allowance: Usd, span: SignedDuration, now: Timestamp) -> Option<Timestamp> {
@@ -223,23 +309,26 @@ pub(crate) async fn after_reading(node: &Arc<Node>, agent: &str, dir: &std::path
 /// What the accounts a login's conversations act for have used up, each
 /// account read once for all of them: what an account has used up depends
 /// only on it and the login, and a login may hold hundreds of conversations.
+/// The machine's own conversations are held by the login's Fable line alone.
 #[derive(Default)]
-pub(super) struct Restrictions(HashMap<(HubAccount, Option<PathBuf>), Option<UsedUp>>);
+pub(super) struct Restrictions(HashMap<(Option<HubAccount>, Option<PathBuf>), Option<UsedUp>>);
 
 impl Restrictions {
-    /// The restriction on `about`, a conversation of the login these are for.
-    pub(super) fn of(&mut self, node: &Node, about: &About) -> Option<(HubAccount, UsedUp)> {
+    /// The restriction on `about`, a conversation of the login these are for,
+    /// with the account it holds; none where it holds the machine's own.
+    pub(super) fn of(&mut self, node: &Node, about: &About) -> Option<(Option<HubAccount>, UsedUp)> {
         let Acting::Accounts { accounts } = &about.acting else {
-            return None;
+            let line = self.0.entry((None, about.home.clone())).or_insert_with(|| fable_line(node, about));
+            return line.clone().map(|used| (None, used));
         };
         accounts
             .iter()
             .filter_map(|account| {
                 let used = self
                     .0
-                    .entry((account.clone(), about.home.clone()))
+                    .entry((Some(account.clone()), about.home.clone()))
                     .or_insert_with(|| used_up(node, about, account, None));
-                used.clone().map(|used| (account.clone(), used))
+                used.clone().map(|used| (Some(account.clone()), used))
             })
             .max_by_key(|(_, used)| (!used.fable(), used.until()))
     }

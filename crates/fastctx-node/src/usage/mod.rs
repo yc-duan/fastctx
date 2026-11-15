@@ -21,7 +21,7 @@ mod tail;
 pub(crate) mod terminal_record;
 
 use crate::Node;
-pub(crate) use allowance::{after_reading, used_up};
+pub(crate) use allowance::{after_reading, fable_line, used_up};
 use fastctx_types::ResidentId;
 use fastctx_types::access::{Acting, HubAccount};
 use fastctx_types::agents::AgentLimits;
