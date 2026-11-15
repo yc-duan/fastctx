@@ -25,8 +25,25 @@ pub(super) trait Work: Send {
     /// one is committed and seen at once, and reaches the disk with the next
     /// durable commit (`Database::settle_now`).
     fn durable(&self) -> bool;
+    /// Whether it is one of a run given together whose next is coming
+    /// (`Database::write_many_now_at`): the batch waits for it a moment and
+    /// is not cut for time before it, so one disk synchronization serves
+    /// the run.
+    fn more(&self) -> bool {
+        false
+    }
+    /// Its savepoint was kept: what it wrote stands in the transaction,
+    /// refused by no guard, though not yet committed.
+    fn stood(&mut self) {}
     fn finish(self: Box<Self>, commit_error: Option<Error>);
 }
+
+/// How long a batch waits for the next of a run (`Work::more`).
+const RUN_WAIT: Duration = Duration::from_millis(2);
+/// How long past its two milliseconds a batch goes on taking the next of a
+/// run: checked between writes, so a write begun before it ends finishes
+/// first — others in the batch wait about this long more for its commit.
+const RUN_MOST: Duration = Duration::from_millis(50);
 
 thread_local! {
     static WRITER: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
@@ -40,6 +57,8 @@ pub(super) fn on_writer() -> bool {
 struct Operation<T, F, C, R> {
     _permit: Admission,
     durable: bool,
+    more: bool,
+    stood: Option<Box<dyn FnOnce() + Send>>,
     write: Option<F>,
     committed: C,
     reply: R,
@@ -53,7 +72,28 @@ where
     C: FnOnce(&T) + Send + 'static,
     R: FnOnce(Result<T>) + Send + 'static,
 {
-    Box::new(Operation { _permit: permit, durable, write: Some(write), committed, reply, result: None })
+    Box::new(Operation { _permit: permit, durable, more: false, stood: None, write: Some(write), committed, reply, result: None })
+}
+
+/// As `job`, one of a run whose next comes after it where `more`; `stood`
+/// told once its savepoint is kept (`Work::stood`).
+#[allow(clippy::too_many_arguments)]
+pub(super) fn job_in_run<T, F, C, R>(
+    permit: Admission,
+    durable: bool,
+    more: bool,
+    stood: impl FnOnce() + Send + 'static,
+    write: F,
+    committed: C,
+    reply: R,
+) -> Job
+where
+    T: Send + 'static,
+    F: FnOnce(&Connection) -> Result<T> + Send + 'static,
+    C: FnOnce(&T) + Send + 'static,
+    R: FnOnce(Result<T>) + Send + 'static,
+{
+    Box::new(Operation { _permit: permit, durable, more, stood: Some(Box::new(stood)), write: Some(write), committed, reply, result: None })
 }
 
 impl<T, F, C, R> Work for Operation<T, F, C, R>
@@ -81,6 +121,14 @@ where
     }
     fn durable(&self) -> bool {
         self.durable
+    }
+    fn more(&self) -> bool {
+        self.more
+    }
+    fn stood(&mut self) {
+        if let Some(stood) = self.stood.take() {
+            stood();
+        }
     }
     fn finish(self: Box<Self>, commit_error: Option<Error>) {
         let Self { result, committed, reply, _permit, .. } = *self;
@@ -158,10 +206,14 @@ pub(super) fn run(
         }
         drop(waiting);
         dirty = true;
-        match &result {
-            Err(error) => damage.notice(error),
-            Ok(()) if !full => unsettled.store(true, Ordering::Release),
-            Ok(()) => {}
+        // A relaxed batch may stand though its commit was not confirmed
+        // (an unknown outcome): one not known to have failed whole leaves
+        // what a settle must make durable.
+        if !full {
+            unsettled.store(true, Ordering::Release);
+        }
+        if let Err(error) = &result {
+            damage.notice(error);
         }
         for job in batch {
             metrics.queue(-1);
@@ -227,6 +279,7 @@ fn commit(
         drop(business);
         if success {
             savepoint.commit()?;
+            job.stood();
         } else {
             if let Some(error) = job.failure() {
                 damage.notice(error);
@@ -238,10 +291,12 @@ fn commit(
             guard::lock(guard).ended(success);
         }
         metrics.operation(operation.elapsed(), !success);
-        if batch.len() >= 32 || started.elapsed() >= Duration::from_millis(2) {
+        // The next of a run is waited for, the batch not cut for time.
+        let more = batch.last().is_some_and(|job| job.more()) && started.elapsed() < RUN_MOST;
+        if batch.len() >= 32 || (started.elapsed() >= Duration::from_millis(2) && !more) {
             break;
         }
-        match queue.pop(Duration::ZERO) {
+        match queue.pop(if more { RUN_WAIT } else { Duration::ZERO }) {
             // A durable operation is not committed relaxed: it begins the
             // next batch.
             Some(next) if !full && next.durable() => {

@@ -37,6 +37,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     performance(root)?;
     tokio::runtime::Builder::new_current_thread().enable_all().build()?.block_on(concurrency(root))?;
     relaxed(root)?;
+    runs(root)?;
     checkpoints(root)?;
     crashes(root)?;
     corruption(root)?;
@@ -265,6 +266,67 @@ fn checkpoints(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+/// A run of writes (`write_many_now_at`) stands on its earlier ones: once one
+/// fails — by an error, a panic, or the commit under it — none after it
+/// writes.
+fn runs(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    type Connection = fastctx_storage::rusqlite::Connection;
+    type Write = Box<dyn FnOnce(&Connection) -> fastctx_storage::Result<()> + Send>;
+    let database = Database::open(&root.join("runs.sqlite3"), SCHEMA)?;
+    let insert = |id: i64| -> (usize, Write) {
+        (
+            64,
+            Box::new(move |db: &Connection| {
+                db.execute("INSERT INTO events(id,body) VALUES(?1,'run')", [id])?;
+                Ok(())
+            }),
+        )
+    };
+    let has = |database: &Database, id: i64| -> fastctx_storage::Result<bool> {
+        database.read_now(move |db| Ok(db.query_row("SELECT count(*) FROM events WHERE id=?1", [id], |row| row.get::<_, i64>(0))? == 1))
+    };
+    let all = database.write_many_now_at(Priority::Normal, vec![insert(1), insert(2), insert(3)]);
+    assert!(all.iter().all(Result::is_ok), "{all:?}");
+    let failing: (usize, Write) = (64, Box::new(|_: &Connection| Err(Error::new("a write that fails"))));
+    let results = database.write_many_now_at(Priority::Normal, vec![insert(11), failing, insert(13)]);
+    assert!(results[0].is_ok() && results[1].is_err() && results[2].is_err(), "{results:?}");
+    assert!(has(&database, 11)? && !has(&database, 13)?, "a write after one that failed wrote");
+    let panicking: (usize, Write) = (64, Box::new(|_: &Connection| -> fastctx_storage::Result<()> { panic!("a write of the drill that panics") }));
+    let results = database.write_many_now_at(Priority::Normal, vec![insert(21), panicking, insert(23)]);
+    assert!(results[0].is_ok() && results[1].is_err() && results[2].is_err(), "{results:?}");
+    assert!(has(&database, 21)? && !has(&database, 23)?, "a write after one that panicked wrote");
+    // One that says it did well, though what it did was refused (outside its
+    // storage role): undone after it returned, before the next ran.
+    let refused: (usize, Write) = (
+        64,
+        Box::new(|db: &Connection| {
+            let _ = db.execute("CREATE TABLE forbidden(x)", []);
+            Ok(())
+        }),
+    );
+    let results = database.write_many_now_at(Priority::Normal, vec![insert(41), refused, insert(43)]);
+    assert!(results[0].is_ok() && results[1].is_err() && results[2].is_err(), "{results:?}");
+    assert!(has(&database, 41)? && !has(&database, 43)?, "a write after one refused once it returned wrote");
+    // A slow write ends its batch: the next of the run is in a transaction of
+    // its own, after the commit under the first failed.
+    let slow: (usize, Write) = (
+        64,
+        Box::new(|db: &Connection| {
+            std::thread::sleep(Duration::from_millis(80));
+            db.execute("INSERT INTO events(id,body) VALUES(31,'run')", [])?;
+            Ok(())
+        }),
+    );
+    fastctx_platform::lab::arm_fault("full-commit", Some("runs.sqlite3"), 1);
+    let results = database.write_many_now_at(Priority::Normal, vec![slow, insert(32)]);
+    fastctx_platform::lab::disarm_faults();
+    assert!(results[0].is_err() && results[1].is_err(), "{results:?}");
+    assert!(!has(&database, 31)? && !has(&database, 32)?, "a write after one whose commit failed wrote");
+    drop(database);
+    println!("runs of writes: none written after one that failed, panicked, was refused, or failed in its commit");
+    Ok(())
+}
+
 /// Each commit goes as far as it asked, however relaxed and durable ones
 /// interleave: a durable one is never answered before the disk has it. A
 /// settle commits only while a relaxed commit waits for the disk.
@@ -319,7 +381,16 @@ fn relaxed(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
     database.settle_now(Priority::Normal)?;
     assert_eq!(database.statistics().commits, commits + 1, "a settle with nothing waiting wrote");
     drop(database);
-    assert_eq!(seen(&Database::open(&root.join("relaxed.sqlite3"), SCHEMA)?)?, 801);
+    let reopened = Database::open(&root.join("relaxed.sqlite3"), SCHEMA)?;
+    assert_eq!(seen(&reopened)?, 801);
+    // What the last process committed relaxed may not be on the disk yet:
+    // the first settle after opening synchronizes it.
+    let commits = reopened.statistics().commits;
+    reopened.settle_now(Priority::Normal)?;
+    assert_eq!(reopened.statistics().commits, commits + 1, "the first settle after opening wrote nothing");
+    reopened.settle_now(Priority::Normal)?;
+    assert_eq!(reopened.statistics().commits, commits + 1, "a settle after the first, with nothing waiting, wrote");
+    drop(reopened);
     println!(
         "relaxed commits: {unsynced} of 532 relaxed writes committed without the disk, every durable one with it; settled once"
     );

@@ -55,6 +55,24 @@ pub fn submit_after(db: &Connection, job: &Job, after: std::time::Duration) -> R
     Ok(())
 }
 
+/// Submits `job` due `after` from now, unless one of its kind and key waits
+/// already: that one keeps its own due time and payload, so asking again —
+/// as each start of a service asks — never puts it off. One that runs is
+/// run once more after, as `submit` has it; one set aside waits anew.
+pub fn submit_unless_waiting(db: &Connection, job: &Job, after: std::time::Duration) -> Result<()> {
+    let state: Option<i64> = db
+        .prepare_cached("SELECT state FROM jobs WHERE kind = ?1 AND key = ?2")?
+        .query_row(params![job.kind, job.key], |row| row.get(0))
+        .optional()?;
+    if state == Some(WAITING) {
+        return Ok(());
+    }
+    submit(db, job)?;
+    db.prepare_cached("UPDATE jobs SET due = ?3 WHERE kind = ?1 AND key = ?2 AND state = ?4")?
+        .execute(params![job.kind, job.key, now() + after.as_millis() as i64, WAITING])?;
+    Ok(())
+}
+
 /// Asks for work, in the transaction that records why it is needed. A job
 /// of the same kind and key that waits takes this payload and is due now;
 /// one that runs is run once more with it after.

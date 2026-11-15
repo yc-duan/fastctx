@@ -81,6 +81,11 @@ impl WeakDatabase {
 struct Inner {
     writes: Arc<queue::Queue>,
     readers: Mutex<Vec<rusqlite::Connection>>,
+    /// How a read connection is opened: one at the opening, the rest as
+    /// reads come together to need them, up to `READERS` — an idle database
+    /// keeps no more connections than it ever read with at once (§18 idle
+    /// memory, codex-865aeb9b: about 10 MiB of a node's working set).
+    opening: Option<ReaderOpening>,
     reading: Arc<Semaphore>,
     background_reading: Arc<Semaphore>,
     reads: Arc<Semaphore>,
@@ -105,6 +110,30 @@ impl Drop for Inner {
 impl std::fmt::Debug for Database {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Database").finish_non_exhaustive()
+    }
+}
+
+/// What opens a read connection of a database.
+struct ReaderOpening {
+    path: PathBuf,
+    cache_bytes: Option<u32>,
+    tables: Arc<std::collections::HashSet<String>>,
+    policy: Option<Arc<dyn authorization::WritePolicy>>,
+}
+
+impl ReaderOpening {
+    fn open(&self) -> Result<rusqlite::Connection> {
+        let mut reader = rusqlite::Connection::open_with_flags(
+            &self.path,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        )?;
+        reader.busy_timeout(ADMISSION)?;
+        reader.set_prepared_statement_cache_capacity(64);
+        if let Some(cache) = self.cache_bytes {
+            reader.pragma_update(None, "cache_size", -i64::from((cache / 1024).max(1)))?;
+        }
+        authorization::install(&mut reader, self.tables.clone(), false, self.policy.clone())?;
+        Ok(reader)
     }
 }
 
@@ -268,24 +297,16 @@ impl Database {
         let policy = guard.as_ref().and_then(|guard| guard::lock(guard).write_policy());
         authorization::install(&mut connection, tables.clone(), true, policy.clone())?;
         let count = READERS;
-        let mut readers = Vec::with_capacity(count);
-        for _ in 0..count {
-            let mut reader = rusqlite::Connection::open_with_flags(
-                path,
-                rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
-            )?;
-            reader.busy_timeout(ADMISSION)?;
-            reader.set_prepared_statement_cache_capacity(64);
-            if let Some(cache) = shape.reader_cache_bytes {
-                reader.pragma_update(None, "cache_size", -i64::from((cache / 1024).max(1)))?;
-            }
-            authorization::install(&mut reader, tables.clone(), false, policy.clone())?;
-            readers.push(reader);
-        }
+        let opening = ReaderOpening { path: path.to_path_buf(), cache_bytes: shape.reader_cache_bytes, tables: tables.clone(), policy: policy.clone() };
+        // One opened now, so that one that cannot be opened fails the opening.
+        let readers = vec![opening.open()?];
         let writes = Arc::new(queue::Queue::new());
         let damage = Arc::new(integrity::Damage::new(path.to_path_buf(), &readings));
         let metrics = Arc::new(metrics::Metrics::new(readings));
-        let unsettled = Arc::new(AtomicBool::new(false));
+        // What a process before this one committed without waiting for the
+        // disk may not be on it yet, its log still in the system's memory
+        // after the process ended: the first settle synchronizes it.
+        let unsettled = Arc::new(AtomicBool::new(true));
         // After `wal_autocheckpoint`, whose fold inside the commit the hook
         // takes the place of. A hook not put on fails the opening: the
         // connection may keep a hook whose state was freed.
@@ -303,6 +324,7 @@ impl Database {
         Ok(Self(Arc::new(Inner {
             writes,
             readers: Mutex::new(readers),
+            opening: Some(opening),
             reading: Arc::new(Semaphore::new(count)),
             background_reading: Arc::new(Semaphore::new(count - INTERACTIVE_READERS)),
             reads: Arc::new(Semaphore::new(1024)),
@@ -360,6 +382,7 @@ impl Database {
                 Self(Arc::new(Inner {
                     writes,
                     readers: Mutex::new(Vec::new()),
+                    opening: None,
                     reading: Arc::new(Semaphore::new(0)),
                     background_reading: Arc::new(Semaphore::new(0)),
                     reads: Arc::new(Semaphore::new(0)),
@@ -485,7 +508,13 @@ impl Database {
         read: impl FnOnce(&rusqlite::Connection) -> Result<T>,
     ) -> Result<T> {
         fastctx_platform::cost::database_read();
-        let connection = self.0.readers.lock().expect("reader pool").pop().expect("a permit reserves a connection");
+        // A permit holds a place for a connection: one kept, or one opened
+        // now, never more than `READERS` in all.
+        let kept = self.0.readers.lock().expect("reader pool").pop();
+        let connection = match kept {
+            Some(connection) => connection,
+            None => self.0.opening.as_ref().ok_or_else(unavailable)?.open()?,
+        };
         let reader = Reader { inner: &self.0, connection: Some(connection), _permit: permit };
         let _holding = Holding::begin();
         let start = Instant::now();
@@ -630,6 +659,97 @@ impl Database {
         write: impl FnOnce(&rusqlite::Connection) -> Result<T> + Send + 'static,
     ) -> Result<T> {
         self.commit_now(priority, bytes, false, write, |_| {})
+    }
+
+    /// Commits each of `writes` in order and durably, as `write_now_at`
+    /// commits one, without waiting for one before giving the writer the
+    /// next: those it finds waiting it takes into one transaction, each in a
+    /// savepoint of its own, so that one disk synchronization serves them
+    /// all. Each sees what those before it wrote, and stands on them: once
+    /// one fails — its write, by an error or a panic, or the commit of the
+    /// transaction it was in — none after it writes anything. The results,
+    /// in order; once one cannot be given to the writer, none after it is.
+    /// The writes are admitted within one wait, and answered within one, as
+    /// one write is.
+    #[track_caller]
+    #[allow(clippy::type_complexity)]
+    pub fn write_many_now_at<T: Send + 'static>(
+        &self,
+        priority: Priority,
+        writes: Vec<(usize, Box<dyn FnOnce(&rusqlite::Connection) -> Result<T> + Send>)>,
+    ) -> Vec<Result<T>> {
+        fastctx_platform::roles::in_place("database writes", || {
+            let total = writes.len();
+            let refused = |error: Error| -> Vec<Result<T>> { (0..total).map(|_| Err(error.clone())).collect() };
+            if let Err(error) = self.available() {
+                return refused(error);
+            }
+            if writer::on_writer() {
+                debug_assert!(false, "a database writer waited for a write");
+                return refused(Error::with_kind(ErrorKind::Invalid, "a database's writer cannot wait for a write"));
+            }
+            let mut answers = Vec::with_capacity(total);
+            // Set while a write of the run has not stood — set as it begins,
+            // cleared once its savepoint is kept, so an error, a panic or a
+            // guard's refusal leaves it set — and by the answer of one whose
+            // commit failed: the writer answers a transaction's writes before
+            // it begins the next.
+            let failed = Arc::new(AtomicBool::new(false));
+            let admitted_by = Instant::now() + QUEUE_WAIT;
+            for (index, (bytes, write)) in writes.into_iter().enumerate() {
+                let left = admitted_by.saturating_duration_since(Instant::now());
+                let permit = match blocking::wait(self.0.writes.admit(priority, bytes), left) {
+                    Some(Ok(permit)) => permit,
+                    Some(Err(error)) => {
+                        answers.push(Err(error));
+                        break;
+                    }
+                    None => {
+                        answers.push(Err(busy("write admission")));
+                        break;
+                    }
+                };
+                self.admitted(priority);
+                let (send, receive) = oneshot::channel();
+                let (stands, kept, answered) = (failed.clone(), failed.clone(), failed.clone());
+                let write = move |connection: &rusqlite::Connection| {
+                    if stands.load(Ordering::Acquire) {
+                        return Err(Error::with_kind(ErrorKind::Invalid, "not written: a write before it in the run failed"));
+                    }
+                    stands.store(true, Ordering::Release);
+                    write(connection)
+                };
+                let stood = move || kept.store(false, Ordering::Release);
+                let job = writer::job_in_run(permit, true, index + 1 < total, stood, write, |_: &T| {}, move |result: Result<T>| {
+                    if result.is_err() {
+                        answered.store(true, Ordering::Release);
+                    }
+                    let _ = send.send(result);
+                });
+                if let Err(error) = self.submit(priority, job) {
+                    answers.push(Err(error));
+                    break;
+                }
+                answers.push(Ok(receive));
+            }
+            // One deadline for the run, as for one write: a stuck writer is
+            // told within it, not once for each.
+            let deadline = Instant::now() + ANSWER;
+            let mut results: Vec<Result<T>> = answers
+                .into_iter()
+                .map(|answer| match answer {
+                    Ok(receive) => {
+                        let left = deadline.saturating_duration_since(Instant::now());
+                        blocking::wait(receive, left).ok_or_else(unknown)?.map_err(|_| unknown())?
+                    }
+                    Err(error) => Err(error),
+                })
+                .collect();
+            while results.len() < total {
+                results.push(Err(busy("an earlier write of the batch")));
+            }
+            results
+        })
     }
 
     /// Makes every relaxed write committed so far as durable as any other,
