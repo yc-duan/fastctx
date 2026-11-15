@@ -131,6 +131,14 @@ impl<K> Drop for Ending<K> {
     }
 }
 
+/// Folding left to SQLite, inside the commit past the threshold (`Shape::
+/// fold_inside`): no hook and no thread, only `held` let go as the writer's
+/// thread ends.
+pub(crate) fn inside<K>(path: &Path, held: K) -> Ending<K> {
+    let shared = Arc::new(Shared { path: path.to_path_buf(), state: Mutex::new(State::default()), woken: Condvar::new() });
+    Ending { shared, held: Some(held) }
+}
+
 /// Puts the log hook on the writer's `connection` of the database at `path`,
 /// folding past `threshold` pages beside it; what the writer's thread holds
 /// until it ends, `held` let go after the folding thread is gone. An error

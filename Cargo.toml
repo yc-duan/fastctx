@@ -41,3 +41,46 @@ opt-level = 3
 
 [profile.release]
 debug = "line-tables-only"
+# Optimized for size (user 2026-11-15): the kernel's code is most of every
+# installer, and most of that is the instances of serde's, the drop glue's
+# and async state machines' generic code, a sixth smaller so
+# (codex-8c21a7a9's probe). The leaves whose speed the drills and the bench
+# hold to, SQLite's writes, hashing and compression, keep `3` below: little
+# generic code, so little size.
+opt-level = "s"
+
+[profile.release.package.libsqlite3-sys]
+opt-level = 3
+
+[profile.release.package.sha2]
+opt-level = 3
+
+[profile.release.package.sha1]
+opt-level = 3
+
+[profile.release.package.xxhash-rust]
+opt-level = 3
+
+[profile.release.package.zstd-sys]
+opt-level = 3
+
+[profile.release.package.miniz_oxide]
+opt-level = 3
+
+[profile.release.package.crc32fast]
+opt-level = 3
+
+[profile.release.package.ring]
+opt-level = 3
+
+# The storage drills' own build (CI's storage jobs). They hold the storage to
+# its budgets, so its code is optimized as a release's speed-critical code
+# is (`3`, not the release's "s"). Nothing of it ships: its local ThinLTO,
+# about a quarter of the node's build on a runner (codex-a92eb3c2's
+# measure: 840 s to 628 s), is left out; optimizing less saved a tenth and
+# would cost the budgets.
+[profile.drill]
+inherits = "release"
+opt-level = 3
+lto = "off"
+debug = false

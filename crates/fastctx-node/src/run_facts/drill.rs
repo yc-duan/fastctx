@@ -15,9 +15,12 @@ pub fn run(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
         return Err("the drill needs an absolute, absent root".into());
     }
     fastctx_platform::disk::create_dir_all(root)?;
-    let database = Database::open_guarded(
+    // The writer's own work is held to its budget here: the log folded inside
+    // its commits, not beside it (`Shape::fold_inside`).
+    let database = Database::open_guarded_shaped(
         &root.join("node.sqlite3"),
         &format!("{}{}{}", sql::SCHEMA, crate::record_payloads::SCHEMA, crate::records::SCHEMA),
+        fastctx_storage::Shape { fold_inside: true, ..Default::default() },
         crate::asset_preservation::guard,
         |db| {
             fastctx_sync::migration::initialize(db)?;

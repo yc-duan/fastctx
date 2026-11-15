@@ -63,6 +63,14 @@ pub struct Shape {
     pub reader_cache_bytes: Option<u32>,
     /// The pages of log after which a commit folds the log into the database.
     pub checkpoint_pages: Option<u32>,
+    /// The log folded inside the commit that takes it past `checkpoint_pages`,
+    /// as SQLite folds it, not beside the writer on a thread of its own.
+    /// Beside the writer a commit never waits for a fold, but the writer's
+    /// own writes meet its disk work: on a slow disk one in ten took past
+    /// two milliseconds (a Windows runner, 2026-11-15; on this computer's
+    /// disk 9 with it inside, 34-54 beside). A drill that holds the writer's
+    /// own work to that budget folds inside; every program folds beside.
+    pub fold_inside: bool,
 }
 
 /// What makes a database's guard from the opened database, if it has one.
@@ -223,6 +231,19 @@ impl Database {
         Self::open_kept(path, schema, &initialize, Some(&guard), Shape::default())
     }
 
+    /// Opens as `open_guarded` does, with the file laid out, cached and its
+    /// log folded as `shape` says.
+    #[track_caller]
+    pub fn open_guarded_shaped(
+        path: &Path,
+        schema: &str,
+        shape: Shape,
+        guard: impl Fn(&rusqlite::Connection) -> Result<Box<dyn Guard>>,
+        initialize: impl Fn(&rusqlite::Connection) -> Result<()>,
+    ) -> Result<Self> {
+        Self::open_kept(path, schema, &initialize, Some(&guard), shape)
+    }
+
     #[track_caller]
     fn open_kept(
         path: &Path,
@@ -310,7 +331,11 @@ impl Database {
         // After `wal_autocheckpoint`, whose fold inside the commit the hook
         // takes the place of. A hook not put on fails the opening: the
         // connection may keep a hook whose state was freed.
-        let ending = checkpointer::install(&mut connection, path, shape.checkpoint_pages.unwrap_or(1000), kept.keeper.clone())?;
+        let ending = if shape.fold_inside {
+            checkpointer::inside(path, kept.keeper.clone())
+        } else {
+            checkpointer::install(&mut connection, path, shape.checkpoint_pages.unwrap_or(1000), kept.keeper.clone())?
+        };
         let (queue, measurements, noticed, file, relaxed) =
             (writes.clone(), metrics.clone(), damage.clone(), path.to_path_buf(), unsettled.clone());
         std::thread::Builder::new().name("sqlite-writer".into()).spawn(move || {

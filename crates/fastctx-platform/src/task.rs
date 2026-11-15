@@ -27,6 +27,16 @@ const QUEUED: usize = 64;
 
 static POLLS: LazyLock<&'static Timing> = LazyLock::new(|| readings::timing("tasks.poll"));
 
+/// A task's future with its type let go. The runtime's machinery for a task
+/// is generic in what it runs: spawned as itself, each of the node's
+/// thousands of futures had a copy of it compiled, the largest share of the
+/// node's code (codex-a92eb3c2's count of its instances); spawned so, one
+/// copy serves every task with the same output.
+type Erased<T> = Pin<Box<dyn Future<Output = T> + Send + 'static>>;
+
+/// Work for the blocking pool with its type let go, as `Erased` is.
+type ErasedWork<R> = Box<dyn FnOnce() -> R + Send + 'static>;
+
 /// Starts `future` as a task whose every slice on its thread is timed; a
 /// slow slice names the task by what it said it does, or by where it was
 /// started.
@@ -36,7 +46,8 @@ where
     F: Future + Send + 'static,
     F::Output: Send + 'static,
 {
-    tokio::spawn(Timed { future: Box::pin(future), started_at: Location::caller(), account: crate::cost::passed_on() })
+    let future: Erased<F::Output> = Box::pin(future);
+    tokio::spawn(Timed { future, started_at: Location::caller(), account: crate::cost::passed_on() })
 }
 
 /// Starts `future` on the runtime `handle` names, timed as `spawn` times it.
@@ -46,7 +57,8 @@ where
     F: Future + Send + 'static,
     F::Output: Send + 'static,
 {
-    handle.spawn(Timed { future: Box::pin(future), started_at: Location::caller(), account: crate::cost::passed_on() })
+    let future: Erased<F::Output> = Box::pin(future);
+    handle.spawn(Timed { future, started_at: Location::caller(), account: crate::cost::passed_on() })
 }
 
 /// `future`, timed as `spawn` times a task, for a set of tasks to start
@@ -64,10 +76,11 @@ where
     R: Send + 'static,
 {
     let account = crate::cost::current();
-    tokio::task::spawn_blocking(crate::doing::carried(move || {
+    let work: ErasedWork<R> = Box::new(crate::doing::carried(move || {
         let _role = roles::scoped(Role::Blocking);
         charged_blocking(account, work)
-    }))
+    }));
+    tokio::task::spawn_blocking(work)
 }
 
 /// Runs `work`, charging how long it takes to `account`.
@@ -130,24 +143,26 @@ where
     R: Send + 'static,
 {
     let account = crate::cost::current();
-    handle.spawn_blocking(crate::doing::carried(move || {
+    let work: ErasedWork<R> = Box::new(crate::doing::carried(move || {
         let _role = roles::scoped(Role::Blocking);
         charged_blocking(account, work)
-    }))
+    }));
+    handle.spawn_blocking(work)
 }
 
-struct Timed<F: Future> {
-    future: Pin<Box<F>>,
+/// A task's future (`P`, pinned on the heap), timed slice by slice.
+struct Timed<P> {
+    future: P,
     started_at: &'static Location<'static>,
     /// What its slices are charged to: what started it was charged to, or,
     /// from its first slice, where it was started.
     account: Option<&'static crate::cost::Account>,
 }
 
-impl<F: Future> Future for Timed<F> {
-    type Output = F::Output;
+impl<P: Future + Unpin> Future for Timed<P> {
+    type Output = P::Output;
 
-    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<F::Output> {
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<P::Output> {
         roles::running_tasks();
         let account = match self.account {
             Some(account) => account,
@@ -159,7 +174,7 @@ impl<F: Future> Future for Timed<F> {
         let _entered = crate::cost::enter(Some(account));
         let started = Instant::now();
         let (blocked, elsewhere) = (roles::in_place_so_far(), crate::cost::elsewhere_so_far());
-        let polled = self.future.as_mut().poll(cx);
+        let polled = Pin::new(&mut self.future).poll(cx);
         // What blocked in place held no other task up.
         let took = started.elapsed().saturating_sub(roles::in_place_so_far().saturating_sub(blocked));
         crate::cost::slice(account, took.saturating_sub(crate::cost::elsewhere_so_far().saturating_sub(elsewhere)));

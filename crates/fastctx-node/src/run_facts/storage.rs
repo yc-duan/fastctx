@@ -247,17 +247,16 @@ pub(crate) fn changed_since(directory: &ConversationDir, after: i64, most: usize
 
 /// `changed_since` in `db`, of the conversation `conversation`.
 fn changed_in(db: &Connection, conversation: &str, after: i64, most: usize) -> StoredResult<(i64, Option<Changed>)> {
-    let version: i64 = db
-        .query_row("SELECT version FROM run_versions WHERE conversation=?1", [conversation], |row| row.get(0))
+    let (version, since, last): (i64, Option<i64>, Option<i64>) = db
+        .query_row("SELECT version, since, last FROM run_versions WHERE conversation=?1", [conversation], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+        })
         .optional()?
-        .unwrap_or(0);
+        .unwrap_or((0, None, None));
     if version <= after {
         return Ok((version, Some((Vec::new(), version))));
     }
-    let tracked: Option<(i64, i64)> = db
-        .query_row("SELECT since, last FROM run_tracked WHERE conversation=?1", [conversation], |row| Ok((row.get(0)?, row.get(1)?)))
-        .optional()?;
-    if !tracked.is_some_and(|(since, last)| since <= after + 1 && last == version) {
+    if !(since.is_some_and(|since| since <= after + 1) && last == Some(version)) {
         return Ok((version, None));
     }
     let mut statement =
