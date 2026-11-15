@@ -9943,6 +9943,7 @@ Used by:
 - fastctx-serve 1.0.1-beta.17 (https://github.com/yc-duan/fastctx)
 - fastctx-storage 1.0.1-beta.17 (https://github.com/yc-duan/fastctx)
 - fastctx-sync 1.0.1-beta.17 (https://github.com/yc-duan/fastctx)
+- fastctx-timeline-core 1.0.1-beta.17 (https://github.com/yc-duan/fastctx)
 - fastctx-tui 1.0.1-beta.17 (https://github.com/yc-duan/fastctx)
 - fastctx-types 1.0.1-beta.17 (https://github.com/yc-duan/fastctx)
 - fastctx-uninstall 1.0.1-beta.17
@@ -87106,4 +87107,4 @@ Source archives for the crates.io dependencies recorded by this build follow. Ea
 - zvariant_derive 5.15.0: https://static.crates.io/crates/zvariant_derive/zvariant_derive-5.15.0.crate
 - zvariant_utils 4.2.0: https://static.crates.io/crates/zvariant_utils/zvariant_utils-4.2.0.crate
 
-<!-- fastctx-notices-inputs: 49b172d1e3e66ceb02f242c42fa24e2244cddbfba0f77688c69f99e7782b5363 -->
+<!-- fastctx-notices-inputs: ec359049d8b3f426310d2f0e19bc6740a48683ae489913a322e91ceef7a191ad -->
