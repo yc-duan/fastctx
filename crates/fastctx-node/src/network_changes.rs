@@ -60,7 +60,7 @@ pub(crate) fn takes(change: &AccountChange) -> bool {
 
 #[derive(Serialize, Deserialize)]
 enum Asked {
-    Change { hub: Option<HubName>, account: AccountName, change: AccountChange },
+    Change { hub: Option<HubName>, account: AccountName, change: Box<AccountChange> },
     Rename { to: MachineName },
 }
 
@@ -174,6 +174,7 @@ fn unit(view: &View, account: &AccountName, change: &AccountChange) -> Result<(S
 async fn resolve(node: &Arc<Node>, asked: &Asked) -> Result<Resolved, Failure> {
     match asked {
         Asked::Change { hub, account, change } => {
+            let change: &AccountChange = change;
             if !takes(change) {
                 return Err(Failure::not_run("this account change cannot be recorded"));
             }
@@ -239,7 +240,7 @@ pub(crate) fn start(node: &Arc<Node>) {
                     }
                 }
                 let mut change = match asked {
-                    Asked::Change { change, .. } if takes(&change) => change,
+                    Asked::Change { change, .. } if takes(&change) => *change,
                     Asked::Rename { to } => AccountChange::Rename { machine: link.name(), to },
                     _ => return Err(Failure::not_run("this account change cannot be recorded")),
                 };
@@ -304,11 +305,11 @@ pub(crate) async fn change(
     if !node.submission_kinds.has(&FAMILY) {
         return crate::world::change(node, hub.as_ref(), &account, change).await;
     }
-    let asked = Asked::Change { hub, account, change };
+    let asked = Asked::Change { hub, account, change: Box::new(change) };
     match submit(node, &asked).await {
         Err(failure) if crate::submission_fallback::unrecorded(&FAMILY, &failure) => {
             let Asked::Change { hub, account, change } = asked else { unreachable!() };
-            crate::world::change(node, hub.as_ref(), &account, change).await
+            crate::world::change(node, hub.as_ref(), &account, *change).await
         }
         result => result.map(|()| None),
     }

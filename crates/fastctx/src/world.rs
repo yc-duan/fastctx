@@ -645,6 +645,7 @@ pub fn assist(args: AssistArgs) -> anyhow::Result<()> {
         daily: args.daily,
         five_hour: args.five_hour,
         turns: args.turns,
+        share: None,
     };
     self::change(args.hub, owner, change)?;
     if args.off {

@@ -431,6 +431,7 @@ async fn main() -> Result<()> {
                 daily: None,
                 five_hour: None,
                 turns: None,
+                share: None,
             },
         )
         .await

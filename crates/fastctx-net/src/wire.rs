@@ -968,6 +968,8 @@ pub enum Change {
         five_hour: Option<u8>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         turns: Option<u16>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        share: Option<u8>,
     },
     /// The super administrator sets the plan shown for `agent`'s login
     /// `home` on `machine`, or takes it away.
@@ -977,6 +979,10 @@ pub enum Change {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         home: Option<std::path::PathBuf>,
         plan: Option<fastctx_types::accounts::PlanLabel>,
+        /// Max as Anthropic now names its largest plan, Ultra (what was Max
+        /// 20x). A hub or node that knows no Ultra keeps and shows it as Max.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        ultra: bool,
     },
     /// `machine` no longer acts for the account.
     StopActing {

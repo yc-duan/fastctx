@@ -123,6 +123,7 @@ fn network() -> Directory {
             daily: None,
             five_hour: None,
             turns: None,
+            share: None,
         }));
     }
     for _ in 0..1000 {

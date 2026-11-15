@@ -235,6 +235,11 @@ pub struct Assist {
     /// 一个登录同时开几轮).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub turns: Option<u16>,
+    /// The part of the login's week the account may use, in percent of the
+    /// week its owner set for it; Fable is half of it. A node that knows no
+    /// shares holds to `weekly`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub share: Option<u8>,
 }
 
 impl Assist {
@@ -266,6 +271,10 @@ pub struct LoginPlan {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub home: Option<PathBuf>,
     pub plan: fastctx_types::accounts::PlanLabel,
+    /// Max shown as Ultra (`fastctx_types::accounts::PlanSeen`); a node that
+    /// knows no Ultra reads it as Max.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub ultra: bool,
 }
 
 /// A machine that acts for an account it is not logged in to: the account

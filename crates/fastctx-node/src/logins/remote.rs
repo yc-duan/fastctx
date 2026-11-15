@@ -67,8 +67,11 @@ pub(crate) async fn query(node: &Arc<Node>, acting: &Acting, machine: Option<Wri
 pub(crate) const OWNERS_WINDOWS: &str = "the windows of the login's account are its owner's to see";
 
 /// What this machine's record shows another account: everything to one
-/// that may work here; to one logins assist, those listed logins alone,
-/// without their account's windows, which are their owner's to see.
+/// that may work here; to one logins assist, those listed logins alone.
+/// One given a limit sees nothing of their account's windows, which are
+/// their owner's; one given none shares the login's whole quota and sees
+/// its windows as its owner does, only to look at (用户 2026-11-15: 唯一一个
+/// 越界的例外是配置协助者，不配置用量，那么他就能看到账号的额度条).
 pub(crate) fn seen(view: &fastctx_net::directory::View, asker: &Asker, mut logins: MachineLogins) -> MachineLogins {
     if asker.hands {
         return logins;
@@ -83,22 +86,34 @@ pub(crate) fn seen(view: &fastctx_net::directory::View, asker: &Asker, mut login
         side.programs.clear();
         side.candidates.clear();
         side.elsewhere.clear();
-        side.listed.retain(|login| {
-            view.assisting(&asker.account, &here).any(|assist| {
-                assist.agent.as_str() == agent
-                    && match &assist.home {
-                        None => login.default,
-                        Some(dir) => crate::homes::same_dir(dir, &login.dir),
-                    }
-            })
-        });
+        let assists = |login: &fastctx_types::logins::Login| -> Vec<fastctx_net::directory::Assist> {
+            view.assisting(&asker.account, &here)
+                .filter(|assist| {
+                    assist.agent.as_str() == agent
+                        && match &assist.home {
+                            None => login.default,
+                            Some(dir) => crate::homes::same_dir(dir, &login.dir),
+                        }
+                })
+                .cloned()
+                .collect()
+        };
+        side.listed.retain(|login| !assists(login).is_empty());
         for login in &mut side.listed {
             login.programs.clear();
             login.change = None;
-            login.limits = fastctx_types::agents::Fact::unavailable(OWNERS_WINDOWS);
+            if assists(login).iter().any(limited) {
+                login.limits = fastctx_types::agents::Fact::unavailable(OWNERS_WINDOWS);
+            }
         }
     }
     logins
+}
+
+/// Whether an assistance holds the account to a part of the login: a share
+/// of its week, or dollars a week or a day.
+fn limited(assist: &fastctx_net::directory::Assist) -> bool {
+    assist.share.is_some() || assist.weekly.is_some() || assist.daily.is_some()
 }
 
 /// What this machine's record shows a caller that works for no account of

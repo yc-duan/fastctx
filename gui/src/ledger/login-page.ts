@@ -38,7 +38,7 @@ import {
   type Split,
 } from "./data";
 import { clock, count, dated, dollars, seconds, tokens, whole } from "./format";
-import { allotted, fableSaid, money, windows } from "./home";
+import { allotted, fableSaid, lentSpent, money, windows } from "./home";
 import { doubleRule, rule } from "./marks";
 import { draw, linkOf, on, say, state, type Tab } from "./state";
 import { chevron, choices, escape, familyMark, gauge, menu, menuUnder, toggle } from "./ui";
@@ -102,7 +102,10 @@ function usage(login: Login): string {
   } else {
     const [five, week, third] = windows(login, 20);
     now = big("5 小时", five!) + big("7 天", week!) + big(fable, third!);
-    if (lent) note = `<p class="lg-mine">本人已用 ${whole((lent.used / 100) * plateOf(login))}，占周额度 ${Math.round(lent.used)}%　未设上限${lent.until ? `　至 ${lent.until}` : ""}</p>`;
+    if (lent) {
+      const mine = lentSpent(login).week;
+      note = `<p class="lg-mine">本人已用 ${whole(mine)}，占周额度 ${Math.round((mine / plateOf(login)) * 100)}%　未设上限${lent.until ? `　至 ${lent.until}` : ""}</p>`;
+    }
     else if (login.credits) note = `<p class="lg-mine">余额 ${escape(login.credits)}</p>`;
   }
   const fetched = daysOf(login);

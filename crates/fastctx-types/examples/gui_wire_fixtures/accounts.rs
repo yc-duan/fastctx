@@ -274,6 +274,7 @@ fn hub() -> HubAccounts {
                 daily: None,
                 five_hour: Some(80),
                 turns: Some(4),
+                share: None,
             },
             AssistSeen {
                 machine: "gpu".parse().unwrap(),
@@ -285,6 +286,7 @@ fn hub() -> HubAccounts {
                 daily: Some(fastctx_types::usage::Usd(8_000_000)),
                 five_hour: None,
                 turns: None,
+                share: None,
             },
         ],
         plans: vec![PlanSeen {
@@ -292,6 +294,7 @@ fn hub() -> HubAccounts {
             agent: "claude".parse().unwrap(),
             home: Some("/home/bo/.claude-team".into()),
             plan: PlanLabel::Max,
+            ultra: false,
         }],
         acting: vec![ActingSeen { machine: "gpu".parse().unwrap(), account: "ada".parse().unwrap(), since: at() }],
         projects: vec![ProjectSeen {
@@ -384,6 +387,7 @@ pub fn fixtures() -> Fixtures {
                 daily: None,
                 five_hour: Some(90),
                 turns: Some(3),
+                share: None,
             },
             AccountChange::Assist {
                 machine: machine(),
@@ -396,18 +400,21 @@ pub fn fixtures() -> Fixtures {
                 daily: Some(fastctx_types::usage::Usd(10_000_000)),
                 five_hour: None,
                 turns: None,
+                share: None,
             },
             AccountChange::Plan {
                 machine: "gpu".parse().unwrap(),
                 agent: "claude".parse().unwrap(),
                 home: None,
                 plan: Some(PlanLabel::Pro),
+                ultra: false,
             },
             AccountChange::Plan {
                 machine: "gpu".parse().unwrap(),
                 agent: "claude".parse().unwrap(),
                 home: Some("/home/bo/.claude-team".into()),
                 plan: None,
+                ultra: false,
             },
             AccountChange::StopActing { machine: "gpu".parse().unwrap() },
             AccountChange::Direct {

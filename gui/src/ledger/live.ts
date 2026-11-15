@@ -175,7 +175,7 @@ function assistsOn(world: WorldNow | null, machine: string, agent: string, login
 
 /** The part of the week an assistance allows, of a hundred: its share where
  *  the hub keeps one, else its weekly dollars over the login's week. */
-export function limitOf(assist: AssistSeen & { share?: number }, plate: number): number | null {
+export function limitOf(assist: AssistSeen, plate: number): number | null {
   if (assist.share) return assist.share;
   if (!assist.weekly) return null;
   return Math.max(1, Math.round(((assist.weekly / 1_000_000) / plate) * 100));
@@ -235,7 +235,7 @@ function lentOf(world: WorldNow | null, machine: Pickable, agent: string, one: W
   const home = one.default ? null : one.dir;
   const mine = loginsOf(world?.accounts);
   for (const hub of world?.accounts.hubs ?? []) {
-    const assist = hub.assists.find((given) => given.machine === machine.name && given.agent === agent && sameHome(given.home, home) && mine.some((login) => login.hub === hub.hub && login.account === given.account)) as (AssistSeen & { share?: number }) | undefined;
+    const assist = hub.assists.find((given) => given.machine === machine.name && given.agent === agent && sameHome(given.home, home) && mine.some((login) => login.hub === hub.hub && login.account === given.account));
     if (assist) return { by: machine.owner ?? "", limit: limitOf(assist, PLATE), used: 0, fable: 0, until: assist.until ? momentSaid(new Date(assist.until)) : null };
   }
   return { by: machine.owner ?? "", limit: null, used: 0, fable: 0, until: null };

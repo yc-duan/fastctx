@@ -153,6 +153,9 @@ export interface AssistSeen {
   /** The most turns the login runs at once, its owner's own counted too;
    *  absent leaves it to the vendor's rate limits. */
   turns?: number;
+  /** The part of the login's week the account may use, in percent of the
+   *  week its owner set; Fable is half of it. A hub of before keeps none. */
+  share?: number;
 }
 
 /** A plan a login names none of (a Claude Code long-lived token), set by
@@ -167,6 +170,8 @@ export interface PlanSeen {
    *  agent's default login there. */
   home: string | null;
   plan: PlanLabel;
+  /** Max shown as Ultra, Anthropic's newer name for what was Max 20x. */
+  ultra?: boolean;
 }
 
 /** A machine of another whose agents may reach an account's machines,
@@ -406,8 +411,8 @@ export interface Dissolution {
 /** A change made as an account (`fastctx_types::accounts::AccountChange`). */
 export type AccountChange =
   | { change: "share"; machine: MachineName; to: AccountName; shared: boolean; jobs?: number }
-  | { change: "assist"; machine: MachineName; to: AccountName; agent: string; home?: string; assisting: boolean; until?: Timestamp; weekly?: number; daily?: number; five_hour?: number; turns?: number }
-  | { change: "plan"; machine: MachineName; agent: string; home?: string; plan: PlanLabel | null }
+  | { change: "assist"; machine: MachineName; to: AccountName; agent: string; home?: string; assisting: boolean; until?: Timestamp; weekly?: number; daily?: number; five_hour?: number; turns?: number; share?: number }
+  | { change: "plan"; machine: MachineName; agent: string; home?: string; plan: PlanLabel | null; ultra?: boolean }
   | { change: "stop_acting"; machine: MachineName }
   /** The administrator's change: the server checks it reaches the machine
    *  at `at` before it counts; none, no longer. */

@@ -167,6 +167,12 @@ pub enum AccountChange {
         /// too; the same on every assistance of the login.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         turns: Option<u16>,
+        /// The part of the login's week `to` may use, in percent of the week
+        /// its owner set for it (用户 2026-11-15: 每人上限用占全号的比例来定);
+        /// Fable is half of it. A node that knows no shares holds to `weekly`,
+        /// which the share is given beside, in dollars.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        share: Option<u8>,
     },
     /// The plan shown for one login of an agent on `machine`, set by the
     /// hub's super administrator on a login that names none (a Claude Code
@@ -177,6 +183,10 @@ pub enum AccountChange {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         home: Option<PathBuf>,
         plan: Option<PlanLabel>,
+        /// Max as Anthropic now names its largest plan, Ultra (what was Max
+        /// 20x). A hub or node that knows no Ultra keeps and shows it as Max.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        ultra: bool,
     },
     /// `machine`, another's, no longer acts for the account.
     StopActing {
@@ -721,6 +731,9 @@ pub struct AssistSeen {
     /// The most turns the login runs at once; none is no limit.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub turns: Option<u16>,
+    /// The part of the login's week the account may use, in percent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub share: Option<u8>,
 }
 
 /// A plan a login names none of, as the hub's super administrator set it
@@ -743,6 +756,9 @@ pub struct PlanSeen {
     /// agent's default login there.
     pub home: Option<PathBuf>,
     pub plan: PlanLabel,
+    /// Max shown as Ultra, Anthropic's newer name for what was Max 20x.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub ultra: bool,
 }
 
 /// A machine of another that acts for an account, since it first used an

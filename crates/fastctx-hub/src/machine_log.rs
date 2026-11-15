@@ -452,7 +452,7 @@ pub(crate) fn action(change: &Change, book: &Book, policy: &fastctx_types::updat
         Change::Share { machine, to, shared, jobs } => {
             Action::Share { machine: machine.clone(), to: to.clone(), shared: *shared, jobs: jobs.filter(|_| *shared) }
         }
-        Change::Assist { machine, to, agent, home, assisting, until, weekly, daily, five_hour, turns } => {
+        Change::Assist { machine, to, agent, home, assisting, until, weekly, daily, five_hour, turns, .. } => {
             Action::Assist {
                 machine: machine.clone(),
                 to: to.clone(),
@@ -466,7 +466,7 @@ pub(crate) fn action(change: &Change, book: &Book, policy: &fastctx_types::updat
                 turns: turns.filter(|_| *assisting),
             }
         }
-        Change::Plan { machine, agent, home, plan } => {
+        Change::Plan { machine, agent, home, plan, .. } => {
             Action::Plan { machine: machine.clone(), agent: agent.clone(), home: home.clone(), plan: *plan }
         }
         Change::StopActing { machine } => Action::StopActing { machine: machine.clone() },

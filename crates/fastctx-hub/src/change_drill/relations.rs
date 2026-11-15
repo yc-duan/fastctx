@@ -34,12 +34,14 @@ fn request(kind: &str, round: usize, accounts: usize) -> Change {
             daily: None,
             five_hour: None,
             turns: None,
+            share: None,
         },
         "Plan" => Change::Plan {
             machine: super::machine(0),
             agent: "codex".parse().expect("agent"),
             home: None,
             plan: (!again).then_some(fastctx_types::accounts::PlanLabel::Max),
+            ultra: false,
         },
         "StopActing" => Change::StopActing { machine: super::machine(0) },
         "ShareProject" => Change::ShareProject {

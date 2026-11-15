@@ -43,17 +43,17 @@ impl Link {
         self.check_account_change(&change)?;
         let wire = match change {
             AccountChange::Share { machine, to, shared, jobs } => Change::Share { machine, to, shared, jobs },
-            AccountChange::Assist { machine, to, agent, home, assisting, until, weekly, daily, five_hour, turns } => {
+            AccountChange::Assist { machine, to, agent, home, assisting, until, weekly, daily, five_hour, turns, share } => {
                 return self
                     .assist(
                         account,
-                        Assist { machine, account: to, agent, home, until, weekly, daily, five_hour, turns },
+                        Assist { machine, account: to, agent, home, until, weekly, daily, five_hour, turns, share },
                         assisting,
                     )
                     .await
                     .map(|()| None);
             }
-            AccountChange::Plan { machine, agent, home, plan } => Change::Plan { machine, agent, home, plan },
+            AccountChange::Plan { machine, agent, home, plan, ultra } => Change::Plan { machine, agent, home, plan, ultra },
             AccountChange::StopActing { machine } => Change::StopActing { machine },
             AccountChange::Direct { machine, at } => Change::Direct { machine, at },
             AccountChange::Remove { name, reason, then } => Change::Remove { name, reason, then },
@@ -163,6 +163,7 @@ impl Link {
                     daily: None,
                     five_hour: None,
                     turns: None,
+                    share: None,
                 },
             )
             .await?;
@@ -178,6 +179,7 @@ impl Link {
             daily: assist.daily.filter(|_| limited),
             five_hour: assist.five_hour.filter(|_| limited),
             turns: assist.turns.filter(|_| limited),
+            share: assist.share.filter(|_| limited),
         };
         self.manage(account, change(assisting, true)).await?;
         let limits = (assist.until, assist.weekly, assist.daily, assist.five_hour, assist.turns);
@@ -328,6 +330,7 @@ impl Link {
                     daily: assist.daily,
                     five_hour: assist.five_hour,
                     turns: assist.turns,
+                    share: assist.share,
                 })
                 .collect(),
             plans: view
@@ -338,6 +341,7 @@ impl Link {
                     agent: plan.agent.clone(),
                     home: plan.home.clone(),
                     plan: plan.plan,
+                    ultra: plan.ultra,
                 })
                 .collect(),
             acting: view

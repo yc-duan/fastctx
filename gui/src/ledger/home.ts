@@ -70,13 +70,23 @@ export function windows(login: Login, tall?: number): string[] {
   ];
 }
 
+/** What I used this week of a login that assists me, in quota dollars: as
+ *  its usage tells, which to me is only mine. */
+export function lentSpent(login: Login): { week: number; fable: number } {
+  const days = usable(daysOf(login));
+  const plate = plateOf(login);
+  if (!days) return { week: ((login.lent?.used ?? 0) / 100) * plate, fable: ((login.lent?.fable ?? 0) / 100) * plate };
+  return { week: days.people.reduce((sum, one) => sum + one.week, 0), fable: days.people.reduce((sum, one) => sum + one.fable, 0) };
+}
+
 /** What one given a limit sees of a login that assists them: their own
  *  part of its week and of its Fable, and nothing of the login's own. */
 export function allotted(login: Login, tall?: number): string[] {
   const lent = login.lent!;
   const allot = (plateOf(login) * lent.limit!) / 100;
-  const used = (lent.used / lent.limit!) * 100;
-  const fable = (lent.fable / (lent.limit! / 2)) * 100;
+  const { week, fable: fableSpent } = lentSpent(login);
+  const used = (week / allot) * 100;
+  const fable = (fableSpent / (allot / 2)) * 100;
   const more = tall ? { tall } : {};
   return [
     gauge(`${login.id}-mine-${tall ?? 0}`, Math.round(used), { ...more, near: used >= 85, under: money(used, allot) }),

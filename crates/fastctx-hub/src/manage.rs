@@ -463,7 +463,7 @@ fn apply(
             }
             Ok(Told::Done)
         }
-        Change::Assist { machine, to, agent, home, assisting, until, weekly, daily, five_hour, turns } => {
+        Change::Assist { machine, to, agent, home, assisting, until, weekly, daily, five_hour, turns, share } => {
             let directory = &mut store.book.directory;
             let owner = held_machine(directory, account, &machine)?;
             other_account(directory, &owner, &to, &machine)?;
@@ -492,6 +492,9 @@ fn apply(
             if assisting && turns == Some(0) {
                 return Err("the most turns at once is a number above zero".to_string());
             }
+            if assisting && share.is_some_and(|share| share == 0 || share > 100) {
+                return Err("the share of the login's week is a percent from 1 to 100".to_string());
+            }
             let assist = Assist {
                 machine,
                 account: to,
@@ -502,6 +505,7 @@ fn apply(
                 daily: daily.filter(|_| assisting),
                 five_hour: five_hour.filter(|_| assisting),
                 turns: turns.filter(|_| assisting),
+                share: share.filter(|_| assisting),
             };
             directory.assists.retain(|existing| !existing.same(&assist));
             if assisting {
@@ -509,7 +513,7 @@ fn apply(
             }
             Ok(Told::Done)
         }
-        Change::Plan { machine, agent, home, plan } => {
+        Change::Plan { machine, agent, home, plan, ultra } => {
             need_super()?;
             let directory = &mut store.book.directory;
             if !directory.member(&machine).is_some_and(|member| member.is_machine()) {
@@ -517,7 +521,8 @@ fn apply(
             }
             directory.plans.retain(|known| !(known.machine == machine && known.agent == agent && known.home == home));
             if let Some(plan) = plan {
-                directory.plans.push(Arc::new(LoginPlan { machine, agent, home, plan }));
+                let ultra = ultra && plan == fastctx_types::accounts::PlanLabel::Max;
+                directory.plans.push(Arc::new(LoginPlan { machine, agent, home, plan, ultra }));
             }
             Ok(Told::Done)
         }
