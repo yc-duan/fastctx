@@ -39,7 +39,7 @@ impl<T: Moment> Node<T> {
 /// The puts, each known by its number among the World's events, in the
 /// merged order: by gap (the host's event they stand before), and within a
 /// gap as they were put.
-pub(super) struct Puts<T> {
+pub struct Puts<T> {
     nodes: Vec<Node<T>>,
     root: u32,
     /// By each World event's number: the gap it was put in and the leaf it
@@ -52,24 +52,24 @@ pub(super) struct Puts<T> {
 
 impl<T: Moment> Puts<T> {
     /// None put yet, of World events at `moments`.
-    pub(super) fn new(moments: Vec<T>) -> Self {
+    pub fn new(moments: Vec<T>) -> Self {
         let events = moments.len();
         Puts { nodes: vec![Node::new(NONE, Vec::new(), true)], root: 0, gap: vec![NONE; events], leaf: vec![NONE; events], moment: moments }
     }
 
     /// The time of the World's event `event`, or of what stands in its place
     /// now where it was put.
-    pub(super) fn moment(&self, event: usize) -> T {
+    pub fn moment(&self, event: usize) -> T {
         self.moment[event]
     }
 
     /// The gap `put` stands in.
-    pub(super) fn gap(&self, put: usize) -> usize {
+    pub fn gap(&self, put: usize) -> usize {
         self.gap[put] as usize
     }
 
     /// `put` after every put of gap `gap` or less, before those of a later gap.
-    pub(super) fn insert_in_gap(&mut self, put: usize, gap: usize) {
+    pub fn insert_in_gap(&mut self, put: usize, gap: usize) {
         let gap = u32::try_from(gap).expect("fewer events than numbers");
         let mut node = self.root;
         while !self.nodes[node as usize].leaf {
@@ -94,14 +94,14 @@ impl<T: Moment> Puts<T> {
     }
 
     /// `put` right before `before`, in its gap.
-    pub(super) fn insert_before(&mut self, put: usize, before: usize) {
+    pub fn insert_before(&mut self, put: usize, before: usize) {
         let (gap, node) = (self.gap[before], self.leaf[before]);
         let position = self.position(node, before);
         self.place(node, position, put, gap);
     }
 
     /// `put` after all, in gap `gap`.
-    pub(super) fn push(&mut self, put: usize, gap: usize) {
+    pub fn push(&mut self, put: usize, gap: usize) {
         let gap = u32::try_from(gap).expect("fewer events than numbers");
         let mut node = self.root;
         while !self.nodes[node as usize].leaf {
@@ -221,7 +221,7 @@ impl<T: Moment> Puts<T> {
     }
 
     /// Whether `one` stands before `other` in the merged order.
-    pub(super) fn before(&self, one: usize, other: usize) -> bool {
+    pub fn before(&self, one: usize, other: usize) -> bool {
         match self.gap[one].cmp(&self.gap[other]) {
             std::cmp::Ordering::Equal => self.index(one) < self.index(other),
             order => order.is_lt(),
@@ -229,13 +229,13 @@ impl<T: Moment> Puts<T> {
     }
 
     /// Of `puts`, the first in the merged order: each placed once.
-    pub(super) fn first_of(&self, puts: impl IntoIterator<Item = usize>) -> Option<usize> {
+    pub fn first_of(&self, puts: impl IntoIterator<Item = usize>) -> Option<usize> {
         puts.into_iter().map(|put| ((self.gap[put], self.index(put)), put)).min().map(|(_, put)| put)
     }
 
     /// The first put after `after` (from the first, with none) whose time
     /// is later than `at`.
-    pub(super) fn first_later(&self, after: Option<usize>, at: T) -> Option<usize> {
+    pub fn first_later(&self, after: Option<usize>, at: T) -> Option<usize> {
         let from = after.map_or(0, |after| self.index(after) + 1);
         self.find(self.root, 0, from, at)
     }
@@ -259,7 +259,7 @@ impl<T: Moment> Puts<T> {
     }
 
     /// What stands in `put`'s place now is at `at`.
-    pub(super) fn set_moment(&mut self, put: usize, at: T) {
+    pub fn set_moment(&mut self, put: usize, at: T) {
         self.moment[put] = at;
         let mut node = self.leaf[put];
         while node != NONE {
@@ -269,7 +269,7 @@ impl<T: Moment> Puts<T> {
     }
 
     /// The puts in the merged order, each with its gap.
-    pub(super) fn into_order(self) -> impl Iterator<Item = (usize, usize)> {
+    pub fn into_order(self) -> impl Iterator<Item = (usize, usize)> {
         // Down the tree from its root, each node's items in turn.
         let mut stack: Vec<(u32, usize)> = vec![(self.root, 0)];
         std::iter::from_fn(move || {

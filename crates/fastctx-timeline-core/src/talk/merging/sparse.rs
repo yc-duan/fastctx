@@ -130,7 +130,7 @@ enum Place {
 
 /// The merged history as `decide` leaves it, laid out sparsely, its times
 /// weighed as `T`.
-pub(crate) struct Layout<T> {
+pub struct Layout<T> {
     hosted: HostKeys,
     /// The host's events' times, as they stand now where a World event took
     /// a place.
@@ -276,7 +276,7 @@ impl<T: Moment + 'static> Layout<T> {
     /// The places of the history in its order, of those that stay in it
     /// (`Happened::in_history` of what stands there last): the World's put
     /// in a gap, then the host's event there — each handed on as it comes.
-    pub(crate) fn slots(self) -> impl Iterator<Item = Slot> {
+    pub fn slots(self) -> impl Iterator<Item = Slot> {
         let Layout { hosted, mut taken, puts, signed, mut over, stays, .. } = self;
         let mut put = puts.into_order().peekable();
         let mut gap = 0usize;
@@ -308,14 +308,14 @@ impl<T: Moment + 'static> Layout<T> {
 
 /// The merged history laid out (`decide`), its times weighed as nanoseconds
 /// where every one is one, else as they are.
-pub(crate) enum Laid {
+pub enum Laid {
     Nanos(Layout<i64>),
     Exact(Layout<Timestamp>),
 }
 
 impl Laid {
     /// The places of the history in its order (`Layout::slots`).
-    pub(crate) fn slots(self) -> Box<dyn Iterator<Item = Slot>> {
+    pub fn slots(self) -> Box<dyn Iterator<Item = Slot>> {
         match self {
             Laid::Nanos(layout) => Box::new(layout.slots()),
             Laid::Exact(layout) => Box::new(layout.slots()),
@@ -328,7 +328,7 @@ impl Laid {
 /// numbered by names closed over `recorded` (`Names::over`) do as well as
 /// their own. Their times and the World's are only weighed against each
 /// other: as nanoseconds of the epoch where every one is one (§28.51 ⑥-3).
-pub(crate) fn decide(mut hosted: HostKeys, recorded: &dyn Keys, codex: bool) -> Result<Laid, String> {
+pub fn decide(mut hosted: HostKeys, recorded: &dyn Keys, codex: bool) -> Result<Laid, String> {
     let asked = Asked::of(recorded)?;
     Ok(match hosted.take_moments() {
         Moments::Nanos(times) if asked.nanos => Laid::Nanos(decide_in(Times::new(times), hosted, recorded, asked, codex)?),
@@ -339,13 +339,16 @@ pub(crate) fn decide(mut hosted: HostKeys, recorded: &dyn Keys, codex: bool) -> 
 /// The World's events' keys as a merge reads them (`decide`): how many, and
 /// each in turn, as often as it asks — held, or read back from where they
 /// are kept (`timeline::world`).
-pub(crate) trait Keys {
+pub trait Keys {
     fn len(&self) -> usize;
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
     fn each(&self, each: &mut dyn FnMut(usize, &Key) -> Result<(), String>) -> Result<(), String>;
 }
 
 /// Keys held.
-pub(crate) struct Held<'a>(pub(crate) &'a [Key]);
+pub struct Held<'a>(pub &'a [Key]);
 
 impl Keys for Held<'_> {
     fn len(&self) -> usize {

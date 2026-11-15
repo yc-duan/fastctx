@@ -21,9 +21,10 @@ required-features = ["storage-drill"]
 storage-drill = []
 timeline-drill = []
 # The timeline's writing, for fastctx-bench; nothing of the node changes with it.
-bench = []
+bench = ["fastctx-timeline-core/bench"]
 
 [dependencies]
+fastctx-timeline-core = { path = "../fastctx-timeline-core" }
 tempfile = "3"
 anyhow.workspace = true
 base64 = "0.22"
@@ -60,6 +61,9 @@ serde.workspace = true
 serde_json = { workspace = true, features = ["raw_value"] }
 sha2 = "0.10"
 tokio = { workspace = true, features = ["fs", "io-util", "macros", "net", "rt-multi-thread", "sync", "time", "signal"] }
+
+[dev-dependencies]
+fastctx-timeline-core = { path = "../fastctx-timeline-core", features = ["test-support"] }
 
 [lints]
 workspace = true

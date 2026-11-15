@@ -17,10 +17,11 @@ LOCAL = {
 # a decision, made here.
 STORAGE_USERS = {
     "fastctx-sync", "fastctx-content", "fastctx-hub", "fastctx-node", "fastctx-net", "fastctx-jobs",
+    "fastctx-timeline-core",
 }
 # The bench measures the storage core's rows of design §18 on the library
 # itself; it ships in no program.
-CONTENT_USERS = {"fastctx-hub", "fastctx-node", "fastctx-client", "fastctx-bench"}
+CONTENT_USERS = {"fastctx-hub", "fastctx-node", "fastctx-client", "fastctx-bench", "fastctx-timeline-core"}
 # Who may open SQLite itself, past the storage layer: none other may make a
 # connection of its own to any database, an asset library's among them.
 RUSQLITE_USERS = {"fastctx-storage", "fastctx-gui"}
@@ -42,7 +43,7 @@ RAW_OPENERS = {
     # The work store a whole reading is kept in as it is placed in the
     # timeline (sync-v2-impl-design 28.51): a node-private file of its own,
     # no asset library.
-    "crates/fastctx-node/src/timeline/spill.rs",
+    "crates/fastctx-timeline-core/src/timeline/spill.rs",
     "crates/fastctx-sync/src/registry/derived.rs",
 }
 # A raw connection opened, or SQLite's connection type under another name.

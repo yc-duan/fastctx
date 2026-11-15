@@ -1604,6 +1604,7 @@ dependencies = [
  "fastctx-sentinel",
  "fastctx-storage",
  "fastctx-sync",
+ "fastctx-timeline-core",
  "fastctx-types",
  "fastctx-uninstall",
  "fastctx-update",
@@ -1724,6 +1725,21 @@ dependencies = [
  "fastctx-platform",
  "fastctx-storage",
  "fastctx-types",
+ "serde_json",
+ "sha2 0.10.9",
+]
+
+[[package]]
+name = "fastctx-timeline-core"
+version = "1.0.1-beta.17"
+dependencies = [
+ "fastctx-content",
+ "fastctx-hosts",
+ "fastctx-platform",
+ "fastctx-storage",
+ "fastctx-types",
+ "getrandom 0.3.4",
+ "jiff",
  "serde_json",
  "sha2 0.10.9",
 ]
