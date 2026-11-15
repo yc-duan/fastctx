@@ -143,6 +143,7 @@ pub(crate) struct Capabilities {
     pub profiles: bool,
     pub machine_updates: bool,
     pub history_switch: bool,
+    pub asset_seals: bool,
 }
 
 impl From<&crate::control::Said> for Capabilities {
@@ -159,6 +160,7 @@ impl From<&crate::control::Said> for Capabilities {
             profiles: said.profiles,
             machine_updates: said.machine_updates,
             history_switch: said.history_switch,
+            asset_seals: said.asset_seals,
         }
     }
 }

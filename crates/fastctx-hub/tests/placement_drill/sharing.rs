@@ -173,6 +173,16 @@ pub(super) async fn exercise(
         pause().await;
     }
     record("a project opened on a shared machine belongs to its holders", read, json!(null));
+    // Its co-owners dispose of it alike (§6.2, the user 2026-11-14): the
+    // machine's owner, who did not open it, shares it on and takes it back.
+    let give = |shared| AccountChange::ShareProject { town: town.clone(), with: name("alice"), shared };
+    let given = owner.account(None, name("owner"), give(true)).await;
+    let taken = owner.account(None, name("owner"), give(false)).await;
+    record(
+        "a co-owner that did not open a project on a shared machine shares it on and takes it back",
+        given.is_ok() && taken.is_ok(),
+        json!({ "given": format!("{given:?}"), "taken": format!("{taken:?}") }),
+    );
     owner.history(HistoryCall::Retire { scope: scope.clone(), name: "shared-record".into(), expected: 2 }).await?;
     let HistoryReply::Document { document } =
         bob.history(HistoryCall::Read { scope: scope.clone(), name: "shared-record".into(), version: None }).await?

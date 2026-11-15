@@ -24,6 +24,7 @@ pub(crate) mod restores;
 pub mod recovery;
 pub(crate) mod objects;
 mod owners;
+pub(crate) mod proving;
 mod scopes;
 mod sentinel_homes;
 pub(crate) mod serve;

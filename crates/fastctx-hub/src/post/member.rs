@@ -403,6 +403,7 @@ impl State {
                 record.profiles = caps.profiles;
                 record.machine_updates = caps.machine_updates;
                 record.history_switch = caps.history_switch;
+                record.asset_seals = caps.asset_seals;
                 record.connected_at = Some(jiff::Timestamp::now());
                 let taken = fastctx_net::window::standing(letters.taken, record.out_epoch);
                 let result = async {

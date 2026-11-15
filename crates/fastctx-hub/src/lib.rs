@@ -936,7 +936,7 @@ fn open(dir: &Path, log: Arc<log::Log>) -> anyhow::Result<Opened> {
         outgoing.pending() || (outgoing.stage == fastctx_types::hub_move::MoveStage::Cancelled && outgoing.prepared)
     });
     let post = store.enable_runtime()?;
-    let troubles = troubles::Troubles::open(store.shelf.clone())?;
+    let troubles = troubles::Troubles::open(store.shelf.clone(), log.clone())?;
     let releases = releases::Releases::new(dir, certificate.certificate.clone())?;
     let hub = format!("hub {} ({}) {}", store.hub.name, store.hub.id, env!("CARGO_PKG_VERSION"));
     let listen = store.hub.listen;
@@ -1295,6 +1295,7 @@ async fn intended(
                 parts,
                 call_details,
                 view_deltas,
+                asset_seals,
             },
         ) => {
             let said = control::Said {
@@ -1329,6 +1330,7 @@ async fn intended(
                 parts,
                 call_details,
                 view_deltas,
+                asset_seals,
             };
             control::session(hub, socket, peer, binding, key, proof, letters, said).await;
         }

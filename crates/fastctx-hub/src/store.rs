@@ -376,6 +376,10 @@ pub struct Letters {
     pub machine_updates: bool,
     #[serde(default)]
     pub history_switch: bool,
+    /// The member's last session said it reads the records of the hub's
+    /// assets sealed and opened.
+    #[serde(default)]
+    pub asset_seals: bool,
     /// Why the hub refused letters of the member's that it may send again,
     /// by number: kept in its count's file (`Taken`), not here.
     #[serde(skip)]
@@ -411,6 +415,7 @@ impl Letters {
             profiles: false,
             machine_updates: false,
             history_switch: false,
+            asset_seals: false,
             refused,
         })
     }

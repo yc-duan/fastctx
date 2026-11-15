@@ -20,7 +20,7 @@ pub(super) fn open(dir: &Path) -> anyhow::Result<Arc<Hub>> {
     let ledgers = crate::ledger::Ledgers::open(dir, &store.hub.id)?;
     let updates =
         crate::updates::Updates::new(dir, &store.shelf, &store.hub.due, &mut Vec::new()).map_err(anyhow::Error::msg)?;
-    let troubles = crate::troubles::Troubles::open(store.shelf.clone())?;
+    let troubles = crate::troubles::Troubles::open(store.shelf.clone(), log.clone())?;
     let releases = crate::releases::Releases::new(dir, certificate.certificate.clone())?;
     let post = store.enable_runtime()?;
     let (switched, _switch) = tokio::sync::oneshot::channel();

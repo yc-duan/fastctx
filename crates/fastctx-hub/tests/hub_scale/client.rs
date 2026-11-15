@@ -358,6 +358,7 @@ pub fn greeting(identity: &Identity, binding: &[u8; 32], position: Letters, addr
             parts: true,
             call_details: true,
             view_deltas: !identity.controller,
+            asset_seals: true,
             replicated_records: true,
         },
     }

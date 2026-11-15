@@ -21,7 +21,11 @@ CREATE TABLE IF NOT EXISTS asset_scopes (
     key TEXT PRIMARY KEY, owner TEXT NOT NULL, descriptor BLOB NOT NULL, word BLOB NOT NULL,
     -- The chain's number when it was described: the order machines list
     -- what they may hold in (§6.6).
-    seq INTEGER NOT NULL DEFAULT 0
+    seq INTEGER NOT NULL DEFAULT 0,
+    -- The machine that described a conversation born assisting an account,
+    -- as it was (its key and its owner as opened): the one machine that
+    -- makes it, holding it whoever else holds that machine (§28.47).
+    source TEXT
 ) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS asset_scopes_by_owner ON asset_scopes (owner);
 ";
@@ -34,6 +38,11 @@ pub(crate) fn migrate(c: &fastctx_storage::rusqlite::Connection) -> fastctx_stor
         c.execute_batch("ALTER TABLE asset_scopes ADD COLUMN seq INTEGER NOT NULL DEFAULT 0;")?;
     }
     c.execute_batch("CREATE INDEX IF NOT EXISTS asset_scopes_by_seq ON asset_scopes (seq, key);")?;
+    // And from before the machine making a scope was kept (§28.47).
+    let sourced = c.prepare("SELECT 1 FROM pragma_table_info('asset_scopes') WHERE name = 'source'")?.exists([])?;
+    if !sourced {
+        c.execute_batch("ALTER TABLE asset_scopes ADD COLUMN source TEXT;")?;
+    }
     Ok(())
 }
 
@@ -45,7 +54,14 @@ pub(crate) struct Scope {
     pub owner: Owner,
     /// Who the bodies' members are, for a scope a body owns.
     pub bodies: Option<std::sync::Arc<super::bodies::Bodies>>,
+    /// The machine that makes it, for a conversation born assisting an
+    /// account: as it was when it described it (`machine_now`).
+    pub source: Option<String>,
 }
+
+/// A scope's row in the control database: its owner, its descriptor and the
+/// hub's word on it as kept, and the machine that makes it.
+type Row = (String, Vec<u8>, Vec<u8>, Option<String>);
 
 /// The accounts behind a request from `machine`: those it is logged in as
 /// and those it may act for (design §6.4).
@@ -196,9 +212,10 @@ pub(crate) fn anyone_reads(directory: &Indexed<'_>, scope: &Scope) -> std::io::R
     })
 }
 
-/// Whether a request from `machine` reads the scope.
+/// Whether a request from `machine` reads the scope: whether it holds any of
+/// it, however (`hold`).
 pub(crate) fn readable(directory: &Indexed<'_>, machine: &MachineName, scope: &Scope) -> bool {
-    readable_known(directory, machine, scope).unwrap_or(false)
+    hold(directory, machine, scope) != Hold::No
 }
 
 /// Whether `key` names a body's scope of its machine's own: its log, and what
@@ -216,51 +233,92 @@ fn own_log(directory: &Indexed<'_>, machine: &MachineName, scope: &Scope) -> boo
             && super::bodies::body_of(directory.all, machine).as_deref() == Some(body.as_str()))
 }
 
-/// As `readable`, an error where it cannot be told now.
-fn readable_known(directory: &Indexed<'_>, machine: &MachineName, scope: &Scope) -> std::io::Result<bool> {
+/// How a machine holds a scope, if at all (design §6.3, §6.6, §28.47): as a
+/// copy only what every account that holds the machine reads; what it makes
+/// itself though they do not.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Hold {
+    No,
+    /// What it did and spent for an account it works for: the streams of the
+    /// account's records named for it, no other machine's (L12).
+    Named,
+    /// What it makes itself: a conversation it runs for an account it
+    /// assists, what an account does on it. Its readers' class, never what
+    /// only those logged in hold.
+    Made,
+    /// A copy: read by an account logged in on it, and, on a machine shared
+    /// whole, by its owner and every account it is shared with.
+    Copy,
+    /// Its own body's log and records, whole.
+    Own,
+}
+
+/// How `machine` holds the scope, none where that cannot be told now.
+pub(crate) fn hold(directory: &Indexed<'_>, machine: &MachineName, scope: &Scope) -> Hold {
+    hold_known(directory, machine, scope).unwrap_or(Hold::No)
+}
+
+/// As `hold`, an error where who reads the scope cannot be told now (AE04):
+/// every reading of a body's members it makes, not the first only, is never
+/// taken for no one (AF02).
+pub(crate) fn hold_known(directory: &Indexed<'_>, machine: &MachineName, scope: &Scope) -> std::io::Result<Hold> {
     if own_log(directory, machine, scope) {
-        return Ok(true);
+        return Ok(Hold::Own);
     }
     // A project's ledger, described before, is read by none until it is
     // kept apart by machine (O10).
     if matches!(&scope.descriptor.readers, Readers::Project { .. }) {
-        return Ok(false);
+        return Ok(Hold::No);
     }
+    if logins_read_known(directory, machine, scope)? && holders_read_known(directory, machine, scope)? {
+        return Ok(Hold::Copy);
+    }
+    if made_here(directory, machine, scope) {
+        return Ok(Hold::Made);
+    }
+    if works_for(directory, machine, scope) {
+        return Ok(Hold::Named);
+    }
+    Ok(Hold::No)
+}
+
+/// Whether an account logged in on `machine` reads the scope: a copy comes
+/// with a login there, never with an account the machine only works for
+/// (`placement-one-rule` 2026-10-21, 2026-11-10).
+fn logins_read_known(directory: &Indexed<'_>, machine: &MachineName, scope: &Scope) -> std::io::Result<bool> {
     let descriptor = &scope.descriptor;
-    for account in principal(directory, machine) {
-        if reads_known(directory, &account, &descriptor.readers, &descriptor.born, scope.bodies.as_deref())? {
+    let Some(member) = directory.member(machine) else { return Ok(false) };
+    for account in &member.logins {
+        if directory.may_act_for(account, &member.name)
+            && reads_known(directory, account, &descriptor.readers, &descriptor.born, scope.bodies.as_deref())?
+        {
             return Ok(true);
         }
     }
     Ok(false)
 }
 
-/// Whether every account a machine is shared with whole, a share still
-/// waiting for the machine to clear among them, reads the scope: a shared
-/// machine holds only what all its holders may see (design §6.3,
-/// `sync-replica-holders`).
-/// Judged as the directory will be once the shares waiting are in force:
-/// what a holder reads through holding the machine counts already.
-pub(crate) fn sharers_read(directory: &Indexed<'_>, machine: &MachineName, scope: &Scope) -> bool {
-    sharers_read_known(directory, machine, scope).unwrap_or(false)
-}
-
-/// As `sharers_read`, an error where it cannot be told now.
-fn sharers_read_known(directory: &Indexed<'_>, machine: &MachineName, scope: &Scope) -> std::io::Result<bool> {
+/// Whether every account that holds `machine` reads the scope, where it is
+/// shared whole: its owner and each account it is shared with, a share still
+/// waiting for the machine to clear among them. A machine shared whole holds
+/// as a copy only what all its holders may see, its owner's own no less than
+/// another's (design §6.3, `placement-one-rule` 2026-11-10,
+/// `sync-replica-holders`). Judged as the directory will be once the shares
+/// waiting are in force: what a holder reads through holding the machine
+/// counts already.
+fn holders_read_known(directory: &Indexed<'_>, machine: &MachineName, scope: &Scope) -> std::io::Result<bool> {
     let descriptor = &scope.descriptor;
     let bodies = scope.bodies.as_deref();
     let machine = directory.canonical(machine).clone();
-    // What an account does on a machine is born on it: the machine holds it
-    // whoever else holds the machine.
-    if let Readers::Working { machine: on, .. } = &descriptor.readers
-        && directory.canonical(on) == &machine
-    {
+    let shares: Vec<usize> = directory.shares_by_machine(&machine).to_vec();
+    if shares.is_empty() {
         return Ok(true);
     }
-    let shares: Vec<usize> = directory.shares_by_machine(&machine).to_vec();
+    let owner = directory.member(&machine).and_then(|member| member.home.clone());
     let all_read = |directory: &Indexed<'_>| -> std::io::Result<bool> {
-        for &at in &shares {
-            if !reads_known(directory, &directory.all.shares[at].account, &descriptor.readers, &descriptor.born, bodies)? {
+        let sharers = shares.iter().map(|&at| &directory.all.shares[at].account);
+        for account in owner.iter().chain(sharers) {
+            if !reads_known(directory, account, &descriptor.readers, &descriptor.born, bodies)? {
                 return Ok(false);
             }
         }
@@ -277,47 +335,64 @@ fn sharers_read_known(directory: &Indexed<'_>, machine: &MachineName, scope: &Sc
     all_read(&Indexed::new(&would, &index))
 }
 
-/// Whether `machine` may hold any stream of the scope (design §2.3, §6.6),
-/// an error where who reads it cannot be told now (AE04): every reading of a body's members it makes, not the first only,
-/// is never taken for no one (AF02).
-pub(crate) fn may_hold_known(directory: &Indexed<'_>, machine: &MachineName, scope: &Scope) -> std::io::Result<bool> {
-    if !readable_known(directory, machine, scope)? || !sharers_read_known(directory, machine, scope)? {
-        return Ok(false);
-    }
-    if !keeps_ledger(directory, machine, scope) {
-        return Ok(false);
-    }
-    let descriptor = &scope.descriptor;
-    if own_log(directory, machine, scope) {
-        return Ok(true);
-    }
-    for class in &descriptor.classes {
-        match class.holders {
-            Holders::Readers => return Ok(true),
-            Holders::Logged => {
-                if let Some(member) = directory.member(machine) {
-                    for account in &member.logins {
-                        if reads_known(directory, account, &descriptor.readers, &descriptor.born, scope.bodies.as_deref())? {
-                            return Ok(true);
-                        }
-                    }
-                }
-            }
-        }
-    }
-    Ok(false)
+/// The machine `machine` is now, as a scope it describes keeps it: its key
+/// and its owner as opened (`identity`).
+fn machine_now(directory: &Indexed<'_>, machine: &MachineName) -> Option<String> {
+    identity(directory, &format!("machine:{}", directory.canonical(machine)))
 }
 
+/// Whether `machine` makes the scope itself (§28.47): a conversation born
+/// assisting an account, which this very machine described as it ran it,
+/// while it still acts for an account that opened it; or what an account
+/// does on it. Never another conversation of the account it assists
+/// (`placement-one-rule` 2026-10-21, 2026-11-10).
+fn made_here(directory: &Indexed<'_>, machine: &MachineName, scope: &Scope) -> bool {
+    let descriptor = &scope.descriptor;
+    let read = |account: &AccountName| reads(directory, account, &descriptor.readers, &descriptor.born, None);
+    match &descriptor.readers {
+        Readers::Working { account, machine: on } => directory.same(on, machine) && read(account),
+        Readers::Conversation { openers, born_on: None } => {
+            scope.source.as_ref().is_some_and(|source| machine_now(directory, machine).as_ref() == Some(source))
+                && principal(directory, machine).iter().any(|account| openers.contains(account) && read(account))
+        }
+        _ => false,
+    }
+}
+
+/// Whether `machine` works for the account whose records the scope is, an
+/// account that does not hold it: what it did and spent for it, it keeps
+/// there in streams named for it (L12). What it does for those that hold it
+/// goes into its body's records, shared whole, or is theirs to read as a
+/// copy (§29 2.5).
+fn works_for(directory: &Indexed<'_>, machine: &MachineName, scope: &Scope) -> bool {
+    let descriptor = &scope.descriptor;
+    let Readers::Account { account } = &descriptor.readers else { return false };
+    principal(directory, machine).contains(account)
+        && !directory.holds(account, machine)
+        && reads(directory, account, &descriptor.readers, &descriptor.born, None)
+}
+
+/// Whether `stream` of an account's records is the one `machine` keeps what
+/// it did or spent in: `activity/<key>`, `usage/<key>`, by the first eight
+/// bytes of its key, as it names them.
+fn named_for(directory: &Indexed<'_>, machine: &MachineName, stream: &str) -> bool {
+    let Some(member) = directory.member(machine) else { return false };
+    let named: String = member.key.as_bytes()[..8].iter().map(|byte| format!("{byte:02x}")).collect();
+    stream.split_once('/').is_some_and(|(kind, name)| matches!(kind, "activity" | "usage") && name == named)
+}
+
+/// Whether `machine` may hold any stream of the scope (design §2.3, §6.6),
+/// an error where who reads it cannot be told now (AE04).
+pub(crate) fn may_hold_known(directory: &Indexed<'_>, machine: &MachineName, scope: &Scope) -> std::io::Result<bool> {
+    Ok(hold_known(directory, machine, scope)? != Hold::No)
+}
 
 /// Whether `machine` may hold `stream` of the scope (design §2.3): the
-/// stream's class names who holds it, and a machine shared whole holds only
-/// what each of its holders reads.
+/// stream's class names who holds it, and a machine shared whole holds as a
+/// copy only what each of its holders reads.
 pub(crate) fn holds(directory: &Indexed<'_>, machine: &MachineName, scope: &Scope, stream: &str) -> bool {
     let descriptor = &scope.descriptor;
     let Some(class) = descriptor.class(stream) else { return false };
-    if !sharers_read(directory, machine, scope) || !keeps_ledger(directory, machine, scope) {
-        return false;
-    }
     // A project's ledger in an account's records: of a project it reads
     // now, under the machines it may work on now (§29, 2.4).
     if let Readers::Account { account } = &descriptor.readers
@@ -326,12 +401,24 @@ pub(crate) fn holds(directory: &Indexed<'_>, machine: &MachineName, scope: &Scop
     {
         return false;
     }
-    match class.holders {
-        Holders::Readers => readable(directory, machine, scope),
-        Holders::Logged if own_log(directory, machine, scope) => true,
-        Holders::Logged => directory.member(machine).is_some_and(|member| {
-            member.logins.iter().any(|account| reads(directory, account, &descriptor.readers, &descriptor.born, scope.bodies.as_deref()))
-        }),
+    holds_as(directory, machine, scope, class, Some(stream))
+}
+
+/// Whether `machine` may hold some stream of the class `class` of the scope:
+/// what a listing of what it holds names (§6.6).
+pub(crate) fn holds_class(directory: &Indexed<'_>, machine: &MachineName, scope: &Scope, class: &StreamClass) -> bool {
+    holds_as(directory, machine, scope, class, None)
+}
+
+fn holds_as(directory: &Indexed<'_>, machine: &MachineName, scope: &Scope, class: &StreamClass, stream: Option<&str>) -> bool {
+    if !keeps_ledger(directory, machine, scope) {
+        return false;
+    }
+    match (hold(directory, machine, scope), class.holders) {
+        (Hold::Own | Hold::Copy, _) => true,
+        (Hold::Made, Holders::Readers) => true,
+        (Hold::Named, Holders::Readers) => stream.is_none_or(|stream| named_for(directory, machine, stream)),
+        _ => false,
     }
 }
 
@@ -349,15 +436,15 @@ fn keeps_ledger(_directory: &Indexed<'_>, _machine: &MachineName, scope: &Scope)
 /// The scope `key`, if the hub described it.
 pub(crate) fn scope(assets: &Assets, key: &str) -> Result<Option<Scope>, String> {
     let key = key.to_string();
-    let found: Option<(String, Vec<u8>, Vec<u8>)> = assets
+    let found: Option<Row> = assets
         .control
         .read_now(move |c| {
-            Ok(c.prepare_cached("SELECT owner, descriptor, word FROM asset_scopes WHERE key = ?1")?
-                .query_row([&key], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+            Ok(c.prepare_cached("SELECT owner, descriptor, word, source FROM asset_scopes WHERE key = ?1")?
+                .query_row([&key], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)))
                 .optional()?)
         })
         .map_err(|error| error.to_string())?;
-    let Some((owner, descriptor, mut word)) = found else { return Ok(None) };
+    let Some((owner, descriptor, mut word, source)) = found else { return Ok(None) };
     let owner = Owner::from_key(&owner).ok_or_else(|| format!("a scope of an unknown owner {owner}"))?;
     let read: Descriptor = serde_json::from_slice(&descriptor).map_err(|error| error.to_string())?;
     // A stop came between its chain head and its word; or the word is under
@@ -376,7 +463,7 @@ pub(crate) fn scope(assets: &Assets, key: &str) -> Result<Option<Scope>, String>
             .map_err(|error| error.to_string())?;
     }
     let bodies = matches!(read.readers, Readers::Body { .. }).then(|| assets.bodies.clone());
-    Ok(Some(Scope { descriptor: read, fact: Fact { fact: Bytes(descriptor), word: Bytes(word) }, owner, bodies }))
+    Ok(Some(Scope { descriptor: read, fact: Fact { fact: Bytes(descriptor), word: Bytes(word) }, owner, bodies, source }))
 }
 
 /// The owner library of `scope`, with the scope installed in it: a scope
@@ -511,6 +598,15 @@ pub(crate) fn describe(
         return Err("none of this machine's accounts reads that scope".into());
     }
     let owner = owner_of(directory, &readers)?;
+    // A conversation born assisting an account: the machine describing it
+    // runs it, and is the one machine that holds it as what it makes
+    // (§28.47).
+    let source = match &readers {
+        Readers::Conversation { born_on: None, .. } => {
+            Some(machine_now(directory, machine).ok_or_else(|| format!("{machine} is not a machine of this network"))?)
+        }
+        _ => None,
+    };
     // A project kept in a body's library: the body's members are kept from
     // now, as for the body's own scopes.
     if let Readers::Project { town } = &readers
@@ -530,7 +626,7 @@ pub(crate) fn describe(
     };
     let bytes = serde_json::to_vec(&descriptor).map_err(|error| error.to_string())?;
     let digest: [u8; 32] = Sha256::digest(&bytes).into();
-    let (key_text, owner_key, stored) = (key.to_string(), owner.key(), bytes.clone());
+    let (key_text, owner_key, stored, sourced) = (key.to_string(), owner.key(), bytes.clone(), source.clone());
     // A conversation described into a body: its records are the body's
     // readers' from now on, kept with the description (§29, 2.6).
     let into_body = match &descriptor.readers {
@@ -546,10 +642,10 @@ pub(crate) fn describe(
             // Never into a library being deleted (design §6.2).
             let added = c
                 .prepare_cached(
-                    "INSERT INTO asset_scopes (key, owner, descriptor, word, seq)
-                     SELECT ?1, ?2, ?3, x'', 0 WHERE NOT EXISTS (SELECT 1 FROM asset_deleting WHERE owner = ?2)",
+                    "INSERT INTO asset_scopes (key, owner, descriptor, word, seq, source)
+                     SELECT ?1, ?2, ?3, x'', 0, ?4 WHERE NOT EXISTS (SELECT 1 FROM asset_deleting WHERE owner = ?2)",
                 )?
-                .execute(params![key_text, owner_key, stored])?;
+                .execute(params![key_text, owner_key, stored, sourced])?;
             if added == 0 {
                 return Ok(None);
             }
@@ -583,7 +679,7 @@ pub(crate) fn describe(
             Ok(())
         })
         .map_err(|error| error.to_string())?;
-    let kept = Scope { descriptor, fact: Fact { fact: Bytes(bytes), word: Bytes(word) }, owner, bodies };
+    let kept = Scope { descriptor, fact: Fact { fact: Bytes(bytes), word: Bytes(word) }, owner, bodies, source };
     library(assets, &kept)?;
     // What the hub's records hold of it goes into it (design §28.17).
     assets.described.lock().expect("described scopes").push(key.to_string());

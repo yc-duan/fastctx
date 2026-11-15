@@ -51,9 +51,7 @@ pub(super) fn check(
                 .iter()
                 .find(|project| &project.town == town)
                 .ok_or_else(|| format!("there is no project {town}"))?;
-            if &project.owner != account {
-                return Err(format!("the project {} is the account {}'s", project.name, project.owner));
-            }
+            super::disposes(directory, account, project, false)?;
             for member in directory
                 .members
                 .iter()

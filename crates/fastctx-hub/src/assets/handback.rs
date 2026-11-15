@@ -120,10 +120,7 @@ pub(super) fn library_as_is(assets: &Assets, scope: &Scope) -> Result<Library, S
 /// note.
 fn gate(assets: &Assets, directory: &Indexed<'_>, machine: &MachineName, key: &str, stream: &str) -> Result<Option<Scope>, String> {
     let Some(scope) = scopes::scope(assets, key)? else { return Ok(None) };
-    if !scopes::readable(directory, machine, &scope)
-        || !scopes::sharers_read(directory, machine, &scope)
-        || !scopes::holds(directory, machine, &scope, stream)
-    {
+    if !scopes::readable(directory, machine, &scope) || !scopes::holds(directory, machine, &scope, stream) {
         return Err(format!("this machine does not hold {stream} of the scope {key}"));
     }
     Ok(Some(scope))

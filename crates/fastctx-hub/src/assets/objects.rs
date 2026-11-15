@@ -105,6 +105,8 @@ pub(crate) struct Objects {
     /// By the proving device's key, each object's proof until when it stands.
     proofs: Mutex<HashMap<[u8; 32], Proven>>,
     pub(crate) apart: super::apart::Apart,
+    /// What is asked and proved by challenge (design §28.45).
+    pub(crate) proving: super::proving::Proving,
 }
 
 impl Objects {
@@ -137,12 +139,6 @@ impl Objects {
         proofs.get(key).and_then(|proven| proven.get(hash)).is_some_and(|until| Instant::now() < *until)
     }
 
-    /// Keeps a proof as the data connection keeps one, for the drills.
-    #[cfg(test)]
-    pub(crate) fn prove_for_drill(&self, key: [u8; 32], hash: [u8; 32]) {
-        self.proofs.lock().expect("proofs").entry(key).or_default().insert(hash, Instant::now() + proof_for(0));
-    }
-
     /// While the device whose key is `key` puts an object, what it proved
     /// lately and the bodies it staged stay (AA05): a frame that waits for
     /// several objects is not held up by the first one's proof, or its
@@ -158,7 +154,9 @@ impl Objects {
         self.apart.keep_staged(key);
     }
 
-    fn proved(&self, key: &[u8; 32], object: &ObjectRef) {
+    /// Keeps that the device whose key is `key` proved it holds `object`:
+    /// sent every byte of it, or answered a challenge for it (§28.45).
+    pub(crate) fn proved(&self, key: &[u8; 32], object: &ObjectRef) {
         let now = Instant::now();
         let mut proofs = self.proofs.lock().expect("proofs");
         if proofs.values().map(HashMap::len).sum::<usize>() >= PROOFS_KEPT {
@@ -378,7 +376,7 @@ fn allowed(hub: &Hub, me: &MachineName, key: &PublicKey, scope: &Scope, object: 
         return Err(format!("{me} is no longer this machine"));
     }
     let fresh = scopes::scope(&hub.assets, &scope.descriptor.scope)?.ok_or("the scope is gone")?;
-    if !scopes::readable(&directory, me, &fresh) || !scopes::sharers_read(&directory, me, &fresh) {
+    if !scopes::readable(&directory, me, &fresh) {
         return Err(format!("{me} reads the scope no more"));
     }
     if let Some(object) = object {
@@ -641,6 +639,7 @@ async fn take(hub: &Arc<Hub>, mut socket: Socket, me: &MachineName, key: &Public
         if !large(&object) {
             let (_, bytes) = chunk(&mut stream, &pulse).await?;
             let _putting = work.begin();
+            let _keeping = keeping(me, &object);
             let lease = blocking(move || library.put(&mut bytes.as_slice(), &holder, LEASE)).await?;
             if lease.object != object {
                 return Err("the bytes sent do not hash to the object".into());
@@ -676,6 +675,7 @@ async fn take(hub: &Arc<Hub>, mut socket: Socket, me: &MachineName, key: &Public
             }
         }
         let _settling = work.begin();
+        let _keeping = keeping(me, &object);
         if let Some(hasher) = hasher
             && <[u8; 32]>::from(hasher.finalize()) != object.hash
         {
@@ -693,16 +693,28 @@ async fn take(hub: &Arc<Hub>, mut socket: Socket, me: &MachineName, key: &Public
     }
     .await;
     if kept.is_ok() && whole {
+        let _proving = keeping(me, &object);
         hub.assets.objects.proved(key.as_bytes(), &object);
     }
     let word = match &kept {
         Ok(()) => DONE.to_string(),
         Err(why) => serde_json::to_string(&format!("the hub did not take it: {why}")).expect("text serializes"),
     };
+    let _receipt = fastctx_platform::doing::waiting_outside(
+        format!("{me}'s receipt for an object it put ({} bytes)", object.size),
+        SILENCE * 2,
+    );
     if let Err(why) = writer.finish(word).await {
         hub.log.line(format_args!("sending an object's receipt: {why}"));
     }
     kept
+}
+
+/// Names the hub keeping an object a device put, past the bytes' coming,
+/// so a keep that does not end says where it stands; the device's receipt
+/// waits on it for as long as it lasts.
+fn keeping(me: &MachineName, object: &ObjectRef) -> fastctx_platform::doing::OutsideWait {
+    fastctx_platform::doing::waiting_outside(format!("keeping an object {me} put ({} bytes)", object.size), SILENCE * 2)
 }
 
 /// Sends a large object's digests, then its chunks from the chunk `from`,

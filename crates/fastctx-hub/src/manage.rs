@@ -467,7 +467,10 @@ fn apply(
             let directory = &mut store.book.directory;
             let owner = held_machine(directory, account, &machine)?;
             other_account(directory, &owner, &to, &machine)?;
-            if directory.is_visitor(account) {
+            // A visitor gives nothing; ending an assistance on a machine it
+            // holds gives nothing either (`net-sharing-and-assist`
+            // 2026-10-23: 访客收到的共享一样管，只收不给).
+            if assisting && directory.is_visitor(account) {
                 return Err(fastctx_types::sharing::VISITOR_GIVES_NOTHING.into());
             }
             let machine = directory.canonical(&machine).clone();
@@ -917,6 +920,7 @@ fn apply(
                 owner: account.clone(),
                 granted: Default::default(),
                 shared_on,
+                frozen: Default::default(),
             }));
             Ok(Told::Done)
         }
@@ -925,13 +929,12 @@ fn apply(
             if directory.account(&with).is_none() {
                 return Err(format!("there is no account {with}"));
             }
-            let project = directory.projects.iter_mut().find(|project| project.town == town).map(Arc::make_mut);
-            let project = project.ok_or_else(|| format!("there is no project {town}"))?;
-            // A project is its owner's to share, the super administrator's
+            let at = directory.projects.iter().position(|project| project.town == town);
+            let at = at.ok_or_else(|| format!("there is no project {town}"))?;
+            // A project is its owners' to share, the super administrator's
             // no more than anyone's (`world-network.md`, 项目也照同一个规矩).
-            if project.owner != *account {
-                return Err(format!("the project {} is the account {}'s", project.name, project.owner));
-            }
+            disposes(directory, account, &directory.projects[at], true)?;
+            let project = Arc::make_mut(&mut directory.projects[at]);
             if shared {
                 project.granted.insert(with);
             } else {
@@ -952,12 +955,10 @@ fn apply(
                 Arc::make_mut(&mut project).owner = to;
                 book.directory.projects.push(project);
             } else {
-                let project =
-                    book.directory.projects.iter_mut().find(|project| project.town == town).map(Arc::make_mut);
-                let project = project.ok_or_else(|| format!("there is no project {town}"))?;
-                if project.owner != *account {
-                    return Err(format!("the project {} is the account {}'s", project.name, project.owner));
-                }
+                let at = book.directory.projects.iter().position(|project| project.town == town);
+                let at = at.ok_or_else(|| format!("there is no project {town}"))?;
+                disposes(&book.directory, account, &book.directory.projects[at], true)?;
+                let project = Arc::make_mut(&mut book.directory.projects[at]);
                 project.granted.remove(&to);
                 project.owner = to;
             }
@@ -993,12 +994,8 @@ fn apply(
             let projects = &mut store.book.directory.projects;
             let position = projects.iter().position(|project| project.town == town);
             let position = position.ok_or_else(|| format!("there is no project {town}"))?;
-            if projects[position].owner != *account {
-                return Err(format!(
-                    "the project {} is the account {}'s",
-                    projects[position].name, projects[position].owner
-                ));
-            }
+            disposes(&store.book.directory, account, &store.book.directory.projects[position], false)?;
+            let projects = &mut store.book.directory.projects;
             // Its ledger goes once the directory without it is kept
             // (`change`).
             let project = Project::clone(&projects[position]);
@@ -1199,6 +1196,7 @@ fn log_out(
     ended: &mut Vec<(MachineName, Refusal)>,
 ) -> Result<(), String> {
     let directory = &mut store.book.directory;
+    let holders = holders_of(directory, name);
     let member = directory.members.iter_mut().find(|member| member.name == *name).map(Arc::make_mut);
     let member = member.ok_or_else(|| format!("there is no member {name}"))?;
     member.logins.remove(account);
@@ -1211,7 +1209,7 @@ fn log_out(
     let left = member.logins.is_empty();
     let key = member.key;
     if unregistered {
-        forget_machine(directory, name);
+        forget_machine(directory, name, &holders);
         store.hub.due.retain(|due| due.key != key);
         store.hub.package_targets.remove(&key);
         store.save_hub().map_err(|e| format!("removing update arrangements: {e}"))?;
@@ -1222,19 +1220,69 @@ fn log_out(
     Ok(())
 }
 
+/// Whether `account` disposes of `project` as its owner does: its owner, or
+/// a co-owner — for one opened on a machine shared whole, any account that
+/// holds that machine now, or held it as it left the network (§6.2,
+/// `net-project-sharing` 2026-10-31, the user 2026-11-14). A visitor
+/// among the co-owners gives nothing: it neither shares the project on nor
+/// hands it over.
+pub(crate) fn disposes(
+    directory: &fastctx_net::directory::Directory,
+    account: &AccountName,
+    project: &Project,
+    gives: bool,
+) -> Result<(), String> {
+    if project.owner == *account {
+        return Ok(());
+    }
+    let holds = project.frozen.contains(account)
+        || project
+            .shared_on
+            .as_ref()
+            .is_some_and(|machine| directory.authorize(account, fastctx_net::authorization::Action::Hold(machine)).is_ok());
+    if holds && !(gives && directory.is_visitor(account)) {
+        return Ok(());
+    }
+    Err(format!("the project {} is the account {}'s", project.name, project.owner))
+}
+
+/// The accounts that hold the machine `name` now — its owner and those it
+/// is shared with whole, the shares in force — as the directory keeps them,
+/// an account locked for now among them: a lock withholds what it may do,
+/// not what it holds.
+fn holders_of(directory: &fastctx_net::directory::Directory, name: &MachineName) -> Vec<AccountName> {
+    let Some(member) = directory.member(name) else { return Vec::new() };
+    let Some(owner) = member.home.as_ref() else { return Vec::new() };
+    let mut holders = vec![owner.clone()];
+    // A visitor's machine is shared with none (`authorization`, Hold).
+    if !directory.is_visitor(owner) {
+        for share in directory.shares.iter().filter(|share| share.machine == member.name && share.active()) {
+            if !holders.contains(&share.account) {
+                holders.push(share.account.clone());
+            }
+        }
+    }
+    holders
+}
+
 /// What was shared of `name`, the assistance of its agents, and what it
-/// acted for go with it as a machine.
-fn forget_machine(directory: &mut fastctx_net::directory::Directory, name: &MachineName) {
+/// acted for go with it as a machine; `holders` held it until now.
+fn forget_machine(directory: &mut fastctx_net::directory::Directory, name: &MachineName, holders: &[AccountName]) {
     directory.shares.retain(|share| share.machine != *name);
     directory.assists.retain(|assist| assist.machine != *name);
     directory.plans.retain(|plan| plan.machine != *name);
     directory.acting.retain(|acting| acting.machine != *name);
-    // A project opened there was its holders'; with the machine gone from
-    // them it is its owner's and those it is shared with, and no later
-    // holder of the name or the machine inherits it.
+    // A project opened there was its holders'. With the machine gone from
+    // them, those who held it then stay its co-owners, frozen as they were
+    // as a body's members are (§6.2) — reading, writing and disposing of it
+    // as before — and no later holder of the name or the machine inherits
+    // it.
     for project in &mut directory.projects {
         if project.shared_on.as_ref() == Some(name) {
-            Arc::make_mut(project).shared_on = None;
+            let project = Arc::make_mut(project);
+            project.shared_on = None;
+            let owner = project.owner.clone();
+            project.frozen.extend(holders.iter().filter(|account| **account != owner).cloned());
         }
     }
 }
@@ -1253,9 +1301,10 @@ fn remove_member(
     ended: &mut Vec<(MachineName, Refusal)>,
 ) -> Result<(), String> {
     let directory = &mut store.book.directory;
+    let holders = holders_of(directory, name);
     let position = directory.members.iter().position(|member| member.name == *name);
     let member = directory.members.remove(position.ok_or_else(|| format!("there is no member {name}"))?);
-    forget_machine(directory, name);
+    forget_machine(directory, name, &holders);
     store.hub.due.retain(|due| due.key != member.key);
     store.hub.package_targets.remove(&member.key);
     store.save_hub().map_err(|e| format!("removing update arrangements: {e}"))?;
@@ -1355,6 +1404,28 @@ fn delete_account(
     // and assistances go: they let go of it once it is gone.
     let forgetting = crate::forget::accounts::audience(store, name);
     let directory = &store.book.directory;
+    // A project it owned on a machine shared whole is its co-owners': it
+    // passes to another that holds that machine now, or held it as it left,
+    // one that may give before a visitor and one not locked before one
+    // that is, and is archived only with none left (§6.2).
+    let heirs: std::collections::BTreeMap<fastctx_types::access::TownId, AccountName> = directory
+        .projects
+        .iter()
+        .filter(|project| project.owner == *name)
+        .filter_map(|project| {
+            let holding = project.shared_on.as_ref().map(|machine| holders_of(directory, machine)).unwrap_or_default();
+            let co_owners: Vec<AccountName> = holding
+                .into_iter()
+                .chain(project.frozen.iter().cloned())
+                .filter(|account| account != name && directory.account(account).is_some())
+                .collect();
+            let rank = |account: &AccountName| {
+                (directory.is_visitor(account), directory.account(account).is_some_and(|found| found.locked))
+            };
+            let heir = co_owners.iter().min_by_key(|account| rank(account))?.clone();
+            Some((project.town.clone(), heir))
+        })
+        .collect();
     let reason = format!("the account {name} was deleted");
     let machines: Vec<MachineName> = directory
         .members
@@ -1382,9 +1453,21 @@ fn delete_account(
     book.directory.shares.retain(|share| share.account != *name);
     book.directory.assists.retain(|assist| assist.account != *name);
     book.directory.acting.retain(|acting| acting.account != *name);
-    let (archived, kept): (Vec<Arc<Project>>, Vec<Arc<Project>>) =
-        std::mem::take(&mut book.directory.projects).into_iter().partition(|project| project.owner == *name);
+    let (archived, kept): (Vec<Arc<Project>>, Vec<Arc<Project>>) = std::mem::take(&mut book.directory.projects)
+        .into_iter()
+        .partition(|project| project.owner == *name && !heirs.contains_key(&project.town));
     book.directory.projects = kept;
+    for project in book.directory.projects.iter_mut().filter(|project| project.owner == *name) {
+        if let Some(heir) = heirs.get(&project.town) {
+            let project = Arc::make_mut(project);
+            project.granted.remove(heir);
+            project.frozen.remove(heir);
+            project.owner = heir.clone();
+        }
+    }
+    for project in book.directory.projects.iter_mut().filter(|project| project.frozen.contains(name)) {
+        Arc::make_mut(project).frozen.remove(name);
+    }
     for project in book.directory.projects.iter_mut().filter(|project| project.granted.contains(name)) {
         Arc::make_mut(project).granted.remove(name);
     }

@@ -35,6 +35,13 @@ use crate::store::shelf::Shelf;
 const KEPT: SignedDuration = SignedDuration::from_hours(7 * 24);
 /// The most troubles kept in all; the oldest go first.
 const AT_MOST: usize = 4096;
+/// A trouble some account that hears of it has not been written of in its
+/// records yet (its scope not there yet, a write that failed) is kept past
+/// those, until written — or until it is this old, or this many are kept,
+/// and it goes, on the log (design §28.52 52-2): what the account's records
+/// would have held of it is the gap, not silence.
+const KEPT_PENDING: SignedDuration = SignedDuration::from_hours(90 * 24);
+const AT_MOST_PENDING: usize = 16_384;
 /// The most troubles in one view, the newest.
 const SHOWN: usize = 64;
 /// The rows they are kept in.
@@ -98,6 +105,72 @@ struct Kept {
     key: Option<PublicKey>,
     /// Who hears of it: each account, with when it was opened.
     told: Vec<(AccountName, Timestamp)>,
+    /// Those of `told` not written of it as it stands in their records yet
+    /// (§28.52 52-2): it is not let go while one is, within `KEPT_PENDING`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pending: Vec<(AccountName, Timestamp)>,
+    /// Whether `pending` was kept with it: a trouble an earlier hub kept
+    /// (beta.17) says nothing of what was written of it (`known`).
+    #[serde(default)]
+    pending_known: bool,
+}
+
+/// `kept` as it is held: one kept before what was written of it was is
+/// taken as waiting to be written for each who hears of it — written again
+/// as the hub starts, or once its account's scope is — not as written.
+fn known(mut kept: Kept) -> Kept {
+    if !kept.pending_known {
+        kept.pending = kept.told.clone();
+        kept.pending_known = true;
+    }
+    kept
+}
+
+/// Where the troubles' rows are sent to be written, in order.
+type Rows = std::sync::mpsc::Sender<(u64, Changes)>;
+
+/// What of `all`, oldest first, goes at `now` (taken out of it): one past a
+/// week, the oldest beyond `AT_MOST` — but one some account has not been
+/// written of yet only past `KEPT_PENDING`, or the oldest beyond
+/// `AT_MOST_PENDING` in all.
+fn pruned(all: &mut Vec<Arc<Kept>>, now: Timestamp) -> Vec<Arc<Kept>> {
+    let mut gone = Vec::new();
+    all.retain(|kept| {
+        let kept_for = if kept.pending.is_empty() { KEPT } else { KEPT_PENDING };
+        let stays = kept.trouble.at.checked_add(kept_for).is_ok_and(|until| until > now);
+        if !stays {
+            gone.push(kept.clone());
+        }
+        stays
+    });
+    let written = all.iter().filter(|kept| kept.pending.is_empty()).count();
+    let mut over = written.saturating_sub(AT_MOST);
+    if over > 0 {
+        all.retain(|kept| {
+            if over > 0 && kept.pending.is_empty() {
+                over -= 1;
+                gone.push(kept.clone());
+                return false;
+            }
+            true
+        });
+    }
+    let over = all.len().saturating_sub(AT_MOST_PENDING);
+    gone.extend(all.drain(..over));
+    gone
+}
+
+/// Notes on the log the troubles that went before every account that hears
+/// of them was written of them in its records.
+fn note_unwritten(log: &crate::log::Log, gone: &[Arc<Kept>]) {
+    for kept in gone.iter().filter(|kept| !kept.pending.is_empty()) {
+        let accounts: Vec<&str> = kept.pending.iter().map(|(account, _)| account.as_str()).collect();
+        log.line(format_args!(
+            "trouble {} let go before it was written into the records of {}",
+            kept.trouble.id,
+            accounts.join(", ")
+        ));
+    }
 }
 
 /// The troubles kept, oldest first, and the same by each account that hears
@@ -122,6 +195,9 @@ impl Shelved {
 
 pub(crate) struct Troubles {
     shelf: Shelf,
+    /// The rows written, in the order they were made: a trouble's row made
+    /// later is never written over by one made before it.
+    rows: std::sync::Mutex<std::sync::mpsc::Sender<(u64, Changes)>>,
     kept: ArcSwap<Shelved>,
     next: AtomicU64,
     recent: Mutex<Recent>,
@@ -177,21 +253,14 @@ impl Recent {
 
 impl Troubles {
     /// The troubles kept in `shelf`; those older than a week are let go.
-    pub(crate) fn open(shelf: Shelf) -> std::io::Result<Self> {
+    pub(crate) fn open(shelf: Shelf, log: Arc<crate::log::Log>) -> std::io::Result<Self> {
         let now = Timestamp::now();
-        let mut all = Vec::new();
-        let mut gone = Vec::new();
-        for (key, _, kept) in shelf.rows::<Kept>(ROWS)? {
-            if kept.trouble.at.checked_add(KEPT).is_ok_and(|until| until > now) {
-                all.push(Arc::new(kept));
-            } else {
-                gone.push(key);
-            }
-        }
+        let mut all: Vec<Arc<Kept>> =
+            shelf.rows::<Kept>(ROWS)?.into_iter().map(|(_, _, kept)| Arc::new(known(kept))).collect();
         all.sort_by_key(|kept| kept.trouble.id);
-        while all.len() > AT_MOST {
-            gone.push(row_key(all.remove(0).trouble.id));
-        }
+        let dropped = pruned(&mut all, now);
+        note_unwritten(&log, &dropped);
+        let gone: Vec<String> = dropped.iter().map(|kept| row_key(kept.trouble.id)).collect();
         if !gone.is_empty() {
             let mut changes = Changes::default();
             changes.deleted.extend(gone.into_iter().map(|key| (ROWS, Arc::<str>::from(key))));
@@ -210,8 +279,18 @@ impl Troubles {
                 migrations.insert(key, migrated);
             }
         }
+        let (rows, writes) = std::sync::mpsc::channel::<(u64, Changes)>();
+        let writing = shelf.clone();
+        std::thread::Builder::new().name("hub troubles".into()).spawn(move || {
+            for (id, changes) in writes {
+                if let Err(error) = writing.write(changes) {
+                    log.line(format_args!("keeping trouble {id}: {error}"));
+                }
+            }
+        })?;
         Ok(Self {
             shelf,
+            rows: std::sync::Mutex::new(rows),
             kept: ArcSwap::from_pointee(Shelved::of(all)),
             next: AtomicU64::new(next),
             recent: Mutex::new("hub troubles", Rank::HUB_TROUBLES, Recent { told, migrations, ..Recent::default() }),
@@ -295,6 +374,8 @@ impl Troubles {
     fn resolve(&self, hub: &Hub, key: PublicKey, kind: TroubleKind, of: impl Fn(&Trouble) -> bool) {
         let now = Timestamp::now();
         let mut over = Vec::new();
+        // Made and sent to be written in one order (`rows`).
+        let rows = self.rows.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         self.kept.rcu(|shelved| {
             over.clear();
             let all = shelved
@@ -308,6 +389,8 @@ impl Troubles {
                     {
                         let mut ended = (**kept).clone();
                         ended.trouble.resolved = Some(now);
+                        // Over is to be written to each who hears of it.
+                        ended.pending = ended.told.clone();
                         let ended = Arc::new(ended);
                         over.push(ended.clone());
                         ended
@@ -328,7 +411,7 @@ impl Troubles {
         let store = hub.store();
         for kept in &over {
             hub.log.line(format_args!("trouble {} is over", kept.trouble.id));
-            self.keep(hub, kept, Vec::new());
+            self.keep(hub, kept, Vec::new(), &rows);
             self.tell(hub, kept, &store);
         }
     }
@@ -512,31 +595,69 @@ impl Troubles {
             trouble.kind,
             trouble.machine.as_ref().map_or(String::new(), |machine| format!(" of {machine}"))
         ));
-        let kept = Arc::new(Kept { trouble, key, told });
-        let mut gone = Vec::new();
+        let kept = Arc::new(Kept { trouble, key, pending: told.clone(), told, pending_known: true });
+        let mut dropped = Vec::new();
+        let rows = self.rows.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         self.kept.rcu(|shelved| {
             let mut all = Vec::with_capacity(shelved.all.len() + 1);
-            let mut dropped = Vec::new();
-            for old in &shelved.all {
-                if old.trouble.at.checked_add(KEPT).is_ok_and(|until| until > now) {
-                    all.push(old.clone());
-                } else {
-                    dropped.push(old.trouble.id);
-                }
-            }
+            all.extend(shelved.all.iter().cloned());
             all.push(kept.clone());
-            let over = all.len().saturating_sub(AT_MOST);
-            dropped.extend(all.drain(..over).map(|old| old.trouble.id));
-            gone = dropped;
+            dropped = pruned(&mut all, now);
             Shelved::of(all)
         });
-        self.keep(hub, &kept, gone);
+        note_unwritten(&hub.log, &dropped);
+        let gone = dropped.iter().map(|old| old.trouble.id).collect();
+        self.keep(hub, &kept, gone, &rows);
+        drop(rows);
         self.tell(hub, &kept, &store);
     }
 
-    /// Writes `kept` down, and lets go of the rows of `gone`.
-    fn keep(&self, hub: &Hub, kept: &Kept, gone: Vec<u64>) {
+    /// Writes `kept` down, and into the records of each who hears of it,
+    /// and lets go of the rows of `gone`.
+    fn keep(&self, hub: &Hub, kept: &Kept, gone: Vec<u64>, rows: &Rows) {
         crate::assets::told::told(hub, kept.trouble.clone(), kept.told.clone());
+        Self::write_row(hub, kept, gone, rows);
+    }
+
+    /// The records of `account`, opened at `opened`, were written of
+    /// `written` as each stood then: each kept that stands so still is no
+    /// longer waiting to be written for it (§28.52 52-2) — one over since
+    /// still is.
+    pub(crate) fn written(&self, hub: &Hub, written: &[Trouble], account: &AccountName, opened: Timestamp) {
+        if written.is_empty() {
+            return;
+        }
+        let stood: HashMap<u64, Option<Timestamp>> = written.iter().map(|trouble| (trouble.id, trouble.resolved)).collect();
+        let mut changed = Vec::new();
+        let rows = self.rows.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        self.kept.rcu(|shelved| {
+            changed.clear();
+            let all = shelved
+                .all
+                .iter()
+                .map(|kept| {
+                    let waits = kept.pending.iter().any(|(name, at)| name == account && *at == opened);
+                    if waits && stood.get(&kept.trouble.id).is_some_and(|resolved| *resolved == kept.trouble.resolved) {
+                        let mut now = (**kept).clone();
+                        now.pending.retain(|(name, at)| !(name == account && *at == opened));
+                        let now = Arc::new(now);
+                        changed.push(now.clone());
+                        now
+                    } else {
+                        kept.clone()
+                    }
+                })
+                .collect();
+            Shelved::of(all)
+        });
+        for kept in &changed {
+            Self::write_row(hub, kept, Vec::new(), &rows);
+        }
+    }
+
+    /// Writes `kept`'s row, and lets go of the rows of `gone`, sent to be
+    /// written in the order the rows were made, held while they are made.
+    fn write_row(hub: &Hub, kept: &Kept, gone: Vec<u64>, rows: &Rows) {
         let mut changes = Changes::default();
         match body(kept) {
             Ok(body) => changes.put.push(Put {
@@ -548,12 +669,10 @@ impl Troubles {
             Err(error) => hub.log.line(format_args!("keeping trouble {}: {error}", kept.trouble.id)),
         }
         changes.deleted.extend(gone.into_iter().map(|id| (ROWS, Arc::<str>::from(row_key(id)))));
-        let (shelf, log, id) = (self.shelf.clone(), hub.log.clone(), kept.trouble.id);
-        fastctx_platform::task::spawn(async move {
-            if let Err(error) = shelf.write_async(changes).await {
-                log.line(format_args!("keeping trouble {id}: {error}"));
-            }
-        });
+        let sent = rows.send((kept.trouble.id, changes));
+        if sent.is_err() {
+            hub.log.line(format_args!("keeping trouble {}: its rows are no longer written", kept.trouble.id));
+        }
     }
 
     /// Tells the sessions of the devices logged in to an account that hears
@@ -597,4 +716,78 @@ pub(crate) struct Detail {
 
 fn row_key(id: u64) -> String {
     format!("{id:020}")
+}
+
+#[cfg(test)]
+mod pruning_tests {
+    use super::*;
+
+    fn kept(id: u64, days_ago: i64, pending: bool) -> Arc<Kept> {
+        let at = Timestamp::now().checked_sub(SignedDuration::from_hours(days_ago * 24)).unwrap();
+        let account: AccountName = "ann".parse().unwrap();
+        let told = vec![(account, Timestamp::UNIX_EPOCH)];
+        Arc::new(Kept {
+            trouble: Trouble {
+                id,
+                at,
+                machine: None,
+                kind: TroubleKind::Outage,
+                count: None,
+                seconds: None,
+                near: None,
+                version: None,
+                resolved: None,
+            },
+            key: None,
+            pending: if pending { told.clone() } else { Vec::new() },
+            told,
+            pending_known: true,
+        })
+    }
+
+    /// A trouble an earlier hub kept, which says nothing of what was
+    /// written of it, waits to be written for each who hears of it; one
+    /// this hub kept as written stays written.
+    #[test]
+    fn a_trouble_kept_before_waits_to_be_written() {
+        let written = kept(1, 6, false);
+        let mut earlier = serde_json::to_value(&*written).unwrap();
+        earlier.as_object_mut().unwrap().remove("pending_known");
+        let earlier = known(serde_json::from_value::<Kept>(earlier).unwrap());
+        assert_eq!(earlier.pending, written.told);
+        let again = known(serde_json::from_str::<Kept>(&serde_json::to_string(&*written).unwrap()).unwrap());
+        assert!(again.pending.is_empty());
+        // Waiting, it outlives the week it would have gone by.
+        let mut all = vec![Arc::new(Kept {
+            trouble: Trouble { at: Timestamp::now().checked_sub(SignedDuration::from_hours(8 * 24)).unwrap(), ..earlier.trouble.clone() },
+            ..earlier
+        })];
+        assert!(pruned(&mut all, Timestamp::now()).is_empty());
+    }
+
+    fn ids(all: &[Arc<Kept>]) -> Vec<u64> {
+        all.iter().map(|kept| kept.trouble.id).collect()
+    }
+
+    /// A trouble not written into every account's records yet outlives the
+    /// week and the count the others go by, until its own longer bounds.
+    #[test]
+    fn a_trouble_not_written_yet_is_kept_until_its_own_bounds() {
+        let now = Timestamp::now();
+        let mut all = vec![kept(1, 100, true), kept(2, 30, true), kept(3, 8, false), kept(4, 1, false), kept(5, 1, true)];
+        let gone = pruned(&mut all, now);
+        assert_eq!(ids(&all), vec![2, 4, 5]);
+        assert_eq!(ids(&gone), vec![1, 3]);
+        // Beyond the most written ones kept, the oldest written go; those
+        // waiting stay.
+        let mut all: Vec<Arc<Kept>> = (0..AT_MOST as u64 + 6).map(|id| kept(id, 0, id % 2 == 0 && id < 6)).collect();
+        let gone = pruned(&mut all, now);
+        assert_eq!(ids(&gone), vec![1, 3, 5]);
+        assert!(all.iter().filter(|kept| kept.pending.is_empty()).count() == AT_MOST);
+        // Beyond the most of all, the oldest go, waiting or not.
+        let mut all: Vec<Arc<Kept>> = (0..AT_MOST_PENDING as u64 + 2).map(|id| kept(id, 0, true)).collect();
+        let gone = pruned(&mut all, now);
+        assert_eq!(ids(&gone), vec![0, 1]);
+        assert_eq!(all.len(), AT_MOST_PENDING);
+    }
 }

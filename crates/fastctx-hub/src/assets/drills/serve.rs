@@ -219,9 +219,52 @@ fn asks_behind_the_gate() {
     let Reply::Put { ticket, missing } = ask(&store, &m1, &k1, prove).unwrap() else { panic!("prove") };
     assert!(ticket != 0);
     assert!(missing.is_empty(), "a proof is every chunk in order: none listed on the control connection");
-    // A proof stands (as the data connection records it): the frame is taken; then the object is read and given.
-    assets.objects.prove_for_drill(*k1.public().as_bytes(), object.hash);
+    // Or by a challenge (§28.45): asked of the device the hub asked to prove it, answered with every byte, worked
+    // out apart and asked after; the proof then stands as one the data connection records.
+    let challenge = || Request::Challenge { object: wire_object.clone() };
+    assert!(ask(&store, &m1, &k1, challenge()).is_err(), "a session opened in asset sync 1 has no challenges");
+    ask(&store, &m1, &k1, Request::Open { version: 2, seen: None, reported: vec![], pinned: None, lineage: vec![] }).unwrap();
+    assert!(ask(&store, &m2, &k2, challenge()).is_err(), "only the device asked to prove it");
+    let answer = |nonce: &[u8]| -> fastctx_types::assets::Bytes {
+        use sha2::Digest as _;
+        let mut digest = sha2::Sha256::new();
+        digest.update(fastctx_types::assets::PROOF_TAG);
+        digest.update(nonce);
+        digest.update(&big);
+        fastctx_types::assets::Bytes(digest.finalize().to_vec())
+    };
+    let settled = |nonce: &fastctx_types::assets::Bytes, given: &fastctx_types::assets::Bytes| {
+        for _ in 0..400 {
+            match ask(&store, &m1, &k1, Request::Proof { nonce: nonce.clone(), answer: given.clone() }).unwrap() {
+                Reply::Proof { proof: fastctx_types::assets::ProofState::Working } => std::thread::sleep(std::time::Duration::from_millis(25)),
+                Reply::Proof { proof } => return proof,
+                other => panic!("a proof answered {other:?}"),
+            }
+        }
+        panic!("a proof never settled")
+    };
+    let Reply::Challenge { nonce, .. } = ask(&store, &m1, &k1, challenge()).unwrap() else { panic!("challenge") };
+    let keep = Request::Proof { nonce: nonce.clone(), answer: fastctx_types::assets::Bytes(vec![]) };
+    assert!(
+        matches!(ask(&store, &m1, &k1, keep).unwrap(), Reply::Proof { proof: fastctx_types::assets::ProofState::Working }),
+        "asked with no answer: kept, and still to be answered"
+    );
+    let right = answer(&nonce.0);
+    assert!(ask(&store, &m2, &k2, Request::Proof { nonce: nonce.clone(), answer: right.clone() }).is_err(), "another device's challenge");
+    assert_eq!(settled(&nonce, &right), fastctx_types::assets::ProofState::Proven);
+    assert!(ask(&store, &m1, &k1, Request::Proof { nonce: nonce.clone(), answer: answer(b"other") }).is_err(), "answered once");
     assert!(assets.objects.proven(k1.public().as_bytes(), &object.hash));
+    // Two challenges not settled at most; a wrong answer bars the object to the device, a right one already
+    // asked for still proves.
+    let Reply::Challenge { nonce: second, .. } = ask(&store, &m1, &k1, challenge()).unwrap() else { panic!("second") };
+    let Reply::Challenge { nonce: third, .. } = ask(&store, &m1, &k1, challenge()).unwrap() else { panic!("third") };
+    assert!(ask(&store, &m1, &k1, challenge()).is_err(), "two not settled at most");
+    assert_eq!(settled(&second, &answer(b"not the bytes")), fastctx_types::assets::ProofState::Wrong);
+    assert!(ask(&store, &m1, &k1, challenge()).is_err(), "answered wrong: barred");
+    assert_eq!(settled(&third, &answer(&third.0)), fastctx_types::assets::ProofState::Proven);
+    assert!(ask(&store, &m1, &k1, Request::Proof { nonce: fastctx_types::assets::Bytes(vec![7; 32]), answer: right }).is_err(), "unknown");
+    println!("challenges: ok");
+    // The frame is taken; then the object is read and given.
     assert!(!assets.objects.proven(k2.public().as_bytes(), &object.hash), "a proof is its device's key's alone");
     let Reply::Received { received: Received::Applied { .. } } = ask(&store, &m1, &k1, take3(vec![object.hash.into()])).unwrap() else { panic!("applied") };
     let Reply::Get { ticket, manifest: given } = ask(&store, &m1, &k1, get.clone()).unwrap() else { panic!("get") };
@@ -266,6 +309,52 @@ fn asks_behind_the_gate() {
     assert_eq!(assets.objects.apart.going(ticket, k1.public().as_bytes()).unwrap(), vec![raw4.body.clone()]);
     assert!(assets.objects.apart.going(ticket, k1.public().as_bytes()).is_none(), "sent once");
     println!("frames apart: ok");
+
+    // Several frames of a stream in one take (§18 E2), from asset sync 3: each answered as taken alone, in order,
+    // up to the first not applied; one wanting objects ends it, and frames of one stream, inline, at most 16.
+    let signer = || Arc::new(Machine(SecretKey::from_seed(&k1.seed())));
+    for n in 0..5u8 {
+        let record = KindRecord { kind: 1, schema: 1, record: Record { item: vec![b'm', n], order: vec![b'm', n], state: State::Is { body: vec![n; 64], objects: vec![] } } };
+        producer.raw_commit(Commit { scope: conv1.into(), stream: "timeline".into(), records: vec![record], leases: vec![], durable: true, op: None, holding: producer.holding(conv1).unwrap().unwrap() }, signer()).unwrap();
+    }
+    let many: Vec<Frame> = producer.export(conv1, "timeline", 6, 10).unwrap().into_iter().map(|raw| Frame::whole(raw.header, raw.signature, raw.body)).collect();
+    assert_eq!(many.len(), 5);
+    let take_many = |frames: &[Frame]| Request::TakeMany { scope: conv1.into(), frames: frames.to_vec() };
+    assert!(ask(&store, &m1, &k1, take_many(&many[..3])).is_err(), "a session opened in asset sync 2 takes frames one at a time");
+    ask(&store, &m1, &k1, Request::Open { version: 3, seen: None, reported: vec![], pinned: None, lineage: vec![] }).unwrap();
+    let words = |reply: Reply| -> Vec<Received> {
+        let Reply::ReceivedMany { received } = reply else { panic!("words on several: {reply:?}") };
+        received
+    };
+    let first = words(ask(&store, &m1, &k1, take_many(&many[..3])).unwrap());
+    let changes: Vec<u64> = first.iter().map(|word| match word { Received::Applied { change, .. } => *change, other => panic!("applied: {other:?}") }).collect();
+    assert!(changes.windows(2).all(|pair| pair[1] == pair[0] + 1), "{changes:?}");
+    // Asked again — a receipt lost — each is told as before, nothing applied twice.
+    assert_eq!(words(ask(&store, &m1, &k1, take_many(&many[..2])).unwrap()), first[..2].to_vec(), "asked again, told again");
+    assert!(matches!(words(ask(&store, &m1, &k1, take_many(&many[4..])).unwrap())[..], [Received::Gap { from: 9, to: 9 }]), "past a gap: told where it is");
+    let rest = words(ask(&store, &m1, &k1, take_many(&many[3..])).unwrap());
+    assert!(matches!(rest[..], [Received::Applied { change: a, .. }, Received::Applied { change: b, .. }] if a == changes[2] + 1 && b == a + 1), "{rest:?}");
+    // One wanting an object ends the take: answered as alone, the frame after it not taken.
+    let wanted: Vec<u8> = (0..70_000u32).map(|i| (i % 241) as u8).collect();
+    let lease = producer.put(&mut wanted.as_slice(), "drill", std::time::Duration::from_secs(60)).unwrap();
+    let wanting = KindRecord { kind: 1, schema: 1, record: Record { item: b"w".to_vec(), order: b"w".to_vec(), state: State::Is { body: b"wants".to_vec(), objects: vec![lease.object] } } };
+    producer.raw_commit(Commit { scope: conv1.into(), stream: "timeline".into(), records: vec![wanting], leases: vec![lease], durable: true, op: None, holding: producer.holding(conv1).unwrap().unwrap() }, signer()).unwrap();
+    let after = KindRecord { kind: 1, schema: 1, record: Record { item: b"x".to_vec(), order: b"x".to_vec(), state: State::Is { body: b"after".to_vec(), objects: vec![] } } };
+    producer.raw_commit(Commit { scope: conv1.into(), stream: "timeline".into(), records: vec![after], leases: vec![], durable: true, op: None, holding: producer.holding(conv1).unwrap().unwrap() }, signer()).unwrap();
+    let two: Vec<Frame> = producer.export(conv1, "timeline", 11, 10).unwrap().into_iter().map(|raw| Frame::whole(raw.header, raw.signature, raw.body)).collect();
+    assert_eq!(two.len(), 2);
+    assert!(matches!(words(ask(&store, &m1, &k1, take_many(&two)).unwrap())[..], [Received::Missing { .. }]), "wants the object, the frame after it left");
+    // What one take carries: frames of one stream, none apart, 1 to 16 of them.
+    let other = KindRecord { kind: 1, schema: 1, record: Record { item: b"o".to_vec(), order: b"o".to_vec(), state: State::Is { body: b"other".to_vec(), objects: vec![] } } };
+    producer.raw_commit(Commit { scope: conv1.into(), stream: "notes".into(), records: vec![other], leases: vec![], durable: true, op: None, holding: producer.holding(conv1).unwrap().unwrap() }, signer()).unwrap();
+    let note = producer.export(conv1, "notes", 0, 1).unwrap().into_iter().map(|raw| Frame::whole(raw.header, raw.signature, raw.body)).next().unwrap();
+    // One of another stream ends the take before it, as one that does not pass the gate does.
+    assert_eq!(words(ask(&store, &m1, &k1, take_many(&[two[1].clone(), note.clone()])).unwrap()).len(), 1, "frames of one stream");
+    assert!(ask(&store, &m1, &k1, take_many(std::slice::from_ref(&note))).is_ok(), "taken first, it is taken");
+    assert!(ask(&store, &m1, &k1, take_many(&[])).is_err(), "at least one");
+    assert!(ask(&store, &m1, &k1, take_many(&vec![two[1].clone(); 17])).is_err(), "at most 16");
+    assert!(ask(&store, &m1, &k1, take_many(std::slice::from_ref(&apart4))).is_err(), "none apart");
+    println!("several frames in one take: ok");
 
     // Bob's account made again under his name reads nothing of what the old one did.
     let bobs_own = Request::Describe { scope: own("bob", "notes"), readers: Readers::Account { account: bob.clone() }, classes: fastctx_types::assets::records_classes() };

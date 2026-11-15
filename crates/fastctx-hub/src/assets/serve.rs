@@ -318,7 +318,6 @@ pub(crate) fn recheck(
     }
     let Some(scope) = scopes::scope(assets, key)? else { return Ok(reply) };
     if !scopes::readable(directory, machine, &scope)
-        || !scopes::sharers_read(directory, machine, &scope)
         || stream.is_some_and(|stream| !scopes::holds(directory, machine, &scope, stream))
     {
         assets.gone(key, machine);
@@ -360,13 +359,16 @@ pub(crate) fn stream_of(request: &Request) -> Option<&str> {
         | Request::Changes { .. }
         | Request::Answer { .. }
         | Request::Take { .. }
+        | Request::TakeMany { .. }
         | Request::Stage { .. }
         | Request::Cursors { .. }
         | Request::Streams { .. }
         | Request::Put { .. }
         | Request::Get { .. }
         | Request::Report { .. }
-        | Request::SyncStatus { .. } => None,
+        | Request::SyncStatus { .. }
+        | Request::Challenge { .. }
+        | Request::Proof { .. } => None,
     }
 }
 
@@ -496,9 +498,13 @@ pub(crate) fn scope_of(request: &Request) -> Option<&str> {
         | Request::Holdings { .. }
         | Request::Changes { .. }
         | Request::Report { .. }
-        | Request::SyncStatus { .. } => None,
+        | Request::SyncStatus { .. }
+        // Of the scope the hub asked the object proved for, judged there.
+        | Request::Challenge { .. }
+        | Request::Proof { .. } => None,
         Request::Answer { scope, .. }
         | Request::Take { scope, .. }
+        | Request::TakeMany { scope, .. }
         | Request::Stage { scope, .. }
         | Request::Cursors { scope, .. }
         | Request::HandBack { scope, .. }
@@ -568,7 +574,7 @@ pub(crate) fn ask(
     // of it: its device stops using what it holds (§4.5, §6.3).
     if let Some(key) = scope_of(&request)
         && let Some(scope) = scopes::scope(assets, key)?
-        && (!scopes::readable(directory, machine, &scope) || !scopes::sharers_read(directory, machine, &scope))
+        && !scopes::readable(directory, machine, &scope)
     {
         assets.gone(key, machine);
         return Ok(Reply::Revoked { scope: key.to_string() });
@@ -689,6 +695,12 @@ pub(crate) fn ask(
                 .take(&scope, raw, &DeviceKeys, &taking, kinds(), assets.signer())
                 .map_err(|error| error.to_string())?;
             fastctx_platform::lab::die_at("take", &scope);
+            // Asked to prove what it refers to, the device may answer a
+            // challenge for each instead of sending it again (§28.45).
+            if let Received::Prove(objects) = &word {
+                let asked: Vec<([u8; 32], u64)> = objects.iter().map(|object| (object.hash, object.size)).collect();
+                assets.objects.proving.asked(&device_key, &scope, &asked);
+            }
             if staged != 0 {
                 if matches!(word, Received::Missing(_) | Received::Prove(_)) {
                     assets.objects.apart.touch(staged, key.as_bytes());
@@ -717,6 +729,7 @@ pub(crate) fn ask(
             }
             Ok(Reply::Received { received: received(word) })
         }
+        Request::TakeMany { scope, frames } => take_many(assets, directory, machine, key, scope, frames),
         Request::Cleared { .. } => Err("a machine's word that it cleared is taken with the directory".into()),
         Request::HandBack { .. } => Ok(Reply::HandedBack { kept: false, why: Some("the hub is not sealed for a recovery".into()) }),
         Request::Put { scope, object, prove, .. } => {
@@ -822,6 +835,8 @@ pub(crate) fn ask(
         Request::Report { report } => super::standing::keep(assets, directory, machine, key.as_bytes(), report),
         // Answered beside the hub's sessions, where who is online is known.
         Request::SyncStatus { .. } => Err("a sync status is asked of the hub itself".into()),
+        Request::Challenge { object } => challenge(assets, directory, machine, key, &object),
+        Request::Proof { nonce, answer } => proof(assets, key, &nonce, &answer),
         Request::Streams { scope } => {
             let kept = gated(assets, directory, machine, &scope)?;
             let library = scopes::library(assets, &kept)?;
@@ -1033,10 +1048,13 @@ fn open(
     pinned: Option<Bytes>,
     lineage: Vec<wire::Rotation>,
 ) -> Result<Reply, String> {
-    if version != wire::VERSION {
-        return Err(format!("asset sync {version} is not this hub's {}", wire::VERSION));
+    if !(wire::OLDEST..=wire::VERSION).contains(&version) {
+        return Err(format!("asset sync {version} is not one this hub speaks ({} to {})", wire::OLDEST, wire::VERSION));
     }
     assets.speaks(key).map_err(|error| error.to_string())?;
+    // What it may ask in this session goes by the version it opened it in:
+    // a challenge from the second on (§28.45).
+    assets.objects.proving.opened(key.as_bytes(), version);
     if let Some(why) = keyring_behind(assets, machine, seen.as_ref(), pinned.as_ref(), &lineage)? {
         assets.seal(&why);
         return Ok(assets.sealed_reply(why));
@@ -1134,6 +1152,163 @@ fn covering(assets: &Assets, scope: &Scope, head: &Head) -> Result<Option<wire::
         head: chain_head.into(),
         word: assets.signer().sign(&statement).into(),
     }))
+}
+
+/// Frames of one stream of `scope`, taken in their order with one disk
+/// synchronization (`Request::TakeMany`, §18 E2): each gated as `Take` gates
+/// one, none staged apart and none naming objects proved. The answers stop
+/// at the first frame not applied or parked; one that wants objects or
+/// proof is answered as `Take` answers it, and the device sends it alone.
+fn take_many(
+    assets: &Assets,
+    directory: &Indexed<'_>,
+    machine: &MachineName,
+    key: &PublicKey,
+    scope: String,
+    frames: Vec<wire::Frame>,
+) -> Result<Reply, String> {
+    let device_key = *key.as_bytes();
+    if assets.objects.proving.version(&device_key).is_none_or(|version| version < wire::MANY) {
+        return Err(format!("frames come several at a time with asset sync {}: send them one at a time", wire::MANY));
+    }
+    if frames.is_empty() || frames.len() > wire::FRAMES_A_TAKE {
+        return Err(format!("a take of several frames carries 1 to {} of them", wire::FRAMES_A_TAKE));
+    }
+    if frames.iter().map(|frame| frame.body.0.len()).sum::<usize>() > wire::MANY_BYTES {
+        return Err(format!("a take of several frames carries at most {} bytes of bodies", wire::MANY_BYTES));
+    }
+    let kept = gated(assets, directory, machine, &scope)?;
+    let mut stream: Option<String> = None;
+    let mut referred: Vec<Vec<[u8; 32]>> = Vec::with_capacity(frames.len());
+    let mut raws = Vec::with_capacity(frames.len());
+    for frame in frames {
+        // As `Take` gates each (AS02, AS07, AQ07, AS01). One that does not
+        // pass ends the take before it: those before it are taken, and the
+        // device, sending it alone, hears why.
+        let gate = || -> Result<Header, String> {
+            if frame.too_large() || frame.apart != 0 {
+                return Err(format!("a frame body over {} bytes travels apart, alone", wire::INLINE_FRAME_BYTES));
+            }
+            let header = Header::decode(&frame.header.0).map_err(|error| format!("a frame's header: {error}"))?;
+            if fastctx_content::v2::hub_orders(&header.stream) {
+                return Err("the hub orders that stream itself".into());
+            }
+            if header.key != header.device {
+                return Err("a frame is signed by the device it names".into());
+            }
+            if stream.as_ref().is_some_and(|stream| *stream != header.stream) {
+                return Err("the frames of one take are of one stream".into());
+            }
+            first_epoch_gate(assets, directory, &kept, &scope, &header.stream, &header.device)?;
+            Ok(header)
+        };
+        let header = match gate() {
+            Ok(header) => header,
+            Err(why) if raws.is_empty() => return Err(why),
+            Err(_) => break,
+        };
+        referred.push(
+            fastctx_content::v2::open(&header, &frame.body.0)
+                .map(|records| {
+                    records
+                        .iter()
+                        .flat_map(|record| match &record.record.state {
+                            fastctx_content::State::Is { objects, .. } => objects.iter().map(|object| object.hash).collect(),
+                            fastctx_content::State::Gone => Vec::new(),
+                        })
+                        .collect()
+                })
+                .unwrap_or_default(),
+        );
+        stream = Some(header.stream);
+        raws.push(RawFrame { header: frame.header.0, signature: frame.signature.0, body: frame.body.0, objects: Vec::new() });
+    }
+    let stream = stream.expect("a frame or more");
+    let library = scopes::library(assets, &kept)?;
+    let period = library.holding(&scope).map_err(|error| error.to_string())?.ok_or("the scope is not held here")?;
+    let proven = |hash: &[u8; 32]| assets.objects.proven(&device_key, hash);
+    let readable = |object: &ObjectRef| {
+        library
+            .streams_reading(&scope, &object.hash)
+            .is_ok_and(|streams| streams.iter().any(|stream| scopes::holds(directory, machine, &kept, stream)))
+    };
+    let taking = Taking { period, readable: &readable, proven: &proven };
+    let words = library.take_many(&scope, raws, &DeviceKeys, &taking, kinds(), assets.signer()).map_err(|error| error.to_string())?;
+    fastctx_platform::lab::die_at("take", &scope);
+    for (word, referred) in words.iter().zip(&referred) {
+        match word {
+            // Asked to prove what it refers to, the device may answer a
+            // challenge for each instead of sending it again (§28.45).
+            Received::Prove(objects) => {
+                let asked: Vec<([u8; 32], u64)> = objects.iter().map(|object| (object.hash, object.size)).collect();
+                assets.objects.proving.asked(&device_key, &scope, &asked);
+            }
+            // Kept by the hub, a frame needs its proofs no more (AF04, AG02).
+            Received::Applied { .. } | Received::Parked { .. } => assets.objects.forget_proofs(&device_key, referred),
+            _ => {}
+        }
+    }
+    if words.iter().any(|word| matches!(word, Received::Applied { .. } | Received::Parked { .. } | Received::Rejected { .. })) {
+        assets.changed(kept.owner.clone(), &scope);
+        assets.receipted(&scope, machine);
+    }
+    if words.iter().any(|word| matches!(word, Received::Applied { .. })) {
+        let next = library
+            .streams(&scope)
+            .map_err(|error| error.to_string())?
+            .into_iter()
+            .find(|(name, _)| *name == stream)
+            .map_or(0, |(_, next)| next);
+        assets.moved(&kept.owner, &scope, &stream, next, machine);
+    }
+    Ok(Reply::ReceivedMany { received: words.into_iter().map(received).collect() })
+}
+
+/// A challenge for `machine` to prove it holds `object`, which the hub asked
+/// it lately to prove for a frame it sent, of a scope it still reads and the
+/// hub still holds the object of (design §28.45). Asking keeps what it
+/// proved lately and the bodies it staged, as sending an object does.
+fn challenge(assets: &Assets, directory: &Indexed<'_>, machine: &MachineName, key: &PublicKey, object: &wire::ObjectRef) -> Result<Reply, String> {
+    let device = *key.as_bytes();
+    assets.objects.keep_alive(&device);
+    let hash = object.hash.array().ok_or("an object's hash is 32 bytes")?;
+    let scope = assets.objects.proving.asked_scope(&device, &hash, object.size)?;
+    let kept = scopes::scope(assets, &scope)?.ok_or("the scope is gone")?;
+    if !scopes::readable(directory, machine, &kept) {
+        return Err(format!("none of this machine's accounts reads the scope {scope}"));
+    }
+    let library = scopes::library(assets, &kept)?;
+    if library.size(&hash).map_err(|error| error.to_string())? != Some(object.size) {
+        return Err("the hub does not hold that object now: send the frame again".into());
+    }
+    let (nonce, until) = assets.objects.proving.issue(&device, &hash, object.size, &scope)?;
+    let left = until.saturating_duration_since(std::time::Instant::now());
+    let until = jiff::Timestamp::now().as_millisecond().saturating_add(i64::try_from(left.as_millis()).unwrap_or(i64::MAX));
+    Ok(Reply::Challenge { nonce: Bytes(nonce.to_vec()), until })
+}
+
+/// `machine`'s answer to a challenge, or its asking again how it stands; the
+/// first time it is told proved, the proof is kept as a whole sending keeps
+/// one (design §28.45).
+fn proof(assets: &Assets, key: &PublicKey, nonce: &Bytes, answer: &Bytes) -> Result<Reply, String> {
+    let device = *key.as_bytes();
+    assets.objects.keep_alive(&device);
+    let nonce = nonce.array().ok_or("a challenge's nonce is 32 bytes")?;
+    // Asked with no answer while the device still reads its bytes: what it
+    // proved and staged is kept, and how the challenge stands is told.
+    if answer.0.is_empty() {
+        return Ok(Reply::Proof { proof: assets.objects.proving.standing(&device, &nonce)? });
+    }
+    let answer = answer.array().ok_or("an answer to a challenge is 32 bytes")?;
+    let library = |scope: &str| -> Result<fastctx_content::v2::Library, String> {
+        let kept = scopes::scope(assets, scope)?.ok_or("the scope is gone")?;
+        scopes::library(assets, &kept)
+    };
+    let (proof, proved) = assets.objects.proving.answer(&device, &nonce, &answer, library)?;
+    if let Some((hash, size)) = proved {
+        assets.objects.proved(&device, &ObjectRef { hash, size });
+    }
+    Ok(Reply::Proof { proof })
 }
 
 #[cfg(test)]

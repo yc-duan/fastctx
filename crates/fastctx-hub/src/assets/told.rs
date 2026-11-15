@@ -233,15 +233,16 @@ fn resolved(body: &[u8]) -> bool {
 }
 
 /// Writes `troubles`, which the account opened at `opened` hears of, into
-/// its scope where they are not there as they are. Call on a thread that may
-/// block.
+/// its scope where they are not there as they are: whether its scope is
+/// here to hold them (then they are all there, as they are). Call on a
+/// thread that may block.
 pub(crate) fn notices(
     assets: &Assets,
     account: &AccountName,
     opened: Timestamp,
     troubles: &[Trouble],
-) -> Result<(), String> {
-    let Some((scope, library)) = scope_of(assets, account, opened)? else { return Ok(()) };
+) -> Result<bool, String> {
+    let Some((scope, library)) = scope_of(assets, account, opened)? else { return Ok(false) };
     let key = scope.descriptor.scope.clone();
     let error = |error: fastctx_content::Error| error.to_string();
     for batch in troubles.chunks(A_BATCH) {
@@ -263,7 +264,7 @@ pub(crate) fn notices(
         }
         apply(assets, &scope, &library, AccountNotice::STREAM, records)?;
     }
-    Ok(())
+    Ok(true)
 }
 
 /// What the directory keeps of an account for its scope: its profile and
@@ -340,12 +341,19 @@ pub(crate) fn settings(assets: &Assets, account: &AccountName, opened: Timestamp
 /// Writes `trouble`, as raised or resolved just now, into the scope of each
 /// account that hears of it.
 pub(crate) fn told(hub: &crate::Hub, trouble: Trouble, to: Vec<(AccountName, Timestamp)>) {
-    let (assets, log) = (hub.assets.clone(), hub.log.clone());
+    let Some(hub) = hub.this.get().and_then(std::sync::Weak::upgrade) else { return };
     fastctx_platform::task::spawn_blocking(move || {
         for (account, opened) in to {
-            if let Err(error) = notices(&assets, &account, opened, std::slice::from_ref(&trouble)) {
-                log.line(format_args!("writing trouble {} for {account} into the asset library: {error}", trouble.id));
-                FAILED.store(true, Ordering::SeqCst);
+            match notices(&hub.assets, &account, opened, std::slice::from_ref(&trouble)) {
+                // In its records: no longer waiting there (§28.52 52-2).
+                Ok(true) => hub.troubles.written(&hub, std::slice::from_ref(&trouble), &account, opened),
+                // Its scope not here yet: written as it is described
+                // (`caught_up`), kept until then.
+                Ok(false) => {}
+                Err(error) => {
+                    hub.log.line(format_args!("writing trouble {} for {account} into the asset library: {error}", trouble.id));
+                    FAILED.store(true, Ordering::SeqCst);
+                }
             }
         }
     });
@@ -373,7 +381,7 @@ async fn pass(
     accounts: Vec<(AccountName, Timestamp, Kept)>,
     troubles: Option<Vec<Vec<Trouble>>>,
 ) {
-    let (assets, log) = (hub.assets.clone(), hub.log.clone());
+    let (assets, log, hub) = (hub.assets.clone(), hub.log.clone(), hub.clone());
     let _ = fastctx_platform::task::spawn_blocking(move || {
         for (at, (account, opened, kept)) in accounts.iter().enumerate() {
             let mut failed = Vec::new();
@@ -383,10 +391,12 @@ async fn pass(
             if let Err(error) = audit(&assets, &database, account, *opened) {
                 failed.push(format!("machine log: {error}"));
             }
-            if let Some(troubles) = troubles.as_ref().and_then(|troubles| troubles.get(at))
-                && let Err(error) = notices(&assets, account, *opened, troubles)
-            {
-                failed.push(format!("troubles: {error}"));
+            if let Some(troubles) = troubles.as_ref().and_then(|troubles| troubles.get(at)) {
+                match notices(&assets, account, *opened, troubles) {
+                    Ok(true) => hub.troubles.written(&hub, troubles, account, *opened),
+                    Ok(false) => {}
+                    Err(error) => failed.push(format!("troubles: {error}")),
+                }
             }
             if !failed.is_empty() {
                 log.line(format_args!("writing what the hub tells {account} into the asset library: {}", failed.join("; ")));

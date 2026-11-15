@@ -107,6 +107,8 @@ pub(crate) struct Said {
     pub parts: bool,
     /// Whether it reads what changed in its view (`Down::View`).
     pub view_deltas: bool,
+    /// Whether it reads the records of the hub's assets sealed and opened.
+    pub asset_seals: bool,
 }
 
 /// What a call or a data connection was allowed under: `from` saying it to
@@ -1928,6 +1930,7 @@ fn ask(
                     profiles: letters.profiles,
                     machine_updates: letters.machine_updates,
                     history_switch: letters.history_switch,
+                    asset_seals: letters.asset_seals,
                 });
             store
                 .book

@@ -54,7 +54,7 @@ pub(crate) fn list(
                     .descriptor
                     .classes
                     .iter()
-                    .filter(|class| scopes::holds(directory, machine, &scope, &class.prefix))
+                    .filter(|class| scopes::holds_class(directory, machine, &scope, class))
                     .map(|class| class.prefix.clone())
                     .collect();
                 let readers = readers_here(directory, machine, &scope);

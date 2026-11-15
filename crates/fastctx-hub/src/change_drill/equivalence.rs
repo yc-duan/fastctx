@@ -109,6 +109,7 @@ fn make_fixture(dir: &Path, seed: u64) -> anyhow::Result<()> {
         owner: super::account(0),
         granted: Default::default(),
         shared_on: None,
+        frozen: Default::default(),
     }));
     for i in 0..2 {
         book.tokens.push(Arc::new(crate::store::TokenRecord {
