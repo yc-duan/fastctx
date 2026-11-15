@@ -65,17 +65,17 @@ export interface DataWords {
 export const zhData: DataWords = {
   archived: "已归档的对话",
   title: "本机数据",
-  total: (size) => `Fastctx 在这台电脑上占 ${size}`,
-  unread: (entries) => `另有 ${entries} 项读不到，没算在内`,
+  total: (size) => `Fastctx 在本机占用 ${size}`,
+  unread: (entries) => `另有 ${entries} 项无法读取，未计入`,
   kinds: { conversations: "对话", command_output: "命令输出", cache: "缓存", program: "程序", other: "其他" },
   conversations: "对话",
-  groups: { listed: "在列", removed: "已归档", elsewhere: "别处的" },
-  none: "这里没有",
+  groups: { listed: "列表中", removed: "已归档", elsewhere: "其他机器的" },
+  none: "无",
   untitled: "未命名的对话",
   parts: { records: "历史与附件原件", command_output: "命令输出", host: (agent) => `${agent} 自己的记录` },
-  hostGone: (days) => (days ? `Claude Code 已按 ${days} 天的保留期删掉` : "Claude Code 已自己删掉"),
-  hostMissing: "不在它该在的地方",
-  livesOn: (machine) => `家在 ${machine}`,
+  hostGone: (days) => (days ? `Claude Code 已按 ${days} 天保留期删除` : "Claude Code 已自行删除"),
+  hostMissing: "不在预期位置",
+  livesOn: (machine) => `位于 ${machine}`,
   ago: (at, now) => {
     const minutes = Math.round((now.getTime() - at.getTime()) / 60000);
     if (minutes < 60) return `${Math.max(1, minutes)} 分钟前`;
@@ -83,30 +83,30 @@ export const zhData: DataWords = {
     return `${Math.round(minutes / 1440)} 天前`;
   },
   delete: (n, size) => `删除 ${n} 段，${size}`,
-  deleteTitle: (n) => `删除 ${n} 段对话在这台电脑上的数据？`,
+  deleteTitle: (n) => `删除 ${n} 段对话在本机的数据？`,
   deleteWhat: (home, guests) =>
     [
-      home ? `${home} 段家在这台：它在这台上的一切都删掉，连同 Codex 或 Claude Code 自己的记录，侧栏里也就没了。` : "",
-      guests ? `${guests} 段家在别处：只删它在这台留下的东西，它的家不碰。` : "",
-      "删了找不回来。",
+      home ? `${home} 段位于本机：删除其在本机的全部数据，包括 Codex 或 Claude Code 自身的记录，并从侧栏中移除。` : "",
+      guests ? `${guests} 段位于其他机器：仅删除其在本机留下的数据。` : "",
+      "删除后无法恢复。",
     ]
       .filter(Boolean)
       .join(""),
   deleteGo: "删除",
   deleted: (n, size) => `已删除 ${n} 段，腾出 ${size}`,
-  refused: (name, why) => `${name} 没删${known(why, zhProblems) ? `：${known(why, zhProblems)}` : ""}`,
+  refused: (name, why) => `${name} 未删除${known(why, zhProblems) ? `：${known(why, zhProblems)}` : ""}`,
   output: "命令输出",
-  outputSaid: "模型拿到之后，完整输出再留",
+  outputSaid: "模型读取后，完整输出的保留时长",
   outputUnlimited: "长期保留。作业输出是资产，不设保留期。",
   days: (n) => `${n} 天`,
   cache: "缓存",
-  cacheSaid: "点开过的文件、拍照留下的图与看过的对话；到期也会自己删",
+  cacheSaid: "打开过的文件、拍摄的图片与查看过的对话；到期自动删除",
   clear: "清空",
   cleared: "已清空",
-  keeps: (days) => `Claude Code 会删掉 ${days} 天没动过的会话记录`,
-  failed: "读不到",
-  reading: "正在统计这台电脑上的占用",
-  refreshing: (ago) => `${ago}统计的，正在更新`,
+  keeps: (days) => `Claude Code 会删除 ${days} 天未改动的会话记录`,
+  failed: "读取失败",
+  reading: "正在统计本机占用",
+  refreshing: (ago) => `${ago}统计，正在更新`,
 };
 
 export const enData: DataWords = {

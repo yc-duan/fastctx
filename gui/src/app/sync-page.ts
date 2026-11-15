@@ -164,7 +164,7 @@ export class SyncPage implements Page {
       ? logins
           .map((login) => {
             const read = this.read.get(`${login.hub}\n${login.account}`);
-            const named = logins.length > 1 ? `<h2 class="sync-login-name">${escape(login.account)} · ${escape(this.hubName(login.hub))}</h2>` : "";
+            const named = logins.length > 1 ? `<h2 class="sync-login-name">${escape(login.account)}　${escape(this.hubName(login.hub))}</h2>` : "";
             const inside = !read
               ? waiting({ label: words.reading, shape: "rows", rows: 3 })
               : "problem" in read
@@ -273,7 +273,7 @@ export class SyncPage implements Page {
     } else if (!left && device.behind < CAUGHT_UP && !device.unpulled && device.missing_objects) {
       state = words.textSynced(device.missing_objects);
     } else {
-      const eta = left && device.rate ? ` · ${words.eta(words.duration((left / device.rate) * 1000))}` : "";
+      const eta = left && device.rate ? `　${words.eta(words.duration((left / device.rate) * 1000))}` : "";
       state = leftSaid ? `${words.catching(leftSaid)}${eta}` : words.behindBy(words.duration(device.behind));
     }
     const shares = [

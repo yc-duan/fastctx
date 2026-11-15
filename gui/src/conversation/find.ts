@@ -294,7 +294,7 @@ export class Finder {
     const global = this.view.global;
     const total = global?.total ?? this.index.total;
     const more = (global ? !global.complete : this.view.far?.more) ? "+" : "";
-    if (global) this.setScope(!query ? null : global.error ?? `${this.words.english ? "All history" : "全部历史"} · ${global.complete ? "" : this.words.english ? "Searching · " : "搜索中 · "}${global.examined}${this.words.english ? " events" : " 条"}${global.previews ? (this.words.english ? ` · ${global.previews} previews only` : ` · ${global.previews} 条仅预览`) : ""}`);
+    if (global) this.setScope(!query ? null : global.error ?? `${this.words.english ? "All history" : "全部历史"}　${global.complete ? "" : this.words.english ? "Searching… " : "搜索中…"}${global.examined}${this.words.english ? " events" : " 条"}${global.previews ? (this.words.english ? `　${global.previews} previews only` : `　${global.previews} 条仅预览`) : ""}`);
     const said = !query ? "" : total ? `${this.words.count(this.current + 1, total)}${more}` : more ? "…" : this.words.none;
     if (this.count.textContent !== said) this.count.textContent = said;
     this.count.classList.toggle("none", !!query && !total && !more);

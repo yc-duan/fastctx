@@ -18,17 +18,17 @@ export interface TextWords {
 
 export const zhText: TextWords = {
   file: "粘贴的文本.txt",
-  attached: "文字太长，已转成文本附件",
-  copied: "文字太长，未能添加附件；全文已复制到剪贴板",
-  limit: `输入框已写满（最多 ${MAX_DOCUMENT_CHARACTERS.toLocaleString("en-US")} 字），请将更多文字作为文件添加`,
-  saving: "文字太长，正在转成文本附件…",
-  rescue: "未能添加附件或自动复制，请复制并保留这份全文",
+  attached: "文字过长，已转为文本附件",
+  copied: "文字过长，无法添加附件；全文已复制到剪贴板",
+  limit: `输入框已满（最多 ${MAX_DOCUMENT_CHARACTERS.toLocaleString("en-US")} 字），更多文字请作为文件添加`,
+  saving: "文字过长，正在转为文本附件…",
+  rescue: "无法添加附件或自动复制，请手动复制全文",
   copy: "复制全文并继续",
   close: "关闭",
-  reconciled: "草稿在别处改过，已保留你的修改",
-  changedSaving: "草稿在别处改过，正在保留未提交的文字…",
-  changedCopied: "草稿在别处改过，未提交的全文已复制到剪贴板",
-  changedRescue: "请复制并保留未提交的全文，复制后即可继续编辑",
+  reconciled: "草稿已在别处修改，已保留本处修改",
+  changedSaving: "草稿已在别处修改，正在保留未提交的文字…",
+  changedCopied: "草稿已在别处修改，未提交的全文已复制到剪贴板",
+  changedRescue: "请复制未提交的全文，复制后可继续编辑",
   changedText: "未提交的文字",
 };
 

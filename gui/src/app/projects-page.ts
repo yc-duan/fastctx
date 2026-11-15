@@ -37,9 +37,9 @@ export const zhProjects: ProjectsWords = {
   title: "项目",
   add: "新建",
   search: "搜索项目",
-  none: "还没有项目",
-  noneFound: "没有找到",
-  talks: (count, waiting) => `${count} 段对话${waiting ? `，${waiting} 段在等你` : ""}`,
+  none: "暂无项目",
+  noneFound: "无匹配项目",
+  talks: (count, waiting) => `${count} 段对话${waiting ? `，${waiting} 段等待回复` : ""}`,
 };
 
 export const enProjects: ProjectsWords = {

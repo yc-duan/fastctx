@@ -54,7 +54,7 @@ export const zhSentinel: SentinelWords = {
   phase: { starting: "启动中", watching: "观测中", satisfied: "已成立", unable: "无法观测", withdrawn: "已撤销", unavailable: "暂不可达" },
   withdraw: "撤销",
   withdrawTitle: "撤销这项观测？",
-  withdrawWhat: "撤销后不再巡检，也不再唤醒对话；已有记录保留。",
+  withdrawWhat: "撤销后停止巡检，不再唤醒对话；已有记录保留。",
   reading: "正在读取…",
   nothing: "尚无记录",
   earlier: "更早的记录未列出",
@@ -71,7 +71,7 @@ export const zhSentinel: SentinelWords = {
     tokens: (count) => `${count} tokens`,
     took: (wakes, tokens, time) => `醒来 ${wakes} 次，${tokens} tokens，共 ${time}`,
     nothing: "尚无观测",
-    unreachable: "有观测所在的机器暂时读不到",
+    unreachable: "部分观测所在的机器暂时无法访问",
   },
 };
 

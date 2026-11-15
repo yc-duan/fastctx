@@ -12,21 +12,21 @@ const invisible = (character: string): boolean => /^[\p{C}\p{Z}\p{Default_Ignora
 export const zhNameSaid: NameSaid = (problem) => {
   switch (problem.problem) {
     case "empty":
-      return "请填写名字";
+      return "请填写名称";
     case "too_long":
-      return "名字太长：最多 32 个字，中文最多 21 个";
+      return "名称过长：最多 32 个字符，中文最多 21 个";
     case "space":
-      return "名字里不能有空格";
+      return "名称不能包含空格";
     case "not_allowed":
-      return invisible(problem.character) ? "名字里有看不见的字符" : `名字里不能有「${problem.character}」，只能用字母、数字和连字符`;
+      return invisible(problem.character) ? "名称包含不可见字符" : `名称不能包含「${problem.character}」，仅限字母、数字和连字符`;
     case "bad_start":
-      return problem.character === "-" ? "名字不能以连字符开头" : `名字不能以「${problem.character}」开头`;
+      return problem.character === "-" ? "名称不能以连字符开头" : `名称不能以「${problem.character}」开头`;
     case "ends_with_hyphen":
-      return "名字不能以连字符结尾";
+      return "名称不能以连字符结尾";
     case "mixed_scripts":
-      return `「${problem.first}」和「${problem.second}」是两种容易看混的文字，不能放在一个名字里`;
+      return `「${problem.first}」与「${problem.second}」属于易混淆的文字，不能用于同一名称`;
     case "reserved":
-      return "这个名字留给中枢服务器自己用";
+      return "该名称为中枢服务器保留";
   }
 };
 

@@ -14,11 +14,11 @@ export interface ProgramWords {
 
 export const zhProgram: ProgramWords = {
   title: (name) => `运行 ${name}？`,
-  what: "打开它会直接运行这个程序。",
+  what: "打开即运行该程序。",
   show: "在文件夹中显示",
   run: "运行",
   close: "关闭",
-  failed: "没有做成",
+  failed: "操作失败",
 };
 
 export const enProgram: ProgramWords = {

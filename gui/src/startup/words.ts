@@ -16,14 +16,14 @@ export interface StartupWords {
 
 export const zhStartup: StartupWords = {
   opening: "正在打开 Fastctx",
-  failed: "Fastctx 没能打开",
+  failed: "Fastctx 未能打开",
   steps: {
-    open_connection: "没连上这台设备上的 Fastctx。",
+    open_connection: "无法连接本设备上的 Fastctx。",
     interface: "界面未能载入，请重试。",
   },
-  stepOther: "打开时出了问题。",
+  stepOther: "打开时出错。",
   retry: "重试",
-  reopening: "修好了，正在重新打开",
+  reopening: "已修复，正在重新打开",
   repair: zhRepair,
 };
 

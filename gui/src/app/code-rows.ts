@@ -43,7 +43,7 @@ export const zhCodes: CodeWords = {
     ssh: (name) => `经 SSH 加 ${name}`,
   },
   kinds: { scan: "手机", line: "Linux 主机", paste: "电脑", managed: "受管机器" },
-  came: (used, uses) => (uses === 0 ? `已进 ${used} 台，不限台数` : uses === 1 ? (used ? "已用" : "还没用") : `已进 ${used} / ${uses} 台`),
+  came: (used, uses) => (uses === 0 ? `已加入 ${used} 台，不限台数` : uses === 1 ? (used ? "已使用" : "未使用") : `已加入 ${used} / ${uses} 台`),
   until: (at) => `到 ${at}`,
   lasting: "不过期",
   madeOn: (machine) => `${machine} 生成`,

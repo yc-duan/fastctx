@@ -35,7 +35,7 @@ export interface ModelPanelWords {
   tooLong: string;
 }
 
-export const zhModelPanel: ModelPanelWords = { model: "模型", effort: "推理强度", speed: "速度", standard: "标准", noModels: "没有可选的模型", chip: "模型", tooLong: "这段对话已超过它的上下文" };
+export const zhModelPanel: ModelPanelWords = { model: "模型", effort: "推理强度", speed: "速度", standard: "标准", noModels: "无可选模型", chip: "模型", tooLong: "此对话已超出该模型的上下文" };
 export const enModelPanel: ModelPanelWords = { model: "Model", effort: "Reasoning", speed: "Speed", standard: "Standard", noModels: "No models available", chip: "Model", tooLong: "This conversation is longer than its context" };
 
 export interface ModelChoice {

@@ -624,13 +624,13 @@ export class ActivityPage implements Page {
     const now = this.now();
     const time = deed.outcome === "running" ? words.running(words.duration(lasted(deed, now))) : words.ran(words.duration(lasted(deed, now)));
     // Whose it was, on a machine several accounts work on (`net-shared-machine-visibility`).
-    const where = [deed.account ?? "", deed.machine, deed.from ? `← ${deed.from}` : "", deed.went?.length ? words.went(deed.went.join(", ")) : ""].filter(Boolean).join(" · ");
+    const where = [deed.account ?? "", deed.machine, deed.from ? `← ${deed.from}` : "", deed.went?.length ? words.went(deed.went.join(", ")) : ""].filter(Boolean).join("　");
     const touched = (deed.touched ?? [])
       .slice(0, 12)
       .map((file) => `<li title="${escape([file.path, words.how[file.how], file.seen ? words.seen : ""].filter(Boolean).join("\n"))}"><span class="ay-how ay-how-${file.how}"></span><span class="ay-file-name">${escape(file.path)}</span></li>`)
       .join("");
     this.card.hidden = false;
-    this.card.innerHTML = `<header class="ay-card-head">${mark(deed)}<span class="ay-card-state">${escape(words.outcome[deed.outcome])}${deed.code !== undefined && deed.code !== 0 ? ` · ${deed.code}` : ""}</span><span class="ay-when" title="${escape(new Date(began(deed)).toLocaleString())}">${escape(words.stamp(began(deed), now))} · ${escape(time)}</span><button class="icon-button ay-card-close" type="button" data-card-close aria-label="${escape(words.title)}">${glyph("close", 16)}</button></header>
+    this.card.innerHTML = `<header class="ay-card-head">${mark(deed)}<span class="ay-card-state">${escape(words.outcome[deed.outcome])}${deed.code !== undefined && deed.code !== 0 ? `　${deed.code}` : ""}</span><span class="ay-when" title="${escape(new Date(began(deed)).toLocaleString())}">${escape(words.stamp(began(deed), now))}　${escape(time)}</span><button class="icon-button ay-card-close" type="button" data-card-close aria-label="${escape(words.title)}">${glyph("close", 16)}</button></header>
       <pre class="ay-script">${escape(deed.script)}</pre>
       <p class="ay-card-line" title="${escape(deed.session ?? "")}">${deed.agent ? glyph(deed.agent, 14) : ""}<span>${escape(where)}</span>${deed.output ? `<span class="ay-card-size">${escape(words.output)} ${escape(words.bytes(deed.output))}</span>` : ""}</p>
       ${touched ? `<ul class="ay-card-files">${touched}</ul>` : ""}`;

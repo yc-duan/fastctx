@@ -7,23 +7,23 @@ import type { AgentState } from "./tools";
 const zh = {
   // A conversation is never asleep to the person reading it: one the World
   // let rest is idle (walkthrough item 20).
-  state: { working: "在干活", waiting: "等你回复", idle: "空闲", asleep: "空闲", offline: "离线" } as Record<AgentState, string>,
+  state: { working: "工作中", waiting: "等待回复", idle: "空闲", asleep: "空闲", offline: "离线" } as Record<AgentState, string>,
   online: "在线",
   offline: "离线",
   device: "设备",
   agents: (n: number) => (n ? `${n} 位智能体` : "没有智能体"),
   more: "更早的",
-  notFound: (what: string) => `这里没有 ${what}`,
+  notFound: (what: string) => `未找到 ${what}`,
   notText: "不是文本",
-  run: "跑",
-  running: "正在跑…",
-  exit: (code: number | null) => (code === null ? "没跑完" : `退出码 ${code}`),
-  say: "说",
-  saying: "正在送…",
-  delivered: "送到了",
-  notDone: "没有做成",
-  signal: (n: number) => `被信号 ${n} 结束`,
-  jobState: { running: "在跑", exited: "跑完了", stopped: "被停下了", interrupted: "中断了", failed: "出错了" } as Record<string, string>,
+  run: "运行",
+  running: "运行中…",
+  exit: (code: number | null) => (code === null ? "未完成" : `退出码 ${code}`),
+  say: "发送",
+  saying: "发送中…",
+  delivered: "已送达",
+  notDone: "失败",
+  signal: (n: number) => `被信号 ${n} 终止`,
+  jobState: { running: "运行中", exited: "已结束", stopped: "已停止", interrupted: "已中断", failed: "失败" } as Record<string, string>,
 };
 
 const en: typeof zh = {

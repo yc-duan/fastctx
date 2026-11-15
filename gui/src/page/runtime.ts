@@ -155,7 +155,7 @@ export function start(): Bridge {
   connecting.catch((error: unknown) => {
     const said = document.createElement("p");
     said.style.color = "#c96a6a";
-    said.textContent = navigator.language.startsWith("zh") ? "这个页面没能连上 Fastctx" : "This page couldn't reach Fastctx";
+    said.textContent = navigator.language.startsWith("zh") ? "此页面无法连接 Fastctx" : "This page couldn't reach Fastctx";
     said.title = error instanceof Error ? error.message : String(error);
     const shown = () => document.body.prepend(said);
     if (document.body) shown();

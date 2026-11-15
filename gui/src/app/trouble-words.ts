@@ -104,7 +104,7 @@ export const zhTroubles: TroubleWords = {
       case "stuck":
         return "卡住";
       case "near":
-        return "快到上限";
+        return "接近上限";
       case "damaged":
         return "记录损坏";
       case "violations":
@@ -112,11 +112,11 @@ export const zhTroubles: TroubleWords = {
       case "outage":
         return trouble.count ? `${trouble.count} 台服务器同时失去联系` : "多台服务器同时失去联系";
       case "hub":
-        return trouble.near ? "中枢服务器快到上限" : "中枢服务器很忙";
+        return trouble.near ? "中枢服务器接近上限" : "中枢服务器繁忙";
       case "rollout":
-        return trouble.version ? `${trouble.version} 的推广已停下` : "推广已停下";
+        return trouble.version ? `${trouble.version} 的推广已停止` : "推广已停止";
       case "migration":
-        return "旧记录迁不过去";
+        return "旧记录无法迁移";
       default:
         return "出现异常";
     }
@@ -125,21 +125,21 @@ export const zhTroubles: TroubleWords = {
     const near = trouble.near ? `${zhBounds[trouble.near.bound] ?? trouble.near.bound}已用 ${trouble.near.used}%` : "";
     switch (trouble.kind) {
       case "silent":
-        return trouble.seconds ? `${trouble.seconds} 秒没有回应` : "";
+        return trouble.seconds ? `${trouble.seconds} 秒无响应` : "";
       case "drops":
         return trouble.count ? `一小时内重连 ${trouble.count} 次` : "";
       case "stuck":
-        return trouble.seconds ? `有任务 ${trouble.seconds} 秒没有进展` : "";
+        return trouble.seconds ? `有任务 ${trouble.seconds} 秒无进展` : "";
       case "near":
         return near;
       case "damaged":
-        return trouble.count ? `${trouble.count} 份旧记录读不出，原件另存 30 天` : "部分记录可能已经丢失";
+        return trouble.count ? `${trouble.count} 份旧记录无法读取，原件另存 30 天` : "部分记录可能已丢失";
       case "violations":
         return "本机服务持续违反运行规则";
       case "hub":
-        return near || (trouble.seconds ? `任务最久等了 ${trouble.seconds} 秒` : "");
+        return near || (trouble.seconds ? `任务最长等待 ${trouble.seconds} 秒` : "");
       case "rollout":
-        return "换上这一版的机器出问题更多";
+        return "此版本机器的故障更多";
       case "migration":
         return trouble.count ? `有 ${trouble.count} 类旧记录迁移失败，正在重试` : "正在重试";
       default:

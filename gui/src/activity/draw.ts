@@ -30,7 +30,7 @@ function inkOf(deed: Placed): string {
 /** What a deed's hover says. */
 export function said(deed: Placed, now: number, words: ActivityWords, when: (at: number) => string): string {
   const time = deed.outcome === "running" ? words.running(words.duration(lasted(deed, now))) : words.ran(words.duration(lasted(deed, now)));
-  const parts = [headline(deed.script), `${when(began(deed))} · ${words.outcome[deed.outcome]}${deed.code !== undefined && deed.code !== 0 ? ` (${deed.code})` : ""} · ${time}`];
+  const parts = [headline(deed.script), `${when(began(deed))}　${words.outcome[deed.outcome]}${deed.code !== undefined && deed.code !== 0 ? ` (${deed.code})` : ""}　${time}`];
   if (deed.went?.length) parts.push(words.went(deed.went.join(", ")));
   if (deed.touched?.length) parts.push(words.files(deed.touched.length));
   return parts.join("\n");
