@@ -130,8 +130,20 @@ if (signed) {
 for (const resource of resources) {
   if (!existsSync(resource) || standsIn(resource)) throw new Error(`the installer carries ${resource}, which is not there`);
 }
-if (prepared) bundlePrepared();
-else build(true);
+// macOS's disk-image step fails now and then on a busy machine (`bundle_dmg.sh`, saying nothing of
+// its own): the bundle is made again, which signs and packs the same application.
+const attempts = platform === "darwin" ? 3 : 1;
+for (let attempt = 1; ; attempt += 1) {
+  try {
+    if (prepared) bundlePrepared();
+    else build(true);
+    break;
+  } catch (error) {
+    if (attempt >= attempts) throw error;
+    console.error(`making the bundle failed (attempt ${attempt} of ${attempts}); making it again`);
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5000);
+  }
+}
 const bundle = resolve(gui, "src-tauri", env.CARGO_TARGET_DIR ?? "target", ...(target === host ? [] : [target]), "release", "bundle");
 const out = resolve(option("--out") ?? join(gui, "..", "dist", "gui"));
 mkdirSync(out, { recursive: true });
