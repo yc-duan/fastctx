@@ -10,18 +10,25 @@
    of what was used. Nothing moves but properties registered for it
    (`breath.css`). Every class of its own begins `lg-`; `lgc-` is a chart's. */
 
-html,
-body {
+:root:has(.lg),
+:root:has(.lg) body {
   height: 100%;
 }
 
-.lg {
+/* The specimen's frame is `.lg`, the side beside the page; in the app the
+   page is `.lg-app`, inside the app's own frame. What holds in both is
+   written for both. */
+.lg,
+.lg-app {
   /* Reckoned from the body's size, so a page keeps its proportions at
      whichever size is chosen: a row of one line, a row of two, and how wide
      a page reads across. */
   --lg-row: calc(var(--body-size) * 3);
   --lg-two: calc(var(--body-size) * 4.6);
   --lg-measure: calc(var(--body-size) * 70);
+  font-variant-numeric: tabular-nums;
+}
+.lg {
   display: grid;
   grid-template-columns: 272px minmax(0, 1fr);
   grid-template-rows: minmax(0, 1fr);
@@ -31,7 +38,7 @@ body {
   overflow: hidden;
   font-variant-numeric: tabular-nums;
 }
-.lg small {
+:is(.lg, .lg-app) small {
   font-size: inherit;
 }
 
@@ -159,30 +166,30 @@ body {
    views under one head, the body comes from the side its switch moved to,
    the head standing still; the first page comes up from a little below.
    What changes in place only fades (`lg-fade`). */
-.lg-main[data-arriving="page"] .lg-page > *,
-.lg-main[data-arriving="forward"] .lg-page > *,
-.lg-main[data-arriving="back"] .lg-page > *,
-.lg-main[data-arriving="right"] .lg-body,
-.lg-main[data-arriving="left"] .lg-body {
+.lg-main[data-coming="page"] .lg-page > *,
+.lg-main[data-coming="forward"] .lg-page > *,
+.lg-main[data-coming="back"] .lg-page > *,
+.lg-main[data-coming="right"] .lg-body,
+.lg-main[data-coming="left"] .lg-body {
   opacity: var(--shown);
   translate: var(--slide) var(--lift);
 }
-.lg-main[data-arriving="page"] .lg-page > * {
+.lg-main[data-coming="page"] .lg-page > * {
   animation: lg-arrive var(--settle) var(--fold-easing) both;
 }
-.lg-main[data-arriving="page"] .lg-page > .lg-body {
+.lg-main[data-coming="page"] .lg-page > .lg-body {
   animation-delay: var(--stagger);
 }
-.lg-main[data-arriving="forward"] .lg-page > * {
+.lg-main[data-coming="forward"] .lg-page > * {
   animation: lg-from-right var(--settle) var(--fold-easing) both;
 }
-.lg-main[data-arriving="back"] .lg-page > * {
+.lg-main[data-coming="back"] .lg-page > * {
   animation: lg-from-left var(--settle) var(--fold-easing) both;
 }
-.lg-main[data-arriving="right"] .lg-body {
+.lg-main[data-coming="right"] .lg-body {
   animation: lg-from-right var(--enter) var(--fold-easing) both;
 }
-.lg-main[data-arriving="left"] .lg-body {
+.lg-main[data-coming="left"] .lg-body {
   animation: lg-from-left var(--enter) var(--fold-easing) both;
 }
 @keyframes lg-from-right {
@@ -217,14 +224,14 @@ body {
 /* The switch between a page's views (`.segmented`, as the app's pages have
    it) and the smaller one between ways of looking at one thing. The wash
    slides from the side chosen before (`segment-slide.ts`). */
-.segmented {
+.lg .segmented {
   display: inline-flex;
   gap: 2px;
   padding: 3px;
   border-radius: var(--radius-full);
   background: var(--fill);
 }
-.segment {
+.lg .segment {
   min-height: 32px;
   padding: 4px 18px;
   border-radius: var(--radius-full);
@@ -232,21 +239,21 @@ body {
   white-space: nowrap;
   transition: color var(--hover) var(--ease), background-color var(--hover) var(--ease);
 }
-.segment:hover:not(.chosen) {
+.lg .segment:hover:not(.chosen) {
   color: var(--text);
 }
-.segment.chosen {
+.lg .segment.chosen {
   color: var(--text-strong);
   background: var(--accent-wash);
 }
-.ledger-switch {
+:is(.lg, .lg-app) .ledger-switch {
   display: inline-flex;
   gap: 2px;
   padding: 3px;
   border-radius: var(--radius-m);
   background: var(--fill);
 }
-.ledger-switch button {
+:is(.lg, .lg-app) .ledger-switch button {
   min-height: 30px;
   padding: 3px 14px;
   border-radius: 8px;
@@ -254,14 +261,14 @@ body {
   white-space: nowrap;
   transition: color var(--hover) var(--ease), background-color var(--hover) var(--ease);
 }
-.ledger-switch button:hover:not(.current) {
+:is(.lg, .lg-app) .ledger-switch button:hover:not(.current) {
   color: var(--text);
 }
-.ledger-switch button.current {
+:is(.lg, .lg-app) .ledger-switch button.current {
   color: var(--text-strong);
   background: var(--fill-strong);
 }
-.seg-thumb {
+.lg .seg-thumb {
   position: absolute;
   left: 0;
   top: 0;
@@ -271,13 +278,13 @@ body {
   pointer-events: none;
   transition: --thumb-x var(--fold) var(--fold-easing), --thumb-y var(--fold) var(--fold-easing), --thumb-w var(--fold) var(--fold-easing), --thumb-h var(--fold) var(--fold-easing);
 }
-.seg-sliding > :not(.seg-thumb) {
+.lg .seg-sliding > :not(.seg-thumb) {
   position: relative;
   z-index: 1;
   background-color: transparent !important;
 }
-.seg-sliding > :not(.seg-thumb),
-.seg-landing > :not(.seg-thumb) {
+.lg .seg-sliding > :not(.seg-thumb),
+.lg .seg-landing > :not(.seg-thumb) {
   transition: none !important;
 }
 
@@ -289,11 +296,10 @@ body {
 .lg-pick,
 .lg-back,
 .lg-more,
-.segment,
-.ledger-switch button,
+.lg .segment,
+:is(.lg, .lg-app) .ledger-switch button,
 .lg-pages > button,
-.lg .choice,
-.sheet .choice {
+:is(.lg, .lg-app) .choice {
   scale: var(--press);
   transition: --press var(--settle) var(--spring), color var(--hover) var(--ease), background-color var(--hover) var(--ease);
 }
@@ -301,15 +307,14 @@ body {
 .lg-pick:active,
 .lg-back:active,
 .lg-more:active,
-.segment:active,
-.ledger-switch button:active,
+.lg .segment:active,
+:is(.lg, .lg-app) .ledger-switch button:active,
 .lg-pages > button:active:not(:disabled),
-.lg .choice:active,
-.sheet .choice:active {
+:is(.lg, .lg-app) .choice:active {
   --press: 0.95;
 }
 .lg-word:active:not(:disabled),
-.lg .text-button:active {
+:is(.lg, .lg-app) .text-button:active {
   color: var(--text-3);
 }
 .lg-row:active:not(.lg-still, :has(button:active)) {
@@ -326,21 +331,21 @@ body {
 }
 /* A switch's wash taken hold of (`slide.ts`): it follows the pointer with
    no easing of its own, and let go, springs to the side it is nearest. */
-.seg-thumb.seg-held {
+.lg .seg-thumb.seg-held {
   scale: 0.96;
   transition: none;
 }
-.seg-thumb.seg-let {
+.lg .seg-thumb.seg-let {
   transition: --thumb-x var(--settle) var(--spring), --thumb-w var(--settle) var(--spring);
 }
-.seg-dragging,
-.seg-dragging > * {
+.lg .seg-dragging,
+.lg .seg-dragging > * {
   cursor: grabbing;
 }
-.seg-dragging > :not(.seg-thumb) {
+.lg .seg-dragging > :not(.seg-thumb) {
   color: var(--text-2) !important;
 }
-.seg-dragging > .seg-near {
+.lg .seg-dragging > .seg-near {
   color: var(--text-strong) !important;
 }
 
@@ -439,7 +444,7 @@ body {
   color: var(--text);
   background: var(--fill);
 }
-.text-button {
+:is(.lg, .lg-app) .text-button {
   white-space: nowrap;
 }
 .lg-soft {
@@ -607,18 +612,18 @@ body {
 .lg-meter.idle > b {
   color: var(--text-3);
 }
-.ledger-meter-ink {
+:is(.lg, .lg-app) .ledger-meter-ink {
   display: block;
   width: 100%;
   height: 100%;
   overflow: visible;
 }
-.ledger-trace {
+:is(.lg, .lg-app) .ledger-trace {
   fill: var(--pen-trace);
 }
 /* One ink for every stroke, the pencil's; one that is at its end or near
    it is in the caution's colour, and so is its figure. */
-.ledger-arc {
+:is(.lg, .lg-app) .ledger-arc {
   fill: var(--pen-graphite);
 }
 .lg-meter.high .ledger-arc,
@@ -638,7 +643,7 @@ body {
   background: var(--text-2);
 }
 /* The stroke is drawn in from its start as its page arrives. */
-.lg-main:not([data-arriving="quiet"]) .ledger-meter-ink > g {
+.lg-main:not([data-coming="quiet"]) .ledger-meter-ink > g {
   clip-path: inset(-8px calc((1 - var(--shown)) * 100%) -8px -8px);
   animation: lg-ink var(--slow) var(--fold-easing) var(--enter) both;
 }
@@ -727,10 +732,10 @@ body {
 /* 「接入」: the app's own cards and lines (`agents-overview.css`,
    `login-line.css`); what is added here is the folders searched and the
    words under the cards. */
-.ao-reach {
+:is(.lg, .lg-app) .ao-reach {
   margin-top: 0;
 }
-.ao-head .text-button {
+:is(.lg, .lg-app) .ao-head .text-button {
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -1251,17 +1256,17 @@ body {
   gap: 14px;
   padding: 6px 12px 18px;
 }
-.lg .choice-row,
-.sheet .choice-row {
+:is(.lg, .lg-app) .choice-row,
+.sheet:is(.lg-change, .lg-assist, .lg-models, .lg-plate) .choice-row {
   display: grid;
   grid-template-columns: 7em minmax(0, 1fr);
   align-items: baseline;
   gap: 0;
 }
-.choice-name {
+:is(.lg, .lg-app, .lg-change, .lg-assist, .lg-models, .lg-plate) .choice-name {
   color: var(--text-3);
 }
-.choice-row > p {
+:is(.lg, .lg-app, .lg-change, .lg-assist, .lg-models, .lg-plate) .choice-row > p {
   margin: 0;
   color: var(--text-2);
 }
@@ -1507,7 +1512,7 @@ body {
 .as-date {
   color: var(--text);
 }
-.sheet .choice-row {
+.sheet:is(.lg-change, .lg-assist, .lg-models, .lg-plate) .choice-row {
   margin-bottom: 18px;
 }
 .as-input {
@@ -1621,7 +1626,8 @@ body {
 .lg-said.leaving {
   animation: lg-leave var(--quick) var(--ease-out) both;
 }
-.pointer-hint {
+/* The app draws these in its shell (`shell.css`); the specimen, here. */
+:root:has(.lg) .pointer-hint {
   position: fixed;
   z-index: 60;
   max-width: min(80vw, 320px);
@@ -1638,7 +1644,7 @@ body {
   translate: var(--slide) var(--lift);
   animation: hint-rise var(--hover) var(--ease-out);
 }
-.pointer-hint[popover] {
+:root:has(.lg) .pointer-hint[popover] {
   inset: auto;
   margin: 0;
   border: 0;
@@ -1650,11 +1656,26 @@ body {
     --lift: 3px;
   }
 }
-.pointer-hint.leaving {
+:root:has(.lg) .pointer-hint.leaving {
   animation: hint-fall var(--quick) var(--ease-out) both;
 }
 @keyframes hint-fall {
   to {
     --shown: 0;
   }
+}
+
+/* In the app: the page sits in the app's frame, and the app's switch keeps
+   to the top of its row unless told otherwise (`pages.css`). */
+.lg-app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+.lg-app > .lg-main {
+  flex: 1;
+}
+.lg-app .lg-head .segmented {
+  align-self: center;
 }

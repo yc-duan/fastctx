@@ -74,16 +74,19 @@ export function loginPage(): string {
 
 // ---- 用量
 
-/** An amount in the unit the page is set to. */
-const amount = (value: number) => (state.unit === "tokens" ? tokens(value) : dollars(value));
+/** The unit drawn: as the page is set, but tokens for Codex, which tells
+ *  no prices. */
+const unitNow = (): "quota" | "tokens" => (current()?.family === "codex" ? "tokens" : state.unit);
+/** An amount in the unit drawn. */
+const amount = (value: number) => (unitNow() === "tokens" ? tokens(value) : dollars(value));
 
 /** The ways this login's usage can be split, as its ledger tells them. */
-const splitsOf = (login: Login, days: Days) => (Object.keys(days.parts[state.unit]) as Split[]).filter((way) => way !== "person" || shared(login));
+const splitsOf = (login: Login, days: Days) => (Object.keys(days.parts[unitNow()]) as Split[]).filter((way) => way !== "person" || shared(login));
 
 /** What is drawn: the whole, or its parts by what it is split by. */
 function series(login: Login, days: Days): Series {
-  const parts = state.split === "none" || !splitsOf(login, days).includes(state.split) ? null : days.parts[state.unit][state.split];
-  return parts ?? { names: ["用量"], values: [days.total[state.unit]] };
+  const parts = state.split === "none" || !splitsOf(login, days).includes(state.split) ? null : days.parts[unitNow()][state.split];
+  return parts ?? { names: ["用量"], values: [days.total[unitNow()]] };
 }
 
 function usage(login: Login): string {
@@ -112,7 +115,7 @@ function usage(login: Login): string {
         <div class="ledger-switch">${kinds.map(([id, name]) => `<button type="button" class="${id === state.chart ? "current" : ""}" data-act="chart" data-value="${id}">${name}</button>`).join("")}</div>
         <span class="lg-head-end">
           ${splits.length ? `<button type="button" class="lg-field"${split ? " data-set" : ""} data-act="split">${split ? `按${splitNames[state.split as Split]}` : "分组"}${chevron()}</button>` : ""}
-          ${state.chart === "hours" ? "" : `<div class="ledger-switch small"><button type="button" class="${state.unit === "quota" ? "current" : ""}" data-act="unit" data-value="quota" title="额度美元：请求的 API 价，Fable 另乘倍率">额度</button><button type="button" class="${state.unit === "tokens" ? "current" : ""}" data-act="unit" data-value="tokens">token</button></div>`}
+          ${state.chart === "hours" || login.family === "codex" ? "" : `<div class="ledger-switch small"><button type="button" class="${state.unit === "quota" ? "current" : ""}" data-act="unit" data-value="quota" title="额度美元：请求的 API 价，Fable 另乘倍率">额度</button><button type="button" class="${state.unit === "tokens" ? "current" : ""}" data-act="unit" data-value="tokens">token</button></div>`}
         </span>
       </header>
       <div class="lg-stats-body" data-kind="${split ? "split" : state.chart}"><div class="lg-chart" data-chart></div>${split ? legend(login, days) : ""}</div>
@@ -148,7 +151,7 @@ function legend(login: Login, days: Days): string {
 
 function figures(days: Days): string {
   const { dates, hours } = days;
-  const total = days.total[state.unit];
+  const total = days.total[unitNow()];
   const figure = (name: string, value: string, more = "") => `<div><dt>${name}</dt><dd>${value}${more ? `<small>${more}</small>` : ""}</dd></div>`;
   let shown = "";
   if (state.chart === "days") {
@@ -193,21 +196,21 @@ export function fillCharts(root: HTMLElement, arriving = false): void {
   coming = false;
   const width = Math.max(320, Math.floor(holder.clientWidth));
   const { dates, hours } = days;
-  const total = days.total[state.unit];
+  const total = days.total[unitNow()];
   const { values } = series(login, days);
   /** What a column over these days says, and what each of its parts is. */
   const said = (title: string, at: number[]) => {
     const each = values.map((of) => at.reduce((sum, day) => sum + of[day]!, 0));
     return { said: `${title}　${amount(each.reduce((a, b) => a + b, 0))}`, ...(each.length > 1 ? { parts: each.map(amount) } : {}) };
   };
-  const axis = (value: number) => (state.unit === "tokens" ? tokens(value) : `$${count(value)}`);
+  const axis = (value: number) => (unitNow() === "tokens" ? tokens(value) : `$${count(value)}`);
   if (state.chart === "days") {
     const from = Math.max(0, dates.length - SHOWN_DAYS);
     const columns: Column[] = Array.from({ length: dates.length - from }, (_, index) => {
       const date = dates[from + index]!;
       return { values: values.map((of) => of[from + index]!), ...said(dated(date), [from + index]), ...(date.getDay() === 1 ? { tick: `${date.getMonth() + 1}/${date.getDate()}` } : {}) };
     });
-    holder.innerHTML = bars(`${login.id}-days-${state.split}-${state.unit}`, columns, width, 280, axis);
+    holder.innerHTML = bars(`${login.id}-days-${state.split}-${unitNow()}`, columns, width, 280, axis);
   } else if (state.chart === "weeks") {
     const columns: Column[] = weeksOf(days)
       .filter((week) => week.length)
@@ -215,11 +218,11 @@ export function fillCharts(root: HTMLElement, arriving = false): void {
         const start = dates[week[0]!]!;
         return { values: values.map((of) => week.reduce((sum, day) => sum + of[day]!, 0)), ...said(`${dated(start, false)} 起一周`, week), tick: `${start.getMonth() + 1}/${start.getDate()}` };
       });
-    holder.innerHTML = bars(`${login.id}-weeks-${state.split}-${state.unit}`, columns, width, 280, axis);
+    holder.innerHTML = bars(`${login.id}-weeks-${state.split}-${unitNow()}`, columns, width, 280, axis);
   } else if (state.chart === "year") {
     holder.innerHTML = calendar(login.id, dates, total, width, (index) => `${dated(dates[index]!)}　${total[index]! > 0 ? amount(total[index]!) : "无用量"}`);
   } else {
-    holder.innerHTML = punch(login.id, hours, width, (weekday, hour) => `${weekdays[weekday]} ${hour} 点　${days.hoursAre === "requests" ? `${count(hours[weekday]![hour]!)} 次请求` : dollars(hours[weekday]![hour]!)}`);
+    holder.innerHTML = punch(login.id, hours, width, (weekday, hour) => `${weekdays[weekday]} ${hour} 点　${days.hoursAre === "requests" ? `${count(hours[weekday]![hour]!)} 次请求` : days.hoursAre === "tokens" ? tokens(hours[weekday]![hour]!) : dollars(hours[weekday]![hour]!)}`);
   }
   readout(holder, root.querySelector<HTMLElement>(".lg-legend"));
   if (comes) rise(holder);
@@ -288,6 +291,8 @@ function field(act: string, name: string, value: string | null): string {
 
 function callsView(login: Login): string {
   const many = shared(login);
+  // Codex tells no prices: its requests are counted in tokens.
+  const priced = login.family !== "codex";
   const fetched = callsOf(login, queryOf());
   const page: CallsPage | null = usable(fetched);
   if (page) seen = { models: page.models, people: page.people };
@@ -319,7 +324,7 @@ function callsView(login: Login): string {
           <span class="lg-soft lg-clip">${escape(talk)}</span>
           <span class="lg-num lg-soft">${shownIf(tokens(row.fresh + row.cacheRead + row.cacheWrite))}</span>
           <span class="lg-num lg-soft">${shownIf(tokens(row.output))}</span>
-          <span class="lg-num">${shownIf(dollars(row.quota))}</span>
+          <span class="lg-num">${shownIf(priced ? dollars(row.quota) : tokens(row.fresh + row.cacheRead + row.cacheWrite + row.output))}</span>
           <span class="lg-num lg-soft">${shownIf(seconds(row.took))}</span>
           <span class="lg-mark-end">${mark}</span>
         </div>
@@ -341,12 +346,12 @@ function callsView(login: Login): string {
       ${field("f-time", "时间", state.time === "全部" ? null : state.time)}${many ? field("f-who", "用户", state.who) : ""}${field("f-model", "型号", state.model)}${field("f-source", "来源", state.source && sourceNames[state.source])}${field("f-outcome", "结果", state.outcome && outcomeNames[state.outcome])}
     </div>
     <div class="lg-sheet"><div class="lg-list lg-calls" style="--cols:${cols}">
-      <div class="lg-heads lg-cols"><span>时间</span>${many ? "<span>用户</span>" : ""}<span>型号</span><span>对话</span><span class="lg-num">输入</span><span class="lg-num">输出</span><span class="lg-num" title="额度美元：请求的 API 价，Fable 另乘倍率">额度</span><span class="lg-num">耗时</span><span></span></div>${rule(1)}
+      <div class="lg-heads lg-cols"><span>时间</span>${many ? "<span>用户</span>" : ""}<span>型号</span><span>对话</span><span class="lg-num">输入</span><span class="lg-num">输出</span>${priced ? `<span class="lg-num" title="额度美元：请求的 API 价，Fable 另乘倍率">额度</span>` : `<span class="lg-num">合计</span>`}<span class="lg-num">耗时</span><span></span></div>${rule(1)}
       ${list || none}
     </div></div>
     <footer class="lg-foot" style="--cols:${cols}">
       ${doubleRule()}
-      <div class="lg-sum lg-cols"><span class="lg-sum-name">${page?.sum ? "合计" : "本页合计"}<small>${count(page?.sum ? total : rows.length)} 次</small></span><span class="lg-num">${tokens(sum.input)}</span><span class="lg-num">${tokens(sum.output)}</span><span class="lg-num">${dollars(sum.quota)}</span><span></span><span></span></div>
+      <div class="lg-sum lg-cols"><span class="lg-sum-name">${page?.sum ? "合计" : "本页合计"}<small>${count(page?.sum ? total : rows.length)} 次</small></span><span class="lg-num">${tokens(sum.input)}</span><span class="lg-num">${tokens(sum.output)}</span><span class="lg-num">${priced ? dollars(sum.quota) : tokens(sum.input + sum.output)}</span><span></span><span></span></div>
       <div class="lg-pages"><button type="button" class="lg-field lg-size" data-act="size">每页 ${state.size} 行${chevron()}</button><button type="button" data-act="page" data-value="${Math.max(1, state.page - 1)}" aria-label="上一页"${state.page === 1 ? " disabled" : ""}>${glyph("back", 14)}</button>${pager}<button type="button" class="lg-next" data-act="page" data-value="${Math.min(pages, state.page + 1)}" aria-label="下一页"${state.page === pages ? " disabled" : ""}>${glyph("back", 14)}</button></div>
     </footer>
   </div>`;
@@ -361,7 +366,7 @@ function detail(login: Login, row: Call, index: number): string {
   return `<div class="lg-detail">
     <dl>${fact("来源", row.source === "agent" ? `子代理 ${escape(row.agent ?? "")}` : sourceNames[row.source])}${row.effort ? fact("推理强度", escape(row.effort)) : ""}${fact("结果", outcomeNames[row.outcome])}</dl>
     <dl>${fact("新输入", count(row.fresh))}${fact(codex ? "缓存输入" : "缓存读", count(row.cacheRead))}${fact(codex ? "推理" : "缓存写", count(row.cacheWrite))}${fact("输出", count(row.output))}</dl>
-    <dl>${fact("API 价", dollars(row.api))}${row.times === 1 ? "" : fact("Fable 倍率", `× ${row.times}`)}${fact("占周额度", part < 0.001 ? "< 0.001%" : `${part.toFixed(3)}%`)}</dl>
+    ${codex ? "" : `<dl>${fact("API 价", dollars(row.api))}${row.times === 1 ? "" : fact("Fable 倍率", `× ${row.times}`)}${fact("占周额度", part < 0.001 ? "< 0.001%" : `${part.toFixed(3)}%`)}</dl>`}
     <dl>${row.first ? fact("首字耗时", seconds(row.first)) : ""}${fact("总耗时", seconds(row.took))}${speed ? fact("输出速度", speed) : ""}</dl>
   </div>${row.opens ? `<div class="lg-detail-end"><button type="button" class="lg-word" data-act="open-turn" data-index="${index}">查看对话</button></div>` : ""}`;
 }

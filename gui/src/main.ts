@@ -68,19 +68,18 @@ import { ProjectActs, enProjectActs, zhProjectActs } from "./app/project-acts";
 import { enMe, zhMe } from "./app/me-words";
 import { enPeople, zhPeople } from "./app/people-words";
 import { LoginPage } from "./app/login";
-import { LoginUsagePage } from "./app/usage/login-page";
 import { enUsage, zhUsage } from "./app/usage/words";
 import "./app/usage/usage.css";
 import "./app/sync.css";
 import "./app/usage/resets.css";
-import { enCalls, zhCalls } from "./app/usage/calls-words";
 import "./app/usage/calls.css";
 import { keepLoginsFor, keptRecord } from "./app/usage/kept";
-import { ActsMenu } from "./app/acts-menu";
 import { specimenUsage } from "./specimen/usage";
 import { specimenCalls } from "./specimen/calls";
 import { enAgentLogins, zhAgentLogins } from "./app/agent-logins-words";
 import { AgentsOverview } from "./app/agents-overview";
+import { AgentsPage } from "./ledger/page";
+import "./ledger/ledger.css";
 import { enAgentsOverview, zhAgentsOverview } from "./app/agents-overview-words";
 import { enProfile, zhProfile } from "./app/profile-words";
 import { isHost, keepSection, sectionOf } from "./app/agent-sections";
@@ -640,6 +639,54 @@ function workbenchChanged(open: boolean): void {
 
 /** Reads a machine's logins, or with null every machine's, as a live World
  *  or the specimen answers. */
+/** The agents' section's one page, kept while it is shown and gone to again
+ *  from within: its places move what is in it (`ledger/page.ts`). */
+let agentsShown: AgentsPage | null = null;
+function agentsPage(next: Place): Page {
+  if (agentsShown && shownPage === agentsShown) {
+    agentsShown.go(next);
+    return agentsShown;
+  }
+  agentsShown = new AgentsPage(
+    {
+      store,
+      words: english ? enAgentLogins : zhAgentLogins,
+      changeWords: english ? enAgentChange : zhAgentChange,
+      read: readAllLogins,
+      scan: (machine, stop) => (live ? scanAgents(machine, stop) : specimenScan(machine, stop, specimen!.now)),
+      add: (machine, agent, dir) => (live ? addAgentLogin(machine, agent, dir) : specimenTakeUp(machine, agent as "claude" | "codex", dir, specimen!.now)),
+      folder: (machine, dir, change) => (live ? agentFolder(machine, dir, change) : specimenFolder(machine, dir, change, specimen!.now)),
+      pick: live && onComputer() ? pickFolder : null,
+      preview: (machine, agent, dir, into, takeBack, workbench) => (live ? previewAgentChange(machine, agent, dir, into, takeBack, workbench) : specimenPreview(machine, agent, dir, into, workbench)),
+      change: (machine, agent, dir, into, raise, takeBack, expected, workbench) => (live ? changeAgentLogin(machine, agent, dir, into, raise, takeBack, expected, workbench) : specimenLoginChange(machine, agent, dir, into, workbench)),
+      limits: (machine, agent, dir) => (live ? readAgentLimits(machine, agent, dir) : notLive()),
+      setTitle: (machine, agent, dir, on) => (live ? setAgentTitle(machine, agent, dir, on) : specimenSetTitle(machine, agent, dir, on, specimen!.now)),
+      setResetInPlace: (machine, agent, dir, on) => (live ? setAgentResetInPlace(machine, agent, dir, on) : specimenSetResetInPlace(machine, agent, dir, on, specimen!.now)),
+      changeModels: (machine, agent, dir, change) => (live ? changeAgentModels(machine, agent, dir, change) : specimenChangeModels(machine, agent, dir, change, specimen!.now)),
+      usage: (machine, agent, dir) => (live ? agentUsage(machine, agent, dir) : specimenUsage(machine, agent, dir, specimen!.now)),
+      calls: (machine, agent, dir, query) => (live ? agentCalls(machine, agent, dir, query) : specimenCalls(machine, agent, dir, query, specimen!.now)),
+      change_: change,
+      benched: (open) => workbenchChanged(open),
+      talkOn: (machine, agent, home) => {
+        workbenchChanged(true);
+        beginTalk(null, loginKey(machine, agent as "claude" | "codex", home), machine);
+      },
+      openTurn: (machine, conversation, turn) => openTurn({ resident: conversation, machine }, turn),
+      nameOf: (id) => {
+        for (const machine of store.world.peek()?.who.machines ?? []) {
+          if (machine.kind !== "answered") continue;
+          const found = machine.reply.residents.find((one) => one.about.id === id);
+          if (found) return titleOf(found);
+        }
+        return null;
+      },
+      now: () => (live ? new Date() : specimen!.now),
+    },
+    next,
+  );
+  return agentsShown;
+}
+
 function readAllLogins(machine: string | null): Promise<WorldLogins> {
   return live ? agentLogins(machine) : specimenLoginsRead(machine);
 }
@@ -2500,9 +2547,6 @@ function openBeside(address: Address): void {
   desk().open(address);
 }
 
-/** The menu of the requests' filters, made when first opened. */
-let callsMenu: ActsMenu | null = null;
-
 /** A turn to bring into view as its conversation is shown. */
 let turnWanted: { key: string; turn: string } | null = null;
 
@@ -3013,7 +3057,14 @@ function show(next: Place): void {
       });
       break;
     case "agents": {
-      // A machine's agents all at once, unless one of them is named.
+      // The agents' section (`ledger/`): the logins one works with, a
+      // machine's agents and the logins found there, and each login's
+      // usage, requests, assistance and settings. A family's own page of
+      // before is its machine's agents now.
+      if ((!next.section || next.section === "claude" || next.section === "codex") && next.tab !== "prefs") {
+        page = agentsPage(next.section ? { kind: "agents", machine: next.machine } : next);
+        break;
+      }
       if (!next.section && next.tab !== "prefs") {
         const agentsPlace = next;
         page = new AgentsOverview({
@@ -3149,37 +3200,7 @@ function show(next: Place): void {
       });
       break;
     case "usage": {
-      const usagePlace = next;
-      page = new LoginUsagePage({
-        store,
-        words: english ? enUsage : zhUsage,
-        logins: english ? enAgentLogins : zhAgentLogins,
-        head,
-        machine: next.machine,
-        agent: next.agent,
-        dir: next.dir,
-        workbench: workbenchShown.on,
-        read: readAllLogins,
-        usage: (machine, agent, dir) => (live ? agentUsage(machine, agent, dir) : specimenUsage(machine, agent, dir, specimen!.now)),
-        when,
-        talk: (machine, agent, home) => {
-          workbenchChanged(true);
-          beginTalk(null, loginKey(machine, agent, home), machine);
-        },
-        calls: {
-          words: english ? enCalls : zhCalls,
-          menu: (callsMenu ??= new ActsMenu()),
-          ask: (machine, agent, dir, query) => (live ? agentCalls(machine, agent, dir, query) : specimenCalls(machine, agent, dir, query, specimen!.now)),
-          open: (machine, conversation, turn) => openTurn({ resident: conversation, machine }, turn),
-          turn: next.turn ?? null,
-          // The address no longer names the turn, and the page stays.
-          unturn: () => {
-            const { turn: _turn, ...all } = usagePlace;
-            place = all;
-            history.replaceState(history.state, "", link(all));
-          },
-        },
-      });
+      page = agentsPage(next);
       break;
     }
     case "talks":

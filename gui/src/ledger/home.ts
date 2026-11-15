@@ -62,10 +62,10 @@ export function windows(login: Login, tall?: number): string[] {
   const fiveSpent = days?.fiveSpent ?? null;
   const five = login.five;
   const fable = fablePart(login);
-  const fiveUnder = five ? `${five.reset ? "已重置" : fiveSpent !== null && five.used > 0 ? `${whole(fiveSpent)} / ${whole((fiveSpent * 100) / five.used)}` : `${five.used}%`}　${five.resets}${tall ? "重置" : ""}` : "";
+  const fiveUnder = !five ? "" : five.reset ? "已重置" : `${fiveSpent !== null && five.used > 0 ? `${whole(fiveSpent)} / ${whole((fiveSpent * 100) / five.used)}` : `${five.used}%`}${five.resets ? `　${five.resets}${tall ? "重置" : ""}` : ""}`;
   return [
     five ? gauge(`${login.id}-five-${tall ?? 0}`, five.reset ? 0 : five.used, { ...more, idle, under: fiveUnder, said: `${five.resets}重置` }) : "",
-    login.week ? gauge(`${login.id}-week-${tall ?? 0}`, login.week.reset ? 0 : login.week.used, { ...more, idle, under: `${login.week.reset ? "已重置" : money(login.week.used, plate)}　${login.week.resets}${tall ? " 重置" : ""}`, said: `${login.week.resets} 重置` }) : "",
+    login.week ? gauge(`${login.id}-week-${tall ?? 0}`, login.week.reset ? 0 : login.week.used, { ...more, idle, under: login.week.reset ? "已重置" : `${money(login.week.used, plate)}${login.week.resets ? `　${login.week.resets}${tall ? " 重置" : ""}` : ""}`, said: `${login.week.resets} 重置` }) : "",
     fable === undefined ? "" : gauge(`${login.id}-fable-${tall ?? 0}`, fableUsed(login), { ...more, idle, near: fableUsed(login) >= 90, under: `${money(fableUsed(login), plate / 2)}${login.fableHeld ? `　<span class="lg-caution">已暂停</span>` : ""}`, said: fableSaid }),
   ];
 }

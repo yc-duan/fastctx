@@ -9,6 +9,10 @@ export type Feature = "conversations" | "collaboration" | "sentinels" | "history
 const features: Feature[] = ["conversations", "collaboration", "sentinels", "history"];
 const sections: AgentSection[] = ["claude", "codex", "prompt", "skills", "mcp"];
 
+/** A login's page's views but the first (`ledger/login-page.ts`). */
+export type LoginTab = "calls" | "assist" | "settings";
+const loginTabs: LoginTab[] = ["calls", "assist", "settings"];
+
 export type Place =
   | { kind: "home" }
   /** What agents did with run on the user's machines (`world-layers.md`). */
@@ -45,7 +49,7 @@ export type Place =
   | { kind: "prompt"; agent: "claude" | "codex" }
   /** What an agent's login on a machine was used for; opened on one
    *  turn's requests when a conversation asks for them. */
-  | { kind: "usage"; machine: string; agent: "codex" | "claude"; dir: string; turn?: { conversation: string; turn: string } }
+  | { kind: "usage"; machine: string; agent: "codex" | "claude"; dir: string; tab?: LoginTab; turn?: { conversation: string; turn: string } }
   /** The features, one card each, and a feature's own page. */
   | { kind: "features" }
   | { kind: "feature"; feature: Feature }
@@ -112,7 +116,7 @@ export function link(place: Place): string {
     case "prompt":
       return `#/agents/prompt/${place.agent}`;
     case "usage":
-      return `#/agents/${part(place.machine)}/${place.agent}/${part(place.dir)}${place.turn ? `/calls/${part(place.turn.conversation)}/${part(place.turn.turn)}` : ""}`;
+      return `#/agents/${part(place.machine)}/${place.agent}/${part(place.dir)}${place.turn ? `/calls/${part(place.turn.conversation)}/${part(place.turn.turn)}` : place.tab ? `/${place.tab}` : ""}`;
     case "features":
       return "#/features";
     case "feature":
@@ -186,7 +190,8 @@ export function placeOf(hash: string): Place {
     case "agents":
       if (parts[1] && (parts[2] === "codex" || parts[2] === "claude") && parts[3]) {
         const turn = parts[4] === "calls" && parts[5] && parts[6] ? { turn: { conversation: parts[5], turn: parts[6] } } : {};
-        return { kind: "usage", machine: parts[1], agent: parts[2], dir: parts[3], ...turn };
+        const tab = loginTabs.includes(parts[4] as LoginTab) ? { tab: parts[4] as LoginTab } : {};
+        return { kind: "usage", machine: parts[1], agent: parts[2], dir: parts[3], ...tab, ...turn };
       }
       // A host's preferences; `#/agents/prefs` alone was the preferences'
       // own section, now the last host's.

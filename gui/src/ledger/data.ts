@@ -173,7 +173,7 @@ export interface Days {
   /** By weekday (Monday first) and hour, over the last 90 days; requests,
    *  or quota dollars where the counts are not kept. */
   hours: number[][];
-  hoursAre: "requests" | "quota";
+  hoursAre: "requests" | "quota" | "tokens";
   /** This week's quota dollars by person: none is the login's owner. */
   people: { name: string | null; week: number; fable: number }[];
   /** What each of its last whole weeks came to by the readings, the newest

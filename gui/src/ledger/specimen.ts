@@ -63,7 +63,7 @@ grabSwitches(root);
 
 drawnBy((how) => {
   const kept = main.querySelector<HTMLElement>(".lg-sheet")?.scrollTop ?? 0;
-  main.dataset.arriving = how;
+  main.dataset.coming = how;
   main.innerHTML = state.place.kind === "login" ? loginPage() : homePage();
   if (how === "quiet") main.querySelector<HTMLElement>(".lg-sheet")?.scrollTo({ top: kept });
   fitInks(main);
