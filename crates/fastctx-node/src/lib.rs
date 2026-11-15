@@ -185,6 +185,9 @@ mod remote_topics;
 mod thumbnail_cache;
 mod thumbnail_room;
 mod timeline;
+/// The timeline's writing as fastctx-bench measures it.
+#[cfg(feature = "bench")]
+pub use timeline::bench;
 pub mod timers;
 mod to_end;
 mod topics;

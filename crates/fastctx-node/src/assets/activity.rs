@@ -183,9 +183,13 @@ fn forgotten(node: &Arc<Node>, hub: &HubId, stream: &str) -> Result<(), String> 
         let Some((last, _)) = keys.last().cloned() else { continue };
         let mut writes = Vec::new();
         for (_, deed) in &keys {
-            let item = fastctx_content::v2::item_of(deed);
-            if library.item(&scope.key, stream, &item).map_err(error)?.is_some() {
-                writes.push(Write::<AccountActivity> { order: item.clone(), item, value: None, objects: Vec::new() });
+            // Under its own key, or, in a body's records, under the digest a
+            // deed of a session elsewhere is kept under (`elsewhere`).
+            for key in [deed.clone(), elsewhere(deed)] {
+                let item = fastctx_content::v2::item_of(&key);
+                if library.item(&scope.key, stream, &item).map_err(error)?.is_some() {
+                    writes.push(Write::<AccountActivity> { order: item.clone(), item, value: None, objects: Vec::new() });
+                }
             }
         }
         if !writes.is_empty() {
@@ -460,6 +464,7 @@ fn deeds(node: &Arc<Node>, hub: &HubId, home: Option<&AccountName>, waits: bool,
             Some(sharing) => sharing.get(hub.as_str()).cloned().flatten(),
             None => shared.body.clone().filter(|_| !before_shared),
         };
+        let to_body = body.is_some();
         let target = match body.as_deref() {
             Some(body) => body_scope(node, library, hub, body, shared.owner, stream)?,
             None => {
@@ -486,10 +491,26 @@ fn deeds(node: &Arc<Node>, hub: &HubId, home: Option<&AccountName>, waits: bool,
             still_open.insert(deed.key.clone());
         }
         deed.body["touched"] = serde_json::json!(touched.get(&deed.key).cloned().unwrap_or_default());
+        // What a session elsewhere ran here names, in a body's records,
+        // neither that session nor its deed by it: whose conversation it was
+        // is its account's, not the body's (§28.47).
+        let mut key = deed.key.clone();
+        if to_body && deed.body.get("from").is_some_and(|from| !from.is_null()) {
+            key = elsewhere(&deed.key);
+            deed.body["session"] = serde_json::Value::Null;
+            deed.body["deed"] = serde_json::json!(key);
+            // Kept under its own key by an earlier version: that one goes, or
+            // the deed is counted twice.
+            let raw = fastctx_content::v2::item_of(&deed.key);
+            if library.item(&scope, stream, &raw).map_err(error)?.is_some() {
+                let scoped = writes.entry(scope.clone()).or_insert_with(|| (holding, Vec::new(), Vec::new()));
+                scoped.1.push(Write { order: raw.clone(), item: raw, value: None, objects: Vec::new() });
+            }
+        }
         let body = serde_json::to_vec(&deed.body).map_err(|error| error.to_string())?;
         // A key longer than an item's: named by its digest, the whole key in
         // the body (PP13, N09).
-        let item = fastctx_content::v2::item_of(&deed.key);
+        let item = fastctx_content::v2::item_of(&key);
         use sha2::Digest as _;
         let digest: [u8; 32] = sha2::Sha256::digest(&body).into();
         if library.item(&scope, stream, &item).map_err(error)?.is_some_and(|entry| match entry.objects.first() {
@@ -503,7 +524,7 @@ fn deeds(node: &Arc<Node>, hub: &HubId, home: Option<&AccountName>, waits: bool,
         let scoped = writes.entry(scope).or_insert_with(|| (holding, Vec::new(), Vec::new()));
         let (value, objects) = if body.len() > BODY_MOST {
             let lease = library.put(&mut body.as_slice(), "activity", LEASE).map_err(error)?;
-            let said = serde_json::json!({ "deed": deed.key, "in_object": true, "bytes": body.len() });
+            let said = serde_json::json!({ "deed": key, "in_object": true, "bytes": body.len() });
             scoped.2.push(lease);
             (serde_json::to_vec(&said).map_err(|error| error.to_string())?, vec![lease.object])
         } else {
@@ -604,9 +625,10 @@ fn usage(node: &Arc<Node>, hub: &HubId, home: Option<&AccountName>, waits: bool,
                 bytes = &bytes[..source as usize];
             }
             if written.is_none() {
-                let lease = library.put(&mut &bytes[..], "usage", LEASE).map_err(error)?;
+                let lines = for_body(node, bytes);
+                let lease = library.put(&mut &lines[..], "usage", LEASE).map_err(error)?;
                 let body = serde_json::to_vec(
-                    &serde_json::json!({ "file": file, "offset": offset, "length": bytes.len(), "source": bytes.len() }),
+                    &serde_json::json!({ "file": file, "offset": offset, "length": lines.len(), "source": bytes.len() }),
                 )
                 .map_err(|error| error.to_string())?;
                 Writer::<AccountUsage>::new(library, &scope, stream)
@@ -718,5 +740,66 @@ fn usage(node: &Arc<Node>, hub: &HubId, home: Option<&AccountName>, waits: bool,
         at["marks"] = serde_json::json!({});
     }
     library.keep_checkpoint(&name, serde_json::to_vec(&at).map_err(|error| error.to_string())?).map_err(error)
+}
+
+
+/// The lines of a piece of the usage ledger as a body's records keep them:
+/// a call made for a conversation an account was assisted in names neither
+/// that conversation nor its turn, the conversation being that account's
+/// alone (`placement-one-rule` 2026-11-10); the usage answer hides them
+/// alike from any other (`usage::calls`). Who used how much is said still.
+fn for_body(node: &Node, bytes: &[u8]) -> Vec<u8> {
+    let mut lines = Vec::with_capacity(bytes.len());
+    for line in bytes.split_inclusive(|&byte| byte == b'\n') {
+        let unnamed = serde_json::from_slice::<serde_json::Value>(line)
+            .ok()
+            .and_then(|mut value| unname(node, &mut value).then_some(value))
+            .and_then(|value| serde_json::to_vec(&value).ok());
+        match unnamed {
+            Some(text) => {
+                lines.extend_from_slice(&text);
+                lines.push(b'\n');
+            }
+            None => lines.extend_from_slice(line),
+        }
+    }
+    lines
+}
+
+/// The key a deed of a session elsewhere is kept under in a body's
+/// records: its digest, naming neither that session nor the deed by it
+/// (§28.47).
+fn elsewhere(key: &str) -> String {
+    use sha2::Digest as _;
+    let digest: String = sha2::Sha256::digest(key.as_bytes()).iter().take(16).map(|byte| format!("{byte:02x}")).collect();
+    format!("elsewhere {digest}")
+}
+
+/// Takes out of `value`, at any depth, the conversation and turn of each
+/// call made for a conversation an account was assisted in here; whether
+/// it took any.
+fn unname(node: &Node, value: &mut serde_json::Value) -> bool {
+    match value {
+        serde_json::Value::Object(map) => {
+            let assisted = map
+                .get("conversation")
+                .and_then(serde_json::Value::as_str)
+                .and_then(|id| id.parse::<fastctx_types::ResidentId>().ok())
+                .is_some_and(|id| match crate::assists::host::kept(node, &id) {
+                    Ok(Some(assisted)) => assisted,
+                    // Its record gone with the conversation: whether it was
+                    // assisted is not known — who holds this machine now
+                    // says nothing of then — so it is not named (§28.47).
+                    _ => true,
+                });
+            if assisted {
+                map.remove("conversation");
+                map.remove("turn");
+            }
+            map.values_mut().fold(assisted, |changed, inner| unname(node, inner) || changed)
+        }
+        serde_json::Value::Array(items) => items.iter_mut().fold(false, |changed, item| unname(node, item) || changed),
+        _ => false,
+    }
 }
 

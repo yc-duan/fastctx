@@ -1,7 +1,7 @@
 //! Give the native CLI a retained prefix without editing the source transcript.
 
 use std::collections::HashSet;
-use std::io::{BufRead, Read, Write};
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
 use fastctx_hosts::claude::{exchange, transcript};
@@ -32,10 +32,19 @@ pub(super) fn prefix(
     let mut output = fastctx_platform::disk::open_with(std::fs::OpenOptions::new().create_new(true).write(true), &path)
         .map_err(failure)?;
     let mut input = std::io::BufReader::new(input.take(length));
-    let (mut row, mut offset, mut boundary) = (Vec::new(), 0_u64, None);
-    while input.read_until(b'\n', &mut row).map_err(failure)? != 0 {
+    let (mut row, mut offset, mut boundary, mut number) = (Vec::new(), 0_u64, None, 0);
+    // A line past the bound World reads ends the fork here: the source is
+    // not copied in part (design §28.49).
+    while {
+        number += 1;
+        fastctx_hosts::bounded::read_line(&mut input, &mut row, number).map_err(failure)? != 0
+    } {
         output.write_all(&row).map_err(failure)?;
         offset += row.len() as u64;
+        if fastctx_hosts::bounded::too_many_values(&row) {
+            let why = format!("holds more than {} values", fastctx_hosts::bounded::VALUES_MOST);
+            return Err(failure(fastctx_hosts::bounded::refused(number, &why)));
+        }
         if let Ok(value) = serde_json::from_slice::<Value>(&row)
             && value["uuid"] == anchor
             && value["isSidechain"] != true

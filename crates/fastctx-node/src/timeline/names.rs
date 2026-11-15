@@ -35,37 +35,78 @@ fn named(happened: &Happened) -> Option<String> {
     }
 }
 
+/// What names `event` whatever its moment, where something does: the item,
+/// words or turn it is, or the response a usage is of (`identities`).
+pub(crate) fn key(event: &SessionEvent) -> Option<String> {
+    super::identity::name(event).or_else(|| named(&event.happened))
+}
+
+/// What `event` is known by where a record stopped short (§28.49) keeps the
+/// timeline's own: its name (`key`), else its moment and kind, as
+/// `identities` knows it but for the order among events alike.
+pub(crate) fn frozen(event: &SessionEvent) -> String {
+    key(event).unwrap_or_else(|| format!("moment/{}/{}", event.at.as_nanosecond(), kind(&event.happened)))
+}
+
 /// The identity of each event of `history`, in its order.
 pub(super) fn identities(history: &[SessionEvent]) -> Vec<Vec<u8>> {
-    let mut seen: HashMap<[u8; 32], u32> = HashMap::new();
-    history
-        .iter()
-        .map(|event| {
+    let mut identities = Identities::default();
+    history.iter().map(|event| identities.next(event).to_vec()).collect()
+}
+
+/// The identities of a history's events handed one at a time, in its order
+/// (`identities`): of what came before, only how many were alike is kept.
+#[derive(Default)]
+pub(super) struct Identities {
+    seen: HashMap<[u8; 32], u32>,
+}
+
+impl Identities {
+    /// The identity of `event`, the next of the history.
+    pub(super) fn next(&mut self, event: &SessionEvent) -> [u8; 32] {
+        let base = base(event);
+        let before = self.seen.entry(base).or_insert(0);
+        let identity = again(base, *before);
+        *before += 1;
+        identity
+    }
+}
+
+/// What `event` is known by before those alike that came before it are
+/// counted (`again`): what names it (`key`), else its moment and kind.
+pub(super) fn base(event: &SessionEvent) -> [u8; 32] {
+    match super::identity::name(event).or_else(|| named(&event.happened)) {
+        Some(name) => named_base(&name),
+        None => {
             let mut hasher = Sha256::new();
             hasher.update(b"fastctx-timeline/2");
-            match super::identity::name(event).or_else(|| named(&event.happened)) {
-                Some(name) => {
-                    hasher.update(b"named");
-                    hasher.update(name.as_bytes());
-                }
-                None => {
-                    hasher.update(b"moment");
-                    hasher.update(event.at.as_nanosecond().to_le_bytes());
-                    hasher.update(kind(&event.happened).as_bytes());
-                }
-            }
-            let named: [u8; 32] = hasher.finalize().into();
-            let before = seen.entry(named).or_insert(0);
-            let identity = if *before == 0 {
-                named
-            } else {
-                let mut again = Sha256::new();
-                again.update(named);
-                again.update(before.to_le_bytes());
-                again.finalize().into()
-            };
-            *before += 1;
-            identity.to_vec()
-        })
-        .collect()
+            hasher.update(b"moment");
+            hasher.update(event.at.as_nanosecond().to_le_bytes());
+            hasher.update(kind(&event.happened).as_bytes());
+            hasher.finalize().into()
+        }
+    }
+}
+
+/// What an event `name` names is known by (`base`), before those alike are
+/// counted: the item a host's call finished is, `item/{call}`, say.
+pub(super) fn named_base(name: &str) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    hasher.update(b"fastctx-timeline/2");
+    hasher.update(b"named");
+    hasher.update(name.as_bytes());
+    hasher.finalize().into()
+}
+
+/// The identity of an event known by `base`, `before` events of the history
+/// known by it before it: the first, by its base; each after, by its base
+/// and how many came before.
+pub(super) fn again(base: [u8; 32], before: u32) -> [u8; 32] {
+    if before == 0 {
+        return base;
+    }
+    let mut again = Sha256::new();
+    again.update(base);
+    again.update(before.to_le_bytes());
+    again.finalize().into()
 }

@@ -371,12 +371,31 @@ pub(super) fn retry_untaken(
 /// a later line was written before `since`. A row damaged long ago therefore
 /// does not make every later wake of the session uncertain.
 fn submitted_since(path: &std::path::Path, since: jiff::Timestamp) -> std::io::Result<bool> {
-    use std::io::BufRead as _;
     let since = since.as_millisecond();
     let mut unreadable = false;
-    for line in std::io::BufReader::new(fastctx_platform::disk::open(path)?).split(b'\n') {
-        let line = line?;
+    let mut reader = std::io::BufReader::new(fastctx_platform::disk::open(path)?);
+    let mut line = Vec::new();
+    loop {
+        line.clear();
+        // A line past the bound World reads is one that cannot be read: it
+        // may hold an accepted prompt (design §28.49). Gone over to its end,
+        // and no further — the next line is read as any other.
+        match fastctx_hosts::bounded::read_bounded(&mut reader, &mut line)? {
+            fastctx_hosts::bounded::Read::Line(0) => break,
+            fastctx_hosts::bounded::Read::Line(_) => {}
+            fastctx_hosts::bounded::Read::Refused { ended } => {
+                if !ended {
+                    fastctx_hosts::bounded::skip_line(&mut reader)?;
+                }
+                unreadable = true;
+                continue;
+            }
+        }
         if line.iter().all(u8::is_ascii_whitespace) {
+            continue;
+        }
+        if fastctx_hosts::bounded::too_many_values(&line) {
+            unreadable = true;
             continue;
         }
         let Ok(entry) = serde_json::from_slice::<serde_json::Value>(&line) else {

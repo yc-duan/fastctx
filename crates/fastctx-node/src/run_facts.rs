@@ -32,7 +32,7 @@ pub(crate) mod updates;
 pub(crate) mod visits;
 pub(crate) mod writing;
 pub(crate) use steps::tell as tell_step;
-pub(crate) use storage::{evidence, job_updates, observations, pending_machines, stamp};
+pub(crate) use storage::{changed_since, evidence, job_updates, observations, pending_machines, stamp, version};
 mod acceptance;
 mod asynchronous;
 pub(crate) use asynchronous::{begin_for, failed_for, keep_for, keep_reply, legacy_reply, receive, record_failure};
@@ -116,6 +116,16 @@ pub(crate) fn assemble(reply: &RunReply, record: &Path) -> io::Result<RunFacts> 
         notes,
         steps,
     })
+}
+
+/// Whether `event` is a host's call of World's `run`, which `attach` gives
+/// its run's facts.
+pub(crate) fn tells_of_a_run(event: &SessionEvent) -> bool {
+    let (Happened::Began { item, .. } | Happened::Updated { item, .. } | Happened::Finished { item, .. }) = &event.happened else {
+        return false;
+    };
+    let What::Tool(tool) = &item.what else { return false };
+    tool.name == "run" && tool.server.as_deref().is_some_and(|server| server == "fastctx" || server.ends_with("_fastctx"))
 }
 
 pub(crate) fn attach(directory: &ConversationDir, event: &mut SessionEvent) -> io::Result<()> {

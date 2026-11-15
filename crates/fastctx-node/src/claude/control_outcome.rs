@@ -48,14 +48,8 @@ impl Evidence {
                     let mut reader = BufReader::new(fastctx_platform::disk::open(&path)?);
                     let mut parent = None;
                     let mut offset = 0;
-                    let mut line = String::new();
-                    loop {
-                        line.clear();
-                        let size = reader.read_line(&mut line)?;
-                        if size == 0 || !line.ends_with('\n') {
-                            break;
-                        }
-                        let row: Value = serde_json::from_str(&line).map_err(io::Error::other)?;
+                    let (mut line, mut number) = (Vec::new(), 0);
+                    while let Some((row, size)) = next_row(&mut reader, &mut line, &mut number)? {
                         if row["isSidechain"] != true
                             && row.get("agentId").is_none_or(Value::is_null)
                             && matches!(row["type"].as_str(), Some("user" | "assistant" | "attachment" | "system"))
@@ -94,14 +88,12 @@ impl Evidence {
         }
         file.seek(SeekFrom::Start(boundary.offset))?;
         let mut reader = BufReader::new(file);
-        let mut line = String::new();
+        let (mut line, mut number) = (Vec::new(), 0);
         let mut compacted = None;
         loop {
-            line.clear();
-            if reader.read_line(&mut line)? == 0 || !line.ends_with('\n') {
+            let Some((row, _)) = next_row(&mut reader, &mut line, &mut number)? else {
                 return Ok(false);
-            }
-            let row: Value = serde_json::from_str(&line).map_err(io::Error::other)?;
+            };
             if row["type"] == "system"
                 && row["subtype"] == "compact_boundary"
                 && row["logicalParentUuid"].as_str() == Some(parent)
@@ -172,13 +164,8 @@ impl Evidence {
         file.seek(SeekFrom::Start(boundary.offset))?;
         let mut reader = BufReader::new(file);
         let mut title = None;
-        let mut line = String::new();
-        loop {
-            line.clear();
-            if reader.read_line(&mut line)? == 0 || !line.ends_with('\n') {
-                break;
-            }
-            let row: Value = serde_json::from_str(&line).map_err(io::Error::other)?;
+        let (mut line, mut number) = (Vec::new(), 0);
+        while let Some((row, _)) = next_row(&mut reader, &mut line, &mut number)? {
             if row["type"] == "custom-title" {
                 title = row["customTitle"].as_str().map(str::to_owned);
             }
@@ -242,4 +229,23 @@ pub(super) fn done() -> Value {
 
 pub(super) fn unknown(reason: &str) -> Failure {
     Failure::control_uncertain(format!("{reason}; the control's outcome is unknown and it will not be repeated"))
+}
+
+/// The next whole line of a host record and its bytes, read within what
+/// World reads of a line (design §28.49): none at the record's end or at a
+/// last line not yet whole; an error for one larger, as for any line that
+/// cannot be read — what judges a control by the record fails there.
+fn next_row(reader: &mut impl BufRead, line: &mut Vec<u8>, number: &mut usize) -> io::Result<Option<(Value, usize)>> {
+    line.clear();
+    *number += 1;
+    let size = fastctx_hosts::bounded::read_line(reader, line, *number)?;
+    if size == 0 || line.last() != Some(&b'\n') {
+        return Ok(None);
+    }
+    if fastctx_hosts::bounded::too_many_values(line) {
+        let why = format!("holds more than {} values", fastctx_hosts::bounded::VALUES_MOST);
+        return Err(fastctx_hosts::bounded::refused(*number, &why));
+    }
+    let row = serde_json::from_slice(line).map_err(io::Error::other)?;
+    Ok(Some((row, size)))
 }

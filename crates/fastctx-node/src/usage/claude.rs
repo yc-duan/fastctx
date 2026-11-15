@@ -229,7 +229,7 @@ fn divide(total: Usd, steps: &[Step], id: &ResidentId, about: &About, at: Timest
             Step::Current { usage, model, turn, agent, effort, timing, outcome, phase } => (
                 usage.as_ref().map_or_else(|| model.clone(), |u| u.model.clone()),
                 Some(Detail {
-                    conversation: id.clone(),
+                    conversation: Some(id.clone()),
                     acting: about.acting.clone(),
                     turn: Some(turn.clone()),
                     source: if agent.is_some() { CallSource::Agent } else { CallSource::Main },
@@ -257,7 +257,7 @@ fn divide(total: Usd, steps: &[Step], id: &ResidentId, about: &About, at: Timest
             tokens: Tokens::default(),
             kinds: Some(KindsUsd { input: total, ..Default::default() }),
             call: Some(Detail {
-                conversation: id.clone(),
+                conversation: Some(id.clone()),
                 acting: about.acting.clone(),
                 turn: None,
                 source: CallSource::Background,

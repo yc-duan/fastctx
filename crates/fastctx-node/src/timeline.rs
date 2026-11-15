@@ -27,13 +27,20 @@ pub(crate) mod words;
 pub(crate) use assets::{checkpoint_of, scope_of};
 pub(crate) use attachments::placed_here as attached;
 pub(crate) use identity::likeness;
-mod names;
+pub(crate) mod names;
 mod order;
 mod preview;
 pub(crate) mod reads;
 mod serial;
+pub(crate) mod spill;
+pub(crate) mod viewed;
+pub(crate) mod world;
 pub(crate) mod born_shared;
 mod tail;
+#[cfg(feature = "bench")]
+pub use tail::bench;
+pub(crate) use assets::Early;
+pub(crate) use tail::told_again;
 pub(crate) mod timers;
 
 use fastctx_content::StreamKey;
@@ -62,10 +69,9 @@ static BUILT: LazyLock<Mutex<HashMap<ResidentId, Instant>>> = LazyLock::new(Mute
 /// again until it reads whole, at most this many times (AA06).
 static UNREAD: LazyLock<Mutex<HashMap<ResidentId, u32>>> = LazyLock::new(Mutex::default);
 const UNREAD_TRIES: u32 = 20;
-/// How long after the node starts the conversations active lately are
-/// looked at again, and how lately (AA09).
+/// How long after the node starts the conversations are looked at again
+/// (AA09).
 const RESCAN_AFTER: Duration = Duration::from_secs(60);
-const RESCAN_ACTIVE: Duration = Duration::from_secs(24 * 60 * 60);
 
 /// The scope of what the content database keeps of a conversation.
 pub(crate) fn scope(conversation: &str) -> String {
@@ -140,8 +146,11 @@ fn produce(node: &std::sync::Weak<crate::Node>) {
         loop {
             watched.notify.notified().await;
             let Some(node) = node.upgrade() else { return };
+            // The asset timeline only: the content database's is made
+            // again for a reader that asks for it (`wanted_content`), not
+            // read whole as each history grows (design §28.53).
             for resident in watched.take() {
-                wanted(&node, &resident);
+                tail::wanted(&node, &resident);
                 later::grew(&node, &resident);
             }
         }
@@ -156,7 +165,6 @@ fn rescan(node: &std::sync::Weak<crate::Node>) {
     fastctx_platform::task::spawn(async move {
         tokio::time::sleep(RESCAN_AFTER).await;
         let Some(node) = node.upgrade() else { return };
-        let lately = jiff::Timestamp::now() - jiff::SignedDuration::from_secs(RESCAN_ACTIVE.as_secs() as i64);
         // Archived ones are brought too — their metadata and words, whose
         // job may not have been written as the node stopped (J06) — and
         // their histories not checked.
@@ -165,27 +173,17 @@ fn rescan(node: &std::sync::Weak<crate::Node>) {
         for resident in &archived {
             tail::wanted(&node, resident);
         }
-        let here: Vec<(ResidentId, bool)> = node
-            .residents
-            .everyone()
-            .filter(|record| record.here && record.removed.is_none())
-            .map(|record| {
-                let active = record.now.as_ref().is_some_and(|now| now.since >= lately);
-                (record.id, active)
-            })
-            .collect();
-        for (resident, active) in &here {
-            // The content timeline is read whole: only the conversations of
-            // late. The asset timeline of each, whose version tells at once
-            // whether anything is to do (BB06).
-            if *active {
-                wanted(&node, resident);
-            } else {
-                tail::wanted(&node, resident);
-            }
-            // Each history is checked whole once each time the node starts
-            // (§10, R4).
-            tail::check_wanted(&node, resident);
+        let here: Vec<ResidentId> =
+            node.residents.everyone().filter(|record| record.here && record.removed.is_none()).map(|record| record.id).collect();
+        // The asset timeline of each, whose version — what its history is
+        // read from, as cheaply as it can be told — tells at once whether
+        // anything is to do (BB06): one unchanged is not read, one changed
+        // read on from where it was. None is checked whole for the node
+        // having started (design §28.53: a change that hid itself from its
+        // version is found by the week's check), nor the content database's
+        // made again unless a reader asks.
+        for resident in &here {
+            tail::wanted(&node, resident);
         }
         drop(here);
         // And each one not checked for a week, every day after.
@@ -211,6 +209,16 @@ async fn run(node: &Arc<crate::Node>, resident: &ResidentId) -> Outcome {
         && since < APART
     {
         return Outcome::Again { after: APART - since };
+    }
+    // Read from the asset library by now, the content database's timeline
+    // is made for no reader: one asked for before it was is not made, nor
+    // its history read whole for it (design §28.52 52-1). A lab makes it
+    // all the same (`api::here`).
+    let assets = std::env::var_os("FASTCTX_LAB_CONTENT_TIMELINE").is_none()
+        && fastctx_platform::roles::in_place("choosing a timeline", || reads::from_assets(node, resident)).unwrap_or(false);
+    if assets {
+        UNREAD.lock().expect("unread timelines").remove(resident);
+        return Outcome::Done;
     }
     match build::build(node, resident).await {
         Ok(built) => {
@@ -238,15 +246,6 @@ async fn run(node: &Arc<crate::Node>, resident: &ResidentId) -> Outcome {
         }
         Err(failure) => Outcome::Failed(failure.message),
     }
-}
-
-/// Asks for a conversation's timeline to be brought to its history: what a
-/// reader of it does, so a conversation no one reads is not read whole for
-/// nothing. Asked again while it waits or runs, it is one job.
-pub(crate) fn wanted(node: &Arc<crate::Node>, resident: &ResidentId) {
-    // The timeline in the asset library is brought along, apart (`tail`).
-    tail::wanted(node, resident);
-    wanted_content(node, resident);
 }
 
 /// Asks for a conversation's metadata and where the user's words to it stand

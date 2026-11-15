@@ -20,6 +20,8 @@ required-features = ["storage-drill"]
 [features]
 storage-drill = []
 timeline-drill = []
+# The timeline's writing, for fastctx-bench; nothing of the node changes with it.
+bench = []
 
 [dependencies]
 tempfile = "3"

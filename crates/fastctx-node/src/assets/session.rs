@@ -19,7 +19,7 @@ use fastctx_content::v2::{EpochFact, Header, Holder, Imported, Library, Network,
 use fastctx_net::link::Link;
 use fastctx_net::sign::PublicKey;
 use fastctx_types::access::HubId;
-use fastctx_types::assets::{self as wire, Bytes, Readers, Reply, Request, StreamClass, VERSION, checkpoint_statement};
+use fastctx_types::assets::{self as wire, Bytes, OLDEST, Readers, Reply, Request, StreamClass, checkpoint_statement};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -173,7 +173,7 @@ async fn run(node: std::sync::Weak<Node>, hub: HubId, wake: Arc<tokio::sync::Not
                 }
                 return;
             }
-            Ok(Some((link, network))) if link.view().asset_sync >= VERSION => {
+            Ok(Some((link, network))) if link.view().asset_sync >= OLDEST => {
                 // A pass that goes on past its time is told (`stuck`), with
                 // what in it waits.
                 let _passing = fastctx_platform::doing::waiting_outside(format!("a pass with {hub}"), PASSED_WITHIN);
@@ -591,6 +591,42 @@ async fn cleared(
         node.log.line(format_args!("whole access to this machine through {hub} waits: {why}"));
         return Ok(());
     }
+    // Nor while a reading is kept on disk to be placed (design §28.51): none
+    // begins until this is said — neither its work store nor its objects put
+    // as it is read — and before anything is purged, every one under way has
+    // ended, its objects put and its leases let go; what one left behind is
+    // taken away here, and while it cannot be, this waits.
+    let _held_off = crate::timeline::spill::hold_off();
+    if crate::timeline::spill::kept() > 0 {
+        node.log.line(format_args!("whole access to this machine through {hub} waits: a reading is kept on disk"));
+        return Ok(());
+    }
+    // Nor the histories cut for viewers from what it held (design §28.52
+    // 52-1): read no more from now, each goes as its viewer is done; until
+    // none is left, this waits.
+    crate::cut_history::advance();
+    node.cut_histories.clear();
+    let world = node.world.path().to_path_buf();
+    match fastctx_platform::task::spawn_blocking(move || crate::cut_history::cleared(&world)).await {
+        Ok(Ok(true)) => {}
+        Ok(Ok(false)) => {
+            node.log.line(format_args!("whole access to this machine through {hub} waits: a history cut for a viewer is still read"));
+            return Ok(());
+        }
+        Ok(Err(error)) => {
+            node.log.line(format_args!("whole access to this machine through {hub} waits: a history cut for a viewer is not taken away: {error}"));
+            return Ok(());
+        }
+        Err(error) => {
+            node.log.line(format_args!("whole access to this machine through {hub} waits: {error}"));
+            return Ok(());
+        }
+    }
+    let left = assets.spill_dir();
+    if let Err(error) = fastctx_platform::task::blocking(move || crate::timeline::spill::clear(&left)).await {
+        node.log.line(format_args!("whole access to this machine through {hub} waits: what a reading kept on disk left is not taken away: {error}"));
+        return Ok(());
+    }
     crate::replicas::publication::prune(node).await?;
     // What ended is purged whole, and the objects only it held go now, not
     // after the grace: the new holder finds none of it on the disk.
@@ -943,7 +979,7 @@ async fn open(assets: &Assets, hub: &HubId, link: &Arc<Link>, session: u64) -> R
         })
         .collect();
     let request = Request::Open {
-        version: VERSION,
+        version: link.asset_version(),
         seen: assets.seen(hub),
         reported: wired,
         pinned: assets.pinned(hub),
@@ -1248,9 +1284,92 @@ async fn upload(
                     return Err(format!("{GOES_ON}{stream} of {scope} going up from {from}"));
                 }
                 gone += frames.len();
+                // Frames the control connection carries go up several in one
+                // take where the hub speaks it (E2): it writes them with one
+                // disk synchronization. One that wants objects or proof goes
+                // again alone, as one travelling apart always does.
+                let many = link.asset_version() >= wire::MANY;
+                let mut queue: std::collections::VecDeque<(Header, wire::Frame, bool)> = std::collections::VecDeque::new();
+                // A frame whose header does not read ends the page there: those
+                // before it go up first, as one at a time they did.
+                let mut unreadable = None;
                 for frame in frames {
-                    let header = Header::decode(&frame.header).map_err(|error| error.to_string())?;
-                    let frame = wire::Frame::whole(frame.header, frame.signature, frame.body);
+                    match Header::decode(&frame.header) {
+                        Ok(header) => queue.push_back((header, wire::Frame::whole(frame.header, frame.signature, frame.body), false)),
+                        Err(error) => {
+                            unreadable = Some(error.to_string());
+                            break;
+                        }
+                    }
+                }
+                while let Some((header, frame, alone)) = queue.pop_front() {
+                    if many && !alone && !frame.too_large() {
+                        let mut run = vec![(header, frame)];
+                        let mut bytes = run[0].1.body.0.len();
+                        while run.len() < wire::FRAMES_A_TAKE
+                            && let Some((_, next, false)) = queue.front()
+                            && !next.too_large()
+                            && bytes + next.body.0.len() <= wire::MANY_BYTES
+                        {
+                            bytes += next.body.0.len();
+                            let (header, frame, _) = queue.pop_front().expect("looked at");
+                            run.push((header, frame));
+                        }
+                        if run.len() > 1 {
+                            let request =
+                                Request::TakeMany { scope: scope.to_string(), frames: run.iter().map(|(_, frame)| frame.clone()).collect() };
+                            let received = match ask(assets, link, request).await {
+                                Ok(Reply::ReceivedMany { received }) => received,
+                                Ok(_) => return Err("the hub did not take the frames".into()),
+                                // Refused whole — its first frame did not pass:
+                                // that one goes alone, and hears why as ever.
+                                Err(why) if why.starts_with(REVOKED) => return Err(why),
+                                Err(_) => {
+                                    let mut run = run.into_iter();
+                                    let (header, frame) = run.next().expect("a run of frames");
+                                    for (header, frame) in run.rev() {
+                                        queue.push_front((header, frame, false));
+                                    }
+                                    queue.push_front((header, frame, true));
+                                    continue;
+                                }
+                            };
+                            if received.is_empty() || received.len() > run.len() {
+                                return Err("the hub's word on the frames is not one for each".into());
+                            }
+                            let mut rest = run.into_iter();
+                            let mut back = Vec::new();
+                            for received in received {
+                                let (header, frame) = rest.next().expect("one word for each");
+                                match went(assets, hub, key, session, scope, &stream, &header, received).await? {
+                                    Went::On => from = header.first + u64::from(header.count),
+                                    Went::Refused(cut) => {
+                                        refused(assets, hub, link, key, scope, &stream, cut).await?;
+                                        return Ok(());
+                                    }
+                                    Went::Gap(wanted) => {
+                                        from = wanted;
+                                        queue.clear();
+                                        rest = Vec::new().into_iter();
+                                        break;
+                                    }
+                                    Went::Wants => {
+                                        back.push((header, frame, true));
+                                        break;
+                                    }
+                                }
+                            }
+                            // What the hub did not take goes again, in order.
+                            back.extend(rest.map(|(header, frame)| (header, frame, false)));
+                            for again in back.into_iter().rev() {
+                                queue.push_front(again);
+                            }
+                            continue;
+                        }
+                        let (single_header, single_frame) = run.pop().expect("one frame");
+                        queue.push_front((single_header, single_frame, true));
+                        continue;
+                    }
                     // Objects the hub has not, or wants proved, go first; then
                     // the frame again, naming what this machine proved.
                     let mut proven: Vec<Bytes> = Vec::new();
@@ -1272,39 +1391,22 @@ async fn upload(
                         }
                         proven.extend(super::objects::put(library, link, scope, objects, prove).await?);
                     };
-                    let receipt = |said: Said, word: Bytes| Receipt {
-                        stream: stream.clone(),
-                        epoch: header.epoch,
-                        first: header.first,
-                        digest: header.digest,
-                        said,
-                        signature: word.0,
-                    };
-                    match received {
-                        wire::Received::Applied { change, prefix, word, .. } => {
-                            fastctx_platform::lab::die_at("receipt", &stream);
-                            let said = Said::Applied { change, prefix: array(&prefix, "a receipt's prefix")? };
-                            keep(assets, hub, key, session, scope, receipt(said, word)).await?;
-                        }
-                        wire::Received::Parked { sequence, accumulated, word } => {
-                            let said =
-                                Said::Parked { sequence, accumulated: array(&accumulated, "a receipt's accumulator")? };
-                            keep(assets, hub, key, session, scope, receipt(said, word)).await?;
-                        }
-                        wire::Received::Rejected { from: cut, word, .. } => {
-                            keep(assets, hub, key, session, scope, receipt(Said::Rejected { from: cut }, word)).await?;
+                    match went(assets, hub, key, session, scope, &stream, &header, received).await? {
+                        Went::On => {}
+                        Went::Refused(cut) => {
                             refused(assets, hub, link, key, scope, &stream, cut).await?;
                             return Ok(());
                         }
-                        wire::Received::Gap { from: wanted, .. } => {
+                        Went::Gap(wanted) => {
                             from = wanted;
                             continue;
                         }
-                        wire::Received::Missing { .. } | wire::Received::Prove { .. } => {
-                            return Err(format!("{stream} of {scope}: the hub still wants objects after they went"));
-                        }
+                        Went::Wants => return Err(format!("{stream} of {scope}: the hub still wants objects after they went")),
                     }
                     from = header.first + u64::from(header.count);
+                }
+                if let Some(why) = unreadable {
+                    return Err(format!("{stream} of {scope}: a frame's header does not read: {why}"));
                 }
             }
             Ok(())
@@ -1318,6 +1420,60 @@ async fn upload(
         }
     }
     failed.map_or(Ok(()), Err)
+}
+
+/// What became of a frame of a stream that went up, by the hub's word on it.
+enum Went {
+    /// Applied or parked, its receipt kept: on to the next.
+    On,
+    /// Refused, the hub's word kept: the stream goes back before `cut`.
+    Refused(u64),
+    /// The hub wants the stream from the frame at this sequence.
+    Gap(u64),
+    /// The hub wants objects first, or them proved.
+    Wants,
+}
+
+/// Keeps the hub's word `received` on the frame `header` of `stream`, as a
+/// receipt where it gives one, and says what became of the frame.
+#[allow(clippy::too_many_arguments)]
+async fn went(
+    assets: &Assets,
+    hub: &HubId,
+    key: &PublicKey,
+    session: u64,
+    scope: &str,
+    stream: &str,
+    header: &Header,
+    received: wire::Received,
+) -> Result<Went, String> {
+    let receipt = |said: Said, word: Bytes| Receipt {
+        stream: stream.to_string(),
+        epoch: header.epoch,
+        first: header.first,
+        digest: header.digest,
+        said,
+        signature: word.0,
+    };
+    match received {
+        wire::Received::Applied { change, prefix, word, .. } => {
+            fastctx_platform::lab::die_at("receipt", stream);
+            let said = Said::Applied { change, prefix: array(&prefix, "a receipt's prefix")? };
+            keep(assets, hub, key, session, scope, receipt(said, word)).await?;
+            Ok(Went::On)
+        }
+        wire::Received::Parked { sequence, accumulated, word } => {
+            let said = Said::Parked { sequence, accumulated: array(&accumulated, "a receipt's accumulator")? };
+            keep(assets, hub, key, session, scope, receipt(said, word)).await?;
+            Ok(Went::On)
+        }
+        wire::Received::Rejected { from: cut, word, .. } => {
+            keep(assets, hub, key, session, scope, receipt(Said::Rejected { from: cut }, word)).await?;
+            Ok(Went::Refused(cut))
+        }
+        wire::Received::Gap { from: wanted, .. } => Ok(Went::Gap(wanted)),
+        wire::Received::Missing { .. } | wire::Received::Prove { .. } => Ok(Went::Wants),
+    }
 }
 
 /// Keeps the hub's word on a frame, when it is the pinned key's.

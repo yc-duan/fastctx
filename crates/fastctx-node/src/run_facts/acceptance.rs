@@ -73,7 +73,7 @@ pub(super) fn receive_at(
                 sql::visits(db, &scope, &saved.call_id, &saved.visited)?;
                 let changed = db.total_changes() != before;
                 if changed {
-                    sql::changed(db, &scope)?;
+                    sql::changed(db, &scope, &saved.call_id)?;
                 }
                 if !changed {
                     return Ok(None);
@@ -163,7 +163,7 @@ pub(super) fn keep_members(
                 sql::steps(db, &scope, &call, &steps)?;
                 sql::visits(db, &scope, &call, &visited)?;
                 if db.total_changes() != before {
-                    sql::changed(db, &scope)?;
+                    sql::changed(db, &scope, &call)?;
                 }
                 Ok(())
             })

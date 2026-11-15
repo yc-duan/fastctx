@@ -70,6 +70,9 @@ pub fn watch_documents<'a>(
         load(node, id, &mut cell).await?;
         drop(cell);
         drop(_reading);
+        // What the last process committed without the disk is on it before
+        // any state is shown (`settling`).
+        super::settling::begun(node).await?;
         let mut state = persistence::read(node, id).await?;
         node.residents.active(id)?;
         failures::apply(node, id, &mut state);
@@ -80,7 +83,8 @@ pub fn watch_documents<'a>(
                 return Err(failure("the document state vector was repeated"));
             }
         }
-        let metadata = state.metadata();
+        let mut metadata = state.metadata();
+        super::settling::shown(node, id, &mut metadata.operations);
         let visible = std::iter::once(&metadata.draft)
             .chain(metadata.queue.iter().chain(&metadata.unobserved).map(|entry| &entry.document))
             .map(|document| document.id.as_str())

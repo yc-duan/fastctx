@@ -176,7 +176,10 @@ impl Prepared {
                 params![self.owner, revision, self.content, i64::try_from(previous).map_err(error)?],
             )?;
             if changed != 1 {
-                return Err(error("the composer changed before its update could commit; read it again"));
+                return Err(Error::with_kind(
+                    fastctx_storage::ErrorKind::Changed,
+                    "the composer changed before its update could commit; read it again",
+                ));
             }
         } else {
             transaction.execute(

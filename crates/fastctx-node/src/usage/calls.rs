@@ -18,7 +18,11 @@ pub(super) const DETAIL_DAYS: i64 = 30;
 /// Ownership remains available after the conversation itself is deleted.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(super) struct Detail {
-    pub conversation: ResidentId,
+    /// None in a body's copy of a call made for a conversation an account
+    /// was assisted in: that conversation is the account's alone
+    /// (`assets::activity::for_body`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub conversation: Option<ResidentId>,
     pub acting: Acting,
     pub turn: Option<String>,
     pub source: CallSource,
@@ -93,7 +97,7 @@ pub(crate) fn calls(
                         timing: detail.timing,
                         outcome: detail.outcome,
                         phase: detail.phase,
-                        conversation: owns.then_some(detail.conversation),
+                        conversation: detail.conversation.filter(|_| owns),
                         turn: if owns { detail.turn } else { None },
                     };
                     // Filtering after redaction cannot be used to discover another conversation.

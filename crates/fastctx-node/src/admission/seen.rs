@@ -258,6 +258,9 @@ pub fn since(node: &Node, looker: Looker, mut reply: SinceReply) -> SinceReply {
         | SinceKind::ResidentMoved { resident, .. }
         | SinceKind::ClaudeRegistered { resident, .. }
         | SinceKind::SubmissionUncertain { resident, .. } => seen(resident),
+        // An ended job's event names the conversation that ran it, which may
+        // be one of another account's elsewhere: seen as that conversation
+        // is (§28.47; the job's record itself is in the machine's book).
         SinceKind::JobEnded { owner: job_owner, account, .. } => owner(node, looker, job_owner, account.as_ref()),
         SinceKind::ColleagueAsked { asker: who, colleague, .. } => seen(who) && other_end(colleague),
         SinceKind::AnswerDelivery { colleague, to, .. } => seen(colleague) && other_end(to),

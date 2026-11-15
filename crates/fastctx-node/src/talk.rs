@@ -31,6 +31,7 @@ use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 mod forwarding;
 mod likeness;
+pub(crate) mod merging;
 pub(crate) mod multiplex;
 pub(crate) mod submission;
 
@@ -143,7 +144,14 @@ pub async fn watch(
         fastctx_platform::task::spawn(async move {
             let _lease = lease;
             let mut views = node.views.subscribe();
-            for piece in pieces.into_iter().chain(told.first()) {
+            for piece in pieces.into_iter().chain(told.first().map(OpeningPiece::Made)) {
+                let piece = match piece.made().await {
+                    Ok(piece) => piece,
+                    Err(failure) => {
+                        let _ = sender.send(Err(failure));
+                        return;
+                    }
+                };
                 if sender.send_wait(Ok(piece), std::time::Duration::from_secs(30)).await.is_err() {
                     return;
                 }
@@ -254,10 +262,27 @@ pub async fn watch(
     Ok(receiver)
 }
 
+/// A piece of an opening: made already, or segments of a history read from
+/// where its cut keeps them as the piece is sent (design §28.52 52-1).
+pub(crate) enum OpeningPiece {
+    Made(Watched),
+    Kept { cut: Arc<crate::cut_history::Kept>, planned: fastctx_net::history::Planned },
+}
+
+impl OpeningPiece {
+    /// The piece, its segments read.
+    pub(crate) async fn made(self) -> Result<Watched, Failure> {
+        match self {
+            OpeningPiece::Made(watched) => Ok(watched),
+            OpeningPiece::Kept { cut, planned } => crate::cut_history::made(cut, planned).await,
+        }
+    }
+}
+
 /// What opening a watch of a resident of this machine hands over first,
 /// the events after it, and whose they are when they go slimmed.
 pub(crate) struct Opening {
-    pub pieces: Vec<Watched>,
+    pub pieces: Vec<OpeningPiece>,
     pub events: Events,
     /// The session, when what follows goes slimmed, its images referred to
     /// where it keeps them.
@@ -278,21 +303,21 @@ async fn opening(
         let lease = crate::composer::watch(node, resident, name).await?;
         let events = node.watchers.watch_composer(resident);
         crate::composer::snapshot(node, resident).await?;
-        let pieces = vec![Watched::History { events: Vec::new() }];
+        let pieces = vec![OpeningPiece::Made(Watched::History { events: Vec::new() })];
         return Ok((Some(lease), Opening { pieces, events, slim: None }));
     }
     if live_only {
         let (events, pending) = subscribe(node, resident)?;
         let mut pieces: Vec<_> =
-            pending.into_iter().filter_map(|event| likeness::watched(event, None, None, true)).collect();
-        pieces.push(Watched::Resumed);
+            pending.into_iter().filter_map(|event| likeness::watched(event, None, None, true)).map(OpeningPiece::Made).collect();
+        pieces.push(OpeningPiece::Made(Watched::Resumed));
         return Ok((None, Opening { pieces, events, slim: None }));
     }
     if let Some(held) = held {
         return Ok((None, crate::held_history::opening(node, resident, held).await?));
     }
     let (history, events) = watch_here(node, resident).await?;
-    Ok((None, Opening { pieces: vec![Watched::History { events: history }], events, slim: None }))
+    Ok((None, Opening { pieces: vec![OpeningPiece::Made(Watched::History { events: history })], events, slim: None }))
 }
 
 /// A live event as a watcher is sent it: slimmed for one that holds the
@@ -309,6 +334,15 @@ pub(crate) fn live(mut event: SessionEvent, slim: Option<&Address>) -> Option<Se
 /// The watch starts before the history is read, so nothing falls between;
 /// what is in both is the watcher's to recognise.
 pub async fn watch_here(node: &Arc<Node>, resident: &ResidentId) -> Result<(Vec<SessionEvent>, Events), Failure> {
+    // Read from the conversation's timeline where it is read here, heard
+    // first (design §28.52 52-1): its sources are not read whole for it.
+    if node.residents.about(resident).is_some_and(|(about, _)| about.world_managed()) {
+        let (events, pending) = requested(node, resident, node.watchers.watch(resident))?;
+        if let Some(mut history) = crate::timeline::viewed::history(node, resident).await? {
+            history.extend(pending);
+            return Ok((history, events));
+        }
+    }
     let read = history_here(node, resident).await?;
     let mut history = read.history;
     history.extend(read.pending);
@@ -329,6 +363,12 @@ pub(crate) struct HistoryRead {
     pub unsettled: bool,
     /// Actual history-read problems, distinct from records still being written.
     pub unavailable: Vec<String>,
+    /// A record of it stopped before a line larger than World reads
+    /// (§28.49): nothing kept of it is taken away by this read, nor written
+    /// again where an event of that record names it (`frozen`, one set for
+    /// each record stopped short).
+    pub refused: bool,
+    pub frozen: Vec<std::collections::HashSet<String>>,
     /// For a read heard apart (`history_apart`): what was under way as its
     /// events began, and the mark of the last event told before them.
     pub snapshots: Vec<Arc<crate::watch::Marked>>,
@@ -386,6 +426,111 @@ pub(crate) async fn history_quietly(node: &Arc<Node>, resident: &ResidentId) -> 
     read_here(node, resident, Hearing::Quiet).await.map_err(|failure| as_deleted(node, resident, failure))
 }
 
+/// What `history_quietly` reads of a Claude resident whose host is read,
+/// kept on disk as it is read (design §28.51 ⑤-4): the World's record as
+/// `read_here` takes it (`recorded`), and the host's history placed in a
+/// work store (`claude::history::hosted_kept`), with the objects of its
+/// events put as they were read (`early`).
+pub(crate) struct HistoryKept {
+    pub(crate) hosted: crate::claude::history::HostedKept,
+    /// The World's record, kept on disk, its names and keys beside it.
+    pub(crate) world: Arc<std::sync::Mutex<crate::timeline::world::World>>,
+    pub(crate) early: Option<crate::timeline::Early>,
+}
+
+/// `history_quietly` of a Claude resident whose host is read, its history
+/// read into `spill` rather than held (`HistoryKept`); none where its host
+/// is not read now (`logins::workbench::reads_host`, asked again here as
+/// `read_here` asks it), for `history_quietly` to read as the World
+/// recorded it.
+pub(crate) async fn history_kept(
+    node: &Arc<Node>,
+    resident: &ResidentId,
+    spill: crate::timeline::spill::Spill,
+    world: crate::timeline::spill::Spill,
+    early: Option<crate::timeline::Early>,
+) -> Result<Option<HistoryKept>, Failure> {
+    read_kept_here(node, resident, spill, world, early).await.map_err(|failure| as_deleted(node, resident, failure))
+}
+
+async fn read_kept_here(
+    node: &Arc<Node>,
+    resident: &ResidentId,
+    spill: crate::timeline::spill::Spill,
+    world: crate::timeline::spill::Spill,
+    early: Option<crate::timeline::Early>,
+) -> Result<Option<HistoryKept>, Failure> {
+    let _doing = fastctx_platform::doing::doing(format!("reading {resident}'s history"));
+    let (about, _) = node.residents.about(resident).ok_or_else(|| crate::forget::gone(node, resident))?;
+    // As `read_here` begins.
+    if !about.world_managed() {
+        return Err(Failure::refused(crate::speech::OWN_SESSION));
+    }
+    if about.host.agent.as_str() != "claude" || !crate::logins::workbench::reads_host(node, &about) {
+        return Ok(None);
+    }
+    let _heard = node.watchers.watch_quietly(resident);
+    let directory = node.world.conversation(resident);
+    let preparing = directory.clone();
+    fastctx_platform::task::spawn_blocking(move || crate::session_record::prepare(&preparing))
+        .await
+        .map_err(|error| Failure::new(error.to_string()))?
+        .map_err(crate::record_migration::failure)?;
+    // The World's record kept on disk as it is read (design §28.51 ⑥-1):
+    // read from its start, the turns a cut took back left out, as
+    // `read_here` leaves them out.
+    let reading = directory.clone();
+    let world = fastctx_platform::task::spawn_blocking(move || crate::timeline::world::World::read(world, &reading, 0, &[]))
+        .await
+        .map_err(|error| Failure::new(error.to_string()))?
+        .map_err(Failure::new)?;
+    let world = Arc::new(std::sync::Mutex::new(world));
+    let (hosted, early) = crate::claude::history::hosted_kept(node, resident, world.clone(), directory, spill, early).await.map_err(Failure::new)?;
+    Ok(Some(HistoryKept { hosted, world, early }))
+}
+
+/// The World's record of a resident's conversation whose host is not read,
+/// as `history_quietly` reads it — as the World recorded it, no turn a cut
+/// took back left out — but kept in `spill` as it is read, not held
+/// (design §28.51 ⑥-4; `World::view_as_recorded` orders it as
+/// `recorded_history` does). None where `read_here` would read its host
+/// now: its workbench open again since it was asked, say.
+pub(crate) async fn recorded_kept(
+    node: &Arc<Node>,
+    resident: &ResidentId,
+    spill: crate::timeline::spill::Spill,
+) -> Result<Option<crate::timeline::world::World>, Failure> {
+    let read = async {
+        let _doing = fastctx_platform::doing::doing(format!("reading {resident}'s history"));
+        let (about, _) = node.residents.about(resident).ok_or_else(|| crate::forget::gone(node, resident))?;
+        // As `read_here` begins.
+        if !about.world_managed() {
+            return Err(Failure::refused(crate::speech::OWN_SESSION));
+        }
+        let _heard = node.watchers.watch_quietly(resident);
+        // As `read_here` decides: a session's host is read where the
+        // workbench is open in its login.
+        let agent = about.host.agent.as_str();
+        if crate::logins::workbench::reads_host(node, &about) && about.session.is_some() && (agent == "codex" || agent == "claude") {
+            return Ok(None);
+        }
+        let directory = node.world.conversation(resident);
+        let world = fastctx_platform::task::spawn_blocking(move || crate::timeline::world::World::read_as_recorded(spill, &directory))
+            .await
+            .map_err(|error| Failure::new(error.to_string()))?
+            .map_err(Failure::new)?;
+        // As `read_here` asks a Codex thread's host for what waits on an
+        // answer once its history is read: its host failing fails it.
+        if let Some(thread) = &about.session
+            && agent == "codex"
+        {
+            drop(node.codex.of(node, &about)?.requests(thread));
+        }
+        Ok(Some(world))
+    };
+    read.await.map_err(|failure| as_deleted(node, resident, failure))
+}
+
 /// A resident's history for a viewer, its events from then on heard apart
 /// from what is under way, with where they begin.
 pub(crate) async fn history_apart(node: &Arc<Node>, resident: &ResidentId) -> Result<HistoryRead, Failure> {
@@ -437,6 +582,8 @@ async fn read_here(node: &Arc<Node>, resident: &ResidentId, hearing: Hearing) ->
     let mut unread = false;
     let mut unsettled = false;
     let mut unavailable = Vec::new();
+    let mut refused = false;
+    let mut frozen = Vec::new();
     // A session the user opened, or one in a login the workbench is closed
     // in, has its host neither started nor read: the conversation reads as
     // the World recorded it.
@@ -479,6 +626,8 @@ async fn read_here(node: &Arc<Node>, resident: &ResidentId, hearing: Hearing) ->
             unread = hosted.unread;
             unsettled = hosted.unsettled;
             unavailable = hosted.unavailable;
+            refused = hosted.refused;
+            frozen = hosted.frozen;
             (recorded, Some(hosted.events))
         }
         _ => (recorded(&directory).await?, None),
@@ -494,7 +643,7 @@ async fn read_here(node: &Arc<Node>, resident: &ResidentId, hearing: Hearing) ->
         }
         _ => Vec::new(),
     };
-    Ok(HistoryRead { history, pending, events, unread, unsettled, unavailable, snapshots, at })
+    Ok(HistoryRead { history, pending, events, unread, unsettled, unavailable, refused, frozen, snapshots, at })
 }
 
 /// The history of `recorded`, what the World kept, and `hosted`, what its
@@ -516,51 +665,93 @@ pub(crate) fn assemble(
         }
     }
     let receipts = crate::attachments::delivered::of(node, resident);
-    let mut history = history(recorded, hosted, agent, &receipts);
-    // A change of history tells a view already open to read again; the
-    // history read here is already what follows it. Kept in a view, an
-    // interface that reads it as news would read again on every event.
-    history.retain(|event| {
-        !matches!(
-            &event.happened,
-            fastctx_types::session::Happened::Changed {
-                change: fastctx_types::session::SessionChange::HistoryChanged
-                    | fastctx_types::session::SessionChange::HistoryCut { .. },
-                ..
-            }
-        )
-    });
+    let mut history = merged(recorded, hosted, agent, &receipts);
     for event in &mut history {
         crate::run_facts::attach(directory, event).map_err(crate::record_migration::failure)?;
     }
     Ok(history)
 }
 
-/// What the World recorded of a conversation after the sequence `after`,
-/// each event with its sequence, the latest sequence, and whether a cut took
-/// turns back among them. From the start, the turns a cut took back are
-/// left out, as `read_here` reads it.
-pub(crate) async fn recorded_after(directory: &ConversationDir, after: u64) -> Result<(Vec<(u64, SessionEvent)>, u64, bool), Failure> {
-    let reading = directory.clone();
-    let (mut recorded, latest) = fastctx_platform::task::spawn_blocking(move || crate::session_record::after(&reading, after))
-        .await
-        .map_err(|error| Failure::new(error.to_string()))?
-        .map_err(crate::record_migration::failure)?;
-    let removed: std::collections::HashSet<_> = recorded
-        .iter()
-        .flat_map(|(_, event)| match &event.happened {
-            fastctx_types::session::Happened::Changed {
-                change: fastctx_types::session::SessionChange::HistoryCut { removed_turns },
-                ..
-            } => removed_turns.clone(),
-            _ => Vec::new(),
-        })
-        .collect();
-    let cut = !removed.is_empty();
-    if after == 0 {
-        recorded.retain(|(_, event)| turn_of(&event.happened).is_none_or(|turn| !removed.contains(turn)));
+/// The history the World's record and the host's make together, as
+/// `assemble` makes it before the conversation's own files add to it.
+pub(crate) fn merged(
+    recorded: Vec<SessionEvent>,
+    hosted: Option<Vec<SessionEvent>>,
+    agent: &str,
+    receipts: &dyn fastctx_types::session::attachments::Receipts,
+) -> Vec<SessionEvent> {
+    let mut history = history(recorded, hosted, agent, receipts);
+    history.retain(|event| !changes_history(event));
+    history
+}
+
+/// Whether `event` tells a change of history: it tells a view already open
+/// to read again, and the history read here is already what follows it.
+/// Kept in a view, an interface that reads it as news would read again on
+/// every event.
+pub(crate) fn changes_history(event: &SessionEvent) -> bool {
+    matches!(
+        &event.happened,
+        fastctx_types::session::Happened::Changed {
+            change: fastctx_types::session::SessionChange::HistoryChanged | fastctx_types::session::SessionChange::HistoryCut { .. },
+            ..
+        }
+    )
+}
+
+/// `assemble` of a history whose host's events are kept on disk (design
+/// §28.51): their keys (`hosted_keys`, named by `names`, the context and
+/// attachments restored as `shown` shows them), each taken by its index
+/// (`hosted`). The World's `recorded` is put among them as `history` puts
+/// it, and the history handed on one event at a time (`each`), each with the
+/// facts of the runs it tells of (where there are the conversation's files
+/// to tell them). Call on a thread that may block.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn assemble_each(
+    directory: Option<&ConversationDir>,
+    agent: &str,
+    recorded: Recorded<'_>,
+    hosted_keys: merging::HostKeys,
+    names: &mut merging::Names,
+    hosted: &mut dyn FnMut(usize) -> Result<SessionEvent, Failure>,
+    each: &mut dyn FnMut(SessionEvent) -> Result<(), Failure>,
+) -> Result<(), Failure> {
+    let mut each = |mut event: SessionEvent| -> Result<(), Failure> {
+        if changes_history(&event) {
+            return Ok(());
+        }
+        if let Some(directory) = directory {
+            crate::run_facts::attach(directory, &mut event).map_err(crate::record_migration::failure)?;
+        }
+        each(event)
+    };
+    let codex = agent == "codex";
+    match recorded {
+        Recorded::Held(recorded) => {
+            let recorded_keys: Vec<merging::Key> = recorded.iter().map(|event| merging::key(event, names)).collect();
+            // Laid out sparsely (design §28.51 ⑤-6): nothing held for each of the
+            // host's events but its time, its key and a few places.
+            let layout = merging::sparse::decide(hosted_keys, &merging::sparse::Held(&recorded_keys), codex).map_err(Failure::new)?;
+            drop(recorded_keys);
+            merging::apply_each(layout.slots(), hosted, recorded, &mut each)
+        }
+        // Its keys kept beside it as the names number them (`World::name`),
+        // its events read back in the order laid out (§28.51 ⑥-1).
+        Recorded::Kept(world) => {
+            let layout = merging::sparse::decide(hosted_keys, &world.keys(), codex).map_err(Failure::new)?;
+            world.apply(layout.slots(), hosted, &mut each, Failure::new)
+        }
     }
-    Ok((recorded, latest, cut))
+}
+
+/// The World's record a merge lays out with the host's events
+/// (`assemble_each`): held, or kept on disk, its view the events merged and
+/// their keys kept beside them (`timeline::world`).
+pub(crate) enum Recorded<'w> {
+    /// Held: as the tests and the bench weigh the store against.
+    #[cfg_attr(not(any(test, feature = "bench")), allow(dead_code))]
+    Held(Vec<SessionEvent>),
+    Kept(&'w crate::timeline::world::World),
 }
 
 /// A session's history: what the World kept of it, and what its host keeps
@@ -586,133 +777,47 @@ fn history(
             _ => None,
         })
         .collect();
-    let mut history: Vec<SessionEvent> = hosted
-        .into_iter()
-        .flat_map(|event| fastctx_types::session::attachments::restore(event, receipts))
-        .filter(|event| match &event.happened {
-            Happened::Heard { message: Some(message), .. } if !message.images.is_empty() => true,
-            Happened::Heard { delivery: Some(_), message: Some(message), .. } if !message.attachments.is_empty() => {
-                true
-            }
-            // Other words the World told are its own record's, except, for
-            // Codex, in a turn the World has no record of sending into. The
-            // World's head note tells them, and in Codex, where the user's
-            // words go in as typed, the id the World gave the message.
-            Happened::Heard { turn, text, message, .. } => {
-                let told = fastctx_hands::told::is_told(text)
-                    || agent == "codex" && message.as_deref().is_some_and(fastctx_hosts::codex::sent_by_world);
-                !(told && (agent != "codex" || turn.as_deref().is_some_and(|turn| sent_turns.contains(turn))))
-            }
-            _ => true,
-        })
-        .collect();
-    // What the host's record holds is the one shown of anything both tell
-    // under one name: a Claude reply seen as it streamed is recorded under
-    // the name its row in Claude Code's file gives it.
-    let held: std::collections::HashSet<(String, String)> = history
-        .iter()
-        .filter_map(|event| match &event.happened {
-            Happened::Finished { turn, item } | Happened::Updated { turn, item } => {
-                Some((turn.clone(), item.id.clone()))
-            }
-            _ => None,
-        })
-        .collect();
-    // A draft recorded before its row was kept (a reply cut short, kept
-    // after its stream ended) is the item that names it as its draft.
-    let drafts: std::collections::HashSet<(String, String)> = recorded
-        .iter()
-        .filter_map(|event| match &event.happened {
-            Happened::Finished { turn, item } => Some((turn.clone(), item.draft.clone()?)),
-            _ => None,
-        })
-        .collect();
-    // The words that open a turn are recorded once the host says the turn
-    // began, by this computer's clock, while the host's record keeps its own:
-    // a quick reply can bear an earlier time than the words it answers. The
-    // first words a turn heard soon after it began open it, whatever the
-    // times say; words sent into it later stand at their own time.
-    let began: std::collections::HashMap<String, jiff::Timestamp> = recorded
-        .iter()
-        .filter_map(|event| match &event.happened {
-            Happened::TurnStarted { turn } => Some((turn.clone(), event.at)),
-            _ => None,
-        })
-        .collect();
-    let mut opened = std::collections::HashSet::new();
-    for mut event in recorded {
-        if let Happened::Finished { turn, item } | Happened::Updated { turn, item } = &event.happened
-            && (held.contains(&(turn.clone(), item.id.clone())) || drafts.contains(&(turn.clone(), item.id.clone())))
-        {
-            continue;
+    let history: Vec<SessionEvent> =
+        hosted.into_iter().flat_map(|event| shown(event, receipts, agent, &|turn| sent_turns.contains(turn))).collect();
+    // The World's record put among the host's events (`merging`): decided on
+    // what each event shows of itself, then laid out.
+    let mut names = merging::Names::default();
+    let hosted_keys: Vec<merging::Key> = history.iter().map(|event| merging::key(event, &mut names)).collect();
+    let recorded_keys: Vec<merging::Key> = recorded.iter().map(|event| merging::key(event, &mut names)).collect();
+    let slots = merging::decide(&hosted_keys, &recorded_keys, agent == "codex");
+    // The host's canonical timeline is kept, including interleaved voice
+    // items and steering input; local facts stand at their source time.
+    merging::apply(slots, history, recorded)
+}
+
+/// What a reader is shown of the host's `event` in a history (`history`):
+/// its attachments as they were delivered, and of words the World told, only
+/// those its own record does not tell. `sent` says whether the World's record
+/// has words it sent into a turn. One event at a time, so that a reading kept
+/// on disk shows each as one held in memory does (design §28.51).
+pub(crate) fn shown(
+    event: SessionEvent,
+    receipts: &dyn fastctx_types::session::attachments::Receipts,
+    agent: &str,
+    sent: &dyn Fn(&str) -> bool,
+) -> Vec<SessionEvent> {
+    use fastctx_types::session::Happened;
+    let mut restored = fastctx_types::session::attachments::restore(event, receipts);
+    restored.retain(|event| match &event.happened {
+        Happened::Heard { message: Some(message), .. } if !message.images.is_empty() => true,
+        Happened::Heard { delivery: Some(_), message: Some(message), .. } if !message.attachments.is_empty() => true,
+        // Other words the World told are its own record's, except, for
+        // Codex, in a turn the World has no record of sending into. The
+        // World's head note tells them, and in Codex, where the user's
+        // words go in as typed, the id the World gave the message.
+        Happened::Heard { turn, text, message, .. } => {
+            let told = fastctx_hands::told::is_told(text)
+                || agent == "codex" && message.as_deref().is_some_and(fastctx_hosts::codex::sent_by_world);
+            !(told && (agent != "codex" || turn.as_deref().is_some_and(sent)))
         }
-        // Native words are reconstructed from the host, including the
-        // stable picture coordinates. Older nodes also recorded them here.
-        if matches!(&event.happened, Happened::Heard { delivery: None, from: None, message: Some(message), .. }
-            if agent == "codex" && message.detail["type"] == "userMessage")
-        {
-            continue;
-        }
-        let same = history.iter().position(|other| match (&event.happened, &other.happened) {
-            (Happened::TurnStarted { turn: a }, Happened::TurnStarted { turn: b })
-            | (Happened::TurnEnded { turn: a, .. }, Happened::TurnEnded { turn: b, .. }) => a == b,
-            (
-                Happened::Heard { turn: a, message: Some(a_message), .. },
-                Happened::Heard { turn: b, message: Some(b_message), .. },
-            ) => a == b && a_message.id == b_message.id,
-            (Happened::Realtime { item: a, complete: ac }, Happened::Realtime { item: b, complete: bc }) => {
-                ac == bc && a["id"] == b["id"] && a["realtimeSessionId"] == b["realtimeSessionId"]
-            }
-            _ => false,
-        });
-        if let Some(index) = same {
-            crate::user_images::merge(&mut event, &history[index]);
-            history[index] = event;
-            continue;
-        }
-        let turn = turn_of(&event.happened);
-        let opening = match (&event.happened, turn) {
-            (Happened::Heard { .. }, Some(turn)) if !opened.contains(turn) => began
-                .get(turn)
-                .is_some_and(|start| event.at.as_millisecond().saturating_sub(start.as_millisecond()) <= OPENING_MS),
-            _ => false,
-        };
-        let first = opening
-            .then(|| {
-                history.iter().position(|other| {
-                    turn == turn_of(&other.happened) && !matches!(other.happened, Happened::TurnStarted { .. })
-                })
-            })
-            .flatten();
-        if let Some(turn) = turn.filter(|_| opening) {
-            opened.insert(turn.to_string());
-        }
-        if let Some(index) = first {
-            history.insert(index, event);
-            continue;
-        }
-        let index = history
-            .iter()
-            .position(|other| {
-                let same_turn = turn.is_some() && turn == turn_of(&other.happened);
-                if same_turn && matches!(other.happened, Happened::TurnEnded { .. }) {
-                    return true;
-                }
-                if same_turn && matches!(event.happened, Happened::TurnStarted { .. }) {
-                    return true;
-                }
-                if matches!(other.happened, Happened::TurnStarted { .. }) && same_turn {
-                    return false;
-                }
-                other.at > event.at
-            })
-            .unwrap_or(history.len());
-        history.insert(index, event);
-    }
-    history.retain(|event| event.happened.in_history());
-    // Preserve the host's canonical timeline, including interleaved voice
-    // items and steering input. Local facts were inserted at their source time.
-    history
+        _ => true,
+    });
+    restored
 }
 
 /// How soon after its turn began words count as the ones that opened it.
@@ -828,10 +933,11 @@ pub async fn serve_watch(
     let mut views = node.views.subscribe();
     let allowed = || crate::admission::seen::resident(node, crate::admission::seen::Looker::Asker(asker), &resident);
     let mut n = 0;
-    let mut next: std::collections::VecDeque<Watched> = pieces.into();
-    next.extend(told.first());
+    let mut next: std::collections::VecDeque<OpeningPiece> = pieces.into();
+    next.extend(told.first().map(OpeningPiece::Made));
     loop {
-        while let Some(watched) = next.pop_front() {
+        while let Some(piece) = next.pop_front() {
+            let watched = piece.made().await?;
             if !allowed() {
                 stream.close().await;
                 return Err(Failure::refused("access to this conversation was withdrawn"));
@@ -871,13 +977,13 @@ pub async fn serve_watch(
                 Ok(Some(event)) => {
                     if (!goal || crate::goals::watch::is_goal(&event)) && crate::goals::visible(node, crate::admission::seen::Looker::Asker(asker), &resident, &event) {
                         let marked = Arc::unwrap_or_clone(event);
-                        next.extend(likeness::watched(marked.event, marked.mark, slim.as_ref(), live_only));
+                        next.extend(likeness::watched(marked.event, marked.mark, slim.as_ref(), live_only).map(OpeningPiece::Made));
                     }
                 },
                 Ok(None) => return ended("this machine stopped telling its events"),
                 Err(error) => { stream.close().await; return Err(Failure::new(error.to_string())); },
             },
-            now = told.changed(node) => next.extend(now),
+            now = told.changed(node) => next.extend(now.map(OpeningPiece::Made)),
             why = stream.ended() => return ended(why.as_deref().unwrap_or("it closed the watch")),
         }
     }

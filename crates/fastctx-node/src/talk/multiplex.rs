@@ -354,7 +354,8 @@ async fn run(
     let _lease = lease;
     let Opening { pieces, mut events, slim } = opened;
     let mut told = Told::new(node, &request.resident, request.now && request.composer.is_none());
-    for watched in pieces.into_iter().chain(told.first()) {
+    for piece in pieces.into_iter().chain(told.first().map(super::OpeningPiece::Made)) {
+        let watched = piece.made().await?;
         flow.deliver(
             link,
             output,

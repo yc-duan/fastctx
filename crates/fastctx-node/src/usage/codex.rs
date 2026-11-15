@@ -77,7 +77,7 @@ pub(super) fn measured(
                 tokens,
                 key: Some(key),
                 call: Some(super::calls::Detail {
-                    conversation: id.clone(),
+                    conversation: Some(id.clone()),
                     acting: about.acting.clone(),
                     turn: counted.turn.or_else(|| turn.clone()),
                     source: if counted.background {

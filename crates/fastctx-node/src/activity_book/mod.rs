@@ -238,8 +238,22 @@ fn row(node: &Node, record: &JobRecord, writes: &[WriteFact], steps: &[fastctx_t
         looked,
         copied,
         touched,
-        sharing: serde_json::to_string(&crate::timeline::born_shared::now(node)).ok(),
+        sharing: serde_json::to_string(&sharing(node, &record.owner)).ok(),
     }
+}
+
+/// What this machine was shared whole as on each network as a deed was
+/// done: none for one done for a conversation an account was assisted in,
+/// whose deeds are that account's alone and never the body's
+/// (`placement-one-rule` 2026-11-10, §29 2.5).
+fn sharing(node: &Node, owner: &JobOwner) -> std::collections::BTreeMap<String, Option<String>> {
+    let assisted = match owner {
+        JobOwner::Resident(address) if node.is_me(&address.machine) => {
+            matches!(crate::assists::host::kept(node, &address.resident), Ok(Some(true)))
+        }
+        _ => false,
+    };
+    if assisted { Default::default() } else { crate::timeline::born_shared::now(node) }
 }
 
 /// Which deed a job is. A job's short name is its conversation's only, and

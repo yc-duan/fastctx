@@ -9,7 +9,8 @@ pub(crate) fn run(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
     let source = Database::open_initialized(&world.path().join("node.sqlite3"), super::SCHEMA, |_| Ok(()))?;
     let target = Database::open_initialized(
         &world.path().join("book.sqlite3"),
-        &format!("{}{}{}", super::SCHEMA, super::SEALS, super::SEALED_ACCOUNTS),
+        // The book's schema as its migrations leave it (`super::open`).
+        &[super::SCHEMA, super::SEALS, super::SEALED_ACCOUNTS, super::SHARING, super::FORGOTTEN].concat(),
         |_| Ok(()),
     )?;
     let service = crate::record_database::register(&world, &source)?;
@@ -166,6 +167,7 @@ fn account_sealed(book: &Database) -> Result<(), Box<dyn std::error::Error>> {
         looked: 0,
         copied: 0,
         touched: Vec::new(),
+        sharing: None,
     };
     let (early, late) = (row(500), row(1500));
     book.write_now(4096, move |db| {

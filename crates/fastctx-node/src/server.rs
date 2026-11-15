@@ -1813,26 +1813,46 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
             users_voice(node, peer)?;
             Box::pin(crate::updates::submission::network(node, hub, account, request)).await.map(Reply::NetworkUpdates)
         }
-        Call::MachineLog { hub, account, before } => {
+        Call::MachineLog { hub, account, before, asset_seals } => {
             users_voice(node, peer)?;
-            let link = crate::world::hub_link(node, Some(&hub))?;
-            match link.machine_log(&account, before).await {
-                Ok(page) => Ok(Reply::MachineLog(page)),
-                // The hub not reached: the changes as the account's records
-                // here hold them (plan 3-5).
-                Err(error) if !matches!(link.status(), fastctx_net::link::Status::Online { .. }) => {
-                    let asking = node.clone();
-                    fastctx_platform::task::spawn_blocking(move || {
-                        crate::timeline::copied_changes::page(&asking, &link, &account, before)
-                    })
-                    .await
-                    .ok()
-                    .flatten()
-                    .map(Reply::MachineLog)
-                    .ok_or_else(|| Failure::new(error))
+            // What the asker reads of the page, as the hub gives this
+            // machine only what it reads: the records of the hub's assets
+            // sealed and opened are not a local tool's of an earlier release.
+            let readable = move |mut page: fastctx_types::machine_log::Page| {
+                if !asset_seals {
+                    page.records.retain(|record| record.action.needs() != fastctx_types::machine_log::Needs::AssetSeals);
                 }
-                Err(error) => Err(Failure::new(error)),
+                page
+            };
+            let link = crate::world::hub_link(node, Some(&hub))?;
+            let mut before = before;
+            // A page left with nothing the asker reads goes on to the next,
+            // at most this many: an earlier release takes an empty page for
+            // the last, and would never ask past it.
+            for _ in 0..64 {
+                let page = match link.machine_log(&account, before).await {
+                    Ok(page) => readable(page),
+                    // The hub not reached: the changes as the account's
+                    // records here hold them (plan 3-5).
+                    Err(error) if !matches!(link.status(), fastctx_net::link::Status::Online { .. }) => {
+                        let (asking, link, account) = (node.clone(), link.clone(), account.clone());
+                        fastctx_platform::task::spawn_blocking(move || {
+                            crate::timeline::copied_changes::page(&asking, &link, &account, before)
+                        })
+                        .await
+                        .ok()
+                        .flatten()
+                        .map(readable)
+                        .ok_or_else(|| Failure::new(error))?
+                    }
+                    Err(error) => return Err(Failure::new(error)),
+                };
+                match page.next_before {
+                    Some(next) if page.records.is_empty() && Some(next) != before => before = Some(next),
+                    _ => return Ok(Reply::MachineLog(page)),
+                }
             }
+            Ok(Reply::MachineLog(fastctx_types::machine_log::Page { records: Vec::new(), next_before: before }))
         }
         Call::ServerCommand { hub, account, name, expires, managed, uses, label, windows, mac } => {
             users_voice(node, peer)?;

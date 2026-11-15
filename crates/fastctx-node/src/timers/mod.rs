@@ -235,6 +235,9 @@ async fn execute(node: &Arc<Node>, store: &Arc<Store>, timer: &Timer) -> Result<
             let Some(timer) = store.begin(timer, Timestamp::now()).await.map_err(|error| error.to_string())? else {
                 return Ok(());
             };
+            // Its firing begun is written beside the conversation at once, so
+            // a machine that takes the conversation over later knows it began.
+            crate::timeline::timers::changed(node, &timer.owner);
             node.residents.active(resident).map_err(|error| error.message)?;
             crate::control_queue::drain(node, resident).await.map_err(|error| error.message)?;
             let management = node.residents.management(resident).map_err(|error| error.message)?;

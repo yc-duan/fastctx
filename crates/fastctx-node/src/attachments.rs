@@ -89,6 +89,25 @@ pub async fn upload(
     composer: Option<fastctx_types::composer::UploadScope>,
     mut source: FrameReader,
 ) -> Result<Uploaded, Failure> {
+    // A file for a conversation on another machine, that machine unnamed:
+    // found as a talk finds it, and kept on this computer as a file for a
+    // named one is (`Sent`), under an operation of the conversation and the
+    // file's bytes — the same file again takes what the first made.
+    if machine.is_none()
+        && composer.is_none()
+        && let UploadTarget::Resident { resident } = &target
+        && node.residents.about(resident).is_none()
+    {
+        let found = crate::colleagues::find_for(node, &Acting::Here, resident).await?;
+        if !node.is_here(&found) {
+            // The file as it is described, not its bytes alone: the same
+            // bytes under another name are another upload.
+            let described = serde_json::to_vec(&file).map_err(failure)?;
+            let operation = format!("upload-{resident}-{}", crate::speech::fixed_id("upload", &[&String::from_utf8_lossy(&described)]));
+            let sent = UploadTarget::Sent { machine: found, target: Box::new(target), operation, account: None, files_on: None };
+            return Box::pin(upload(node, sent, None, file, composer, source)).await;
+        }
+    }
     if let UploadTarget::Sent { machine, target, operation, account, files_on } = target {
         let uploader = destinations::sender(node, &machine, &target, account.as_ref())?;
         node.settled_for(&uploader).await;

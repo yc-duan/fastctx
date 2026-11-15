@@ -108,7 +108,7 @@ pub(super) fn record(
         usage: None,
         unidentified: Vec::new(),
         detail: Detail {
-            conversation: id.clone(),
+            conversation: Some(id.clone()),
             acting: about.acting.clone(),
             turn: None,
             source: CallSource::Background,
@@ -162,7 +162,7 @@ pub(super) fn record(
             usd: Some(usd),
             tokens: priced.tokens,
             call: Some(Detail {
-                conversation: id.clone(),
+                conversation: Some(id.clone()),
                 acting: about.acting.clone(),
                 turn: priced.turn,
                 source: priced.source,

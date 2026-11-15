@@ -25,6 +25,7 @@ mod rejected;
 pub(crate) use rejected::rejected;
 mod sending;
 mod settlement;
+mod settling;
 mod state;
 mod storage;
 mod submissions;
@@ -83,6 +84,7 @@ pub struct Composers {
     snapshots: publication::Snapshots,
     legacy_refreshes: legacy_refresh::Refreshes,
     durability: Arc<durability::Durability>,
+    settling: Arc<settling::Settling>,
 }
 
 pub fn removed(node: &Node, id: &ResidentId) {
@@ -103,6 +105,7 @@ pub async fn deleted(node: &Node, id: &ResidentId) -> Result<(), Failure> {
     node.composers.upload_failures.lock().expect("composer upload failures").remove(id);
     node.composers.holds.lock().expect("composer checkpoint failures").remove(id);
     node.composers.stopping.lock().expect("composer stops").remove(id);
+    settling::forget(node, id);
     Ok(())
 }
 
@@ -244,15 +247,23 @@ fn accepting<'a>(
                 drop(_reading);
                 return legacy_lined::answer(node, id, &mutation.operation).await.map(|answer| (answer, false));
             }
-            return Ok((
-                answer::Answer::state(
-                    state,
-                    bounded,
-                    receipt.landed.clone(),
-                    receipt.delivery.clone().or_else(|| pending.map(|flight| flight.delivery.id.clone())),
-                ),
-                bounded && receipt.delivery.is_none() && (pending.is_some() || lined),
-            ));
+            let answer = answer::Answer::state(
+                state,
+                bounded,
+                receipt.landed.clone(),
+                receipt.delivery.clone().or_else(|| pending.map(|flight| flight.delivery.id.clone())),
+            );
+            let accepted = bounded && receipt.delivery.is_none() && (pending.is_some() || lined);
+            // Words left queued, asked for again: let go of only once on
+            // the disk, as the first time (`settling`) — their commit may
+            // have been the last process's, not yet synchronized.
+            let queued = sends(&mutation.change) && !accepted && receipt.landed.is_none() && receipt.delivery.is_none();
+            if queued {
+                drop(cell);
+                drop(_reading);
+                settling::durable(node, Some((id, mutation.operation.as_str()))).await?;
+            }
+            return Ok((answer, accepted));
         }
         if let Some(outcome) = receipts::outcome(node, id, state, &mutation.operation).await? {
             if let Some(error) = outcome.failure {
@@ -354,7 +365,23 @@ fn accepting<'a>(
             None => (None, None),
         };
         let (committed_node, committed_id, runtime) = (node.clone(), id.clone(), tokio::runtime::Handle::current());
-        storage::publish_then(node, id, &mut cell, next, move || {
+        // Words sent on now, or lined up behind those going, are taken
+        // without waiting for the disk (受理, design §3, §28.46): the sender
+        // keeps them until it hears how they landed, and what makes them
+        // safe is their record in the asset library, waited for before they
+        // are handed on (已落盘). Words left in the queue of a busy
+        // conversation are let go by the sender as it hears them taken: the
+        // queue is their keeper. From the native input box they are taken
+        // without waiting too — it sees them queued at once — and answered
+        // once on the disk (`settling`); an older caller's answer waits for
+        // the disk.
+        let sent = sends(&mutation.change);
+        let queued = sent && answer.is_none() && !lined;
+        let relaxed = sent && (!queued || bounded);
+        // Shown in no state until a barrier has it (`settling`).
+        let withheld = queued && bounded;
+        let first = withheld && settling::withhold(node, id, &mutation.operation);
+        let published = storage::publish_at(node, id, &mut cell, next, !relaxed, move || {
             if let Some(callback) = callback {
                 callback();
             }
@@ -362,7 +389,23 @@ fn accepting<'a>(
                 crate::attachments::forsake(&committed_node, &committed_id, &forsaken);
             });
         })
-        .await?;
+        .await;
+        if let Err(failure) = published {
+            // Failed for certain, there is no send to withhold; a commit whose
+            // outcome is not known may stand, and stays withheld until a
+            // barrier has it, asked again under its operation.
+            // One withheld before this attempt — its outcome not known — stays
+            // so: that attempt may stand though this one failed. The composer
+            // changed under this one is answered so as well (the change may
+            // be an earlier attempt of it, late): it is asked again, and kept
+            // withheld until then — a send that never committed is in no
+            // state to filter.
+            let unknown = failure.code == Some(fastctx_types::ipc::FailureCode::Unanswered);
+            if first && !unknown {
+                settling::release(node, id, &mutation.operation);
+            }
+            return Err(failure);
+        }
         let mut result = answer::Answer::state(cell.as_ref().expect("loaded"), bounded, None, None);
         drop(cell);
         drop(_reading);
@@ -371,10 +414,15 @@ fn accepting<'a>(
             if lined && !bounded {
                 return legacy_lined::answer(node, id, &mutation.operation).await.map(|answer| (answer, false));
             }
+            if withheld {
+                settling::durable(node, Some((id, mutation.operation.as_str()))).await?;
+            }
             return Ok((result, lined));
         };
-        // The capture is already durable. Native clients receive its operation
-        // state and never wait on a host for more than this foreground interval.
+        // The capture is committed; what it is handed on after is its record
+        // in the asset library, on the disk (已落盘). Native clients receive
+        // its operation state and never wait on a host for more than this
+        // foreground interval.
         let delivered = if bounded {
             match tokio::time::timeout(std::time::Duration::from_millis(100), answer).await {
                 Ok(Ok(answer)) => answer,
@@ -406,4 +454,9 @@ fn accepting<'a>(
 
 pub fn changed(node: &Arc<Node>, id: &ResidentId) {
     schedule(node, id);
+}
+
+/// Whether `change` sends words: from the input, captured, or from the queue.
+fn sends(change: &Change) -> bool {
+    matches!(change, Change::Send { .. } | Change::SendDocument { .. } | Change::SendQueued { .. })
 }

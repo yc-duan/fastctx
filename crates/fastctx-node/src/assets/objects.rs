@@ -19,6 +19,9 @@ const FETCHED_AT_ONCE: usize = 64;
 /// How long an object a hub did not give waits before it is asked of that
 /// hub again.
 const ASK_AGAIN: Duration = Duration::from_secs(60);
+/// How long an object's data connection is waited for before the node says
+/// it waits (`doing::waiting_outside`): a label, not a bound.
+const SENT_WITHIN: Duration = Duration::from_secs(30);
 
 fn chunks(size: u64) -> u64 {
     size.div_ceil(CHUNK_BYTES).max(1)
@@ -33,14 +36,47 @@ fn hex(hash: &[u8; 32]) -> String {
 }
 
 /// Puts each of `objects` of `scope` to the hub, every byte of each when
-/// `prove`; their hashes, to name as proven when the frame goes again.
+/// `prove` — or, with a hub that speaks it, an answer to a challenge for it
+/// (design §28.45); their hashes, to name as proven when the frame goes
+/// again.
 pub(super) async fn put(library: &Library, link: &Arc<Link>, scope: &str, objects: &[wire::ObjectRef], prove: bool) -> Result<Vec<Bytes>, String> {
     let mut proven = Vec::with_capacity(objects.len());
+    let mut held = Vec::with_capacity(objects.len());
     for object in objects {
         let object = local(object)?;
         let hash = object.hash;
         if blocking(library, move |library| library.size(&hash)).await? != Some(object.size) {
             return Err(format!("a frame refers to the object {} this machine does not hold", hex(&hash)));
+        }
+        held.push(object);
+    }
+    // With a hub that speaks it, each proved by a challenge, two at a time
+    // (design §28.45); what one leaves is proved by sending it whole.
+    let mut answered: std::collections::HashMap<[u8; 32], Answered> = std::collections::HashMap::new();
+    if prove && link.asset_version() >= wire::CHALLENGES {
+        let mut waiting = held.iter().copied();
+        let mut running = tokio::task::JoinSet::new();
+        loop {
+            while running.len() < PROVED_AT_ONCE {
+                let Some(object) = waiting.next() else { break };
+                let (library, link) = (library.clone(), link.clone());
+                running.spawn(async move { (object.hash, by_challenge(&library, &link, object).await) });
+            }
+            let Some(done) = running.join_next().await else { break };
+            if let Ok((hash, outcome)) = done {
+                answered.insert(hash, outcome);
+            }
+        }
+    }
+    for object in held {
+        let hash = object.hash;
+        match answered.remove(&hash) {
+            Some(Answered::Proven) => {
+                proven.push(Bytes::from(hash));
+                continue;
+            }
+            Some(Answered::Again(why)) => return Err(format!("the frame goes again, the hub to say what it wants: {why}")),
+            Some(Answered::Send) | None => {}
         }
         let large = object.size as usize > ROW_BYTES;
         let request = Request::Put {
@@ -53,6 +89,9 @@ pub(super) async fn put(library: &Library, link: &Arc<Link>, scope: &str, object
             return Err("the hub did not say what of the object it wants".into());
         };
         if ticket != 0 {
+            // Waited for past their time, the node says which: the data
+            // connection's own bounds are longer (§28.40, the stuck pass).
+            let _sending = fastctx_platform::doing::waiting_outside(format!("an object's data connection to the hub ({} bytes)", object.size), SENT_WITHIN);
             let mut outgoing = link.put_object(ticket).await?;
             // A large object's digests go first on the data connection; the
             // hub says which chunks it wants.
@@ -74,11 +113,105 @@ pub(super) async fn put(library: &Library, link: &Arc<Link>, scope: &str, object
                 let bytes = blocking(library, move |library| library.read(&hash, offset, length)).await?;
                 outgoing.chunk(index, &bytes).await?;
             }
+            let _received = fastctx_platform::doing::waiting_outside("the hub's word that it has the object", SENT_WITHIN);
             outgoing.finish().await?;
         }
         proven.push(Bytes::from(hash));
     }
     Ok(proven)
+}
+
+/// How often a proof being worked out by the hub is asked after.
+const PROOF_ASKED_EVERY: Duration = Duration::from_millis(250);
+/// How often the hub is told, while this machine reads an object to answer
+/// a challenge, to keep what it proved and staged.
+const KEEP_EVERY: Duration = Duration::from_secs(30);
+/// Objects proved by challenge at once, as the hub works two out at once.
+const PROVED_AT_ONCE: usize = 2;
+/// Replies lost in a row before a proof by challenge is given up.
+const LOST_MOST: u32 = 3;
+
+/// How proving an object by a challenge ended (design §28.45).
+enum Answered {
+    /// The hub took it as proved.
+    Proven,
+    /// The hub holds it no more, found its own bytes damaged, or knows the
+    /// challenge no more: the frame goes again, the hub then saying what it
+    /// wants of it.
+    Again(String),
+    /// Proved by sending every byte instead: the hub would not challenge,
+    /// or the answer was not its.
+    Send,
+}
+
+/// Proves to the hub that this machine holds `object` by answering a
+/// challenge (design §28.45). While it reads the object the hub is told to
+/// keep what it proved and staged; a reply lost is asked again; how long it
+/// asks after goes by this machine's own clock, as long as the hub may take
+/// to read the object.
+async fn by_challenge(library: &Library, link: &Arc<Link>, object: ObjectRef) -> Answered {
+    let challenge = Request::Challenge { object: wire::ObjectRef { hash: object.hash.into(), size: object.size } };
+    let nonce = match link.assets(challenge).await {
+        Ok(Reply::Challenge { nonce, .. }) => nonce,
+        Err(why) if why.contains("send the frame again") => return Answered::Again(why),
+        _ => return Answered::Send,
+    };
+    let Some(given) = nonce.array() else { return Answered::Send };
+    let keeping = {
+        let (link, nonce) = (link.clone(), nonce.clone());
+        fastctx_platform::task::spawn(async move {
+            loop {
+                tokio::time::sleep(KEEP_EVERY).await;
+                let _ = link.assets(Request::Proof { nonce: nonce.clone(), answer: Bytes(Vec::new()) }).await;
+            }
+        })
+    };
+    let hash = object.hash;
+    let answer = blocking(library, move |library| answer_of(library, &hash, object.size, &given)).await;
+    keeping.abort();
+    let Ok(answer) = answer else { return Answered::Send };
+    let asked_until = Instant::now() + Duration::from_secs(600 + object.size / (50 << 20) + 60);
+    let mut lost = 0;
+    loop {
+        let asking = Request::Proof { nonce: nonce.clone(), answer: Bytes(answer.to_vec()) };
+        match link.assets(asking).await {
+            Ok(Reply::Proof { proof: wire::ProofState::Proven }) => return Answered::Proven,
+            Ok(Reply::Proof { proof: wire::ProofState::Working }) if Instant::now() < asked_until => {
+                lost = 0;
+                tokio::time::sleep(PROOF_ASKED_EVERY).await;
+            }
+            Ok(Reply::Proof { proof: wire::ProofState::Damaged }) => {
+                return Answered::Again("the hub's own copy of the object was damaged; it is wanted whole again".into());
+            }
+            Ok(_) => return Answered::Send,
+            Err(why) if why.contains("send the frame again") => return Answered::Again(why),
+            Err(_) if lost < LOST_MOST && Instant::now() < asked_until => {
+                lost += 1;
+                tokio::time::sleep(PROOF_ASKED_EVERY * 4).await;
+            }
+            Err(_) => return Answered::Send,
+        }
+    }
+}
+
+/// `SHA256(PROOF_TAG ‖ nonce ‖ every byte)` of the object `hash` of `size`
+/// held here, read a chunk at a time.
+fn answer_of(library: &Library, hash: &[u8; 32], size: u64, nonce: &[u8; 32]) -> fastctx_content::Result<[u8; 32]> {
+    use sha2::Digest as _;
+    let mut digest = sha2::Sha256::new();
+    digest.update(wire::PROOF_TAG);
+    digest.update(nonce);
+    let mut offset = 0;
+    while offset < size {
+        let length = (size - offset).min(CHUNK_BYTES) as u32;
+        let bytes = library.read(hash, offset, length)?;
+        if bytes.is_empty() {
+            return Err(fastctx_content::Error::Invalid("the object ended before its length".into()));
+        }
+        digest.update(&bytes);
+        offset += bytes.len() as u64;
+    }
+    Ok(digest.finalize().into())
 }
 
 /// Fetches what the records taken refer to and this machine has not; what

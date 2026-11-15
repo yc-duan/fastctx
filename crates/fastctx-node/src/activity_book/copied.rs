@@ -30,9 +30,8 @@ pub(crate) fn answer(node: &Node, acting: &Acting, written: &Written, query: &Bo
     }
     let library = &node.assets.as_ref()?.library;
     // Its stream on the network it is named on, or on each that lists it
-    // as the same machine; whose the accounts asking are, and whether one
-    // of them owns it.
-    let (mut streams, mut logins, mut owned, mut keys) = (BTreeSet::new(), BTreeSet::new(), false, BTreeSet::new());
+    // as the same machine, and whose the accounts asking are.
+    let (mut streams, mut logins, mut keys) = (BTreeSet::new(), BTreeSet::new(), BTreeSet::new());
     for link in node.links() {
         if written.hub.as_ref().is_some_and(|hub| link.hub_name() != *hub) {
             continue;
@@ -45,7 +44,6 @@ pub(crate) fn answer(node: &Node, acting: &Acting, written: &Written, query: &Bo
         let named: String = member.key.as_bytes()[..8].iter().map(|byte| format!("{byte:02x}")).collect();
         keys.insert(named.clone());
         streams.insert((hub, format!("{}/{named}", AccountActivity::STREAM)));
-        owned |= member.home.as_ref().is_some_and(|home| accounts.contains(home));
     }
     if keys.len() > 1 {
         return None;
@@ -60,10 +58,11 @@ pub(crate) fn answer(node: &Node, acting: &Acting, written: &Written, query: &Bo
         if !crate::timeline::copy::records_here(node, &scope) {
             continue;
         }
-        // A body's records hold its members' deeds alike: those of the
-        // accounts asking, and the machine's own user's where one of them
-        // owns it, as the machine itself would show them.
-        let body = scope.key.starts_with("b/");
+        // A body's records hold its members' deeds alike, every account's
+        // and the machine's own user's: a member reads them all, each with
+        // its account, as the machine shows them to whoever may work on it
+        // (§29 2.5, `net-shared-machine-visibility` 2026-11-10). Only a
+        // member holds them here (`records_here`).
         for (_, stream) in streams.iter().filter(|(hub, _)| scope.hub.as_deref() == Some(hub.as_str())) {
             let mut after = None;
             loop {
@@ -75,10 +74,6 @@ pub(crate) fn answer(node: &Node, acting: &Acting, written: &Written, query: &Bo
                 for entry in page {
                     // A deed whose body is not all here: no whole answer.
                     let value = read(library, &entry)?;
-                    let account = value.get("account").and_then(serde_json::Value::as_str).unwrap_or_default();
-                    if body && !(logins.contains(account) || (account.is_empty() && owned)) {
-                        continue;
-                    }
                     let key = value.get("deed").and_then(serde_json::Value::as_str).unwrap_or_default().to_string();
                     if let Some(deed) = deed_of(&value).filter(|deed| deed.began >= from && deed.began < to) {
                         deeds.insert(key, deed);
@@ -163,5 +158,6 @@ fn deed_of(value: &serde_json::Value) -> Option<Deed> {
             .and_then(serde_json::Value::as_array)
             .map(|touched| touched.iter().filter_map(|one| serde_json::from_value::<Touched>(one.clone()).ok()).collect())
             .unwrap_or_default(),
+        account: text("account").and_then(|key| key.split_once('/')).and_then(|(_, name)| name.parse().ok()),
     })
 }

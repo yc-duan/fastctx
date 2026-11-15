@@ -20,15 +20,21 @@ pub fn run(world: &Path, session: &str, after: Option<u64>) -> io::Result<()> {
             };
             if let Some(mut file) = file {
                 if after.is_none() {
+                    // Where the last whole line ends: found a block at a
+                    // time, no line held whole (design §28.49).
                     let mut reader = BufReader::new(file);
-                    let mut line = String::new();
+                    let mut position = 0u64;
                     loop {
-                        line.clear();
-                        let size = reader.read_line(&mut line)?;
-                        if size == 0 || !line.ends_with('\n') {
+                        let block = reader.fill_buf()?;
+                        if block.is_empty() {
                             return output(json!({"offset":offset}));
                         }
-                        offset += size as u64;
+                        if let Some(at) = block.iter().rposition(|byte| *byte == b'\n') {
+                            offset = position + at as u64 + 1;
+                        }
+                        let length = block.len();
+                        position += length as u64;
+                        reader.consume(length);
                     }
                 }
                 if file.metadata()?.len() < offset {
@@ -36,15 +42,29 @@ pub fn run(world: &Path, session: &str, after: Option<u64>) -> io::Result<()> {
                 }
                 file.seek(SeekFrom::Start(offset))?;
                 let mut reader = BufReader::new(file);
-                let mut line = String::new();
+                let mut line = Vec::new();
                 loop {
                     line.clear();
-                    let size = reader.read_line(&mut line)?;
-                    if size == 0 || !line.ends_with('\n') {
+                    // A line larger than World reads is not the cleanup's:
+                    // gone over unread, once whole (design §28.49).
+                    let size = match fastctx_hosts::bounded::read_bounded(&mut reader, &mut line)? {
+                        fastctx_hosts::bounded::Read::Line(size) => size,
+                        fastctx_hosts::bounded::Read::Refused { ended } => {
+                            if !ended && !fastctx_hosts::bounded::skip_line(&mut reader)? {
+                                break;
+                            }
+                            offset = reader.stream_position()?;
+                            continue;
+                        }
+                    };
+                    if size == 0 || line.last() != Some(&b'\n') {
                         break;
                     }
                     offset += size as u64;
-                    let row: Value = serde_json::from_str(&line).map_err(io::Error::other)?;
+                    if fastctx_hosts::bounded::too_many_values(&line) {
+                        continue;
+                    }
+                    let row: Value = serde_json::from_slice(&line).map_err(io::Error::other)?;
                     if row["type"] == "system"
                         && row["subtype"] == "local_command"
                         && row["isSidechain"] != true

@@ -155,6 +155,9 @@ pub(crate) struct Listed {
     pub(crate) basis: String,
 }
 
+/// The directory in the asset library's where readings are kept on disk.
+const SPILL: &str = "spill";
+
 impl Assets {
     /// Forgets how far `hub`'s scopes were listed: the next pass lists all,
     /// and a listing under way when it was forgotten is not kept (CC07).
@@ -175,6 +178,9 @@ impl Assets {
     pub(crate) fn open(dir: PathBuf, device: SecretKey) -> io::Result<Self> {
         fastctx_platform::ensure_private_dir(&dir)?;
         let (library, _) = Library::open(&dir).map_err(|error| io::Error::other(error.to_string()))?;
+        // What readings kept on disk left when a node stopped short: no
+        // other node has this library open now (`timeline::spill`).
+        let _ = crate::timeline::spill::clear(&dir.join(SPILL));
         // The kinds this machine knows: records of others wait in their
         // frames, out of the index, until a release that knows them, which
         // takes them in now (§2.3).
@@ -224,6 +230,12 @@ impl Assets {
     /// done to it then: a conversation exported (`release`).
     pub(crate) fn open_stopped(world: &fastctx_types::layout::WorldDir) -> io::Result<Library> {
         Library::open(&world.assets()).map(|(library, _)| library).map_err(|error| io::Error::other(error.to_string()))
+    }
+
+    /// Where readings too large to hold whole are kept while they are placed
+    /// in the timeline (`timeline::spill`).
+    pub(crate) fn spill_dir(&self) -> PathBuf {
+        self.path.parent().map(|dir| dir.join(SPILL)).unwrap_or_else(|| PathBuf::from(SPILL))
     }
 
     /// The directory of the conversation `resident` lives in here.

@@ -97,7 +97,12 @@ impl Prepared {
                 i64::try_from(self.previous).map_err(error)?
             ])?;
         if changed != 1 {
-            return Err(error("the composer changed before its text could commit; synchronize it again"));
+            // Asked again (`failures::storage`): what changed it may be an
+            // earlier write of this text, committed late.
+            return Err(fastctx_storage::Error::with_kind(
+                fastctx_storage::ErrorKind::Changed,
+                "the composer changed before its text could commit; synchronize it again",
+            ));
         }
         self.text.commit(db)
     }

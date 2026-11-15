@@ -34,6 +34,14 @@ CREATE TABLE IF NOT EXISTS run_job_sources (
 CREATE TABLE IF NOT EXISTS run_versions (
     conversation TEXT PRIMARY KEY, version INTEGER NOT NULL
 ) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS run_call_versions (
+    conversation TEXT NOT NULL, call TEXT NOT NULL, version INTEGER NOT NULL,
+    PRIMARY KEY(conversation,call)
+) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS run_call_versions_since ON run_call_versions(conversation,version);
+CREATE TABLE IF NOT EXISTS run_tracked (
+    conversation TEXT PRIMARY KEY, since INTEGER NOT NULL, last INTEGER NOT NULL
+) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS run_inline_budget (conversation TEXT NOT NULL, call TEXT NOT NULL, used INTEGER NOT NULL, PRIMARY KEY(conversation,call)) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS run_inline_hashes (conversation TEXT NOT NULL, call TEXT NOT NULL, id TEXT NOT NULL, hash TEXT NOT NULL, PRIMARY KEY(conversation,call,id)) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS run_writes (
@@ -117,11 +125,28 @@ pub(super) fn save(db: &Connection, conversation: &str, stored: &StoredCall) -> 
     Ok(())
 }
 
-pub(super) fn changed(db: &Connection, conversation: &str) -> Result<()> {
-    db.execute(
+/// The facts of `call` changed: the conversation's run facts take their
+/// next version, and the call is noted as changed at it, so a reader of
+/// them brings only the calls changed since it last read (design §28.53,
+/// codex-e024d399 #1). What is noted call by call runs from `since` through
+/// `last` with no version missing: one an older node took between, noting
+/// no call, begins it again.
+pub(super) fn changed(db: &Connection, conversation: &str, call: &str) -> Result<()> {
+    let version: i64 = db.query_row(
         "INSERT INTO run_versions(conversation,version) VALUES(?1,1)
-        ON CONFLICT(conversation) DO UPDATE SET version=version+1",
+        ON CONFLICT(conversation) DO UPDATE SET version=version+1 RETURNING version",
         [conversation],
+        |row| row.get(0),
+    )?;
+    db.execute(
+        "INSERT INTO run_call_versions(conversation,call,version) VALUES(?1,?2,?3)
+        ON CONFLICT(conversation,call) DO UPDATE SET version=excluded.version",
+        params![conversation, call, version],
+    )?;
+    db.execute(
+        "INSERT INTO run_tracked(conversation,since,last) VALUES(?1,?2,?2)
+        ON CONFLICT(conversation) DO UPDATE SET since=CASE WHEN last=?2-1 THEN since ELSE ?2 END, last=?2",
+        params![conversation, version],
     )?;
     Ok(())
 }

@@ -58,6 +58,9 @@ pub(super) fn runs(db: &Connection) -> Result<()> {
             Migration { version: 1, sql: crate::run_facts::SCHEMA },
             Migration { version: 2, sql: crate::run_facts::SCHEMA },
             Migration { version: 3, sql: crate::run_facts::SCHEMA },
+            // The calls' own versions and what each conversation's refresh
+            // has followed (§28.53): `run_call_versions`, `run_tracked`.
+            Migration { version: 4, sql: crate::run_facts::SCHEMA },
         ],
     )?;
     for ((table, stream, definition), old) in definitions.into_iter().zip(old) {
@@ -129,3 +132,7 @@ fn rebuild(db: &Connection, table: &str, definition: &str) -> Result<()> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "positions_tests.rs"]
+mod tests;

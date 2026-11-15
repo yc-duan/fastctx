@@ -12,7 +12,7 @@ use std::collections::HashMap;
 pub(super) type Identity = [u8; 32];
 
 /// What names an event apart from what it holds, when something does.
-pub(super) fn name(event: &SessionEvent) -> Option<String> {
+pub(crate) fn name(event: &SessionEvent) -> Option<String> {
     fastctx_types::likeness::event_name(event)
 }
 
@@ -20,6 +20,11 @@ pub(super) fn name(event: &SessionEvent) -> Option<String> {
 /// repeated occurrences (`fastctx_types::likeness`).
 pub(crate) fn likeness(event: &SessionEvent, encoded: &[u8]) -> [u8; 32] {
     fastctx_types::likeness::likeness(event, encoded)
+}
+
+/// As `likeness`, of an event whose encoding's SHA-256 is `content`.
+pub(super) fn likeness_of(event: &SessionEvent, content: &[u8; 32]) -> [u8; 32] {
+    fastctx_types::likeness::likeness_of(event, content)
 }
 
 fn half(digest: &[u8]) -> [u8; 16] {

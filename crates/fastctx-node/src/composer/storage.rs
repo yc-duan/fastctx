@@ -113,14 +113,31 @@ pub(super) fn publish_then<'a>(
     node: &'a Arc<Node>,
     id: &'a ResidentId,
     cell: &'a mut Option<Stored>,
+    next: Stored,
+    committed: impl FnOnce() + Send + 'static,
+) -> Future<'a, ()> {
+    publish_at(node, id, cell, next, true, committed)
+}
+
+/// As `publish_then`, committed without waiting for the disk where not
+/// `durable`: words sent are taken so (受理, design §3) — their record
+/// in the asset library and its operation are what is waited for
+/// (已落盘), and the sender keeps them until then, sending them again
+/// under the same operation where this commit was lost.
+pub(super) fn publish_at<'a>(
+    node: &'a Arc<Node>,
+    id: &'a ResidentId,
+    cell: &'a mut Option<Stored>,
     mut next: Stored,
+    durable: bool,
     committed: impl FnOnce() + Send + 'static,
 ) -> Future<'a, ()> {
     Box::pin(async move {
         if !node.residents.knows(id) {
             return Err(failure("unknown resident"));
         }
-        let operations = next.operations();
+        let mut operations = next.operations();
+        super::settling::shown(node, id, &mut operations);
         let prepared = persistence::prepare(id, &mut next)?;
         let compact_due = prepared.compact_due();
         let documents = node.composers.streams.prepare(id, synchronized(&mut next, &prepared, operations)?);
@@ -128,27 +145,27 @@ pub(super) fn publish_then<'a>(
         let revision = next.revision;
         let busy = super::idle::busy(&next);
         let (weak, published_id, runtime) = (Arc::downgrade(node), id.clone(), tokio::runtime::Handle::current());
-        let result = node
-            .database
-            .write_then_at(
-                fastctx_storage::Priority::Interactive,
-                prepared.bytes,
-                move |transaction| prepared.commit(transaction),
-                move |_| {
-                    documents.committed();
-                    if let Some(node) = weak.upgrade() {
-                        if compact_due {
-                            node.durable_jobs.stir(compaction::KIND);
-                        }
-                        match view {
-                            Some(view) => publication::committed(&node, &runtime, &published_id, view, busy),
-                            None => publication::settled(&node, &runtime, &published_id, revision, busy),
-                        }
-                    }
-                    committed();
-                },
-            )
-            .await;
+        let bytes = prepared.bytes;
+        let write = move |transaction: &fastctx_storage::rusqlite::Connection| prepared.commit(transaction);
+        let after = move |_: &_| {
+            documents.committed();
+            if let Some(node) = weak.upgrade() {
+                if compact_due {
+                    node.durable_jobs.stir(compaction::KIND);
+                }
+                match view {
+                    Some(view) => publication::committed(&node, &runtime, &published_id, view, busy),
+                    None => publication::settled(&node, &runtime, &published_id, revision, busy),
+                }
+            }
+            committed();
+        };
+        let priority = fastctx_storage::Priority::Interactive;
+        let result = if durable {
+            node.database.write_then_at(priority, bytes, write, after).await
+        } else {
+            node.database.write_relaxed_then_at(priority, bytes, write, after).await
+        };
         match result {
             Ok(()) => {
                 *cell = Some(next);
