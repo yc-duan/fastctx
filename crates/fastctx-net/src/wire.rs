@@ -276,6 +276,11 @@ pub enum Intent {
         /// place of being told to ask for the whole view again.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         view_deltas: bool,
+        /// The member reads the records of the hub's assets sealed and
+        /// opened again. Earlier releases do not say so, and could read
+        /// nothing of a machine log page with one.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        asset_seals: bool,
     },
     /// A password login to `account`: the first OPAQUE message. The hub
     /// answers `Down::LoginResponse`; the device finishes with

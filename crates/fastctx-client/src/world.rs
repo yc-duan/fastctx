@@ -927,7 +927,7 @@ impl World {
         account: fastctx_types::AccountName,
         before: Option<u64>,
     ) -> Result<fastctx_types::machine_log::Page, Error> {
-        match self.ask(Call::MachineLog { hub, account, before }).await? {
+        match self.ask(Call::MachineLog { hub, account, before, asset_seals: true }).await? {
             Reply::MachineLog(page) => Ok(page),
             other => Err(unexpected(other)),
         }

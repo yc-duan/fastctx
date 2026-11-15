@@ -42,6 +42,8 @@ export interface Deed {
   looked: number;
   copied: number;
   touched?: Touched[];
+  /** The account it ran for; none for the machine's own user's. */
+  account?: string;
 }
 
 export interface Hour {

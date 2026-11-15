@@ -6,7 +6,7 @@
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 
-use crate::{AgentName, JobId, MachineName, TownName};
+use crate::{AccountName, AgentName, JobId, MachineName, TownName};
 
 /// What an interface asks a machine of its book.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -77,6 +77,11 @@ pub struct Deed {
     pub copied: u32,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub touched: Vec<Touched>,
+    /// The account it ran for, none for this machine's own user's: a
+    /// machine's activity, read by whoever may work on it, says whose each
+    /// deed is (`net-shared-machine-visibility` 2026-11-10).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account: Option<AccountName>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

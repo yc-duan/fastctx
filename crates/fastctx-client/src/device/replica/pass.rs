@@ -16,7 +16,7 @@ use fastctx_content::ObjectRef;
 use fastctx_net::ids::HubId;
 use fastctx_net::link::Link;
 use fastctx_net::sign::PublicKey;
-use fastctx_types::assets::{self as wire, Bytes, Reply, Request, VERSION};
+use fastctx_types::assets::{self as wire, Bytes, Reply, Request};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
@@ -46,7 +46,7 @@ pub(super) async fn ask(replica: &Replica, link: &Arc<Link>, request: Request) -
 /// A device writes nothing, so it reports no receipts.
 pub(super) async fn open(replica: &Replica, hub: &HubId, link: &Arc<Link>) -> Result<PublicKey, String> {
     let request = Request::Open {
-        version: VERSION,
+        version: link.asset_version(),
         seen: replica.pins.seen(hub),
         reported: Vec::new(),
         pinned: replica.pins.pinned(hub),

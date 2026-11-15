@@ -193,7 +193,7 @@ import {
 import { enRemoval, zhRemoval } from "./app/removal-words";
 import { enAccess, enLogin, enMachines, enToken, zhAccess, zhLogin, zhMachines, zhToken } from "./app/account-words";
 import { LASTING, loginsOf, type AccountChange, type Login, type TokenSeen, type TokenWay } from "./world/accounts";
-import { assistantOf, assistantsOf, fileHome, groupsOf, inNoNetwork, loginKey, loginLabel, machinesOf, residentIn } from "./app/reach";
+import { assistantOf, assistantsOf, coOwnersOf, fileHome, groupsOf, inNoNetwork, isLocked, loginKey, loginLabel, machinesOf, residentIn } from "./app/reach";
 import { folders as foldersOf, type Folders } from "./world/focus";
 import { ComposerSession } from "./conversation/composer";
 import { allowPrivacy, attachmentThumbnail, fetchAttachment, fetchFile, openLocal, reveal, saveAs, thumbnail, thumbnailUrl, type Saved, type Thumbnail } from "./world/files";
@@ -2746,7 +2746,14 @@ function pageAccount(town: string): string | null {
     const project = hub.projects.find((one) => one.name === town);
     if (!project) continue;
     const able = hub.logins.filter((login) => login === project.owner || project.granted.includes(login));
-    return able.find((login) => login === project.owner) ?? able[0] ?? null;
+    // An account locked here is no use: its owner's or one granted it
+    // first, else a co-owner's, the one the project's acts use (§28.47),
+    // a locked one last.
+    const world = store.world.peek();
+    const unlocked = (account: string) => !world || !isLocked(world, { hub: hub.hub, hubName: hub.name, account });
+    const coOwners = world ? coOwnersOf(world, hub, project).map((login) => login.account) : [];
+    const ranked = [...able.filter((login) => login === project.owner), ...able.filter((login) => login !== project.owner), ...coOwners];
+    return ranked.find(unlocked) ?? ranked[0] ?? null;
   }
   return null;
 }

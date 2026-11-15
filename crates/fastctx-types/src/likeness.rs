@@ -26,8 +26,12 @@ pub fn event_name(event: &SessionEvent) -> Option<String> {
 /// repeated occurrences. Both halves are SHA-256 prefixes of the original:
 /// of its name (or content), then of its content as encoded.
 pub fn likeness(event: &SessionEvent, encoded: &[u8]) -> [u8; 32] {
-    let content = Sha256::digest(encoded);
-    let named = event_name(event).map_or_else(|| half(&content), |name| half(&Sha256::digest(name.as_bytes())));
+    likeness_of(event, &Sha256::digest(encoded).into())
+}
+
+/// As `likeness`, of an event whose encoding's SHA-256 is `content`.
+pub fn likeness_of(event: &SessionEvent, content: &[u8; 32]) -> [u8; 32] {
+    let named = event_name(event).map_or_else(|| half(content), |name| half(&Sha256::digest(name.as_bytes())));
     let mut likeness = [0; 32];
     likeness[..16].copy_from_slice(&named);
     likeness[16..].copy_from_slice(&content[..16]);

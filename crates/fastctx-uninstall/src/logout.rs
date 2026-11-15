@@ -104,6 +104,7 @@ async fn open_saying(
         parts: false,
         call_details: false,
         view_deltas: false,
+        asset_seals: false,
     };
     dial::send(
         &mut connection.socket,

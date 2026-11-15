@@ -352,13 +352,12 @@ impl FormPage {
     fn done(&mut self, ctx: &Ctx, done: Done) -> Act {
         let words = &ctx.words;
         match (&self.kind, done) {
-            (Kind::OpenAgent { .. }, Done::Opened(said)) => {
+            (Kind::OpenAgent { .. }, Done::Opened(said, first)) => {
                 let here =
                     self.nodes.as_ref().map(|nodes| nodes.machine.clone()).unwrap_or_else(|| said.to.machine.clone());
                 let project = self.chosen_project_name();
                 let town = self.chosen_town();
                 let agent = self.value(Key::Agent);
-                let first = self.value(Key::FirstWords);
                 Act::Replace(Page::Talk(Box::new(talk::TalkPage::opened(agent, town, project, first, said, here))))
             }
             (Kind::NewProject, Done::Record(record)) => {

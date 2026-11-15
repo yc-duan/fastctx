@@ -349,6 +349,7 @@ impl Action {
             Self::Profile { .. } => Needs::Profiles,
             Self::MachineUpdates { .. } => Needs::MachineUpdates,
             Self::History { .. } => Needs::HistorySwitch,
+            Self::AssetSeal { .. } | Self::OpenAssets => Needs::AssetSeals,
             Self::Collab { .. }
             | Self::Share { .. }
             | Self::Assist { .. }
@@ -372,8 +373,6 @@ impl Action {
             | Self::DeleteAccount { .. }
             | Self::Settings { .. }
             | Self::Dissolve { .. }
-            | Self::AssetSeal { .. }
-            | Self::OpenAssets
             | Self::OpenProject { .. }
             | Self::ShareProject { .. }
             | Self::MoveProject { .. }
@@ -413,6 +412,10 @@ pub enum Needs {
     MachineUpdates,
     /// A reader of account history switch changes.
     HistorySwitch,
+    /// A reader of the records of the hub's assets sealed and opened again,
+    /// which came in 1.0.1-beta.18: an earlier one reads nothing of a page
+    /// with one.
+    AssetSeals,
 }
 
 /// What one reader of the machine log says it reads.
@@ -426,6 +429,7 @@ pub struct Reads {
     pub profiles: bool,
     pub machine_updates: bool,
     pub history_switch: bool,
+    pub asset_seals: bool,
 }
 
 impl Reads {
@@ -441,6 +445,7 @@ impl Reads {
             Needs::Profiles => self.profiles,
             Needs::MachineUpdates => self.machine_updates,
             Needs::HistorySwitch => self.history_switch,
+            Needs::AssetSeals => self.asset_seals,
         }
     }
 }
@@ -475,4 +480,21 @@ pub struct Record {
 pub struct Page {
     pub records: Vec<Record>,
     pub next_before: Option<u64>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The records of the hub's assets sealed and opened go only to a
+    /// reader that says it reads them: an earlier one could read nothing
+    /// of a page with one.
+    #[test]
+    fn assets_sealed_and_opened_go_to_those_who_read_them() {
+        for action in [Action::AssetSeal { at_start: true }, Action::OpenAssets] {
+            assert_eq!(action.needs(), Needs::AssetSeals);
+            assert!(!Reads { history_switch: true, ..Reads::default() }.covers(action.needs()));
+            assert!(Reads { asset_seals: true, ..Reads::default() }.covers(action.needs()));
+        }
+    }
 }

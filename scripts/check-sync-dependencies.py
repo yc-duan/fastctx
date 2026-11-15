@@ -39,6 +39,10 @@ RAW_OPENERS = {
     "crates/fastctx-node/src/conversation_store/transfer/release.rs",
     "crates/fastctx-node/src/conversation_store/transfer/status.rs",
     "crates/fastctx-node/src/timers/headers.rs",
+    # The work store a whole reading is kept in as it is placed in the
+    # timeline (sync-v2-impl-design 28.51): a node-private file of its own,
+    # no asset library.
+    "crates/fastctx-node/src/timeline/spill.rs",
     "crates/fastctx-sync/src/registry/derived.rs",
 }
 # A raw connection opened, or SQLite's connection type under another name.

@@ -705,5 +705,26 @@
     "purpose": "Observation",
     "capability": "timeline_reads",
     "mapping": "crates/fastctx-types/src/remote.rs"
+  },
+  {
+    "type": "crates/fastctx-types/src/assets.rs::Request",
+    "variant": "Challenge",
+    "purpose": "AssetSync",
+    "capability": "asset_sync",
+    "mapping": "crates/fastctx-types/src/assets.rs"
+  },
+  {
+    "type": "crates/fastctx-types/src/assets.rs::Request",
+    "variant": "Proof",
+    "purpose": "AssetSync",
+    "capability": "asset_sync",
+    "mapping": "crates/fastctx-types/src/assets.rs"
+  },
+  {
+    "type": "crates/fastctx-types/src/assets.rs::Request",
+    "variant": "TakeMany",
+    "purpose": "AssetSync",
+    "capability": "asset_sync",
+    "mapping": "crates/fastctx-types/src/assets.rs"
   }
 ]

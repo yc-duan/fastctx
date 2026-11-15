@@ -1565,7 +1565,7 @@ export class MachinesPage implements Page {
         ...(top ? [{ act: "move", label: words.moveHub, icon: "move" as const }] : []),
         ...(top ? [{ act: "signup", label: this.options.people.signUpState(open), icon: "signup" as const, on: open }] : []),
         ...(top && spot.hub.assets_sealed ? [{ act: "open-assets", label: words.openAssets, icon: "unlock" as const }] : []),
-        ...(top ? [{ act: "asset-seal", label: words.assetSeal, icon: "lock" as const, on: !!spot.hub.asset_seal_at_start }] : []),
+        ...(top && spot.hub.asset_seals ? [{ act: "asset-seal", label: words.assetSeal, icon: "lock" as const, on: !!spot.hub.asset_seal_at_start }] : []),
         ...(top && spot.hub.versions && this.options.updates ? [{ act: "updates", label: this.options.updates.words.policy, icon: "update" as const }] : []),
         details,
         ...(top && spot.hub.dissolves ? [{ act: "dissolve", label: words.dissolve, icon: "close" as const, danger: true }] : []),

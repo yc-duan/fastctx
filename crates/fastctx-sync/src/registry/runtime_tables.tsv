@@ -26,3 +26,38 @@ recovery_results	runtime.assets	crates/fastctx-hub/src/assets/handback.rs
 recovery_refusals	runtime.assets	crates/fastctx-hub/src/assets/handback.rs
 book_forgotten	runtime.assets	crates/fastctx-node/src/activity_book/mod.rs
 sentinel_homes	runtime.assets	crates/fastctx-hub/src/assets/sentinel_homes.rs
+# The work store a whole reading of a conversation is kept in as it is
+# placed in its timeline (design §28.51): a node-private file, taken away
+# once the reading is written; none of it is an asset.
+again	runtime.assets	crates/fastctx-node/src/timeline/spill.rs
+alike	runtime.assets	crates/fastctx-node/src/timeline/spill.rs
+before	runtime.assets	crates/fastctx-node/src/timeline/spill.rs
+began	runtime.assets	crates/fastctx-node/src/timeline/spill.rs
+block	runtime.assets	crates/fastctx-node/src/timeline/spill.rs
+earlier	runtime.assets	crates/fastctx-node/src/timeline/spill.rs
+entry	runtime.assets	crates/fastctx-node/src/timeline/spill.rs
+final	runtime.assets	crates/fastctx-node/src/timeline/spill.rs
+found	runtime.assets	crates/fastctx-node/src/timeline/spill.rs
+had	runtime.assets	crates/fastctx-node/src/timeline/spill.rs
+hosted	runtime.assets	crates/fastctx-node/src/timeline/spill.rs
+item	runtime.assets	crates/fastctx-node/src/timeline/spill.rs
+known	runtime.assets	crates/fastctx-node/src/timeline/spill.rs
+line	runtime.assets	crates/fastctx-node/src/timeline/spill.rs
+marked	runtime.assets	crates/fastctx-node/src/timeline/spill.rs
+member	runtime.assets	crates/fastctx-node/src/timeline/spill.rs
+moved	runtime.assets	crates/fastctx-node/src/timeline/spill.rs
+named	runtime.assets	crates/fastctx-node/src/timeline/spill.rs
+placed	runtime.assets	crates/fastctx-node/src/timeline/spill.rs
+raw	runtime.assets	crates/fastctx-node/src/timeline/spill.rs
+removed	runtime.assets	crates/fastctx-node/src/timeline/spill.rs
+shared	runtime.assets	crates/fastctx-node/src/timeline/spill.rs
+slot	runtime.assets	crates/fastctx-node/src/timeline/spill.rs
+timing	runtime.assets	crates/fastctx-node/src/timeline/spill.rs
+view	runtime.assets	crates/fastctx-node/src/timeline/spill.rs
+world	runtime.assets	crates/fastctx-node/src/timeline/spill.rs
+world_key	runtime.assets	crates/fastctx-node/src/timeline/spill.rs
+beside	runtime.assets	crates/fastctx-node/src/timeline/world.rs
+# Which calls' runs' facts changed at which version, for the timeline to
+# give them again call by call (design §28.53).
+run_call_versions	runtime.assets	crates/fastctx-node/src/run_facts/sql.rs
+run_tracked	runtime.assets	crates/fastctx-node/src/run_facts/sql.rs

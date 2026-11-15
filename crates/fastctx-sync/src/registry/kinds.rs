@@ -214,6 +214,10 @@ pub(super) const KINDS: &[Registration] = &[
         Confirmed,
         GenericTombstone
     ),
+    // Kept, not used in this release (design §28.52 52-0): no producer. A
+    // colleague's parent is in the conversation's metadata; a native
+    // subagent's own history and the whole tree of colleagues are not
+    // assets yet. Not counted among the kinds synced.
     kind!(
         "conversation.agents",
         Asset,
@@ -372,6 +376,8 @@ pub(super) const KINDS: &[Registration] = &[
         Confirmed,
         GenericTombstone
     ),
+    // Kept, not used in this release (design §28.52 52-0): no producer, the
+    // host's pictures not taken in yet. Not counted among the kinds synced.
     kind!(
         "conversation.picture",
         Asset,
@@ -525,6 +531,9 @@ pub(super) const KINDS: &[Registration] = &[
         PendingUser,
         GenericTombstone
     ),
+    // Kept, not used in this release (design §28.52 52-0): there is no read
+    // position of a conversation to keep (the interface's `lastSeen` is its
+    // own device's). Not counted among the kinds synced.
     kind!(
         "account.read-position",
         Asset,

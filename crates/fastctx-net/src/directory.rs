@@ -291,6 +291,11 @@ pub struct Project {
     /// A non-assisted origin whose current whole-machine holders share the records.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub shared_on: Option<MachineName>,
+    /// Those who held the machine shared whole it was opened on as that
+    /// machine left the network: its co-owners still, frozen as they were,
+    /// as a body's members are (§6.2, §28.47).
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub frozen: BTreeSet<AccountName>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

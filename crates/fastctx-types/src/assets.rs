@@ -14,12 +14,37 @@ use base64::{Engine, engine::general_purpose::STANDARD};
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error};
 
 /// The protocol version a side speaks. A hub declares as `asset_sync` the
-/// newest it speaks; a device opens in its own once the hub's is not older,
-/// and the hub answers in it where it still speaks it, refusing it where it
-/// does not. A later version is what any new reader class, holder class,
-/// receipt or message comes with: a hub sends a device nothing its version
-/// does not know (sync v2 freeze spec, 1).
-pub const VERSION: u32 = 1;
+/// newest it speaks; a device opens in the newest both speak, its own or the
+/// hub's, none older than `OLDEST`, and the hub answers in it where it still
+/// speaks it, refusing it where it does not. A later version is what any new
+/// reader class, holder class, receipt or message comes with: a hub sends a
+/// device nothing its version does not know (sync v2 freeze spec, 1). The
+/// second brings proofs of holding by challenge (design §28.45); the third,
+/// frames of a stream taken several at a time (`MANY`).
+pub const VERSION: u32 = 3;
+
+/// The oldest version a side still speaks.
+pub const OLDEST: u32 = 1;
+
+/// The version from which a device proves it holds an object by answering a
+/// challenge, not by sending every byte again (design §6.5, §28.45).
+pub const CHALLENGES: u32 = 2;
+
+/// The version from which a device sends a hub several frames of a stream
+/// in one request (`Request::TakeMany`), which the hub writes with one disk
+/// synchronization (§18 E2).
+pub const MANY: u32 = 3;
+
+/// The most frames one `TakeMany` carries.
+pub const FRAMES_A_TAKE: usize = 16;
+
+/// The most bytes of frame bodies one `TakeMany` carries: each carried on
+/// the control connection, none travelling apart.
+pub const MANY_BYTES: usize = 1 << 20;
+
+/// What a proof of holding begins with: the answer to a challenge is
+/// `SHA256(PROOF_TAG ‖ nonce ‖ every byte of the object)` (§6.5).
+pub const PROOF_TAG: &[u8] = b"fastctx-pop/1";
 
 /// The most a frame's body carried on the control connection holds (§7.1);
 /// a larger one travels apart, on a data connection.
@@ -351,6 +376,11 @@ pub enum Request {
         #[serde(default, skip_serializing_if = "is_zero")]
         staged: u64,
     },
+    /// Frames of one stream of `scope` for the hub to take, in their order,
+    /// each as `Take` takes one without objects proved or a body staged
+    /// apart: answered with the hub's word on each, up to the first not
+    /// applied or parked (`Reply::ReceivedMany`). From version `MANY` on.
+    TakeMany { scope: String, frames: Vec<Frame> },
     /// Room for a frame body of `size` bytes of `scope`, too large for the
     /// control connection: a data connection under the ticket the hub
     /// answers sends it, in chunks, before the frame is taken (§7.1).
@@ -456,6 +486,29 @@ pub enum Request {
     /// How `account`'s machines stand, over the last `hours` (design §28.9):
     /// asked by a machine the account is logged in on.
     SyncStatus { account: crate::AccountName, hours: u32 },
+    /// Asks for a challenge, to prove it holds `object`, which the hub asked
+    /// it lately to prove for a frame it sent (design §28.45). From version
+    /// `CHALLENGES` on.
+    Challenge { object: ObjectRef },
+    /// Answers a challenge with `SHA256(PROOF_TAG ‖ nonce ‖ every byte)`;
+    /// asked again with the same nonce and answer, how the proof stands
+    /// (design §28.45). From version `CHALLENGES` on.
+    Proof { nonce: Bytes, answer: Bytes },
+}
+
+/// How a proof of holding by challenge stands (design §28.45).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProofState {
+    /// Queued or being worked out: ask again.
+    Working,
+    /// Proved: the hub takes the frame as from a device that sent every
+    /// byte of the object lately.
+    Proven,
+    /// The answer is not the hub's: proved by sending every byte, if at all.
+    Wrong,
+    /// The hub's own bytes are not the object's: sent every byte again.
+    Damaged,
 }
 
 /// A device's release of a stream it orders to the machine `to`, whose
@@ -598,6 +651,7 @@ impl Request {
             Self::Open { .. } => "open",
             Self::Answer { .. } => "answer",
             Self::Take { .. } => "take",
+            Self::TakeMany { .. } => "take_many",
             Self::Stage { .. } => "stage",
             Self::Holdings { .. } => "holdings",
             Self::Cursors { .. } => "cursors",
@@ -616,6 +670,8 @@ impl Request {
             Self::Cleared { .. } => "cleared",
             Self::Report { .. } => "report",
             Self::SyncStatus { .. } => "sync_status",
+            Self::Challenge { .. } => "challenge",
+            Self::Proof { .. } => "proof",
         }
     }
 
@@ -626,6 +682,7 @@ impl Request {
             Self::Open { .. }
             | Self::Answer { .. }
             | Self::Take { .. }
+            | Self::TakeMany { .. }
             | Self::Stage { .. }
             | Self::Holdings { .. }
             | Self::Cursors { .. }
@@ -643,7 +700,9 @@ impl Request {
             | Self::Get { .. }
             | Self::Cleared { .. }
             | Self::Report { .. }
-            | Self::SyncStatus { .. } => Purpose::AssetSync,
+            | Self::SyncStatus { .. }
+            | Self::Challenge { .. }
+            | Self::Proof { .. } => Purpose::AssetSync,
         }
     }
 }
@@ -770,6 +829,9 @@ pub enum Reply {
     Cleared { activated: u32 },
     Refused { why: String },
     Received { received: Received },
+    /// The hub's word on each frame of a `TakeMany`, in order, up to the
+    /// first not applied or parked: those after it it did not take.
+    ReceivedMany { received: Vec<Received> },
     Word {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         received: Option<Received>,
@@ -866,6 +928,11 @@ pub enum Reply {
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         manifest: Vec<Bytes>,
     },
+    /// A challenge: the nonce to answer, and until when it stands, in
+    /// milliseconds since the epoch (design §28.45).
+    Challenge { nonce: Bytes, until: i64 },
+    /// How a proof by challenge stands.
+    Proof { proof: ProofState },
 }
 
 /// What the hub tells a device unasked.

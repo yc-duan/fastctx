@@ -445,6 +445,11 @@ pub struct HubAccounts {
     pub home: Option<AccountName>,
     /// Whether anyone who reaches the hub may open an account.
     pub self_registration: bool,
+    /// Whether the hub seals its assets and opens them again as its super
+    /// administrator asks: one that syncs assets. An earlier one (beta.17)
+    /// does neither, and refuses being asked.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub asset_seals: bool,
     /// Whether the hub seals every asset each time it starts, until the
     /// super administrator opens them.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -754,4 +759,12 @@ pub struct ProjectSeen {
     pub name: TownName,
     pub owner: AccountName,
     pub granted: Vec<AccountName>,
+    /// The machine shared whole it was opened on: whoever holds that
+    /// machine disposes of it as its owner does (§6.2).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shared_on: Option<MachineName>,
+    /// Those who held that machine as it left the network: its co-owners
+    /// still, disposing of it as its owner does.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub frozen: Vec<AccountName>,
 }

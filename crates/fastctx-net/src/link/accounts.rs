@@ -267,6 +267,7 @@ impl Link {
                 .collect(),
             home: me.and_then(|me| me.home.clone()),
             self_registration: view.self_registration,
+            asset_seals: view.asset_sync > 0,
             asset_seal_at_start: view.asset_seal_at_start,
             assets_sealed: view.assets_sealed.clone(),
             synced: view.synced.clone(),
@@ -359,12 +360,21 @@ impl Link {
                     view.me().is_some_and(|me| {
                         me.logins.contains(&project.owner)
                             || project.granted.iter().any(|account| me.logins.contains(account))
+                            // Its machine's co-owners' alike, those frozen in
+                            // as it left among them (§6.2).
+                            || project.frozen.iter().any(|account| me.logins.contains(account))
+                            || project
+                                .shared_on
+                                .as_ref()
+                                .is_some_and(|machine| me.logins.iter().any(|account| view.holds(account, machine)))
                     })
                 })
                 .map(|project| ProjectSeen {
                     name: project.name.clone(),
                     owner: project.owner.clone(),
                     granted: project.granted.iter().cloned().collect(),
+                    shared_on: project.shared_on.clone(),
+                    frozen: project.frozen.iter().cloned().collect(),
                 })
                 .collect(),
             arrivals: Vec::new(),

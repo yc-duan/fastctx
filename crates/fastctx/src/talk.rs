@@ -62,13 +62,16 @@ pub fn run(args: TalkArgs) -> anyhow::Result<()> {
                 reasoning_effort: args.effort.clone(),
                 ..Default::default()
             };
-            let said = world
-                .open_with_options(
+            // Words longer than an input box holds go as a text attachment,
+            // as the input box sends them (design §28.49).
+            let (said, _) = world
+                .open_long(
                     AgentName::try_from(agent.as_str())?,
                     args.town.as_deref().map(TownName::try_from).transpose()?,
                     args.node.as_deref().map(fastctx_types::access::Written::parse).transpose()?,
                     text.clone(),
                     options,
+                    Default::default(),
                 )
                 .await?;
             println!("=== opened {} on {} ===", said.to.resident, said.to.machine);
@@ -103,7 +106,7 @@ pub fn run(args: TalkArgs) -> anyhow::Result<()> {
         printer.events(&history);
         if !words.is_empty() {
             let text = words.join(" ");
-            let said = world.talk(resident, machine, text.clone()).await?;
+            let (said, _) = world.talk_long(resident, machine, text.clone(), None).await?;
             if !conversation.said(&said, &text) {
                 printer.note(&gone(&said));
                 return Ok(());
@@ -134,7 +137,7 @@ pub fn run(args: TalkArgs) -> anyhow::Result<()> {
                 line = typed.recv() => match line {
                     Some(line) if line.trim().is_empty() => {}
                     Some(line) => {
-                        let said = world.talk(resident.clone(), machine.clone(), line.clone()).await?;
+                        let (said, _) = world.talk_long(resident.clone(), machine.clone(), line.clone(), None).await?;
                         if !conversation.said(&said, &line) {
                             printer.note(&gone(&said));
                         }

@@ -88,6 +88,7 @@ impl Index {
         for (at, project) in all.projects.iter().enumerate() {
             index.projects.entry(project.town.clone()).or_insert(at);
             let mut accounts = project.granted.clone();
+            accounts.extend(project.frozen.iter().cloned());
             accounts.insert(project.owner.clone());
             if let Some(machine) = &project.shared_on
                 && let Some(shared) = holders.get(all.canonical(machine))

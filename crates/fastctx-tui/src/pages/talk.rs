@@ -221,15 +221,35 @@ impl TalkPage {
                 }
             }
             Data::Done { job, result } => match (job, result) {
-                (Job::Talk { .. }, Ok(Done::Said(said))) => {
-                    if let Some(local) = self.pending.pop_front()
-                        && self.stands(&said.landed)
-                    {
-                        self.transcript.landed(local, said.landed, said.to.machine);
+                (Job::Talk { local, .. }, Ok(Done::Said(said, sent))) => {
+                    // The outcome of the words it is of: sends end in any
+                    // order, a long one's upload slower than a short one.
+                    if let Some(at) = self.pending.iter().position(|pending| *pending == local) {
+                        self.pending.remove(at);
+                        // Gone as an attachment, the words shown are the line
+                        // that went with it, as the conversation tells them.
+                        self.transcript.resaid(local, sent, said.delivery.clone());
+                        if self.stands(&said.landed) {
+                            self.transcript.landed(local, said.landed, said.to.machine);
+                        }
                     }
                 }
-                (Job::Talk { .. }, Err(_)) => {
-                    if let Some(local) = self.pending.pop_front() {
+                (Job::Talk { text, local, .. }, Ok(Done::Refused(_))) => {
+                    if let Some(at) = self.pending.iter().position(|pending| *pending == local) {
+                        self.pending.remove(at);
+                        self.transcript.failed(local);
+                    }
+                    // Refused for certain, not sent: the words come back to be
+                    // sent again, where nothing else is being typed.
+                    if self.editor.is_empty() {
+                        self.editor.set(&text);
+                    }
+                }
+                // Its outcome not known, the words may have gone: shown as
+                // failed, not offered to be sent again.
+                (Job::Talk { local, .. }, Err(_)) => {
+                    if let Some(at) = self.pending.iter().position(|pending| *pending == local) {
+                        self.pending.remove(at);
                         self.transcript.failed(local);
                     }
                 }
@@ -379,7 +399,7 @@ impl TalkPage {
                 self.note = None;
                 let local = self.transcript.sending(text.clone(), self.here.clone());
                 self.pending.push_back(local);
-                Act::Do(Job::Talk { to: self.address.resident.clone(), machine: self.address.machine.clone(), text })
+                Act::Do(Job::Talk { to: self.address.resident.clone(), machine: self.address.machine.clone(), text, local })
             }
             Edit::Unhandled => {
                 match key.code {
@@ -681,3 +701,4 @@ fn ended_line(ctx: &Ctx, end: &fastctx_types::session::TurnEnd) -> String {
         TurnHow::Other(how) => words.turn_ended_as(how),
     }
 }
+

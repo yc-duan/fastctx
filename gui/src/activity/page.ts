@@ -571,7 +571,8 @@ export class ActivityPage implements Page {
     const { words } = this.options;
     const now = this.now();
     const time = deed.outcome === "running" ? words.running(words.duration(lasted(deed, now))) : words.ran(words.duration(lasted(deed, now)));
-    const where = [deed.machine, deed.from ? `← ${deed.from}` : "", deed.went?.length ? words.went(deed.went.join(", ")) : ""].filter(Boolean).join(" · ");
+    // Whose it was, on a machine several accounts work on (`net-shared-machine-visibility`).
+    const where = [deed.account ?? "", deed.machine, deed.from ? `← ${deed.from}` : "", deed.went?.length ? words.went(deed.went.join(", ")) : ""].filter(Boolean).join(" · ");
     const touched = (deed.touched ?? [])
       .slice(0, 12)
       .map((file) => `<li title="${escape([file.path, words.how[file.how], file.seen ? words.seen : ""].filter(Boolean).join("\n"))}"><span class="ay-how ay-how-${file.how}"></span><span class="ay-file-name">${escape(file.path)}</span></li>`)

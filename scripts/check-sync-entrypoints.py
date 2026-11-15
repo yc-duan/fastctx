@@ -71,6 +71,12 @@ ASSET_OPENERS = {
     "crates/fastctx-hub/src/assets/drills/serve.rs",
     # The bench of design §18's storage-core rows; it ships in no program.
     "crates/fastctx-bench/src/storage.rs",
+    # The measure of §18's proof-by-challenge row (design §28.45), a test
+    # ignored by default: its own library in a temporary folder.
+    "crates/fastctx-hub/src/assets/proving.rs",
+    # The timeline's writing, in its tests only: each its own library in a
+    # temporary folder (sync-v2-impl-design 28.51-28.53).
+    "crates/fastctx-node/src/timeline/assets.rs",
 }
 ASSET_OPENING = re.compile(
     r"\b(?:Content|Objects|Library)\s*>?\s*::\s*open(?:_hub)?\b|\b(?:OBJECTS_DIRECTORY|OBJECTS_FILE|BYTES_FILE)\b"

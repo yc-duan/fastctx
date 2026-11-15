@@ -5,6 +5,7 @@
 
 import { escape } from "../conversation/prose";
 import { loginsOf, type AccountChange, type HubAccounts, type Login, type ProjectSeen } from "../world/accounts";
+import { coOwnersOf, isLocked, isVisitor } from "./reach";
 import type { ResidentNow } from "../world/world";
 import type { AccessWords } from "./account-words";
 import { ActsMenu, type MenuAct } from "./acts-menu";
@@ -91,13 +92,16 @@ export interface ProjectActsOptions {
   deleted(town: string): void;
 }
 
-/** How the reader holds a project: as which login, on which hub, and
- *  whether it is theirs. */
+/** How the reader holds a project: as which login, on which hub, whether
+ *  it is theirs — its owner's, or, opened on a machine shared whole, one
+ *  that holds that machine (§6.2) — and whether they may give it on, which
+ *  a visitor among its holders may not. */
 interface Hold {
   login: Login;
   hub: HubAccounts;
   project: ProjectSeen;
   mine: boolean;
+  gives: boolean;
 }
 
 export class ProjectActs {
@@ -114,8 +118,8 @@ export class ProjectActs {
     const { words } = this.options;
     if (!hold) return [];
     return [
-      ...(hold.mine ? [{ act: "share", icon: "colleague" as const, label: words.share }] : []),
-      ...(hold.mine ? [{ act: "transfer", icon: "move" as const, label: words.transfer }] : []),
+      ...(hold.gives ? [{ act: "share", icon: "colleague" as const, label: words.share }] : []),
+      ...(hold.gives ? [{ act: "transfer", icon: "move" as const, label: words.transfer }] : []),
       ...(hold.mine && hold.hub.deletes_projects ? [{ act: "delete", icon: "trash" as const, label: words.remove, danger: true }] : []),
     ];
   }
@@ -205,9 +209,17 @@ export class ProjectActs {
       if (!project) continue;
       const logins = loginsOf(world.accounts).filter((login) => login.hub === hub.hub);
       const owner = logins.find((login) => login.account === project.owner);
-      const login = owner ?? logins[0];
+      // A co-owner (`coOwnersOf`): one that may give and is not locked
+      // chosen before a visitor or a locked one; and before the owner when
+      // the owner is locked here and a co-owner is not.
+      const coOwners = coOwnersOf(world, hub, project);
+      const unlocked = coOwners.find((one) => !isLocked(world, one));
+      const holder = owner && !isLocked(world, owner) ? undefined : (unlocked ?? (owner ? undefined : coOwners[0]));
+      const login = holder ?? owner ?? logins[0];
       if (!login) continue;
-      return { login, hub, project, mine: !!owner };
+      const free = (one: Login) => !isVisitor(world, one) && !isLocked(world, one);
+      // Locked here, the owner gives nothing either: the hub would refuse it.
+      return { login, hub, project, mine: !!owner || !!holder, gives: holder ? free(holder) : !!owner && !isLocked(world, owner) };
     }
     return null;
   }

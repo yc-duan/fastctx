@@ -181,6 +181,11 @@ export interface ProjectSeen {
   name: TownName;
   owner: AccountName;
   granted: AccountName[];
+  /** The machine shared whole it was opened on: whoever holds it disposes
+   *  of the project as its owner does. */
+  shared_on?: MachineName;
+  /** Those who held that machine as it left the network: co-owners still. */
+  frozen?: AccountName[];
 }
 
 /** A device that logged in to an account, or a machine registered under
@@ -338,6 +343,9 @@ export interface HubAccounts {
   logins: AccountName[];
   home: AccountName | null;
   self_registration: boolean;
+  /** The hub seals its assets and opens them again as asked; an earlier
+   *  one refuses being asked. */
+  asset_seals?: boolean;
   /** The hub seals every asset each time it starts, until the super
    *  administrator opens them. */
   asset_seal_at_start?: boolean;

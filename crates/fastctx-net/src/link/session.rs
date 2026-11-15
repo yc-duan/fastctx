@@ -336,6 +336,7 @@ async fn greet(inner: &Arc<Inner>, upstream: &Upstream, dialed: dial::Dialed) ->
             parts: true,
             call_details: true,
             view_deltas: true,
+            asset_seals: true,
         },
     };
     match tokio::time::timeout(SILENCE, dial::send(&mut socket, &hello)).await {

@@ -197,6 +197,12 @@ pub enum Call {
         hub: crate::HubName,
         account: crate::AccountName,
         before: Option<u64>,
+        /// The asker reads the records of the hub's assets sealed and
+        /// opened (`machine_log::Needs::AssetSeals`). A local tool of an
+        /// earlier release does not say so, and is given none: it could
+        /// read nothing of a page with one.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        asset_seals: bool,
     },
     /// The account's history switch, or this computer's with neither name.
     HistorySwitchRead {

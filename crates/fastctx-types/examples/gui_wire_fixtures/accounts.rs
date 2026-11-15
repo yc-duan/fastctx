@@ -131,6 +131,7 @@ fn hub() -> HubAccounts {
         logins: vec!["ada".parse().unwrap()],
         home: Some("ada".parse().unwrap()),
         self_registration: true,
+        asset_seals: true,
         asset_seal_at_start: true,
         assets_sealed: Some("the hub seals them each time it starts, until the super administrator opens them".into()),
         synced: vec![fastctx_types::sync_status::AccountSync {
@@ -297,6 +298,8 @@ fn hub() -> HubAccounts {
             name: "mark50".parse().unwrap(),
             owner: "ada".parse().unwrap(),
             granted: vec!["bo".parse().unwrap()],
+            shared_on: None,
+            frozen: Vec::new(),
         }],
         arrivals: vec![Arrival {
             hub: "w-0123456789abcdef".parse().unwrap(),

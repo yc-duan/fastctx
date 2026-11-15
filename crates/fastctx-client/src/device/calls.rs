@@ -338,7 +338,7 @@ impl Device {
                 let reply = session.link.network_updates(&account, request).await.map_err(failed)?;
                 return Ok((Reply::NetworkUpdates(reply), here()));
             }
-            Call::MachineLog { hub, account, before } => {
+            Call::MachineLog { hub, account, before, .. } => {
                 let session = self.on_hub(Some(&hub))?;
                 let page = session.link.machine_log(&account, before).await.map_err(failed)?;
                 return Ok((Reply::MachineLog(page), here()));
