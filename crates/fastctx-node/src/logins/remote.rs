@@ -276,6 +276,25 @@ pub(crate) async fn set_resets_in_place(
     }
 }
 
+/// Sets a login's week in quota dollars, here or on another of the user's
+/// machines.
+pub(crate) async fn set_week(
+    node: &Arc<Node>,
+    machine: Written,
+    agent: AgentName,
+    dir: PathBuf,
+    week: Option<fastctx_types::usage::Usd>,
+) -> Result<MachineLogins, Failure> {
+    if node.is_here(&machine) {
+        super::set_week(node, &agent, &dir, week)?;
+        return super::changed_here(node).await;
+    }
+    match ask(node, &machine, Purpose::Hands, RemoteCall::SetAgentWeek { agent, dir, week }).await? {
+        RemoteReply::AgentLogins(logins) => Ok(*logins),
+        _ => Err(other(&machine)),
+    }
+}
+
 /// Turns automatic naming of Codex conversations in a login on or off,
 /// here or on another of the user's machines.
 pub(crate) async fn set_title(
@@ -415,6 +434,10 @@ pub(crate) async fn answer(
         }
         RemoteCall::SetAgentResetInPlace { agent, dir, on } => {
             super::submitted::set_resets_in_place(node, agent, dir, on).await.map(logins)
+        }
+        RemoteCall::SetAgentWeek { agent, dir, week } => {
+            super::set_week(node, &agent, &dir, week)?;
+            super::changed_here(node).await.map(logins)
         }
         RemoteCall::ChangeAgentModels { agent, dir, change } => {
             super::models::change(node, &agent, &dir, &change)?;

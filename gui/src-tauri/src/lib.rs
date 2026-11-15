@@ -1312,6 +1312,7 @@ pub fn run() {
             logins::set_agent_title,
             logins::change_agent_models,
             logins::set_agent_reset_in_place,
+            logins::set_agent_week,
             logins::agent_usage,
             logins::agent_calls,
             topics::world_topics,

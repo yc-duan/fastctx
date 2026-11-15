@@ -110,7 +110,7 @@ export function netOf(world: WorldNow | null, seen: Seen, now: Date): Net {
     for (const [agent, side] of sidesOf(record)) {
       for (const [one, listed] of [...side.listed.map((one) => [one, true] as const), ...side.candidates.map((one) => [one, false] as const)]) {
         const login = loginOf(world, machine, agent, side, one, listed, now);
-        const plate = seen.plates.get(login.id);
+        const plate = one.week ? one.week / 1_000_000 : seen.plates.get(login.id);
         if (plate) plates[login.id] = plate;
         logins.push(login);
         if (machine.hold === "assist") continue;

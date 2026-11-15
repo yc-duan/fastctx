@@ -150,6 +150,12 @@ pub struct Login {
     /// assists; off unless its owner turned it on (`world-usage.md`).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub reset_in_place: bool,
+    /// The login's week in quota dollars as its owner set it, which an
+    /// assistance's share and the whole login's Fable line are reckoned of
+    /// (用户 2026-11-15: 我们只支持自己定，暂时不做自动校准。默认3000刀); none is
+    /// the World's default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub week: Option<crate::usage::Usd>,
     /// The program the World starts for this login, as it would start it
     /// now; none when there is none to start.
     #[serde(default, skip_serializing_if = "Option::is_none")]

@@ -327,6 +327,14 @@ pub enum RemoteCall {
         dir: std::path::PathBuf,
         on: bool,
     },
+    /// Set a login's week there, in quota dollars; only for those who hold
+    /// the machine.
+    SetAgentWeek {
+        agent: AgentName,
+        dir: std::path::PathBuf,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        week: Option<crate::usage::Usd>,
+    },
     /// Change the models offered in a Claude Code login there; only for
     /// those who hold the machine.
     ChangeAgentModels {
@@ -727,6 +735,7 @@ impl RemoteCall {
             | RemoteCall::AgentFolder { .. }
             | RemoteCall::SetAgentTitle { .. }
             | RemoteCall::SetAgentResetInPlace { .. }
+            | RemoteCall::SetAgentWeek { .. }
             | RemoteCall::ChangeAgentModels { .. }
             | RemoteCall::PreviewAgentChange { .. }
             | RemoteCall::ChangeAgentLogin { .. }
@@ -932,6 +941,7 @@ impl RemoteCall {
         use crate::sync::transfer::Purpose;
         match self {
             Self::Timeline { .. } | Self::Topics { .. } => Some(Purpose::Observation),
+            Self::SetAgentWeek { .. } => Some(Purpose::ExecutionControl),
             Self::AddAgentLogin { .. }
             | Self::AgentActivity { .. }
             | Self::AgentCalls { .. }

@@ -250,6 +250,21 @@ pub(crate) fn set_title(node: &Node, agent: &AgentName, dir: &Path, on: bool) ->
     .map_err(|error| Failure::new(format!("keeping the login's naming: {error}")))
 }
 
+/// Sets the week of the Codex or Claude Code login `dir` here, in quota
+/// dollars, as its owner chooses; none is the World's default.
+pub(crate) fn set_week(node: &Node, agent: &AgentName, dir: &Path, week: Option<fastctx_types::usage::Usd>) -> Result<(), Failure> {
+    if !AGENTS.contains(&agent.as_str()) {
+        return Err(Failure::not_run("only Codex and Claude Code logins keep their usage"));
+    }
+    if week.is_some_and(|week| week.0 == 0) {
+        return Err(Failure::not_run("a login's week is an amount above zero"));
+    }
+    known(node, agent, dir)?;
+    crate::usage::set_week(node, agent.as_str(), dir, week).map_err(|error| Failure::new(format!("keeping the login's week: {error}")))?;
+    snapshot::ask(node);
+    Ok(())
+}
+
 /// Turns on or off whether a week the vendor cleared before its reset counts
 /// anew in the Codex or Claude Code login `dir` here, as its owner chooses;
 /// off by default (`world-usage.md`).

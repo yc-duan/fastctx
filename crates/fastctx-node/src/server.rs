@@ -1451,6 +1451,14 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
                 .await
                 .map(|logins| Reply::MachineAgentLogins(Box::new(logins)))
         }
+        Call::SetAgentWeek { machine, agent, dir, week } => {
+            users_voice(node, peer)?;
+            crate::managed::refuse(node)?;
+
+            crate::logins::remote::set_week(node, machine, agent, dir, week)
+                .await
+                .map(|logins| Reply::MachineAgentLogins(Box::new(logins)))
+        }
         Call::ChangeAgentModels { machine, agent, dir, change } => {
             users_voice(node, peer)?;
             crate::managed::refuse(node)?;

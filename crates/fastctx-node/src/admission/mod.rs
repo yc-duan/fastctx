@@ -175,6 +175,7 @@ fn admit_inner(
             | RemoteCall::AgentFolder { .. }
             | RemoteCall::SetAgentTitle { .. }
             | RemoteCall::SetAgentResetInPlace { .. }
+            | RemoteCall::SetAgentWeek { .. }
             | RemoteCall::ChangeAgentModels { .. }
             | RemoteCall::PreviewAgentChange { .. }
             | RemoteCall::ChangeAgentLogin { .. }

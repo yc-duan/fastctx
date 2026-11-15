@@ -363,6 +363,17 @@ impl World {
         machine_logins(self.ask(Call::SetAgentResetInPlace { machine, agent, dir, on }).await?)
     }
 
+    /// Sets a login's week in quota dollars, or the World's default again.
+    pub async fn set_agent_week(
+        &self,
+        machine: Written,
+        agent: fastctx_types::AgentName,
+        dir: std::path::PathBuf,
+        week: Option<fastctx_types::usage::Usd>,
+    ) -> Result<fastctx_types::logins::MachineLogins, Error> {
+        machine_logins(self.ask(Call::SetAgentWeek { machine, agent, dir, week }).await?)
+    }
+
     /// Changes the models the World offers in a Claude Code login, for
     /// everyone who uses it.
     pub async fn change_agent_models(

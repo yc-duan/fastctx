@@ -68,6 +68,33 @@ fn follows_clearings(path: &Path) -> bool {
     fastctx_platform::disk::exists(path.join(FOLLOW_CLEARINGS)).unwrap_or(false)
 }
 
+/// Where a login's week, as its owner set it, is kept: its dollars, in
+/// millionths, beside its ledger.
+const WEEK: &str = "week";
+
+/// A login's week in quota dollars as its owner set it; none is the World's
+/// default.
+pub(crate) fn week(node: &Node, agent: &str, dir: &Path) -> Option<fastctx_types::usage::Usd> {
+    let kept = fastctx_platform::disk::read(ledger(node, agent, dir).join(WEEK)).ok()?;
+    String::from_utf8(kept).ok()?.trim().parse::<u64>().ok().filter(|week| *week > 0).map(fastctx_types::usage::Usd)
+}
+
+/// Keeps a login's week, or forgets it for the World's default.
+pub(crate) fn set_week(node: &Node, agent: &str, dir: &Path, week: Option<fastctx_types::usage::Usd>) -> io::Result<()> {
+    let path = ledger(node, agent, dir);
+    let kept = path.join(WEEK);
+    match week {
+        Some(week) => {
+            fastctx_platform::disk::create_dir_all(&path)?;
+            fastctx_platform::disk::write(&kept, week.0.to_string().as_bytes())
+        }
+        None => match fastctx_platform::disk::remove_file(&kept) {
+            Err(error) if error.kind() != io::ErrorKind::NotFound => Err(error),
+            _ => Ok(()),
+        },
+    }
+}
+
 /// Whether future early weekly resets are detected for this login.
 /// Previously confirmed boundaries do not depend on this setting.
 pub(crate) fn resets_in_place(node: &Node, agent: &str, dir: &Path) -> bool {

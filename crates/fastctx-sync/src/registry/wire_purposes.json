@@ -726,5 +726,19 @@
     "purpose": "AssetSync",
     "capability": "asset_sync",
     "mapping": "crates/fastctx-types/src/assets.rs"
+  },
+  {
+    "type": "crates/fastctx-types/src/calls.rs::Call",
+    "variant": "SetAgentWeek",
+    "purpose": "ExecutionControl",
+    "capability": "node_ipc",
+    "mapping": "crates/fastctx-types/src/calls.rs"
+  },
+  {
+    "type": "crates/fastctx-types/src/remote.rs::RemoteCall",
+    "variant": "SetAgentWeek",
+    "purpose": "ExecutionControl",
+    "capability": "timeline_reads",
+    "mapping": "crates/fastctx-types/src/remote.rs"
   }
 ]

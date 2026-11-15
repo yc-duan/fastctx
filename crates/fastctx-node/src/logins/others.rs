@@ -129,6 +129,7 @@ pub(super) fn side(
             unattended: None,
             auto_title: false,
             reset_in_place: false,
+            week: None,
             launcher: None,
             models: Vec::new(),
             model_edits: None,

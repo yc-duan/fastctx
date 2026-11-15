@@ -98,6 +98,7 @@ pub fn admit(view: &View, from: &MachineName, call: &RemoteCall) -> Result<(), F
             | RemoteCall::AgentFolder { .. }
             | RemoteCall::SetAgentTitle { .. }
             | RemoteCall::SetAgentResetInPlace { .. }
+            | RemoteCall::SetAgentWeek { .. }
             | RemoteCall::ChangeAgentModels { .. }
             | RemoteCall::PreviewAgentChange { .. }
             | RemoteCall::ChangeAgentLogin { .. }

@@ -1105,6 +1105,7 @@ impl fastctx_net::link::Node for Handler {
                     | RemoteCall::AgentFolder { .. }
                     | RemoteCall::SetAgentTitle { .. }
                     | RemoteCall::SetAgentResetInPlace { .. }
+                    | RemoteCall::SetAgentWeek { .. }
                     | RemoteCall::ChangeAgentModels { .. }
                     | RemoteCall::PreviewAgentChange { .. }
                     | RemoteCall::ChangeAgentLogin { .. }

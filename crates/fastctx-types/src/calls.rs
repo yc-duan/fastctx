@@ -618,6 +618,17 @@ pub enum Call {
         dir: std::path::PathBuf,
         on: bool,
     },
+    /// The week of the login `dir` on `machine`, in quota dollars: what an
+    /// assistance's share and the whole login's Fable line are reckoned of.
+    /// None sets the World's default again. Set by whoever may manage the
+    /// login.
+    SetAgentWeek {
+        machine: Written,
+        agent: AgentName,
+        dir: std::path::PathBuf,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        week: Option<crate::usage::Usd>,
+    },
     /// Changes the models the World offers in the Claude Code login `dir` on
     /// `machine`; changed by whoever may manage the login, offered to
     /// everyone who uses it, those it assists too (`world-gui.md`, 对话).
@@ -1598,6 +1609,8 @@ impl Call {
             Self::Topics { .. } | Self::RemoteTopics { .. } | Self::SyncStatus { .. } => Some(Purpose::Observation),
             // Takes over the streams the lost device ordered (design §28.10).
             Self::AdoptConversation { .. } => Some(Purpose::AssetSync),
+            // Sets what a login's assistances and its Fable line are held to.
+            Self::SetAgentWeek { .. } => Some(Purpose::ExecutionControl),
         }
     }
 }

@@ -43,6 +43,7 @@ export interface AgentsPageOptions {
   limits(machine: string, agent: string, dir: string): Promise<MachineLogins>;
   setTitle(machine: string, agent: string, dir: string, on: boolean): Promise<MachineLogins>;
   setResetInPlace(machine: string, agent: string, dir: string, on: boolean): Promise<MachineLogins>;
+  setWeek(machine: string, agent: string, dir: string, week: number | null): Promise<MachineLogins>;
   changeModels(machine: string, agent: string, dir: string, change: ModelChange): Promise<MachineLogins>;
   usage(machine: string, agent: string, dir: string): Promise<UsageReport>;
   calls(machine: string, agent: string, dir: string, query: UsageCallsQuery): Promise<UsageCallsPage>;
@@ -377,7 +378,14 @@ export class AgentsPage implements Page {
         // keeps it as Max (`fastctx_types::accounts::PlanSeen`).
         return accounts({ change: "plan", machine, agent, ...(home ? { home } : {}), plan: plan === "ultra" ? "max" : plan, ...(plan === "ultra" ? { ultra: true } : {}) } as AccountChange, login);
       },
-      plate: () => Promise.reject(new Error("该机器的 Fastctx 暂不支持设置周额度")),
+      plate: async (login, dollars) => {
+        const { machine, agent, dir } = this.recordOf(login);
+        try {
+          this.took(await options.setWeek(machine, agent, dir, Math.round(dollars * 1_000_000)));
+        } catch (error) {
+          throw new Error(/does not know|unknown variant|older/i.test(String(error)) ? "该机器的 Fastctx 版本较旧，暂不支持设置周额度" : error instanceof Error ? error.message : String(error));
+        }
+      },
       assist: (login, person, limit, until) => accounts(assisted(login, person, limit, until), login),
       endAssist: (login, person) => {
         const { machine, agent, home } = this.recordOf(login);

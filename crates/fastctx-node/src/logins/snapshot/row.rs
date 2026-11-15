@@ -99,12 +99,13 @@ pub(super) async fn one(
         None
     };
     let (reading, dir, kept) = (node.clone(), dir_owned.clone(), record.clone());
-    let (reset_in_place, workbench, drift, auto_title) = read(node, deadline, "reading login preferences", move || {
+    let (reset_in_place, workbench, drift, auto_title, week) = read(node, deadline, "reading login preferences", move || {
         Ok((
             crate::usage::resets_in_place(&reading, agent, &dir),
             logins::workbench::is_open(&reading, &fastctx_types::access::Acting::Here, agent, Some(&dir)),
             logins::refresh::of(&reading, agent, &dir),
             agent == "codex" && !kept.codex.untitled.iter().any(|known| crate::homes::same_dir(known, &dir)),
+            crate::usage::week(&reading, agent, &dir),
         ))
     })
     .await
@@ -117,6 +118,7 @@ pub(super) async fn one(
                 reason: error.message,
             }),
             false,
+            None,
         )
     });
     let program_unreadable = program_failure.is_some();
@@ -141,6 +143,7 @@ pub(super) async fn one(
         unattended,
         auto_title,
         reset_in_place,
+        week,
         launcher,
         models,
         model_edits,

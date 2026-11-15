@@ -72,6 +72,7 @@ impl RemoteCall {
             | Self::SentinelKey { .. }
             | Self::SentinelTry
             | Self::SetAgentResetInPlace { .. }
+            | Self::SetAgentWeek { .. }
             | Self::StopJob { .. }
             | Self::StopOn { .. }
             | Self::Talk { .. }
@@ -213,6 +214,7 @@ impl Call {
             | Self::SentinelTry { .. }
             | Self::ServerCommand { .. }
             | Self::SetAgentResetInPlace { .. }
+            | Self::SetAgentWeek { .. }
             | Self::StopJob { .. }
             | Self::Talk { .. }
             | Self::UninstallPrepare

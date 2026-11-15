@@ -418,6 +418,12 @@ export function setAgentResetInPlace(machine: MachineName, agent: string, dir: s
   return invoke("set_agent_reset_in_place", { machineName: machine, agentName: agent, dir, on });
 }
 
+/** Sets a login's week in quota dollars, millionths of a dollar; none is
+ *  the World's default again. */
+export function setAgentWeek(machine: MachineName, agent: string, dir: string, week: number | null): Promise<MachineLogins> {
+  return invoke("set_agent_week", { machineName: machine, agentName: agent, dir, week });
+}
+
 /** Changes the models a Claude Code login offers, for everyone who uses it. */
 export function changeAgentModels(machine: MachineName, agent: string, dir: string, change: ModelChange): Promise<MachineLogins> {
   return invoke("change_agent_models", { machineName: machine, agentName: agent, dir, change });
