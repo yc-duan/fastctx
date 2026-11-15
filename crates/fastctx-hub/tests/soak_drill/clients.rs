@@ -300,7 +300,7 @@ pub(crate) async fn person(
                 // Something slow, stopped once it is under way.
                 if type_and_send(&local, &seen, &LOCAL, &resident, None, &format!("soak slow {n} [[slow: 8]]")).await {
                     tokio::time::sleep(dice.seconds(1, 3)).await;
-                    let _ = seen.time("stop", local.stop(resident.clone(), None, None)).await;
+                    let _ = seen.time("stop", local.stop(resident.clone(), None, None, None)).await;
                 }
             } else {
                 let text = words(&mut dice, n);

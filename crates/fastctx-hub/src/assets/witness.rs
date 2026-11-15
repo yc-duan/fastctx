@@ -76,28 +76,19 @@ fn absolute(name: &str) -> io::Result<Option<PathBuf>> {
 
 /// Where the file of the hub `id` kept in `dir` lives: `FASTCTX_HUB_WITNESS_DIR`
 /// when set; beside a hub kept in the system's temporary directory (a
-/// drill's); otherwise the service account's state directory. Never inside
-/// the hub's directory, where a copy of it would come back with the hub.
+/// drill's); otherwise a directory of its own in the service account's state
+/// directory. Never inside the hub's directory, where a copy of it would
+/// come back with the hub; and never inside a directory another part of
+/// Fastctx makes and checks, as `%ProgramData%\Fastctx` (file names ignore
+/// case there) or `/var/lib/fastctx`, which a directory made first would
+/// stop.
 fn location(dir: &Path, id: &str) -> io::Result<PathBuf> {
     let base = if let Some(set) = absolute("FASTCTX_HUB_WITNESS_DIR")? {
         set
     } else if dir.starts_with(std::env::temp_dir()) {
         dir.parent().unwrap_or(dir).join("hub-witness")
-    } else if cfg!(windows) {
-        let state = match absolute("LOCALAPPDATA")? {
-            Some(state) => Some(state),
-            None => absolute("ProgramData")?,
-        };
-        state
-            .ok_or_else(|| io::Error::other("neither LOCALAPPDATA nor ProgramData names where the hub keeps its witness"))?
-            .join("fastctx")
-            .join("hub-witness")
     } else {
-        let state = match absolute("XDG_STATE_HOME")? {
-            Some(state) => Some(state),
-            None => absolute("HOME")?.map(|home| home.join(".local").join("state")),
-        };
-        state.unwrap_or_else(|| PathBuf::from("/var/lib")).join("fastctx").join("hub-witness")
+        state()?.join("fastctx-hub-witness")
     };
     let path = base.join(format!("{id}.json"));
     if inside(&path, dir)? {
@@ -108,6 +99,35 @@ fn location(dir: &Path, id: &str) -> io::Result<PathBuf> {
         )));
     }
     Ok(path)
+}
+
+/// The service account's state directory.
+fn state() -> io::Result<PathBuf> {
+    if cfg!(windows) {
+        let state = match absolute("LOCALAPPDATA")? {
+            Some(state) => Some(state),
+            None => absolute("ProgramData")?,
+        };
+        state.ok_or_else(|| io::Error::other("neither LOCALAPPDATA nor ProgramData names where the hub keeps its witness"))
+    } else {
+        let state = match absolute("XDG_STATE_HOME")? {
+            Some(state) => Some(state),
+            None => absolute("HOME")?.map(|home| home.join(".local").join("state")),
+        };
+        Ok(state.unwrap_or_else(|| PathBuf::from("/var/lib")))
+    }
+}
+
+/// Where the file was kept before it had a directory of its own
+/// (`fastctx/hub-witness` in the state directory), where `location` would
+/// now choose that state directory: a hub that kept it there takes it up
+/// from there, rather than finding none and trusting whatever its own
+/// directory holds now.
+fn earlier_location(dir: &Path, id: &str) -> io::Result<Option<PathBuf>> {
+    if absolute("FASTCTX_HUB_WITNESS_DIR")?.is_some() || dir.starts_with(std::env::temp_dir()) {
+        return Ok(None);
+    }
+    Ok(Some(state()?.join("fastctx").join("hub-witness").join(format!("{id}.json"))))
 }
 
 /// `path` as the system resolves it: the longest part of it that exists,
@@ -156,13 +176,36 @@ impl Witness {
     /// The witness of the hub `id` kept in `dir`, as last written.
     pub(crate) fn open(dir: &Path, id: &str) -> io::Result<Self> {
         let path = location(dir, id)?;
-        let kept = match fastctx_platform::disk::read(&path) {
-            Ok(bytes) => serde_json::from_slice(&bytes)
-                .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, format!("{}: {error}", path.display())))?,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => Kept::default(),
-            Err(error) => return Err(error),
+        let read = |path: &Path| -> io::Result<Option<Kept>> {
+            match fastctx_platform::disk::read(path) {
+                Ok(bytes) => serde_json::from_slice(&bytes)
+                    .map(Some)
+                    .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, format!("{}: {error}", path.display()))),
+                Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+                Err(error) => Err(error),
+            }
         };
-        Ok(Self { path, kept: Mutex::new(kept), frozen: AtomicBool::new(false) })
+        if let Some(kept) = read(&path)? {
+            return Ok(Self { path, kept: Mutex::new(kept), frozen: AtomicBool::new(false) });
+        }
+        let witness = Self { path, kept: Mutex::new(Kept::default()), frozen: AtomicBool::new(false) };
+        if let Some(earlier) = earlier_location(dir, id)?
+            && let Some(kept) = read(&earlier)?
+        {
+            // Moved: written where it is kept now before it leaves where it
+            // was, and that directory let go once empty, as it is in the way
+            // of SYSTEM's home on Windows (`%ProgramData%\Fastctx`).
+            witness.write(&kept)?;
+            *witness.kept.lock().expect("witness") = kept;
+            fastctx_platform::disk::remove_file(&earlier)?;
+            if let Some(directory) = earlier.parent() {
+                let _ = fastctx_platform::disk::remove_dir(directory);
+                if let Some(parent) = directory.parent() {
+                    let _ = fastctx_platform::disk::remove_dir(parent);
+                }
+            }
+        }
+        Ok(witness)
     }
 
     pub(crate) fn path(&self) -> &Path {

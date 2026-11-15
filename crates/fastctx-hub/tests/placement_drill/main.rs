@@ -595,7 +595,7 @@ async fn main() -> Result<()> {
         plan_file(&host, &a)? == pa,
         json!(null),
     );
-    wa.stop(sa.to.resident.clone(), Some("host".parse()?), None).await?;
+    wa.stop(sa.to.resident.clone(), Some("host".parse()?), None, None).await?;
     anyhow::ensure!(idle_after(&host, &a, before).await, "the held turn did not stop");
     let local_home = base.join("alice-codex");
     std::fs::create_dir_all(&local_home)?;
@@ -751,10 +751,23 @@ async fn main() -> Result<()> {
     }
     anyhow::ensure!(focused_back, "the focused computer did not reconnect");
     wa.manage(sa.to.resident.clone(), Some("host".parse()?), Management::Focus { focus: focused("alice-two") }).await?;
-    let before = last_turn(&host, &a);
-    wa.talk(sa.to.resident.clone(), Some("host".parse()?), "ALICE_NEW_PLACE".into()).await?;
-    anyhow::ensure!(idle_after(&host, &a, before).await, "the new-place turn did not settle");
-    let moved = plan_file(&host, &a)?;
+    // Back as alice-pc sees it is not yet back as the conversation's own
+    // computer hears it: until then a turn there has no working computer and
+    // its receipt names no path. Another turn is begun until one has it.
+    let mut moved = None;
+    for _ in 0..40 {
+        let before = last_turn(&host, &a);
+        wa.talk(sa.to.resident.clone(), Some("host".parse()?), "ALICE_NEW_PLACE".into()).await?;
+        anyhow::ensure!(idle_after(&host, &a, before).await, "the new-place turn did not settle");
+        if let Ok(path) = plan_file(&host, &a) {
+            moved = Some(path);
+            break;
+        }
+        for _ in 0..4 {
+            pause().await;
+        }
+    }
+    let moved = moved.context("no turn after the focused computer came back had a working place")?;
     record("the next turn gets the selected replica path", moved.starts_with(&alice_two) && moved != pa, json!(moved));
     record(
         "both copies retain the recovered edit",

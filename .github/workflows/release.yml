@@ -115,6 +115,12 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.92.0
         with:
           targets: ${{ matrix.target }}
+      # The cache's key counts every toolchain installed, so a runner image's
+      # own idle one would make each image a cache of its own: only the one
+      # the build uses stays (codex-a94c19c2, run 43701326124).
+      - name: Keep only the toolchain the build uses
+        shell: bash
+        run: for t in $(rustup toolchain list | awk '{print $1}'); do case "$t" in 1.92.0-*) ;; *) rustup toolchain uninstall "$t" ;; esac; done
       - uses: Swatinem/rust-cache@v2
         with:
           key: kernel-${{ matrix.target }}
@@ -159,12 +165,17 @@ jobs:
           path: tests
           if-no-files-found: error
 
+  # In two parts at once, about eight minutes each on the Arm runner where
+  # the whole took seventeen: the first the scenarios named, the second the
+  # rest, so that a scenario added later runs in it.
   network-windows:
     needs: kernel-windows
-    name: network ${{ matrix.target }}
+    name: network ${{ matrix.target }} ${{ matrix.part }}
     strategy:
       fail-fast: false
       matrix:
+        target: [x86_64-pc-windows-msvc, aarch64-pc-windows-msvc]
+        part: [first, rest]
         include:
           - target: x86_64-pc-windows-msvc
             runner: windows-2025
@@ -195,7 +206,9 @@ jobs:
             unzip -q -o "$RUNNER_TEMP/earlier.zip" -d "$RUNNER_TEMP/earlier"
             earlier=(--earlier "$(cygpath -m "$RUNNER_TEMP/earlier/fastctx.exe")")
           fi
-          tests/network_drill.exe --root "$(cygpath -m "$RUNNER_TEMP")" "${earlier[@]}"
+          first=cuts,restart,freeze,half-open,update-policy,skill-folders,plan-copies
+          if [[ '${{ matrix.part }}' == first ]]; then part=(--only "$first"); else part=(--skip "$first"); fi
+          tests/network_drill.exe --root "$(cygpath -m "$RUNNER_TEMP")" "${part[@]}" "${earlier[@]}"
 
   test-windows-arm:
     needs: kernel-windows
@@ -338,6 +351,12 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.92.0
         with:
           targets: ${{ matrix.build }}
+      # The cache's key counts every toolchain installed, so a runner image's
+      # own idle one would make each image a cache of its own: only the one
+      # the build uses stays (codex-a94c19c2, run 43701326124).
+      - name: Keep only the toolchain the build uses
+        shell: bash
+        run: for t in $(rustup toolchain list | awk '{print $1}'); do case "$t" in 1.92.0-*) ;; *) rustup toolchain uninstall "$t" ;; esac; done
       - uses: Swatinem/rust-cache@v2
         with:
           key: kernel-${{ matrix.target }}
@@ -403,12 +422,15 @@ jobs:
           path: tests
           if-no-files-found: error
 
+  # In two parts at once, as on Windows (network-windows).
   network-linux:
     needs: kernel-linux
-    name: network ${{ matrix.target }}
+    name: network ${{ matrix.target }} ${{ matrix.part }}
     strategy:
       fail-fast: false
       matrix:
+        target: [x86_64-unknown-linux-gnu, aarch64-unknown-linux-gnu]
+        part: [first, rest]
         include:
           - target: x86_64-unknown-linux-gnu
             runner: ubuntu-24.04
@@ -433,10 +455,12 @@ jobs:
           mkdir -p "$RUNNER_TEMP/earlier"
           curl -fsSL "https://github.com/${{ github.repository }}/releases/download/v$EARLIER_RELEASE/fastctx-${{ matrix.target }}.tar.gz" \
             | tar xz -C "$RUNNER_TEMP/earlier"
-          tests/network_drill --root "$RUNNER_TEMP" --earlier "$RUNNER_TEMP/earlier/fastctx"
+          first=cuts,restart,freeze,half-open,update-policy,skill-folders,plan-copies
+          if [[ '${{ matrix.part }}' == first ]]; then part=(--only "$first"); else part=(--skip "$first"); fi
+          tests/network_drill --root "$RUNNER_TEMP" "${part[@]}" --earlier "$RUNNER_TEMP/earlier/fastctx"
       # The letter window between machines and their hub, by seed, through every fault of a line
       # and a process: nothing lost, each letter's effect once and in order, no window overrun.
-      - if: env.DRILLS == 'true'
+      - if: env.DRILLS == 'true' && matrix.part == 'first'
         name: Letter window simulation
         run: tests/letter_drill --seeds 5000
 
@@ -477,16 +501,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.92.0
+      # The cache's key counts every toolchain installed, so a runner image's
+      # own idle one would make each image a cache of its own: only the one
+      # the build uses stays (codex-a94c19c2, run 43701326124).
+      - name: Keep only the toolchain the build uses
+        shell: bash
+        run: for t in $(rustup toolchain list | awk '{print $1}'); do case "$t" in 1.92.0-*) ;; *) rustup toolchain uninstall "$t" ;; esac; done
       - uses: Swatinem/rust-cache@v2
         with:
           key: storage-linux
           save-if: false
       - if: env.DRILLS == 'true'
         name: Storage engine drill
-        run: cargo test --release --locked -p fastctx-storage --test storage_drill -- --root "$RUNNER_TEMP/storage-drill"
+        run: cargo test --profile drill --locked -p fastctx-storage --test storage_drill -- --root "$RUNNER_TEMP/storage-drill"
       - if: env.DRILLS == 'true'
         name: Node records drill
-        run: cargo test --release --locked -p fastctx-node --features storage-drill --test record_drill -- --root "$RUNNER_TEMP/record-drill"
+        run: cargo test --profile drill --locked -p fastctx-node --features storage-drill --test record_drill -- --root "$RUNNER_TEMP/record-drill"
 
   # The same on Windows, under a directory long enough that the archive of a moved record passes the
   # length Windows' own calls take, and with a record another program holds open as a scanner does.
@@ -504,16 +534,22 @@ jobs:
         shell: pwsh
         run: Add-MpPreference -ExclusionPath $env:GITHUB_WORKSPACE, $env:RUNNER_TEMP, "$env:USERPROFILE\.cargo", "$env:USERPROFILE\.rustup"
       - uses: dtolnay/rust-toolchain@1.92.0
+      # The cache's key counts every toolchain installed, so a runner image's
+      # own idle one would make each image a cache of its own: only the one
+      # the build uses stays (codex-a94c19c2, run 43701326124).
+      - name: Keep only the toolchain the build uses
+        shell: bash
+        run: for t in $(rustup toolchain list | awk '{print $1}'); do case "$t" in 1.92.0-*) ;; *) rustup toolchain uninstall "$t" ;; esac; done
       - uses: Swatinem/rust-cache@v2
         with:
           key: storage-windows
           save-if: false
       - if: env.DRILLS == 'true'
         name: Storage engine drill
-        run: cargo test --release --locked -p fastctx-storage --test storage_drill -- --root "$(cygpath -m "$RUNNER_TEMP")/storage-drill"
+        run: cargo test --profile drill --locked -p fastctx-storage --test storage_drill -- --root "$(cygpath -m "$RUNNER_TEMP")/storage-drill"
       - if: env.DRILLS == 'true'
         name: Node records drill
-        run: cargo test --release --locked -p fastctx-node --features storage-drill --test record_drill -- --root "$(cygpath -m "$RUNNER_TEMP")/record-drill-under-a-directory-named-long-enough-to-matter"
+        run: cargo test --profile drill --locked -p fastctx-node --features storage-drill --test record_drill -- --root "$(cygpath -m "$RUNNER_TEMP")/record-drill-under-a-directory-named-long-enough-to-matter"
 
   # What each crate may touch and on which threads is kept by clippy (`clippy.toml` in the hub, the
   # link and the node; `specs/world-engine.md`, 线程的三种角色), on every system: each has code paths
@@ -538,11 +574,18 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.92.0
         with:
           components: clippy
+      # The cache's key counts every toolchain installed, so a runner image's
+      # own idle one would make each image a cache of its own: only the one
+      # the build uses stays (codex-a94c19c2, run 43701326124).
+      - name: Keep only the toolchain the build uses
+        shell: bash
+        run: for t in $(rustup toolchain list | awk '{print $1}'); do case "$t" in 1.92.0-*) ;; *) rustup toolchain uninstall "$t" ;; esac; done
       - uses: Swatinem/rust-cache@v2
         with:
           key: clippy-${{ matrix.os }}
           save-if: false
-      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      # With the hub's asset drills, which only its own feature builds.
+      - run: cargo clippy --workspace --all-targets --features fastctx-hub/content-drill --locked -- -D warnings
       - run: cargo clippy -p fastctx-node --features storage-drill --all-targets --locked -- -D warnings
 
   test-linux:
@@ -646,6 +689,11 @@ jobs:
             ${{ runner.temp }}/centos7/result.json
           if-no-files-found: warn
 
+  # Both Mac kernels are built on an Intel Mac, the Apple silicon one across: of the free Macs it
+  # has the memory (14 GB to 7) the node's largest crate takes compiling beside the others. On an
+  # Apple silicon one that crate took two hours, and twelve minutes in the step after it. The Apple
+  # silicon kernel's version is checked on the Apple silicon Mac that tests it (test-macos-arm).
+  # The build's timings, and its memory and swap every 10 s, go up with it.
   kernel-macos:
     needs: sync-architecture
     if: github.ref_type == 'branch'
@@ -654,15 +702,18 @@ jobs:
       fail-fast: false
       matrix:
         target: [aarch64-apple-darwin, x86_64-apple-darwin]
-    runs-on: macos-15
+    runs-on: macos-15-intel
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.92.0
         with:
           targets: ${{ matrix.target }}
-      - if: matrix.target == 'x86_64-apple-darwin'
-        name: Let Apple silicon run what is built for Intel
-        run: softwareupdate --install-rosetta --agree-to-license || /usr/bin/arch -x86_64 /usr/bin/true
+      # The cache's key counts every toolchain installed, so a runner image's
+      # own idle one would make each image a cache of its own: only the one
+      # the build uses stays (codex-a94c19c2, run 43701326124).
+      - name: Keep only the toolchain the build uses
+        shell: bash
+        run: for t in $(rustup toolchain list | awk '{print $1}'); do case "$t" in 1.92.0-*) ;; *) rustup toolchain uninstall "$t" ;; esac; done
       - uses: Swatinem/rust-cache@v2
         with:
           key: kernel-${{ matrix.target }}
@@ -675,12 +726,36 @@ jobs:
           node-version: '22'
       - if: env.DRILLS == 'true'
         run: node scripts/check-launcher.cjs "$RUNNER_TEMP"
-      - run: node scripts/kernel.mjs '${{ matrix.target }}'
+      - name: Build the kernel, its memory and swap sampled every 10 s
+        run: |
+          mkdir -p measure
+          ( set +e +o pipefail
+            while :; do
+              echo "== $(date -u +%H:%M:%S)"
+              vm_stat | grep -E 'free|active|inactive|wired|compressor|Pageins|Pageouts|Swapins|Swapouts'
+              sysctl -n vm.swapusage
+              ps -axo rss=,comm= | sort -rn | head -5
+              sleep 10
+            done ) > measure/memory.log 2>&1 &
+          sampler=$!
+          if FASTCTX_CARGO_TIMINGS=1 node scripts/kernel.mjs '${{ matrix.target }}'; then built=0; else built=$?; fi
+          kill "$sampler" || true
+          sysctl -n hw.ncpu hw.memsize machdep.cpu.brand_string >> measure/memory.log || true
+          cp -R target/cargo-timings measure/ || true
+          exit "$built"
+      - name: Upload the build's timings and memory
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-measure-${{ matrix.target }}
+          path: measure
+          if-no-files-found: warn
       - name: Verify version and package the native program
         run: |
           binary="target/${{ matrix.target }}/release/fastctx"
           version="$(python -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["workspace"]["package"]["version"])')"
-          test "$("$binary" --version)" = "fastctx $version"
+          # An Apple silicon kernel does not run on this Intel Mac: test-macos-arm checks it.
+          if [[ '${{ matrix.target }}' != aarch64-apple-darwin ]]; then test "$("$binary" --version)" = "fastctx $version"; fi
           if [[ "$GITHUB_REF_TYPE" == tag ]]; then test "$GITHUB_REF_NAME" = "v$version"; fi
           python scripts/package.py platform --target '${{ matrix.target }}' --binary "$binary" --notices dist/THIRD_PARTY_LICENSES.md --output dist
           mkdir -p kernel && cp "$binary" kernel/
@@ -707,12 +782,15 @@ jobs:
           path: tests
           if-no-files-found: error
 
+  # In two parts at once, as on Windows (network-windows).
   network-macos:
     needs: kernel-macos
-    name: network ${{ matrix.target }}
+    name: network ${{ matrix.target }} ${{ matrix.part }}
     strategy:
       fail-fast: false
       matrix:
+        target: [aarch64-apple-darwin, x86_64-apple-darwin]
+        part: [first, rest]
         include:
           - target: aarch64-apple-darwin
             runner: macos-15
@@ -744,7 +822,9 @@ jobs:
           mkdir -p "$RUNNER_TEMP/earlier"
           curl -fsSL "https://github.com/${{ github.repository }}/releases/download/v$EARLIER_RELEASE/fastctx-${{ matrix.target }}.tar.gz" \
             | tar xz -C "$RUNNER_TEMP/earlier"
-          tests/network_drill --root "$RUNNER_TEMP" --earlier "$RUNNER_TEMP/earlier/fastctx"
+          first=cuts,restart,freeze,half-open,update-policy,skill-folders,plan-copies
+          if [[ '${{ matrix.part }}' == first ]]; then part=(--only "$first"); else part=(--skip "$first"); fi
+          tests/network_drill --root "$RUNNER_TEMP" "${part[@]}" --earlier "$RUNNER_TEMP/earlier/fastctx"
 
   test-macos-arm:
     needs: kernel-macos
@@ -768,6 +848,11 @@ jobs:
           path: tests
       - name: Restore executable permissions
         run: chmod +x kernel/fastctx tests/*
+      # Built on an Intel Mac, its version is checked here, where it runs.
+      - name: Verify the kernel's version
+        run: |
+          version="$(python -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["workspace"]["package"]["version"])')"
+          test "$(kernel/fastctx --version)" = "fastctx $version"
       - name: Smoke test on this machine, with a managed Mac installed as root
         run: python scripts/smoke.py kernel/fastctx --service --managed dist/fastctx-aarch64-apple-darwin.tar.gz
       - name: Verify the bundled ripgrep, the node's lifetime, job control and byte streams, in the bash a Mac comes with
@@ -925,6 +1010,12 @@ jobs:
         with:
           components: rust-docs
           targets: ${{ matrix.target }}
+      # The cache's key counts every toolchain installed, so a runner image's
+      # own idle one would make each image a cache of its own: only the one
+      # the build uses stays (codex-a94c19c2, run 43701326124).
+      - name: Keep only the toolchain the build uses
+        shell: bash
+        run: for t in $(rustup toolchain list | awk '{print $1}'); do case "$t" in 1.92.0-*) ;; *) rustup toolchain uninstall "$t" ;; esac; done
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: gui/src-tauri
@@ -955,7 +1046,7 @@ jobs:
           if-no-files-found: error
 
   bundle-windows:
-    needs: [gui-windows, kernel-windows, kernel-linux]
+    needs: [gui-windows, kernel-windows]
     name: bundle ${{ matrix.target }}
     strategy:
       fail-fast: false
@@ -995,11 +1086,6 @@ jobs:
         with:
           name: kernel-${{ matrix.target }}
           path: kernel
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: archive-*-unknown-linux-gnu
-          merge-multiple: true
-          path: gui/src-tauri/linux
       # The boot service takes a new release's kernel by this signature alone, with no administrator.
       - name: Sign the World program it carries
         env:
@@ -1074,6 +1160,12 @@ jobs:
       - if: matrix.target == 'x86_64-apple-darwin'
         name: Let Apple silicon run what is built for Intel
         run: softwareupdate --install-rosetta --agree-to-license || /usr/bin/arch -x86_64 /usr/bin/true
+      # The cache's key counts every toolchain installed, so a runner image's
+      # own idle one would make each image a cache of its own: only the one
+      # the build uses stays (codex-a94c19c2, run 43701326124).
+      - name: Keep only the toolchain the build uses
+        shell: bash
+        run: for t in $(rustup toolchain list | awk '{print $1}'); do case "$t" in 1.92.0-*) ;; *) rustup toolchain uninstall "$t" ;; esac; done
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: gui/src-tauri
@@ -1104,7 +1196,7 @@ jobs:
           if-no-files-found: error
 
   bundle-macos:
-    needs: [gui-macos, kernel-macos, kernel-linux]
+    needs: [gui-macos, kernel-macos]
     name: bundle ${{ matrix.target }}
     strategy:
       fail-fast: false
@@ -1142,11 +1234,6 @@ jobs:
         with:
           name: kernel-${{ matrix.target }}
           path: kernel
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: archive-*-unknown-linux-gnu
-          merge-multiple: true
-          path: gui/src-tauri/linux
       # The fixed certificate the application and its kernel are signed with every version, so the
       # privacy a Mac's user grants Fastctx holds across versions: in a keychain of this job alone,
       # trusted for code signing here.
@@ -1258,6 +1345,12 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.92.0
         with:
           components: rust-docs
+      # The cache's key counts every toolchain installed, so a runner image's
+      # own idle one would make each image a cache of its own: only the one
+      # the build uses stays (codex-a94c19c2, run 43701326124).
+      - name: Keep only the toolchain the build uses
+        shell: bash
+        run: for t in $(rustup toolchain list | awk '{print $1}'); do case "$t" in 1.92.0-*) ;; *) rustup toolchain uninstall "$t" ;; esac; done
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: gui/src-tauri
@@ -1324,11 +1417,6 @@ jobs:
         with:
           name: kernel-x86_64-unknown-linux-gnu
           path: kernel
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: archive-*-unknown-linux-gnu
-          merge-multiple: true
-          path: gui/src-tauri/linux
       - name: Build, seal and verify the deb and the AppImage
         run: |
           chmod +x kernel/fastctx
@@ -1423,6 +1511,12 @@ jobs:
         with:
           components: rust-docs
           targets: aarch64-linux-android,armv7-linux-androideabi,i686-linux-android,x86_64-linux-android
+      # The cache's key counts every toolchain installed, so a runner image's
+      # own idle one would make each image a cache of its own: only the one
+      # the build uses stays (codex-a94c19c2, run 43701326124).
+      - name: Keep only the toolchain the build uses
+        shell: bash
+        run: for t in $(rustup toolchain list | awk '{print $1}'); do case "$t" in 1.92.0-*) ;; *) rustup toolchain uninstall "$t" ;; esac; done
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: gui/src-tauri
@@ -1445,14 +1539,21 @@ jobs:
         run: |
           npm ci --no-audit --no-fund
           cargo fetch --locked --manifest-path src-tauri/Cargo.toml
-      - name: Build the APK for every phone's processor
+      # An APK for each phone's processor, a quarter of one that carries all four (user
+      # 2026-11-15); and the one of all four still, which phones that update by it take until they
+      # have their own (`gui/src-tauri/src/updates.rs`). The second build packs the libraries the
+      # first compiled.
+      - name: Build the APKs, one for each phone's processor and one for all
         working-directory: gui
         run: |
+          node scripts/android.mjs build --apk --split-per-abi
           node scripts/android.mjs build --apk
-          built="$(ls src-tauri/gen/android/app/build/outputs/apk/universal/release/*.apk)"
           mkdir -p ../dist/gui
-          "$ANDROID_HOME/build-tools/37.0.0/zipalign" -f -P 16 4 "$built" "../dist/gui/aligned.apk"
-      - name: Sign the APK
+          for pair in universal:universal arm64:arm64-v8a arm:armeabi-v7a x86:x86 x86_64:x86_64; do
+            built="$(ls src-tauri/gen/android/app/build/outputs/apk/${pair%%:*}/release/*.apk)"
+            "$ANDROID_HOME/build-tools/37.0.0/zipalign" -f -P 16 4 "$built" "../dist/gui/aligned-${pair#*:}.apk"
+          done
+      - name: Sign the APKs
         env:
           ANDROID_KEYSTORE: ${{ secrets.ANDROID_KEYSTORE }}
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
@@ -1467,16 +1568,18 @@ jobs:
           keystore="$RUNNER_TEMP/release.jks"
           trap 'rm -f "$keystore"' EXIT
           printf '%s' "$ANDROID_KEYSTORE" | base64 -d > "$keystore"
-          signed="../dist/gui/Fastctx_${version}_universal.apk"
-          "$ANDROID_HOME/build-tools/37.0.0/apksigner" sign --ks "$keystore" --ks-key-alias fastctx \
-            --ks-pass env:ANDROID_KEYSTORE_PASSWORD --key-pass env:ANDROID_KEYSTORE_PASSWORD \
-            --out "$signed" ../dist/gui/aligned.apk
-          rm ../dist/gui/aligned.apk
-          "$ANDROID_HOME/build-tools/37.0.0/zipalign" -c -P 16 4 "$signed"
-          certificates="$("$ANDROID_HOME/build-tools/37.0.0/apksigner" verify --print-certs "$signed")"
-          printf '%s\n' "$certificates" | grep 'certificate SHA-256 digest'
-          printf '%s\n' "$certificates" | grep -q "certificate SHA-256 digest: $RELEASE_CERTIFICATE"
-          node node_modules/@tauri-apps/cli/tauri.js signer sign --app-version "$version" "$signed"
+          for abi in universal arm64-v8a armeabi-v7a x86 x86_64; do
+            signed="../dist/gui/Fastctx_${version}_${abi}.apk"
+            "$ANDROID_HOME/build-tools/37.0.0/apksigner" sign --ks "$keystore" --ks-key-alias fastctx \
+              --ks-pass env:ANDROID_KEYSTORE_PASSWORD --key-pass env:ANDROID_KEYSTORE_PASSWORD \
+              --out "$signed" "../dist/gui/aligned-$abi.apk"
+            rm "../dist/gui/aligned-$abi.apk"
+            "$ANDROID_HOME/build-tools/37.0.0/zipalign" -c -P 16 4 "$signed"
+            certificates="$("$ANDROID_HOME/build-tools/37.0.0/apksigner" verify --print-certs "$signed")"
+            printf '%s\n' "$certificates" | grep 'certificate SHA-256 digest'
+            printf '%s\n' "$certificates" | grep -q "certificate SHA-256 digest: $RELEASE_CERTIFICATE"
+            node node_modules/@tauri-apps/cli/tauri.js signer sign --app-version "$version" "$signed"
+          done
       - uses: actions/upload-artifact@v4
         with:
           name: gui-android
@@ -1535,6 +1638,12 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.92.0
         with:
           targets: x86_64-pc-windows-msvc
+      # The cache's key counts every toolchain installed, so a runner image's
+      # own idle one would make each image a cache of its own: only the one
+      # the build uses stays (codex-a94c19c2, run 43701326124).
+      - name: Keep only the toolchain the build uses
+        shell: bash
+        run: for t in $(rustup toolchain list | awk '{print $1}'); do case "$t" in 1.92.0-*) ;; *) rustup toolchain uninstall "$t" ;; esac; done
       - uses: Swatinem/rust-cache@v2
         with:
           # Same host, target and flags as the x64 kernel; use its existing main-branch cache.

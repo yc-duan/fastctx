@@ -10,7 +10,8 @@ pub(crate) mod brought;
 pub(crate) mod chain;
 #[cfg(test)]
 pub(crate) mod drill_kinds;
-#[cfg(test)]
+// They commit records unjudged: the `content-drill` feature (Cargo.toml).
+#[cfg(all(test, feature = "content-drill"))]
 mod drills;
 mod handback;
 mod handback_repair;
