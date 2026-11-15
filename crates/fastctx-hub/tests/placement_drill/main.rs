@@ -82,6 +82,30 @@ fn record(what: &str, ok: bool, detail: Value) {
 async fn pause() {
     tokio::time::sleep(Duration::from_millis(250)).await;
 }
+/// Until the computer at `root` holds the account's whole share of the
+/// machine in force. The hub answers a new share at once, and the share
+/// gives nothing until the machine has cleared what the account may not see
+/// (sync v2 design §6.3): what the account does on the machine as one of its
+/// holders belongs after that.
+async fn share_in_force(root: &Path, on: &str, account: &str) -> Result<()> {
+    let world = World::new(WorldDir::under(root), Peer::Command { resident: None, session: None });
+    let mut seen = None;
+    for _ in 0..240 {
+        seen = world
+            .accounts()
+            .await?
+            .hubs
+            .iter()
+            .flat_map(|hub| &hub.shares)
+            .find(|share| share.machine == machine(on) && share.account == name(account))
+            .map(|share| share.pending);
+        if seen == Some(None) {
+            return Ok(());
+        }
+        pause().await;
+    }
+    anyhow::bail!("{account}'s share of {on} never came into force there: {seen:?}")
+}
 async fn ask(root: &Path, call: Value) -> Result<Value> {
     let mut client =
         fastctx_client::Client::connect(&WorldDir::under(root), Peer::Command { resident: None, session: None })
@@ -496,6 +520,7 @@ async fn main() -> Result<()> {
         AccountChange::Share { machine: machine("host"), to: name("mobile"), shared: true, jobs: None },
     )
     .await?;
+    share_in_force(&host, "host", "mobile").await?;
     let before = last_turn(&host, &m);
     wm.talk(
         sm.to.resident.clone(),

@@ -61,6 +61,9 @@ pub(super) async fn exercise(
             AccountChange::Share { machine: machine("host"), to: name("bob"), shared: true, jobs: None },
         )
         .await?;
+    // A conversation born before the share is in force is born private to
+    // its account, and stays so.
+    share_in_force(host, "host", "bob").await?;
     let shared = bob
         .open_with(
             "codex".parse()?,
