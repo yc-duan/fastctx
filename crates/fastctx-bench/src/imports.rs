@@ -23,6 +23,10 @@ use std::time::{Duration, Instant};
 
 /// The most a record's body holds; an event larger is an object.
 const RECORD_BYTES: usize = 64 << 10;
+/// The most records, and bytes of them, the node commits of a timeline at
+/// once (`timeline/assets.rs`).
+const COMMIT_RECORDS: usize = 1_024;
+const COMMIT_BYTES: usize = 4 << 20;
 
 fn row(n: u64, text: String) -> Value {
     let ms = n * 10;
@@ -56,11 +60,18 @@ fn record(path: &Path, lines: u64, bytes: u64, seeded: &mut Seeded) -> Result<()
 
 /// Reads `path` from its start and commits what it shows; how many events.
 fn import(three: &crate::storage::Three, path: &Path, number: &mut u64) -> Result<usize, String> {
+    imported(three, path, number).map(|(events, _)| events)
+}
+
+/// As `import`, with whether the reading stopped before a line larger than
+/// World reads (design §28.49).
+fn imported(three: &crate::storage::Three, path: &Path, number: &mut u64) -> Result<(usize, bool), String> {
     let holding = three.producer.holding(SCOPE).map_err(error)?.ok_or("not held")?;
     let read = follow::tail(path, &follow::Seam::default(), &HashSet::new(), &|_| true, false, &|_| false)
         .map_err(error)?
         .map_err(|why| format!("the reading restarted: {why}"))?;
     let events = read.transcript.events.len();
+    let refused = read.transcript.problems.iter().any(|problem| problem.contains("more than World reads"));
     let (mut records, mut leases) = (Vec::new(), Vec::new());
     for event in &read.transcript.events {
         *number += 1;
@@ -87,12 +98,28 @@ fn import(three: &crate::storage::Three, path: &Path, number: &mut u64) -> Resul
         });
     }
     let mut leases = leases.into_iter();
-    for part in records.chunks(256) {
+    // As the node commits a timeline it writes (`timeline/assets.rs`): up
+    // to 1,024 records or 4 MiB of them a commit.
+    let mut parts: Vec<Vec<KindRecord>> = Vec::new();
+    let mut bytes = 0;
+    for record in records {
+        let size = match &record.record.state {
+            State::Is { body, .. } => body.len(),
+            State::Gone => 0,
+        };
+        if parts.last().is_none_or(|part| part.len() >= COMMIT_RECORDS || bytes + size > COMMIT_BYTES) {
+            parts.push(Vec::new());
+            bytes = 0;
+        }
+        bytes += size;
+        parts.last_mut().expect("a part").push(record);
+    }
+    for part in parts {
         let leasing = part.iter().filter(|record| matches!(&record.record.state, State::Is { objects, .. } if !objects.is_empty())).count();
         let commit = Commit {
             scope: SCOPE.into(),
             stream: Timeline::STREAM.into(),
-            records: part.to_vec(),
+            records: part,
             leases: leases.by_ref().take(leasing).collect(),
             durable: false,
             op: None,
@@ -100,7 +127,7 @@ fn import(three: &crate::storage::Three, path: &Path, number: &mut u64) -> Resul
         };
         three.producer.raw_commit(commit, three.device.clone()).map_err(error)?;
     }
-    Ok(events)
+    Ok((events, refused))
 }
 
 pub(crate) fn first_import(dir: &Path, _scale: Scale) -> Result<bool, String> {
@@ -162,15 +189,25 @@ pub(crate) fn large_value(dir: &Path, scale: Scale) -> Result<bool, String> {
     let three = three(dir)?;
     let mut number = 0u64;
     let started = Instant::now();
-    let (imported, grew) = grown(|| import(&three, &path, &mut number))?;
+    let (read, grew) = grown(|| imported(&three, &path, &mut number))?;
     let took = started.elapsed();
-    let events = imported?;
+    let (events, refused) = read?;
     let mib = grew as f64 / f64::from(1 << 20);
-    let met = took <= Duration::from_secs(5) && mib <= 64.0;
+    // A line larger than World reads is not read: the reading stops before
+    // it and says so, the rows before it committed (design §28.49); one
+    // within the bound is read whole.
+    let larger = bytes as usize > fastctx_hosts::bounded::LINE_MOST;
+    // The four rows before the large line, each one event; with it, five.
+    let met = took <= Duration::from_secs(5) && mib <= 64.0 && refused == larger && events == if larger { 4 } else { 5 };
+    let measure = if larger {
+        "a record whose last line holds 287 MB, more than World reads: read from its start up to that line, which is refused and told, the rows before it committed"
+    } else {
+        "a record whose last line holds 28.7 MB, within what World reads: read from its start and committed"
+    };
     println!(
         "{}",
-        json!({ "row": "large-value", "measure": "a record whose one line holds 287 MB, read from its start and committed",
-                "seconds": took.as_secs_f64(), "grew_mib": mib, "events": events, "target_seconds": 5.0, "target_mib": 64.0, "met": met })
+        json!({ "row": "large-value", "measure": measure, "seconds": took.as_secs_f64(), "grew_mib": mib, "events": events,
+                "refused": refused, "target_seconds": 5.0, "target_mib": 64.0, "met": met })
     );
     Ok(met)
 }

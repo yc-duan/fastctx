@@ -64,6 +64,17 @@ pub(crate) fn run(row: &str, dir: &Path, scale: Scale) -> Result<bool, String> {
         "large-value" => crate::imports::large_value(dir, scale),
         "codex-advance" => crate::codex::advance(dir, scale),
         "codex-relist" => crate::codex::relist(dir, scale),
+        "codex-kept-same" => crate::codex::kept_same(dir, scale),
+        "codex-relist-held" => crate::codex::relist_held(dir, scale),
+        "claude-relist" => crate::claude::relist(dir, scale),
+        "claude-relist-large" => crate::claude::relist_large(dir, scale),
+        "claude-place" => crate::claude::place(dir, scale),
+        "claude-place-large" => crate::claude::place_large(dir, scale),
+        "claude-place-stopped" => crate::claude::place_stopped(dir, scale),
+        "claude-follow" => crate::claude::follow(dir, scale),
+        "claude-follow-window" => crate::claude::follow_window(dir, scale),
+        "claude-follow-world" => crate::claude::follow_world(dir, scale),
+        "claude-world-alone" => crate::claude::world_alone(dir, scale),
         other => Err(format!("no row {other}")),
     }
 }
@@ -130,6 +141,20 @@ impl Three {
         }
     }
 
+    /// The hub takes `frames` of one stream in one request, as a device of
+    /// asset sync 3 sends a run of them (E2): one disk synchronization.
+    fn take_many(&self, frames: Vec<RawFrame>) -> Result<(), String> {
+        let (count, period) = (frames.len(), self.hub.holding(SCOPE).map_err(error)?.ok_or("not held")?);
+        let anything = |_: &ObjectRef| true;
+        let nothing = |_: &[u8; 32]| false;
+        let taking = Taking { period, readable: &anything, proven: &nothing };
+        let words = self.hub.take_many(SCOPE, frames, &Checked, &taking, self.kinds.clone(), self.hub_key.clone()).map_err(error)?;
+        if words.len() != count || words.iter().any(|word| !matches!(word, Received::Applied { .. })) {
+            return Err(format!("the hub did not apply every frame: {words:?}"));
+        }
+        Ok(())
+    }
+
     /// The producer's frames from `from`, at most `most`.
     fn frames_of(library: &Library, from: u64, most: usize) -> Result<Vec<RawFrame>, String> {
         library.export(SCOPE, Timeline::STREAM, from, most).map_err(error)
@@ -175,17 +200,43 @@ impl Three {
 }
 
 /// The hub takes frames of 64 records of 512 bytes, one account, one stream:
-/// at least 20,000 records a second.
+/// at least 20,000 records a second. Taken as a device of asset sync 3 sends
+/// them, a run of up to 16 inline frames in a request (E2); one at a time,
+/// as an older device sends them, told beside it.
 fn hub_frames(dir: &Path, scale: Scale) -> Result<bool, String> {
-    let three = three(dir)?;
     let count = scale.of(200_000);
+    let three = three(&dir.join("many"))?;
+    three.produce(count, 64, |_| 512, 18)?;
+    let mut frames = Three::frames_of(&three.producer, 0, usize::MAX)?.into_iter().peekable();
+    let started = Instant::now();
+    while frames.peek().is_some() {
+        let mut run = Vec::new();
+        let mut bytes = 0;
+        while run.len() < fastctx_types::assets::FRAMES_A_TAKE
+            && let Some(next) = frames.peek()
+            && bytes + next.body.len() <= fastctx_types::assets::MANY_BYTES
+        {
+            bytes += next.body.len();
+            run.push(frames.next().expect("looked at"));
+        }
+        three.take_many(run)?;
+    }
+    let met = stats::rate("hub-frames", "storage core: frames taken, a run of up to 16 in a request (asset sync 3)", count as f64, "records", started.elapsed(), 20_000.0, serde_json::json!({ "per_frame": 64, "bytes": 512, "per_take": fastctx_types::assets::FRAMES_A_TAKE }));
+    let alone = three_alone(&dir.join("alone"), count)?;
+    stats::rate("hub-frames", "storage core: frames taken one a request (an older device)", count as f64, "records", alone, 0.0, serde_json::json!({ "per_frame": 64, "bytes": 512 }));
+    Ok(met)
+}
+
+/// How long the hub takes `count` records in frames of 64, one at a time.
+fn three_alone(dir: &Path, count: usize) -> Result<std::time::Duration, String> {
+    let three = three(dir)?;
     three.produce(count, 64, |_| 512, 18)?;
     let frames = Three::frames_of(&three.producer, 0, usize::MAX)?;
     let started = Instant::now();
     for frame in frames {
         three.take(frame)?;
     }
-    Ok(stats::rate("hub-frames", "storage core: frames taken", count as f64, "records", started.elapsed(), 20_000.0, serde_json::json!({ "per_frame": 64, "bytes": 512 })))
+    Ok(started.elapsed())
 }
 
 /// A replica takes 300,000 records of 1 KiB in frames filled to 1 MiB: at
