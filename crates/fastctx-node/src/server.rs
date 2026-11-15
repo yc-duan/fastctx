@@ -1827,9 +1827,9 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
             let link = crate::world::hub_link(node, Some(&hub))?;
             let mut before = before;
             // A page left with nothing the asker reads goes on to the next,
-            // at most this many: an earlier release takes an empty page for
-            // the last, and would never ask past it.
-            for _ in 0..64 {
+            // as long as the next is older: an earlier release takes an
+            // empty page for the last, and would never ask past it.
+            loop {
                 let page = match link.machine_log(&account, before).await {
                     Ok(page) => readable(page),
                     // The hub not reached: the changes as the account's
@@ -1848,11 +1848,12 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
                     Err(error) => return Err(Failure::new(error)),
                 };
                 match page.next_before {
-                    Some(next) if page.records.is_empty() && Some(next) != before => before = Some(next),
+                    Some(next) if page.records.is_empty() && before.is_none_or(|before| next < before) => {
+                        before = Some(next)
+                    }
                     _ => return Ok(Reply::MachineLog(page)),
                 }
             }
-            Ok(Reply::MachineLog(fastctx_types::machine_log::Page { records: Vec::new(), next_before: before }))
         }
         Call::ServerCommand { hub, account, name, expires, managed, uses, label, windows, mac } => {
             users_voice(node, peer)?;
