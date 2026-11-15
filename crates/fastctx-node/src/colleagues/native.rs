@@ -19,6 +19,10 @@ use tokio::time::Instant;
 /// Said of a history whose read failed as a fault of the program's own.
 const UNREAD: &str = "its history could not be read";
 
+/// The longest one read keeps its turn: a record its host keeps adding to
+/// is read over and over, and no one may be waiting for it any longer.
+const READ: Duration = Duration::from_secs(120);
+
 #[derive(Clone, Default)]
 struct Kept {
     agent: NativeAgent,
@@ -294,9 +298,10 @@ pub(super) async fn open(
     // continues delivering events until a complete replacement is ready.
     if read.history.due() {
         read.fold.recent = false;
+        let waiting = Waiting::begin();
         let history = tokio::time::timeout_at(
             deadline,
-            in_turn(node, {
+            in_turn(node, waiting.clone(), {
                 let (node, id) = (node.clone(), id.clone());
                 async move { crate::talk::history_quietly(&node, &id).await }
             }),
@@ -313,12 +318,12 @@ pub(super) async fn open(
                 }
             }
         };
+        read.waited += waiting.waited();
         match result {
-            Ok(Some((Ok(history), waited, _turn))) => {
-                read.waited += waited;
+            Ok(Ok((Ok(history), turn))) => {
                 read.folded += history.history.len();
                 let reconnecting = read.events.is_none();
-                read.fold = folded(read.fold, history.history, None).await;
+                read.fold = folded(read.fold, history.history, None, turn).await;
                 read.unavailable = history.unavailable;
                 read.goal_changed |= reconnecting && read.history_seen;
                 read.history_seen = true;
@@ -339,16 +344,15 @@ pub(super) async fn open(
                     }
                 }
             }
-            Ok(Some((Err(error), waited, _turn))) => {
-                read.waited += waited;
+            Ok(Ok((Err(error), _turn))) => {
                 read.unavailable = vec![error.message];
                 read.history.settled();
             }
-            Ok(None) => {
+            Ok(Err(Missed::Failed)) => {
                 read.unavailable = vec![UNREAD.into()];
                 read.history.retry();
             }
-            Err(_) => read.history.retry(),
+            Ok(Err(Missed::Late)) | Err(_) => read.history.retry(),
         }
     }
     progress(&read.fold, &read.unavailable, read.reading());
@@ -359,9 +363,10 @@ pub(super) async fn open(
         if Instant::now() >= deadline {
             break;
         }
+        let waiting = Waiting::begin();
         let activity = tokio::time::timeout_at(
             deadline,
-            in_turn(node, {
+            in_turn(node, waiting.clone(), {
                 let (node, id, agent) = (node.clone(), id.clone(), agent.clone());
                 async move { crate::agent_activity::here(&node, &id, &agent).await }
             }),
@@ -380,9 +385,9 @@ pub(super) async fn open(
                 }
             }
         };
+        read.waited += waiting.waited();
         match result {
-            Ok(Some((Ok(activity), waited, _turn))) => {
-                read.waited += waited;
+            Ok(Ok((Ok(activity), turn))) => {
                 read.folded += activity.events.len();
                 if let Some(start) = activity.agent {
                     let parent = read.fold.agents.get(&agent).and_then(|kept| kept.parent.clone());
@@ -392,23 +397,22 @@ pub(super) async fn open(
                         activity.events.first().map_or_else(Timestamp::now, |event| event.at),
                     );
                 }
-                read.fold = folded(read.fold, activity.events, Some(agent.clone())).await;
+                read.fold = folded(read.fold, activity.events, Some(agent.clone()), turn).await;
                 let kept = read.fold.entry(&agent);
                 kept.agent.unavailable = activity.unavailable;
                 kept.agent.reading = false;
             }
-            Ok(Some((Err(error), waited, _turn))) => {
-                read.waited += waited;
+            Ok(Ok((Err(error), _turn))) => {
                 let kept = read.fold.entry(&agent);
                 kept.agent.reading = !error.is_refused() && !error.is_deleted();
                 kept.agent.unavailable = Some(error.message);
             }
-            Ok(None) => {
+            Ok(Err(Missed::Failed)) => {
                 let kept = read.fold.entry(&agent);
                 kept.agent.reading = false;
                 kept.agent.unavailable = Some(UNREAD.into());
             }
-            Err(_) => break,
+            Ok(Err(Missed::Late)) | Err(_) => break,
         }
         for (id, kept) in &read.fold.agents {
             if kept.agent.reading && scheduled.insert(id.clone()) {
@@ -423,29 +427,64 @@ pub(super) async fn open(
     read
 }
 
-/// What `reading` reads, in its turn among the whole histories read for
-/// collaborations at once (`live::turn`): with how long it waited for the
-/// turn, and the turn itself, held until what was read has been folded and
-/// let go. The read goes on to its end though the one that asked waits no
-/// longer: what it holds is there until then, and its turn is no other's
-/// before. None when the read failed as a fault of the program's own.
-async fn in_turn<T: Send + 'static>(
-    node: &Arc<Node>,
-    reading: impl Future<Output = T> + Send + 'static,
-) -> Option<(T, Duration, crate::colleagues::live::Turn)> {
-    let asked = std::time::Instant::now();
-    let turn = crate::colleagues::live::turn(node).await;
-    let waited = asked.elapsed();
-    fastctx_platform::task::spawn(async move { (reading.await, turn) })
-        .await
-        .ok()
-        .map(|(read, turn)| (read, waited, turn))
+/// How long a read waited for its turn, known as soon as it has it; one
+/// that never had it waited all the while since it asked.
+#[derive(Clone)]
+struct Waiting {
+    asked: std::time::Instant,
+    had: Arc<std::sync::OnceLock<Duration>>,
 }
 
-/// A whole history is folded on a thread that may block.
-async fn folded(mut fold: Fold, events: Vec<SessionEvent>, parent: Option<String>) -> Fold {
+impl Waiting {
+    fn begin() -> Self {
+        Self { asked: std::time::Instant::now(), had: Arc::default() }
+    }
+
+    fn waited(&self) -> Duration {
+        self.had.get().copied().unwrap_or_else(|| self.asked.elapsed())
+    }
+}
+
+/// Why a read in its turn brought nothing: it took longer than a read may
+/// (`READ`), or it failed as a fault of the program's own.
+enum Missed {
+    Late,
+    Failed,
+}
+
+/// What `reading` reads, in its turn among the whole histories read for
+/// collaborations at once (`live::turn`), with the turn: it is held until
+/// what was read has been folded and let go (`folded`). The read goes on,
+/// for as long as a read may, though the one that asked waits no longer:
+/// what it holds is there until it ends, and its turn is no other's before.
+async fn in_turn<T: Send + 'static>(
+    node: &Arc<Node>,
+    waiting: Waiting,
+    reading: impl Future<Output = T> + Send + 'static,
+) -> Result<(T, crate::colleagues::live::Turn), Missed> {
+    let turn = crate::colleagues::live::turn(node).await;
+    let _ = waiting.had.set(waiting.asked.elapsed());
+    let read = fastctx_platform::task::spawn(async move { (tokio::time::timeout(READ, reading).await, turn) });
+    match read.await {
+        Ok((Ok(read), turn)) => Ok((read, turn)),
+        Ok((Err(_), _)) => Err(Missed::Late),
+        Err(_) => Err(Missed::Failed),
+    }
+}
+
+/// A whole history is folded on a thread that may block; its turn among the
+/// histories read at once goes with it there, and ends as it is let go,
+/// whether or not the one that asked still waits.
+async fn folded(
+    mut fold: Fold,
+    events: Vec<SessionEvent>,
+    parent: Option<String>,
+    turn: crate::colleagues::live::Turn,
+) -> Fold {
     fastctx_platform::task::blocking(move || {
         fold.events(&events, parent.as_deref());
+        drop(events);
+        drop(turn);
         fold
     })
     .await

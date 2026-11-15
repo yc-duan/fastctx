@@ -32,9 +32,10 @@ use tokio::sync::{Notify, OwnedSemaphorePermit, Semaphore, watch};
 /// the changes that come with it: an agent at work tells many a second.
 const SETTLE: Duration = Duration::from_millis(250);
 
-/// How long a collaboration is still kept after the last who followed it
-/// left: an interface that opens the same panel again, or joins again after
-/// its connection broke, finds it as it stands, with nothing read again.
+/// How long a collaboration of this machine is still kept after the last
+/// who followed it left: an interface that opens the same panel again, or
+/// joins again after its connection broke, finds it as it stands, with
+/// nothing read again. Its keeper goes on asking whether it may be seen.
 const LINGER: Duration = Duration::from_secs(60);
 
 /// How many whole histories are read for collaborations at once. Each is
@@ -145,7 +146,10 @@ async fn keep(node: Arc<Node>, key: Key, name: String, told: Sender, came: Arc<N
     let started = std::time::Instant::now();
     node.log.line(format_args!("following {what}"));
     loop {
-        let ended = while_followed(work(&node, &key, &told), &told, &came, LINGER).await;
+        // One followed on another machine is not kept on: whether this
+        // device may still see it is asked again each time it is followed.
+        let linger = if key.machine.is_none() { LINGER } else { Duration::ZERO };
+        let ended = while_followed(work(&node, &key, &told), &told, &came, linger).await;
         let lasted = crate::talk::lasted(started);
         match &ended {
             Some(failure) => {
