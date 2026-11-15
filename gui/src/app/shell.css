@@ -516,19 +516,6 @@ html.gripping-y * {
   color: var(--text-3);
 }
 
-/* A page gone to comes in over a moment: its ink settles, nothing moves;
-   a registered property, so its words stay smooth on Windows. */
-.main > .page-arriving {
-  opacity: var(--shown);
-  animation: page-arrive var(--enter) var(--ease-out) both;
-}
-
-@keyframes page-arrive {
-  from {
-    --shown: 0;
-  }
-}
-
 /* Conversations: one line each, in fixed columns so a long name never moves
    the marks: which agent, the name cut short, the kind of device it lives
    on. Every name in the sidebar begins on one line, a project's

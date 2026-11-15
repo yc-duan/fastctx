@@ -9,7 +9,8 @@ import { projectWho, mergeFormer } from "./project/who";
 import { followFormer } from "./project/former";
 import { localHome } from "./sentinel/local";
 import { configureTopics, followState, mapTopic } from "./world/topics";
-import { followSwitches } from "./app/segment-slide";
+import { followSwitches, grabSwitches } from "./app/segment-slide";
+import { followTabs } from "./app/arrive";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import type { Attachment, FilePlace, UploadTarget } from "./world/attachments";
 import type { AssistantFiles } from "./conversation/node-tray";
@@ -18,6 +19,7 @@ import "katex/dist/katex.min.css";
 import "./design/fonts.css";
 import "./design/tokens.css";
 import "./design/breath.css";
+import "./design/arrive.css";
 import "./design/base.css";
 import "./design/highlight.css";
 import "./conversation/conversation.css";
@@ -1333,6 +1335,8 @@ function versionsHere(look: boolean): void {
 
 // A switch's chosen side slides to the one pressed, wherever it is drawn.
 followSwitches();
+grabSwitches();
+followTabs();
 
 const shell = new Shell({
   store,

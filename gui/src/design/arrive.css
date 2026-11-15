@@ -1,0 +1,57 @@
+/* What comes in, and from where (`app/arrive.ts`). Into a place, the page
+   comes from the right, and back out of it, from the left, over the longer
+   of the two durations; a view under the same head comes from the side its
+   switch moved to, over the shorter; a page opened fresh comes up from a
+   little below; what changes in place only fades. Only registered
+   properties move (`breath.css`), so words stay crisp on Windows. */
+[data-arriving] {
+  opacity: var(--shown);
+  translate: var(--slide) var(--lift);
+}
+[data-arriving="page"] {
+  animation: arrive-rise var(--settle) var(--fold-easing) both;
+}
+[data-arriving="forward"] {
+  animation: arrive-from-right var(--settle) var(--fold-easing) both;
+}
+[data-arriving="back"] {
+  animation: arrive-from-left var(--settle) var(--fold-easing) both;
+}
+[data-arriving="right"] {
+  animation: arrive-from-right var(--enter) var(--fold-easing) both;
+}
+[data-arriving="left"] {
+  animation: arrive-from-left var(--enter) var(--fold-easing) both;
+}
+[data-arriving="quiet"] {
+  animation: arrive-fade var(--enter) var(--ease-out) both;
+}
+/* What holds a panel or a page's body while it slides clips it across, so no
+   scrollbar flickers in under it (the window itself clips a whole page). */
+:has(> [role="tabpanel"][data-arriving]),
+.main > :has(> [data-arriving]) {
+  overflow-x: hidden;
+}
+@keyframes arrive-rise {
+  from {
+    --shown: 0;
+    --lift: 10px;
+  }
+}
+@keyframes arrive-from-right {
+  from {
+    --shown: 0;
+    --slide: 20px;
+  }
+}
+@keyframes arrive-from-left {
+  from {
+    --shown: 0;
+    --slide: -20px;
+  }
+}
+@keyframes arrive-fade {
+  from {
+    --shown: 0;
+  }
+}

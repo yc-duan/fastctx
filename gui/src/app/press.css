@@ -15,3 +15,29 @@
 :root[data-input="touch"] img {
   -webkit-user-drag: none;
 }
+
+/* What is pressed answers at once, while the button is still down (用户
+   2026-11-15): a filled thing — a switch's side, a tab, a choice, a quiet
+   button — tightens to 0.95 and springs back when let go; a list's row
+   deepens. Pressing in is quick and letting go springs, as the icon buttons
+   and text buttons have it (`shell.css`, `project.css`). */
+:root :is(.segment, .st-tab, .mp-tab, .data-tab, .choice, .quiet-button, .welcome-way, .ledger-switch > button, .picker-kinds > button, .model-speeds > button) {
+  scale: var(--press);
+  transition:
+    color var(--hover) var(--ease),
+    background-color var(--hover) var(--ease),
+    --press var(--settle) var(--spring);
+}
+:root :is(.segment, .st-tab, .mp-tab, .data-tab, .choice, .quiet-button, .welcome-way, .ledger-switch > button, .picker-kinds > button, .model-speeds > button):active:not(:disabled, [aria-disabled="true"]) {
+  --press: 0.95;
+  transition-duration: var(--hover), var(--hover), var(--quick);
+  transition-timing-function: var(--ease), var(--ease), var(--ease-out);
+}
+/* A tab drawn as a word pales. */
+:root .tab:active {
+  color: var(--text-3);
+}
+/* A list's row deepens. */
+:root :is(.row-link, .project-link, .pop-row, .agent-row, .fp-row, .lm-row, .attach-row, .job-row, .sp-menu-row, .talk-menu-item, .logins-row, .settings-link):active:not(:disabled, :has(button:active)) {
+  background: var(--fill-strong);
+}

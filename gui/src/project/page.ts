@@ -106,7 +106,7 @@ export class ProjectPage {
       )}
       <header class="project-intro"></header>
       <div class="tabs" role="tablist"><button class="tab" type="button" role="tab" data-view="now">${escape(options.words.nowTab)}</button><button class="tab" type="button" role="tab" data-view="reference">${escape(options.words.referenceTab)}</button></div>
-      <div class="project-board"></div>`;
+      <div class="project-board" role="tabpanel"></div>`;
     this.title = this.element.querySelector<HTMLElement>(".page-title")!;
     this.title.textContent = options.town;
     this.intro = this.element.querySelector<HTMLElement>(".project-intro")!;

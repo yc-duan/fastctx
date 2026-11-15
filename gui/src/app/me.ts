@@ -88,7 +88,7 @@ export class MePage implements Page {
     this.title = words.title;
     this.element = document.createElement("div");
     this.element.className = "settings-page me-page";
-    this.element.innerHTML = `${options.head(`<h1 class="page-title">${escape(words.title)}</h1>`)}<div class="me st-room"><div class="me-top"></div><div class="st-tabs me-tabs" role="tablist" aria-label="${escape(words.title)}"></div><div class="st-sheet scroller"></div></div>`;
+    this.element.innerHTML = `${options.head(`<h1 class="page-title">${escape(words.title)}</h1>`)}<div class="me st-room"><div class="me-top"></div><div class="st-tabs me-tabs" role="tablist" aria-label="${escape(words.title)}"></div><div class="st-sheet scroller" role="tabpanel"></div></div>`;
     this.top = this.element.querySelector<HTMLElement>(".me-top")!;
     this.tabs = this.element.querySelector<HTMLElement>(".me-tabs")!;
     this.sheet = this.element.querySelector<HTMLElement>(".me .st-sheet")!;
