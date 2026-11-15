@@ -66,7 +66,7 @@ export interface Looked {
   joined: boolean;
 }
 
-export type RemoteStep = "connect" | "check" | "upload" | "hub" | "join" | "arrive" | "withdraw";
+export type RemoteStep = "connect" | "check" | "bring" | "upload" | "hub" | "join" | "arrive" | "withdraw";
 
 export interface RemoteSeams {
   probe(host: string, port: number): Promise<RemoteKey>;
@@ -699,7 +699,7 @@ export class RemoteWorld {
     if (!server) return;
     this.busy = true;
     this.progress = [];
-    this.plan(["connect", "check", "upload", "withdraw"]);
+    this.plan(["connect", "check", "bring", "upload", "withdraw"]);
     this.draw();
     try {
       // This computer's own logins to it end first, while its hub answers,
@@ -748,7 +748,7 @@ export class RemoteWorld {
     this.busy = true;
     this.failed = false;
     this.stage = "making";
-    this.plan(this.resume ? (this.serverJoins() ? ["login", "connect", "check", "upload", "join"] : ["login"]) : ["connect", "check", "upload", "hub", "login", "join"]);
+    this.plan(this.resume ? (this.serverJoins() ? ["login", "connect", "check", "bring", "upload", "join"] : ["login"]) : ["connect", "check", "bring", "upload", "hub", "login", "join"]);
     this.draw();
     try {
       const step = (one: RemoteStep) => this.mark(one, "doing");
@@ -798,7 +798,7 @@ export class RemoteWorld {
     if (!server) return;
     this.busy = true;
     this.stage = "making";
-    this.plan(["connect", "check", "upload", "join", ...(adding.then ? (["arrive"] as const) : [])]);
+    this.plan(["connect", "check", "bring", "upload", "join", ...(adding.then ? (["arrive"] as const) : [])]);
     this.draw();
     try {
       const step = (one: RemoteStep) => this.mark(one, "doing");

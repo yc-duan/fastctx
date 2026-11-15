@@ -6,11 +6,12 @@ use crate::{
     timeline_watch::Shared,
 };
 use fastctx_types::timeline_pages::{
-    PAGE_BYTES, PAGE_EVENTS, TimelineAsk, TimelineChange, TimelineEvent, TimelineFrom, TimelinePlace, TimelineTold,
+    PAGE_BYTES, PAGE_EVENTS, TimelineAsk, TimelineChange, TimelineEvent, TimelineFrom, TimelinePlace, TimelineShown,
+    TimelineTold,
 };
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::VecDeque,
+    collections::{HashSet, VecDeque},
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, AtomicU64, Ordering},
@@ -24,6 +25,9 @@ pub(crate) struct Searches {
 }
 struct Search {
     token: u64,
+    /// The events whose text the page holds already, by item and sequence:
+    /// told by place alone, their bodies neither read nor sent again.
+    known: HashSet<(String, u64)>,
     cancelled: AtomicBool,
     cancelling: tokio::sync::Notify,
     state: tokio::sync::Mutex<State>,
@@ -39,7 +43,12 @@ struct State {
 #[derive(Deserialize)]
 #[serde(tag = "do", rename_all = "snake_case")]
 pub(crate) enum Request {
-    Start,
+    /// A search begun; `known`, the events whose text the page kept from
+    /// one before, as they were then.
+    Start {
+        #[serde(default)]
+        known: Vec<Known>,
+    },
     Next { token: String, counts: Vec<u32> },
     Hit { token: String, ordinal: String, cursor: Option<index::Seeking> },
     Rank { token: String, item: String, ordinal: u32, cursor: Option<index::Ranking> },
@@ -56,7 +65,18 @@ pub(crate) enum Reply {
 #[derive(Serialize)]
 pub(crate) struct Event {
     place: TimelinePlace,
-    event: fastctx_types::session::SessionEvent,
+    /// Which version of the event this is: the page keeps its text by it.
+    sequence: String,
+    /// None for an event the page said it holds as it is.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    event: Option<fastctx_types::session::SessionEvent>,
+}
+
+/// An event whose text the page holds, as of its sequence.
+#[derive(Deserialize)]
+pub(crate) struct Known {
+    item: String,
+    sequence: String,
 }
 
 impl Searches {
@@ -75,12 +95,17 @@ impl Searches {
             .cloned()
             .ok_or_else(|| "this search was cancelled".into())
     }
-    async fn start(&self) -> Result<Arc<Search>, String> {
+    async fn start(&self, known: Vec<Known>) -> Result<Arc<Search>, String> {
         self.close();
         let token = self.next.fetch_add(1, Ordering::AcqRel) + 1;
         let index = tokio::task::spawn_blocking(Index::new).await.map_err(|e| e.to_string())??;
+        let known = known
+            .into_iter()
+            .filter_map(|known| Some((known.item, known.sequence.parse().ok()?)))
+            .collect();
         let search = Arc::new(Search {
             token,
+            known,
             cancelled: AtomicBool::new(false),
             cancelling: tokio::sync::Notify::new(),
             index: Arc::new(Mutex::new(index)),
@@ -101,8 +126,8 @@ impl Searches {
     }
     pub async fn request(&self, reader: Shared, request: Request) -> Result<Reply, String> {
         match request {
-            Request::Start => {
-                let search = self.start().await?;
+            Request::Start { known } => {
+                let search = self.start(known).await?;
                 Ok(Reply::Batch {
                     token: search.token.to_string(),
                     events: Vec::new(),
@@ -234,10 +259,20 @@ impl Search {
         let mut pending = Vec::new();
         while let Some(event) = state.queued.get(events.len()).cloned() {
             self.check()?;
-            let (body, preview) = crate::timeline_scan::full(&reader, &event).await?;
-            bytes += serde_json::to_vec(&body).map_or(0, |bytes| bytes.len());
-            pending.push((event.place.clone(), event.sequence, preview.is_some()));
-            events.push(Event { place: event.place, event: body });
+            let sequence = event.sequence.to_string();
+            if self.known.contains(&(event.place.item.clone(), event.sequence)) {
+                // Its text is the page's already: told by place, as it would
+                // be counted from a preview or a whole body alike.
+                let preview = matches!(&event.shown, TimelineShown::Oversized { bytes, .. } if *bytes > crate::timeline_body::EXPANDED_BYTES);
+                bytes += event.place.item.len() + event.place.order.len() + 64;
+                pending.push((event.place.clone(), event.sequence, preview));
+                events.push(Event { place: event.place, sequence, event: None });
+            } else {
+                let (body, preview) = crate::timeline_scan::full(&reader, &event).await?;
+                bytes += serde_json::to_vec(&body).map_or(0, |bytes| bytes.len());
+                pending.push((event.place.clone(), event.sequence, preview.is_some()));
+                events.push(Event { place: event.place, sequence, event: Some(body) });
+            }
             if bytes >= PAGE_BYTES as usize {
                 break;
             }

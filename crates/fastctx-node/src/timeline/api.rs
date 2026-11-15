@@ -124,9 +124,13 @@ pub(crate) async fn here(node: &Arc<Node>, request: TimelineAsk) -> Result<Timel
     // is read; the asset library's is made from its sources (§28.3). A lab
     // keeps the content timeline made as it is read all the same, to compare
     // the two by.
+    // One whose asset timeline is being made now (a conversation not opened
+    // since the node took the second version up) is read there in a moment:
+    // its history is not read whole a second time beside it.
     if matches!(&request, TimelineAsk::Moved { .. } | TimelineAsk::Page { from: TimelineFrom::Latest, .. })
         && (std::env::var_os("FASTCTX_LAB_CONTENT_TIMELINE").is_some()
-            || !fastctx_platform::roles::in_place("choosing a timeline", || reads::from_assets(node, request.resident()))?)
+            || (!fastctx_platform::roles::in_place("choosing a timeline", || reads::from_assets(node, request.resident()))?
+                && !super::tail::producing(request.resident())))
     {
         super::wanted_content(node, request.resident());
     }

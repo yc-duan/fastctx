@@ -216,6 +216,8 @@ impl Entry {
 #[derive(Default)]
 pub(super) struct Book {
     valid: bool,
+    /// Where each call of the days a page may show lies (`super::calls`).
+    pub calls: super::calls::Index,
     pub totals: HashMap<Identity, (Timestamp, Usd)>,
     pub meters: HashMap<Identity, super::meter::Meter>,
     /// The reports counted, each with when the row that counted it was

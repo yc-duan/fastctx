@@ -298,3 +298,10 @@
     min-width: 0;
   }
 }
+
+/* Over what was last measured, while it is measured again
+   (`DataPage.freshness`). */
+.data-fresh {
+  margin: 0 0 var(--space-3);
+  font-size: var(--size-text);
+}

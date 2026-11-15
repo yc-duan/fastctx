@@ -220,6 +220,11 @@ async fn run(node: &Arc<crate::Node>, resident: &ResidentId) -> Outcome {
         UNREAD.lock().expect("unread timelines").remove(resident);
         return Outcome::Done;
     }
+    // Its asset timeline being made now, it is read there once made: asked
+    // again after a while, by when it is, this finds nothing to do.
+    if std::env::var_os("FASTCTX_LAB_CONTENT_TIMELINE").is_none() && tail::producing(resident) {
+        return Outcome::Again { after: APART };
+    }
     match build::build(node, resident).await {
         Ok(built) => {
             BUILT.lock().expect("built timelines").insert(resident.clone(), Instant::now());

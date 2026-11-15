@@ -196,6 +196,17 @@ pub(crate) fn current(node: &Node) -> Option<Arc<WorldNow>> {
     shown.told.borrow().clone()
 }
 
+/// As `current`, with the presence of the machines a caller already knows
+/// worked out for them: everything else of it is the same whatever they
+/// know, so the residents are not read again for it.
+pub(crate) fn current_known(node: &Node, known: &[String]) -> Option<WorldNow> {
+    let mut world = (*current(node)?).clone();
+    if !known.is_empty() {
+        world.machine_presence = fastctx_net::machine_presence::of(&node.links(), &world.who, known);
+    }
+    Some(world)
+}
+
 pub(crate) async fn now_known(node: &Arc<Node>, known: &[String]) -> Result<WorldNow, Failure> {
     let here = node.machine();
     let towns = crate::ledger::query::held(node).await?;

@@ -10,6 +10,9 @@ export interface PageContext {
   theme: Theme;
   /** The interface's language: "zh-CN" or "en". */
   locale: string;
+  /** Whether the interface moves less (`motion.ts`); none from a host that
+   *  does not say. */
+  reduced?: boolean;
 }
 
 export interface Bridge {

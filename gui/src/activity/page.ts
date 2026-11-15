@@ -46,6 +46,14 @@ const KEPT_SPAN = "activity.span";
 /** How often what runs is read again while the page is open, and the year. */
 const NOW_MS = 4000;
 const YEAR_MS = 60_000;
+/** The year's hours, summed again over the whole year by each reading, are
+ *  read again on the book's change no oftener than this; the span's deeds
+ *  follow every change. */
+const YEAR_AGAIN_MS = 60_000;
+/** How long the answer from an offline machine's copy stands for a window. */
+const COPY_AGAIN_MS = 60_000;
+/** How many days apart from the span are kept read. */
+const DAYS_KEPT = 31;
 const LIMIT = 2000;
 
 export interface BookMachine {
@@ -105,6 +113,13 @@ export class ActivityPage implements Page {
   /** The year is read one reading at a time: a slow machine is not asked
    *  over again while it answers. */
   private readonly yearReading = new Set<string>();
+  /** When the local year was last asked for, and the reading set for later. */
+  private yearAt = 0;
+  private yearTimer = 0;
+  /** When each offline machine's copy was last asked, by window. */
+  private readonly copiedAt = new Map<string, number>();
+  /** The days apart from the span being read. */
+  private readonly dayReading = new Set<number>();
   private clock = 0;
   private left = false;
   private bringing = new Set<string>();
@@ -145,7 +160,7 @@ export class ActivityPage implements Page {
     });
     this.clock = window.setInterval(() => { if (!document.hidden) this.draw(); }, NOW_MS);
     this.subscriptions.push(
-      followState(BOOK, async () => { await this.readYear("local"); if (this.localFailures.has("hours")) throw new Error("the local book did not answer"); }, YEAR_MS),
+      followState(BOOK, async () => { await this.readYearSoon(); if (this.localFailures.has("hours")) throw new Error("the local book did not answer"); }, YEAR_MS),
       followState(BOOK, async () => { await this.readSpan("local"); if (this.localFailures.has("deeds")) throw new Error("the local book did not answer"); }, NOW_MS),
       followState(null, () => this.readYear("remote"), YEAR_MS),
       followState(null, () => this.readSpan("remote"), NOW_MS),
@@ -156,6 +171,7 @@ export class ActivityPage implements Page {
     this.left = true;
     for (const stop of this.subscriptions) stop();
     clearInterval(this.clock);
+    clearTimeout(this.yearTimer);
     this.resize.disconnect();
     this.stopWatch();
   }
@@ -181,19 +197,32 @@ export class ActivityPage implements Page {
   private async askAll(query: BookQuery, only?: "local" | "remote"): Promise<{ answers: BookAnswer[]; away: string[] }> {
     const all = this.options.machines();
     const machines = all.filter((machine) => !only || (machine.written === null) === (only === "local"));
-    const asked = await Promise.allSettled(
-      machines.map((machine) => (machine.online || machine.written === null ? this.options.read(machine.written, query) : Promise.reject(new Error("offline")))),
-    );
-    if (only === "local") {
-      if (asked.some((result) => result.status === "rejected")) this.localFailures.add(query.ask);
-      else this.localFailures.delete(query.ask);
-    }
     // Keep the other machines' answers when only the local book changed.
     const key = `${query.ask}:${query.ask === "deeds" ? query.from : dayOf(Date.parse(query.from))}`;
     let kept = this.answers.get(key);
     if (!kept) {
       kept = new Map(); this.answers.set(key, kept);
       if (this.answers.size > 16) this.answers.delete(this.answers.keys().next().value!);
+    }
+    const known = kept;
+    // A machine offline is asked too: this computer's node answers from the
+    // copy of its activity it keeps, where it has one. That copy grows only
+    // as what the machine sent before it went comes through, so it is asked
+    // again for a window no oftener than `COPY_AGAIN_MS`.
+    const now = Date.now();
+    const asked = await Promise.allSettled(
+      machines.map((machine) => {
+        const away = machine.written !== null && !machine.online;
+        const copied = away && now - (this.copiedAt.get(`${key}\n${machine.name}`) ?? 0) < COPY_AGAIN_MS ? known.get(machine.name) : undefined;
+        if (copied) return Promise.resolve(copied);
+        const reading = this.options.read(machine.written, query);
+        if (away) void reading.then(() => this.copiedAt.set(`${key}\n${machine.name}`, now), () => undefined);
+        return reading;
+      }),
+    );
+    if (only === "local") {
+      if (asked.some((result) => result.status === "rejected")) this.localFailures.add(query.ask);
+      else this.localFailures.delete(query.ask);
     }
     for (const name of kept.keys()) if (!all.some((machine) => machine.name === name)) kept.delete(name);
     asked.forEach((result, index) => kept!.set(machines[index]!.name, result.status === "fulfilled" ? result.value : null));
@@ -240,6 +269,19 @@ export class ActivityPage implements Page {
     }
   }
 
+  /** The local year, read now or once `YEAR_AGAIN_MS` since the last read
+   *  that answered. Its follower waits with it, so that changes meanwhile
+   *  come to one reading, and a reading that failed is tried again as any
+   *  of the follower's is (`followState`). */
+  private async readYearSoon(): Promise<void> {
+    const wait = this.yearAt + YEAR_AGAIN_MS - Date.now();
+    if (wait > 0) await new Promise<void>((resolve) => { this.yearTimer = window.setTimeout(resolve, wait); });
+    if (this.left) return;
+    this.yearAt = Date.now();
+    await this.readYear("local");
+    if (this.localFailures.has("hours")) this.yearAt = 0;
+  }
+
   private async readYear(only?: "local" | "remote"): Promise<void> {
     const group = only ?? "all";
     if (this.yearReading.has(group)) return;
@@ -264,17 +306,24 @@ export class ActivityPage implements Page {
     }
     const read = this.daysRead.get(day);
     if (read) return read;
-    void this.askAll({ ask: "deeds", from: iso(day), to: iso(day + DAY_MS), limit: LIMIT }).then(({ answers, away }) => {
-      const deeds: Placed[] = [];
-      let more = false;
-      for (const answer of answers) {
-        if (answer.kind !== "deeds") continue;
-        more ||= answer.more;
-        for (const deed of answer.deeds) deeds.push({ ...deed, machine: answer.machine });
-      }
-      this.daysRead.set(day, { deeds, hours: [], away, more });
-      if (this.view === "timeline" && this.day === day) this.draw();
-    });
+    // One reading of a day at a time, however often it is drawn meanwhile;
+    // the days read kept few.
+    if (this.dayReading.has(day)) return null;
+    this.dayReading.add(day);
+    void this.askAll({ ask: "deeds", from: iso(day), to: iso(day + DAY_MS), limit: LIMIT })
+      .then(({ answers, away }) => {
+        const deeds: Placed[] = [];
+        let more = false;
+        for (const answer of answers) {
+          if (answer.kind !== "deeds") continue;
+          more ||= answer.more;
+          for (const deed of answer.deeds) deeds.push({ ...deed, machine: answer.machine });
+        }
+        this.daysRead.set(day, { deeds, hours: [], away, more });
+        while (this.daysRead.size > DAYS_KEPT) this.daysRead.delete(this.daysRead.keys().next().value!);
+        if (this.view === "timeline" && this.day === day) this.draw();
+      })
+      .finally(() => this.dayReading.delete(day));
     return null;
   }
 
@@ -327,7 +376,10 @@ export class ActivityPage implements Page {
         html = this.drawSessions();
         break;
     }
-    const away = this.gathered.away.length ? `<p class="ay-away" title="${escape(this.options.words.unanswered(this.gathered.away.join(", ")))}">${glyph("info", 14)}<span>${escape(this.options.words.unanswered(this.gathered.away.join(", ")))}</span></p>` : "";
+    // Said of what this view shows: the timeline's day may be one read apart.
+    const shown = this.view === "timeline" ? this.deedsOfDay(this.day) : this.gathered;
+    const truncated = shown?.more ? `<p class="ay-away">${glyph("info", 14)}<span>${escape(this.options.words.truncated(LIMIT))}</span></p>` : "";
+    const away = truncated + (this.gathered.away.length ? `<p class="ay-away" title="${escape(this.options.words.unanswered(this.gathered.away.join(", ")))}">${glyph("info", 14)}<span>${escape(this.options.words.unanswered(this.gathered.away.join(", ")))}</span></p>` : "");
     // The same page again is left as it stands, its figures unlaid.
     if (html + away === this.written && this.body.firstChild) {
       this.drawCard();

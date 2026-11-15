@@ -23,6 +23,7 @@ import { AccountChoice, loginKey, type ProfileCalls } from "./profile-account";
 import type { ProfileWords } from "./profile-words";
 import { detailOf } from "./problem";
 import { hostContext, type HostContext } from "./host-context";
+import { waiting } from "./waiting";
 
 export type Host = "claude" | "codex";
 type Table = Record<string, unknown>;
@@ -277,7 +278,7 @@ export class HostPrefs {
     this.sliders.clear();
     this.element.innerHTML =
       state.kind === "reading"
-        ? `<p class="prof-quiet prof-board hp-first">${escape(words.reading)}</p>`
+        ? waiting({ label: words.reading, shape: "lines", rows: 3 })
         : state.kind === "failed"
           ? `<p class="prof-quiet prof-board hp-first" title="${escape(state.detail)}">${escape(words.readFailed)}</p>`
           : state.kind === "older"

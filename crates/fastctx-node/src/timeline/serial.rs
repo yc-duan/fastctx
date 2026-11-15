@@ -22,6 +22,11 @@ impl Serial {
         let turn = self.0.lock().expect("timeline builds").entry(resident.clone()).or_default().clone();
         Arc::new(turn.lock_owned().await)
     }
+
+    /// Whether `resident`'s timeline is being built now.
+    pub(super) fn busy(&self, resident: &ResidentId) -> bool {
+        self.0.lock().expect("timeline builds").get(resident).is_some_and(|turn| turn.try_lock().is_err())
+    }
 }
 
 /// A build held: cloned into each piece of its blocking work.

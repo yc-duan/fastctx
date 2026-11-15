@@ -10,6 +10,7 @@
 // the World's runtime asks one thing of its own, `world/fonts`: the faces,
 // as bytes (`faces.ts`).
 
+import { reducedMotion } from "../motion";
 import type { Theme } from "../page/bridge";
 import { faces } from "./faces";
 import type { PageFrame } from "./frame";
@@ -137,7 +138,7 @@ function hostContext(context: HostContext): Record<string, unknown> {
     availableDisplayModes: ["inline"],
     platform: context.platform,
     userAgent: "Fastctx",
-    world: { theme: context.theme },
+    world: { theme: context.theme, reduced: reducedMotion() },
   };
 }
 

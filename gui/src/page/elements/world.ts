@@ -9,7 +9,7 @@
 //   <w-file machine="lab" path="/runs/7/train.log" tail="4000" every="10s"></w-file>
 //   <w-job machine="lab" job="j-k3x9a2" every="10s"></w-job>
 
-import { BOUND, PageElement, escape, sheet, world } from "../element";
+import { BOUND, PageElement, escape, pending, sheet, world } from "../element";
 import type { Tools } from "../tools";
 import { words } from "../words";
 
@@ -52,7 +52,7 @@ const live = sheet(`
 
 /** What a failed or pending answer shows; null when there is data. */
 function standing(loading: boolean, data: unknown): string | null {
-  if (loading) return `<span class="faint">…</span>`;
+  if (loading) return pending("word");
   if (data && typeof data === "object" && "error" in data && typeof (data as { error: unknown }).error === "string") {
     return `<span class="wrong">${escape((data as { error: string }).error)}</span>`;
   }

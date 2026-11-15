@@ -10,7 +10,7 @@
 // Data is an array of objects (x and y name their keys; y defaults to every
 // numeric key but x), or { x: [...], series: [{ name, values: [...] }] }.
 
-import { BOUND, PageElement, escape, sheet } from "../element";
+import { BOUND, PageElement, escape, pending, sheet } from "../element";
 
 const INKS = ["--pen-clay", "--pen-sky", "--pen-sage", "--pen-rose", "--pen-graphite"];
 
@@ -73,7 +73,7 @@ export class Chart extends PageElement {
 
   protected draw(): void {
     if (this.loading) {
-      this.shadow.innerHTML = `<div class="empty">…</div>`;
+      this.shadow.innerHTML = pending("block");
       return;
     }
     const data = this.data;

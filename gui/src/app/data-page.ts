@@ -20,6 +20,7 @@ import { link } from "./places";
 import { redrawKeepingFocus } from "./focus";
 import { detailOf } from "./problem";
 import type { Page } from "./shell";
+import { waiting, waitingInline } from "./waiting";
 
 export interface DataWords {
   title: string;
@@ -57,6 +58,8 @@ export interface DataWords {
   keeps(days: number): string;
   failed: string;
   reading: string;
+  /** Over what was last measured, while it is measured again. */
+  refreshing(ago: string): string;
 }
 
 export const zhData: DataWords = {
@@ -102,7 +105,8 @@ export const zhData: DataWords = {
   cleared: "已清空",
   keeps: (days) => `Claude Code 会删掉 ${days} 天没动过的会话记录`,
   failed: "读不到",
-  reading: "正在量",
+  reading: "正在统计这台电脑上的占用",
+  refreshing: (ago) => `${ago}统计的，正在更新`,
 };
 
 export const enData: DataWords = {
@@ -146,7 +150,8 @@ export const enData: DataWords = {
   cleared: "Emptied",
   keeps: (days) => `Claude Code deletes sessions untouched for ${days} days`,
   failed: "Couldn't read",
-  reading: "Measuring",
+  reading: "Measuring what is kept on this computer",
+  refreshing: (ago) => `Measured ${ago}, updating`,
 };
 
 export interface DataPageOptions {
@@ -164,6 +169,8 @@ export interface DataPageOptions {
 }
 
 const KIND_ORDER = ["conversations", "command_output", "cache", "program", "other"] as const;
+/** A measure younger than this, shown at once, is not made again. */
+const FRESH_MS = 10_000;
 
 export class DataPage implements Page {
   readonly element: HTMLElement;
@@ -176,6 +183,8 @@ export class DataPage implements Page {
   private chosen = new Set<string>();
   private open = new Set<string>();
   private said: { text: string; detail: string } | null = null;
+  /** While it is measured again: what is shown is what was last measured. */
+  private refreshing = false;
 
   constructor(private readonly options: DataPageOptions) {
     this.title = options.words.title;
@@ -197,16 +206,39 @@ export class DataPage implements Page {
 
   private async read(): Promise<void> {
     const { data, cache } = this.options;
+    this.refreshing = true;
+    // This device's cache is asked beside the measure, never after it.
+    const cached = cache?.size().then((bytes) => {
+      this.deviceCache = bytes;
+      if (!this.options.data) this.draw();
+    });
+    // Its failure is told below, once the measure is through.
+    cached?.catch(() => undefined);
     try {
-      if (data) {
-        const reply = await data({ do: "list" });
-        if (reply.data === "listed") this.space = reply;
+      // What was last measured here, shown at once while it is measured
+      // again: measuring walks everything kept here. Asked before the
+      // measure, not beside it: an earlier node takes the question for a
+      // measure, and one measured just now is not measured again.
+      let fresh = false;
+      if (data && !this.space) {
+        const kept = await data({ do: "list", kept: true }).catch(() => null);
+        if (kept?.data === "listed") {
+          this.space = kept;
+          fresh = this.options.now().getTime() - Date.parse(kept.at) < FRESH_MS;
+          this.draw();
+        }
       }
-      if (cache) this.deviceCache = await cache.size();
+      if (data && !fresh) {
+        const reply = await data({ do: "list" });
+        if (reply.data !== "listed") throw new Error(`the node answered ${reply.data} to a list`);
+        this.space = reply;
+      }
+      await cached;
       this.problem = null;
     } catch (error) {
       this.problem = detailOf(error);
     }
+    this.refreshing = false;
     this.draw();
   }
 
@@ -214,13 +246,22 @@ export class DataPage implements Page {
     const { words } = this.options;
     const space = this.space;
     let html: string;
-    if (this.problem) html = `<p class="feature-note" title="${escape(this.problem)}">${escape(words.failed)}</p>`;
-    else if (space) html = `${this.bar(space)}${this.archivedWay()}${this.conversations(space)}${this.output(space)}${this.cacheSection(null)}`;
+    if (this.problem && !space) html = `<p class="feature-note" title="${escape(this.problem)}">${escape(words.failed)}</p>`;
+    else if (space) html = `${this.freshness(space)}${this.bar(space)}${this.archivedWay()}${this.conversations(space)}${this.output(space)}${this.cacheSection(null)}`;
     else if (!this.options.data && this.deviceCache !== null) html = `${this.archivedWay()}${this.cacheSection(this.deviceCache)}`;
-    else html = `<p class="feature-note">${escape(words.reading)}</p>`;
+    else html = waiting({ label: words.reading, shape: "bar-rows", rows: 5 });
     redrawKeepingFocus(this.body, () => {
       this.body.innerHTML = html;
     });
+  }
+
+  /** Over what was last measured while it is measured again, when; and a
+   *  measure again that failed, over what stays shown. */
+  private freshness(space: Space): string {
+    const { words } = this.options;
+    if (this.refreshing) return `<p class="data-fresh">${waitingInline(words.refreshing(words.ago(new Date(space.at), this.options.now())))}</p>`;
+    if (this.problem) return `<p class="feature-note data-fresh" title="${escape(this.problem)}">${escape(words.failed)}</p>`;
+    return "";
   }
 
   /** The hand-drawn bar of everything here, a colour for each kind. */

@@ -16,6 +16,7 @@ import { escape } from "../conversation/prose";
 import { composing } from "../typing";
 import type { Folder, Folders } from "../world/focus";
 import { Sheet } from "./confirm";
+import { waiting } from "./waiting";
 
 export interface FolderPickerWords {
   title(machine: string): string;
@@ -275,7 +276,7 @@ export class FolderPicker {
       const go = options.allow ? `<button type="button" class="text-button quiet-button" data-fp="allow">${escape(words.privacyGo)}</button>` : "";
       rows = `<div class="fp-note" title="${escape(this.error ?? "")}"><span>${escape(words.privacy)}</span>${go}</div>`;
     } else if (this.error) rows = `<p class="fp-note" title="${escape(this.error)}">${escape(words.unreadable)}</p>`;
-    else if (!listing) rows = `<p class="fp-note quiet">${escape(words.reading)}</p>`;
+    else if (!listing) rows = waiting({ label: words.reading, shape: "rows", rows: 4 });
     else if (!listing.folders.length && !listing.next_cursor) rows = `<p class="fp-note quiet">${escape(words.noFolders)}</p>`;
     else if (!listing.folders.length) rows = "";
     else

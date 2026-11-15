@@ -14,12 +14,33 @@ use crate::Node;
 use fastctx_content::v2::{AccountUsage, Kind as _};
 use fastctx_types::access::{Acting, HubAccount, Written};
 use fastctx_types::usage::UsageReport;
-use std::collections::{BTreeMap, BTreeSet};
-use std::path::Path;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::path::{Path, PathBuf};
+use std::sync::{LazyLock, Mutex};
+use std::time::{Duration, Instant};
 
 /// A ledger's day files as pieces: by day, each piece by its offset and the
 /// scope it came from, its lines.
 type Days = BTreeMap<String, BTreeMap<(u64, String), Vec<u8>>>;
+
+/// What a report from the copies was asked for: the node's root, the
+/// machine, its network, the login, and whose use is shown.
+type Asked = (PathBuf, String, String, String, PathBuf, Option<HubAccount>, bool);
+
+/// Each copy the report was read from, by its scope, at the revision read.
+type Read = Vec<(String, u64)>;
+
+/// A report made, from what it was read from, and when.
+type Made = (Read, Instant, UsageReport);
+
+/// Reports made from the copies, kept while the copies stand as they were
+/// read: a page asks each minute, and making one reads every piece of the
+/// login's ledger again. Kept a while at most all the same, as what one
+/// says of now (today, the week) moves.
+static MADE: LazyLock<Mutex<HashMap<Asked, Made>>> = LazyLock::new(Mutex::default);
+const MADE_FOR: Duration = Duration::from_secs(300);
+/// The most reports kept.
+const MADE_KEPT: usize = 16;
 
 /// `agent`'s login `dir` on `written` (of the network it names, or the one
 /// network that lists it) as the copies here hold it, while the machine is
@@ -61,14 +82,30 @@ pub(crate) fn report(node: &Node, written: &Written, agent: &str, dir: &Path) ->
         (false, [account]) => Some(HubAccount { hub: hub.clone(), account: account.clone() }),
         (false, _) => return None,
     };
+    let scopes: Vec<_> = library
+        .held_scopes()
+        .ok()?
+        .into_iter()
+        .filter(|scope| crate::timeline::copy::records_here(node, scope) && scope.hub.as_deref() == Some(hub.as_str()))
+        .collect();
+    // Made a moment ago of the copies as they stand: as made then.
+    let read: Option<Read> = scopes
+        .iter()
+        .map(|scope| Some((scope.key.clone(), library.view_revision(&scope.key, &stream).ok()?.unwrap_or(0))))
+        .collect();
+    let asked: Asked = (node.root.clone(), machine.to_string(), hub.to_string(), agent.to_string(), dir.to_path_buf(), only.clone(), owner);
+    if let Some(read) = &read
+        && let Some((kept, at, report)) = MADE.lock().expect("reports made").get(&asked)
+        && kept == read
+        && at.elapsed() < MADE_FOR
+    {
+        return Some(report.clone());
+    }
     // Each day's pieces by offset, the lines of each scope's piece in turn,
     // of each key the login's path may go by.
     let mut by_key: BTreeMap<String, Days> = BTreeMap::new();
     let ledgers: BTreeMap<String, String> = keys(dir).into_iter().map(|key| (format!("{agent}-{key}/"), key)).collect();
-    for scope in library.held_scopes().ok()? {
-        if !crate::timeline::copy::records_here(node, &scope) || scope.hub.as_deref() != Some(hub.as_str()) {
-            continue;
-        }
+    for scope in &scopes {
         let mut after = None;
         loop {
             let page = library.page(&scope.key, &stream, after.take(), 500).ok()?;
@@ -118,7 +155,16 @@ pub(crate) fn report(node: &Node, written: &Written, agent: &str, dir: &Path) ->
         super::report::report_of(agent, &folder, only.as_ref(), owner)
     })();
     let _ = fastctx_platform::disk::remove_dir_all(&folder);
-    made.ok()
+    let made = made.ok()?;
+    if let Some(read) = read {
+        let mut kept = MADE.lock().expect("reports made");
+        if kept.len() >= MADE_KEPT && !kept.contains_key(&asked) {
+            let oldest = kept.iter().min_by_key(|(_, (_, at, _))| *at).map(|(asked, _)| asked.clone());
+            kept.remove(&oldest.expect("one kept"));
+        }
+        kept.insert(asked, (read, Instant::now(), made.clone()));
+    }
+    Some(made)
 }
 
 /// The keys the login `dir` may go by on the machine it is on, which keys

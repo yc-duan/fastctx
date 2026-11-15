@@ -16,6 +16,7 @@ import { RecordColumn } from "./record";
 import { stripMarkup, wakesOf, type Wake } from "./strip";
 import type { SentinelWords } from "./words";
 import "./sentinel.css";
+import { sayWaiting } from "../app/waiting";
 
 export interface SentinelPageOptions {
   words: SentinelWords;
@@ -99,7 +100,7 @@ export class SentinelPage implements Page {
       moved: () => this.moved(),
       ...(options.lines ? { lines: options.lines } : {}),
     });
-    if (!this.record) this.say(words.reading);
+    if (!this.record) this.say(words.reading, "", true);
     this.resize = new ResizeObserver(() => {
       const width = Math.round(this.strip.getBoundingClientRect().width);
       if (width && width !== this.width) {
@@ -219,9 +220,11 @@ export class SentinelPage implements Page {
     });
   }
 
-  private say(said: string | null, why = ""): void {
+  /** `waits`: what is said is awaited (`sayWaiting`). */
+  private say(said: string | null, why = "", waits = false): void {
     this.note.hidden = !said;
-    if (this.note.textContent !== (said ?? "")) this.note.textContent = said ?? "";
+    if (waits && said) sayWaiting(this.note, said);
+    else if (this.note.textContent !== (said ?? "") || this.note.firstElementChild) this.note.textContent = said ?? "";
     this.note.title = why;
     this.note.classList.toggle("sn-alone", !this.column?.drawn);
   }

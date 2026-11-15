@@ -20,6 +20,8 @@ export interface ActivityWords {
   quiet: string;
   /** Machines that did not answer, in a hover. */
   unanswered(machines: string): string;
+  /** More went on in the span than a machine's answer holds. */
+  truncated(limit: number): string;
   /** A machine that did not answer, in its lane. */
   away: string;
   ran(duration: string): string;
@@ -104,6 +106,7 @@ export const zhActivity: ActivityWords = {
   lately: "刚才",
   quiet: "这段时间里没有活动",
   unanswered: (machines) => `没有回答：${machines}`,
+  truncated: (limit) => `这段时间的活动很多，每台电脑只列出了最近的 ${limit.toLocaleString("zh-CN")} 条`,
   away: "不在线",
   ran: (duration) => `跑了 ${duration}`,
   running: (duration) => `已跑 ${duration}`,
@@ -161,6 +164,7 @@ export const enActivity: ActivityWords = {
   lately: "Lately",
   quiet: "Nothing in this span",
   unanswered: (machines) => `No answer: ${machines}`,
+  truncated: (limit) => `A lot went on in this span: only each computer's latest ${limit.toLocaleString("en")} are listed`,
   away: "Offline",
   ran: (duration) => `Ran ${duration}`,
   running: (duration) => `Running ${duration}`,

@@ -14,6 +14,7 @@ import { Steady } from "../app/steady";
 import { LineViewport, type LineSource } from "../longview";
 import { glyph } from "./glyphs";
 import { escape } from "./prose";
+import { waitingInline } from "../app/waiting";
 
 export interface Job {
   job: string;
@@ -257,7 +258,7 @@ export class JobsPanel {
     if (!output) return;
     const element = document.createElement("div");
     element.className = "job-output";
-    element.textContent = words.loading;
+    element.innerHTML = waitingInline(words.loading);
     row.element.append(element);
     row.element.querySelector(".job-what")?.setAttribute("aria-expanded", "true");
     const open: NonNullable<Row["open"]> = { element, viewport: null, lines: null, closed: false };

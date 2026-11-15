@@ -29,6 +29,7 @@ import type { Page } from "./shell";
 import { effect, type Signal } from "./signals";
 import type { Store } from "./store";
 import { keepRecord, keptRecord, readerNow } from "./usage/kept";
+import { waiting } from "./waiting";
 
 /** The most lines a card holds: past it, the last says how many more. */
 const SHOWN = 3;
@@ -273,7 +274,7 @@ export class AgentsOverview implements Page {
       return `<p class="ao-quiet" title="${escape(this.problem.detail)}">${escape(said)}</p>`;
     }
     const record = this.record?.machine === machine.name ? this.record : null;
-    if (!record) return `<p class="ao-quiet">${escape(logins.reading)}</p>`;
+    if (!record) return waiting({ label: logins.reading, shape: "rows", rows: 3 });
     // Never scanned: the agents' marks and the one thing to do. A machine
     // whose agents assist the user tells no scan, only the logins it may.
     if (!record.scan && machine.hold !== "assist") {

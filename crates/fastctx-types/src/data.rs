@@ -11,8 +11,15 @@ use crate::{AgentName, MachineName, TownName};
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "do")]
 pub enum DataCall {
-    /// What the World keeps here, by kind and by conversation.
-    List,
+    /// What the World keeps here, by kind and by conversation. With `kept`,
+    /// answered at once with what was last measured here (`Unmeasured`
+    /// while nothing was), so a page shows it while a measure goes on:
+    /// measuring walks everything kept here. An earlier node, not knowing
+    /// it, measures.
+    List {
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        kept: bool,
+    },
     /// Deletes conversations kept here, each by the name `List` gives it: a
     /// conversation that lives here with everything it has here, its host's
     /// own record included; a guest room alone.
@@ -28,6 +35,8 @@ pub enum DataCall {
 #[serde(rename_all = "snake_case", tag = "data")]
 pub enum DataReply {
     Listed(Box<Space>),
+    /// Nothing measured here yet since this node started (`List` with `kept`).
+    Unmeasured,
     Deleted {
         deletions: Vec<Deletion>,
     },

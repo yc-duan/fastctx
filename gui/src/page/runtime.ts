@@ -72,6 +72,7 @@ function first(): PageContext {
   return {
     theme: theme === "ink-black" || theme === "warm-white" ? theme : "warm-black",
     locale: root.dataset.locale || "zh-CN",
+    reduced: root.hasAttribute("data-world-reduced"),
   };
 }
 
@@ -142,6 +143,7 @@ export function start(): Bridge {
     // resident wrote keeps the language it was written in.
     document.documentElement.dataset.worldTheme = context.theme;
     document.documentElement.dataset.locale = context.locale;
+    document.documentElement.toggleAttribute("data-world-reduced", context.reduced === true);
     if (context.locale !== locale) {
       locale = context.locale;
       drawAll();

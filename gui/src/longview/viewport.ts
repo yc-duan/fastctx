@@ -1,6 +1,7 @@
 import type { LineInterruption, LineMatch, LineSource } from "./source";
 import { chainTouch } from "./touch";
 import { handOnAtEdge } from "../scroll-handoff";
+import { sayWaiting } from "../app/waiting";
 
 /** Draws one row from its line, for lines that carry more than their text
  *  (a diff row's kind and numbers, an output line's place in the whole).
@@ -50,7 +51,7 @@ export class LineViewport {
   private requestRange: [number, number] | null = null;
   private unchain: () => void;
   /** What the status says of the reads, and why, under a broken way. */
-  private said = { text: "", why: "" };
+  private said = { text: "", why: "", waits: false };
   private broken: LineInterruption | null = null;
   private unhear: () => void;
   /** The frame on which the lines in view are looked at again after a read. */
@@ -85,15 +86,17 @@ export class LineViewport {
       }) ?? (() => {});
   }
 
-  /** Says `text` in the status, why on hover, unless the way is broken. */
-  private say(text: string, why = ""): void {
-    this.said = { text, why };
+  /** Says `text` in the status, why on hover, unless the way is broken;
+   *  `waits`, as awaited (`sayWaiting`). */
+  private say(text: string, why = "", waits = false): void {
+    this.said = { text, why, waits };
     this.tell();
   }
 
   private tell(): void {
     const { text, why } = this.broken ? { text: this.options.interrupted ?? "Disconnected, reconnecting…", why: this.broken.why } : this.said;
-    this.status.textContent = text;
+    if (!this.broken && this.said.waits && text) sayWaiting(this.status, text);
+    else this.status.textContent = text;
     if (why) this.status.title = why;
     else this.status.removeAttribute("title");
   }
@@ -197,7 +200,7 @@ export class LineViewport {
     const request = new AbortController();
     this.request = request;
     this.requestRange = [start, start + count];
-    this.say(this.options.loading ?? "Loading…");
+    this.say(this.options.loading ?? "Loading…", "", true);
     this.element.setAttribute("aria-busy", "true");
     let succeeded = false;
     this.pending = this.source.read(start, count, request.signal).then((lines) => {

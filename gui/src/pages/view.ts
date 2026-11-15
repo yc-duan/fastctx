@@ -11,6 +11,7 @@ import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
 import type { Address } from "../world/events";
 import { holds, sameAct, unconsented, type PageAct, type PageConsent, type PageVersion, type PageView, type PageWriter } from "../world/pages";
+import { reducedMotion } from "../motion";
 import { compose } from "./compose";
 import { mountFrame, pagesShownHere } from "./frame";
 import { PageHost, type HostContext } from "./host";
@@ -165,7 +166,7 @@ export class PageScreen {
       return;
     }
     const context = this.options.context();
-    const html = compose(view.html, { theme: context.theme, locale: context.locale });
+    const html = compose(view.html, { theme: context.theme, locale: context.locale, reduced: reducedMotion() });
     const frame = mountFrame(this.stage, html, view.publication.title || view.page);
     this.host = new PageHost({
       frame,

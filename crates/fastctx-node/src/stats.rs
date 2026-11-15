@@ -78,6 +78,13 @@ const GPU_FOR: Duration = Duration::from_secs(5);
 
 static GPUS: Mutex<Option<(Instant, Vec<Gpu>)>> = Mutex::new(None);
 
+/// Whether a reading of the graphics cards is under way: one at a time.
+static GPU_READING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// How long the first reading of the graphics cards is waited for; a page
+/// is answered without them after that, and has them on its next ask.
+const GPU_FIRST: Duration = Duration::from_millis(800);
+
 /// Whether the machine has NVIDIA's tool at all; asked once.
 static GPU_TOOL: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
 
@@ -293,8 +300,42 @@ pub(crate) async fn here(
 }
 
 /// The machine's NVIDIA graphics cards, as `nvidia-smi` tells; none where
-/// it is not installed.
+/// it is not installed. Its tool can take seconds: what it last told is
+/// answered while it is asked again apart, so it never holds up the rest
+/// of the page; only the first reading is waited for, and briefly.
 pub(crate) async fn gpus() -> Vec<Gpu> {
+    use std::sync::atomic::Ordering;
+    let kept = GPUS.lock().expect("never poisoned").clone();
+    if let Some((at, gpus)) = &kept
+        && at.elapsed() < GPU_FOR
+    {
+        return gpus.clone();
+    }
+    if GPU_TOOL.get() == Some(&false) {
+        return Vec::new();
+    }
+    let reading = (!GPU_READING.swap(true, Ordering::AcqRel)).then(|| {
+        fastctx_platform::task::spawn(async {
+            let gpus = read_gpus().await;
+            *GPUS.lock().expect("never poisoned") = Some((Instant::now(), gpus));
+            GPU_READING.store(false, Ordering::Release);
+        })
+    });
+    if let Some((_, gpus)) = kept {
+        return gpus;
+    }
+    match reading {
+        Some(reading) => {
+            let _ = tokio::time::timeout(GPU_FIRST, reading).await;
+        }
+        None => tokio::time::sleep(GPU_FIRST).await,
+    }
+    GPUS.lock().expect("never poisoned").as_ref().map(|(_, gpus)| gpus.clone()).unwrap_or_default()
+}
+
+/// As `gpus`, waiting as long as their tool takes: for a look at what the
+/// machine has (`inspect`), which says it once rather than every moment.
+pub(crate) async fn gpus_read() -> Vec<Gpu> {
     if let Some((at, gpus)) = &*GPUS.lock().expect("never poisoned")
         && at.elapsed() < GPU_FOR
     {
@@ -303,6 +344,12 @@ pub(crate) async fn gpus() -> Vec<Gpu> {
     if GPU_TOOL.get() == Some(&false) {
         return Vec::new();
     }
+    let gpus = read_gpus().await;
+    *GPUS.lock().expect("never poisoned") = Some((Instant::now(), gpus.clone()));
+    gpus
+}
+
+async fn read_gpus() -> Vec<Gpu> {
     let read = fastctx_platform::task::spawn_blocking(|| {
         let mut command = std::process::Command::new("nvidia-smi");
         command
@@ -319,7 +366,7 @@ pub(crate) async fn gpus() -> Vec<Gpu> {
         fastctx_platform::bounded::output(command, "nvidia-smi", std::time::Duration::from_secs(10))
     })
     .await;
-    let gpus = match read {
+    match read {
         Ok(Ok(output)) if output.status.success() => {
             let _ = GPU_TOOL.set(true);
             String::from_utf8_lossy(&output.stdout).lines().filter_map(gpu_line).collect()
@@ -329,9 +376,7 @@ pub(crate) async fn gpus() -> Vec<Gpu> {
             Vec::new()
         }
         _ => Vec::new(),
-    };
-    *GPUS.lock().expect("never poisoned") = Some((Instant::now(), gpus.clone()));
-    gpus
+    }
 }
 
 /// One card's line: its name, total and used memory in mebibytes, and how

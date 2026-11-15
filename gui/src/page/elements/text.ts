@@ -12,7 +12,7 @@ import hljs from "highlight.js/lib/common";
 import base from "../../design/base.css?raw";
 import highlight from "../../design/highlight.css?raw";
 import { render } from "../../conversation/prose";
-import { BOUND, PageElement, escape, sheet } from "../element";
+import { BOUND, PageElement, escape, pending, sheet } from "../element";
 import { themedWithin } from "../themed";
 
 const prose = sheet(`${base}\n${themedWithin(highlight)}\n:host { display: block; }`);
@@ -38,7 +38,7 @@ export class Markdown extends PageElement {
 
   protected draw(): void {
     if (this.loading) {
-      this.shadow.innerHTML = `<p class="faint">…</p>`;
+      this.shadow.innerHTML = pending("lines");
       return;
     }
     const data = this.data;
@@ -57,7 +57,7 @@ export class Code extends PageElement {
 
   protected draw(): void {
     if (this.loading) {
-      this.shadow.innerHTML = `<p class="faint">…</p>`;
+      this.shadow.innerHTML = pending("lines");
       return;
     }
     const data = this.data;

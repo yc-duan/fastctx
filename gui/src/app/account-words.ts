@@ -64,7 +64,7 @@ export interface LoginWords {
   /** Adding a server to an existing World over SSH. */
   addGo: string;
   adding: string;
-  remoteSteps: Record<"connect" | "check" | "upload" | "hub" | "login" | "join" | "arrive" | "withdraw", string>;
+  remoteSteps: Record<"connect" | "check" | "bring" | "upload" | "hub" | "login" | "join" | "arrive" | "withdraw", string>;
   /** The four steps of making a World on a server, over its form. */
   remoteStages: [string, string, string, string];
   /** On the button while signing in to the server to look at it. */
@@ -234,7 +234,7 @@ export const zhLogin: LoginWords = {
   notArch: "这台服务器的架构不受支持，只支持 x86_64 与 aarch64",
   addGo: "添加",
   adding: "正在添加…",
-  remoteSteps: { connect: "连接服务器", check: "查看服务器", upload: "上传程序", hub: "建网络", login: "这台电脑登录", join: "服务器加入", arrive: "中枢服务器搬过去", withdraw: "撤掉网络" },
+  remoteSteps: { connect: "连接服务器", check: "查看服务器", bring: "下载服务器用的程序", upload: "上传程序", hub: "建网络", login: "这台电脑登录", join: "服务器加入", arrive: "中枢服务器搬过去", withdraw: "撤掉网络" },
   remoteStages: ["服务器", "网络", "管理员", "机器"],
   looking: "正在连接…",
   networkAt: (address) => `别的设备用 ${address} 连进来`,
@@ -369,7 +369,7 @@ export const enLogin: LoginWords = {
   notArch: "This server's architecture isn't supported; only x86_64 and aarch64 are",
   addGo: "Add",
   adding: "Adding…",
-  remoteSteps: { connect: "Connect", check: "Look at the server", upload: "Upload the program", hub: "Set up the network", login: "Sign this computer in", join: "Add the server", arrive: "Move the hub there", withdraw: "Take the network down" },
+  remoteSteps: { connect: "Connect", check: "Look at the server", bring: "Download the program for the server", upload: "Upload the program", hub: "Set up the network", login: "Sign this computer in", join: "Add the server", arrive: "Move the hub there", withdraw: "Take the network down" },
   remoteStages: ["Server", "Network", "Administrator", "Machines"],
   looking: "Connecting…",
   networkAt: (address) => `Other devices connect at ${address}`,

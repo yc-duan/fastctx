@@ -110,10 +110,29 @@ pub(crate) async fn moved(
     after: u64,
     within: Duration,
 ) -> Result<Option<u64>, Failure> {
-    if let Some(held) = super::local::held(node, resident)? {
-        return super::local::moved(&held, after, within).await;
+    let until = tokio::time::Instant::now() + within;
+    let mut waited = false;
+    loop {
+        if let Some(held) = super::local::held(node, resident)? {
+            // Made in the asset library while this waited on the content
+            // timeline: its revision is news to the reader, who reads it there.
+            if waited {
+                return super::local::moved(&held, 0, Duration::ZERO).await;
+            }
+            return super::local::moved(&held, after, until.saturating_duration_since(tokio::time::Instant::now())).await;
+        }
+        let left = until.saturating_duration_since(tokio::time::Instant::now());
+        // While its asset timeline is being made, the content timeline is not
+        // (`api::here`), and the making wakes nothing here: it is looked for
+        // again each moment, and every few while it may begin.
+        let every = if super::tail::producing(resident) { Duration::from_millis(500) } else { Duration::from_secs(2) };
+        let slice = left.min(every);
+        let moved = node.content()?.moved(&super::stream(resident), after, slice).await.map_err(failure)?;
+        if moved.is_some() || slice >= left {
+            return Ok(moved);
+        }
+        waited = true;
     }
-    node.content()?.moved(&super::stream(resident), after, within).await.map_err(failure)
 }
 
 /// A range of an object the conversation's timeline refers to; none when it

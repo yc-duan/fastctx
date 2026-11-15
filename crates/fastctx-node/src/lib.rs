@@ -278,6 +278,8 @@ pub(crate) struct Node {
     collaboration_reads: colleagues::tree::Reads,
     collaboration_followed: colleagues::live::Followed,
     cut_histories: cut_history::CutHistories,
+    /// What 本机数据 last measured here (`data::Measured`).
+    data_space: data::Measured,
     plan_reads: plan_reads::Reads,
     skill_copies: skills::copies::Copies,
     skill_index: skills::cache::Cache,
@@ -856,6 +858,7 @@ pub async fn run_prepared(
                 collaboration_reads: Default::default(),
                 collaboration_followed: Default::default(),
                 cut_histories: Default::default(),
+                data_space: Default::default(),
                 plan_reads: Default::default(),
                 skill_copies: Default::default(),
                 skill_index: Default::default(),

@@ -45,6 +45,7 @@ import { HistoryFeature, type FeatureFrame } from "./history-feature";
  *  only as `collab.rs` lets it. */
 const COLLABORATION_READY = true;
 import { watchFilm } from "../film/theater";
+import { waiting } from "./waiting";
 
 /** The limits a callee's slider steps through, before no limit. */
 const AT_ONCE_STEPS = [1, 2, 3, 4, 6, 8, 12, 16];
@@ -565,7 +566,7 @@ export class FeaturesPage implements Page {
         : !collab
           ? this.problem
             ? `<p class="feature-note feature-trouble" title="${escape(this.problem.detail)}">${escape(this.problem.text)}<button class="text-button quiet-button" type="button" data-act="retry">${glyph("regenerate", 14)}<span>${escape(words.retry)}</span></button></p>`
-            : `<p class="feature-note">${escape(words.reading)}</p>`
+            : waiting({ label: words.reading, shape: "lines", rows: 3 })
           : on
             ? ""
             : `<button class="sheet-go feature-turn" type="button" data-act="turn" data-on="1">${escape(words.turnOn)}</button>${

@@ -89,7 +89,7 @@ pub fn run(args: DataArgs) -> anyhow::Result<()> {
 }
 
 fn list() -> anyhow::Result<Space> {
-    match call(DataCall::List)? {
+    match call(DataCall::List { kept: false })? {
         Reply::Data(DataReply::Listed(space)) => Ok(*space),
         _ => anyhow::bail!("the node answered something other than what it keeps"),
     }

@@ -30,6 +30,7 @@ import { Sheet } from "./confirm";
 import { detailOf, enProblems, known, zhProblems } from "./problem";
 import { stepMark as mark } from "../pen/step-mark";
 import { workbenchShown } from "./workbench-shown";
+import { waiting } from "./waiting";
 
 export interface AgentChangeWords {
   applyTitle(who: string, machine: string): string;
@@ -462,7 +463,7 @@ export class AgentChangeSheet {
       ? told.list
       : problem
         ? `<p class="removal-said removal-wrong" title="${escape(problem)}">${escape(words.previewFailed)}</p>`
-        : `<p class="removal-said">${escape(words.reading)}</p>`;
+        : waiting({ label: words.reading, shape: "lines", rows: 3 });
     return `<div class="dc">
       <p class="dc-where">${escape(said.where(target.machine, target.who))}</p>
       <div class="dc-scroll">
@@ -569,7 +570,7 @@ export class AgentChangeSheet {
   private details(preview: ChangePreview | null, problem: string | null): string {
     const { words } = this;
     if (problem) return `<p class="removal-said removal-wrong" title="${escape(problem)}">${escape(words.previewFailed)}</p>`;
-    if (!preview) return `<p class="removal-said">${escape(words.reading)}</p>`;
+    if (!preview) return waiting({ label: words.reading, shape: "lines", rows: 3 });
     const open = this.state.at === "asking" ? this.state.files : new Set<number>();
     const files = preview.files
       .map((file, index) => {

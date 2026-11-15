@@ -14,6 +14,8 @@ import type { Theme } from "../page/bridge";
 export interface Composing {
   theme: Theme;
   locale: string;
+  /** The interface moves less: the page's waiting stays still. */
+  reduced?: boolean;
 }
 
 /** The policy a page lives under. Inline script and style are the page
@@ -35,6 +37,7 @@ export function compose(html: string, composing: Composing): string {
   const root = page.documentElement;
   root.dataset.worldTheme = composing.theme;
   root.dataset.locale = composing.locale;
+  if (composing.reduced) root.setAttribute("data-world-reduced", "");
   const rule = page.createElement("meta");
   rule.httpEquiv = "Content-Security-Policy";
   rule.content = POLICY;

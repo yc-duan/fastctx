@@ -54,7 +54,7 @@ import { AgentBox } from "./agent-box";
 import { toldSaid, type AgentRun } from "./agents";
 import { Conversation } from "./conversation";
 import { eventParts, searchText } from "./event-find";
-import type { SearchEvent, SearchHit } from "./timeline-find";
+import type { KnownText, SearchEvent, SearchHit } from "./timeline-find";
 import { escape, plain, render } from "./prose";
 import { askedSkill } from "./commands";
 import { askedHtml, askedOf } from "./goal-notice";
@@ -91,6 +91,7 @@ import { clockSays, stretchSays, thoughtHeads, thoughtOnly, thoughtText, thought
 import { displayedText, htmlText as displayedTextHtml, type TextMatch } from "./find-text";
 import { GAP, type FindChanges, type FindMatch, type FindPart } from "./find-index";
 import { composing } from "../typing";
+import { waitingInline } from "../app/waiting";
 
 export interface Context {
   words: Words;
@@ -177,6 +178,9 @@ const PREFETCH = 1024 * 1024;
 /** The characters of changes' rows a page keeps read whole (`RowsKept`):
  *  the few latest changes of any size, or many small ones. */
 const ROWS_KEPT = 4 * 1024 * 1024;
+/** How much text a search keeps for another query (`searchTexts`): about
+ *  32 MB of a page's memory, the latest of a history first. */
+const SEARCH_TEXT_CHARS = 16 * 1024 * 1024;
 
 /** How far beyond what is in view blocks are drawn, in screens: one above,
  *  as a reader going up meets what was just there; two below, where the
@@ -1022,10 +1026,46 @@ export class ConversationView {
     })();
   }
 
-  /** One detached projection per batch, released without mounting any rows. */
+  /** The events a search has counted in, each with the text of its parts:
+   *  kept, so that another query counts them without reading them again
+   *  (`timeline_search.rs`, `known`). The latest are kept, to a bound; the
+   *  words they were drawn in decide them, so other words drop them. */
+  private searchTexts = new Map<string, { sequence: string; texts: string[]; chars: number }>();
+  private searchTextChars = 0;
+  private searchTextWords: unknown = null;
+
+  /** The events whose text a search here holds, as of their sequences. */
+  searchKnown(): KnownText[] {
+    this.searchTextsFresh();
+    return [...this.searchTexts].map(([item, kept]) => ({ item, sequence: kept.sequence }));
+  }
+
+  private searchTextsFresh(): void {
+    if (this.searchTextWords === this.context.words) return;
+    this.searchTexts.clear();
+    this.searchTextChars = 0;
+    this.searchTextWords = this.context.words;
+  }
+
+  private keepSearchText(item: string, sequence: string, texts: string[]): void {
+    const before = this.searchTexts.get(item);
+    if (before) {
+      this.searchTextChars -= before.chars;
+      this.searchTexts.delete(item);
+    }
+    const chars = texts.reduce((sum, text) => sum + text.length, 0);
+    if (this.searchTextChars + chars > SEARCH_TEXT_CHARS) return;
+    this.searchTexts.set(item, { sequence, texts, chars });
+    this.searchTextChars += chars;
+  }
+
+  /** One detached projection per batch, released without mounting any rows;
+   *  an event whose text is kept is counted from it, its body not sent. */
   async searchCounts(events: SearchEvent[], query: string, signal: AbortSignal): Promise<number[]> {
+    this.searchTextsFresh();
+    const read = events.filter((event): event is SearchEvent & { event: NonNullable<SearchEvent["event"]> } => event.event !== undefined);
     const conversation = new Conversation();
-    conversation.open({ generation: 0, start: 0, turns_before: 0, carry: [], events: events.map((event) => event.event), pages: { older: false, newer: false, keys: events.map((event) => event.place.item), objects: [], pending: [] } }, null);
+    conversation.open({ generation: 0, start: 0, turns_before: 0, carry: [], events: read.map((event) => event.event), pages: { older: false, newer: false, keys: read.map((event) => event.place.item), objects: [], pending: [] } }, null);
     const projection = new ConversationView(document.createElement("div"), conversation, { ...this.context, scroller: document.createElement("div") }, true);
     projection.blocks = conversation.blocks();
     const counts: number[] = [];
@@ -1033,12 +1073,19 @@ export class ConversationView {
     try {
       for (const event of events) {
         signal.throwIfAborted();
-        const entries = conversation.live.entries.filter((entry) => conversation.live.placeOf(entry.key) === event.place.item);
-        let count = 0;
-        for (const part of eventParts(entries, projection.blocks, (block) => projection.findContent.parts(block))) {
-          const text = await part.read(signal);
-          count += await searchText(text, query, signal) as number;
+        let texts: string[];
+        if (event.event === undefined) {
+          const kept = this.searchTexts.get(event.place.item);
+          if (!kept || kept.sequence !== event.sequence) throw new Error("the text kept for this search changed; search again");
+          texts = kept.texts;
+        } else {
+          const entries = conversation.live.entries.filter((entry) => conversation.live.placeOf(entry.key) === event.place.item);
+          texts = [];
+          for (const part of eventParts(entries, projection.blocks, (block) => projection.findContent.parts(block))) texts.push(await part.read(signal));
+          this.keepSearchText(event.place.item, event.sequence, texts);
         }
+        let count = 0;
+        for (const text of texts) count += await searchText(text, query, signal) as number;
         counts.push(count);
         if (performance.now() - began > 8) { await new Promise<void>((resolve) => requestAnimationFrame(() => resolve())); began = performance.now(); }
       }
@@ -2865,7 +2912,7 @@ export class ConversationView {
       content.append(note);
       return;
     }
-    note.textContent = words.output.reading;
+    note.innerHTML = waitingInline(words.output.reading);
     content.append(note);
     const lines = this.context.lines;
     const request = new AbortController();
@@ -2950,7 +2997,7 @@ export class ConversationView {
     const { words } = this.context;
     const note = document.createElement("p");
     note.className = "io-note";
-    note.textContent = words.output.reading;
+    note.innerHTML = waitingInline(words.output.reading);
     card.body.append(note);
     const request = new AbortController();
     const held: { raw: OpenedLines | null } = { raw: null };

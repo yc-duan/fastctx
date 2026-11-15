@@ -16,6 +16,7 @@ import { Conversation } from "./conversation";
 import { ConversationView, type Context } from "./view";
 import { detailOf } from "../app/problem";
 import { handOnAtEdge } from "../scroll-handoff";
+import { sayWaiting } from "../app/waiting";
 
 export interface AgentBoxContext {
   words: Words;
@@ -159,7 +160,7 @@ export class AgentBox {
     const reading = ++this.reading;
     const mark = readMark(this.run);
     const first = !this.readAt;
-    if (first) this.say(this.context.words.agents.reading);
+    if (first) this.say(this.context.words.agents.reading, "", true);
     try {
       const activity = await record(this.run.id);
       if (this.closed || reading !== this.reading) return;
@@ -186,9 +187,11 @@ export class AgentBox {
     if (this.following) this.scroller.scrollTop = this.scroller.scrollHeight;
   }
 
-  private say(said: string | null, why = ""): void {
+  /** `waits`: what is said is awaited (`sayWaiting`). */
+  private say(said: string | null, why = "", waits = false): void {
     this.note.hidden = !said;
-    this.note.textContent = said ?? "";
+    if (waits && said) sayWaiting(this.note, said);
+    else this.note.textContent = said ?? "";
     this.note.title = why;
   }
 

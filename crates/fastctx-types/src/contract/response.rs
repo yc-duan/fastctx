@@ -291,7 +291,7 @@ impl Call {
             Self::Data(request) => {
                 use crate::data::DataCall;
                 match request {
-                    DataCall::List | DataCall::OutputDays { .. } => Response::Answer,
+                    DataCall::List { .. } | DataCall::OutputDays { .. } => Response::Answer,
                     DataCall::Delete { .. } | DataCall::ClearCache => Response::Submit,
                 }
             }
@@ -501,6 +501,8 @@ fn update_response(request: &crate::update::UpdateCall, fetch: Response) -> Resp
         | UpdateCall::App { .. }
         | UpdateCall::Progress { .. } => Response::Answer,
         UpdateCall::Fetch { .. } => fetch,
+        // A download answered once it is done.
+        UpdateCall::Bring { .. } => Response::Stream,
         UpdateCall::Look | UpdateCall::Kernel { .. } | UpdateCall::Choose { .. } | UpdateCall::Repair { .. } => {
             Response::Submit
         }

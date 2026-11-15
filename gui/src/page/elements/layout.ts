@@ -5,7 +5,7 @@
 //   <w-card title="训练" note="lab 跑了 4 小时"> … </w-card>
 //   <w-stat label="验证损失" value="0.412" delta="-0.031" good="down"></w-stat>
 
-import { BOUND, PageElement, escape, sheet } from "../element";
+import { BOUND, PageElement, escape, pending, sheet } from "../element";
 
 export class Grid extends PageElement {
   static observedAttributes = ["columns", "gap"];
@@ -115,7 +115,7 @@ export class Stat extends PageElement {
     }
     this.shadow.innerHTML = `
       <div class="label">${escape(this.getAttribute("label"))}</div>
-      <div class="value"><span>${escape(this.value())}</span>${this.getAttribute("unit") ? `<span class="unit">${escape(this.getAttribute("unit"))}</span>` : ""}${delta ? `<span class="delta ${tone}">${escape(delta)}</span>` : ""}</div>
+      <div class="value"><span>${this.loading && !this.hasAttribute("value") ? pending("value") : escape(this.value())}</span>${this.getAttribute("unit") ? `<span class="unit">${escape(this.getAttribute("unit"))}</span>` : ""}${delta ? `<span class="delta ${tone}">${escape(delta)}</span>` : ""}</div>
       ${(() => {
         const why = this.failed(this.data);
         if (why !== null) return `<div class="note wrong" role="status">${escape(why)}</div>`;

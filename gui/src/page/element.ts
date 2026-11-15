@@ -46,6 +46,24 @@ const shared = sheet(`
   *, *::before, *::after { box-sizing: border-box; }
   .faint { color: var(--text-3); }
   .wrong { color: var(--wrong); }
+  /* What a bound element shows while the World is asked: the shape of
+     what comes, faint and breathing (\`pending\`), as the interface's own
+     waiting does (\`app/waiting.css\`). */
+  .sk {
+    display: block;
+    border-radius: 6px;
+    background: var(--hairline, rgba(127, 127, 127, 0.16));
+    animation: sk-breathe 2.6s cubic-bezier(0.42, 0, 0.58, 1) infinite;
+    animation-delay: calc(var(--i, 0) * 120ms);
+  }
+  .sk-line { height: 0.8em; width: var(--w, 80%); margin: 0.45em 0; }
+  .sk-block { height: 120px; width: 100%; }
+  .sk-value { display: inline-block; height: 0.9em; width: 3.2em; vertical-align: baseline; }
+  .sk-word { display: inline-block; height: 0.8em; width: 4em; vertical-align: middle; }
+  @keyframes sk-breathe { 0%, 100% { opacity: 0.95; } 50% { opacity: 0.45; } }
+  /* Still where the interface moves less, as its host tells the page
+     (\`runtime.ts\`): its choice, which may differ from the system's. */
+  :host-context([data-world-reduced]) .sk { animation: none; }
   .label {
     font-size: var(--body-size);
     color: var(--text-3);
@@ -62,6 +80,18 @@ const shared = sheet(`
     outline-offset: 2px;
   }
 `);
+
+/** What an element shows while the World is asked: lines of text to come,
+ *  a block (a table or a chart), a value, or a word within a line. */
+export function pending(kind: "lines" | "block" | "value" | "word", rows = 3): string {
+  const widths = [92, 78, 85, 64, 88];
+  const shape =
+    kind === "lines"
+      ? Array.from({ length: rows }, (_, at) => `<span class="sk sk-line" style="--w:${widths[at % widths.length]}%;--i:${at}"></span>`).join("")
+      : `<span class="sk sk-${kind}"></span>`;
+  const tag = kind === "value" || kind === "word" ? "span" : "div";
+  return `<${tag} role="status" aria-busy="true">${shape}</${tag}>`;
+}
 
 export function sheet(css: string): CSSStyleSheet {
   const made = new CSSStyleSheet();

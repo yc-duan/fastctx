@@ -43,6 +43,7 @@ import { assistingOwner, machineWritten } from "../reach";
 import { ownerLoginOf } from "../machine-logins";
 import { resetHistory } from "./resets";
 import type { UsageWords } from "./words";
+import { waiting } from "../waiting";
 
 type Agent = "codex" | "claude";
 type Tab = "calendar" | "quota" | "weeks" | "punch" | "calls" | "resets";
@@ -165,6 +166,8 @@ export class LoginUsagePage implements Page {
       if (heard?.kind === "answered") {
         this.record = heard.logins;
         keepRecord(heard.logins, asked);
+        // Each is drawn as it comes, never held for the other.
+        if (!this.left) this.draw();
       }
     });
     // A login the workbench is closed in has no use read.
@@ -173,6 +176,7 @@ export class LoginUsagePage implements Page {
       : readReport(this.key, () => options.usage(options.machine, options.agent, options.dir)).then((report) => {
           this.report = report;
           this.problem = null;
+          if (!this.left) this.draw();
         });
     const [, used] = await Promise.allSettled([record, report]);
     // Left while it read: nothing more is drawn or asked.
@@ -234,7 +238,7 @@ export class LoginUsagePage implements Page {
     if (!this.open()) {
       html = `<p class="feature-quiet">${escape(words.workbenchOff)}</p>`;
     } else if (!this.report) {
-      html = this.problem ? `<p class="feature-note" title="${escape(this.problem)}">${escape(words.failed)}</p>` : `<p class="feature-quiet ledger-reading">${escape(words.reading)}</p>`;
+      html = this.problem ? `<p class="feature-note" title="${escape(this.problem)}">${escape(words.failed)}</p>` : waiting({ label: words.reading, shape: "card" });
     } else {
       const usage = this.prepared.get(this.report, namer(world, options.machine, words));
       const mine = assistingMe(world, options.machine, options.agent, options.dir, login?.default ?? false);

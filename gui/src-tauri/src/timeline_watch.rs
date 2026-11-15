@@ -231,32 +231,36 @@ struct Page {
     newer: Option<TimelinePlace>,
 }
 
+/// How long opening waits for the live subscription to be acknowledged
+/// before it shows what this computer holds and lets the watch follow.
+const LIVE_FIRST: std::time::Duration = std::time::Duration::from_millis(1500);
+
 /// `None` selects the unchanged whole-history Watch path for an older peer.
 /// Unmaterialized history opens immediately and joins realtime meanwhile.
+/// The live subscription is registered first, so that nothing between the
+/// page read and it is missed; one not acknowledged within `LIVE_FIRST` (a
+/// slow line, a busy host) no longer holds the page while this computer
+/// holds the conversation: it opens from what is here, and the watch is
+/// opened and caught up behind it as a broken one is (`stream`).
 pub(crate) async fn open(
     world: &World,
     resident: ResidentId,
     machine: Option<Written>,
 ) -> Result<Option<Opened>, NotWatched> {
-    // Not reached, neither gone nor refused: the node may hold the
-    // conversation whole here and read it from its copy (design §28.30).
-    let (mut watching, unwatched) = match world.watch_live(resident.clone(), machine.clone()).await {
-        Ok(watching) => (Some(watching), None),
-        Err(error) if older(&error) => return Ok(None),
-        Err(error) if error.is_deleted() || error.is_refused() => return Err(error.into()),
-        Err(error) => (None, Some(error)),
+    // Which step failed: opening the watch (`true`), or its acknowledgement.
+    let attempt = async {
+        let mut watching = world.watch_live(resident.clone(), machine.clone()).await.map_err(|error| (true, error))?;
+        let pending = ready(&mut watching).await.map_err(|error| (false, error))?;
+        Ok::<_, (bool, Error)>((watching, pending))
     };
-    let pending = match watching.as_mut() {
-        Some(watching) => ready(watching).await?,
-        None => timeline_window::Window::default(),
-    };
+    tokio::pin!(attempt);
     let (transcript, _) = Transcript::new(&[])?;
     let mut reader = Reader {
         world: world.clone(),
-        resident,
-        machine,
+        resident: resident.clone(),
+        machine: machine.clone(),
         transcript: Arc::new(Mutex::new(transcript)),
-        state: pending.into(),
+        state: timeline_window::Window::default().into(),
         running_reads: HashMap::new(),
         through: None,
         catch_up: false,
@@ -268,7 +272,30 @@ pub(crate) async fn open(
         closed: Arc::new(AtomicBool::new(false)),
         closing: Arc::new(tokio::sync::Notify::new()),
     };
-    let mut page = match reader.fetch_typed(TimelineFrom::Latest, PAGE_EVENTS).await {
+    let settled = match tokio::time::timeout(LIVE_FIRST, &mut attempt).await {
+        Ok(settled) => settled,
+        Err(_) => {
+            if let Ok(page) = reader.fetch_typed(TimelineFrom::Latest, PAGE_EVENTS).await
+                && page.revision.is_some()
+            {
+                return opened(reader, page, None).await.map(Some);
+            }
+            attempt.await
+        }
+    };
+    // Not reached, neither gone nor refused: the node may hold the
+    // conversation whole here and read it from its copy (design §28.30).
+    let (watching, unwatched) = match settled {
+        Ok((watching, pending)) => {
+            reader.state = pending.into();
+            (Some(watching), None)
+        }
+        Err((true, error)) if older(&error) => return Ok(None),
+        Err((true, error)) if error.is_deleted() || error.is_refused() => return Err(error.into()),
+        Err((true, error)) => (None, Some(error)),
+        Err((false, error)) => return Err(error.into()),
+    };
+    let page = match reader.fetch_typed(TimelineFrom::Latest, PAGE_EVENTS).await {
         Ok(page) => page,
         Err(error) if older(&error) && unwatched.is_none() => return Ok(None),
         Err(error) => return Err(unwatched.unwrap_or(error).into()),
@@ -279,6 +306,11 @@ pub(crate) async fn open(
     {
         return Err(error.into());
     }
+    opened(reader, page, watching).await.map(Some)
+}
+
+/// The window opened on `page`, the first read.
+async fn opened(mut reader: Reader, mut page: Page, watching: Option<Watching>) -> Result<Opened, NotWatched> {
     if page.revision.is_some() {
         reader.complete_edge(&mut page, true).await.map_err(NotWatched::from)?;
     }
@@ -296,7 +328,7 @@ pub(crate) async fn open(
         closing: reader.closing.clone(),
         reader: tokio::sync::Mutex::new(reader),
     });
-    Ok(Some(Opened { reader: shared, watching, window }))
+    Ok(Opened { reader: shared, watching, window })
 }
 fn older(error: &Error) -> bool {
     matches!(error, Error::Call(CallError::Failed(failure)) if failure.not_run && failure.code == Some(fastctx_types::ipc::FailureCode::Unsupported))

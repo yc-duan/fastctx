@@ -14,6 +14,7 @@ import type { SentinelOverview, SentinelWake, SentinelWatched } from "../world/s
 import type { Words } from "../words";
 import type { SentinelWords } from "./words";
 import "./overview.css";
+import { sayWaiting } from "../app/waiting";
 
 export interface OverviewOptions {
   words: SentinelWords;
@@ -72,7 +73,7 @@ export class SentinelOverviewPage implements Page {
     this.totals = this.element.querySelector<HTMLElement>(".so-totals")!;
     this.axis = this.element.querySelector<HTMLElement>(".so-axis")!;
     this.note = this.element.querySelector<HTMLElement>(".so-note")!;
-    this.say(words.reading);
+    this.say(words.reading, "", true);
     this.resize = new ResizeObserver(() => {
       const width = Math.round(this.list.getBoundingClientRect().width);
       if (width && width !== this.width) {
@@ -110,9 +111,11 @@ export class SentinelOverviewPage implements Page {
 
   }
 
-  private say(text: string | null, why = ""): void {
+  /** `waits`: what is said is awaited (`sayWaiting`). */
+  private say(text: string | null, why = "", waits = false): void {
     this.note.hidden = !text;
-    this.note.textContent = text ?? "";
+    if (waits && text) sayWaiting(this.note, text);
+    else this.note.textContent = text ?? "";
     this.note.title = why;
   }
 

@@ -51,6 +51,7 @@ import { newestKnown, type UpdateCall, type UpdateState } from "../world/updates
 import type { UpdateViewWords } from "./update-view-words";
 import type { UpdateWords } from "./update-words";
 import { jobsOf, residentsOf, type Store } from "./store";
+import { sayWaiting } from "./waiting";
 
 export interface MachinePageOptions {
   store: Store;
@@ -660,7 +661,10 @@ export class MachinePage implements Page {
     } else if (!stats) text = words.reading;
     if (text && stats) text = `${text} ${words.lastRead(this.options.ago(Date.now() - heard))}`;
     this.note.hidden = !text;
-    set(this.note, text);
+    // Read for the first time: awaited, not a line that reads like a fault.
+    if (!stats && text === words.reading) sayWaiting(this.note, text);
+    else if (this.note.firstElementChild) this.note.textContent = text;
+    else set(this.note, text);
     this.note.title = title;
     this.board.classList.toggle("stale", !!text && !!stats);
   }

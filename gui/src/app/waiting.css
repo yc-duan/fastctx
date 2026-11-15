@@ -1,0 +1,148 @@
+/* Waiting (`app/waiting.ts`): the dots breathe in turn as the startup's do
+   (`startup/startup.css`), the shape of what comes breathes slower, one
+   part after another; all of it comes in after a moment, so nothing that
+   arrives at once flashes it. Its classes are its own (`wait-`, `wsk`):
+   `.waiting` is already a state of turns, rows and lists. */
+
+.wait-block {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding-block: var(--space-2);
+  animation: wait-in var(--settle) var(--ease-out) var(--wait-delay) both;
+}
+
+.wait-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--text-3);
+  animation: wait-in var(--settle) var(--ease-out) var(--wait-delay) both;
+}
+
+:root {
+  /* How long a wait goes unshown: what comes sooner never shows it. */
+  --wait-delay: 200ms;
+}
+
+@keyframes wait-in {
+  from {
+    opacity: 0;
+    transform: translateY(2px);
+  }
+}
+
+.wait-said {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin: 0;
+  font-size: var(--size-text);
+  color: var(--text-2);
+}
+
+.wait-dots {
+  display: inline-flex;
+  flex: none;
+  gap: 5px;
+}
+
+.wait-dots > span {
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-full);
+  background: currentColor;
+  transform: scale(var(--breath-scale));
+  opacity: var(--breath-alpha);
+  animation: pulse var(--breath) var(--ease-in-out) infinite;
+}
+
+.wait-inline .wait-dots > span {
+  width: 5px;
+  height: 5px;
+}
+
+.wait-dots > span:nth-child(2) {
+  animation-delay: calc(var(--breath) / 6);
+}
+
+.wait-dots > span:nth-child(3) {
+  animation-delay: calc(var(--breath) / 3);
+}
+
+.wait-shape {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.wsk {
+  display: block;
+  border-radius: var(--radius-s);
+  background: var(--hairline);
+  opacity: var(--breath-alpha);
+  animation: ink-breathe var(--breath-slow) var(--ease-in-out) infinite;
+  animation-delay: calc(var(--i, 0) * var(--stagger) * 2);
+}
+
+.wsk-line {
+  height: 12px;
+  width: var(--w, 80%);
+}
+
+.wsk-rows {
+  display: flex;
+  flex-direction: column;
+}
+
+.wsk-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  height: 40px;
+  border-bottom: 1px solid var(--hairline);
+}
+
+.wsk-row:last-child {
+  border-bottom: 0;
+}
+
+.wsk-mark {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  border-radius: var(--radius-full);
+}
+
+.wsk-name {
+  flex: none;
+  width: calc(var(--w, 80%) * 0.55);
+  height: 10px;
+}
+
+.wsk-end {
+  flex: none;
+  width: 52px;
+  height: 10px;
+  margin-left: auto;
+}
+
+.wsk-bar {
+  height: 28px;
+  width: 100%;
+  margin-bottom: var(--space-2);
+  border-radius: var(--radius-full);
+}
+
+.wsk-card {
+  height: 120px;
+  width: 100%;
+  border-radius: var(--radius-m);
+}
+
+:root[data-reduced] .wait-block,
+:root[data-reduced] .wait-inline,
+:root[data-reduced] .wait-dots > span,
+:root[data-reduced] .wsk {
+  animation: none;
+}

@@ -16,8 +16,8 @@ const PROTOCOL = "2026-01-26";
 interface HostContext {
   theme?: "light" | "dark";
   locale?: string;
-  /** The World's own: which of its three themes. */
-  world?: { theme?: Theme };
+  /** The World's own: which of its three themes, and whether it moves less. */
+  world?: { theme?: Theme; reduced?: boolean };
   [key: string]: unknown;
 }
 
@@ -38,7 +38,8 @@ type Message = {
 
 function contextOf(host: HostContext, before: PageContext): PageContext {
   const theme = host.world?.theme ?? (host.theme === "light" ? "warm-white" : host.theme === "dark" ? "warm-black" : before.theme);
-  return { theme, locale: host.locale ?? before.locale };
+  const reduced = host.world?.reduced ?? before.reduced;
+  return { theme, locale: host.locale ?? before.locale, ...(reduced === undefined ? {} : { reduced }) };
 }
 
 /** A face the World hands its pages, as bytes. */

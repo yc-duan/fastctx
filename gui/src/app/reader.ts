@@ -13,6 +13,7 @@ import type { FileRange, FileReadInfo } from "../world/file-read";
 import { HeldRead, shareOf, type ReadProgress } from "../world/reads";
 import type { PdfView, PdfViewState } from "../pdf";
 import type { Page } from "./shell";
+import { sayWaiting, waitingInline } from "./waiting";
 
 export interface TextRead {
   info: FileReadInfo;
@@ -145,7 +146,7 @@ export class ReaderPage implements Page {
     }
     fact.removeAttribute("title");
     const share = shareOf(progress);
-    fact.textContent = share === null ? words.reading : words.readingShare(share);
+    sayWaiting(fact, share === null ? words.reading : words.readingShare(share));
   }
 
   private sayBroken(): void {
@@ -164,7 +165,7 @@ export class ReaderPage implements Page {
   private async read(): Promise<void> {
     const { words, machine, path, tail } = this.options;
     const asked = ++this.asked;
-    this.facts.innerHTML = `<span class="fact">${escape(machine)}</span><span class="sep"></span><span class="fact reader-path">${escape(path)}</span><span class="sep"></span><span class="fact">${escape(words.reading)}</span>`;
+    this.facts.innerHTML = `<span class="fact">${escape(machine)}</span><span class="sep"></span><span class="fact reader-path">${escape(path)}</span><span class="sep"></span><span class="fact">${waitingInline(words.reading)}</span>`;
     const ending = /\.([a-z0-9]+)$/i.exec(path)?.[1]?.toLowerCase() ?? "";
     const held = this.hold(asked);
     if (ending === "pdf") return this.readPdf(asked, held);

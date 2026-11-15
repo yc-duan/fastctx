@@ -7,7 +7,7 @@
 //
 // Data is an array of objects, or { columns: [...], rows: [[...]] }.
 
-import { BOUND, PageElement, escape, sheet } from "../element";
+import { BOUND, PageElement, escape, pending, sheet } from "../element";
 
 type Row = Record<string, unknown>;
 
@@ -40,7 +40,7 @@ export class Table extends PageElement {
 
   protected draw(): void {
     if (this.loading) {
-      this.shadow.innerHTML = `<div class="empty">…</div>`;
+      this.shadow.innerHTML = pending("block");
       return;
     }
     const { columns, rows, error } = shape(this.data, this.getAttribute("columns"));

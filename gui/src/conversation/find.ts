@@ -12,6 +12,9 @@ import { FindHighlights } from "./find-highlights";
 import type { TimelineFind } from "./timeline-find";
 import { composing } from "../typing";
 
+/** How long the words typed into find settle before they are searched. */
+const TYPING_MS = 150;
+
 interface FindView {
   global?: TimelineFind | undefined;
   findChanges(): FindChanges;
@@ -59,6 +62,8 @@ export class Finder {
   private globalPreviousTotal = 0;
   private globalRanked = -1;
   private fresh = false;
+  /** A search waiting for the words being typed to settle. */
+  private typing = 0;
   private pending = false;
   private running = false;
   private disposed = false;
@@ -104,10 +109,28 @@ export class Finder {
     this.element.querySelector(".find-count")!.before(this.scope);
     this.input = this.element.querySelector<HTMLInputElement>(".find-input")!;
     this.count = this.element.querySelector<HTMLElement>(".find-count")!;
-    this.input.addEventListener("input", () => this.search(true));
+    // Each letter typed is not a search of its own through the whole
+    // history: the words settle a moment first; emptied, it clears at once.
+    this.input.addEventListener("input", () => {
+      clearTimeout(this.typing);
+      this.typing = 0;
+      if (!this.input.value) {
+        this.search(true);
+        return;
+      }
+      this.typing = window.setTimeout(() => {
+        this.typing = 0;
+        this.search(true);
+      }, TYPING_MS);
+    });
     this.input.addEventListener("keydown", (event) => {
       if (event.key === "Enter" && !composing(event)) {
         event.preventDefault();
+        if (this.typing) {
+          clearTimeout(this.typing);
+          this.typing = 0;
+          this.search(true);
+        }
         void this.step(event.shiftKey ? -1 : 1);
       }
     });

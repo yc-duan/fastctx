@@ -17,6 +17,7 @@ mod readings;
 mod recent;
 mod report;
 mod resets;
+mod tail;
 pub(crate) mod terminal_record;
 
 use crate::Node;

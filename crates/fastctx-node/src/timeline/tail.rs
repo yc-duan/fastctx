@@ -71,6 +71,14 @@ static CHECK_ASKED: LazyLock<Mutex<HashMap<ResidentId, Instant>>> = LazyLock::ne
 static BROUGHT: LazyLock<Mutex<HashMap<ResidentId, Instant>>> = LazyLock::new(Mutex::default);
 /// The asset timeline's builds, one per conversation at a time.
 pub(super) static PRODUCING: super::serial::Serial = super::serial::Serial::new();
+
+/// Whether the asset library's timeline of `resident` is being made now: it
+/// is read there in a moment, and its history is not read whole for the
+/// content database's beside it (`api::here`, `timeline::run`).
+pub(super) fn producing(resident: &ResidentId) -> bool {
+    PRODUCING.busy(resident)
+}
+
 /// While a conversation is at work, or just was, it is looked at again
 /// this often: a host writes its record late, and says nothing when it does
 /// (BB04).

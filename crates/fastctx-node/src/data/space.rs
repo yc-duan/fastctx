@@ -2,7 +2,7 @@
 //! conversation with its parts. Sizes are the bytes of the files and of the
 //! directory entries themselves, links not followed: what `du -sb` counts.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap};
 use std::io;
 use std::path::{Path, PathBuf};
 
@@ -39,6 +39,10 @@ pub(super) struct Measured {
     pub places: Vec<PathBuf>,
     /// What its agent's program keeps of it.
     pub host_files: Vec<PathBuf>,
+    /// The bytes of each of `host_files`, as they were counted.
+    pub host_sizes: Vec<u64>,
+    /// Its directories whose records say when it last did something.
+    pub record_dirs: Vec<PathBuf>,
     /// The sessions its agent's program knew it by: Claude Code's sessions,
     /// or its Codex thread.
     pub sessions: Vec<String>,
@@ -52,6 +56,42 @@ pub(super) struct Measured {
     pub job_town: Option<(Timestamp, Option<TownName>)>,
 }
 
+impl Measured {
+    /// Counts one file its agent's program keeps of it.
+    fn add_host(&mut self, file: PathBuf) -> io::Result<()> {
+        let size = tally(&file)?;
+        self.host.add(size);
+        self.host_sizes.push(size.bytes);
+        self.host_files.push(file);
+        Ok(())
+    }
+
+    /// Counts what one of its places holds, met on a walk: its jobs and
+    /// their output apart from the rest.
+    fn add_part(&mut self, path: &Path, metadata: &std::fs::Metadata, bytes: u64) {
+        let size = Size { bytes, latest: activity_time(path, metadata) };
+        let Some(directory) = self.places.iter().find(|directory| path.starts_with(directory)) else {
+            return;
+        };
+        if output_part(path.strip_prefix(directory).expect("prefix")) {
+            self.output.add(size);
+        } else {
+            self.records.add(size);
+        }
+    }
+
+    /// Walks the places given, all of them its own.
+    fn add_places(&mut self, places: &[PathBuf]) -> io::Result<()> {
+        fastctx_platform::disk_usage::visit_many(places.iter().map(PathBuf::as_path), |path, metadata, bytes| {
+            self.add_part(path, metadata, bytes);
+        })?;
+        Ok(())
+    }
+}
+
+/// Everything kept here, walked once: each entry counts for its kind and
+/// for the conversation whose place holds it. Only a conversation's places
+/// outside the root, and its agent's records, are walked apart.
 pub(super) fn measure(node: &Node) -> io::Result<Space> {
     let world = &node.world;
     let mut measured = conversations(node)?;
@@ -59,38 +99,85 @@ pub(super) fn measure(node: &Node) -> io::Result<Space> {
     let root = &node.root;
     let canonical_root = fastctx_platform::disk::canonicalize(root)?;
     // The directories a conversation owns: a file is its when one of the
-    // file's ancestors is among them, looked up rather than searched.
-    let mut owned = HashSet::new();
-    for one in measured.values() {
+    // file's ancestors is among them, looked up rather than searched. A
+    // place of a conversation names it; a record of its agent's program
+    // here does not, as its bytes are counted with the agent's.
+    let mut owned: HashMap<PathBuf, Option<String>> = HashMap::new();
+    let mut elsewhere: Vec<(String, Vec<PathBuf>)> = Vec::new();
+    for (name, one) in &measured {
+        let mut away = Vec::new();
         for path in &one.places {
-            owned.insert(path.clone());
+            if path.starts_with(root) {
+                owned.insert(path.clone(), Some(name.clone()));
+            } else {
+                owned.entry(path.clone()).or_insert(None);
+                away.push(path.clone());
+            }
         }
-        for path in &one.host_files {
+        if !away.is_empty() {
+            elsewhere.push((name.clone(), away));
+        }
+        for (path, bytes) in one.host_files.iter().zip(&one.host_sizes) {
             match fastctx_platform::disk::canonicalize(path) {
                 Ok(canonical) if canonical.starts_with(&canonical_root) => {
-                    owned.insert(path.clone());
+                    owned.entry(path.clone()).or_insert(None);
                 }
-                Ok(_) => kinds.host_records += tally(path)?.bytes,
+                Ok(_) => kinds.host_records += bytes,
                 // Gone or refused since it was listed: nothing of it is
                 // counted.
                 Err(_) => {}
             }
         }
     }
-    let owner = |path: &Path| path.ancestors().find(|ancestor| owned.contains(*ancestor)).map(Path::to_path_buf);
     let programs =
         [root.join("bin"), root.join("renewal"), world.path().join("bin"), world.path().join("claude-plugins")];
     let cache = root.join("cache");
     let viewed = cache.join("viewed");
+    let towns = world.path().join("towns");
+    // The conversations' records are kept in the records database, and what
+    // was attached in the asset library: theirs, not anything else's.
+    let assets = world.assets();
+    let records = world.path().join("node.sqlite3");
+    let records_name = records.file_name().and_then(|name| name.to_str()).unwrap_or_default().to_string();
+    let of_records = |path: &Path| {
+        path.parent() == records.parent()
+            && path.file_name().and_then(|name| name.to_str()).is_some_and(|name| {
+                name.strip_prefix(records_name.as_str())
+                    .is_some_and(|rest| ["", "-wal", "-shm", "-journal", "-keeper"].contains(&rest))
+            })
+    };
     let mut root_bytes = 0;
-    let unread = fastctx_platform::disk_usage::visit(root, |path, _, bytes| {
+    let unread = fastctx_platform::disk_usage::visit(root, |path, metadata, bytes| {
         root_bytes += bytes;
-        if let Some(directory) = owner(path) {
-            if output_part(path.strip_prefix(&directory).expect("prefix")) {
+        // The nearest directory owned, for its kind; the nearest place, for
+        // its conversation.
+        let mut directory = None;
+        let mut conversation = None;
+        for ancestor in path.ancestors() {
+            if let Some(of) = owned.get(ancestor) {
+                directory.get_or_insert(ancestor);
+                if of.is_some() {
+                    conversation = of.as_ref();
+                    break;
+                }
+            }
+        }
+        // A conversation counts each of its files whole, as when each was
+        // measured alone (and as deleting it measures it): a file linked into
+        // two places counts once in the kinds, in each conversation it is in.
+        if let Some(name) = conversation
+            && let Some(one) = measured.get_mut(name)
+        {
+            one.add_part(path, metadata, if metadata.is_file() { metadata.len() } else { bytes });
+        }
+        if let Some(directory) = directory {
+            if output_part(path.strip_prefix(directory).expect("prefix")) {
                 kinds.command_output += bytes;
             } else {
                 kinds.conversations += bytes;
             }
+        } else if (path.starts_with(&assets) && path != assets) || of_records(path) {
+            kinds.conversations += bytes;
         } else if programs.iter().any(|directory| path.starts_with(directory)) {
             kinds.program += bytes;
         } else if path.starts_with(&cache)
@@ -101,7 +188,7 @@ pub(super) fn measure(node: &Node) -> io::Result<Space> {
             && !path.starts_with(viewed.join(".requests"))
         {
             kinds.cache += bytes;
-        } else if path.strip_prefix(world.path().join("towns")).ok().is_some_and(|path| {
+        } else if path.strip_prefix(&towns).ok().is_some_and(|path| {
             let parts: Vec<_> = path.iter().collect();
             parts.len() >= 4 && parts[1] == "pages" && (parts[3] == "jobs" || parts[3] == "out")
         }) {
@@ -110,6 +197,11 @@ pub(super) fn measure(node: &Node) -> io::Result<Space> {
             kinds.other += bytes;
         }
     })?;
+    for (name, away) in elsewhere {
+        if let Some(one) = measured.get_mut(&name) {
+            one.add_places(&away)?;
+        }
+    }
     let everyone: HashMap<ResidentId, crate::residents::OnRecord> =
         node.residents.everyone().map(|resident| (resident.id.clone(), resident)).collect();
     let mut listed = Vec::new();
@@ -166,7 +258,7 @@ fn measure_conversations(node: &Node, wanted: Option<&str>) -> io::Result<BTreeM
                 }
             }
         }
-        add_directory(one, kept.directory.path(), &node.log)?;
+        add_directory(one, kept.directory.path())?;
     }
     // What stays where the earlier layout put it belongs to the conversation
     // of the same name.
@@ -186,7 +278,7 @@ fn measure_conversations(node: &Node, wanted: Option<&str>) -> io::Result<BTreeM
                 one.places.push(directory.clone());
             }
             if !fastctx_platform::owned_directory::is_link(&fastctx_platform::disk::symlink_metadata(&directory)?) {
-                add_directory(one, &directory, &node.log)?;
+                add_directory(one, &directory)?;
             }
         }
     }
@@ -206,9 +298,6 @@ fn measure_conversations(node: &Node, wanted: Option<&str>) -> io::Result<BTreeM
             }
             if !one.places.contains(exchange) {
                 one.places.push(exchange.clone());
-            }
-            if !fastctx_platform::owned_directory::is_link(&fastctx_platform::disk::symlink_metadata(exchange)?) {
-                one.records.add(tally(exchange)?);
             }
         }
         let about = match crate::residents::read_about(&directory) {
@@ -242,8 +331,7 @@ fn measure_conversations(node: &Node, wanted: Option<&str>) -> io::Result<BTreeM
                     let files = rollouts[&home].get(thread).cloned().unwrap_or_default();
                     host_record = HostRecord::Missing { bytes: 0 };
                     for file in files {
-                        one.host.add(tally(&file)?);
-                        one.host_files.push(file);
+                        one.add_host(file)?;
                     }
                 }
             }
@@ -277,13 +365,11 @@ fn measure_conversations(node: &Node, wanted: Option<&str>) -> io::Result<BTreeM
                         if own.as_deref().is_some_and(|own| crate::homes::within(own, &file)) {
                             continue;
                         }
-                        one.host.add(tally(&file)?);
-                        one.host_files.push(file);
+                        one.add_host(file)?;
                     }
                 }
                 if let Some(own) = own {
-                    one.host.add(tally(&own)?);
-                    one.host_files.push(own);
+                    one.add_host(own)?;
                 }
                 if !sessions.is_empty() {
                     host_record = HostRecord::Missing { bytes: one.host.bytes };
@@ -310,60 +396,21 @@ fn measure_conversations(node: &Node, wanted: Option<&str>) -> io::Result<BTreeM
         }
         one.host_record = host_record;
     }
-    for one in measured.values_mut() {
-        let activity = one.records.latest;
-        one.records = Size::default();
-        one.output = Size::default();
-        fastctx_platform::disk_usage::visit_many(one.places.iter().map(PathBuf::as_path), |path, metadata, bytes| {
-            let size = Size { bytes, latest: activity_time(path, metadata) };
-            let directory = one.places.iter().find(|directory| path.starts_with(directory)).expect("a visited place");
-            if output_part(path.strip_prefix(directory).expect("prefix")) {
-                one.output.add(size);
-            } else {
-                one.records.add(size);
-            }
-        })?;
-        one.records.latest = one.records.latest.max(activity);
+    // Everything is measured in one walk (`measure`); one conversation alone
+    // walks its own places.
+    if wanted.is_some() {
+        for one in measured.values_mut() {
+            let places = one.places.clone();
+            one.add_places(&places)?;
+        }
     }
     Ok(measured)
 }
 
-/// Adds what one directory of a conversation holds: its jobs and their
-/// output apart from the rest.
-fn add_directory(one: &mut Measured, directory: &Path, log: &crate::log::Log) -> io::Result<()> {
-    fastctx_platform::disk_usage::visit(directory, |path, metadata, bytes| {
-        let size = Size { bytes, latest: activity_time(path, metadata) };
-        if output_part(path.strip_prefix(directory).expect("prefix")) {
-            one.output.add(size);
-        } else {
-            one.records.add(size);
-        }
-    })?;
-    #[derive(serde::Deserialize)]
-    struct Happened {
-        at: Option<Timestamp>,
-    }
-    for name in ["actions", "messages"] {
-        let file = match fastctx_platform::disk::open(directory.join(name)) {
-            Ok(file) => file,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
-            Err(error) => return Err(error),
-        };
-        for happened in serde_json::Deserializer::from_reader(io::BufReader::new(file)).into_iter::<Happened>() {
-            match happened {
-                Ok(happened) => one.records.latest = one.records.latest.max(happened.at),
-                Err(error) => {
-                    log.line(format_args!(
-                        "activity timestamp unreadable in {}, line {}, column {}",
-                        directory.join(name).display(),
-                        error.line(),
-                        error.column()
-                    ));
-                    break;
-                }
-            }
-        }
-    }
+/// Notes one directory of a conversation: its records of what it did, and
+/// its jobs. What it holds is counted by the walk.
+fn add_directory(one: &mut Measured, directory: &Path) -> io::Result<()> {
+    one.record_dirs.push(directory.to_path_buf());
     for entry in entries(directory)? {
         let name = entry.file_name().and_then(|name| name.to_str()).unwrap_or_default().to_string();
         if name == "legacy" {
@@ -376,6 +423,40 @@ fn add_directory(one: &mut Measured, directory: &Path, log: &crate::log::Log) ->
         }
     }
     Ok(())
+}
+
+/// When a conversation last did something, as its records of it say: read
+/// only for one no resident's own account here dates.
+fn recorded_activity(one: &Measured, log: &crate::log::Log) -> io::Result<Option<Timestamp>> {
+    #[derive(serde::Deserialize)]
+    struct Happened {
+        at: Option<Timestamp>,
+    }
+    let mut latest = None;
+    for directory in &one.record_dirs {
+        for name in ["actions", "messages"] {
+            let file = match fastctx_platform::disk::open(directory.join(name)) {
+                Ok(file) => file,
+                Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+                Err(error) => return Err(error),
+            };
+            for happened in serde_json::Deserializer::from_reader(io::BufReader::new(file)).into_iter::<Happened>() {
+                match happened {
+                    Ok(happened) => latest = latest.max(happened.at),
+                    Err(error) => {
+                        log.line(format_args!(
+                            "activity timestamp unreadable in {}, line {}, column {}",
+                            directory.join(name).display(),
+                            error.line(),
+                            error.column()
+                        ));
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    Ok(latest)
 }
 
 fn activity_time(path: &Path, metadata: &std::fs::Metadata) -> Option<Timestamp> {
@@ -441,6 +522,12 @@ fn describe(
     let kind = Kind::of(name).expect("only conversation directories are measured");
     let directory = ConversationDir::at(&node.world.conversations().join(name));
     let mut last = one.records.latest.max(one.output.latest).max(one.host.latest);
+    // A resident dates itself; any other, by its records.
+    let dated = matches!(&kind, Kind::Home(id)
+        if everyone.contains_key(id) || fastctx_platform::disk::is_there(directory.about()));
+    if !dated {
+        last = last.max(recorded_activity(one, &node.log)?);
+    }
     let running = one.unreadable_jobs.first().cloned().or_else(|| {
         one.running
             .first()

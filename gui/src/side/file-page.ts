@@ -18,6 +18,7 @@ import { Sketch } from "../pen/sketch";
 import type { Peek } from "./pane";
 import type { FileWords } from "./words";
 import "./file-page.css";
+import { waiting } from "../app/waiting";
 
 /** A file's lines as the machine holding it gives them, let go when done. */
 export type FileLines = LineSource & { close(): Promise<void> };
@@ -73,7 +74,7 @@ export class FilePage implements Peek {
       </header>
       <h2 class="fv-name">${escape(name)}</h2>
       <div class="fv-rule" aria-hidden="true"></div>
-      <div class="fv-body"><p class="fv-note">${escape(words.reading)}</p></div>`;
+      <div class="fv-body">${waiting({ label: words.reading, shape: "lines", rows: 8 })}</div>`;
     this.body = this.element.querySelector<HTMLElement>(".fv-body")!;
     this.rule = this.element.querySelector<HTMLElement>(".fv-rule")!;
     this.element.querySelector(".fv-outside")!.addEventListener("click", () => options.outside());

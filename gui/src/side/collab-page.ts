@@ -17,6 +17,7 @@ import { ruled, seeded } from "../pen/shapes";
 import type { SidePage } from "./pane";
 import type { CollabNode, NodeState } from "./types";
 import type { CollabWords, GoalWords } from "./words";
+import { waiting, waitingInline } from "../app/waiting";
 
 /** How long ago one ended and still stands among the rest. */
 const RECENT = 30 * 60_000;
@@ -114,7 +115,7 @@ export class CollabPage implements SidePage {
       return `<section class="cp-group"><h3 class="cp-group-name">${escape(name)}</h3>${kept.map((node) => this.card(node, now)).join("")}${fold}</section>`;
     });
     const note = this.reading ? this.words.reading : this.nodes.length === 0 ? this.words.empty : "";
-    this.element.innerHTML = drawn.join("") + (note ? `<p class="cp-empty">${escape(note)}</p>` : "");
+    this.element.innerHTML = drawn.join("") + (this.reading ? waiting({ label: note, shape: "rows", rows: 2 }) : note ? `<p class="cp-empty">${escape(note)}</p>` : "");
     this.tick();
   }
 
@@ -155,7 +156,7 @@ export class CollabPage implements SidePage {
     const meta = [
       node.kind === "colleague" ? `<span>${escape(node.name)}</span>` : "",
       state,
-      node.reading ? `<span>${escape(words.reading)}</span>` : "",
+      node.reading ? waitingInline(words.reading) : "",
       going(node.state) && node.doing ? `<span class="cp-doing">${escape(node.doing)}</span>` : "",
       !going(node.state) && node.tokens ? `<span>${escape(words.tokens(node.tokens))}</span>` : "",
       // A colleague's goal says itself only where it stopped short of done.
@@ -241,7 +242,7 @@ export function shortLine(node: CollabNode, now: number, words: CollabWords, goa
   const took = workedFor(node, now);
   // One waiting on the user says so before its time.
   const waits = node.reading
-    ? `<span class="cp-said">${escape(words.reading)}</span>`
+    ? `<span class="cp-said">${waitingInline(words.reading)}</span>`
     : node.state === "waiting" ? `<span class="cp-said waiting">${escape(words.states.waiting)}</span>` : "";
   return `<button class="cp-line ${node.state}" type="button" data-id="${escape(node.id)}" title="${escape(pointedAt(node, took, now, words, goals))}"><span class="cp-state" role="img" aria-label="${escape(words.states[node.state])}">${stateMark(node.state)}</span><span class="cp-task">${escape(node.task || node.name)}</span><span class="cp-end">${waits}<span class="cp-took">${took === null ? "" : escape(words.took(took))}</span></span></button>`;
 }

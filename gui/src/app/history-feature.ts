@@ -12,6 +12,7 @@ import { historyFilm } from "../film/history";
 import type { Built, Shape } from "../film/reel";
 import { readHistorySwitch, writeHistorySwitch } from "../world/history-switch";
 import type { FeaturesWords } from "./features-words";
+import { waiting } from "./waiting";
 
 /** What the features page lends a feature drawn on it. */
 export interface FeatureFrame {
@@ -115,7 +116,7 @@ export class HistoryFeature {
       this.place === "none"
         ? `<p class="feature-note">${escape(words.noAccount)}</p>`
         : this.on === null
-          ? trouble || `<p class="feature-note">${escape(words.reading)}</p>`
+          ? trouble || waiting({ label: words.reading, shape: "lines", rows: 2 })
           : `<button class="sheet-go feature-turn" type="button" data-act="turn"${this.busy ? " disabled" : ""}>${escape(words.turnOn)}</button>${trouble}`;
     body.innerHTML = `<div class="feature-intro with-gives"><div class="feature-film"></div>${this.frame.gives(said.gives)}${turn}</div>`;
     if (playing) body.querySelector(".feature-film")?.replaceChildren(playing);

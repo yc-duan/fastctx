@@ -46,6 +46,7 @@ import { keepRecord, keptRecord, keptReport, readerNow, readReport, reportKey } 
 import { usageOf } from "./usage/model";
 import { assistingMe, namer } from "./usage/people";
 import type { UsageWords } from "./usage/words";
+import { waiting } from "./waiting";
 
 type Agent = "codex" | "claude";
 
@@ -434,7 +435,7 @@ export class AgentLoginsPage implements Page {
 
   private machineBody(machine: Shown, world: WorldNow | null, now: Date): string {
     const { words } = this.options;
-    if (machine.heard.kind === "reading") return `<p class="feature-quiet logins-reading">${escape(words.reading)}</p>`;
+    if (machine.heard.kind === "reading") return waiting({ label: words.reading, shape: "rows", rows: 2 });
     if (machine.heard.kind === "away") {
       return `<div class="logins-empty">${glyph(machine.here ? "desktop" : "server", 40)}<p class="feature-quiet" title="${escape(machine.heard.detail)}">${escape(machine.heard.said)}</p></div>`;
     }

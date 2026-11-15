@@ -2,11 +2,15 @@ import type { SessionEvent } from "../world/events";
 import type { Conversation, TimelinePosition } from "./conversation";
 import type { FindMatch } from "./find-index";
 
-export interface SearchEvent { place: TimelinePosition; event: SessionEvent }
+/** An event as a search tells it: its body, or none where the page holds its
+ *  text as of `sequence` already (`known`). */
+export interface SearchEvent { place: TimelinePosition; sequence: string; event?: SessionEvent }
+/** An event whose text the page holds, as of its sequence. */
+export interface KnownText { item: string; sequence: string }
 interface Ranking { after: TimelinePosition; before: string }
 interface Seeking { after: TimelinePosition; left: string }
 export interface SearchHit { place: TimelinePosition; ordinal: number }
-export type SearchRequest = { do: "start" } | { do: "next"; token: string; counts: number[] }
+export type SearchRequest = { do: "start"; known?: KnownText[] } | { do: "next"; token: string; counts: number[] }
   | { do: "hit"; token: string; ordinal: string; cursor: Seeking | null }
   | { do: "rank"; token: string; item: string; ordinal: number; cursor: Ranking | null } | { do: "close"; token: string };
 export type SearchReply = { kind: "batch"; token: string; events: SearchEvent[]; total: string; examined: string; complete: boolean; previews: string }
@@ -37,7 +41,8 @@ export class TimelineFind {
   constructor(private readonly conversation: Conversation,
     private readonly count: (events: SearchEvent[], query: string, signal: AbortSignal) => Promise<number[]>,
     private readonly locate: (hit: SearchHit, query: string, signal: AbortSignal) => Promise<FindMatch | null>,
-    private readonly grew: () => void) {}
+    private readonly grew: () => void,
+    private readonly known: () => KnownText[] = () => []) {}
 
   async search(query: string): Promise<void> {
     const owner = this.conversation.searchIdentity;
@@ -56,7 +61,7 @@ export class TimelineFind {
     const epoch = this.epoch; const signal = this.signal.signal;
     this.error = null;
     this.working = (async () => {
-      let request: SearchRequest = start ? { do: "start" } : { do: "next", token: this.token!, counts: [] };
+      let request: SearchRequest = start ? { do: "start", known: this.known() } : { do: "next", token: this.token!, counts: [] };
       for (;;) {
         if (this.navigating) await this.navigating;
         signal.throwIfAborted();

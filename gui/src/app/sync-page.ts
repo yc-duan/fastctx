@@ -20,6 +20,7 @@ import type { Store } from "./store";
 import { CAUGHT_UP, INKS, lagLines } from "./sync-draw";
 import type { SyncWords } from "./sync-words";
 import { fitInks, parts } from "./usage/draw";
+import { waiting } from "./waiting";
 
 export interface SyncPageOptions {
   store: Store;
@@ -60,6 +61,10 @@ export class SyncPage implements Page {
   private readonly spans: HTMLElement;
   private span: Span = keptSpan();
   private readonly read = new Map<string, Read>();
+  /** The logins asked now: one ask at a time each, whatever its span; and
+   *  those to be asked again once it answers, the span having changed. */
+  private readonly asking = new Map<string, Span>();
+  private readonly again = new Set<string>();
   private timer: number | null = null;
   private readonly resize: ResizeObserver;
   private width = 0;
@@ -117,20 +122,38 @@ export class SyncPage implements Page {
       .join("");
   }
 
-  /** Asks how each login's devices stand, all at once. */
+  /** Asks how each login's devices stand, all at once, each drawn as it
+   *  answers: a slow hub holds up only its own. A login still answering is
+   *  not asked again over it: asked meanwhile for another span, it is asked
+   *  for that one once it answers, and the answer for a span no longer
+   *  chosen is let go. */
   private async ask(): Promise<void> {
-    const hours = HOURS[this.span];
-    await Promise.all(
-      this.logins().map(async (login) => {
-        const key = `${login.hub}\n${login.account}`;
-        try {
-          this.read.set(key, { reply: await this.options.read(login.hub, login.account, hours) });
-        } catch (error) {
-          this.read.set(key, { problem: detailOf(error) });
-        }
-      }),
-    );
-    this.draw();
+    await Promise.all(this.logins().map((login) => this.askOne(login)));
+  }
+
+  private async askOne(login: Login): Promise<void> {
+    const key = `${login.hub}\n${login.account}`;
+    const asked = this.asking.get(key);
+    if (asked !== undefined) {
+      if (asked !== this.span) this.again.add(key);
+      return;
+    }
+    const span = this.span;
+    this.asking.set(key, span);
+    let read: Read;
+    try {
+      read = { reply: await this.options.read(login.hub, login.account, HOURS[span]) };
+    } catch (error) {
+      read = { problem: detailOf(error) };
+    } finally {
+      this.asking.delete(key);
+    }
+    if (this.timer === null) return;
+    if (span === this.span) {
+      this.read.set(key, read);
+      this.draw();
+    }
+    if (this.again.delete(key) || span !== this.span) await this.askOne(login);
   }
 
   private draw(): void {
@@ -143,7 +166,7 @@ export class SyncPage implements Page {
             const read = this.read.get(`${login.hub}\n${login.account}`);
             const named = logins.length > 1 ? `<h2 class="sync-login-name">${escape(login.account)} · ${escape(this.hubName(login.hub))}</h2>` : "";
             const inside = !read
-              ? `<p class="feature-note">${escape(words.reading)}</p>`
+              ? waiting({ label: words.reading, shape: "rows", rows: 3 })
               : "problem" in read
                 ? `<p class="feature-note" title="${escape(read.problem)}">${escape(words.failed)}</p>`
                 : this.login(read.reply, width, login);
