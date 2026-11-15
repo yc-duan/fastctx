@@ -121,10 +121,13 @@ jobs:
       - name: Keep only the toolchain the build uses
         shell: bash
         run: for t in $(rustup toolchain list | awk '{print $1}'); do case "$t" in 1.92.0-*) ;; *) rustup toolchain uninstall "$t" ;; esac; done
+      # A ci/ branch's run keeps its compiled dependencies for the branch's
+      # next run (a branch reads its own caches and main's); a tag's reads
+      # only main's, which warm.yml keeps, and saves none.
       - uses: Swatinem/rust-cache@v2
         with:
           key: kernel-${{ matrix.target }}
-          save-if: false
+          save-if: ${{ startsWith(github.ref, 'refs/heads/ci/') }}
       - uses: actions/setup-python@v5
         with:
           python-version: '3.13'
@@ -360,7 +363,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: kernel-${{ matrix.target }}
-          save-if: false
+          save-if: ${{ startsWith(github.ref, 'refs/heads/ci/') }}
       - uses: actions/setup-python@v5
         with:
           python-version: '3.13'
@@ -510,7 +513,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: storage-linux
-          save-if: false
+          save-if: ${{ startsWith(github.ref, 'refs/heads/ci/') }}
       - if: env.DRILLS == 'true'
         name: Storage engine drill
         run: cargo test --profile drill --locked -p fastctx-storage --test storage_drill -- --root "$RUNNER_TEMP/storage-drill"
@@ -543,7 +546,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: storage-windows
-          save-if: false
+          save-if: ${{ startsWith(github.ref, 'refs/heads/ci/') }}
       - if: env.DRILLS == 'true'
         name: Storage engine drill
         run: cargo test --profile drill --locked -p fastctx-storage --test storage_drill -- --root "$(cygpath -m "$RUNNER_TEMP")/storage-drill"
@@ -583,7 +586,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: clippy-${{ matrix.os }}
-          save-if: false
+          save-if: ${{ startsWith(github.ref, 'refs/heads/ci/') }}
       # With the hub's asset drills, which only its own feature builds.
       - run: cargo clippy --workspace --all-targets --features fastctx-hub/content-drill --locked -- -D warnings
       - run: cargo clippy -p fastctx-node --features storage-drill --all-targets --locked -- -D warnings
@@ -717,7 +720,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: kernel-${{ matrix.target }}
-          save-if: false
+          save-if: ${{ startsWith(github.ref, 'refs/heads/ci/') }}
       - uses: actions/setup-python@v5
         with:
           python-version: '3.13'
@@ -1020,7 +1023,7 @@ jobs:
         with:
           workspaces: gui/src-tauri
           key: gui-${{ matrix.target }}
-          save-if: false
+          save-if: ${{ startsWith(github.ref, 'refs/heads/ci/') }}
       - uses: actions/setup-python@v5
         with:
           python-version: '3.13'
@@ -1170,7 +1173,7 @@ jobs:
         with:
           workspaces: gui/src-tauri
           key: gui-${{ matrix.target }}
-          save-if: false
+          save-if: ${{ startsWith(github.ref, 'refs/heads/ci/') }}
       - uses: actions/setup-python@v5
         with:
           python-version: '3.13'
@@ -1355,7 +1358,7 @@ jobs:
         with:
           workspaces: gui/src-tauri
           key: gui-linux
-          save-if: false
+          save-if: ${{ startsWith(github.ref, 'refs/heads/ci/') }}
       - uses: actions/setup-python@v5
         with:
           python-version: '3.13'
@@ -1521,7 +1524,7 @@ jobs:
         with:
           workspaces: gui/src-tauri
           key: android
-          save-if: false
+          save-if: ${{ startsWith(github.ref, 'refs/heads/ci/') }}
       - uses: actions/setup-python@v5
         with:
           python-version: '3.13'
@@ -1648,7 +1651,7 @@ jobs:
         with:
           # Same host, target and flags as the x64 kernel; use its existing main-branch cache.
           shared-key: kernel-x86_64-pc-windows-msvc-kernel-windows
-          save-if: false
+          save-if: ${{ startsWith(github.ref, 'refs/heads/ci/') }}
       - uses: actions/setup-python@v5
         with:
           python-version: '3.13'
