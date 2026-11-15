@@ -260,18 +260,19 @@ fn route(line: &[u8], pending: &Mutex<Pending>, inbound: &mpsc::UnboundedSender<
     if text.is_empty() {
         return;
     }
-    let message: Value = match serde_json::from_str(text) {
+    let mut message: Value = match serde_json::from_str(text) {
         Ok(message) => message,
         Err(error) => {
             log(format!("the app-server wrote a line that is not JSON ({error}): {text}"));
             return;
         }
     };
+    // Taken out of the message, not copied: an answer may be megabytes (E4).
     let method = message.get("method").and_then(Value::as_str).map(str::to_string);
-    let params = message.get("params").cloned().unwrap_or(Value::Null);
-    match (method, message.get("id")) {
+    let params = message.get_mut("params").map(Value::take).unwrap_or(Value::Null);
+    match (method, message.get_mut("id").map(Value::take)) {
         (Some(method), Some(id)) => {
-            let _ = inbound.send(Inbound::Request { id: id.clone(), method, params });
+            let _ = inbound.send(Inbound::Request { id, method, params });
         }
         (Some(method), None) => {
             let _ = inbound.send(Inbound::Notification {
@@ -285,7 +286,7 @@ fn route(line: &[u8], pending: &Mutex<Pending>, inbound: &mpsc::UnboundedSender<
             else {
                 return;
             };
-            let answer = match message.get("error") {
+            let answer = match message.get_mut("error").map(Value::take) {
                 Some(error) => Err(Unanswered::Rpc {
                     code: error.get("code").and_then(Value::as_i64).unwrap_or_default(),
                     data: error.get("data").cloned().unwrap_or(Value::Null),
@@ -295,7 +296,7 @@ fn route(line: &[u8], pending: &Mutex<Pending>, inbound: &mpsc::UnboundedSender<
                         .map(str::to_string)
                         .unwrap_or_else(|| error.to_string()),
                 }),
-                None => Ok(message.get("result").cloned().unwrap_or(Value::Null)),
+                None => Ok(message.get_mut("result").map(Value::take).unwrap_or(Value::Null)),
             };
             let _ = inbound.send(Inbound::Response { waiter, answer });
         }

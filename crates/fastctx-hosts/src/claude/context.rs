@@ -1,81 +1,99 @@
 //! The public message projection used to confirm a persisted compact replacement.
 
 use serde_json::{Value, json};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::io;
 
-pub(super) fn order(rows: &[&Value]) -> io::Result<Vec<usize>> {
-    let boundary = rows.iter().rposition(|row| row["type"] == "system" && row["subtype"] == "compact_boundary");
-    let mut order: Vec<_> = rows
-        .iter()
-        .enumerate()
-        .skip(boundary.unwrap_or(0))
-        .filter(|(_, row)| matches!(row["type"].as_str(), Some("user" | "assistant" | "attachment" | "system")))
-        .map(|(index, _)| index)
-        .collect();
+/// The rows of the context the session holds, in their order: from the last
+/// compaction that replaced it (`boundary`), the rows of the kinds a context
+/// is made of (`contextual`, all of them in order), the messages it kept put
+/// back after its anchor. Read through the row source (`Rows`): by number,
+/// and by the UUID a row bears, each UUID one row's. What the rows say that
+/// makes no context is told apart (the inner `Err`), as a problem of the
+/// record; a row the source fails to give fails the reading. Rows are
+/// numbered in four bytes (the reading counts no more).
+pub(super) fn order(
+    rows: &dyn super::transcript::Rows,
+    contextual: Vec<u32>,
+    boundary: Option<usize>,
+) -> io::Result<Result<Vec<u32>, &'static str>> {
+    match ordered(rows, contextual, boundary) {
+        Ok(order) => Ok(Ok(order)),
+        Err(Untold::Context(why)) => Ok(Err(why)),
+        Err(Untold::Store(error)) => Err(error),
+    }
+}
+
+/// Why `order` could not tell the context: the row source failed, or the
+/// rows make no context.
+enum Untold {
+    Store(io::Error),
+    Context(&'static str),
+}
+
+impl From<io::Error> for Untold {
+    fn from(error: io::Error) -> Self {
+        Untold::Store(error)
+    }
+}
+
+fn ordered(rows: &dyn super::transcript::Rows, contextual: Vec<u32>, boundary: Option<usize>) -> Result<Vec<u32>, Untold> {
+    use Untold::Context;
+    let mut order: Vec<u32> = contextual.into_iter().filter(|index| *index as usize >= boundary.unwrap_or(0)).collect();
     let Some(boundary) = boundary else { return Ok(order) };
-    let by_uuid: HashMap<_, _> =
-        rows.iter().enumerate().filter_map(|(index, row)| Some((row["uuid"].as_str()?, index))).collect();
-    let metadata = &rows[boundary]["compactMetadata"];
-    let (anchor, preserved) = if let Some(messages) = metadata.get("preservedMessages") {
-        let anchor = messages["anchorUuid"]
-            .as_str()
-            .ok_or_else(|| io::Error::other("Claude preserved messages omit their anchor"))?;
-        let preserved = messages["uuids"]
-            .as_array()
-            .ok_or_else(|| io::Error::other("Claude preserved messages omit their UUIDs"))?
-            .iter()
-            .map(|uuid| uuid.as_str().ok_or_else(|| io::Error::other("Claude preserved UUID is not a string")))
-            .collect::<io::Result<Vec<_>>>()?;
-        (anchor, preserved)
-    } else if let Some(segment) = metadata.get("preservedSegment") {
-        let anchor = segment["anchorUuid"]
-            .as_str()
-            .ok_or_else(|| io::Error::other("Claude preserved segment omits its anchor"))?;
-        let head =
-            segment["headUuid"].as_str().ok_or_else(|| io::Error::other("Claude preserved segment omits its head"))?;
-        let mut tail =
-            segment["tailUuid"].as_str().ok_or_else(|| io::Error::other("Claude preserved segment omits its tail"))?;
-        let mut visited = HashSet::new();
-        let mut preserved = Vec::new();
-        loop {
-            if !visited.insert(tail) {
-                return Err(io::Error::other("Claude preserved segment has a UUID cycle"));
+    let boundary_row = rows.row(boundary)?;
+    let metadata = &boundary_row.value_of()["compactMetadata"];
+    // The rows the compaction kept, by their numbers — a UUID each row's
+    // and each row's one — not by their UUIDs held again: a segment may be
+    // the whole of a long record.
+    let (anchor, preserved, kept) = if let Some(messages) = metadata.get("preservedMessages") {
+        let anchor = messages["anchorUuid"].as_str().ok_or(Context("Claude preserved messages omit their anchor"))?;
+        let uuids = messages["uuids"].as_array().ok_or(Context("Claude preserved messages omit their UUIDs"))?;
+        for uuid in uuids {
+            uuid.as_str().ok_or(Context("Claude preserved UUID is not a string"))?;
+        }
+        // Each told once, of a row there is: the first fault met says why.
+        let (mut kept, mut preserved) = (HashSet::new(), Vec::with_capacity(uuids.len()));
+        for uuid in uuids.iter().filter_map(Value::as_str) {
+            let index = rows.index_of(uuid)?.ok_or(Context("Claude preserved messages refer to an absent row"))? as u32;
+            if !kept.insert(index) {
+                return Err(Context("Claude preserved messages repeat a UUID"));
             }
-            let index = *by_uuid
-                .get(tail)
-                .ok_or_else(|| io::Error::other("Claude preserved segment refers to an absent row"))?;
-            preserved.push(tail);
+            preserved.push(index);
+        }
+        (anchor, preserved, kept)
+    } else if let Some(segment) = metadata.get("preservedSegment") {
+        let anchor = segment["anchorUuid"].as_str().ok_or(Context("Claude preserved segment omits its anchor"))?;
+        let head = segment["headUuid"].as_str().ok_or(Context("Claude preserved segment omits its head"))?;
+        let mut tail = segment["tailUuid"].as_str().ok_or(Context("Claude preserved segment omits its tail"))?.to_owned();
+        let (mut kept, mut preserved) = (HashSet::new(), Vec::new());
+        loop {
+            let index = rows.index_of(&tail)?.ok_or(Context("Claude preserved segment refers to an absent row"))?;
+            // A row met again is a UUID met again: a cycle.
+            if !kept.insert(index as u32) {
+                return Err(Context("Claude preserved segment has a UUID cycle"));
+            }
+            preserved.push(index as u32);
             if tail == head {
                 break;
             }
-            tail = rows[index]["parentUuid"]
+            tail = rows.row(index)?.value_of()["parentUuid"]
                 .as_str()
-                .ok_or_else(|| io::Error::other("Claude preserved segment does not reach its head"))?;
+                .ok_or(Context("Claude preserved segment does not reach its head"))?
+                .to_owned();
         }
         preserved.reverse();
-        (anchor, preserved)
+        (anchor, preserved, kept)
     } else {
         return Ok(order);
     };
-    let mut unique = HashSet::new();
-    let preserved: Vec<_> = preserved
-        .into_iter()
-        .map(|uuid| {
-            if !unique.insert(uuid) {
-                return Err(io::Error::other("Claude preserved messages repeat a UUID"));
-            }
-            by_uuid
-                .get(uuid)
-                .copied()
-                .ok_or_else(|| io::Error::other("Claude preserved messages refer to an absent row"))
-        })
-        .collect::<io::Result<_>>()?;
-    order.retain(|index| !preserved.contains(index));
-    let anchor = order
-        .iter()
-        .position(|&index| rows[index]["uuid"].as_str() == Some(anchor))
-        .ok_or_else(|| io::Error::other("Claude preserved anchor is absent from the current context"))?;
+    order.retain(|index| !kept.contains(index));
+    // The anchor's row: the one row bearing its UUID, where it stands in
+    // the order (a row numbered once bears one UUID, each UUID one row's).
+    let anchor_row = rows.index_of(anchor)?;
+    let anchor = anchor_row
+        .and_then(|anchor_row| order.iter().position(|&index| index as usize == anchor_row))
+        .ok_or(Context("Claude preserved anchor is absent from the current context"))?;
     order.splice(anchor + 1..anchor + 1, preserved);
     Ok(order)
 }

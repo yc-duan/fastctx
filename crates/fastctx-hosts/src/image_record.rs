@@ -17,9 +17,14 @@ fn invalid(message: impl Into<String>) -> io::Error {
 
 /// Image fields are replaced by private blob markers before JSON parsing.
 /// Metadata receives the node's quarter-RAM share, charging four Value
-/// slots per encoded byte for parsing, containers and their growth.
+/// slots per encoded byte for parsing, containers and their growth — and no
+/// more than World reads of any line (design §28.49): at most `LINE_MOST`
+/// bytes and `VALUES_MOST` values besides the images spooled, or the record
+/// is not read.
 pub fn next(reader: &mut impl BufRead, temporary: &Path, cancelled: &AtomicBool) -> io::Result<Option<Record>> {
-    let allowance = fastctx_platform::memory::physical()? / 4 / (4 * std::mem::size_of::<Value>() as u64);
+    let allowance = (fastctx_platform::memory::physical()? / 4 / (4 * std::mem::size_of::<Value>() as u64))
+        .min(crate::bounded::LINE_MOST as u64);
+    let mut values = 0usize;
     let mut json = Vec::new();
     let mut blobs = Vec::new();
     let mut key = String::new();
@@ -64,7 +69,7 @@ pub fn next(reader: &mut impl BufRead, temporary: &Path, cancelled: &AtomicBool)
                     let b = byte_required(reader)?;
                     encoded.push(b);
                     if encoded.len() as u64 + json.len() as u64 > allowance {
-                        return Err(invalid("host record metadata exceeds this machine's parsing allowance"));
+                        return Err(crate::bounded::refused_record("holds metadata past what World reads of a record (32 MiB, or less where this machine's memory allows less)"));
                     }
                     if b == b'\\' {
                         encoded.push(byte_required(reader)?);
@@ -80,6 +85,13 @@ pub fn next(reader: &mut impl BufRead, temporary: &Path, cancelled: &AtomicBool)
             value_of.clear();
         } else {
             json.push(byte);
+            if matches!(byte, b'{' | b'[' | b',') {
+                values += 1;
+                if values > crate::bounded::VALUES_MOST {
+                    let why = format!("holds metadata of more than {} values", crate::bounded::VALUES_MOST);
+                    return Err(crate::bounded::refused_record(&why));
+                }
+            }
             match byte {
                 b'{' => containers.push((b'{', true)),
                 b'[' => {
@@ -114,7 +126,7 @@ pub fn next(reader: &mut impl BufRead, temporary: &Path, cancelled: &AtomicBool)
             }
         }
         if json.len() as u64 > allowance {
-            return Err(invalid("host record metadata exceeds this machine's parsing allowance"));
+            return Err(crate::bounded::refused_record("holds metadata past what World reads of a record (32 MiB, or less where this machine's memory allows less)"));
         }
     }
     let value = serde_json::from_slice(&json).map_err(io::Error::other)?;

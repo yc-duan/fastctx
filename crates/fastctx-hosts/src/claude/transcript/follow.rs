@@ -14,12 +14,12 @@
 //! A tail read from the start is the whole record: the reading that cannot
 //! take up where it was is this one, from the beginning.
 
-use super::{Scanned, project, scan};
+use super::{Earlier, Held, Keep, Kept, Output, RowStore, Rows, SET_QUEUED, Scanned, project, project_asking, scan};
 use crate::claude::subagents;
 use crate::claude::titles::Titles;
 use fastctx_platform::file_read;
 use fastctx_types::file_identity::FileIdentity;
-use fastctx_types::session::HostAgentStart;
+use fastctx_types::session::{HostAgentStart, SessionEvent};
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -50,8 +50,11 @@ pub struct Seam {
     /// The xxh3 of each MiB of the record before it, the last one short.
     pub blocks: Vec<u64>,
     pub titles: Titles,
-    /// What could not be made out before it.
+    /// What could not be made out before it, the first `PROBLEMS_KEPT`
+    /// word for word, and how many more.
     pub problems: Vec<String>,
+    #[serde(default)]
+    pub problems_omitted: usize,
     /// The agents started before it, for the ends told of them later: what
     /// an end needs, not what each was asked (CC19).
     pub agents: HashMap<String, HostAgentStart>,
@@ -151,22 +154,22 @@ pub fn tail(
     }
     // The tail, read once.
     let mut first = Xxh3::new();
-    let mut scanned = Scanned::new(seam.line, seam.offset, seam.titles.clone(), seam.problems.clone());
+    let mut scanned = Scanned::new(seam.line, seam.offset, seam.titles.clone(), seam.problems.clone(), seam.problems_omitted);
     file.seek(SeekFrom::Start(seam.offset))?;
     scan(&mut BufReader::with_capacity(1 << 20, (&mut file).take(metadata.len() - seam.offset)), None, false, &mut scanned, Some(&mut first))?;
     let (_, end) = scanned.reached();
     if seam.offset > 0
-        && let Some(why) = unsupported(&scanned, seam, seen)
+        && let Some(why) = unsupported(&scanned.rows, seam, seen)?
     {
         return Ok(Err(Restart::Unsupported(why)));
     }
     // A whole reading takes a last row that lacks only its line's end, once
-    // nothing will write the rest (CC17).
-    if ended && end < metadata.len() {
+    // nothing will write the rest (CC17). A line larger than World reads
+    // ends the reading here as there, the rows before it read (§28.49).
+    if ended && end < metadata.len() && scanned.refused().is_none() {
         return Ok(Err(Restart::Unsupported("a last row without its line's end")));
     }
-    let since = scanned.rows.iter().find_map(|row| at(&row.value));
-    let moved = next_seam(&scanned, seam, accept);
+    let (since, moved) = next_seam(&scanned.rows, seam, accept)?;
     // Read again: the same bytes, the same file at the path, no shorter.
     if !reads_again(&mut file, seam.offset, end, first.digest())? {
         return Ok(Err(Restart::Unsteady));
@@ -180,7 +183,7 @@ pub fn tail(
     let seam_at = moved.as_ref().map(|(_, said, _, _)| *said);
     let prefix_ids: Vec<String> = match &moved {
         Some((to, _, _, _)) => scanned
-            .rows
+            .rows()
             .iter()
             .filter(|row| row.start < *to)
             .filter_map(|row| row.value.get("uuid").and_then(Value::as_str).map(str::to_string))
@@ -189,7 +192,7 @@ pub fn tail(
     };
     let next = match moved {
         Some((to, _, latest, abandoned)) => {
-            let mut next = advanced(&mut file, seam, to, identity, earlier, &beside)?;
+            let mut next = advanced(&mut file, seam, to, identity, &|uuid| Ok(earlier.contains(uuid)), &beside, Held::default())?;
             next.latest = latest;
             next.abandoned = seam.abandoned.iter().cloned().chain(abandoned).collect();
             // What the seam is placed by is what was read and is shown:
@@ -210,7 +213,7 @@ pub fn tail(
     {
         return Ok(Err(Restart::Unsupported("an agent before the seam told of another call")));
     }
-    let transcript = project(scanned, &[], earlier, beside, seam.agents.clone())?;
+    let transcript = project(scanned, &[], earlier, beside, seam.agents.clone(), super::Output::Context)?;
     // An agent the files beside tell of that no call started — before the
     // seam or past it — is one a call before the seam started, its
     // telling come late: a whole reading links it (CC10). One whose file
@@ -230,6 +233,148 @@ pub fn tail(
         next
     });
     Ok(Ok(Tail { transcript, seam: next, end, since, seam_at, prefix_ids }))
+}
+
+/// Where a tail read into a store (`tail_kept`, design §28.51 ⑤-5) keeps
+/// its rows and gives what it found: the rows kept in `rows`; the events
+/// handed to `events` as they are made, none held; the record id of each
+/// row the seam moved past handed to `moved_past` (not `Tail::prefix_ids`);
+/// of `asked`, those the record holds — among its rows or the queued
+/// messages' sources it names — told in the transcript's `uuids`, which
+/// holds no others.
+pub struct TailStore<'k> {
+    pub rows: &'k mut dyn RowStore,
+    pub events: &'k mut dyn FnMut(SessionEvent) -> io::Result<()>,
+    pub moved_past: &'k mut dyn FnMut(&str) -> io::Result<()>,
+    pub asked: &'k [String],
+}
+
+/// Which of some record ids are of rows before a seam (`tail_kept`), asked
+/// a batch at a time: those that are.
+pub type Seen<'s> = &'s dyn Fn(&[String]) -> io::Result<HashSet<String>>;
+
+/// How many record ids past a seam are asked of at once (`Seen`).
+const SEEN_AT_ONCE: usize = 4096;
+
+/// As `tail`, the rows past `seam` kept in `kept.rows` rather than held,
+/// read back as they are asked for, and the events handed on as they are
+/// made (`Output::History`); `earlier` asked of each record id, and `seen`
+/// of the record ids past the seam a batch at a time. The same checks, the
+/// same seam, the same events. All that is asked of the rows past the seam
+/// is asked before the seam's own rows are read again into the store, which
+/// lets the others go (`advanced`); the checks after it are made in the
+/// order `tail` makes them.
+pub fn tail_kept(
+    path: &Path,
+    seam: &Seam,
+    earlier: Earlier<'_>,
+    accept: &dyn Fn(Timestamp) -> bool,
+    ended: bool,
+    seen: Seen<'_>,
+    kept: TailStore<'_>,
+) -> io::Result<Result<Tail, Restart>> {
+    let TailStore { rows: store, events, moved_past, asked } = kept;
+    let mut file = file_read::open(path)?;
+    let metadata = file.metadata()?;
+    let identity = file_read::snapshot(&file, &metadata)?.identity();
+    if seam.identity.as_ref().is_some_and(|known| *known != identity) {
+        return Ok(Err(Restart::Replaced));
+    }
+    if metadata.len() < seam.offset {
+        return Ok(Err(Restart::Truncated));
+    }
+    if !prefix_holds(&mut file, seam)? {
+        return Ok(Err(Restart::Rewritten));
+    }
+    // The tail, read once, into the store.
+    let mut first = Xxh3::new();
+    store.clear()?;
+    let mut scanned = Scanned::with(Kept::new(&mut *store), seam.line, seam.offset, seam.titles.clone(), seam.problems.clone(), seam.problems_omitted);
+    file.seek(SeekFrom::Start(seam.offset))?;
+    scan(&mut BufReader::with_capacity(1 << 20, (&mut file).take(metadata.len() - seam.offset)), None, false, &mut scanned, Some(&mut first))?;
+    scanned.rows.scanned()?;
+    let (_, end) = scanned.reached();
+    if seam.offset > 0 {
+        // The record ids past the seam asked a batch at a time whether they
+        // are of rows before it; looked up of those that are as each row is
+        // judged, in its order (`unsupported`).
+        let mut before = HashSet::new();
+        let mut batch = Vec::with_capacity(SEEN_AT_ONCE);
+        let mut ask = |batch: &mut Vec<String>| -> io::Result<()> {
+            before.extend(seen(batch)?);
+            batch.clear();
+            Ok(())
+        };
+        let rows = scanned.rows.blocks_store().ok_or_else(|| io::Error::other("rows kept with no store"))?;
+        rows.ids_before(u64::MAX, &mut |uuid| {
+            batch.push(uuid.to_string());
+            if batch.len() >= SEEN_AT_ONCE { ask(&mut batch) } else { Ok(()) }
+        })?;
+        ask(&mut batch)?;
+        if let Some(why) = unsupported(&scanned.rows, seam, &|uuid| before.contains(uuid))? {
+            return Ok(Err(Restart::Unsupported(why)));
+        }
+    }
+    if ended && end < metadata.len() && scanned.refused().is_none() {
+        return Ok(Err(Restart::Unsupported("a last row without its line's end")));
+    }
+    let (since, moved) = next_seam(&scanned.rows, seam, accept)?;
+    if !reads_again(&mut file, seam.offset, end, first.digest())? {
+        return Ok(Err(Restart::Unsteady));
+    }
+    let now = file_read::open(path)?;
+    let still = file_read::snapshot(&now, &now.metadata()?)?;
+    if still.identity() != identity || still.size < end {
+        return Ok(Err(Restart::Unsteady));
+    }
+    let beside = subagents::beside(path);
+    let seam_at = moved.as_ref().map(|(_, said, _, _)| *said);
+    let mut transcript = project_asking(scanned, &[], earlier, beside.clone(), seam.agents.clone(), Output::History(events))?;
+    // Asked of the rows past the seam while the store holds them.
+    if let Some((to, ..)) = &moved {
+        store.ids_before(*to, moved_past)?;
+    }
+    for uuid in asked {
+        if transcript.uuids.contains(uuid) || store.index_of(uuid)?.is_some() || store.is_member(SET_QUEUED, uuid)? {
+            transcript.uuids.insert(uuid.clone());
+        }
+    }
+    transcript.uuids.retain(|uuid| asked.contains(uuid));
+    let next = match moved {
+        Some((to, _, latest, abandoned)) => {
+            store.clear()?;
+            let mut next = advanced(&mut file, seam, to, identity, earlier, &beside, Kept::new(&mut *store))?;
+            next.latest = latest;
+            next.abandoned = seam.abandoned.iter().cloned().chain(abandoned).collect();
+            if !reads_again(&mut file, seam.offset, end, first.digest())? {
+                return Ok(Err(Restart::Unsteady));
+            }
+            Some(next)
+        }
+        None if seam.identity.is_none() => Some(Seam { identity: Some(identity), ..seam.clone() }),
+        None => None,
+    };
+    let told: Vec<(String, String)> = beside.calls().map(|(id, call)| (id.to_string(), call.to_string())).collect();
+    let pairs: Vec<String> = told.iter().map(|(id, call)| format!("{id}@{call}")).collect();
+    if seam.offset > 0
+        && told.iter().zip(&pairs).any(|((id, _), pair)| seam.agents.contains_key(id) && !seam.told.contains(pair))
+    {
+        return Ok(Err(Restart::Unsupported("an agent before the seam told of another call")));
+    }
+    let unlinked: Vec<String> = told
+        .into_iter()
+        .filter(|(id, _)| !seam.agents.contains_key(id) && !transcript.agents().contains_key(id))
+        .map(|(id, call)| format!("{id}@{call}"))
+        .collect();
+    if seam.offset > 0 && unlinked.iter().any(|id| !seam.unlinked.contains(id)) {
+        return Ok(Err(Restart::Unsupported("an agent before the seam told of late")));
+    }
+    let next = next.map(|mut next| {
+        next.unlinked = if seam.offset == 0 { unlinked } else { seam.unlinked.clone() };
+        next.told = pairs;
+        next
+    });
+    Ok(Ok(Tail { transcript, seam: next, end, since, seam_at, prefix_ids: Vec::new() }))
 }
 
 /// Whether `[from, to)` of `file` hashes to `expected` read again.
@@ -263,23 +408,26 @@ fn blocks(file: &mut File, seam: &Seam, to: u64) -> io::Result<Vec<u64>> {
     Ok(blocks)
 }
 
+/// Where a seam moves to (`next_seam`): the start of the row, its time, the
+/// latest time before it and the calls spoken past unanswered before it.
+type Moved = (u64, Timestamp, Option<Timestamp>, Vec<String>);
+
 /// Where the seam goes next: the start of the last row past it that starts
 /// the user's words, its time accepted and later than every row before it
 /// (CC13: events at one moment are named by their order there, so none are
-/// split across it), with every tool call before it answered. With it, the
-/// latest time before it and the calls spoken past unanswered before it.
-#[allow(clippy::type_complexity)]
-fn next_seam(
-    scanned: &Scanned,
-    seam: &Seam,
-    accept: &dyn Fn(Timestamp) -> bool,
-) -> Option<(u64, Timestamp, Option<Timestamp>, Vec<String>)> {
+/// split across it), with every tool call before it answered (`Moved`).
+/// With it, the time of the first row that has one. The rows taken once in
+/// their order.
+fn next_seam<L: Rows>(rows: &L, seam: &Seam, accept: &dyn Fn(Timestamp) -> bool) -> io::Result<(Option<Timestamp>, Option<Moved>)> {
     // Each call still waiting, with how many times the user spoke since.
-    let mut waiting: HashMap<&str, usize> = HashMap::new();
-    let (mut found, mut last_start) = (None, None::<u64>);
+    let mut waiting: HashMap<String, usize> = HashMap::new();
+    // Where it would go, with how many calls were spoken past by then: the
+    // calls only ever grow, so those before it are the first so many.
+    let (mut found, mut last_start) = (None::<(u64, Timestamp, Option<Timestamp>, usize)>, None::<u64>);
     let mut latest = seam.latest;
     let mut abandoned: Vec<String> = Vec::new();
-    for row in &scanned.rows {
+    let mut since = None;
+    rows.each(&mut |_, row| {
         // A row a later one of its UUID replaced stands out of file order:
         // no seam is placed by it.
         let in_order = last_start.is_none_or(|last| row.start > last);
@@ -287,7 +435,7 @@ fn next_seam(
         // Nor one with a row after it in the record's order that stands
         // before it in the file: the bytes before such a seam would not be
         // the rows before it (EE03).
-        if found.as_ref().is_some_and(|(to, ..): &(u64, Timestamp, Option<Timestamp>, Vec<String>)| row.start < *to) {
+        if found.as_ref().is_some_and(|(to, ..)| row.start < *to) {
             found = None;
         }
         let prompt = row.kind() == Some("user") && row.prompt();
@@ -306,13 +454,16 @@ fn next_seam(
             });
         }
         let time = at(&row.value);
+        if since.is_none() {
+            since = time;
+        }
         if in_order
             && waiting.is_empty()
             && row.start > seam.offset
             && prompt
             && let Some(said) = time.filter(|said| latest.is_none_or(|latest| *said > latest) && accept(*said))
         {
-            found = Some((row.start, said, latest, abandoned.clone()));
+            found = Some((row.start, said, latest, abandoned.len()));
         }
         if let Some(time) = time {
             latest = Some(latest.map_or(time, |latest| latest.max(time)));
@@ -321,7 +472,7 @@ fn next_seam(
             match (row.kind(), block.get("type").and_then(Value::as_str)) {
                 (Some("assistant"), Some("tool_use")) => {
                     if let Some(id) = block.get("id").and_then(Value::as_str) {
-                        waiting.insert(id, 0);
+                        waiting.insert(id.to_string(), 0);
                     }
                 }
                 (Some("user"), Some("tool_result")) => {
@@ -332,30 +483,36 @@ fn next_seam(
                 _ => {}
             }
         }
-    }
-    found
+        Ok(())
+    })?;
+    abandoned.truncate(found.as_ref().map_or(0, |(.., spoken)| *spoken));
+    Ok((since, found.map(|(to, said, latest, _)| (to, said, latest, abandoned))))
 }
 
 /// The seam at `to`: what the rows between `seam` and it leave for a reading
-/// that takes up there.
-fn advanced(
+/// that takes up there, read again into `rows`.
+#[allow(clippy::too_many_arguments)]
+fn advanced<L: Keep>(
     file: &mut File,
     seam: &Seam,
     to: u64,
     identity: FileIdentity,
-    earlier: &HashSet<String>,
+    earlier: Earlier<'_>,
     beside: &subagents::Beside,
+    rows: L,
 ) -> io::Result<Seam> {
     let blocks = blocks(file, seam, to)?;
-    let mut scanned = Scanned::new(seam.line, seam.offset, seam.titles.clone(), seam.problems.clone());
+    let mut scanned = Scanned::with(rows, seam.line, seam.offset, seam.titles.clone(), seam.problems.clone(), seam.problems_omitted);
     file.seek(SeekFrom::Start(seam.offset))?;
     scan(&mut BufReader::new(file.take(to - seam.offset)), None, false, &mut scanned, None)?;
+    scanned.rows.scanned()?;
     let (line, offset) = scanned.reached();
     if offset != to {
         return Err(io::Error::other("the record's rows before the new seam did not read whole"));
     }
     let titles = scanned.titles().clone();
-    let between = project(scanned, &[], earlier, beside.clone(), seam.agents.clone())?;
+    // Only what the seam keeps of the rows before it: none of their events.
+    let between = project_asking(scanned, &[], earlier, beside.clone(), seam.agents.clone(), Output::SeamOnly)?;
     Ok(Seam {
         identity: Some(identity),
         offset,
@@ -363,6 +520,7 @@ fn advanced(
         blocks,
         titles,
         problems: between.problems.clone(),
+        problems_omitted: between.problems_omitted,
         agents: between
             .agents()
             .iter()
@@ -379,39 +537,88 @@ fn advanced(
 /// alone: a compaction, whose summary names what it kept, a row that takes
 /// back rows not in the tail, and the answer to a call before the seam the
 /// user had spoken past.
-fn unsupported(scanned: &Scanned, seam: &Seam, seen: &dyn Fn(&str) -> bool) -> Option<&'static str> {
-    for row in &scanned.rows {
-        if row.value.get("uuid").and_then(Value::as_str).is_some_and(seen) {
-            return Some("a row of a record before the seam again");
+fn unsupported<L: Rows>(rows: &L, seam: &Seam, seen: &dyn Fn(&str) -> bool) -> io::Result<Option<&'static str>> {
+    // Looked up, not walked, for each answer.
+    let abandoned: HashSet<&str> = seam.abandoned.iter().map(String::as_str).collect();
+    let mut why = None;
+    rows.each(&mut |_, row| {
+        if why.is_none() {
+            why = unsupported_row(rows, row, &abandoned, seen)?;
         }
-        if row.kind() == Some("user")
-            && !seam.abandoned.is_empty()
-            && row.blocks().into_iter().flatten().any(|block| {
-                block.get("type").and_then(Value::as_str) == Some("tool_result")
-                    && block.get("tool_use_id").and_then(Value::as_str).is_some_and(|id| seam.abandoned.iter().any(|known| known == id))
-            })
-        {
-            return Some("the answer to a call before the seam");
-        }
-        if row.compaction() || row.replacement() || row.value["isCompactSummary"] == true {
-            return Some("a compaction");
-        }
-        let references = match row.kind() {
-            Some("assistant") => row.value.get("supersedesUuids"),
-            Some("system") if row.value["subtype"] == "model_refusal_fallback" => row.value.get("retractedMessageUuids"),
-            _ => None,
-        };
-        if let Some(ids) = references.and_then(Value::as_array)
-            && ids.iter().filter_map(Value::as_str).any(|id| !scanned.by_uuid.contains_key(id))
-        {
-            return Some("a row taking back rows before the seam");
+        Ok(())
+    })?;
+    Ok(why)
+}
+
+/// What in `row` of `rows` refers back past the seam (`unsupported`), the
+/// calls before it the user spoke past `abandoned`.
+fn unsupported_row<L: Rows>(rows: &L, row: &super::Row, abandoned: &HashSet<&str>, seen: &dyn Fn(&str) -> bool) -> io::Result<Option<&'static str>> {
+    if row.value.get("uuid").and_then(Value::as_str).is_some_and(seen) {
+        return Ok(Some("a row of a record before the seam again"));
+    }
+    if row.kind() == Some("user")
+        && !abandoned.is_empty()
+        && row.blocks().into_iter().flatten().any(|block| {
+            block.get("type").and_then(Value::as_str) == Some("tool_result")
+                && block.get("tool_use_id").and_then(Value::as_str).is_some_and(|id| abandoned.contains(id))
+        })
+    {
+        return Ok(Some("the answer to a call before the seam"));
+    }
+    if row.compaction() || row.replacement() || row.value["isCompactSummary"] == true {
+        return Ok(Some("a compaction"));
+    }
+    let references = match row.kind() {
+        Some("assistant") => row.value.get("supersedesUuids"),
+        Some("system") if row.value["subtype"] == "model_refusal_fallback" => row.value.get("retractedMessageUuids"),
+        _ => None,
+    };
+    if let Some(ids) = references.and_then(Value::as_array) {
+        for id in ids.iter().filter_map(Value::as_str) {
+            if rows.index_of(id)?.is_none() {
+                return Ok(Some("a row taking back rows before the seam"));
+            }
         }
     }
-    None
+    Ok(None)
 }
 
 fn at(row: &Value) -> Option<Timestamp> {
     row.get("timestamp").and_then(Value::as_str).and_then(|text| text.parse().ok())
+}
+
+/// Whether the record at `path` is still the one read through `seam`: the
+/// same file, no shorter, and every block before the seam the bytes hashed
+/// as it was read — the whole prefix, as an advance checks only up to 32 MiB
+/// (the background check §10 leaves the rest to; design §28.53). Hashed a
+/// block at a time, nothing parsed; given up, interrupted, as soon as `stop`
+/// says so (a check ended for taking too long).
+pub fn prefix_unchanged(path: &Path, seam: &Seam, stop: &dyn Fn() -> bool) -> io::Result<bool> {
+    let Some(known) = &seam.identity else { return Ok(false) };
+    let mut file = file_read::open(path)?;
+    let metadata = file.metadata()?;
+    let snapshot = file_read::snapshot(&file, &metadata)?;
+    if snapshot.identity() != *known || snapshot.size < seam.offset {
+        return Ok(false);
+    }
+    let count = seam.offset.div_ceil(BLOCK) as usize;
+    if seam.blocks.len() != count {
+        return Ok(false);
+    }
+    let mut bytes = vec![0u8; BLOCK as usize];
+    for (index, block) in seam.blocks.iter().enumerate() {
+        if stop() {
+            return Err(io::Error::new(io::ErrorKind::Interrupted, "the check was stopped"));
+        }
+        let start = index as u64 * BLOCK;
+        let length = (seam.offset - start).min(BLOCK) as usize;
+        file.seek(SeekFrom::Start(start))?;
+        file.read_exact(&mut bytes[..length])?;
+        if xxh3_64(&bytes[..length]) != *block {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 /// Whether the bytes before the seam are the ones read then: all of them up

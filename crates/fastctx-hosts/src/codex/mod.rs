@@ -818,13 +818,15 @@ impl CodexHost {
     /// is not kept in pages — so it is read whole as ever. A seam whose turn
     /// moved, or a settled turn found changed, reads it from its start;
     /// why, with it. `accept` says whether every turn the World saw begin
-    /// before a time had ended by then.
-    pub async fn follow(
+    /// before a time had ended by then. A reading from its start is kept in
+    /// `keeping` as it is read, where given (`follow::Keeping`).
+    pub async fn follow<'k>(
         self: &Arc<Self>,
         thread: &str,
         owner: &fastctx_types::Address,
         seam: &follow::Seam,
         accept: &(dyn Fn(Timestamp) -> bool + Send + Sync),
+        mut keeping: Option<&mut (dyn follow::Keeping + 'k)>,
     ) -> Result<Option<(follow::Tail, Option<String>)>, String> {
         let server = self.server().await?;
         if self.lock().threads.get(thread).is_some_and(|t| t.created_here && !t.completed_item) {
@@ -834,11 +836,11 @@ impl CodexHost {
         let mut seam = seam.clone();
         let mut restarted = None;
         loop {
-            let read = match follow::tail(&server, thread, running.as_deref(), Some(owner), &seam, accept).await {
+            let read = match follow::tail(&server, thread, running.as_deref(), Some(owner), &seam, accept, keeping.as_deref_mut()).await {
                 // One a Codex of another version wrote reads once it is loaded.
                 Err(error) if error == not_loaded(thread) => {
                     self.ensure_loaded(&server, thread).await?;
-                    follow::tail(&server, thread, running.as_deref(), Some(owner), &seam, accept).await?
+                    follow::tail(&server, thread, running.as_deref(), Some(owner), &seam, accept, keeping.as_deref_mut()).await?
                 }
                 read => read?,
             };
