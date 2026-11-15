@@ -1,5 +1,10 @@
 ; World's own part of installing and removing, around Tauri's NSIS template.
 
+; The installer's payload compressed with a dictionary of 32 MiB, not NSIS's 8: the
+; program and the interface share much a wider window finds, 19 MB less to download
+; (codex-8c21a7a9, 2026-11-15). Here, included before the template adds any file.
+SetCompressorDictSize 32
+
 ; A removal's report is read in the details: each step World took, and what
 ; is left on this computer and why.
 ShowUninstDetails show

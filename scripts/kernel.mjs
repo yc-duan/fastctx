@@ -38,8 +38,10 @@ function release(target, environment) {
   if (windows && !/(?:^|\s)target-feature=\+crt-static(?:\s|$)/.test(env.RUSTFLAGS ?? "")) {
     env.RUSTFLAGS = `${env.RUSTFLAGS ?? ""} -C target-feature=+crt-static`.trim();
   }
+  // FASTCTX_CARGO_TIMINGS asks for cargo's report of how long each crate took (target/cargo-timings).
+  const timings = env.FASTCTX_CARGO_TIMINGS ? ["--timings"] : [];
   const cargo = (argv, options) => execFileSync("cargo",
-    [toolchain, linux ? "zigbuild" : "build", "--locked", "--release", ...argv, "--target", buildTarget],
+    [toolchain, linux ? "zigbuild" : "build", "--locked", "--release", ...timings, ...argv, "--target", buildTarget],
     { cwd: repo, env, ...options });
   return { env, host, target, buildTarget, linux, windows, cargo };
 }
@@ -53,6 +55,12 @@ export function buildKernel(target, environment = process.env) {
     // Nothing reads a release kernel's symbols: a panic is logged by its message and place.
     execFileSync("zig", ["objcopy", "--strip-all", binary, `${binary}.stripped`], { env, stdio: "inherit" });
     renameSync(`${binary}.stripped`, binary);
+  } else if (buildTarget.endsWith("-apple-darwin")) {
+    // As on Linux: 92 MB of a Mac kernel was its symbol table (codex-8c21a7a9). A Mac runs
+    // only a signed program, and the linker's own signature does not survive the strip:
+    // signed again as the linker signs, the release signature comes later (bundle-macos).
+    execFileSync("strip", [binary], { env, stdio: "inherit" });
+    execFileSync("codesign", ["--force", "--sign", "-", binary], { env, stdio: "inherit" });
   }
   execFileSync("python", [join(repo, "scripts/package.py"), "check-binary", "--target", bundleTarget.replace(/-unknown-linux-musl$/, "-unknown-linux-gnu"),
     "--binary", binary, "--notices", env.FASTCTX_THIRD_PARTY_LICENSES], { cwd: repo, env, stdio: "inherit" });
@@ -60,6 +68,9 @@ export function buildKernel(target, environment = process.env) {
   const version = metadata.packages.find(pkg => pkg.name === "fastctx").version;
   const architecture = buildTarget.split("-")[0];
   const crossLinux = linux && host.includes("-unknown-linux-") && architecture !== host.split("-")[0];
+  // An Apple silicon kernel built on an Intel Mac does not run there: the Apple silicon Mac that
+  // tests it checks its version (release.yml, test-macos-arm).
+  if (buildTarget === "aarch64-apple-darwin" && host.startsWith("x86_64-")) return { binary, buildTarget, bundleTarget, version };
   const runner = crossLinux ? `qemu-${architecture}` : binary;
   const printed = execFileSync(runner, crossLinux ? [binary, "--version"] : ["--version"], { env, encoding: "utf8" });
   if (printed.replace(/\r\n/g, "\n") !== `fastctx ${version}\n`) throw new Error(`invalid kernel version output: ${printed}`);

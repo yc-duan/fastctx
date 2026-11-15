@@ -152,7 +152,7 @@ Fastctx 1.0 目前是测试版，发布在 [GitHub Releases](https://github.com/
 | macOS（Intel） | `Fastctx_<版本>_x64.dmg` | `fastctx-x86_64-apple-darwin.tar.gz` |
 | Linux x86_64 | `.AppImage`、`.deb` | `fastctx-x86_64-unknown-linux-gnu.tar.gz` |
 | Linux ARM64 | — | `fastctx-aarch64-unknown-linux-gnu.tar.gz` |
-| Android | `Fastctx_<版本>_universal.apk` | — |
+| Android | `Fastctx_<版本>_arm64-v8a.apk`（大多数手机）；另有 `_armeabi-v7a`、`_x86`、`_x86_64`，`_universal` 适用全部 | — |
 
 - **校验**：每个版本都附带 `SHA256SUMS`。
 - **Windows**：需要先装 Git for Windows（`run` 用它的 bash）。

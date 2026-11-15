@@ -215,7 +215,11 @@ impl Device {
         if !fastctx_platform::follows_releases()
             && matches!(
                 call,
-                UpdateCall::Look | UpdateCall::Fetch { .. } | UpdateCall::Kernel { .. } | UpdateCall::Choose { .. }
+                UpdateCall::Look
+                    | UpdateCall::Fetch { .. }
+                    | UpdateCall::Bring { .. }
+                    | UpdateCall::Kernel { .. }
+                    | UpdateCall::Choose { .. }
             )
         {
             return Err(failed("development builds do not follow releases"));
@@ -264,6 +268,7 @@ impl Device {
                 }
             }
             UpdateCall::Fetch { version, target } => self.fetch_update(version, target)?,
+            UpdateCall::Bring { .. } => return Err(failed("a device installs no server")),
             UpdateCall::Repair { .. } => return Err(failed("this device does not support local installation repair")),
             UpdateCall::Kernel { .. } => return Err(failed("a device runs no World program of its own")),
             UpdateCall::Choose { version } => {

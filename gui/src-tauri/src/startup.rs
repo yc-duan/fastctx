@@ -120,8 +120,9 @@ pub fn open(app: tauri::AppHandle) {
                 changed(&app);
                 #[cfg(desktop)]
                 crate::updates::after_update(&app);
-                let carried = app.path().resource_dir().ok().map(|dir| dir.join("linux"));
-                if let Err(error) = crate::updates::introduce(&app.state::<crate::Shell>(), carried).await {
+                // The installer carries no other machine's program since
+                // beta.18: a remote install brings it (`remote_world::ssh`).
+                if let Err(error) = crate::updates::introduce(&app.state::<crate::Shell>(), None).await {
                     warning(&app, "introduce_application", error);
                 }
             }

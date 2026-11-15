@@ -460,6 +460,18 @@ pub(crate) async fn call(node: &Arc<Node>, call: UpdateCall) -> Result<State, St
             }
         }
         UpdateCall::Fetch { version, target } => fetch(node, version, target)?,
+        UpdateCall::Bring { version, target } => {
+            // Another machine's program, brought and verified as this one's
+            // update is (GitHub, else the hubs), apart from it: held a while
+            // past its answer, for the upload that follows.
+            let held = packages::retain(node, &version);
+            let manifest = manifest_of(node, &version).await?;
+            bring(node, &manifest, &target).await.map_err(|problem| problem.why)?;
+            fastctx_platform::task::spawn(async move {
+                tokio::time::sleep(BROUGHT_HELD).await;
+                drop(held);
+            });
+        }
         UpdateCall::Kernel { version } => kernel(node, version.as_deref(), None).await?,
         UpdateCall::Choose { version } => {
             let chosen = match version {
@@ -477,6 +489,9 @@ pub(crate) async fn call(node: &Arc<Node>, call: UpdateCall) -> Result<State, St
 async fn manifest_of(node: &Arc<Node>, version: &str) -> Result<Manifest, String> {
     fastctx_update::catalog::manifest(&state(node), cache(node).manifests(), &node.links(), version).await
 }
+
+/// How long a package brought for another machine is held past its answer.
+const BROUGHT_HELD: Duration = Duration::from_secs(30 * 60);
 
 /// Brings the package `target` of `version` here, in the background.
 fn fetch(node: &Arc<Node>, version: String, target: String) -> Result<(), String> {
@@ -823,7 +838,7 @@ pub(crate) async fn machine(
     if node.is_here(&machine) {
         return call(node, update).await.map_err(Failure::new);
     }
-    if matches!(update, UpdateCall::App { .. } | UpdateCall::Fetch { .. } | UpdateCall::Progress { .. }) {
+    if matches!(update, UpdateCall::App { .. } | UpdateCall::Fetch { .. } | UpdateCall::Bring { .. } | UpdateCall::Progress { .. }) {
         return Err(Failure::new("only an interface on that machine says what it is or brings packages there"));
     }
     if matches!(update, UpdateCall::Repair { .. }) {
@@ -959,7 +974,7 @@ pub(crate) async fn remote(node: &Arc<Node>, asker: Asker, update: Option<Update
         Some(UpdateCall::Kernel { version }) => {
             kernel(node, version.as_deref(), Some(asker)).await.map(|()| state(node))
         }
-        Some(UpdateCall::App { .. } | UpdateCall::Fetch { .. } | UpdateCall::Progress { .. }) => {
+        Some(UpdateCall::App { .. } | UpdateCall::Fetch { .. } | UpdateCall::Bring { .. } | UpdateCall::Progress { .. }) => {
             Err(format!("only an interface on {} says what it is or brings packages there", node.machine()))
         }
         Some(update) => call(node, update).await,

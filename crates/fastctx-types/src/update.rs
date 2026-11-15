@@ -776,6 +776,15 @@ pub enum UpdateCall {
         version: String,
         target: String,
     },
+    /// Bring the package `target` of `version` here for another machine, and
+    /// answer once it is here and verified (`State::kept` names it): the
+    /// program a remote install puts on a server over SSH, which the
+    /// interface carries no more (user 2026-11-15). Apart from this machine's
+    /// own update, and held here a while for the upload.
+    Bring {
+        version: String,
+        target: String,
+    },
     /// Update this machine's World program, as `fastctx update` does: to
     /// `version`, or from the newest release on its line.
     Kernel {

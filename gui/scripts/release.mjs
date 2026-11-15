@@ -53,8 +53,8 @@ const target = option("--target") ?? host;
 const exe = platform === "win32" ? ".exe" : "";
 const binaries = join(gui, "src-tauri", "binaries");
 const sidecar = join(binaries, `fastctx-${target}${exe}`);
-// The release configuration's bundle, with the Linux archives a World made on a server, or a server
-// added, over SSH is installed from.
+// The release configuration's bundle. It carries no Linux archive since 1.0.1-beta.18: a World made on
+// a server, or a server added, over SSH has this computer's node bring the program (user 2026-11-15).
 const release = JSON.parse(readFileSync(join(gui, "src-tauri", "tauri.release.conf.json"), "utf8"));
 const config = { bundle: { ...release.bundle, externalBin: ["binaries/fastctx"], createUpdaterArtifacts: false } };
 // With `--kernel-signed`, the kernel's official signature lies beside it, and is installed beside the

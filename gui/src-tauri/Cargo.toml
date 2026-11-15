@@ -11,6 +11,22 @@ publish = false
 # and tests, and the core is reached by path.
 [workspace]
 
+# Optimized for size as the core is (`../../Cargo.toml`), the leaves whose
+# speed matters kept fast; and without the symbol table, which nothing
+# reads (16 MB of the Mac's interface, codex-8c21a7a9).
+[profile.release]
+opt-level = "s"
+strip = "symbols"
+
+[profile.release.package.libsqlite3-sys]
+opt-level = 3
+
+[profile.release.package.sha2]
+opt-level = 3
+
+[profile.release.package.ring]
+opt-level = 3
+
 [patch.crates-io]
 pdf_oxide = { path = "../../vendor/pdf_oxide" }
 

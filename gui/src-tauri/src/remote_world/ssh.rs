@@ -252,10 +252,12 @@ pub async fn look(server: &Server) -> Result<Seen, String> {
 }
 
 /// Signs in, checks the server, and uploads the program for its
-/// architecture from `archives`, saying each step as it begins.
+/// architecture, of this application's version, which this computer's node
+/// brings and verifies (the installer carries it no more, user 2026-11-15),
+/// saying each step as it begins.
 pub async fn open(
     server: &Server,
-    archives: &Path,
+    shell: &crate::Shell,
     step: &impl Fn(&'static str) -> Result<(), String>,
 ) -> Result<Remote, String> {
     step("connect")?;
@@ -279,14 +281,6 @@ pub async fn open(
             ));
         }
     };
-    let archive = archives.join(name);
-    if !archive.is_file() {
-        return Err(format!(
-            "this app carries no program for {} Linux ({} is missing)",
-            machine.unwrap_or_default(),
-            archive.display()
-        ));
-    }
     let sudo = if uid == Some("0") {
         Sudo::Root
     } else if run(&handle, "sudo -n true", Vec::new()).await?.status == Some(0) {
@@ -302,6 +296,12 @@ pub async fn open(
         // before anything is made.
         run(&handle, "sudo -S -k -p '' true", format!("{password}\n").into_bytes()).await?.ok("sudo")?;
     }
+
+    step("bring")?;
+    let target = name.strip_suffix(".tar.gz").unwrap_or(name);
+    let archive = crate::updates::program_for(shell, target)
+        .await
+        .map_err(|why| format!("bringing the program for {} Linux here: {why}", machine.unwrap_or_default()))?;
 
     step("upload")?;
     let digest = sha256(&archive).await?;
@@ -325,10 +325,10 @@ pub async fn open(
 /// the session stays open for the server to join.
 pub async fn make_hub(
     request: &Request,
-    archives: &Path,
+    shell: &crate::Shell,
     step: impl Fn(&'static str) -> Result<(), String>,
 ) -> Result<(Remote, Made), String> {
-    let remote = open(&request.server, archives, &step).await?;
+    let remote = open(&request.server, shell, &step).await?;
     step("hub")?;
     let public = SocketAddr::new(remote.address.ip(), request.hub_port);
     run(

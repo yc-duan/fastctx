@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 pub fn run(receipt: PathBuf, profile: PathBuf) -> Result<(), String> {
     use tauri::Manager as _;
-    let mut context = tauri::generate_context!();
+    let mut context = crate::context();
     context.config_mut().app.windows.clear();
     let failed_receipt = receipt.clone();
     let result = tauri::Builder::default()
@@ -83,8 +83,6 @@ fn resources(app: &tauri::AppHandle) -> Result<(), String> {
         "licenses/LICENSE-APACHE",
         "licenses/NOTICE",
         "licenses/THIRD_PARTY_LICENSES.md",
-        "linux/fastctx-x86_64-unknown-linux-gnu.tar.gz",
-        "linux/fastctx-aarch64-unknown-linux-gnu.tar.gz",
     ] {
         let path = root.join(name);
         let metadata =
