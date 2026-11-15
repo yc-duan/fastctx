@@ -133,8 +133,12 @@ impl Native {
         let began = std::time::Instant::now();
         let read = native::open(node, id, Instant::now() + READING, read, progress).await;
         if began.elapsed() > Duration::from_secs(2) {
-            node.log
-                .line(format_args!("reading {id}'s agents for its collaboration took {}", crate::talk::lasted(began)));
+            node.log.line(format_args!(
+                "reading {id}'s agents for its collaboration took {}: {} events, {} ms waiting for its turn",
+                crate::talk::lasted(began),
+                read.folded,
+                read.waited.as_millis(),
+            ));
         }
         Self { read, again: Instant::now() + AGAIN }
     }

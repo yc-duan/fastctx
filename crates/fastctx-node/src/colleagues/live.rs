@@ -26,11 +26,22 @@ use std::{
     },
     time::Duration,
 };
-use tokio::sync::watch;
+use tokio::sync::{Notify, OwnedSemaphorePermit, Semaphore, watch};
 
 /// How long after a change the collaboration is worked out again, gathering
 /// the changes that come with it: an agent at work tells many a second.
 const SETTLE: Duration = Duration::from_millis(250);
+
+/// How long a collaboration is still kept after the last who followed it
+/// left: an interface that opens the same panel again, or joins again after
+/// its connection broke, finds it as it stands, with nothing read again.
+const LINGER: Duration = Duration::from_secs(60);
+
+/// How many whole histories are read for collaborations at once. Each is
+/// several times its size in memory while it is read and folded, and a
+/// conversation that asked many colleagues follows them all together
+/// (2026-11-15: thirty-seven read at once took a node from 0.8 GB to 2.1).
+const READS: usize = 2;
 
 /// What those who follow a collaboration are told: the latest tree, or why
 /// it can no longer be followed.
@@ -45,11 +56,33 @@ pub(crate) type Following = watch::Receiver<Option<Told>>;
 
 /// The collaborations followed from this node, by what is followed and as
 /// whom.
-#[derive(Default)]
 pub(crate) struct Followed {
-    kept: std::sync::Mutex<HashMap<String, Sender>>,
+    kept: std::sync::Mutex<HashMap<String, Kept>>,
     /// The version of the latest tree told, higher with each.
     version: AtomicU64,
+    /// The turns of the whole histories read for them (`READS`).
+    reads: Arc<Semaphore>,
+}
+
+impl Default for Followed {
+    fn default() -> Self {
+        Self { kept: Default::default(), version: AtomicU64::default(), reads: Arc::new(Semaphore::new(READS)) }
+    }
+}
+
+/// One collaboration kept: what those who follow it are told, and the word
+/// to its keeper that one came to follow it.
+struct Kept {
+    told: Sender,
+    came: Arc<Notify>,
+}
+
+/// A whole history's turn to be read for a collaboration, held until what
+/// was read of it has been folded and let go.
+pub(crate) type Turn = OwnedSemaphorePermit;
+
+pub(crate) async fn turn(node: &Node) -> Turn {
+    node.collaboration_followed.reads.clone().acquire_owned().await.expect("never closed")
 }
 
 /// What one keeper keeps: `id`'s collaboration as `acting` sees it, on
@@ -83,13 +116,17 @@ pub(crate) fn follow(
     let name = key.name();
     let mut kept = node.collaboration_followed.kept.lock().expect("never poisoned");
     let mut following = match kept.get(&name) {
-        Some(told) => told.subscribe(),
+        Some(kept) => {
+            let following = kept.told.subscribe();
+            kept.came.notify_one();
+            following
+        }
         None => {
             let (told, following) = watch::channel(None);
-            let told = Arc::new(told);
-            kept.insert(name.clone(), told.clone());
+            let (told, came) = (Arc::new(told), Arc::new(Notify::new()));
+            kept.insert(name.clone(), Kept { told: told.clone(), came: came.clone() });
             let node = node.clone();
-            fastctx_platform::task::spawn(async move { keep(node, key, name, told).await });
+            fastctx_platform::task::spawn(async move { keep(node, key, name, told, came).await });
             following
         }
     };
@@ -97,9 +134,9 @@ pub(crate) fn follow(
     following
 }
 
-/// Keeps a collaboration for as long as one follows it, or until it can no
-/// longer be followed.
-async fn keep(node: Arc<Node>, key: Key, name: String, told: Sender) {
+/// Keeps a collaboration for as long as one follows it and a while after
+/// (`LINGER`), or until it can no longer be followed.
+async fn keep(node: Arc<Node>, key: Key, name: String, told: Sender, came: Arc<Notify>) {
     let what = match (&key.machine, key.follow) {
         (None, Follow::Tree) => format!("{}'s collaboration", key.id),
         (None, Follow::Branch) => format!("{}'s own collaboration", key.id),
@@ -108,10 +145,7 @@ async fn keep(node: Arc<Node>, key: Key, name: String, told: Sender) {
     let started = std::time::Instant::now();
     node.log.line(format_args!("following {what}"));
     loop {
-        let ended = tokio::select! {
-            failure = work(&node, &key, &told) => Some(failure),
-            () = told.closed() => None,
-        };
+        let ended = while_followed(work(&node, &key, &told), &told, &came, LINGER).await;
         let lasted = crate::talk::lasted(started);
         match &ended {
             Some(failure) => {
@@ -128,10 +162,36 @@ async fn keep(node: Arc<Node>, key: Key, name: String, told: Sender) {
             None if told.receiver_count() > 0 => continue,
             None => {}
         }
-        if kept.get(&name).is_some_and(|current| Arc::ptr_eq(current, &told)) {
+        if kept.get(&name).is_some_and(|current| Arc::ptr_eq(&current.told, &told)) {
             kept.remove(&name);
         }
         return;
+    }
+}
+
+/// Runs `working` while one follows what `told` tells and for `linger` after
+/// the last one left: its failure when it ends by itself, none when no one
+/// came back in that time.
+async fn while_followed(
+    working: impl Future<Output = Failure>,
+    told: &Sender,
+    came: &Notify,
+    linger: Duration,
+) -> Option<Failure> {
+    tokio::pin!(working);
+    loop {
+        tokio::select! {
+            failure = &mut working => return Some(failure),
+            () = told.closed() => {}
+        }
+        tokio::select! {
+            failure = &mut working => return Some(failure),
+            () = came.notified() => continue,
+            () = tokio::time::sleep(linger) => {}
+        }
+        if told.receiver_count() == 0 {
+            return None;
+        }
     }
 }
 
@@ -181,27 +241,33 @@ pub(crate) async fn watch(
         Ok(piece) => watch_queue::watched_size(piece),
         Err(error) => (error.message.len(), None),
     });
+    // Said in the log as a machine's watch is (`serve`): which watches come
+    // and go, and how soon, shows what the keepers above are kept for.
+    let (watching, what, opened) =
+        (node.clone(), format!("a watch here of {resident}'s collaboration"), std::time::Instant::now());
+    node.log.line(format_args!("{what} opened"));
     fastctx_platform::task::spawn(async move {
-        loop {
+        let why = loop {
             tokio::select! {
-                changed = following.changed() => if changed.is_err() { return },
-                () = sender.closed() => return,
+                changed = following.changed() => if changed.is_err() { break "its keeper went" },
+                () = sender.closed() => break "the watcher left",
             }
             let told = following.borrow_and_update().clone();
             match told {
                 Some(Told::Tree { version, tree }) => {
                     let tree = Box::new(Arc::unwrap_or_clone(tree));
                     if sender.send(Ok(Watched::Collaboration { version, tree })).is_err() {
-                        return;
+                        break "the watcher left";
                     }
                 }
                 Some(Told::Ended(failure)) => {
                     let _ = sender.send(Err(failure));
-                    return;
+                    break "it can no longer be followed";
                 }
                 None => {}
             }
-        }
+        };
+        watching.log.line(format_args!("{what} ended after {}: {why}", crate::talk::lasted(opened)));
     });
     Ok(receiver)
 }
@@ -268,5 +334,42 @@ pub(crate) async fn serve(
             }
             None => return ended("the node stopped"),
         }
+    }
+}
+
+#[cfg(test)]
+mod lingering {
+    use super::*;
+
+    fn told() -> (Sender, Following) {
+        let (told, following) = watch::channel(None);
+        (Arc::new(told), following)
+    }
+
+    /// Kept while one follows it and through the linger after the last one
+    /// left; one who comes back in that time finds the same work going on,
+    /// and with no one back it ends.
+    #[tokio::test]
+    async fn kept_a_while_after_the_last_one_left() {
+        let (told, following) = told();
+        let came = Notify::new();
+        let kept = while_followed(std::future::pending::<Failure>(), &told, &came, Duration::from_millis(200));
+        tokio::pin!(kept);
+        assert!(tokio::time::timeout(Duration::from_millis(50), &mut kept).await.is_err());
+        drop(following);
+        assert!(tokio::time::timeout(Duration::from_millis(50), &mut kept).await.is_err());
+        let again = told.subscribe();
+        came.notify_one();
+        assert!(tokio::time::timeout(Duration::from_millis(400), &mut kept).await.is_err());
+        drop(again);
+        assert!(tokio::time::timeout(Duration::from_secs(5), &mut kept).await.expect("ends after the linger").is_none());
+    }
+
+    #[tokio::test]
+    async fn ends_with_its_work() {
+        let (told, _following) = told();
+        let ended =
+            while_followed(async { Failure::new("gone") }, &told, &Notify::new(), Duration::from_secs(60)).await;
+        assert_eq!(ended.map(|failure| failure.message), Some("gone".to_string()));
     }
 }
