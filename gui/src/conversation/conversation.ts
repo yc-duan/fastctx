@@ -1017,9 +1017,13 @@ export class Conversation {
   coming(keys?: readonly string[]): { keys: string[]; words: string[]; unnamed: number } {
     return this.live.coming(keys);
   }
-  /** The ids of the words a stop waits for (`Fold.haltedIds`). */
+  /** The ids of the words a stop waits for, and how many have none yet
+   *  (`Fold.haltedIds`, `Fold.haltedUnnamed`). */
   haltedIds(): string[] {
     return this.live.haltedIds();
+  }
+  haltedUnnamed(): number {
+    return this.live.haltedUnnamed();
   }
   turnBegan(): number | null {
     return this.live.turnBegan();

@@ -1725,6 +1725,12 @@ export class Fold {
     return found;
   }
 
+  /** How many of the words a stop waits for the World has not answered for
+   *  yet, heard by now or not (`named` keeps their ids as they come). */
+  haltedUnnamed(): number {
+    return this.haltedWords.filter((word) => word.delivery === undefined).length;
+  }
+
   /** The ids the World answered for the words a stop waits for with,
    *  those that have one by now (`named` keeps them). */
   haltedIds(): string[] {

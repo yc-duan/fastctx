@@ -1580,10 +1580,17 @@ async fn stop_words(
     let bound = fastctx_platform::task::spawn_blocking(move || {
         let mut bound = Vec::new();
         for id in looking {
-            match crate::delivery::input_turn(&directory, &id)? {
-                // Gone from the inbox untaken (taken back, refused): no
-                // turn will take it, and no stop is kept for none.
-                None if crate::inbox::read(&directory, &id)?.is_none() => {}
+            let taken = match crate::delivery::input_turn(&directory, &id)? {
+                // Gone from the inbox: taken meanwhile, its turn read again
+                // now, or taken back or refused, which no turn will take
+                // and keeps no stop.
+                None if crate::inbox::read(&directory, &id)?.is_none() => match crate::delivery::input_turn(&directory, &id)? {
+                    None => continue,
+                    Some(turn) => Some(turn),
+                },
+                taken => taken,
+            };
+            match taken {
                 None => bound.push((None, id)),
                 Some(turn) if Some(&turn) == other.as_ref() => bound.push((Some(turn), id)),
                 Some(turn) => {

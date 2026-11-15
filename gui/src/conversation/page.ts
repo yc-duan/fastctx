@@ -1444,7 +1444,10 @@ export class ConversationPage {
           for (const id of named) sent.add(id);
           send(named);
         }
-        if ((coming.unnamed > 0 || pending > 0 || named.length > 0) && Date.now() - since < NAMING_MS) {
+        // Words heard before their id came still wait for it: the id is
+        // kept as it comes, whatever became of the words shown sending.
+        const unnamed = Math.max(coming.unnamed, conversation.haltedUnnamed());
+        if ((unnamed > 0 || pending > 0 || named.length > 0) && Date.now() - since < NAMING_MS) {
           setTimeout(look, NAMING_LOOK_MS);
           return;
         }
