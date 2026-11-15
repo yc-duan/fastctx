@@ -588,8 +588,8 @@ jobs:
           key: clippy-${{ matrix.os }}
           save-if: ${{ startsWith(github.ref, 'refs/heads/ci/') }}
       # With the hub's asset drills, which only its own feature builds.
-      - run: cargo clippy --workspace --all-targets --features fastctx-hub/content-drill --locked -- -D warnings
-      - run: cargo clippy -p fastctx-node --features storage-drill --all-targets --locked -- -D warnings
+      - run: cargo clippy --workspace --all-targets --features fastctx-hub/content-drill,fastctx-node/timeline-test-support --locked -- -D warnings
+      - run: cargo clippy -p fastctx-node --features storage-drill,timeline-test-support --all-targets --locked -- -D warnings
 
   test-linux:
     needs: kernel-linux
@@ -774,9 +774,20 @@ jobs:
           name: archive-${{ matrix.target }}
           path: dist/fastctx-*.tar.gz
           if-no-files-found: error
+      # The tests' build is timed too, to see what of it the kernel's units
+      # do not already hold.
       - if: env.DRILLS == 'true'
         name: Build the release tests
-        run: node scripts/kernel.mjs --tests '${{ matrix.target }}' tests
+        run: |
+          rm -rf target/cargo-timings
+          FASTCTX_CARGO_TIMINGS=1 node scripts/kernel.mjs --tests '${{ matrix.target }}' tests
+      - if: always() && env.DRILLS == 'true'
+        name: Upload the tests' build timings
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-measure-tests-${{ matrix.target }}
+          path: target/cargo-timings
+          if-no-files-found: warn
       - if: env.DRILLS == 'true'
         name: Upload the tests
         uses: actions/upload-artifact@v4

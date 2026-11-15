@@ -2420,8 +2420,15 @@ mod tests {
             }
             assert_eq!(kept_refused, refused);
             let placed = reading.place(crate::claude::history::kept::Placing::Held { recorded: &recorded, merged: &recorded }, &mut |_| Ok(()), &NoReceipts, None, &|_| false).unwrap();
-            let kept::Placed { mut spill, keys, names, .. } = placed;
-            assert_eq!(spill.known_sets(frozen.len()).unwrap(), frozen, "round {round}");
+            let kept::Placed { spill, keys, names, .. } = placed;
+            // What the spill kept is looked into with the timeline's test
+            // support on (`--features timeline-test-support`).
+            #[cfg(feature = "timeline-test-support")]
+            let spill = {
+                let mut spill = spill;
+                assert_eq!(spill.known_sets(frozen.len()).unwrap(), frozen, "round {round}");
+                spill
+            };
             let mut finals = finals(None, Hosted { spill, keys, names, early: None }, "claude", &|_| false, crate::talk::Recorded::Held(recorded.clone()), refused).unwrap();
             let reach = if refused { Reach::Added } else { Reach::Whole };
             let kept = assets::write_kept(&kept_library, signer.clone(), &resident, &kept_placed, &mut finals.spill, None, reach, &mut |_, _, _| Ok(false)).unwrap();

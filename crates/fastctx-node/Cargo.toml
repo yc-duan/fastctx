@@ -22,6 +22,13 @@ storage-drill = []
 timeline-drill = []
 # The timeline's writing, for fastctx-bench; nothing of the node changes with it.
 bench = ["fastctx-timeline-core/bench"]
+# What the timeline's library tests look into (`cargo test -p fastctx-node --lib
+# --features timeline-test-support`). A feature of its own, not a
+# dev-dependency's: one would give the timeline another set of features
+# whenever any test of the node is built, and the node with it, so that the
+# release tests could not be built of the kernel's own units
+# (scripts/kernel.mjs --tests), as the hub's content-drill says.
+timeline-test-support = ["fastctx-timeline-core/test-support"]
 
 [dependencies]
 fastctx-timeline-core = { path = "../fastctx-timeline-core" }
@@ -61,9 +68,6 @@ serde.workspace = true
 serde_json = { workspace = true, features = ["raw_value"] }
 sha2 = "0.10"
 tokio = { workspace = true, features = ["fs", "io-util", "macros", "net", "rt-multi-thread", "sync", "time", "signal"] }
-
-[dev-dependencies]
-fastctx-timeline-core = { path = "../fastctx-timeline-core", features = ["test-support"] }
 
 [lints]
 workspace = true

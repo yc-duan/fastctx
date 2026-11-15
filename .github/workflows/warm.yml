@@ -209,8 +209,8 @@ jobs:
           cache-on-failure: true
       # As the release's clippy builds it (release.yml), so that what this
       # keeps is what that one takes up.
-      - run: cargo clippy --workspace --all-targets --features fastctx-hub/content-drill --locked -- -D warnings
-      - run: cargo clippy -p fastctx-node --features storage-drill --all-targets --locked -- -D warnings
+      - run: cargo clippy --workspace --all-targets --features fastctx-hub/content-drill,fastctx-node/timeline-test-support --locked -- -D warnings
+      - run: cargo clippy -p fastctx-node --features storage-drill,timeline-test-support --all-targets --locked -- -D warnings
 
   kernel-macos:
     needs: sync-architecture
