@@ -851,7 +851,7 @@ async fn submit_thread(
     let (mut input, client) = match batch.as_slice() {
         // A fact of its own work reads best as the output of the tool that
         // started it.
-        [only] if matches!(only.delivery.notice, Notice::JobEnded { .. }) => (
+        [only] if as_tool_output(&[&only.delivery.notice], along_only) => (
             Input::ToolOutput {
                 name: "run".to_string(),
                 namespace: None,
@@ -972,6 +972,14 @@ fn hand_over_later(node: Arc<Node>, id: ResidentId, about: About, directory: Con
             node.log.line(format_args!("words for {id} wait: {}", failure.message));
         }
     });
+}
+
+/// Whether what one handover holds goes in as the output of the tool that
+/// started the work: the one fact that a job of its own ended, which wakes
+/// it. A job the user stopped wakes no one and rides along with the running
+/// turn, as text like all that rides along.
+fn as_tool_output(notices: &[&Notice], along_only: bool) -> bool {
+    !along_only && matches!(notices, [Notice::JobEnded { .. }])
 }
 
 /// A notice as it goes into a thread: the user's words as they typed them,
@@ -1629,4 +1637,45 @@ pub fn fixed_id(prefix: &str, parts: &[&str]) -> NoticeId {
     }
     let digest: String = hash.finalize().iter().take(10).map(|byte| format!("{byte:02x}")).collect();
     NoticeId::try_from(format!("{prefix}-{digest}")).expect("a word and hex")
+}
+
+#[cfg(test)]
+mod riding_along {
+    use super::*;
+    use fastctx_types::residents::STOPPED_BY_USER;
+    use fastctx_types::run::{EndedHow, StopRequest};
+
+    fn ended(how: EndedHow, by: Option<&str>) -> Notice {
+        Notice::JobEnded {
+            taken: false,
+            job: "j-abc123".to_string().try_into().expect("a job id"),
+            machine: "desktop".parse().expect("a machine name"),
+            request: None,
+            follower: None,
+            consumed: Vec::new(),
+            follower_unconfirmed: false,
+            how,
+            status: None,
+            at: Timestamp::UNIX_EPOCH,
+            output: "out.log".into(),
+            stderr: None,
+            last: None,
+            stop: by.map(|by| Box::new(StopRequest { by: by.into(), reason: String::new() })),
+            scratch: Vec::new(),
+        }
+    }
+
+    /// A job the user stopped rides along with the running turn, and what
+    /// rides along goes in as text: sent as a tool's output, the handover
+    /// to a running turn had no text to send and the node panicked.
+    #[test]
+    fn a_job_the_user_stopped_goes_in_as_text() {
+        let stopped = ended(EndedHow::Stopped, Some(STOPPED_BY_USER));
+        assert!(stopped.along().is_some());
+        assert!(!as_tool_output(&[&stopped], true));
+        let finished = ended(EndedHow::Finished, None);
+        assert!(finished.along().is_none());
+        assert!(as_tool_output(&[&finished], false));
+        assert!(!as_tool_output(&[&finished, &finished], false));
+    }
 }
