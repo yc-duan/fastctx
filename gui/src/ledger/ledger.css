@@ -1679,3 +1679,6 @@
 .lg-app .lg-head .segmented {
   align-self: center;
 }
+.lg-folder .lg-word {
+  margin-left: auto;
+}

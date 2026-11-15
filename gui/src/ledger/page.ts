@@ -335,6 +335,9 @@ export class AgentsPage implements Page {
           (error: unknown) => toast(error instanceof Error ? error.message : "无法打开文件夹选择"),
         );
       },
+      folder: (machine, dir, change) => {
+        refreshed(options.folder(machine.id, dir, { change })).catch((error: unknown) => toast(error instanceof Error ? error.message : "操作失败"));
+      },
       newTalk: (login) => {
         const { machine, agent, home } = this.recordOf(login);
         options.talkOn(machine, agent, home);

@@ -224,6 +224,8 @@ export interface Deeds {
   bench(login: Login, open: boolean): void;
   scan(machine: Machine): void;
   addFolder(machine: Machine): void;
+  /** Stops a folder's search, or no longer searches it. */
+  folder(machine: Machine, dir: string, change: "stop" | "forget"): void;
   newTalk(login: Login): void;
   openTurn(login: Login, call: Call): void;
   reread(login: Login): void;

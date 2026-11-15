@@ -161,7 +161,7 @@ function attachBody(machine: Machine): string {
   const folders = machine.folders
     ? `<section class="ao-card lg-folders"><header class="ao-head"><span class="ao-mark">${glyph("folder", 22)}</span><h2 class="ao-name">搜索的文件夹</h2>${machine.here ? `<button type="button" class="text-button ll-go" data-act="add-folder">${glyph("plus", 14)}添加文件夹…</button>` : ""}</header>
         <ul class="ao-logins">${machine.folders
-          .map((folder) => `<li class="lg-folder"><span>${escape(folder.dir)}</span><small>${escape(folder.said)}</small></li>${found.filter((login) => login.under === folder.dir).map(lineOf).join("")}`)
+          .map((folder) => `<li class="lg-folder"><span>${escape(folder.dir)}</span><small>${escape(folder.said)}</small>${machine.here || deeds ? `<button type="button" class="lg-word" data-act="folder" data-change="${folder.busy ? "stop" : "forget"}" data-dir="${escape(folder.dir)}">${folder.busy ? "停止" : "移除"}</button>` : ""}</li>${found.filter((login) => login.under === folder.dir).map(lineOf).join("")}`)
           .join("")}${machine.folders.length ? "" : `<li class="lg-folder lg-soft">尚未添加</li>`}</ul></section>`
     : "";
   const others = machines.filter((one) => one !== machine && !one.owner);
@@ -211,6 +211,11 @@ on("new-talk", (button) => {
   if (!login) return;
   if (deeds) deeds.newTalk(login);
   else say(`新对话：${login.who}（样品未实现）`);
+});
+on("folder", (button) => {
+  const machine = machines.find((one) => one.id === state.machine);
+  if (deeds && machine) deeds.folder(machine, button.dataset.dir!, button.dataset.change as "stop" | "forget");
+  else say(button.dataset.change === "stop" ? "已停止搜索（样品）" : "已移除文件夹（样品）");
 });
 on("add-folder", () => {
   const machine = machines.find((one) => one.id === state.machine);
