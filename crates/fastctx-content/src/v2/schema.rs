@@ -9,7 +9,7 @@
 
 /// The layout of the tables this build makes (`layout.rs`): changed with
 /// every change to them until the layout is settled (plan 3-3).
-pub(crate) const LAYOUT: &str = "2026-11-13.2";
+pub(crate) const LAYOUT: &str = "2026-11-14.2";
 
 /// Made before anything else as the library opens (`layout.rs`): where its
 /// layout is stamped. Nothing is written when it is there already.
@@ -453,6 +453,32 @@ CREATE TABLE IF NOT EXISTS published (
 CREATE TABLE IF NOT EXISTS checkpoints (
     name TEXT PRIMARY KEY,
     state BLOB NOT NULL
+) WITHOUT ROWID;
+-- How often what a producer kept was let go from beside it (`checkpoints.rs`):
+-- what it read before that is not kept after.
+CREATE TABLE IF NOT EXISTS checkpoint_epochs (
+    name TEXT PRIMARY KEY,
+    epoch INTEGER NOT NULL
+) WITHOUT ROWID;
+-- The items a producer holds in its window as it stands, each one's time and
+-- order key (eight bytes, big-endian), under the generation its checkpoint
+-- names (design §28.51 ⑤-7): written before the checkpoint that names them.
+CREATE TABLE IF NOT EXISTS checkpoint_held (
+    name TEXT NOT NULL,
+    generation INTEGER NOT NULL,
+    second INTEGER NOT NULL,
+    nanos INTEGER NOT NULL,
+    key BLOB NOT NULL,
+    PRIMARY KEY (name, generation, second, nanos, key)
+) WITHOUT ROWID;
+-- The 8-byte digests (big-endian) a producer keeps of what lies before
+-- where it reads through, under the generation its checkpoint names
+-- (design §28.51 ⑤-7c): asked of a few at a time, never read whole.
+CREATE TABLE IF NOT EXISTS checkpoint_digests (
+    name TEXT NOT NULL,
+    generation INTEGER NOT NULL,
+    digest BLOB NOT NULL,
+    PRIMARY KEY (name, generation, digest)
 ) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS conflicts (
     id INTEGER PRIMARY KEY,

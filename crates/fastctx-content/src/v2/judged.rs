@@ -13,11 +13,11 @@
 //! which kinds, judges an item's records against the same states.
 
 use super::frame::{Header, KindRecord, open};
-use super::items::{Applying, apply};
+use super::items::Applying;
 use super::{Authorizer, Entry};
 use crate::error::invalid;
 use fastctx_storage::rusqlite::{Connection, OptionalExtension, params};
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 /// Frames read at a time building an item history.
 const FRAMES_AT_ONCE: i64 = 64;
@@ -263,6 +263,16 @@ impl Out {
     }
 }
 
+/// What a frame's earlier record left its item as, for those after it in
+/// the frame: the record itself where it was let in — made into the item's
+/// state only if another record of the item asks (§18 E1: most items come
+/// once in a frame, and copying each one's body was most of what keeping
+/// them cost) — or the state found where it was refused.
+enum Earlier {
+    At(usize),
+    Found(Option<Entry>),
+}
+
 /// Judges the records of the frame `header` heads, in their own order:
 /// `fate` says what each is, `blocked` which items wait from before it. How
 /// many went into the index.
@@ -278,9 +288,41 @@ pub(super) fn frame(
     mut fate: impl FnMut(usize, &KindRecord) -> Fate,
 ) -> fastctx_storage::Result<usize> {
     let head = header.chain();
-    let mut earlier: BTreeMap<&[u8], Option<Entry>> = BTreeMap::new();
+    let mut earlier: HashMap<&[u8], Earlier> = HashMap::with_capacity(records.len());
     let mut waiting: HashSet<&[u8]> = HashSet::new();
     let mut applied = 0;
+    // Looked up once for the frame, not for each record (§28.43, E1): which
+    // of its records waited already, and whether anything of its stream and
+    // period waits at all as the library keeps it — an item that comes to
+    // wait during the frame is in `waiting` from then on.
+    let deferred_here: HashSet<u64> = deferred(db, at.stream, header.epoch, header.first, &head)?.into_iter().collect();
+    let nothing_waits = matches!(blocked, Blocked::Stored)
+        && db
+            .prepare_cached("SELECT 1 FROM pending_items WHERE stream = ?1 AND holding = ?2 LIMIT 1")?
+            .query_row(params![at.stream, at.holding], |_| Ok(()))
+            .optional()?
+            .is_none();
+    // The rows of the frame's items, looked up at once (§18 E1): what each
+    // item's first record judged here is judged against and written over.
+    // Only that record's own judging changes its item's row, and those
+    // after it go by `earlier`, so the row found now is the row then; an
+    // item asked and not found has none.
+    let mut rows = {
+        let mut items: Vec<&[u8]> = records.iter().map(|record| record.record.item.as_slice()).collect();
+        items.sort_unstable();
+        items.dedup();
+        super::items::indexed_many(db, at.stream, &items)?
+    };
+    let mut numbers = super::items::Numbers::new(at.stream, records.len());
+    let mut inserts = super::items::Inserts::default();
+    // Whether anything of the stream and period is kept aside for its
+    // prefix: a record kept aside during the frame is of an item `earlier`
+    // has from then on, so what the frame found stands for the others.
+    let aside = db
+        .prepare_cached("SELECT 1 FROM prefix_items WHERE stream = ?1 AND holding = ?2 LIMIT 1")?
+        .query_row(params![at.stream, at.holding], |_| Ok(()))
+        .optional()?
+        .is_some();
     for (offset, record) in records.iter().enumerate() {
         let revision = header.first + offset as u64;
         let item = record.record.item.as_slice();
@@ -291,11 +333,11 @@ pub(super) fn frame(
                 blocked.add(db, at, item)?;
             }
             Fate::Stood => {
-                earlier.insert(item, super::hub::after(record, revision));
+                earlier.insert(item, Earlier::At(offset));
             }
             Fate::Judge => {
                 // Behind an earlier record of its item still out, it waits.
-                if waiting.contains(item) || blocked.holds(db, at, item)? {
+                if waiting.contains(item) || (!nothing_waits && blocked.holds(db, at, item)?) {
                     defer(db, at.stream, header, &head, offset)?;
                     waiting.insert(item);
                     blocked.add(db, at, item)?;
@@ -303,25 +345,37 @@ pub(super) fn frame(
                 }
                 // Its waiting mark goes once it is judged, not before: what
                 // it is judged against is found with it (Y02).
-                let prior = match earlier.get(item) {
-                    Some(prior) => prior.clone(),
-                    None => before_at(db, at.stream, at.holding, item, revision, history)?,
+                // An item's first record here: its row looked up once, for
+                // judging it and for writing it (§18 E1).
+                let (prior, indexed) = match earlier.get(item) {
+                    Some(Earlier::At(before)) => (super::hub::after(&records[*before], header.first + *before as u64), None),
+                    Some(Earlier::Found(prior)) => (prior.clone(), None),
+                    None => {
+                        let indexed = rows.remove(item);
+                        (before_at(db, at.stream, at.holding, item, revision, history, indexed.as_ref(), aside)?, Some(indexed))
+                    }
                 };
                 if kinds.authorize(header, record, prior.as_ref()).is_err() {
                     refuse(db, at.stream, header, &head, offset)?;
                     // Refused, it leaves its item as it was for those after.
-                    earlier.insert(item, prior);
+                    earlier.insert(item, Earlier::Found(prior));
                     continue;
                 }
-                forget_deferred(db, at.stream, header, &head, offset)?;
-                super::hub::hidden_by_floor(db, at, revision, record)?;
-                apply(db, at, revision, record)?;
+                if deferred_here.contains(&(offset as u64)) {
+                    forget_deferred(db, at.stream, header, &head, offset)?;
+                }
+                match indexed {
+                    Some(indexed) => super::items::apply_judged_known(db, at, revision, record, &mut numbers, indexed, &mut inserts)?,
+                    None => super::items::apply_judged(db, at, revision, record, &mut numbers, &mut inserts)?,
+                };
                 history.let_in(at, item, revision, header.first, offset);
-                earlier.insert(item, super::hub::after(record, revision));
+                earlier.insert(item, Earlier::At(offset));
                 applied += 1;
             }
         }
     }
+    inserts.flush(db)?;
+    numbers.finish(db)?;
     Ok(applied)
 }
 
@@ -358,8 +412,18 @@ pub(super) fn deferred(db: &Connection, stream: i64, epoch: u64, first: u64, hea
 /// record of it in the period's frames before that place, those kept out
 /// passed over (`history`); else the prefix state of an earlier period, if
 /// earlier.
-fn before_at(db: &Connection, stream: i64, holding: i64, item: &[u8], revision: u64, history: &mut History) -> fastctx_storage::Result<Option<Entry>> {
-    if let Some(state) = super::hub::before_below(db, stream, holding, item, revision)? {
+#[allow(clippy::too_many_arguments)]
+fn before_at(
+    db: &Connection,
+    stream: i64,
+    holding: i64,
+    item: &[u8],
+    revision: u64,
+    history: &mut History,
+    indexed: Option<&super::items::Indexed>,
+    aside: bool,
+) -> fastctx_storage::Result<Option<Entry>> {
+    if let Some(state) = super::hub::before_below_known(db, stream, holding, item, revision, indexed, aside)? {
         return Ok(state);
     }
     if let Some((placed, first, offset)) = history.before(db, stream, holding, item, revision)? {

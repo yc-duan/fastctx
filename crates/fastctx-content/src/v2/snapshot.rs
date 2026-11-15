@@ -33,7 +33,8 @@ use crate::error::invalid;
 use crate::record::{Record, State, pack, unpack};
 use crate::Result;
 use fastctx_storage::Priority;
-use fastctx_storage::rusqlite::{Connection, OptionalExtension, params};
+use fastctx_storage::rusqlite::types::Value;
+use fastctx_storage::rusqlite::{Connection, OptionalExtension, params, params_from_iter};
 use sha2::{Digest, Sha256};
 use std::collections::HashSet;
 
@@ -146,13 +147,22 @@ fn newest(
     items: usize,
     bytes: usize,
 ) -> fastctx_storage::Result<(Vec<Entry>, bool)> {
-    let mut statement = db.prepare_cached(
+    // Below `before` as a plain bound, which SQLite seeks in the index, not
+    // one it walks to from the last item (`reads::seek`).
+    let mut values = vec![Value::Integer(stream), Value::Integer(holding), Value::Integer(IS), Value::Integer(items as i64 + 1)];
+    let below = match before {
+        Some((place, item)) => {
+            values.extend([Value::Blob(place.clone()), Value::Blob(item.clone())]);
+            "AND (place, item) < (?5, ?6)"
+        }
+        None => "",
+    };
+    let mut statement = db.prepare_cached(&format!(
         "SELECT item, place, revision, kind, schema, body, objects, local FROM items
-         WHERE stream = ?1 AND holding = ?2 AND state = ?3 AND (?4 = 0 OR (place, item) < (?5, ?6))
-         ORDER BY place DESC, item DESC LIMIT ?7",
-    )?;
-    let (started, (place, item)) = (before.is_some(), before.cloned().unwrap_or_default());
-    let mut rows = statement.query(params![stream, holding, IS, started, place, item, items as i64 + 1])?;
+         WHERE stream = ?1 AND holding = ?2 AND state = ?3 {below}
+         ORDER BY place DESC, item DESC LIMIT ?4"
+    ))?;
+    let mut rows = statement.query(params_from_iter(values))?;
     let (mut entries, mut taken) = (Vec::new(), 0usize);
     while let Some(row) = rows.next()? {
         let body: Vec<u8> = row.get::<_, Option<Vec<u8>>>(5)?.unwrap_or_default();
@@ -213,36 +223,31 @@ fn hide_unstood(
     after: Option<&(Vec<u8>, Vec<u8>)>,
     limit: i64,
 ) -> fastctx_storage::Result<Option<(Vec<u8>, Vec<u8>)>> {
-    let (low_place, low_item) = low.cloned().unwrap_or_default();
-    let (high_place, high_item) = high.cloned().unwrap_or_default();
     let rows: Vec<Unstood> = {
-        let mut statement = db.prepare_cached(
+        // Each bound a plain one, which SQLite seeks in the index rather
+        // than walking to it from the first item for every batch
+        // (`reads::seek`): past where the batch before ended — which was at
+        // `low` or after it — else from `low`; before `high`.
+        let mut values = vec![Value::Integer(stream), Value::Integer(holding), Value::Integer(IS), Value::Integer(through as i64), Value::Integer(limit)];
+        let mut bounds = String::new();
+        let mut bound = |values: &mut Vec<Value>, relation: &str, (place, item): &(Vec<u8>, Vec<u8>)| {
+            values.extend([Value::Blob(place.clone()), Value::Blob(item.clone())]);
+            bounds.push_str(&format!(" AND (place, item) {relation} (?{}, ?{})", values.len() - 1, values.len()));
+        };
+        match (after, low) {
+            (Some(after), _) => bound(&mut values, ">", after),
+            (None, Some(low)) => bound(&mut values, ">=", low),
+            (None, None) => {}
+        }
+        if let Some(high) = high {
+            bound(&mut values, "<", high);
+        }
+        let mut statement = db.prepare_cached(&format!(
             "SELECT place, item, revision, objects FROM items
-             WHERE stream = ?1 AND holding = ?2 AND state = ?3 AND revision < ?4
-               AND (?5 = 0 OR (place, item) >= (?6, ?7)) AND (?8 = 0 OR (place, item) < (?9, ?10))
-               AND (?11 = 0 OR (place, item) > (?12, ?13))
-             ORDER BY place, item LIMIT ?14",
-        )?;
-        let (going, (after_place, after_item)) = (after.is_some(), after.cloned().unwrap_or_default());
-        let rows = statement.query_map(
-            params![
-                stream,
-                holding,
-                IS,
-                through as i64,
-                low.is_some(),
-                low_place,
-                low_item,
-                high.is_some(),
-                high_place,
-                high_item,
-                going,
-                after_place,
-                after_item,
-                limit
-            ],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
-        )?;
+             WHERE stream = ?1 AND holding = ?2 AND state = ?3 AND revision < ?4{bounds}
+             ORDER BY place, item LIMIT ?5"
+        ))?;
+        let rows = statement.query_map(params_from_iter(values), |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)))?;
         rows.collect::<std::result::Result<Vec<_>, _>>()?
     };
     let full = rows.len() as i64 == limit;

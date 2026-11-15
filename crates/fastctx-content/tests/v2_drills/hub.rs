@@ -99,6 +99,20 @@ pub(crate) fn run() {
     assert_eq!(prefixes, 4);
     let history: i64 = db.query_row("SELECT COUNT(*) FROM parked_history", [], |r| r.get(0)).unwrap();
     assert_eq!(history, 3, "every parked accumulator is kept for good");
+    // Several frames in one take (§18 E2): one that refers to an object one
+    // before it does ends the take before it — the first one's keeping
+    // consumes the object's proof — and, asked alone, it is judged afresh.
+    let c3 = |records| Commit { scope: "s".into(), stream: "t3".into(), records, leases: vec![], durable: true, op: None, holding: producer.holding("s").unwrap().unwrap_or(0) };
+    producer.raw_commit(c3(vec![rec("x1", vec![blob.object])]), signer.clone()).unwrap();
+    producer.raw_commit(c3(vec![rec("x2", vec![blob.object])]), signer.clone()).unwrap();
+    let both = producer.export("s", "t3", 0, 10).unwrap();
+    let taken = hub.take_many("s", both.clone(), &Fake, &proving, auth.clone(), hub_signer.clone()).unwrap();
+    assert!(matches!(taken[..], [Received::Applied { .. }]), "{taken:?}");
+    assert!(hub.item("s", "t3", b"x2").unwrap().is_none(), "not taken with the first");
+    assert_eq!(take(both[1].clone(), &closed), Received::Prove(vec![blob.object]), "alone, its proof let go, asked for one");
+    // A known frame's objects count too.
+    let again = hub.take_many("s", both.clone(), &Fake, &proving, auth.clone(), hub_signer.clone()).unwrap();
+    assert_eq!(again, taken, "the first told as before, the second not taken with it");
     println!("v2 hub drill: ok");
     let _ = std::fs::remove_dir_all(&base);
 }

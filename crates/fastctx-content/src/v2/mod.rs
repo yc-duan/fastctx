@@ -59,6 +59,7 @@ mod unaccepted;
 mod view;
 mod window;
 
+pub use checkpoints::HeldItem;
 pub use collect::{Collected, Started};
 pub use commit::{Commit, Committed};
 pub use copies::HeldScope;

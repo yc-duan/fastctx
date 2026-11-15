@@ -290,6 +290,32 @@ impl Library {
         Ok(count)
     }
 
+    /// The present object `hash` found damaged — its bytes are not what its
+    /// hash names (design §28.45) — goes back to preparing and is wanted,
+    /// as a lost one does: a frame that refers to it hears it missing, and
+    /// the bytes sent then take its place. Whether it was present.
+    pub fn damaged(&self, hash: &[u8; 32]) -> Result<bool> {
+        let hash = *hash;
+        Ok(self.database().write_now_at(Priority::Normal, 512, move |db| {
+            let Some((life, size)) = super::objects::present(db, &hash)? else { return Ok(false) };
+            db.prepare_cached("UPDATE objects SET state = 0 WHERE hash = ?1 AND life = ?2 AND state = 1")?
+                .execute(params![&hash[..], life])?;
+            db.prepare_cached("INSERT OR IGNORE INTO wanted (hash, size, role, priority, hint) VALUES (?1, ?2, 'lost', 0, NULL)")?
+                .execute(params![&hash[..], size as i64])?;
+            db.prepare_cached(
+                "INSERT OR IGNORE INTO wanted_in (scope, hash)
+                 SELECT r.scope, r.hash FROM object_refs r JOIN scopes s ON s.id = r.scope AND s.holding = r.holding
+                 WHERE r.hash = ?1 AND r.count > 0
+                 UNION
+                 SELECT t.scope, f.hash FROM frame_objects f JOIN streams t ON t.id = f.stream
+                 JOIN scopes s ON s.id = t.scope AND s.holding = f.holding
+                 WHERE f.hash = ?1",
+            )?
+            .execute(params![&hash[..]])?;
+            Ok(true)
+        })?)
+    }
+
     /// Files in the objects' buckets that are no present or preparing life.
     fn remove_orphans(&self) -> Result<usize> {
         let mut removed = 0;

@@ -7,7 +7,7 @@
 
 use super::{Entry, Library};
 use super::frame::{Header, KindRecord, Signer, seal};
-use super::items::{Applying, apply, floors_passed};
+use super::items::{Applying, Numbers, apply_numbered, floors_passed};
 use super::objects::{Lease, present, release_in};
 use super::scopes::held;
 use crate::error::invalid;
@@ -156,6 +156,9 @@ impl Library {
                 }
             }
             let at = Applying { scope, stream, holding };
+            // The write numbers a block at a time, as a frame judged takes
+            // them (E1): the very numbers taking them one by one would give.
+            let mut numbers = Numbers::new(stream, commit.records.len());
             let mut first = next;
             for frame in &sealed {
                 let header = Header {
@@ -200,10 +203,11 @@ impl Library {
                     referring.execute(params![stream, epoch as i64, first as i64, holding, &hash[..]])?;
                 }
                 for (offset, record) in commit.records[frame.records.clone()].iter().enumerate() {
-                    apply(db, at, first + offset as u64, record)?;
+                    apply_numbered(db, at, first + offset as u64, record, &mut numbers)?;
                 }
                 first += u64::from(frame.count);
             }
+            numbers.finish(db)?;
             db.prepare_cached("UPDATE streams SET next = ?2, head = ?3 WHERE id = ?1")?
                 .execute(params![stream, first as i64, &head[..]])?;
             db.prepare_cached(

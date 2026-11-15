@@ -89,8 +89,8 @@ impl Library {
         if !REMADE.contains(&stream) {
             return Ok(false);
         }
-        let (scope, stream, device, checkpoint) =
-            (scope.to_string(), stream.to_string(), *device, checkpoint.map(str::to_string));
+        let (scope, stream, device, checkpoint, named) =
+            (scope.to_string(), stream.to_string(), *device, checkpoint.map(str::to_string), checkpoint.map(str::to_string));
         let discarded = self.database().write_now_at(Priority::Normal, 4096, move |db| {
             let Some((scope_id, _, Some(holding))) = held(db, &scope)? else {
                 return Err(invalid("the scope is not held here"));
@@ -110,6 +110,9 @@ impl Library {
             db.prepare_cached("DELETE FROM outbox WHERE stream = ?1")?.execute([stream_id])?;
             if let Some(name) = &checkpoint {
                 db.prepare_cached("DELETE FROM checkpoints WHERE name = ?1")?.execute([name])?;
+                // One that read before keeps nothing after; what it held
+                // goes after this (design §28.51 ⑤-7).
+                super::checkpoints::let_go(db, name)?;
             }
             if let Some((fact, signed)) = &first {
                 db.prepare_cached(
@@ -127,6 +130,11 @@ impl Library {
         })?;
         if discarded {
             self.wrote();
+            // What its producer held, let go with the epoch above, goes a
+            // batch at a time after (`sweep_held`).
+            if let Some(name) = &named {
+                self.sweep_held(name, None)?;
+            }
         }
         Ok(discarded)
     }
