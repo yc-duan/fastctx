@@ -19,6 +19,10 @@ const SHOWN: &str = "shown";
 /// How long a later process tries to reach the first, which may still be
 /// binding its socket, and waits for its answer.
 const WAIT: Duration = Duration::from_secs(5);
+/// How long a process whose window is gone takes at most to end. One that
+/// lingered past its window kept the lock and the webview's storage: the
+/// app opened again on Linux showed a window that took no clicks.
+const ENDS_WITHIN: Duration = Duration::from_secs(3);
 
 pub(crate) struct Instance {
     /// Held for the life of the process; the system lets go of it however
@@ -95,6 +99,27 @@ pub(crate) fn leaving() {
     LEAVING.store(true, Ordering::SeqCst);
 }
 
+/// Its window is gone and the app ends: a later process waits for the lock
+/// rather than ask this one for a window, and this one ends within
+/// `ENDS_WITHIN` whatever its teardown waits on.
+fn ending() {
+    static ENDING: std::sync::Once = std::sync::Once::new();
+    ENDING.call_once(|| {
+        // Ending to start its successor (`leaving`, an update) it is left to
+        // do so: the restart comes after this.
+        if LEAVING.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        let ends = std::thread::Builder::new().name("fastctx-ending".into()).spawn(|| {
+            std::thread::sleep(ENDS_WITHIN);
+            std::process::exit(0);
+        });
+        if let Err(error) = ends {
+            eprintln!("watching Fastctx end: {error}");
+        }
+    });
+}
+
 impl Instance {
     /// Answers later processes for as long as this one runs.
     pub(crate) fn serve(self, app: tauri::AppHandle) {
@@ -152,6 +177,13 @@ pub(crate) fn plugin(
                 Err(error) => crate::startup::warning(app, "single_instance", error),
             }
             Ok(())
+        })
+        .on_event(|_, event| match event {
+            // On Linux the window's close ends the app; on macOS it hides it,
+            // and only quitting destroys it.
+            tauri::RunEvent::WindowEvent { label, event: tauri::WindowEvent::Destroyed, .. } if label == "main" => ending(),
+            tauri::RunEvent::Exit => ending(),
+            _ => {}
         })
         .build()
 }

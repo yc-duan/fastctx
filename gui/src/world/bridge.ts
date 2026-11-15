@@ -294,10 +294,12 @@ export function agents(machine: MachineName | null): Promise<WorldAgents> {
   return invoke("agents", { machineName: machine });
 }
 
-/** Stops the turn the user saw running (`turn`), and no turn begun since;
- *  without one, whatever runs. */
-export function stop(who: Address, turn: string | null = null): Promise<boolean> {
-  return invoke("stop", { residentId: who.resident, machineName: who.machine, turn });
+/** Stops the turn the user saw running (`turn`), and no turn begun since.
+ *  Seeing none, with the ids of the words that were on their way
+ *  (`words`), only the turn that takes those; without either, whatever
+ *  runs. */
+export function stop(who: Address, turn: string | null = null, words: string[] | null = null): Promise<boolean> {
+  return invoke("stop", { residentId: who.resident, machineName: who.machine, turn, words });
 }
 
 /** A project's overview: its map, and who is in its town now. */

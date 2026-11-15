@@ -68,7 +68,7 @@ pub fn run(args: StopArgs) -> anyhow::Result<ExitCode> {
                 None => false,
             },
             Ok((Target::Colleague(resident), machine)) => {
-                match runtime.block_on(client.call(Call::Stop { resident, machine, turn: None })) {
+                match runtime.block_on(client.call(Call::Stop { resident, machine, turn: None, words: None })) {
                     Ok(Reply::Stopped { resident, stopped }) => {
                         println!("{}", fastctx_types::collab_prompt::stopped(&resident, stopped));
                         tell(began, named, None, if stopped { StopHow::Stopped } else { StopHow::AlreadyStopped });

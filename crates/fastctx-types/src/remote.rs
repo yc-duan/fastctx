@@ -530,6 +530,9 @@ pub enum RemoteCall {
         /// The turn the user saw running (`Call::Stop`).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         turn: Option<String>,
+        /// The words on their way the stop is for (`Call::Stop`).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        words: Option<Vec<crate::NoticeId>>,
     },
     /// Do something to a resident's conversation there, for the user.
     Control {

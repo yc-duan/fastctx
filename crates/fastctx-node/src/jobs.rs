@@ -297,7 +297,9 @@ impl Jobs {
                 break;
             }
             tokio::select! {
-                () = changed_or(&mut changes, &launched.job, BACKSTOP) => continue,
+                // A stop ready with the wait's end, or with words, goes
+                // first: the job it stops is not left running.
+                biased;
                 () = came(&mut interrupted) => {
                     // Its end, as the stop records it, is what this call answers.
                     interrupted = None;
@@ -307,6 +309,7 @@ impl Jobs {
                     }
                     continue;
                 }
+                () = changed_or(&mut changes, &launched.job, BACKSTOP) => continue,
                 () = tokio::time::sleep_until(deadline) => {
                     answered = Some(Answered::WaitOver { seconds: seconds(wait) });
                     break;

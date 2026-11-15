@@ -750,6 +750,10 @@ struct Inbox<'a> {
     /// only the latest goes in (`Notice::along`).
     #[serde(skip_serializing_if = "Option::is_none")]
     along: Option<&'a str>,
+    /// A job the user stopped, told after: the mod gives it to no turn
+    /// running when it came, which may be the one stopped with it.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    after_stop: bool,
     /// What it replaces, handed over before and not yet in.
     #[serde(skip_serializing_if = "<[String]>::is_empty")]
     replaces: &'a [String],
@@ -762,6 +766,8 @@ pub struct Delivering<'a> {
     pub at: Option<Timestamp>,
     pub as_user: bool,
     pub along: Option<&'a str>,
+    /// A job the user stopped, told after (`Inbox::after_stop`).
+    pub after_stop: bool,
     pub replaces: &'a [String],
 }
 
@@ -770,10 +776,11 @@ pub struct Delivering<'a> {
 /// the disk: the node keeps on the disk that it handed this over before it
 /// writes them, and hands over again at its start what a lost power took.
 pub fn deliver(directory: &Path, id: &str, text: &str, how: Delivering<'_>) -> io::Result<()> {
-    let Delivering { at, as_user, along, replaces } = how;
+    let Delivering { at, as_user, along, after_stop, replaces } = how;
     let inbox = directory.join("inbox");
     ensure_private_dir(&inbox)?;
-    let mut bytes = serde_json::to_vec(&Inbox { id, at, text, as_user, along, replaces }).expect("strings serialize");
+    let mut bytes =
+        serde_json::to_vec(&Inbox { id, at, text, as_user, along, after_stop, replaces }).expect("strings serialize");
     // Claude Code 2.1.287's fs API accepts at most 4 MiB per operation.
     const FILE_BYTES: usize = 4 * 1024 * 1024;
     if bytes.len() > FILE_BYTES {
@@ -806,6 +813,9 @@ pub fn deliver(directory: &Path, id: &str, text: &str, how: Delivering<'_>) -> i
         }
         if let Some(along) = along {
             value["along"] = along.into();
+        }
+        if after_stop {
+            value["after_stop"] = true.into();
         }
         if !replaces.is_empty() {
             value["replaces"] = replaces.into();

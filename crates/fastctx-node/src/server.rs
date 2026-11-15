@@ -1579,12 +1579,12 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
                 .await
                 .map(|tree| Reply::Collaboration(Box::new(tree)))
         }
-        Call::Stop { resident, machine, turn } => {
+        Call::Stop { resident, machine, turn, words } => {
             if let Caller::Resident(parent) = caller::of(node, peer)? {
                 return crate::colleagues::stopping::stop(node, parent, resident, machine).await;
             }
             users_voice(node, peer)?;
-            crate::talk::stop(node, resident, machine, turn)
+            crate::talk::stop(node, resident, machine, turn, words)
                 .await
                 .map(|(resident, stopped)| Reply::Stopped { resident, stopped })
         }
@@ -2115,11 +2115,10 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
         Call::WorldNow { known } => {
             users_voice(node, peer)?;
             // As the interfaces watching it were told it, while nothing has
-            // changed since; otherwise worked out now.
-            if known.is_empty()
-                && let Some(world) = crate::shown::current(node)
-            {
-                return Ok(Reply::WorldNow(Box::new((*world).clone())));
+            // changed since, the presence of what the caller knows worked
+            // out for it; otherwise worked out now.
+            if let Some(world) = crate::shown::current_known(node, &known) {
+                return Ok(Reply::WorldNow(Box::new(world)));
             }
             crate::shown::now_known(node, &known).await.map(|world| Reply::WorldNow(Box::new(world)))
         }

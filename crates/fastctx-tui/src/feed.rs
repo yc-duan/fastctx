@@ -327,7 +327,7 @@ async fn work(world: &World, job: Job) -> Result<Done, fastctx_client::Error> {
             }
             Err(error) => return Err(error),
         },
-        Job::Stop { resident, machine } => Done::Stopped(world.stop(resident, Some(machine.into()), None).await?.1),
+        Job::Stop { resident, machine } => Done::Stopped(world.stop(resident, Some(machine.into()), None, None).await?.1),
         Job::Attach { resident } => Done::Attachable(world.attach(resident).await?),
         Job::Open { agent, town, node, text, choices } => {
             let (said, first) = world.open_long(agent, town, node.map(Into::into), text, Default::default(), choices).await?;

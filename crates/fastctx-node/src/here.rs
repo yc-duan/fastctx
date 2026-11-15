@@ -276,13 +276,16 @@ pub(crate) async fn run(
     let (mut told, mut stopping) = (false, false);
     let answered = loop {
         tokio::select! {
-            answered = &mut answer => break answered,
+            // A stop ready with the answer goes first: the job it stops is
+            // not left running for the answer having won.
+            biased;
             // The job there stops with the turn; its answer comes as it ends.
             _ = interrupted.changed(), if !stopping => {
                 stopping = true;
                 crate::run_stops::keep(node, &here, &acting, to, &dispatch).await
                     .map_err(|error| Failure::new(format!("keeping the turn's stop: {error}")))?;
             }
+            answered = &mut answer => break answered,
             // The node holds every sender, so the watch never closes.
             _ = words.changed(), if !told => {
                 told = true;

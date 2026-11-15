@@ -1013,6 +1013,14 @@ export class Conversation {
   runningTurn(): string | null {
     return this.live.runningTurn();
   }
+  /** The words on their way a stop pressed now is for (`Fold.coming`). */
+  coming(keys?: readonly string[]): { keys: string[]; words: string[]; unnamed: number } {
+    return this.live.coming(keys);
+  }
+  /** The ids of the words a stop waits for (`Fold.haltedIds`). */
+  haltedIds(): string[] {
+    return this.live.haltedIds();
+  }
   turnBegan(): number | null {
     return this.live.turnBegan();
   }

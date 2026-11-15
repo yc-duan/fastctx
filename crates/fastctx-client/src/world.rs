@@ -605,15 +605,17 @@ impl World {
     }
 
     /// Stops the turn a resident on any machine is running (only `turn`,
-    /// when given: the one the user saw); returns where it lives and whether
-    /// a turn was running.
+    /// when given: the one the user saw; seeing none, only the turn of
+    /// `words`, when given); returns where it lives and whether a turn was
+    /// running.
     pub async fn stop(
         &self,
         resident: ResidentId,
         machine: Option<Written>,
         turn: Option<String>,
+        words: Option<Vec<fastctx_types::NoticeId>>,
     ) -> Result<(Address, bool), Error> {
-        match self.ask(Call::Stop { resident, machine, turn }).await? {
+        match self.ask(Call::Stop { resident, machine, turn, words }).await? {
             Reply::Stopped { resident, stopped } => Ok((resident, stopped)),
             other => Err(unexpected(other)),
         }

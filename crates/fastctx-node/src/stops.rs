@@ -43,6 +43,22 @@ impl Stops {
         })
         .await
     }
+    /// A stop kept for `words` whichever turn takes them, whether a turn
+    /// runs now or not (`talk::stop_words`): the exact words the user
+    /// stopped, not whatever waits.
+    pub(crate) async fn keep_for(
+        &self,
+        node: &Arc<Node>,
+        resident: &ResidentId,
+        words: Vec<NoticeId>,
+        source: StopSource,
+    ) -> io::Result<()> {
+        let committed = recovery::notification(node, resident);
+        store::ordered(node.world.conversation(resident), move |directory, order| {
+            store::keep(directory, &words, source, order, &committed)
+        })
+        .await
+    }
     pub(crate) async fn started<'a>(
         &self,
         node: &Arc<Node>,

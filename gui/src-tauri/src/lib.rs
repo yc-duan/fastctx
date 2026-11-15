@@ -593,17 +593,22 @@ async fn agents(
     shell.world().agents(machine(machine_name)?).await.map_err(|error| error.to_string())
 }
 
-/// Stops the turn a resident is running; says whether one was.
+/// Stops the turn a resident is running; says whether one was. Seeing no
+/// turn, `words` are the ids of the words on their way the stop is for.
 #[fastctx_gui_command::command]
 async fn stop(
     shell: tauri::State<'_, Shell>,
     resident_id: String,
     machine_name: Option<String>,
     turn: Option<String>,
+    words: Option<Vec<String>>,
 ) -> Result<bool, String> {
+    let words = words.map(|words| {
+        words.iter().filter_map(|id| id.parse::<fastctx_types::NoticeId>().ok()).collect::<Vec<_>>()
+    });
     let (_, stopped) = shell
         .world()
-        .stop(resident(resident_id)?, machine(machine_name)?, turn)
+        .stop(resident(resident_id)?, machine(machine_name)?, turn, words)
         .await
         .map_err(|error| error.to_string())?;
     Ok(stopped)
@@ -1094,6 +1099,13 @@ pub(crate) const WINDOW_KEPT: tauri_plugin_window_state::StateFlags = tauri_plug
     .union(tauri_plugin_window_state::StateFlags::POSITION)
     .union(tauri_plugin_window_state::StateFlags::MAXIMIZED);
 
+/// The application's context, made in this one place: each `generate_context!`
+/// embeds the interface's files again, and three of them carried 9 MB of the
+/// same twice over (codex-8c21a7a9, 2026-11-15).
+pub(crate) fn context() -> tauri::Context<tauri::Wry> {
+    tauri::generate_context!()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // WebKitGTK's DMA-BUF renderer leaves the window blank with many GPU
@@ -1132,7 +1144,7 @@ pub fn run() {
         Ok(None) => return,
         Err(error) => (None, Some(error)),
     };
-    let context = tauri::generate_context!();
+    let context = context();
     #[cfg(all(unix, desktop))]
     let instance = match unix_instance::enter(&context.config().identifier) {
         Ok(Some(instance)) => Ok(instance),

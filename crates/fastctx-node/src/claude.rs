@@ -632,8 +632,9 @@ async fn apply(
                     exchange::Reported::Replaced { ids } => {
                         // Told again before they went in: they never will.
                         let (working, conversation) = (node.clone(), node.world.conversation(resident));
+                        let settled = ids.clone();
                         fastctx_platform::task::spawn_blocking(move || -> std::io::Result<()> {
-                            for id in ids {
+                            for id in settled {
                                 if let Ok(id) = fastctx_types::NoticeId::try_from(id.as_str()) {
                                     crate::inbox::settle(&working, &conversation, &id)?;
                                 }
@@ -642,6 +643,10 @@ async fn apply(
                         })
                         .await
                         .map_err(std::io::Error::other)??;
+                        // Their proof stays beside the session as a handover's
+                        // does, a turn named by none: a mod made again does not
+                        // hand them over, whatever receipt of its own it lost.
+                        exchange::acknowledge_handover(directory, &ids, "")?;
                     }
                     exchange::Reported::Stored { uuid } => {
                         node.claude.state.lock().expect("never poisoned").stored.insert(session.to_string(), uuid);
@@ -1987,7 +1992,8 @@ async fn into_inbox(
         .collect(),
         None => Vec::new(),
     };
-    let how = exchange::Delivering { at: Some(pending.delivery.at), as_user, along, replaces: &replaces };
+    let after_stop = along.is_some() && matches!(pending.delivery.notice, Notice::JobEnded { .. });
+    let how = exchange::Delivering { at: Some(pending.delivery.at), as_user, along, after_stop, replaces: &replaces };
     // Commit the intent and its timestamp before the plugin can consume it.
     // Replaying a Handed intent republishes the same id and preserves its time.
     if pending.state != PendingState::Handed {

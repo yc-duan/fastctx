@@ -63,6 +63,7 @@ import { missingCharacter, recoverable } from "./composer/errors";
 import { textareaText } from "./composer/characters";
 import { attachText, copyRejectedText, showTextNotice } from "./text-attachment";
 import { enText, zhText } from "./text-words";
+import { sayWaiting, waitingInline } from "../app/waiting";
 
 /** How many events the page holds at most, and how many its latest part
  *  holds before what comes before its newest turns is let go, down to how
@@ -76,6 +77,10 @@ const LATEST_KEPT = 800;
 /** How long a turn asked to stop shows ended before its host has ended it
  *  (`ConversationPage.stop`). */
 const STOP_OVERDUE_MS = 2000;
+/** How long a stop of words on their way waits for the World to answer
+ *  for them, and how often it looks (`stopNamed`). */
+const NAMING_MS = 60_000;
+const NAMING_LOOK_MS = 50;
 
 /** The mark of an agent named "Claude" or "Codex". */
 const markOf = (agent: string) => (/claude/i.test(agent) ? "claude" : "codex");
@@ -182,8 +187,9 @@ export interface PageOptions {
    *  resolves with what came of them. */
   send(text: string, attached: { refs: unknown[]; shown: Attached[]; filesOn?: string | null }): Promise<Sent> | void;
   /** Asks the agent to stop the turn shown running (`null` while only words
-   *  are on their way); resolves whether a turn was running to stop. */
-  stop(turn: string | null): Promise<boolean> | void;
+   *  are on their way: then `words`, the ids of those words, when known);
+   *  resolves whether a turn was running to stop. */
+  stop(turn: string | null, words: string[] | null): Promise<boolean> | void;
   /** Stops one job it started, on the machine it runs on. */
   stopJob?: ((job: string, machine: string) => Promise<void>) | undefined;
   /** A job's output as lines from the machine running it, read as it
@@ -422,7 +428,7 @@ export class ConversationPage {
           cancelAnimationFrame(owner.frame); owner.render();
           return await this.view.resolveSearch(hit, query, signal);
         } finally { this.findingPosition -= 1; }
-      }, () => this.finder.refresh());
+      }, () => this.finder.refresh(), () => this.view.searchKnown());
     this.scroller.before(this.finder.element);
     this.element.querySelector(".find-toggle")!.addEventListener("click", () => (this.finder.open ? this.finder.close() : this.finder.show()));
     this.element.querySelector(".view-steps")!.addEventListener("click", () => this.toggleSteps());
@@ -1121,7 +1127,7 @@ export class ConversationPage {
     };
     const held = first();
     if (held) return bring(held.key);
-    this.say(this.options.words.english ? "Finding this turn…" : "正在查找这个回合…");
+    this.say(this.options.words.english ? "Finding this turn…" : "正在查找这个回合…", "", false, true);
     void conversation.reachTurn(turn).then((reached) => {
       if (this.wantedTurn !== turn) return;
       const found = reached ? first() : undefined;
@@ -1353,11 +1359,20 @@ export class ConversationPage {
    *  why. */
   private stop(): void {
     const target = this.options.conversation.runningTurn();
-    const asked = this.options.stop(target);
+    // Seeing no turn, the stop is for the words on their way now, and for
+    // none sent after: by the ids the World answered for them with, once
+    // it has answered for them all.
+    // Words it gave no id for, or none on their way, leave it to stop
+    // whatever runs.
+    const coming = target === null ? this.options.conversation.coming() : null;
+    const mine = this.stopsAsked + 1;
+    const asked = coming && coming.unnamed > 0
+      ? this.stopNamed(coming.keys, mine)
+      : this.options.stop(target, coming && coming.words.length > 0 ? coming.words : null);
     if (!asked) return;
     // Only the answer to the latest stop speaks: one to an earlier stop,
     // coming late, leaves a stop asked since standing.
-    const mine = ++this.stopsAsked;
+    this.stopsAsked = mine;
     this.options.conversation.halt();
     this.watchStop();
     this.update();
@@ -1381,6 +1396,63 @@ export class ConversationPage {
         this.update();
       },
     );
+  }
+
+  /** A stop of words on their way (`keys`) the World has not answered for
+   *  all of yet. Each goes by its id as soon as the World answers for it,
+   *  whether a turn took it meanwhile or not: its machine stops whichever
+   *  turn took it. What is gone without an id leaves nothing to stop. One
+   *  whose stop did not get there is sent again. It keeps watching for
+   *  `NAMING_MS`, or until a later stop is asked (`asked`), and answers with
+   *  what the first stop it sent answers. Never a stop of whatever runs,
+   *  nor of a turn found by what words say, which may be words sent
+   *  after. */
+  private stopNamed(keys: readonly string[], asked: number): Promise<boolean> {
+    const since = Date.now();
+    const { conversation } = this.options;
+    const sent = new Set<string>();
+    return new Promise<boolean>((done, failed) => {
+      let first: Promise<boolean> | null = null;
+      // Later stops on their way: watched until they are answered.
+      let pending = 0;
+      const send = (words: string[]) => {
+        const going = this.options.stop(null, words);
+        if (!going) return;
+        if (first === null) {
+          first = going;
+          going.then(done, failed);
+        } else {
+          pending += 1;
+          // Not there: sent again at the next look.
+          going.then(
+            () => { pending -= 1; },
+            () => {
+              pending -= 1;
+              for (const id of words) sent.delete(id);
+            },
+          );
+        }
+      };
+      const look = () => {
+        if (asked !== this.stopsAsked) {
+          if (first === null) done(false);
+          return;
+        }
+        const coming = conversation.coming(keys);
+        const named = [...new Set([...coming.words, ...conversation.haltedIds()])].filter((id) => !sent.has(id));
+        if (named.length > 0) {
+          for (const id of named) sent.add(id);
+          send(named);
+        }
+        if ((coming.unnamed > 0 || pending > 0 || named.length > 0) && Date.now() - since < NAMING_MS) {
+          setTimeout(look, NAMING_LOOK_MS);
+          return;
+        }
+        if (first === null) done(false);
+      };
+      // After `halt`, which this stop's words are kept by.
+      setTimeout(look, 0);
+    });
   }
 
   /** A stop asked for is over, its turn ended or never stopped. */
@@ -1739,8 +1811,10 @@ export class ConversationPage {
     return false;
   }
 
-  private say(text: string, detail = "", refused = false): void {
-    this.note.textContent = text;
+  /** `waits`: what is said is awaited (`sayWaiting`). */
+  private say(text: string, detail = "", refused = false, waits = false): void {
+    if (waits && text) sayWaiting(this.note, text);
+    else this.note.textContent = text;
     this.note.title = detail;
     this.noteDetail = null;
     this.note.classList.toggle("refused", refused);
@@ -2894,7 +2968,11 @@ export class ConversationPage {
     const preparing = conversation.preparing;
     const trouble = this.away !== null ? now : this.gone ?? (preparing ? (words.english ? "Preparing history…" : "正在整理历史…") : null);
     this.state.hidden = !trouble;
-    if (this.state.textContent !== (trouble ?? "")) this.state.textContent = trouble ?? "";
+    if (this.state.textContent !== (trouble ?? "")) {
+      // Its history being prepared is awaited; being away or gone is said.
+      if (preparing && trouble && this.away === null && this.gone === null) this.state.innerHTML = waitingInline(trouble);
+      else this.state.textContent = trouble ?? "";
+    }
     this.state.classList.toggle("gone", this.away !== null || this.gone !== null);
     // How long it has been broken is as of when the pointer comes to it.
     const why = this.interrupted && this.brokenSince

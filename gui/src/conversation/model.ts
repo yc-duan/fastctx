@@ -1624,6 +1624,9 @@ export class Fold {
   unsend(key: string): void {
     this.settlers.delete(key);
     this.remove((entry) => entry.key === key);
+    // Words that did not go start no turn: a stop waiting for them has
+    // nothing of them to find, by id or by what they say.
+    this.haltedWords = this.haltedWords.filter((word) => word.key !== key);
   }
 
   /** Keeps how the words being sent under `key` are sent again or taken
@@ -1704,6 +1707,28 @@ export class Fold {
       }
     }
     this.clock += 1;
+  }
+
+  /** The words on their way a stop pressed now, seeing no turn, is for:
+   *  those of `keys`, or all on their way. `words` are the ids the World
+   *  answered for them with; `unnamed` counts those it has not answered
+   *  for yet. Words it answered for without an id are in neither. */
+  coming(keys?: readonly string[]): { keys: string[]; words: string[]; unnamed: number } {
+    const found = { keys: [] as string[], words: [] as string[], unnamed: 0 };
+    const entries = keys ? keys.map((key) => this.byKey.get(key)) : this.entries;
+    for (const entry of entries) {
+      if (entry?.kind !== "heard" || entry.sending === undefined || entry.sending.state === "settled") continue;
+      found.keys.push(entry.key);
+      if (typeof entry.delivery === "string") found.words.push(entry.delivery);
+      else if (entry.delivery === undefined) found.unnamed += 1;
+    }
+    return found;
+  }
+
+  /** The ids the World answered for the words a stop waits for with,
+   *  those that have one by now (`named` keeps them). */
+  haltedIds(): string[] {
+    return this.haltedWords.flatMap((word) => (typeof word.delivery === "string" ? [word.delivery] : []));
   }
 
   /** A turn the user asked to stop, as its machine tells every viewer: what

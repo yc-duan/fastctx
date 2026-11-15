@@ -777,6 +777,12 @@ pub enum Call {
         /// begun since. A node before this field stops whatever runs.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         turn: Option<String>,
+        /// Seeing no turn, the words on their way when the user pressed
+        /// stop: only the turn that takes them is stopped, never one of
+        /// words sent after. A node before this field stops whatever runs
+        /// or comes.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        words: Option<Vec<NoticeId>>,
     },
     /// Does something to a resident's conversation on any machine for the
     /// user, besides speaking into it (`session::control`).

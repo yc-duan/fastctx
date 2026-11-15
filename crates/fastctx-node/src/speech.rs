@@ -772,9 +772,24 @@ async fn submit_thread(
     if single && keep(directory, &pending).await? {
         crate::goals::engine::input_changed(node, id);
     }
+    // What rides with the next turn does not go into a turn the user stopped
+    // that has not ended yet, alone or before other words; read holding the
+    // resident's speech, as the stop's own check is.
+    let stopped = match node.residents.now(id).and_then(|now| now.turn) {
+        Some(turn) => {
+            let (reading, whose) = (node.clone(), id.clone());
+            fastctx_platform::task::blocking(move || crate::stops::requested_turn(&reading, &whose, &turn))
+                .await
+                .map_err(|error| Failure::new(format!("reading whether the turn was stopped: {error}")))?
+        }
+        None => false,
+    };
+    if stopped && pending.delivery.notice.along().is_some() {
+        return Ok(Some(Landed::Waiting { why: None, answered: true }));
+    }
     let Batch { mut batch, after, waits } = {
         let (reading, whose, own) = (node.clone(), id.clone(), pending.delivery.id.clone());
-        crate::delivery::local(directory, move |directory| next_batch(&reading, &whose, directory, &own))
+        crate::delivery::local(directory, move |directory| next_batch(&reading, &whose, directory, &own, stopped))
             .await
             .map_err(|error| Failure::new(format!("reading what waits: {error}")))?
     };
@@ -1281,11 +1296,22 @@ struct Batch {
 /// precede its first actual input. One handover takes as much as it holds,
 /// a longer wait goes over several turns, and only as much of the wait is
 /// read as goes in, with the one after.
-fn next_batch(node: &Node, id: &ResidentId, directory: &ConversationDir, own: &NoticeId) -> std::io::Result<Batch> {
+/// What goes in one handover with `own`, oldest first. With the running
+/// turn one the user stopped (`stopped`), what rides with the next turn
+/// stays behind for it.
+fn next_batch(
+    node: &Node,
+    id: &ResidentId,
+    directory: &ConversationDir,
+    own: &NoticeId,
+    stopped: bool,
+) -> std::io::Result<Batch> {
     use crate::delivery::handovers::{BYTES, INPUTS, accepted_inputs};
     let (mut batch, mut after, mut bytes, mut closed, mut waits) = (Vec::new(), None, 0, false, false);
     let eligible = |kept: &Pending, accepted: &std::collections::HashSet<NoticeId>| {
+        let behind = stopped && kept.delivery.notice.along().is_some();
         kept.state == PendingState::Waiting
+            && !behind
             && !accepted.contains(&kept.delivery.id)
             && !node.taking.lock().expect("never poisoned").contains(&(id.clone(), kept.delivery.id.clone()))
     };

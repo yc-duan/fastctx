@@ -4,6 +4,7 @@
 // `?s=home|claude|codex|project|journal|machines|settings|new`,
 // `?theme=…`, `?lang=en` and `?live` pick what to look at.
 
+import { onMotion } from "./motion";
 import { projectWho, mergeFormer } from "./project/who";
 import { followFormer } from "./project/former";
 import { localHome } from "./sentinel/local";
@@ -52,6 +53,7 @@ import "./app/removal.css";
 import "./app/managed.css";
 import "./app/progress-steps.css";
 import "./app/data-page.css";
+import "./app/waiting.css";
 import "./app.css";
 import "./conversation/talk-usage.css";
 import "./conversation/context-sheet.css";
@@ -2262,7 +2264,7 @@ function liveTalk(address: Address): DeskTalk {
         go();
       });
     },
-    stop: (turn) => stop(address, turn),
+    stop: (turn, words) => stop(address, turn, words),
     // A sentinel's row withdraws it, then the list is asked again.
     stopJob: (job, machine) => (sentinelRows.peek().some((row) => row.job === job) ? sentinelStop(job, machine).then(async () => { await readSentinels(); }) : stopJob(job, machine)),
     jobOutput: (job) => RemoteLines.open(job.machine, job.output, { kind: "output", job: job.job }),
@@ -3663,6 +3665,8 @@ applyTheme(() => {
   void redrawDiagrams(shell.element);
   openPage?.contextChanged();
 });
+// A page open moves as much as the interface does.
+onMotion(() => openPage?.contextChanged());
 show(specimenPlace() ?? placeOf(location.hash));
 // A device in no network any more, however it left (it logged out, the
 // network was dissolved, its hub went away), has only the way in to show,

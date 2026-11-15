@@ -30,6 +30,7 @@ impl Device {
                 update,
                 fastctx_types::update::UpdateCall::App { .. }
                     | fastctx_types::update::UpdateCall::Fetch { .. }
+                    | fastctx_types::update::UpdateCall::Bring { .. }
                     | fastctx_types::update::UpdateCall::Progress { .. }
             )
         {
@@ -501,9 +502,9 @@ impl Device {
                 let machine = self.find(&resident, machine).await?;
                 (machine, RemoteCall::Collaboration { resident: resident.clone(), colleagues: true }, Some(resident))
             }
-            Call::Stop { resident, machine, turn } => {
+            Call::Stop { resident, machine, turn, words } => {
                 let machine = self.find(&resident, machine).await?;
-                (machine, RemoteCall::Stop { resident: resident.clone(), turn }, Some(resident))
+                (machine, RemoteCall::Stop { resident: resident.clone(), turn, words }, Some(resident))
             }
             // A command stops as the user asks, on the machine it runs on.
             Call::StopJob { job, machine, hub } => {
