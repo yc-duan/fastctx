@@ -21,7 +21,7 @@ import { GoalPage } from "./goal-page";
 import { HistoryCard } from "./history-card";
 import { SideHome } from "./home";
 import { SideFiles } from "./files-page";
-import { tally, type ChangedFile } from "../files/model";
+import type { ChangedFile } from "../files/model";
 import type { ViewTab } from "../files/view";
 import { SideWhere } from "./where";
 import type { PanePart, PartSet, Peek } from "./pane";
@@ -201,7 +201,6 @@ export class SideParts implements PartSet {
         detail: (error) => context.detail?.(error) ?? String(error),
       });
       this.parts.push({ id: PART.files, name: seams.files.words.side.name, page: this.filesPage });
-      this.where.files = () => void this.openChanges();
     }
     // The history its model works with, a page of its own that the mark in
     // the desk's corner opens: its project's, else its own.
@@ -265,8 +264,6 @@ export class SideParts implements PartSet {
   changed(files: ChangedFile[]): void {
     this.home.files(files);
     this.filesPage?.changed(files);
-    const words = this.context.seams.files?.words;
-    if (words) this.where.changed(files.length ? tally(files) : null, words.turn.total(files.length));
   }
 
   /** All the conversation changed, as a page of the side. */

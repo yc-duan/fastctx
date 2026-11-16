@@ -45,8 +45,6 @@ export interface FilesWords {
     tabs: string;
     content: string;
     changes(n: number): string;
-    copyPath: string;
-    copied: string;
     outside: string;
     /** Opens the file among its machine's folders. */
     inFolders: string;
@@ -134,8 +132,6 @@ export const zhFiles: FilesWords = {
     tabs: "看什么",
     content: "内容",
     changes: (n) => (n ? `改动 ${n}` : "改动"),
-    copyPath: "复制路径",
-    copied: "已复制",
     outside: "用本机程序打开",
     inFolders: "在目录中查看",
     reading: "正在读取",
@@ -211,8 +207,6 @@ export const enFiles: FilesWords = {
     tabs: "What is shown",
     content: "Content",
     changes: (n) => (n ? `Changes ${n}` : "Changes"),
-    copyPath: "Copy path",
-    copied: "Copied",
     outside: "Open with this device's program",
     inFolders: "Show among its folders",
     reading: "Reading",

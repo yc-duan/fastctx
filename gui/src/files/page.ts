@@ -223,7 +223,7 @@ export class FilesPage implements Page {
     modes.innerHTML = `${mode("all", escape(words.tree.all), list === null)}${mode("changed", `${escape(words.tree.changed)}${count ? `<small>${count}</small>` : ""}`)}`;
   }
 
-  /** The folder the tree starts at, a step to each folder over it. */
+  /** Where the tree starts: the machine's home, or one of its disks. */
   private drawCrumbs(): void {
     const crumbs = this.element.querySelector<HTMLElement>(".fb-crumbs")!;
     const { words } = this.options;
@@ -236,16 +236,7 @@ export class FilesPage implements Page {
     const { home, places } = this.places;
     const starts = [...(home ? [{ name: words.tree.home, path: home, mark: "home" as const }] : []), ...places.map((place) => ({ ...place, mark: "disk" as const }))];
     const chips = starts.map((start) => `<button type="button" class="fb-place${plain(start.path) === plain(this.root!) ? " chosen" : ""}" data-root="${escape(start.path)}" title="${escape(start.path)}">${glyph(start.mark, 14)}<span>${escape(start.name)}</span></button>`).join("");
-    // Each folder from the top of the path down to the one shown.
-    const parts = this.root.split(/[\\/]/).filter(Boolean);
-    const slash = this.root.includes("\\") && !this.root.includes("/") ? "\\" : "/";
-    let walked = this.root.startsWith(slash) ? "" : null;
-    const steps = parts.map((part, index) => {
-      walked = walked === null ? part : `${walked}${slash}${part}`;
-      const at = /^[A-Za-z]:$/.test(walked) ? `${walked}${slash}` : walked;
-      return index === parts.length - 1 ? `<b>${escape(part)}</b>` : `<button type="button" class="fb-step" data-root="${escape(at)}">${escape(part)}</button>`;
-    });
-    crumbs.innerHTML = `<div class="fb-places">${chips}</div><div class="fb-path">${steps.join(`<i aria-hidden="true">/</i>`)}</div>`;
+    crumbs.innerHTML = `<div class="fb-places">${chips}</div>`;
   }
 
   // The machines to choose among.

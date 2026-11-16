@@ -11,7 +11,6 @@ import { Sheet } from "../app/confirm";
 import { leave, leaving, stay } from "../app/leave";
 import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
-import { figures, mark } from "../files/changed";
 import { folderName } from "../world/focus";
 import type { WhereMachine, WhereShown } from "./types";
 import type { WhereWords } from "./words";
@@ -27,11 +26,6 @@ export class SideWhere {
   private readonly pop: HTMLElement;
   private sheet: Sheet | null = null;
   private shown: WhereShown | null = null;
-  /** What the conversation changed, before the line: how many files and
-   *  by how many lines; pressed, its files in the side. */
-  private readonly sum: HTMLButtonElement;
-  /** Opens the conversation's files in the side. */
-  files: (() => void) | null = null;
 
   constructor(
     private readonly words: WhereWords,
@@ -45,12 +39,6 @@ export class SideWhere {
     this.corner.innerHTML = `<button class="sw-line" type="button" aria-haspopup="dialog" aria-expanded="false"></button><div class="sw-pop" role="dialog" aria-label="${escape(words.title)}" hidden></div>`;
     this.button = this.corner.querySelector(".sw-line")!;
     this.pop = this.corner.querySelector(".sw-pop")!;
-    this.sum = document.createElement("button");
-    this.sum.type = "button";
-    this.sum.className = "sw-changed";
-    this.sum.hidden = true;
-    this.sum.addEventListener("click", () => this.files?.());
-    this.corner.prepend(this.sum);
     this.button.addEventListener("click", () => (this.pop.hidden || leaving(this.pop) ? this.pull() : this.putBack()));
     this.pop.addEventListener("click", (event) => this.pressed(event));
     this.pop.addEventListener("keydown", (event) => {
@@ -69,16 +57,6 @@ export class SideWhere {
     this.line.hidden = true;
     this.line.setAttribute("aria-haspopup", "dialog");
     this.line.addEventListener("click", () => this.pullSheet());
-  }
-
-  /** What the conversation changed, as it now stands; none hides it. */
-  changed(sum: { files: number; added: number; removed: number } | null, said: string): void {
-    this.sum.hidden = !sum;
-    if (!sum) return;
-    const html = `${mark("changed", said)}<span>${sum.files}</span>${figures(sum.added, sum.removed)}`;
-    if (this.sum.innerHTML !== html) this.sum.innerHTML = html;
-    this.sum.title = said;
-    this.sum.setAttribute("aria-label", said);
   }
 
   show(where: WhereShown | null): void {

@@ -98,14 +98,18 @@ export class FileView {
     if (!this.changes.length) this.tab = "content";
     for (const change of this.changes.slice(0, OPEN)) this.opened.add(change.id);
     this.element.className = "fx-view";
-    const act = (name: string, mark: Parameters<typeof glyph>[0], label: string) => `<button class="icon-button" type="button" data-act="${name}" aria-label="${escape(label)}" title="${escape(label)}">${glyph(mark, 16)}</button>`;
+    // Where it is, quiet, and the way to it among its machine's folders;
+    // then its name, with the switch between what it holds and its
+    // changes on the same ruled line.
+    const place = `${glyph("machine", 14)}<span class="fx-machine">${escape(machine)}</span><span class="fx-folder"><bdi>${escape(folder)}</bdi></span>`;
+    const where = options.folders
+      ? `<a class="fx-place" href="${escape(options.folders)}" title="${escape(`${words.view.inFolders}\n${machine}  ${path}`)}">${place}</a>`
+      : `<span class="fx-place" title="${escape(`${machine}  ${path}`)}">${place}</span>`;
+    const out = options.seams.outside ? `<button class="icon-button fx-out" type="button" data-act="outside" aria-label="${escape(words.view.outside)}" title="${escape(words.view.outside)}">${glyph("launch", 16)}</button>` : "";
     this.element.innerHTML = `<header class="fx-head">
-        <span class="fx-where" title="${escape(`${machine}  ${path}`)}">${glyph("machine", 14)}<span class="fx-machine">${escape(machine)}</span><span class="fx-folder"><bdi>${escape(folder)}</bdi></span></span>
-        <span class="fx-acts">${act("copy", "copy", words.view.copyPath)}${options.folders ? `<a class="icon-button" href="${escape(options.folders)}" aria-label="${escape(words.view.inFolders)}" title="${escape(words.view.inFolders)}">${glyph("tree", 16)}</a>` : ""}${
-          options.seams.outside ? act("outside", "launch", words.view.outside) : ""
-        }</span>
+        <div class="fx-where">${where}${out}</div>
+        <div class="fx-title"><div class="fx-named"><h2 class="fx-name">${escape(name)}</h2><span class="fx-sum"></span></div><div class="segmented fx-tabs" role="radiogroup" aria-label="${escape(words.view.tabs)}"></div></div>
       </header>
-      <div class="fx-title"><h2 class="fx-name">${escape(name)}</h2><span class="fx-sum"></span><div class="segmented fx-tabs" role="radiogroup" aria-label="${escape(words.view.tabs)}"></div></div>
       <div class="fx-body"></div>`;
     this.body = this.element.querySelector<HTMLElement>(".fx-body")!;
     this.content.className = "fx-content";
@@ -155,7 +159,8 @@ export class FileView {
     sum.innerHTML = this.changes.length ? figures(added, removed) : "";
     tabs.hidden = !this.changes.length;
     const tab = (id: ViewTab, said: string) => `<button type="button" class="segment${id === this.tab ? " chosen" : ""}" role="radio" aria-checked="${id === this.tab}" data-tab="${id}">${escape(said)}</button>`;
-    tabs.innerHTML = `${tab("content", words.view.content)}${tab("changes", words.view.changes(this.changes.length))}`;
+    // How many changes is said only where there are several.
+    tabs.innerHTML = `${tab("content", words.view.content)}${tab("changes", words.view.changes(this.changes.length > 1 ? this.changes.length : 0))}`;
   }
 
   private show(): void {
@@ -171,20 +176,9 @@ export class FileView {
 
   private pressed(event: MouseEvent): void {
     const target = event.target as HTMLElement;
-    const { machine, path, seams, words } = this.options;
+    const { machine, path, seams } = this.options;
     const act = target.closest<HTMLElement>("[data-act]");
     if (act?.dataset.act === "outside") return seams.outside?.(machine, path);
-    if (act?.dataset.act === "copy") {
-      void navigator.clipboard?.writeText(path).then(() => {
-        act.title = words.view.copied;
-        act.innerHTML = glyph("check", 16);
-        window.setTimeout(() => {
-          act.title = words.view.copyPath;
-          act.innerHTML = glyph("copy", 16);
-        }, 1400);
-      });
-      return;
-    }
     const tab = target.closest<HTMLElement>("[data-tab]")?.dataset.tab as ViewTab | undefined;
     if (tab) {
       if (tab === this.tab) return;
@@ -220,13 +214,17 @@ export class FileView {
       return;
     }
     const listed = this.changes.slice(0, LISTED);
+    // A conversation's one change of the file needs no line of its own: the
+    // head already says how many lines.
+    const lone = !!this.options.own && this.changes.length === 1;
     this.changed.innerHTML = `${listed
       .map((change) => {
         const line = changeLine(this.options.own ? { ...change, session: null, agent: null, from: null } : change, words, seams.named, now);
         // What has no lines kept is its line alone: nothing opens under it.
-        if (!change.rows) return `<section class="fx-change bare"><div class="fx-change-line"><span class="fx-twist"></span>${line}</div></section>`;
-        const open = this.opened.has(change.id);
-        return `<section class="fx-change${open ? " open" : ""}" data-change="${escape(change.id)}"><div class="fx-change-head" role="button" tabindex="0" aria-expanded="${open}"><span class="fx-twist">${glyph("chevron", 12)}</span>${line}</div><div class="fx-change-fold"><div class="fx-change-body"></div></div></section>`;
+        if (!change.rows) return `<section class="fx-change bare"><div class="fx-change-line">${line}</div></section>`;
+        const open = lone || this.opened.has(change.id);
+        const head = lone ? "" : `<div class="fx-change-head" role="button" tabindex="0" aria-expanded="${open}">${line}${glyph("chevron", 16)}</div>`;
+        return `<section class="fx-change${open ? " open" : ""}" data-change="${escape(change.id)}">${head}<div class="fx-change-fold"><div class="fx-change-body"></div></div></section>`;
       })
       .join("")}${this.changes.length > LISTED ? `<p class="fx-note">${escape(words.view.earlier(this.changes.length - LISTED))}</p>` : ""}`;
     for (const section of this.changed.querySelectorAll<HTMLElement>(".fx-change.open")) this.fill(section, section.dataset.change!);

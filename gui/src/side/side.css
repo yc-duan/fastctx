@@ -236,10 +236,10 @@ html.framed .sp-panel.sp-over .sp-line {
   line-height: var(--leading-prose);
 }
 
-/* The way back to the overview, over the page it left, where a card's
-   name begins. */
+/* The way back, over the page it left: its arrow at the page's left edge,
+   where what the page shows begins. */
 .sp-back {
-  padding: 0 var(--sp-end) 0 calc(var(--sp-start) + var(--space-3));
+  padding: 0 var(--sp-end) 0 var(--sp-start);
 }
 
 .sp-back[hidden] {
@@ -1657,11 +1657,27 @@ button.gh-goal:hover,
 }
 
 .sf-head {
+  position: relative;
   flex: none;
   display: flex;
-  align-items: center;
+  align-items: flex-end;
   gap: 12px;
+  min-height: 36px;
   margin: 0 0 var(--space-3);
+}
+
+/* The line under the switch, ruled across the page. */
+.sf-head::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 8px;
+  background: var(--pen-rule);
+  -webkit-mask: var(--pen-rule-1) 0 50% / 100% 100% no-repeat;
+  mask: var(--pen-rule-1) 0 50% / 100% 100% no-repeat;
+  pointer-events: none;
 }
 
 .sf-shows .segment small {
@@ -1672,6 +1688,7 @@ button.gh-goal:hover,
 
 .sf-sum {
   margin-left: auto;
+  padding-bottom: 9px;
   font-variant-numeric: tabular-nums;
 }
 

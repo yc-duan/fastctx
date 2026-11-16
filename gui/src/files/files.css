@@ -238,27 +238,26 @@
 
 /* ---- A change's lines ---- */
 
+/* A line too long for the page is carried on under itself: nothing scrolls
+   sideways. */
 .cf-diff {
-  overflow-x: auto;
-  overscroll-behavior-x: contain;
   border-radius: var(--radius-m);
   background: var(--surface-code);
   font-family: var(--font-code);
   font-size: var(--size-code);
   font-variation-settings: var(--code-axes);
   line-height: 1.6;
+  overflow: hidden;
 }
 
 .cf-diff-lines {
-  display: inline-block;
-  min-width: 100%;
   padding: 6px 0;
-  vertical-align: top;
 }
 
 .cf-dl {
   display: flex;
-  white-space: pre;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
   tab-size: 4;
 }
 
@@ -279,10 +278,19 @@
   user-select: none;
 }
 
+/* What is carried on hangs two letters past the line's own indentation. */
 .cf-dt {
-  flex: 1 0 auto;
-  padding-right: 20px;
+  flex: 1 1 0;
+  min-width: 0;
+  padding-right: 12px;
+  padding-left: calc((var(--in, 0) + 2) * 1ch);
+  text-indent: calc((var(--in, 0) + 2) * -1ch);
   color: var(--text);
+}
+
+.cf-dl.cf-gap > .cf-dt {
+  padding-left: 0;
+  text-indent: 0;
 }
 
 .cf-dl.cf-add {
@@ -301,9 +309,8 @@
   color: var(--del-fg);
 }
 
+/* The lines left alone between two parts: said in a quiet word, no band. */
 .cf-dl.cf-gap {
-  margin: 4px 0;
-  background: var(--fill);
   font-family: var(--font-reading);
   font-size: var(--size-fine);
   line-height: 2;
@@ -447,6 +454,9 @@
 
 /* ---- A file opened ---- */
 
+/* Set as the plan's page is: where it is, quiet, on the first line; its
+   name on a ruled line, the switch between what it holds and its changes
+   standing on the same line; then the file, which alone scrolls. */
 .fx-view {
   display: flex;
   flex-direction: column;
@@ -457,25 +467,37 @@
 
 .fx-head {
   flex: none;
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  min-height: 36px;
+  margin: 0 0 var(--space-3);
 }
 
 /* Where it is: the machine, then its folders, which give way from the
-   front so the end of the path stays. */
+   front so the end of the path stays. Pressed, it is shown among them. */
 .fx-where {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 28px;
+  color: var(--text-3);
+  font-size: var(--size-fine);
+}
+
+.fx-place {
   flex: 1 1 auto;
   min-width: 0;
   display: flex;
   align-items: center;
   gap: 6px;
   white-space: nowrap;
-  color: var(--text-3);
+  color: inherit;
+  text-decoration: none;
+  transition: color var(--hover) var(--ease);
 }
 
-.fx-where > .glyph,
+a.fx-place:hover {
+  color: var(--text-2);
+}
+
+.fx-place > .glyph,
 .fx-machine {
   flex: none;
 }
@@ -483,7 +505,7 @@
 .fx-folder {
   flex: 0 1 auto;
   min-width: 0;
-  margin-left: var(--space-2);
+  margin-left: var(--space-1);
   overflow: hidden;
   text-overflow: ellipsis;
   direction: rtl;
@@ -493,32 +515,50 @@
   direction: ltr;
 }
 
-.fx-acts {
+.fx-out {
   flex: none;
-  display: flex;
-  gap: 2px;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  margin-right: -6px;
   color: var(--text-3);
 }
 
-.fx-acts .icon-button {
-  display: grid;
-  place-items: center;
-  width: 32px;
-  height: 32px;
-  color: inherit;
-}
-
-.fx-acts .icon-button:hover {
+.fx-out:hover {
   color: var(--text);
 }
 
 .fx-title {
-  flex: none;
+  position: relative;
   display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 6px 14px;
-  margin: 0 0 var(--space-3);
+  align-items: flex-end;
+  gap: 0 12px;
+  min-height: 38px;
+}
+
+/* The line under the name, ruled across the page. */
+.fx-title::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 8px;
+  background: var(--pen-rule);
+  -webkit-mask: var(--pen-rule-1) 0 50% / 100% 100% no-repeat;
+  mask: var(--pen-rule-1) 0 50% / 100% 100% no-repeat;
+  pointer-events: none;
+}
+
+/* The name and its lines on one baseline. */
+.fx-named {
+  flex: 0 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  padding-bottom: 9px;
 }
 
 .fx-name {
@@ -531,11 +571,16 @@
   font-family: var(--font-emphasis);
   font-weight: 400;
   font-size: var(--size-h3);
-  line-height: var(--leading-prose);
+  line-height: 1.3;
   color: var(--text-strong);
 }
 
+.fx-sum {
+  flex: none;
+}
+
 .fx-tabs {
+  flex: none;
   margin-left: auto;
 }
 
@@ -649,7 +694,8 @@
   margin: 0;
 }
 
-/* Its changes, the latest first: who and when on a line, the lines under. */
+/* Its changes, the latest first: who and when in a line of quiet words, as
+   a stretch's heading is; its lines under, opened and shut by the line. */
 .fx-changes {
   overflow: auto;
   overscroll-behavior: contain;
@@ -657,29 +703,43 @@
 }
 
 .fx-change + .fx-change {
-  margin-top: var(--space-2);
+  margin-top: var(--space-3);
+}
+
+.fx-change.bare + .fx-change.bare {
+  margin-top: 0;
 }
 
 .fx-change-head,
 .fx-change-line {
   display: flex;
   align-items: center;
-  gap: 12px;
-  min-height: 40px;
-  padding: 0 10px 0 6px;
-  border-radius: var(--radius-m);
+  gap: 10px;
+  min-height: 30px;
   color: var(--text-2);
   white-space: nowrap;
-  cursor: pointer;
-  transition: background-color var(--hover) var(--ease);
 }
 
-.fx-change-line {
-  cursor: default;
+.fx-change-head {
+  cursor: pointer;
+  transition: color var(--hover) var(--ease);
 }
 
 .fx-change-head:hover {
-  background: var(--fill);
+  color: var(--text);
+}
+
+.fx-change-head > .glyph {
+  flex: none;
+  margin-left: -4px;
+  color: var(--text-3);
+  --turn: -90deg;
+  rotate: var(--turn);
+  transition: --turn var(--expand) var(--expand-easing);
+}
+
+.fx-change.open > .fx-change-head > .glyph {
+  --turn: 0deg;
 }
 
 :is(.fx-change-head, .fx-change-line) > time {
@@ -689,31 +749,8 @@
 }
 
 :is(.fx-change-head, .fx-change-line) > .cf-who {
-  flex: 1 1 auto;
+  flex: 0 1 auto;
   max-width: none;
-}
-
-:is(.fx-change-head, .fx-change-line) > .cf-figures {
-  margin-left: auto;
-}
-
-.fx-change.bare + .fx-change.bare {
-  margin-top: 0;
-}
-
-.fx-twist {
-  flex: none;
-  display: grid;
-  place-items: center;
-  width: 16px;
-  color: var(--text-3);
-  --turn: -90deg;
-  rotate: var(--turn);
-  transition: --turn var(--expand) var(--expand-easing);
-}
-
-.fx-change.open .fx-twist {
-  --turn: 0deg;
 }
 
 .fx-change-fold {
@@ -738,7 +775,7 @@
 }
 
 .fx-change-body > .fx-note {
-  padding: 2px 10px 10px 34px;
+  padding: 0 0 8px;
 }
 
 /* ---- The page: a tree and a file side by side ---- */
@@ -930,58 +967,27 @@
   gap: 4px;
 }
 
-.fb-place,
-.fb-step {
-  border: 0;
-  background: none;
-  color: var(--text-2);
-  font: inherit;
-  cursor: pointer;
-}
-
 .fb-place {
   display: inline-flex;
   align-items: center;
   gap: 6px;
   height: 28px;
   padding: 0 10px;
+  border: 0;
   border-radius: var(--radius-full);
   background: var(--fill);
+  color: var(--text-2);
+  font: inherit;
+  cursor: pointer;
   scale: var(--press, 1);
+}
+
+.fb-place:hover {
+  color: var(--text-strong);
 }
 
 .fb-place.chosen {
   background: var(--accent-wash);
-  color: var(--text-strong);
-}
-
-.fb-path {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0 4px;
-  margin-top: 8px;
-  padding-left: 4px;
-  min-height: 24px;
-}
-
-.fb-path i {
-  font-style: normal;
-  opacity: 0.6;
-}
-
-.fb-path b {
-  font-weight: 400;
-  color: var(--text);
-}
-
-.fb-step {
-  padding: 0 2px;
-  border-radius: 4px;
-}
-
-.fb-step:hover,
-.fb-place:hover {
   color: var(--text-strong);
 }
 
@@ -1094,7 +1100,4 @@
     margin: 0 0 var(--space-1) -6px;
   }
 
-  .fx-tabs {
-    margin-left: 0;
-  }
 }

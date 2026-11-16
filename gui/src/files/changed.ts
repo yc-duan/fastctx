@@ -125,7 +125,10 @@ export function diffLines(rows: readonly DiffRow[], path: string, words: FilesWo
       const number = row.kind === "del" ? row.old : row.new;
       const sign = row.kind === "add" ? "+" : row.kind === "del" ? "−" : "";
       const text = lang && row.text ? hljs.highlight(row.text, { language: lang, ignoreIllegals: true }).value : escape(row.text);
-      return `<div class="cf-dl cf-${row.kind}"><span class="cf-dn">${number ?? ""}</span><span class="cf-ds">${sign}</span><span class="cf-dt">${text || " "}</span></div>`;
+      // How far the line is indented, a tab four: what is carried on under
+      // it hangs a little past that.
+      const indent = [...(/^[ \t]*/.exec(row.text)?.[0] ?? "")].reduce((sum, mark) => sum + (mark === "\t" ? 4 : 1), 0);
+      return `<div class="cf-dl cf-${row.kind}"><span class="cf-dn">${number ?? ""}</span><span class="cf-ds">${sign}</span><span class="cf-dt"${indent ? ` style="--in:${Math.min(indent, 40)}"` : ""}>${text || " "}</span></div>`;
     })
     .join("");
   const rest = rows.length > limit ? `<p class="cf-longer">${escape(words.view.longer(rows.length - limit))}</p>` : "";
