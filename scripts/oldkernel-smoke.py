@@ -37,11 +37,27 @@ def main():
     try:
         subprocess.run(["systemctl", "daemon-reload"], check=True)
         env = dict(os.environ, RUNNER_TEMP=str(root), TMPDIR=str(root), FASTCTX_HOME=str(root / "unused"))
-        return subprocess.run([str(args.wrapper.resolve()), "314", sys.executable, str(here / "smoke.py"),
+        code = subprocess.run([str(args.wrapper.resolve()), "314", sys.executable, str(here / "smoke.py"),
                                str(args.program.resolve()), "--service", "--expect-seccomp"], env=env).returncode
+        if code:
+            diagnose(root)
+        return code
     finally:
         generator.unlink()
         subprocess.run(["systemctl", "daemon-reload"], check=True)
+
+
+def diagnose(root):
+    """What the generator made of the units, and what systemd holds of it."""
+    print("--- old-kernel generator")
+    logs = [log for log in (root / "generator.log", Path("/run/systemd/generator/fastctx-oldkernel.log")) if log.exists()]
+    print("".join(log.read_text() for log in logs) if logs else "(the generator left no log: it did not run, or could not write it)")
+    for command in (["systemctl", "--version"],
+                    ["sh", "-c", "ls -la /run/systemd/system-generators /run/systemd/generator 2>&1 | grep -i -e fastctx -e total"],
+                    ["sh", "-c", "cat /run/systemd/generator/fastctx-service-*.service.d/oldkernel.conf 2>&1"],
+                    ["sh", "-c", "journalctl -b --no-pager -o cat 2>/dev/null | grep -i -e generator -e oldkernel | tail -n 20"]):
+        result = subprocess.run(command, capture_output=True, text=True)
+        print("$ " + " ".join(command) + "\n" + result.stdout + result.stderr)
 
 
 if __name__ == "__main__":
