@@ -303,8 +303,10 @@ export const timesOf = (model: string) => (isFable(model) ? FABLE_TIMES : 1);
  *  middle of what its weeks came to, and how far above or below it the
  *  figure is, of a hundred. None where no week has been read yet. */
 export function plateCheck(weeks: number[], set: number): { read: number; off: number } | null {
-  if (!weeks.length) return null;
-  const sorted = [...weeks].sort((a, b) => a - b);
+  // A week that cost nothing in dollars (Codex keeps no prices) tells
+  // nothing of what a week holds.
+  const sorted = weeks.filter((week) => Number.isFinite(week) && week > 0).sort((a, b) => a - b);
+  if (!sorted.length) return null;
   const read = sorted.length % 2 ? sorted[(sorted.length - 1) / 2]! : (sorted[sorted.length / 2 - 1]! + sorted[sorted.length / 2]!) / 2;
   return { read, off: Math.round(((set - read) / read) * 100) };
 }

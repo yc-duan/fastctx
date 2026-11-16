@@ -197,7 +197,7 @@ export function fillCharts(root: HTMLElement, arriving = false): void {
   if (!days) return;
   const comes = arriving || coming;
   coming = false;
-  const width = Math.max(320, Math.floor(holder.clientWidth));
+  const width = Math.max(240, Math.floor(holder.clientWidth));
   const { dates, hours } = days;
   const total = days.total[unitNow()];
   const { values } = series(login, days);

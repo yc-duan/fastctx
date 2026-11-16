@@ -97,21 +97,23 @@ export function allotted(login: Login, tall?: number): string[] {
 const loginPlace = (login: Login) => linkOf({ kind: "login", id: login.id, tab: "usage" });
 
 function quotaBody(): string {
-  const cell = (drawn: string) => drawn || "<span></span>";
-  const row = (login: Login) => {
+  // Each window says its own name too, for a narrow screen, where the
+  // group's heads give way to rows stacked under the login.
+  const cell = (drawn: string, head: string) => (drawn ? drawn.replace('<span class="lg-cell"', `<span class="lg-cell" data-head="${head}"`) : "<span></span>");
+  const row = (login: Login, heads: [string, string, string]) => {
     const lent = login.lent;
     const cells = lent && lent.limit !== null ? ["", ...allotted(login)] : windows(login);
     const under = lent ? `来自 ${escape(lent.by)}　${lent.until ? `至 ${lent.until}` : "不限期"}` : `${escape(login.machine)}${login.plan ? `　${escape(login.plan)}` : ""}${machineOf(login).online ? "" : "　离线"}`;
     return `<div class="lg-row lg-cols${state.fresh === login.id ? " fresh" : ""}" role="link" tabindex="0" data-go="${loginPlace(login)}">
       <span class="lg-who"><b>${escape(login.who)}</b><small>${under}</small></span>
-      ${cells.map(cell).join("")}
+      ${cells.map((drawn, at) => cell(drawn, heads[at] ?? "")).join("")}
       <span class="lg-row-end"><button type="button" class="lg-word" data-act="new-talk" data-id="${escape(login.id)}">新对话</button></span>
     </div>`;
   };
   // Each group names its own columns on its head, right over its rows.
   const group = (name: string, mark: string, of: Login[], heads: [string, string, string], line: 1 | 2 | 3) =>
     of.length
-      ? `<section class="lg-family"><div class="lg-family-head lg-cols"><h2>${mark}<span>${name}</span></h2>${heads.map((head) => `<span${head === "Fable" ? ` title="${fableSaid}"` : ""}>${head}</span>`).join("")}<span></span></div>${rule(line)}${of.map(row).join("")}</section>`
+      ? `<section class="lg-family"><div class="lg-family-head lg-cols"><h2>${mark}<span>${name}</span></h2>${heads.map((head) => `<span${head === "Fable" ? ` title="${fableSaid}"` : ""}>${head}</span>`).join("")}<span></span></div>${rule(line)}${of.map((login) => row(login, heads)).join("")}</section>`
       : "";
   const working = logins.filter((login) => login.workbench && !login.lent);
   const lent = logins.filter((login) => login.lent);

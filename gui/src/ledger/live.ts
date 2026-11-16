@@ -305,7 +305,7 @@ export function daysFrom(report: UsageReport, login: Login, plate: number, world
     merged.set(key, { name: one.name, week: had.week + one.week, fable: had.fable + one.fable });
   }
   const ledgered = [...merged.values()].reduce((sum, one) => sum + one.week, 0);
-  const weeks = (report.weeks ?? [])
+  const weeks = (login.family === "codex" ? [] : (report.weeks ?? []))
     .filter((span) => (span.used_tenths ?? 0) >= 50)
     .map((span) => ({ start: new Date(span.start), value: span.used.reduce((sum, one) => sum + (one.usd ?? 0), 0) / 1_000_000 / ((span.used_tenths ?? 0) / 1000) }))
     .slice(-8);

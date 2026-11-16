@@ -684,6 +684,37 @@
 .lg-quota .lg-row {
   min-height: var(--lg-two);
 }
+/* On a narrow screen the columns give way: a login's windows stack under
+   its name, each named, and the group's heads go. */
+@media (max-width: 760px) {
+  :is(.lg, .lg-app) .lg-quota {
+    --cols: minmax(0, 1fr);
+  }
+  :is(.lg, .lg-app) .lg-quota .lg-family-head > span {
+    display: none;
+  }
+  :is(.lg, .lg-app) .lg-quota .lg-row {
+    row-gap: 10px;
+    padding-block: 12px;
+  }
+  :is(.lg, .lg-app) .lg-quota .lg-row > span:empty {
+    display: none;
+  }
+  :is(.lg, .lg-app) .lg-quota .lg-row > .lg-cell {
+    display: grid;
+    grid-template-columns: 4.5em minmax(0, 1fr);
+    column-gap: 12px;
+    align-items: baseline;
+  }
+  :is(.lg, .lg-app) .lg-quota .lg-row > .lg-cell::before {
+    content: attr(data-head);
+    grid-row: span 2;
+    color: var(--text-3);
+  }
+  :is(.lg, .lg-app) .lg-quota .lg-row-end {
+    justify-self: start;
+  }
+}
 .lg-who {
   min-width: 0;
 }
@@ -1682,3 +1713,80 @@
 .lg-folder .lg-word {
   margin-left: auto;
 }
+
+/* A phone: a page's head wraps, a login's switch on a line of its own
+   under who it is; what stood side by side stands one under another; a
+   list too wide for the screen is swiped across under its heads. */
+@media (max-width: 760px) {
+  :is(.lg, .lg-app) .lg-head {
+    flex-wrap: wrap;
+    row-gap: 10px;
+    gap: var(--space-4);
+    min-height: 0;
+    padding: 12px 4px 12px;
+  }
+  :is(.lg, .lg-app) .lg-head .segment {
+    white-space: nowrap;
+  }
+  :is(.lg, .lg-app) .lg-head-end {
+    min-width: 0;
+  }
+  :is(.lg, .lg-app) .lg-head-end .lg-pick {
+    min-width: 0;
+    max-width: 100%;
+  }
+  :is(.lg, .lg-app) .lg-head-end .lg-pick span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  :is(.lg, .lg-app) .lg-head-login .lg-ident {
+    flex: 1 1 calc(100% - 120px);
+    margin-right: 0;
+  }
+  :is(.lg, .lg-app) .lg-head-login .lg-ident p {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  :is(.lg, .lg-app) .lg-head-login .segmented {
+    order: 5;
+  }
+  :is(.lg, .lg-app) .lg-head-login .lg-head-end {
+    order: 6;
+  }
+  :is(.lg, .lg-app) .lg-now,
+  :is(.lg, .lg-app) .lg-now[data-count] {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 24px;
+    padding: 4px 4px 22px;
+  }
+  :is(.lg, .lg-app) .lg-stats {
+    padding: 0 4px;
+  }
+  :is(.lg, .lg-app) .lg-stats-head,
+  :is(.lg, .lg-app) .lg-bar {
+    flex-wrap: wrap;
+    row-gap: 8px;
+  }
+  :is(.lg, .lg-app) .lg-stats-body,
+  :is(.lg, .lg-app) .lg-stats-body[data-kind="split"] {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 24px;
+    min-height: 0;
+  }
+  :is(.lg, .lg-app) .lg-figures {
+    flex-wrap: wrap;
+    gap: 14px 32px;
+  }
+  :is(.lg, .lg-app) .lg-detail {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+  }
+  :is(.lg, .lg-app) .lg-calls,
+  :is(.lg, .lg-app) .lg-people {
+    min-width: max-content;
+  }
+  :is(.lg, .lg-app) .lg-foot .lg-pages {
+    flex-wrap: wrap;
+  }
+}
+
