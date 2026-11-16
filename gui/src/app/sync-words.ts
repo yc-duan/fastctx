@@ -59,6 +59,38 @@ export interface SyncWords {
   failed: string;
   /** How long, as a duration. */
   duration(ms: number): string;
+  /** Between this computer and the hub: the two ways, and what each says. */
+  up: string;
+  down: string;
+  here: string;
+  hub: string;
+  toUpload(frames: number, size: string): string;
+  /** Said of the way down while the two are cut off. */
+  resumes: string;
+  /** The list of devices: how many, the standings it is sorted by, the
+   *  search, the heads over each standing's columns, and the row that
+   *  stands for the rest of a long group. */
+  devices(n: number): string;
+  standings: { all: string; syncing: string; silent: string; away: string; synced: string };
+  find: string;
+  heads: { left: string; behind: string; away: string; onReturn: string; recent(span: "day" | "week"): string };
+  rest(n: number): string;
+  noMatch: string;
+  nothingMissed: string;
+  silentSaid: string;
+  /** A device opened: what it is doing and why, in a sentence, and the
+   *  facts under it. */
+  whySyncing(left: string, eta: string | null): string;
+  whyBehind(behind: string): string;
+  whyFiles(files: number, size: string): string;
+  whySynced(ago: string): string;
+  whySilent: string;
+  facts: { download: string; files: string; unpulled: string; upload: string; rate: string; online: string; offline: string; reported: string };
+  fileCount(count: number, size: string): string;
+  frames(frames: number, size: string): string;
+  scopes(n: number): string;
+  perSecond(size: string): string;
+  ago(since: string): string;
   /** The way in, on 「我」 and beside it in the sidebar. */
   entry: string;
   entrySaid(synced: number, devices: number): string;
@@ -126,10 +158,35 @@ export const zhSync: SyncWords = {
   hereTitle: "本机",
   nothingUnsent: "均已上传",
   cutOff: (since) => `与中枢断开 ${since}`,
-  unreached: "无法连接中枢，以下仅为本机记录",
+  unreached: "无法连接中枢，仅显示本机记录",
   reading: "正在查询中枢",
   failed: "读取失败",
   duration: zhDuration,
+  up: "上传",
+  down: "下载",
+  here: "本机",
+  hub: "中枢",
+  toUpload: (frames, size) => `${frames} 条待上传，${size}`,
+  resumes: "连接恢复后继续",
+  devices: (n) => `${n} 台设备`,
+  standings: { all: "全部", syncing: "同步中", silent: "未报告", away: "离线", synced: "已同步" },
+  find: "搜索设备",
+  heads: { left: "剩余", behind: "落后", away: "离线", onReturn: "恢复后需同步", recent: (span) => (span === "day" ? "近 24 小时" : "近 7 天") },
+  rest: (n) => `其余 ${n} 台`,
+  noMatch: "无匹配设备",
+  nothingMissed: "无遗漏",
+  silentSaid: "旧版本的设备不报告同步进度，升级后开始同步",
+  whySyncing: (left, eta) => `正在从中枢下载，剩余 ${left}${eta ? `，${eta}` : ""}`,
+  whyBehind: (behind) => `落后中枢 ${behind}，正在追平`,
+  whyFiles: (files, size) => `文字已同步，${files} 个文件待下载，${size}`,
+  whySynced: (ago) => `已同步，${ago}确认`,
+  whySilent: "已登录此账号，尚未报告同步进度。旧版本的设备不参与同步，升级后开始",
+  facts: { download: "待下载", files: "文件", unpulled: "未取全", upload: "待上传", rate: "速度", online: "在线", offline: "离线", reported: "最近报告" },
+  fileCount: (count, size) => `${count} 个，${size}`,
+  frames: (frames, size) => `${frames} 条，${size}`,
+  scopes: (n) => `${n} 段`,
+  perSecond: (size) => `${size}/s`,
+  ago: (since) => `${since}前`,
   entry: "同步",
   entrySaid: (synced, devices) => (synced === devices ? (devices === 1 ? "已齐" : `${devices} 台都已齐`) : `${devices} 台中 ${synced} 台已同步`),
 };
@@ -173,10 +230,35 @@ export const enSync: SyncWords = {
   hereTitle: "This computer",
   nothingUnsent: "Everything sent",
   cutOff: (since) => `Cut off from the hub for ${since}`,
-  unreached: "The hub is not reached; below is what this computer knows itself",
+  unreached: "The hub is not reached; this is what this computer knows itself",
   reading: "Asking the hub",
   failed: "Could not read it",
   duration: enDuration,
+  up: "Up",
+  down: "Down",
+  here: "This device",
+  hub: "Hub",
+  toUpload: (frames, size) => `${frames} to send, ${size}`,
+  resumes: "Goes on once connected",
+  devices: (n) => `${n} ${n === 1 ? "device" : "devices"}`,
+  standings: { all: "All", syncing: "Catching up", silent: "Not reporting", away: "Offline", synced: "Caught up" },
+  find: "Find a device",
+  heads: { left: "To go", behind: "Behind", away: "Offline", onReturn: "To catch up on return", recent: (span) => (span === "day" ? "Last 24 hours" : "Last 7 days") },
+  rest: (n) => `${n} more`,
+  noMatch: "No device matches",
+  nothingMissed: "Nothing missed",
+  silentSaid: "A device on an earlier version does not tell where it stands; it syncs once updated",
+  whySyncing: (left, eta) => `Taking from the hub, ${left} to go${eta ? `, ${eta}` : ""}`,
+  whyBehind: (behind) => `${behind} behind the hub, catching up`,
+  whyFiles: (files, size) => `Text caught up; ${files} ${files === 1 ? "file" : "files"} to come, ${size}`,
+  whySynced: (ago) => `Caught up, confirmed ${ago}`,
+  whySilent: "Logged in to this account, it has not told where it stands. A device on an earlier version takes no part in syncing until it is updated",
+  facts: { download: "To take", files: "Files", unpulled: "Not whole yet", upload: "To send", rate: "Rate", online: "Online", offline: "Offline", reported: "Last told" },
+  fileCount: (count, size) => `${count}, ${size}`,
+  frames: (frames, size) => `${frames}, ${size}`,
+  scopes: (n) => `${n}`,
+  perSecond: (size) => `${size}/s`,
+  ago: (since) => `${since} ago`,
   entry: "Sync",
   entrySaid: (synced, devices) => (synced === devices ? (devices === 1 ? "Caught up" : `All ${devices} caught up`) : `${synced} of ${devices} caught up`),
 };

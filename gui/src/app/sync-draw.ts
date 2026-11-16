@@ -1,12 +1,12 @@
-// The sync status page's drawings, in the usage page's pen: how far behind
-// each device stood through the span, a line each in its own ink, the
-// offline stretches left blank, a small ring where it came back and a dot
-// where it caught up; and the small ring of how many of the devices are
-// caught up, for the way in. Each is drawn at the width it is shown at; the
-// hover over each stretch of time says where every device stood then.
+// The sync status page's drawings (`sync-page.ts`): the two lines between
+// this computer and the hub, one each way; how far behind a device stood
+// through the span, small beside it in the list and large where it is
+// opened, the offline stretches left blank, a small ring where it came back
+// and a dot where it caught up; and the small ring of how many of the
+// devices are caught up, for the way in. One ink: the pencil's.
 
 import { escape } from "../conversation/prose";
-import { circle, dot, outline, ruled, seeded, type Point } from "../pen/shapes";
+import { circle, dashed, dot, outline, ruled, ruledPoints, seeded, type Point } from "../pen/shapes";
 import type { LagPoint } from "../world/sync";
 import type { SyncWords } from "./sync-words";
 
@@ -128,6 +128,52 @@ export function lagLines(input: LinesInput): string {
     hits += `<rect x="${f(x(at))}" y="${top}" width="${f(slot)}" height="${f(h)}" fill="transparent"${hint([words.at(new Date(at), span), ...said].join("\n"))}/>`;
   }
   return `<svg class="ledger-chart sync-lines" viewBox="0 0 ${f(width)} ${height}" width="${f(width)}" height="${height}" role="img" aria-label="${escape(words.lineTitle)}"><path class="ledger-rule" d="${grid}"/>${labels}<g filter="url(#pen-marker-lite)">${ink}${marks}</g>${hits}</svg>`;
+}
+
+/** A line between this computer and the hub, drawn a thousand units long
+ *  and stretched to the room it has, with the head it points with: broken
+ *  into dashes where the two are cut off from each other. */
+export function wayLine(seed: string, cut: boolean): { line: string; head: string } {
+  const random = seeded(`sync-way:${seed}`);
+  const d = cut ? dashed([0, 5], [1000, 5], 1.3, random, 14, 12) : outline(ruledPoints([0, 5], [1000, 5], random), 1.3, random, { pressure: 0.2, taper: 0.01 });
+  const head = outline([[1.5, 1.5], [8.6, 5]], 1.5, random, { pressure: 0.15, taper: 0.1 }) + outline([[1.5, 8.5], [8.6, 5]], 1.5, random, { pressure: 0.15, taper: 0.1 });
+  return {
+    line: `<svg class="sy-way-line" viewBox="0 0 1000 10" preserveAspectRatio="none" aria-hidden="true"><path d="${d}"/></svg>`,
+    head: `<svg class="sy-way-head" viewBox="0 0 10 10" aria-hidden="true"><path d="${head}"/></svg>`,
+  };
+}
+
+/** How far behind one device stood through the span, small: a faint line
+ *  the length of the span, inked where it was online, the ink rising with
+ *  how far behind it stood against `ceiling`; blank where it was offline. */
+export function strip(points: LagPoint[], from: number, to: number, ceiling: number, seed: string, width = 168, height = 22): string {
+  const random = seeded(`sync-strip:${seed}`);
+  const base = height - 4;
+  const rise = height - 8;
+  const slots = 56;
+  const span = Math.max(1, to - from);
+  // The most it stood behind in each slot of the span it was online in.
+  const most: (number | null)[] = new Array(slots).fill(null);
+  for (const point of points) {
+    if (!point.online || point.at < from || point.at > to) continue;
+    const slot = Math.min(slots - 1, Math.floor(((point.at - from) / span) * slots));
+    most[slot] = Math.max(most[slot] ?? 0, point.behind);
+  }
+  const x = (slot: number) => 1 + ((slot + 0.5) / slots) * (width - 2);
+  const y = (behind: number) => base - Math.sqrt(Math.min(1, behind / Math.max(1, ceiling))) * rise;
+  let ink = "";
+  let run: Point[] = [];
+  const flush = () => {
+    if (run.length > 1) ink += outline(run, 1.6, random, { pressure: 0.15, taper: 0.02 });
+    else if (run.length === 1) ink += dot(run[0]!, 1.2, random);
+    run = [];
+  };
+  most.forEach((behind, slot) => {
+    if (behind === null) flush();
+    else run.push([x(slot), y(behind < CAUGHT_UP ? 0 : behind)]);
+  });
+  flush();
+  return `<svg class="sy-strip" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}" aria-hidden="true"><path class="sy-strip-base" d="${ruled([1, base], [width - 1, base], 0.8, random)}"/><path class="sy-strip-ink" d="${ink}"/></svg>`;
 }
 
 /** A small ring, drawn round as far as `synced` of `devices`: the way in,
