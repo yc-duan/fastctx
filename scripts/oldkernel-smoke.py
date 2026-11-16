@@ -25,7 +25,7 @@ def main():
     here = Path(__file__).resolve().parent
     settings = root / "generator.json"
     settings.write_text(json.dumps({"root": str(root), "wrapper": str(args.wrapper.resolve())}))
-    generators = Path("/run/systemd/system-generators")
+    generators = generators_dir()
     generators.mkdir(parents=True, exist_ok=True)
     generator = generators / ("fastctx-oldkernel-" + str(os.getpid()))
     if generator.exists():
@@ -49,6 +49,17 @@ def main():
         subprocess.run(["systemctl", "daemon-reload"], check=True)
 
 
+def generators_dir():
+    """Where systemd finds this run's generator: under /run, which goes with
+    the machine, unless /run lets no program run from it. Some runner images
+    mount it so, and systemd then fails every generator there with
+    'Permission denied', leaving the services unwrapped; /etc is searched for
+    generators as well, and the generator is taken away when the run ends."""
+    if os.statvfs("/run").f_flag & os.ST_NOEXEC:
+        return Path("/etc/systemd/system-generators")
+    return Path("/run/systemd/system-generators")
+
+
 def unread(root):
     """Units the generator could not read, said even when the rest passed:
     one such unit once left every other unwrapped."""
@@ -64,7 +75,8 @@ def diagnose(root):
     logs = [log for log in (root / "generator.log", Path("/run/systemd/generator/fastctx-oldkernel.log")) if log.exists()]
     print("".join(log.read_text() for log in logs) if logs else "(the generator left no log: it did not run, or could not write it)")
     for command in (["systemctl", "--version"],
-                    ["sh", "-c", "ls -la /run/systemd/system-generators /run/systemd/generator 2>&1 | grep -i -e fastctx -e total"],
+                    ["sh", "-c", "findmnt -no OPTIONS /run"],
+                    ["sh", "-c", "ls -la /run/systemd/system-generators /etc/systemd/system-generators /run/systemd/generator 2>&1 | grep -i -e fastctx -e total"],
                     ["sh", "-c", "cat /run/systemd/generator/fastctx-service-*.service.d/oldkernel.conf 2>&1"],
                     ["sh", "-c", "journalctl -b --no-pager -o cat 2>/dev/null | grep -i -e generator -e oldkernel | tail -n 20"]):
         result = subprocess.run(command, capture_output=True, text=True)
