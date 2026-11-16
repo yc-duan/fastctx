@@ -42,13 +42,15 @@ pub(crate) async fn conversation_files(
     after: String,
 ) -> Result<FileChanges, String> {
     use fastctx_types::timeline_pages::{FILES_ITEMS, TimelineAsk, TimelineTold};
-    let reader = shell.timeline_readers.get(id).ok_or("the conversation is no longer watched")?;
+    let unknown = FileChanges { known: false, reread: false, changes: Vec::new(), through: String::new(), more: false };
+    // Watched whole, the older way, from a machine of an earlier release:
+    // no reader of its timeline, and none of its files kept.
+    let Some(reader) = shell.timeline_readers.get(id) else { return Ok(unknown) };
     let (world, machine, resident) = {
         let reader = reader.lock().await;
         (reader.world.clone(), reader.machine.clone(), reader.resident.clone())
     };
     let after = if after.is_empty() { 0 } else { after.parse::<u64>().map_err(|error| error.to_string())? };
-    let unknown = FileChanges { known: false, reread: false, changes: Vec::new(), through: String::new(), more: false };
     let reading = world.timeline(machine, TimelineAsk::Files { resident, after, max_items: FILES_ITEMS });
     let told = tokio::select! {
         told = tokio::time::timeout(std::time::Duration::from_secs(30), reading) => told,

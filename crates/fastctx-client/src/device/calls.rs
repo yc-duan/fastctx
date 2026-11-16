@@ -649,8 +649,12 @@ impl Device {
                 .await
                 .map_err(failed)?
                 .map_err(failed)?;
+            // Of an earlier release: what reads it opens it the older way.
             if !matches!(&facts, RemoteReply::Facts(facts) if facts.timeline_reads) {
-                return Err(failed("this machine does not answer timeline pages; update it"));
+                return Err(crate::CallError::Failed(fastctx_types::ipc::Failure::unsupported(
+                    "this machine does not answer timeline pages; update it",
+                ))
+                .into());
             }
             // The files a conversation changed: never asked of a hub or a
             // machine that does not know the question.
