@@ -10,7 +10,6 @@
 // it, and one of the host's agents, are read in a sheet. Where it works is
 // said in the desk's corner, whether the side is open or folded away.
 
-import { Sheet } from "../app/confirm";
 import type { AgentRun } from "../conversation/agents";
 import { PlanPage, type PlanShown } from "../plan/panel";
 import { planShape } from "../plan/shape";
@@ -142,9 +141,10 @@ export class SideParts implements PartSet {
   history: { part: string; label: string } | null = null;
   private readonly bar: GoalBar;
   private readonly home: SideHome;
-  private readonly collab: CollabPage;
-  /** Everyone who works with the conversation, while their sheet is open. */
-  private teamSheet: Sheet | null = null;
+  /** The colleagues it asked, and the host's agents it sent, each read
+   *  whole on its own card of the overview once opened there. */
+  private readonly colleaguesPage: CollabPage;
+  private readonly agentsPage: CollabPage;
   private readonly goalPage: GoalPage;
   private readonly filesPage: SideFiles | null = null;
   private readonly planPage: PlanPage;
@@ -197,15 +197,27 @@ export class SideParts implements PartSet {
       clear: () => void this.act(seams.goal.clear(version())),
       expand: () => this.frame?.show(PART.goal),
     });
-    this.collab = new CollabPage(words.collab, words.goal, (node) => this.openNode(node));
+    // The files it changed and the folders it works in: read whole on their
+    // card of the overview once opened there; in a window of their own, the
+    // window's first page.
+    if (seams.files)
+      this.filesPage = new SideFiles({
+        words: seams.files.words,
+        machine: seams.self.machine,
+        list: seams.files.list,
+        home: seams.files.home,
+        browse: seams.files.browse,
+        open: (machine, path, tab) => context.openFile?.(machine, path, tab),
+        detail: (error) => context.detail?.(error) ?? String(error),
+      });
+    this.colleaguesPage = new CollabPage(words.collab, words.goal, (node) => this.openNode(node), ["colleague", "side"]);
+    this.agentsPage = new CollabPage(words.collab, words.goal, (node) => this.openNode(node), ["subagent"]);
     page.querySelector(".composer-dock > form.composer")?.before(this.bar.element);
     this.home = new SideHome(
       words,
       {
         page: () => this.frame?.show(PART.goal),
         node: (node) => this.openNode(node),
-        team: () => this.openTeam(),
-        files: () => this.frame?.show(PART.files),
         file: (machine, path) => context.openFile?.(machine, path, "changes"),
         // A card taken out stands in a window of its own, its place kept
         // here; the files' goes with the files open, which are shut here.
@@ -222,26 +234,14 @@ export class SideParts implements PartSet {
       !seams.noGoal,
       this.planPage.element,
       seams.files?.words ?? null,
+      // What each card shows opened whole. The files in a window of their
+      // own are that window's first page, not a card's.
+      { colleagues: this.colleaguesPage, agents: this.agentsPage, ...(this.filesPage && ONLY !== "files" ? { files: this.filesPage } : {}) },
     );
-    this.parts = [
-      { id: PART.home, name: words.home.name, page: this.home },
-      ...(seams.noGoal ? [] : [{ id: PART.goal, name: words.pages.goal, page: this.goalPage }]),
-    ];
-    if (seams.files) {
-      this.filesPage = new SideFiles({
-        words: seams.files.words,
-        machine: seams.self.machine,
-        list: seams.files.list,
-        home: seams.files.home,
-        browse: seams.files.browse,
-        open: (machine, path, tab) => context.openFile?.(machine, path, tab),
-        detail: (error) => context.detail?.(error) ?? String(error),
-      });
-      this.parts.push({ id: PART.files, name: seams.files.words.side.name, page: this.filesPage });
-      // The files in a window of their own: their page is the first there,
-      // each file read on a tab after it.
-      if (ONLY === "files") this.parts.splice(0, this.parts.length - 1);
-    }
+    this.parts =
+      ONLY === "files" && this.filesPage && seams.files
+        ? [{ id: PART.files, name: seams.files.words.side.name, page: this.filesPage }]
+        : [{ id: PART.home, name: words.home.name, page: this.home }, ...(seams.noGoal ? [] : [{ id: PART.goal, name: words.pages.goal, page: this.goalPage }])];
     // The history its model works with, a page of its own that the mark in
     // the desk's corner opens: its project's, else its own.
     if (seams.history && !ONLY) {
@@ -364,30 +364,10 @@ export class SideParts implements PartSet {
   }
 
   private follow(): void {
-    const detailed = this.shownPart === PART.home || this.shownPart === PART.goal || this.teamSheet !== null || this.telling.team.size > 0;
+    const detailed = this.shownPart === PART.home || this.shownPart === PART.goal || this.telling.team.size > 0;
     if (detailed === this.detailed) return;
     this.detailed = detailed;
     this.following?.detail(detailed);
-  }
-
-  /** Everyone who works with the conversation, in a sheet: a colleague
-   *  pressed opens beside the conversation, one of the host's agents in the
-   *  sheet, the way back to everyone at its head. */
-  private openTeam(): void {
-    const sheet = this.teamSheet ?? new Sheet("cs-sheet");
-    if (!this.teamSheet) {
-      this.teamSheet = sheet;
-      sheet.dialog.addEventListener("close", () => {
-        if (this.teamSheet === sheet) this.teamSheet = null;
-        this.follow();
-      });
-    }
-    const words = this.context.seams.words;
-    sheet.body.innerHTML = sheet.head(words.pages.collab, words.close);
-    sheet.body.append(this.collab.element);
-    sheet.anew();
-    sheet.show();
-    this.follow();
   }
 
   leave(): void {
@@ -402,7 +382,6 @@ export class SideParts implements PartSet {
   private openNode(node: CollabNode): void {
     if (this.context.away) return this.context.away.node(node);
     if (node.kind === "colleague" || node.kind === "side") {
-      this.teamSheet?.close();
       this.frame?.beside({ resident: node.id, machine: node.machine ?? this.context.seams.self.machine });
       return;
     }
@@ -412,7 +391,6 @@ export class SideParts implements PartSet {
       if (colleague) this.openNode(colleague);
       return;
     }
-    this.teamSheet?.close();
     this.context.jump(node.id);
   }
 
@@ -464,7 +442,8 @@ export class SideParts implements PartSet {
     this.drawnTeam = key;
     this.teamNodes = nodes;
     this.tell("team");
-    this.collab.show(nodes, this.teamReading);
+    this.colleaguesPage.show(nodes, this.teamReading);
+    this.agentsPage.show(nodes, this.teamReading);
     this.home.team(nodes);
     if (fresh) {
       this.fresh = true;

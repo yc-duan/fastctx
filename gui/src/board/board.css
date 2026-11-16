@@ -18,3 +18,37 @@
 .sb-main {
   display: none;
 }
+
+/* The card is the whole of what it holds, as tall as the window: nothing
+   of it folds here, so its head is its name and how it stands, no more,
+   and what it holds scrolls with the window's own height. */
+.sb-host .sh-page.sp-page {
+  padding-bottom: var(--space-3);
+}
+
+.sb-host .sh-card {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.sb-host .sh-head {
+  cursor: default;
+}
+
+.sb-host .sh-turn {
+  display: none;
+}
+
+.sb-host .sh-card > .sh-fold,
+.sb-host .sh-card .sh-fold-inner,
+.sb-host .sh-card .sh-body {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.sb-host .sh-whole {
+  flex: 1 1 auto;
+  max-height: none;
+}

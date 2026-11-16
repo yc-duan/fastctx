@@ -12,6 +12,13 @@
 // of the side, where it is let go into a window of its own (`board.ts`), as
 // the mark at its head's end does at a press; its place is kept in the side
 // meanwhile, and from there it is called forward or put back.
+//
+// Each card shows a glance of what it holds, and at its foot the way to the
+// whole of it, there on the card, scrolling in the card past a height; and
+// back to the glance (the user, 2026-11-17: "所有侧栏卡片我们统一做成 show
+// more 和 show less，能滚动"). Nothing opens over the side for it. In a
+// window of its own a card is the whole of what it holds and fills the
+// window, with none of what folds or opens it in the side.
 
 import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
@@ -29,8 +36,10 @@ import type { SideWords } from "./words";
 /** The lines a card of those who work with the conversation shows, before
  *  the rest are left to the sheet. */
 const SHORT = 4;
-/** Where this device keeps the cards folded away. */
+/** Where this device keeps the cards folded away, and those showing the
+ *  whole of what they hold. */
 const FOLDED = "side-home-folded";
+const WHOLE = "side-home-whole";
 
 export interface HomeSeams {
   /** The goal's page of the side. */
@@ -38,11 +47,7 @@ export interface HomeSeams {
   /** One who works with the conversation: a colleague beside it, one of the
    *  host's agents read in a sheet. */
   node(node: CollabNode): void;
-  /** Everyone who works with it, in a sheet. */
-  team(): void;
-  /** The files it changed, as a page of the side; and one of them, opened
-   *  to its changes. */
-  files?(): void;
+  /** One of the files it changed, opened to its changes. */
   file?(machine: string, path: string): void;
   /** Whether a card stands in a window of its own, its place kept here. */
   away?(card: Card): boolean;
@@ -61,19 +66,19 @@ const FILES = 4;
 const CARRIED = 6;
 const SETTLE = 400;
 
-function folded(): Set<string> {
+function kept(key: string): Set<string> {
   try {
-    return new Set(JSON.parse(localStorage.getItem(FOLDED) ?? "[]") as string[]);
+    return new Set(JSON.parse(localStorage.getItem(key) ?? "[]") as string[]);
   } catch {
     return new Set();
   }
 }
 
-function keepFolded(cards: Set<string>): void {
+function keep(key: string, cards: Set<string>): void {
   try {
-    localStorage.setItem(FOLDED, JSON.stringify([...cards]));
+    localStorage.setItem(key, JSON.stringify([...cards]));
   } catch {
-    // Folding is this device's convenience; without storage it lasts the page.
+    // This device's convenience; without storage it lasts the page.
   }
 }
 
@@ -100,7 +105,9 @@ export class SideHome implements SidePage {
   private planned = false;
   private nodes: CollabNode[] = [];
   private changed: ChangedFile[] = [];
-  private readonly fold = folded();
+  private readonly fold = kept(FOLDED);
+  /** The cards showing the whole of what they hold. */
+  private readonly whole = kept(WHOLE);
   /** Those on short lines, in the order their times stand on the page. */
   private lined: CollabNode[] = [];
   private timer: number | null = null;
@@ -122,14 +129,25 @@ export class SideHome implements SidePage {
     private readonly planPage: HTMLElement,
     /** The words of the files it changed; none where they are not shown. */
     private readonly fileWords: FilesWords | null = null,
+    /** What a card shows opened whole: a page of its own, set into the
+     *  card. */
+    private readonly pages: Partial<Record<Card, SidePage>> = {},
   ) {
     this.element = document.createElement("section");
     this.element.className = "sh-page";
     this.none.className = "sh-none";
     this.element.addEventListener("click", (event) => {
       const target = event.target as HTMLElement;
-      // The press that ends a card's being carried does nothing more.
-      if (performance.now() - this.carriedAt < SETTLE) return;
+      // The press that ends a card's being carried does nothing more; and
+      // what a card shows whole hears its own presses.
+      if (performance.now() - this.carriedAt < SETTLE || target.closest(".sh-whole")) return;
+      const more = target.closest<HTMLElement>("[data-more]")?.dataset.more;
+      if (more) {
+        if (!this.whole.delete(more)) this.whole.add(more);
+        keep(WHOLE, this.whole);
+        this.draw();
+        return;
+      }
       const pulled = target.closest<HTMLElement>("[data-pull]");
       if (pulled) {
         const section = pulled.closest<HTMLElement>(".sh-card");
@@ -149,7 +167,7 @@ export class SideHome implements SidePage {
         const shut = !this.fold.has(card);
         if (shut) this.fold.add(card);
         else this.fold.delete(card);
-        keepFolded(this.fold);
+        keep(FOLDED, this.fold);
         // Folded where it stands, so it eases shut or open as a
         // conversation's steps do; the next drawing finds it as it is.
         const section = head.closest<HTMLElement>(".sh-card");
@@ -162,9 +180,7 @@ export class SideHome implements SidePage {
         return;
       }
       const open = target.closest<HTMLElement>("[data-open]")?.dataset.open;
-      if (open === "team") return this.seams.team();
       if (open === "goal") return this.seams.page(open);
-      if (open === "files") return this.seams.files?.();
       const file = target.closest<HTMLElement>("[data-file]");
       if (file) return this.seams.file?.(file.dataset.machine!, file.dataset.file!);
       const id = target.closest<HTMLElement>("[data-id]")?.dataset.id;
@@ -288,8 +304,15 @@ export class SideHome implements SidePage {
         const made = document.createElement("template");
         made.innerHTML = html;
         const element = made.content.firstElementChild as HTMLElement;
-        // The plan's page is one element, kept as its card is set anew.
+        // The plan's page is one element, kept as its card is set anew; so
+        // is the page a card shows whole.
         if (key === "plan") element.querySelector(".sh-plan")?.append(this.planPage);
+        const slot = element.querySelector<HTMLElement>(".sh-whole");
+        const page = slot ? this.pages[key as Card] : undefined;
+        if (slot && page) {
+          slot.append(page.element);
+          page.shown?.();
+        }
         if (card) card.element.replaceWith(element);
         card = { sign, element };
         this.standing.set(key, card);
@@ -452,8 +475,24 @@ export class SideHome implements SidePage {
     const lines = latest
       .map((file) => `<button class="sh-file" type="button" data-file="${escape(file.path)}" data-machine="${escape(file.machine)}" title="${escape(file.path)}">${mark(file.how, words.how[file.how])}<span class="sh-file-name">${escape(file.name)}</span>${figures(file.added, file.removed)}</button>`)
       .join("");
-    const all = `<button class="text-button sh-all" type="button" data-open="files">${escape(words.side.all(sum.files))}</button>`;
-    return this.card("files", words.side.name, words.files(sum.files), `<div class="sh-files">${lines}</div><div class="sh-files-foot">${all}${figures(sum.added, sum.removed)}</div>`);
+    // Whole, their own page: every file, and the folders it works in.
+    if (this.wholeOf("files")) return this.card("files", words.side.name, words.files(sum.files), `<div class="sh-whole"></div>${this.foot("files", 0, true)}`);
+    return this.card("files", words.side.name, words.files(sum.files), `<div class="sh-files">${lines}</div>${this.foot("files", this.changed.length - latest.length, false, figures(sum.added, sum.removed))}`);
+  }
+
+  /** Whether a card shows the whole of what it holds: always in a window
+   *  of its own; in the side, once opened so at its foot. */
+  private wholeOf(card: Card): boolean {
+    return !!this.pages[card] && (ONLY === card || this.whole.has(card));
+  }
+
+  /** A card's foot: the way to the whole of what it holds, `rest` more of
+   *  them where it lists things, or back to the glance; and what else the
+   *  foot says, at its end. None in a window of its own. */
+  private foot(card: Card, rest: number, whole: boolean, tail = ""): string {
+    if (ONLY || !this.pages[card]) return tail ? `<div class="sh-foot"><span></span>${tail}</div>` : "";
+    const said = whole ? this.words.home.fewer : this.words.home.more(rest);
+    return `<div class="sh-foot"><button class="text-button sh-more${whole ? " whole" : ""}" type="button" data-more="${card}" aria-expanded="${whole}"><span>${escape(said)}</span>${glyph("chevron", 14)}</button>${tail}</div>`;
   }
 
   /** The colleagues, or the host's agents: those at work first, a short line
@@ -463,14 +502,17 @@ export class SideHome implements SidePage {
     const words = this.words;
     const working = nodes.filter((node) => going(node.state)).length;
     const waiting = nodes.some((node) => node.state === "waiting");
+    const name = card === "colleagues" ? words.collab.groups.colleagues : words.collab.groups.agents;
+    const state = working ? words.collab.atWork(working) : "";
+    const waits = waiting ? words.collab.states.waiting : "";
+    // Whole, their own page: a card each, with the agents each sent.
+    if (this.wholeOf(card)) return this.card(card, name, state, `<div class="sh-whole"></div>${this.foot(card, 0, true)}`, waits);
     const shown = nodes.slice(0, SHORT);
     for (const node of shown) this.lined.push(node);
     const lines = shown.map((node) => shortLine(node, now, words.collab, words.goal)).join("");
+    // The foot is there where there is more to see than the lines say.
     const more = nodes.length > SHORT || nodes.some((node) => node.children.length > 0);
-    const all = more ? `<button class="text-button sh-all" type="button" data-open="team">${escape(words.home.all(nodes.length))}</button>` : "";
-    const name = card === "colleagues" ? words.collab.groups.colleagues : words.collab.groups.agents;
-    const state = working ? words.collab.atWork(working) : "";
-    return this.card(card, name, state, `<div class="sh-lines">${lines}</div>${all}`, waiting ? words.collab.states.waiting : "");
+    return this.card(card, name, state, `<div class="sh-lines">${lines}</div>${more ? this.foot(card, nodes.length - shown.length, false) : ""}`, waits);
   }
 
   /** Each second while the page is seen and one works: their times. */
@@ -485,7 +527,7 @@ export class SideHome implements SidePage {
 
   private second(): void {
     const now = Date.now();
-    const cells = this.element.querySelectorAll<HTMLElement>(".cp-line .cp-took");
+    const cells = this.element.querySelectorAll<HTMLElement>(".sh-lines .cp-line .cp-took");
     this.lined.forEach((node, index) => {
       if (!going(node.state)) return;
       const took = workedFor(node, now);

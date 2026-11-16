@@ -94,7 +94,6 @@ export interface FilesWords {
     folders: string;
     shows: string;
     none: string;
-    all(n: number): string;
     /** The mark at a machine's folder that goes to the machine's own page
      *  of files. */
     browse: string;
@@ -177,7 +176,6 @@ export const zhFiles: FilesWords = {
     folders: "目录",
     shows: "看什么",
     none: "这个对话还没有改动文件",
-    all: (n) => `全部 ${n} 个`,
     browse: "在这台电脑的文件页里打开",
   },
 };
@@ -255,7 +253,6 @@ export const enFiles: FilesWords = {
     folders: "Folders",
     shows: "What is shown",
     none: "This conversation has changed no file yet",
-    all: (n) => `All ${n}`,
     browse: "Open in this computer's files",
   },
 };

@@ -851,11 +851,58 @@ html.sh-carrying * {
   padding-left: var(--space-2);
 }
 
-/* Under the lines, where they begin. */
-.sh-all {
-  align-self: flex-start;
-  margin: var(--space-1) var(--space-1) 0;
+/* A card's foot: the way to the whole of what it holds, and back to the
+   glance, where its lines begin; what else the foot says, at its end. */
+.sh-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  min-height: 30px;
+  margin-top: var(--space-1);
+  padding: 0 var(--space-3) 0 var(--space-1);
+}
+
+.sh-more {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   padding: 0 var(--space-2);
+}
+
+.sh-more > .glyph {
+  flex: none;
+  color: var(--text-3);
+  transition: rotate var(--expand) var(--expand-easing);
+}
+
+.sh-more.whole > .glyph {
+  rotate: 180deg;
+}
+
+.sh-foot .cf-figures {
+  gap: 6px;
+  font-size: var(--size-fine);
+}
+
+/* The whole of what a card holds, set into the card: past a height it
+   scrolls there, the card standing as tall as that and no taller. */
+.sh-whole {
+  min-height: 0;
+  max-height: min(56dvh, 520px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  padding: 0 var(--space-3);
+}
+
+.sh-whole > .cp-page {
+  overflow: visible;
+}
+
+.sh-whole > .sf-page {
+  display: flex;
+  flex-direction: column;
 }
 
 .sh-none {
@@ -2002,17 +2049,9 @@ button.gh-goal:hover,
   text-overflow: ellipsis;
 }
 
-.sh-file .cf-figures,
-.sh-files-foot .cf-figures {
+.sh-file .cf-figures {
   gap: 6px;
   font-size: var(--size-fine);
-}
-
-.sh-files-foot {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding-right: var(--space-3);
 }
 
 .sf-page.sp-page {

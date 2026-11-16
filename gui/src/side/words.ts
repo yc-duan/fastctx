@@ -11,13 +11,17 @@ export interface SideWords {
   home: {
     name: string;
     none: string;
-    all: (n: number) => string;
     /** What the menu that chooses the overview's cards is called. */
     shows: string;
     /** Said where every card was put away. */
     hidden: string;
     /** Said in a card's place while it stands in a window of its own. */
     away: string;
+    /** At a card's foot: shows the whole of what it holds, `n` more of them
+     *  where it lists things; and, with the whole shown, only the first of
+     *  it again. */
+    more(n: number): string;
+    fewer: string;
   };
   /** A file read in the side, on a tab of its own. */
   file: FileWords;
@@ -166,7 +170,7 @@ function clock(ms: number, now: number, locale: string, today: string, tomorrow:
 
 export const zhSide: SideWords = {
   pages: { plan: "计划", goal: "目标", collab: "协作", history: "笔记", files: "文件" },
-  home: { name: "概览", none: "暂无计划与协作", all: (n) => `全部 ${n} 个`, shows: "侧栏显示的内容", hidden: "都收起来了，右键选择要显示的内容", away: "在独立窗口" },
+  home: { name: "概览", none: "暂无计划与协作", shows: "侧栏显示的内容", hidden: "都收起来了，右键选择要显示的内容", away: "在独立窗口", more: (n) => (n > 0 ? `展开其余 ${n} 个` : "展开"), fewer: "收起" },
   file: { outside: "用默认程序打开", reading: "读取中…", missing: "找不到这个文件", failed: "读取失败", interrupted: "连接中断，正在重连…" },
   panel: "侧面板",
   shut: "收起侧面板",
@@ -256,7 +260,7 @@ export const zhSide: SideWords = {
 
 export const enSide: SideWords = {
   pages: { plan: "Plan", goal: "Goal", collab: "Team", history: "Notes", files: "Files" },
-  home: { name: "Overview", none: "No plan or helpers yet", all: (n) => `All ${n}`, shows: "What the side shows", hidden: "Everything is put away; right-click to choose what is shown", away: "In its own window" },
+  home: { name: "Overview", none: "No plan or helpers yet", shows: "What the side shows", hidden: "Everything is put away; right-click to choose what is shown", away: "In its own window", more: (n) => (n > 0 ? `Show ${n} more` : "Show more"), fewer: "Show less" },
   file: { outside: "Open with default app", reading: "Reading…", missing: "File not found", failed: "Could not read this file", interrupted: "Disconnected, reconnecting…" },
   panel: "Side panel",
   shut: "Close the side panel",

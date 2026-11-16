@@ -63,6 +63,9 @@ export class CollabPage implements SidePage {
     private readonly words: CollabWords,
     private readonly goals: GoalWords,
     private readonly pressed: (node: CollabNode) => void,
+    /** The kinds it shows, where not all of them: on a card of the side's
+     *  overview, which names them itself, so their group goes unnamed. */
+    private readonly only?: readonly CollabNode["kind"][],
   ) {
     this.element = document.createElement("section");
     this.element.className = "cp-page";
@@ -106,15 +109,17 @@ export class CollabPage implements SidePage {
       [groups.agents, "subagent"],
       [groups.side, "side"],
     ];
-    const drawn = kinds.map(([name, kind]) => {
+    const only = this.only;
+    const drawn = kinds.filter(([, kind]) => !only || only.includes(kind)).map(([name, kind]) => {
       const all = ordered.filter((node) => node.kind === kind);
       const kept = this.unfolded ? all : all.filter(recent);
       const earlier = all.length - all.filter(recent).length;
       if (all.length === 0) return "";
       const fold = earlier ? `<button class="cp-earlier" type="button">${escape(this.unfolded ? this.words.fold : this.words.earlier(earlier))}</button>` : "";
-      return `<section class="cp-group"><h3 class="cp-group-name">${escape(name)}</h3>${kept.map((node) => this.card(node, now)).join("")}${fold}</section>`;
+      return `<section class="cp-group">${only ? "" : `<h3 class="cp-group-name">${escape(name)}</h3>`}${kept.map((node) => this.card(node, now)).join("")}${fold}</section>`;
     });
-    const note = this.reading ? this.words.reading : this.nodes.length === 0 ? this.words.empty : "";
+    const none = !this.nodes.some((node) => !only || only.includes(node.kind));
+    const note = this.reading ? this.words.reading : none ? this.words.empty : "";
     this.element.innerHTML = drawn.join("") + (this.reading ? waiting({ label: note, shape: "rows", rows: 2 }) : note ? `<p class="cp-empty">${escape(note)}</p>` : "");
     this.tick();
   }
