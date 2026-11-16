@@ -50,6 +50,23 @@ function rowsOf(lines: readonly DiffLine[]): DiffRow[] {
 const HOW: Record<WriteFact["kind"], How> = { added: "added", modified: "changed", deleted: "removed" };
 const kindOf = (how: How): WriteFact["kind"] => (how === "added" ? "added" : how === "removed" ? "deleted" : "modified");
 
+/** The page's changes joined by the kept ones: those the page does not
+ *  hold are added; a host's edit the page holds is told by the kept record,
+ *  whole where the page may hold a shortened stand-in of its call, with the
+ *  page's lines where the record keeps none. A run's write is the page's,
+ *  told as its facts come, ahead of the record. */
+function joined(held: FileChange[], kept: Iterable<FileChange>): FileChange[] {
+  const index = new Map<string, number>();
+  held.forEach((change, at) => index.set(change.id, at));
+  const out = held.slice();
+  for (const change of kept) {
+    const at = index.get(change.id);
+    if (at === undefined) out.push(change);
+    else if (change.id.startsWith("i:")) out[at] = { ...change, rows: change.rows ?? out[at]!.rows };
+  }
+  return out;
+}
+
 /** How long apart the kept changes are read again as the calls move. */
 const PULL_APART_MS = 10_000;
 /** The most readings one pull makes. */
@@ -60,10 +77,11 @@ export class TalkChanges {
   private readonly held = new WeakMap<Tool, FileChange[]>();
   /** What was last put together, and from what. */
   private all: { sign: string; files: ChangedFile[] } | null = null;
-  private readonly turns = new Map<string, { sign: number; files: ChangedFile[] }>();
-  /** The changes the machine it lives on keeps, by name, and where their
-   *  reading stopped. */
+  private readonly turns = new Map<string, { sign: string; files: ChangedFile[] }>();
+  /** The changes the machine it lives on keeps, by name and by turn, and
+   *  where their reading stopped. */
   private readonly kept = new Map<string, FileChange>();
+  private readonly keptTurns = new Map<string, Map<string, FileChange>>();
   private keptVersion = 0;
   private through = "";
   private pulling = false;
@@ -71,6 +89,9 @@ export class TalkChanges {
   private pulledAt = 0;
   /** The calls as they stood when the kept changes were last read. */
   private pulledSign: number | null = null;
+  /** Read again a while on, whatever the calls: the last reading failed,
+   *  stopped short, or found more (kept as the history is made). */
+  private again = false;
   private closed = false;
 
   constructor(
@@ -81,18 +102,27 @@ export class TalkChanges {
   /** Reads the kept changes again once the calls moved, a while apart;
    *  `drawn` once something new came. */
   want(drawn: () => void): void {
-    const tools = this.conversation.toolsOf(null);
-    const sign = tools.reduce((sum, entry) => sum + entry.stamp, tools.length);
-    if (this.closed || sign === this.pulledSign || this.pullTimer || this.pulling) return;
-    const wait = this.pulledSign === null ? 400 : Math.max(0, this.pulledAt + PULL_APART_MS - Date.now());
+    if (this.closed || this.pullTimer || this.pulling) return;
+    if (!this.again && this.callsSign() === this.pulledSign) return;
+    const wait = this.pulledAt === 0 ? 400 : Math.max(0, this.pulledAt + PULL_APART_MS - Date.now());
     this.pullTimer = setTimeout(() => {
       this.pullTimer = null;
-      this.pulledSign = sign;
-      void this.pull().then((changed) => {
+      this.pulledSign = this.callsSign();
+      this.again = false;
+      void this.pull().then(({ changed, again }) => {
         this.pulledAt = Date.now();
-        if (changed && !this.closed) drawn();
+        this.again = again;
+        if (this.closed) return;
+        if (changed) drawn();
+        // The calls moved while it read, or it is to read again.
+        this.want(drawn);
       });
     }, wait);
+  }
+
+  private callsSign(): number {
+    const tools = this.conversation.toolsOf(null);
+    return tools.reduce((sum, entry) => sum + entry.stamp, tools.length);
   }
 
   /** Stops reading the kept changes. */
@@ -102,13 +132,16 @@ export class TalkChanges {
     this.pullTimer = null;
   }
 
-  /** The kept changes written since the last reading; whether any came. */
-  private async pull(): Promise<boolean> {
-    if (this.pulling) return false;
+  /** The kept changes written since the last reading: whether any came, and
+   *  whether to read again a while on. */
+  private async pull(): Promise<{ changed: boolean; again: boolean }> {
+    if (this.pulling) return { changed: false, again: false };
     this.pulling = true;
     let changed = false;
+    let again = false;
     try {
-      for (let page = 0; page < PULL_PAGES; page += 1) {
+      let page = 0;
+      for (; page < PULL_PAGES; page += 1) {
         const reading = this.conversation.files(this.through);
         if (!reading) break;
         const told = await reading;
@@ -117,26 +150,45 @@ export class TalkChanges {
         if (told.reread) {
           if (this.through === "") break;
           this.kept.clear();
+          this.keptTurns.clear();
           this.through = "";
           changed = true;
           continue;
         }
         for (const { item, change } of told.changes) {
+          this.forget(item);
           const made = change === undefined ? null : this.keptChange(item, change);
-          if (made) this.kept.set(item, made);
-          else this.kept.delete(item);
+          if (made) this.keep(made);
           changed = true;
         }
         this.through = told.through;
         if (!told.more) break;
       }
+      // Stopped short of the end, or more may come as its history is kept.
+      again = page >= PULL_PAGES || changed;
     } catch {
-      // Not now: the page's own calls stand, and the next move reads again.
+      // Not now: the page's own calls stand, and it reads again a while on.
+      again = true;
     } finally {
       this.pulling = false;
     }
     if (changed) this.keptVersion += 1;
-    return changed;
+    return { changed, again };
+  }
+
+  private keep(change: FileChange): void {
+    this.kept.set(change.id, change);
+    if (change.turn === null) return;
+    let turn = this.keptTurns.get(change.turn);
+    if (!turn) this.keptTurns.set(change.turn, (turn = new Map()));
+    turn.set(change.id, change);
+  }
+
+  private forget(id: string): void {
+    const change = this.kept.get(id);
+    if (!change) return;
+    this.kept.delete(id);
+    if (change.turn !== null) this.keptTurns.get(change.turn)?.delete(id);
   }
 
   /** A kept change as the page shows one; none where it says too little. */
@@ -151,9 +203,12 @@ export class TalkChanges {
     const machine = typeof told.machine === "string" && told.machine ? told.machine : maker.machine;
     const write = told.source === "write";
     let rows: FileChange["rows"];
+    let counted: { added: number; removed: number } | null = null;
     const diff = told.diff;
     if (!write && typeof diff === "string") {
       rows = async () => parse(diff);
+      // Counted as the page counts a call's diff, so the two agree.
+      counted = counts(diff);
     } else if (write && diff && typeof diff === "object" && !Array.isArray(diff)) {
       const ref = diff as unknown as DiffRef;
       const kept = maker.kept;
@@ -171,8 +226,8 @@ export class TalkChanges {
       machine,
       path,
       how,
-      added: added ?? 0,
-      removed: removed ?? 0,
+      added: counted?.added ?? added ?? 0,
+      removed: counted?.removed ?? removed ?? 0,
       uncounted: write && added === null && removed === null,
       seen: false,
       session: maker.session,
@@ -186,10 +241,10 @@ export class TalkChanges {
   /** The files `turn` changed, in the order of their machines and paths. */
   turn(turn: string): ChangedFile[] {
     const tools = this.conversation.toolsOf(turn);
-    const sign = tools.reduce((sum, entry) => sum + entry.stamp, tools.length);
+    const sign = `${tools.reduce((sum, entry) => sum + entry.stamp, tools.length)}:${this.keptVersion}`;
     const kept = this.turns.get(turn);
     if (kept?.sign === sign) return kept.files;
-    const files = filesOf(tools.flatMap((entry) => this.of(entry)));
+    const files = filesOf(joined(tools.flatMap((entry) => this.of(entry)), this.keptTurns.get(turn)?.values() ?? []));
     this.turns.set(turn, { sign, files });
     if (this.turns.size > 400) this.turns.delete(this.turns.keys().next().value!);
     return files;
@@ -201,13 +256,7 @@ export class TalkChanges {
     const tools = this.conversation.toolsOf(null);
     const sign = `${tools.reduce((sum, entry) => sum + entry.stamp, tools.length)}:${this.keptVersion}`;
     if (this.all?.sign === sign) return this.all.files;
-    const held = tools.flatMap((entry) => this.of(entry));
-    let changes = held;
-    if (this.kept.size) {
-      const named = new Set(held.map((change) => change.id));
-      changes = held.concat([...this.kept.values()].filter((change) => !named.has(change.id)));
-    }
-    const files = filesOf(changes);
+    const files = filesOf(joined(tools.flatMap((entry) => this.of(entry)), this.kept.values()));
     this.all = { sign, files };
     return files;
   }

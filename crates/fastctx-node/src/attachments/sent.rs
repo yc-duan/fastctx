@@ -181,7 +181,7 @@ fn reserve_now(
     if fastctx_platform::disk::is_there(&path) {
         let kept: Reservation = read_json(&path)?;
         if kept != reservation {
-            return Err(failure("the upload operation was reused for different content"));
+            return Err(failure(REUSED));
         }
     } else {
         write_new(&path, &reservation)?;
@@ -274,12 +274,17 @@ fn validate_preview(preview: &Thumbnail, attachment: &Attachment) -> Result<(), 
     Ok(())
 }
 
+/// Why an upload is refused whose operation another upload of other bytes
+/// holds: that one's card is not this one's to mark failed.
+const REUSED: &str = "the upload operation was reused for different content";
+
 struct Prepared {
     acting: Acting,
     home: Written,
     attachment: Attachment,
     arriving: Option<Arriving>,
-    _lock: FileLock,
+    /// Shared, so a failure is said while it is still held.
+    _lock: Arc<FileLock>,
     _place: Arc<crate::data::places::Using>,
 }
 
@@ -339,13 +344,32 @@ async fn prepare_sent(
             arriving.keep = true;
             (arriving.attachment.clone(), Some(arriving))
         };
-        Ok(Prepared { acting, home, attachment, arriving, _lock: lock, _place: place })
+        Ok(Prepared { acting, home, attachment, arriving, _lock: Arc::new(lock), _place: place })
     })
     .await
     .map_err(failure)?
 }
 
-async fn complete_sent(node: &Arc<Node>, from: &MachineName, prepared: Prepared) -> Result<Uploaded, Failure> {
+/// Finishes an upload whose bytes all arrived (`finish_sent`); one that
+/// fails then — its digest, room, flush, rename or commit — is said failed
+/// while this try still holds the upload's lock, as one cut short is.
+async fn complete_sent(
+    node: &Arc<Node>,
+    from: &MachineName,
+    prepared: Prepared,
+    scope: Option<&UploadScope>,
+) -> Result<Uploaded, Failure> {
+    let held = prepared._lock.clone();
+    let (home, attachment) = (prepared.home.clone(), prepared.attachment.clone());
+    let finished = finish_sent(node, from, prepared).await;
+    if let Err(error) = &finished {
+        failed_here(node, &home, &attachment, scope, error).await;
+    }
+    drop(held);
+    finished
+}
+
+async fn finish_sent(node: &Arc<Node>, from: &MachineName, prepared: Prepared) -> Result<Uploaded, Failure> {
     let (attachment, prepared) = fastctx_platform::task::spawn_blocking(move || {
         let mut prepared = prepared;
         let attachment = match prepared.arriving.take() {
@@ -403,7 +427,7 @@ pub(super) async fn upload(
         Err(error) => return Err(prepare_failed(node, &machine, resident.as_ref(), scope.as_ref(), error).await),
     };
     if prepared.arriving.is_none() {
-        return complete_sent(node, &from, prepared).await;
+        return complete_sent(node, &from, prepared, scope.as_ref()).await;
     }
     let transferred = async {
         let arriving = prepared.arriving.as_mut().expect("unfinished");
@@ -437,7 +461,7 @@ pub(super) async fn upload(
         failed_here(node, &prepared.home, &prepared.attachment, scope.as_ref(), &error).await;
         return Err(error);
     }
-    complete_sent(node, &from, prepared).await
+    complete_sent(node, &from, prepared, scope.as_ref()).await
 }
 
 /// What a failure to make ready the arrival of an upload into a draft kept
@@ -453,6 +477,7 @@ async fn prepare_failed(
     if let (Some(scope), Some(resident)) = (scope, resident)
         && node.is_here(machine)
         && !error.is_unanswered()
+        && error.message != REUSED
         && let Err(failure) = crate::composer::uploads::failed(node, resident, scope, &error.message).await
     {
         node.log.line(format_args!("recording a sent attachment's failure: {failure}"));
@@ -512,7 +537,7 @@ pub(super) async fn receive(
         Err(error) => return Err(prepare_failed(node, &machine, resident.as_ref(), scope.as_ref(), error).await),
     };
     if prepared.arriving.is_none() {
-        return complete_sent(node, from, prepared).await;
+        return complete_sent(node, from, prepared, scope.as_ref()).await;
     }
     let transferred = async {
         let mut arriving = prepared.arriving.take().expect("unfinished");
@@ -544,7 +569,7 @@ pub(super) async fn receive(
             return Err(error);
         }
     }
-    let uploaded = complete_sent(node, from, prepared).await?;
+    let uploaded = complete_sent(node, from, prepared, scope.as_ref()).await?;
     stream.done().await.map_err(broke)?;
     Ok(uploaded)
 }

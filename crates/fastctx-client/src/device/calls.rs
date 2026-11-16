@@ -658,7 +658,10 @@ impl Device {
                 && !(session.link.view().file_changes
                     && matches!(&facts, RemoteReply::Facts(facts) if facts.file_changes))
             {
-                return Err(failed("this machine or its hub does not keep the files conversations changed; update it"));
+                return Err(crate::CallError::Failed(fastctx_types::ipc::Failure::not_run(
+                    "this machine or its hub does not keep the files conversations changed; update it",
+                ))
+                .into());
             }
         }
         if matches!(&remote, RemoteCall::Goal { .. }) {

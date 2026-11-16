@@ -54,12 +54,16 @@ pub(crate) async fn conversation_files(
         told = tokio::time::timeout(std::time::Duration::from_secs(30), reading) => told,
         () = reader.closed() => return Err("the conversation window closed".into()),
     };
-    Ok(match told {
+    match told {
         Ok(Ok(TimelineTold::Files { known, changes, through, more })) => {
-            FileChanges { known, reread: false, changes, through: through.to_string(), more }
+            Ok(FileChanges { known, reread: false, changes, through: through.to_string(), more })
         }
-        Ok(Ok(TimelineTold::Reread)) => FileChanges { known: true, reread: true, more: true, ..unknown },
-        // A machine of an earlier release does not know the question.
-        Ok(Ok(_) | Err(_)) | Err(_) => unknown,
-    })
+        Ok(Ok(TimelineTold::Reread)) => Ok(FileChanges { known: true, reread: true, more: true, ..unknown }),
+        // A node, machine or hub of an earlier release, never asked.
+        Ok(Err(fastctx_client::Error::Call(fastctx_client::CallError::Failed(failure)))) if failure.not_run => Ok(unknown),
+        Ok(Ok(_)) => Ok(unknown),
+        // Not now: the page asks again a while on.
+        Ok(Err(error)) => Err(error.to_string()),
+        Err(_) => Err("reading the files the conversation changed took over 30 s".into()),
+    }
 }

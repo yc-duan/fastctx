@@ -984,6 +984,28 @@ fn given(entry: &Entry, mut event: SessionEvent, attach: &dyn Fn(&mut SessionEve
     Ok(Some(Queued { write: Write { item: entry.item.clone(), order: entry.order.clone(), value: Some(body), objects }, put, leased: None, bytes }))
 }
 
+/// The most an event kept whole in an object is read into memory.
+const EVENT_OBJECT_BYTES: u64 = 64 << 20;
+
+/// The bytes of an object kept here, read a piece at a time (one read gives
+/// at most a mebibyte); none where it is not here.
+pub(super) fn object_whole(library: &Library, hash: &[u8; 32]) -> Result<Option<Vec<u8>>, Failure> {
+    let Some(size) = library.size(hash).map_err(failure)? else { return Ok(None) };
+    if size > EVENT_OBJECT_BYTES {
+        return Err(failure("an event's object is past what is read whole"));
+    }
+    let mut bytes = Vec::with_capacity(size as usize);
+    while (bytes.len() as u64) < size {
+        let length = u32::try_from((size - bytes.len() as u64).min(1 << 20)).expect("a mebibyte");
+        let piece = library.read(hash, bytes.len() as u64, length).map_err(failure)?;
+        if piece.is_empty() {
+            return Err(failure("an event's object ended before its length"));
+        }
+        bytes.extend_from_slice(&piece);
+    }
+    Ok(Some(bytes))
+}
+
 /// The event an entry of the timeline holds: itself, or the object it is
 /// kept whole in; none where that object is not here.
 pub(super) fn event_of(library: &Library, entry: &Entry) -> Result<Option<SessionEvent>, Failure> {
@@ -991,9 +1013,7 @@ pub(super) fn event_of(library: &Library, entry: &Entry) -> Result<Option<Sessio
         Some((&EVENT, encoded)) => Ok(Some(serde_json::from_slice(encoded).map_err(failure)?)),
         Some((&OVERSIZED, _)) => {
             let Some(object) = entry.objects.first() else { return Ok(None) };
-            let Some(size) = library.size(&object.hash).map_err(failure)? else { return Ok(None) };
-            let length = u32::try_from(size).map_err(|_| failure("an event's object is past what one read takes"))?;
-            let bytes = library.read(&object.hash, 0, length).map_err(failure)?;
+            let Some(bytes) = object_whole(library, &object.hash)? else { return Ok(None) };
             Ok(Some(serde_json::from_slice(&bytes).map_err(failure)?))
         }
         _ => Ok(None),

@@ -152,6 +152,16 @@ fn as_sent(
         return Ok(Some((path, file)));
     }
     let folder = path.parent().expect("a kept original has a folder").to_path_buf();
+    // The name asked for, kept beside the first, is given when it is the
+    // bytes sent, whatever became of the first since.
+    let alias = if file.name == sent.name { None } else { pictures::place(&folder, &sent.name) };
+    if let Some(alias) = alias
+        && alias.try_exists()?
+        && is_sent(&alias, sent)?
+    {
+        let file = AttachmentFile { name: sent.name.clone(), media_type: sent.media_type.clone(), source: file.source };
+        return Ok(Some((alias, file)));
+    }
     if !is_sent(&path, sent)? {
         std::fs::remove_dir_all(&folder)?;
         return Ok(None);

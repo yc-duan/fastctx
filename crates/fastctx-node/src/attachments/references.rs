@@ -39,12 +39,31 @@ pub(crate) fn preview(node: &Node, wanted: &Attachment) -> Result<fastctx_types:
     Err(missing)
 }
 
-/// The conversations here forked from `conversation`, archived ones too.
+/// The conversations here forked from `conversation`, archived ones too,
+/// and those forked from them in turn: a fork of a fork holds what it
+/// inherited as its parent did.
 fn forks_of(node: &Node, conversation: &fastctx_types::Address) -> Vec<ResidentId> {
     if !node.is_me(&conversation.machine) {
         return Vec::new();
     }
-    node.residents.everyone().filter(|one| one.about.forked_from.as_ref() == Some(conversation)).map(|one| one.id).collect()
+    let mut children: std::collections::HashMap<ResidentId, Vec<ResidentId>> = std::collections::HashMap::new();
+    for one in node.residents.everyone() {
+        if let Some(source) = one.about.forked_from.as_ref().filter(|source| node.is_me(&source.machine)) {
+            children.entry(source.resident.clone()).or_default().push(one.id);
+        }
+    }
+    let mut found = Vec::new();
+    let mut seen = std::collections::HashSet::from([conversation.resident.clone()]);
+    let mut next = vec![conversation.resident.clone()];
+    while let Some(parent) = next.pop() {
+        for child in children.remove(&parent).unwrap_or_default() {
+            if seen.insert(child.clone()) {
+                found.push(child.clone());
+                next.push(child);
+            }
+        }
+    }
+    found
 }
 
 /// Gives the forks of `parent` the small pictures of its attachments kept

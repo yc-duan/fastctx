@@ -58,6 +58,7 @@ mod view;
 mod w;
 mod wait;
 mod wake_guard;
+mod weeks;
 mod work;
 mod world;
 mod writers;
@@ -324,6 +325,12 @@ enum Command {
     /// account: that login works for it, the machine is not given. Or end
     /// the assistance.
     Assist(world::AssistArgs),
+    /// The agents' logins on one machine or on every machine you may use,
+    /// with the week each is reckoned of.
+    Logins(weeks::LoginsArgs),
+    /// Set the week of one login in US dollars of quota: what an
+    /// assistance's share of it comes to. Or the default again.
+    Week(weeks::WeekArgs),
     /// The agents on a machine of another account, which this account used,
     /// no longer reach this account's machines.
     Disallow(world::DisallowArgs),
@@ -579,6 +586,8 @@ fn main() -> ExitCode {
         Command::Update(args) => self_update::run(args),
         Command::Share(args) => world::share(args),
         Command::Assist(args) => world::assist(args),
+        Command::Logins(args) => weeks::logins(args),
+        Command::Week(args) => weeks::week(args),
         Command::Disallow(args) => world::disallow(args),
         Command::Remove(args) => world::remove(args),
         Command::Dissolve(args) => world::dissolve(args),
@@ -606,7 +615,7 @@ fn print_licenses() -> ExitCode {
 
 /// The commands a person runs on a machine: its node, joining and managing
 /// the World, talking to residents, the TUI.
-const PEOPLE_ONLY: [&str; 24] = [
+const PEOPLE_ONLY: [&str; 26] = [
     "ui",
     "data",
     "node",
@@ -622,6 +631,8 @@ const PEOPLE_ONLY: [&str; 24] = [
     "accounts",
     "share",
     "assist",
+    "logins",
+    "week",
     "disallow",
     "remove",
     "rename",

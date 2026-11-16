@@ -309,7 +309,11 @@ pub(crate) async fn open(
     let unwatched_older = unwatched.as_ref().is_some_and(older);
     let page = match reader.fetch_typed(TimelineFrom::Latest, PAGE_EVENTS).await {
         Ok(page) => page,
-        Err(error) if older(&error) && (unwatched.is_none() || unwatched_older) => return Ok(None),
+        Err(error) if older(&error) && unwatched.is_none() => return Ok(None),
+        // The watch already said the machine is of an older release: no
+        // copy here answered for it, whatever the reading's own failure
+        // says (an older machine refuses pages as not run, not unsupported).
+        Err(_) if unwatched_older => return Ok(None),
         Err(error) => return Err(unwatched.unwrap_or(error).into()),
     };
     // Unwatched, only a copy that holds the conversation opens it.
