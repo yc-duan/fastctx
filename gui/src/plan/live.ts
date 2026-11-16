@@ -27,6 +27,12 @@ export type LiveFacts = (id: string) => LiveFact | null;
 // digits, a job's six letters and digits, a sentinel's up to sixteen.
 const pattern = /\b(?:(?:codex|claude)-[0-9a-z]{4,}|j-[0-9a-z]{6}|s-[0-9a-z]{6,16})\b/g;
 
+/** The ids a text names, each once: what is known of them is sent with a
+ *  plan shown in another window (`side/parts.ts`). */
+export function idsIn(text: string): string[] {
+  return [...new Set(text.match(pattern) ?? [])];
+}
+
 /** Replaces each id in the text under `root` with its chip. Code keeps its
  *  ids as written. */
 export function liven(root: HTMLElement, facts: LiveFacts): void {

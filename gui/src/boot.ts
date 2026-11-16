@@ -70,11 +70,15 @@ function tooOld(): void {
 // Inside the shell the World on this device opens after the window does:
 // the interface loads once it has (`startup/gate.ts`). The language is
 // settled next: the interface reads it as it starts.
-if (canDraw())
+// A window a card of the side was taken out into (`side/board.ts`) is that
+// card and nothing else of the app: it loads its own small entry, and reads
+// nothing of the World, which the desk's window has open.
+if (!canDraw()) tooOld();
+else if (new URLSearchParams(location.search).has("board")) void import("./board/main").catch(showStartupFailure);
+else
   void import("./startup/gate")
     .then(({ untilStarted }) => untilStarted())
     .then(() => import("./language"))
     .then(({ settleLanguage }) => settleLanguage())
     .then(() => import("./main"))
     .catch(showStartupFailure);
-else tooOld();

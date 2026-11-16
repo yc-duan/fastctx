@@ -25,8 +25,8 @@ import { effortLabel } from "./effort-slider";
 import { fileRow, mentionAt, mentioned, type FileWords, type FoundFile } from "./mention";
 import { FileLinks } from "./file-links";
 import { fileKind } from "./file-kind";
-import { split as splitPath } from "../files/model";
-import { FileView, type ViewTab } from "../files/view";
+import type { ViewTab } from "../files/view";
+import { FileTabs, type Reading } from "../side/file-tabs";
 import type { DiffLine, WriteFact } from "../world/run-facts";
 import { TalkChanges } from "./changed";
 import { whyOf } from "../world/again";
@@ -606,9 +606,32 @@ export class ConversationPage {
     // Its parts for the desk's side (`side/parts.ts`): the plan, the goal,
     // and who works with it, the host's own agents among them.
     if (options.side) {
+      // How its files are read: on their tabs here, and for the window its
+      // files' card stands in.
+      const lines = options.lines;
+      const pictures = options.pictures;
+      const reading: Reading | null = lines
+        ? {
+            lines: (on, at) => lines(on, at, { kind: "file", encoding: null }),
+            picture: pictures ? (on, at, max) => pictures.thumbnail(on, at, max) : undefined,
+            outside: (on, at) => this.fileLinks?.openOutside(on, at),
+            gone,
+            detail: whyOf,
+          }
+        : null;
+      if (reading && fileWords)
+        this.fileTabs = new FileTabs({
+          side: () => this.side,
+          words: fileWords,
+          reading,
+          changes: (machine, path) => this.changes?.file(machine, path) ?? [],
+          open: (machine, path) => this.openFile(machine, path),
+          folders: options.filesLink,
+        });
       this.side = new SideParts(this.element, {
         host: markOf(someone.agent) === "codex" ? "codex" : "claude",
         seams: options.side,
+        ...(reading ? { reading } : {}),
         say: (text, detail) => this.say(text, detail ?? ""),
         // Answers go in at once, into the turn if one runs.
         answer: async (text) => {
@@ -1066,7 +1089,7 @@ export class ConversationPage {
   private changes: TalkChanges | null = null;
   /** The files read in the side, each on its tab, whose changes follow
    *  the conversation. */
-  private readonly filesRead = new Map<string, { machine: string; path: string; view: FileView }>();
+  private fileTabs: FileTabs | null = null;
 
   /** What the conversation changed, to its side: its card and its page,
    *  and the file read there. A reading of the calls that found nothing
@@ -1075,7 +1098,7 @@ export class ConversationPage {
     const { changes, side } = this;
     if (!changes || !side) return;
     side.changed(changes.whole());
-    for (const read of this.filesRead.values()) read.view.update(changes.file(read.machine, read.path));
+    this.fileTabs?.update();
   }
 
   /** The host's own agents, as the conversation now knows them, to their
@@ -1853,59 +1876,16 @@ export class ConversationPage {
 
   /** A file read in the side on a tab of its own, at what it holds or at
    *  what the conversation did to it: the tab it already has is turned to;
-   *  where the side stands in a window of its own, it opens there. False
+   *  where the files stand in a window of their own, it opens there. False
    *  where there is no side to read it in. */
   private readFile(machine: MachineName, path: string, attachment: AttachmentSource | null, tab: ViewTab | null = null): boolean {
-    const { side, options } = this;
-    const lines = options.lines;
-    const words = options.side?.files?.words;
-    if (!side || !lines || !words) return false;
-    const key = `${machine}\n${path}`;
-    const id = `file:${key}`;
-    const read = this.filesRead.get(key);
-    if (read && side.showTab(id)) {
-      if (tab) read.view.turn(tab);
-      return true;
-    }
+    const { side, fileTabs } = this;
+    if (!side || !fileTabs) return false;
+    if (fileTabs.turn(machine, path, tab)) return true;
     // A file the user sent is read where the World keeps it, which only
     // this window knows.
-    if (!attachment && !read && side.sendOut({ machine, path, tab }, () => void this.readFile(machine, path, null, tab))) return true;
-    const pictures = options.pictures;
-    const view = new FileView({
-      words,
-      seams: {
-        lines: (on, at) => lines(on, at, { kind: "file", encoding: null }),
-        picture: pictures ? (on, at, max) => pictures.thumbnail(on, at, max) : undefined,
-        outside: (on, at) => this.fileLinks?.openOutside(on, at, on === machine && at === path ? attachment : null),
-        open: (on, at) => this.openFile(on, at),
-        gone,
-        detail: whyOf,
-      },
-      machine,
-      path,
-      changes: this.changes?.file(machine, path) ?? [],
-      tab: tab ?? undefined,
-      now: () => Date.now(),
-      own: true,
-      tabbed: true,
-      folders: options.filesLink?.(machine, path),
-    });
-    const { folder, name } = splitPath(path);
-    const opened = side.openTab({
-      id,
-      name,
-      hint: splitPath(folder.replace(/[\\/]+$/, "")).name,
-      title: `${machine}  ${path}`,
-      file: { machine, path },
-      page: view,
-      leave: () => {
-        this.filesRead.delete(key);
-        view.leave();
-      },
-    });
-    if (opened) this.filesRead.set(key, { machine, path, view });
-    else view.leave();
-    return opened;
+    if (!attachment && side.sendOut({ machine, path, tab }, () => void this.readFile(machine, path, null, tab))) return true;
+    return fileTabs.open(machine, path, tab, attachment ? (on, at) => this.fileLinks?.openOutside(on, at, attachment) : undefined);
   }
 
   /** `waits`: what is said is awaited (`sayWaiting`). */

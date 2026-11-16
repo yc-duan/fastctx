@@ -2,7 +2,10 @@
 // changed, as a list of changed files is read everywhere, each opening over
 // the page to its changes; or, by the switch at its head, the folders it
 // works in on each of its machines as trees, the changed files marked in
-// them, any file opening over the page to what it holds.
+// them, any file opening on a tab to what it holds. Each machine's folder
+// folds away under its head and opens again (the user, 2026-11-17: "每个
+// 电脑得支持收起和展开"), kept so on this device; one folded as the page
+// is drawn is not read until it is opened.
 
 import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
@@ -30,6 +33,19 @@ export interface SideFilesSeams {
 
 type Shows = "changes" | "folders";
 
+/** Where this device keeps the folders folded away, and how many it keeps:
+ *  the latest folded stay. */
+const FOLDED = "side-files-folded";
+const KEPT = 200;
+
+function folded(): Set<string> {
+  try {
+    return new Set(JSON.parse(localStorage.getItem(FOLDED) ?? "[]") as string[]);
+  } catch {
+    return new Set();
+  }
+}
+
 /** The folder holding all of `files`: the one they share, a single file's
  *  own. */
 function holding(files: ChangedFile[]): string {
@@ -53,6 +69,10 @@ export class SideFiles implements SidePage {
   /** What the trees were last put together from. */
   private planted = "";
   private written = "";
+  private readonly fold = folded();
+  /** A folder's tree read for the first time: at once where its folder is
+   *  open, else as it is first opened. */
+  private readonly starts = new Map<string, () => void>();
 
   constructor(private readonly seams: SideFilesSeams) {
     const { words } = seams;
@@ -67,6 +87,8 @@ export class SideFiles implements SidePage {
         this.draw();
         return;
       }
+      const head = target.closest<HTMLElement>(".sf-root-head");
+      if (head) return this.turn(head);
       const row = target.closest<HTMLElement>("[data-file]");
       if (row) seams.open(row.dataset.machine!, row.dataset.file!, "changes");
     });
@@ -95,6 +117,31 @@ export class SideFiles implements SidePage {
 
   shown(): void {
     this.draw();
+  }
+
+  /** Folds a machine's folder away under its head, or opens it again,
+   *  where it stands, as a card does. */
+  private turn(head: HTMLElement): void {
+    const section = head.closest<HTMLElement>(".sf-root")!;
+    const key = section.dataset.root!;
+    const shut = !this.fold.has(key);
+    if (shut) this.fold.add(key);
+    else this.fold.delete(key);
+    try {
+      localStorage.setItem(FOLDED, JSON.stringify([...this.fold].slice(-KEPT)));
+    } catch {
+      // Folding is this device's convenience; without storage it lasts the page.
+    }
+    if (!shut) this.start(key);
+    section.classList.toggle("shut", shut);
+    section.querySelector(":scope > .sh-fold")?.classList.toggle("open", !shut);
+    head.setAttribute("aria-expanded", String(!shut));
+  }
+
+  private start(key: string): void {
+    const start = this.starts.get(key);
+    this.starts.delete(key);
+    start?.();
   }
 
   private draw(): void {
@@ -132,6 +179,7 @@ export class SideFiles implements SidePage {
     this.planted = sign;
     for (const { tree } of this.trees.values()) tree.leave();
     this.trees.clear();
+    this.starts.clear();
     holder.replaceChildren();
     for (const machine of machines) {
       // Where it changed files outside the folders it was pointed at, the
@@ -140,12 +188,15 @@ export class SideFiles implements SidePage {
       const beyond = machine.folders.length && outside.length ? [holding(outside)] : [];
       const roots: (string | null)[] = list === null ? [null] : machine.folders.length ? [...machine.folders, ...beyond] : [null];
       for (const root of roots) {
+        const key = `${machine.name}\n${root ?? ""}`;
+        const shut = this.fold.has(key);
         const section = document.createElement("section");
-        section.className = "sf-root";
-        section.innerHTML = `<h3 class="sf-root-head">${glyph("machine", 14)}<b>${escape(machine.name)}</b><span><bdi></bdi></span></h3>`;
+        section.className = `sf-root${shut ? " shut" : ""}`;
+        section.dataset.root = key;
+        section.innerHTML = `<button class="sf-root-head" type="button" aria-expanded="${!shut}"><span class="sh-turn">${glyph("chevron", 12)}</span>${glyph("machine", 14)}<b>${escape(machine.name)}</b><span><bdi></bdi></span></button><div class="sh-fold${shut ? "" : " open"}"><div class="sh-fold-inner"></div></div>`;
         const tree = new FileTree({ words, list: list ? (path) => list(machine.name, path) : null, chosen: (path) => this.seams.open(machine.name, path, null), detail: this.seams.detail });
         tree.changed(this.files.filter((file) => file.machine === machine.name));
-        section.append(tree.element);
+        section.querySelector(".sh-fold-inner")!.append(tree.element);
         holder.append(section);
         const named = section.querySelector<HTMLElement>("bdi")!;
         const start = (folder: string | null) => {
@@ -153,10 +204,17 @@ export class SideFiles implements SidePage {
           named.parentElement!.title = folder ?? "";
           tree.show(folder, list === null ? "changed" : "all");
         };
-        const key = `${machine.name}\n${root ?? ""}`;
         this.trees.set(key, { machine: machine.name, tree });
-        if (root !== null || list === null) start(root);
-        else void this.seams.home(machine.name).then((home) => this.trees.get(key)?.tree === tree && start(home), () => start(null));
+        // Its folder is said in its head at once; its tree is read once it
+        // is open.
+        const named0 = root ?? "";
+        named.textContent = named0;
+        named.parentElement!.title = named0;
+        this.starts.set(key, () => {
+          if (root !== null || list === null) start(root);
+          else void this.seams.home(machine.name).then((home) => this.trees.get(key)?.tree === tree && start(home), () => start(null));
+        });
+        if (!shut) this.start(key);
       }
     }
   }

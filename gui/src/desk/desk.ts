@@ -24,7 +24,6 @@ import { glyph } from "../conversation/glyphs";
 import type { KeepablePage } from "../conversation/kept";
 import type { ConversationPage } from "../conversation/page";
 import { escape } from "../conversation/prose";
-import { ALONE } from "../side/board";
 import { OVER, SideFrame } from "../side/frame";
 import type { SideWords } from "../side/words";
 import type { Address } from "../world/wire";
@@ -319,9 +318,7 @@ export class Desk implements Page {
   private wake(): void {
     if (!this.restored) {
       this.restored = true;
-      // A side alone in its window shows the one conversation it was
-      // opened on, and keeps nothing of the desk.
-      if (!ALONE) this.restore();
+      this.restore();
     }
     if (!this.away) return;
     this.away = false;
@@ -600,7 +597,6 @@ export class Desk implements Page {
   }
 
   private keep(): void {
-    if (ALONE) return;
     const panes = this.panes.filter((one) => one.address).map((one) => one.key);
     try {
       localStorage.setItem(KEPT, JSON.stringify({ panes, focused: this.focusKey }));

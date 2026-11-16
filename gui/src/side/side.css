@@ -2100,16 +2100,35 @@ button.gh-goal:hover,
   margin-top: var(--space-4);
 }
 
+/* A machine's folder, folding away under its head as a card does. */
 .sf-root-head {
   display: flex;
   align-items: center;
   gap: 6px;
+  width: 100%;
   min-width: 0;
-  margin: 0 0 4px;
-  padding: 0 6px;
+  min-height: 28px;
+  margin: 0 0 2px;
+  padding: 0 6px 0 2px;
+  border-radius: var(--radius-s);
   font: inherit;
+  text-align: left;
   color: var(--text-3);
   white-space: nowrap;
+  transition: color var(--hover) var(--ease);
+}
+
+.sf-root-head:hover {
+  color: var(--text-2);
+}
+
+.sf-root-head > .sh-turn {
+  flex: none;
+  width: 14px;
+}
+
+.sf-root.shut .sh-turn {
+  --turn: -90deg;
 }
 
 .sf-root-head > .glyph,
@@ -2129,7 +2148,7 @@ button.gh-goal:hover,
   direction: rtl;
 }
 
-.sf-root > .ft-tree {
+.sf-root .ft-tree {
   padding-inline: 0;
   padding-bottom: 0;
 }
@@ -2138,18 +2157,6 @@ button.gh-goal:hover,
   height: auto;
   overflow: hidden;
   padding: 0 calc(var(--sp-end) + var(--space-3)) var(--space-4) calc(var(--sp-start) + var(--space-3));
-}
-
-/* Alone in its window (`board.ts`) the side is the whole of it: always
-   open, no conversation under it, nothing coming up or going down. */
-html.side-board .desk-panes {
-  display: none;
-}
-
-html.side-board .sp-panel.sp-over {
-  opacity: 1;
-  transform: none;
-  transition: none;
 }
 
 .sp-page.fx-view .fx-name {

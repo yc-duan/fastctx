@@ -1,0 +1,20 @@
+/* A card of the side in a window of its own (`board/main.ts`): the side
+   lies over the whole window, always open, nothing coming up or going
+   down, and no way to take anything further out. */
+.sb-host {
+  position: relative;
+  display: flex;
+  height: 100vh;
+  height: 100dvh;
+  background: var(--bg);
+}
+
+.sb-host .sp-panel.sp-over {
+  opacity: 1;
+  transform: none;
+  transition: none;
+}
+
+.sb-main {
+  display: none;
+}
