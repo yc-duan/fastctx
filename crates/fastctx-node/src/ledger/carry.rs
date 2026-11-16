@@ -256,6 +256,9 @@ async fn one(node: &Arc<Node>, link: &Arc<Link>, home: &AccountName, town: &Town
         .iter()
         .enumerate()
         .filter_map(|(index, (_, entry, _))| match topics::omitted(entry, &journal.skipped) {
+            // A page an earlier release published, and nothing else: pages
+            // are no more, and none is carried (codex-e7b1552a R3).
+            _ if !entry.files.is_empty() && entry.files.iter().all(|file| super::removed(&file.path)) => None,
             Ok(true) => None,
             Ok(false) => Some(Ok(index)),
             Err(error) => Some(Err(error)),

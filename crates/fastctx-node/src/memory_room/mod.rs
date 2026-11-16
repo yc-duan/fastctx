@@ -47,17 +47,19 @@ pub(crate) fn start(node: &Arc<Node>) {
         loop {
             timer.tick().await;
             if available().is_some_and(|available| available < LOW) {
-                crate::lifecycle::relieve(&node, HIGH, None).await;
+                crate::lifecycle::relieve(&node, HIGH, None, crate::lifecycle::Asking::Pressed).await;
             }
         }
     });
 }
 
 /// Frees memory before `id`'s host is woken or started: up to `HIGH`, by
-/// letting go of others that are idle.
+/// letting go of others that are idle, for a few seconds at most. Several
+/// woken at once may each find enough and start together: nothing is kept
+/// for one about to start, and the kernel's swap takes what is short.
 pub(crate) async fn make_room(node: &Arc<Node>, id: &ResidentId) {
     if available().is_some_and(|available| available < HIGH) {
-        crate::lifecycle::relieve(node, HIGH, Some(id)).await;
+        crate::lifecycle::relieve(node, HIGH, Some(id), crate::lifecycle::Asking::Waking).await;
     }
 }
 

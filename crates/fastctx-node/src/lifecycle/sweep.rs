@@ -10,7 +10,21 @@
 use super::{ReleaseReason, adapters::Candidate, retention};
 use crate::Node;
 use fastctx_types::{ResidentId, ipc::Failure, residents::About};
-use std::{sync::Arc, time::Duration};
+use std::{
+    sync::Arc,
+    time::{Duration, Instant},
+};
+
+/// Why a worker is let go now.
+#[derive(Clone, Copy)]
+enum Going {
+    /// Its model rested long enough (`retention::idle_delay`).
+    Rested,
+    /// Memory runs short, and of the idle ones its model acted longest ago,
+    /// at `acted` as seen as they were ranked: acted since, it is not the
+    /// longest idle any more, and stays this time (codex-4bf06087 #5).
+    ForMemory { acted: jiff::Timestamp },
+}
 
 /// Whether `about`'s worker may go: a Claude conversation the World
 /// started, its host present and nothing holding it; `timed`, once its model
@@ -26,8 +40,12 @@ async fn eligible(node: &Node, about: &About, timed: bool) -> Result<bool, Failu
 
 /// Lets go of `about`'s worker under its gates, everything looked at again
 /// there and Claude Code asked afresh whether it is idle: whether it went.
-async fn release_idle(node: &Arc<Node>, about: &About, timed: bool) -> Result<bool, Failure> {
+/// Let go for memory, one found busy a moment ago is asked again all the
+/// same, and one found busy now is asked again at the next look: memory
+/// short waits for no while (codex-4bf06087 #6).
+async fn release_idle(node: &Arc<Node>, about: &About, going: Going) -> Result<bool, Failure> {
     let id = &about.id;
+    let timed = matches!(going, Going::Rested);
     let action = crate::control_queue::gate(node, id);
     let Ok(_action) = action.try_lock() else { return Ok(false) };
     let management = node.residents.management(id)?;
@@ -36,18 +54,26 @@ async fn release_idle(node: &Arc<Node>, about: &About, timed: bool) -> Result<bo
     if current.session != about.session || current.home != about.home || !eligible(node, &current, timed).await? {
         return Ok(false);
     }
-    let Some(token) = node.idle_probes.begin(id) else { return Ok(false) };
-    let worker = match crate::claude::lifecycle::idle(node, &current).await {
-        Ok(None) => return Ok(false),
-        result => {
-            node.idle_probes.clear(id, &token);
-            result?.expect("a positive idle observation")
+    let worker = if timed {
+        let Some(token) = node.idle_probes.begin(id) else { return Ok(false) };
+        match crate::claude::lifecycle::idle(node, &current).await {
+            Ok(None) => return Ok(false),
+            result => {
+                node.idle_probes.clear(id, &token);
+                result?.expect("a positive idle observation")
+            }
         }
+    } else {
+        let Some(worker) = crate::claude::lifecycle::idle(node, &current).await? else { return Ok(false) };
+        worker
     };
-    // Its own work — a subagent, a monitor — moved since the last turn: the
-    // model acted then (2026-11-16).
-    if timed && !node.residents.now(id).is_some_and(|now| retention::rested(now.since, worker.updated)) {
-        return Ok(false);
+    let Some(now) = node.residents.now(id) else { return Ok(false) };
+    match going {
+        // Its own work — a subagent, a monitor — moved since the last turn:
+        // the model acted then (2026-11-16).
+        Going::Rested if !retention::rested(now.since, worker.updated) => return Ok(false),
+        Going::ForMemory { acted } if acted_at(now.since, worker.updated) > acted => return Ok(false),
+        _ => {}
     }
     if !eligible(node, &current, timed).await? {
         return Ok(false);
@@ -69,13 +95,38 @@ async fn consider(node: &Arc<Node>, about: &About, scan: &mut crate::claude::lif
             result?;
         }
     }
-    release_idle(node, about, true).await.map(|_| ())
+    release_idle(node, about, Going::Rested).await.map(|_| ())
 }
 
-/// One relief at a time: one asked for while another runs is that one —
-/// it frees memory already — and never waits for it, as letting go of a
-/// host may wake one, which asks for relief again.
+/// When the model last acted: as the World saw its turns, and as the host
+/// last wrote the work of its own it runs between them.
+fn acted_at(since: jiff::Timestamp, host: Option<jiff::Timestamp>) -> jiff::Timestamp {
+    host.map_or(since, |host| host.max(since))
+}
+
+/// Who asks for memory.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Asking {
+    /// The look every few seconds, memory short: one running already is it.
+    Pressed,
+    /// A host about to be woken or started: it waits a while for one running
+    /// already, then frees what is still wanted itself, for no longer than
+    /// that while in all — never set going on what another is doing
+    /// (codex-4bf06087 #3, #4).
+    Waking,
+}
+
+/// The longest a wake waits for memory, in all.
+const WAKING_WAITS: Duration = Duration::from_secs(20);
+
+/// One relief at a time.
 static RELIEVING: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+tokio::task_local! {
+    /// Set while a relief runs in this task: letting go of a host may wake
+    /// one, which asks for relief again, and that one returns at once.
+    static RELIEVING_HERE: ();
+}
 
 /// Frees memory until `target` bytes are available: lets go of idle
 /// workers, the one whose model acted longest ago first, but `except`'s,
@@ -87,45 +138,54 @@ pub(crate) fn relieve<'a>(
     node: &'a Arc<Node>,
     target: u64,
     except: Option<&'a ResidentId>,
+    asking: Asking,
 ) -> std::pin::Pin<Box<dyn std::future::Future<Output = usize> + Send + 'a>> {
-    Box::pin(relieve_now(node, target, except))
+    Box::pin(async move {
+        if RELIEVING_HERE.try_with(|_| ()).is_ok() {
+            return 0;
+        }
+        let deadline = (asking == Asking::Waking).then(|| Instant::now() + WAKING_WAITS);
+        let _relieving = match deadline {
+            None => match RELIEVING.try_lock() {
+                Ok(held) => held,
+                Err(_) => return 0,
+            },
+            Some(deadline) => match tokio::time::timeout_at(deadline.into(), RELIEVING.lock()).await {
+                Ok(held) => held,
+                Err(_) => return 0,
+            },
+        };
+        RELIEVING_HERE.scope((), relieve_now(node, target, except, deadline)).await
+    })
 }
 
-async fn relieve_now(node: &Arc<Node>, target: u64, except: Option<&ResidentId>) -> usize {
-    let Ok(_relieving) = RELIEVING.try_lock() else { return 0 };
+async fn relieve_now(node: &Arc<Node>, target: u64, except: Option<&ResidentId>, deadline: Option<Instant>) -> usize {
+    let late = || deadline.is_some_and(|deadline| Instant::now() >= deadline);
     if crate::memory_room::available().is_none_or(|available| available >= target) {
         return 0;
     }
     let mut scan = crate::claude::lifecycle::Scan::default();
     let mut idle = Vec::new();
     for resident in node.residents.everyone() {
+        if late() {
+            break;
+        }
         let about = resident.about;
         if except == Some(&about.id) || !eligible(node, &about, false).await.unwrap_or(false) {
             continue;
         }
-        let Some(token) = node.idle_probes.begin(&about.id) else { continue };
-        let worker = match scan.idle(node, &about).await {
-            Ok(None) => continue,
-            result => {
-                node.idle_probes.clear(&about.id, &token);
-                match result {
-                    Ok(worker) => worker.expect("a positive idle observation"),
-                    Err(_) => continue,
-                }
-            }
-        };
+        let Ok(Some(worker)) = scan.idle(node, &about).await else { continue };
         let Some(now) = node.residents.now(&about.id) else { continue };
-        let acted = worker.updated.map_or(now.since, |updated| updated.max(now.since));
-        idle.push((acted, about));
+        idle.push((acted_at(now.since, worker.updated), about));
     }
     idle.sort_by_key(|(acted, _)| *acted);
     let mut went = 0;
     for (acted, about) in idle {
         let Some(available) = crate::memory_room::available() else { break };
-        if available >= target {
+        if available >= target || late() {
             break;
         }
-        match release_idle(node, &about, false).await {
+        match release_idle(node, &about, Going::ForMemory { acted }).await {
             Ok(true) => {
                 went += 1;
                 node.log.line(format_args!(

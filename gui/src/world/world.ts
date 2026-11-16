@@ -467,6 +467,8 @@ export interface MapView {
   opened: Stamp;
   /** Most recently added to first. */
   journals: JournalSummary[];
+  /** Always empty: what interfaces before beta.18 read as the project's pages. */
+  pages: [];
   /** The canon's documents, or why they could not be read. */
   canon: Result<CanonHead[], string> | null;
 }

@@ -45,6 +45,7 @@ export function specimenMap(): MapView {
     ledger: "/home/me/.fastctx/world/towns/mark50/ledger",
     record,
     opened: { by: { kind: "user" }, on: "desktop", at: at("01T09:12:00") },
+    pages: [],
     journals: [
       {
         journal: "q16-fixed-point",

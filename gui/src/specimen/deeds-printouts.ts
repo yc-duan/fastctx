@@ -35,7 +35,6 @@ const HELP = [
   "  copy       Copy files and directories on one of the user's machines or between them",
   "  talk       Talk to a resident on any machine, or open a session to talk to",
   "  project    The user's projects: list, show and enter them",
-  "  page       A project's pages: HTML the user opens in the World app",
   "  login      Log this computer in to an account on a hub",
   "  logout     Log this computer out of an account",
   "  token      Codes that let other devices into an account",

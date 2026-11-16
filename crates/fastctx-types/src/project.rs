@@ -263,8 +263,32 @@ pub struct MapView {
     pub opened: Stamp,
     /// Most recently added to first.
     pub journals: Vec<JournalSummary>,
+    /// Empty: what an interface before beta.18 reads as the project's pages,
+    /// which it requires.
+    #[serde(default)]
+    pub pages: RetiredPages,
     /// The canon's documents, or why they could not be read.
     pub canon: Option<Result<Vec<CanonHead>, String>>,
+}
+
+/// What a reader of a release before beta.18 required as a project's pages:
+/// written as an empty list, and whatever an earlier node sent read as
+/// nothing. Pages are no more (beta.18).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct RetiredPages;
+
+impl Serialize for RetiredPages {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeSeq as _;
+        serializer.serialize_seq(Some(0))?.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for RetiredPages {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        serde::de::IgnoredAny::deserialize(deserializer)?;
+        Ok(RetiredPages)
+    }
 }
 
 /// One entry as it is read.

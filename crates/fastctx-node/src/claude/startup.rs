@@ -317,11 +317,15 @@ const DAEMON_TAIL: u64 = 256 * 1024;
 /// they still wait as waking, no turn is recorded for them, and the
 /// session's transcript holds nothing submitted since they were sent.
 /// Anything unread or unknown counts as taken, so words never go in twice.
+/// Words only queued count as taken while the host that queued them may
+/// still be running — its queue may yet give them to the model — and as
+/// untaken once its activation `ended` (codex-4bf06087 #1).
 pub(super) fn untaken(
     node: &Node,
     session: &str,
     directory: &fastctx_types::layout::ConversationDir,
     id: &NoticeId,
+    ended: bool,
 ) -> std::io::Result<bool> {
     if crate::delivery::input_turn(directory, id)?.is_some() {
         return Ok(false);
@@ -339,7 +343,7 @@ pub(super) fn untaken(
     let Ok(Some(transcript)) = exchange::transcript(&host_directory) else {
         return Ok(false);
     };
-    Ok(matches!(submitted_since(&transcript, since), Ok(false)))
+    Ok(matches!(submitted_since(&transcript, since, !ended), Ok(false)))
 }
 
 /// The activation ended and `untaken` proved no submission. Remove its old
@@ -367,14 +371,15 @@ pub(super) fn retry_untaken(
 /// session took: a prompt as it opens a turn (`user`), or one put into the
 /// turn running (`attachment`). Both are written before the model is asked.
 /// Words only queued — an `enqueue`, even a `dequeue`, with neither after
-/// it — never reached the model: the host was stopped first, as Claude
-/// Code's daemon does with a session it retires (2026-11-16, 洛杉矶linux).
+/// it — never reached the model when the host was stopped first, as Claude
+/// Code's daemon does with a session it retires (2026-11-16, 洛杉矶linux);
+/// while it may run on they still may, and count when `queued` says so.
 /// Its lines are in the order they were written. One that cannot be read, as a row cut short
 /// when the host was killed, may hold an accepted prompt: it counts as
 /// submitted, which makes the delivery uncertain rather than repeated, unless
 /// a later line was written before `since`. A row damaged long ago therefore
 /// does not make every later wake of the session uncertain.
-fn submitted_since(path: &std::path::Path, since: jiff::Timestamp) -> std::io::Result<bool> {
+fn submitted_since(path: &std::path::Path, since: jiff::Timestamp, queued: bool) -> std::io::Result<bool> {
     let since = since.as_millisecond();
     let mut unreadable = false;
     let mut reader = std::io::BufReader::new(fastctx_platform::disk::open(path)?);
@@ -410,7 +415,9 @@ fn submitted_since(path: &std::path::Path, since: jiff::Timestamp) -> std::io::R
         if at.is_some_and(|at| at.as_millisecond() < since) {
             unreadable = false;
         }
-        if matches!(entry["type"].as_str(), Some("user" | "attachment")) {
+        if matches!(entry["type"].as_str(), Some("user" | "attachment"))
+            || (queued && entry["type"].as_str() == Some("queue-operation"))
+        {
             match at {
                 Some(at) if at.as_millisecond() >= since => return Ok(true),
                 Some(_) => {}
@@ -580,7 +587,7 @@ async fn watch(
                         // them wake it again: Claude Code's daemon, short of
                         // memory, retires the very worker it just claimed
                         // for them as one long idle.
-                        if waking && untaken(node, &session, &directory, id)? {
+                        if waking && untaken(node, &session, &directory, id, true)? {
                             drop((births, held));
                             retry_untaken(node, resident, &session, id)?;
                             return Ok(());

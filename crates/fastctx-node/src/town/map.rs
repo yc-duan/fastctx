@@ -22,6 +22,7 @@ pub async fn view(node: &Arc<Node>, town: &TownName, acting: &Acting) -> Result<
         record,
         opened,
         journals: Vec::new(),
+        pages: Default::default(),
         canon: None,
     })
 }

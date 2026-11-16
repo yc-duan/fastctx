@@ -53,11 +53,16 @@ pub(crate) async fn held(node: &Node, id: &ResidentId) -> Result<bool, Failure> 
     {
         return Ok(true);
     }
-    // Context that rides with the next turn does not itself require a runtime.
-    // Untaken plugin envelopes return to Waiting when that activation ends.
+    // Words on their way into the host, handed over or waking it. Context
+    // that rides with the next turn does not itself require a runtime, nor
+    // do words still waiting for a way in — a login's turn, say: they wake
+    // the host when they go in (codex-4bf06087 #2). Untaken plugin envelopes
+    // return to Waiting when that activation ends.
     let directory = node.world.conversation(id);
     fastctx_platform::task::spawn_blocking(move || {
-        crate::inbox::any(&directory, |row| row.delivery.notice.along().is_none())
+        crate::inbox::any(&directory, |row| {
+            row.delivery.notice.along().is_none() && row.state != fastctx_types::residents::PendingState::Waiting
+        })
     })
     .await
     .map_err(|error| Failure::new(error.to_string()))?

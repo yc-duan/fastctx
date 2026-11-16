@@ -517,12 +517,11 @@ pub(crate) fn finish(node: &Node) -> io::Result<Vec<String>> {
             continue;
         }
         let directory = world.town(&town);
-        // What an earlier release kept of its pages, here and among the
-        // project's files, goes (beta.18).
-        for folder in [directory.path().join("pages"), directory.ledger().join("pages")] {
-            if let Err(error) = remove(&folder) {
-                problems.push(format!("letting go of {town}'s pages: {error}"));
-            }
+        // The pages an earlier release published among the project's files
+        // go (beta.18). The jobs they ran stay: their records and output are
+        // under the project's own `pages` (codex-e7b1552a R1).
+        if let Err(error) = remove(&directory.ledger().join("pages")) {
+            problems.push(format!("letting go of {town}'s pages: {error}"));
         }
         let kept = kept_files(&directory)?;
         let key = kept_key(world, &kept)?;

@@ -470,7 +470,7 @@ fn map(now: Timestamp) -> MapView {
     let codex = Writer::Resident { address: address("codex-7f3a", "laptop") };
     MapView {
         memory: None,
-        pages: Vec::new(),
+        pages: Default::default(),
         town: town("mark50"),
         ledger: "~/.fastctx/world/towns/mark50/ledger".into(),
         record: towns(now).remove(0).record,

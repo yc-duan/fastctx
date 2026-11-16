@@ -26,6 +26,23 @@ MARKED_LIVE = {"kind": "watched", "id": 37, "watched": {
 CONTROLLED_SINCE = {"done": 5, "forked": 5, "reported": 10, "refused": 10, "model_menu": 10}
 
 
+
+# Pages are no more (beta.18), but what an earlier release wrote as a page
+# stays readable: a page as speaker, writer and job owner in old records.
+RETIRED_PAGE = {"town": "mark50", "page": "training", "version": 1,
+                "by": {"kind": "resident", "address": {"machine": "desktop", "resident": "codex-abcd"}},
+                "on": "desktop", "opened_on": "phone"}
+PAGE_SPEAKER = {"kind": "page", "page": RETIRED_PAGE}
+PAGE_WRITER = {"kind": "page", "page": RETIRED_PAGE}
+PAGE_JOB_OWNER = {"page": RETIRED_PAGE}
+# A project's map as today's node writes it: its pages, which readers before
+# beta.18 require, always empty.
+MAP = {"town": "mark50", "ledger": "C:/world/towns/mark50/ledger",
+       "record": {"version": 1, "name": "Mark 50", "what": "Training experiments", "machines": ["desktop"],
+                  "places": [], "canon": None, "by": {"kind": "user"}, "on": "desktop", "at": "2026-10-04T12:00:00Z"},
+       "opened": {"by": {"kind": "user"}, "on": "desktop", "at": "2026-10-04T12:00:00Z"},
+       "journals": [], "pages": [], "canon": None}
+
 def frame(reply):
     return {"kind": "reply", "id": 37, "reply": {"Ok": reply}}
 
@@ -124,7 +141,7 @@ def replies(fixtures):
     for kind in ["reconnecting", "safety", "rerouted", "tools_missing", "tool_server", "warning", "error"]:
         notices.append({"kind": "health", "colleague": ADDRESS, "label": "task", "health": {"kind": kind, "text": kind}})
     for speaker in [{"kind": "user", "machine": "desktop"}, {"kind": "resident", "address": ADDRESS},
-                    {"kind": "world"}, fixtures["pages"]["speaker"]]:
+                    {"kind": "world"}, PAGE_SPEAKER]:
         notices.append({"kind": "words", "from": speaker, "text": "verbatim words"})
     # What a colleague tells the agent that asked it, with message_user.
     notices.append({"kind": "words", "from": {"kind": "resident", "address": ADDRESS}, "text": "verbatim words",
@@ -143,9 +160,9 @@ def replies(fixtures):
         yield {"reply": "nodes", **nodes}
     yield {"reply": "towns", "towns": fixtures["world"]["towns"]}
     yield {"reply": "journals", "town": "project", "journals": fixtures["world"]["journals"]}
-    page_map = fixtures["pages"]["map"]
+    page_map = MAP
     for writer in [{"kind": "user"}, {"kind": "resident", "address": ADDRESS},
-                   {"kind": "session", "agent": "claude"}, fixtures["pages"]["writer"],
+                   {"kind": "session", "agent": "claude"}, PAGE_WRITER,
                    {"kind": "elsewhere", "page": False}, {"kind": "elsewhere", "page": True}]:
         record = {**page_map["record"], "by": writer}
         stamp = {"by": writer, "on": "desktop", "at": AT}
@@ -168,9 +185,6 @@ def replies(fixtures):
         yield {"reply": "journal", "view": {"town": "project", "journal": "notes", "directory": "C:/notes",
                "description": {"version": 1, "text": "notes", "by": writer, "on": "desktop", "at": AT}, "first": 1,
                "entries": [{"stamp": entry, "text": "entry", "mentioned_by": []}], "total": 1, "writers": 1}}
-    for reply in fixtures["pages"]["replies"]:
-        if reply["reply"] in ["page", "pages"]:
-            yield reply
     record = {"id": "j-abc123", "machine": "desktop", "owner": ADDRESS, "town": "project", "script": "echo hello",
               "cwd": "C:/data", "output": "C:/job.log", "started_at": AT, "supervisor": None, "pid": 17,
               "exit": {"status": {"code": 0}, "at": AT}, "output_ended_at": AT, "remaining": 0,
@@ -179,12 +193,12 @@ def replies(fixtures):
     resident = fixtures["world"]["who"][0]["machines"][0]["reply"]["residents"][0]
     yield {"reply": "waited", "records": [{**record, "owner": ADDRESS}]}
     jobs = fixtures["world"]["who"][0]["machines"][0]["reply"]["jobs"]
-    for owner in [ADDRESS, fixtures["pages"]["job_owner"]]:
+    for owner in [ADDRESS, PAGE_JOB_OWNER]:
         yield {"reply": "looked", "looked": [{"id": "j-abc123", "found": [{"kind": "job", "record": {**record, "owner": owner}}], "unasked": ["offline"]}]}
         who = deepcopy(fixtures["world"]["who"][0])
         who["machines"][0]["reply"]["jobs"][0]["owner"] = owner
         yield {"reply": "who", **who}
-    for speaker in [{"kind": "world"}, fixtures["pages"]["speaker"]]:
+    for speaker in [{"kind": "world"}, PAGE_SPEAKER]:
         detail = {"resident": resident, "records": "C:/resident", "actions": [resident["last_action"]],
                   "actions_total": 1, "asked": "task", "answers": [{"at": AT, "kind": "heard", "from": speaker, "turn": "turn-1", "text": "words"}], "jobs": jobs}
         yield {"reply": "looked", "looked": [{"id": ADDRESS["resident"], "found": [{"kind": "resident", **detail}], "unasked": []}]}
@@ -228,8 +242,6 @@ def calls(fixtures):
     yield {"call": "watch", "resident": ADDRESS["resident"], "machine": None, "live_only": True, "now": True}, PEER, False
     yield {"call": "since", "since": AT, "town": None}, PEER, False
     yield {"call": "agents", "machine": None}, PEER, False
-    for call in fixtures["pages"]["calls"]:
-        yield call, PEER, call["do"] in ["publish", "read", "list"]
 
 
 def page_identity(value):

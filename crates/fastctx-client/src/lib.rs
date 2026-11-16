@@ -696,6 +696,15 @@ pub fn command_peer() -> std::io::Result<Peer> {
             _ => Err(invalid(name)),
         }
     };
+    // A script an earlier release's page ran: pages are no more (beta.18),
+    // and what one runs speaks as no one, never as the user at the terminal
+    // (codex-e7b1552a R4).
+    if set("FASTCTX_PAGE")?.is_some() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "pages were removed in Fastctx beta.18: a page's script cannot use the World",
+        ));
+    }
     let resident =
         set("FASTCTX_RESIDENT")?.map(|value| value.parse().map_err(|_| invalid("FASTCTX_RESIDENT"))).transpose()?;
     let thread = set("CODEX_THREAD_ID")?;

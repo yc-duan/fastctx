@@ -34,6 +34,9 @@ const PLANS: Family = family("call/plans");
 const PLAN_WRITES: Family = Family { again: true, ..family("call/plan-writes") };
 const PROJECTS: Family = family("call/projects");
 const COPIES: Family = family("call/copies");
+/// Calls of pages an earlier release accepted: pages are no more (beta.18),
+/// and each is answered so, never left waiting (codex-e7b1552a R5).
+const RETIRED: [Family; 3] = [family("call/pages"), family("call/page-act"), family("call/page-execute")];
 
 // Only the explicitly matched calls below enter these recordings. In particular,
 // authentication and login calls, whose arguments contain secrets, never do.
@@ -53,6 +56,15 @@ pub(crate) fn register(node: &Arc<Node>) {
         submitted::register_resolved(node, family, |node, asked, resolved| async move {
             work::execute(&node, asked, resolved).await
         });
+    }
+    for family in RETIRED {
+        submitted::register_resolved(
+            node,
+            family,
+            |_node, _asked: serde_json::Value, _resolved: serde_json::Value| async move {
+                Err::<(), _>(Failure::new("pages were removed in Fastctx beta.18; this page's call was not carried out"))
+            },
+        );
     }
 }
 

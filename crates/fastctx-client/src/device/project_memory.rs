@@ -88,6 +88,7 @@ impl Device {
                             record,
                             opened,
                             journals: Vec::new(),
+                            pages: Default::default(),
                             canon: None,
                         }),
                     })

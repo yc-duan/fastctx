@@ -9,7 +9,7 @@ pub(crate) mod refused;
 mod retention;
 pub(crate) mod retry;
 mod sweep;
-pub(crate) use sweep::relieve;
+pub(crate) use sweep::{Asking, relieve};
 pub(crate) mod wake;
 mod words;
 

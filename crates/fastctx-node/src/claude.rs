@@ -1269,7 +1269,7 @@ async fn uncertain_inputs(
             && (input.state == PendingState::Handed
                 || crate::lifecycle::retry::progress_now(node, resident, &input.delivery.id)?
                     .is_none_or(|progress| progress.accepted))
-            && startup::untaken(node, session, &directory, &input.delivery.id)?
+            && startup::untaken(node, session, &directory, &input.delivery.id, ended.is_some())?
         {
             startup::retry_untaken(node, resident, session, &input.delivery.id)?;
         } else {
