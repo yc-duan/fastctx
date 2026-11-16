@@ -30,7 +30,7 @@ export async function specimenSync(_hub: HubId, _account: string, hours: number)
   const step = hours <= 24 ? 5 * MINUTE : HOUR;
   const asked = new URLSearchParams(location.search).get("sync");
   const all = asked === "all";
-  if (asked === "cut") return { local: { machine: "desktop", unsent_frames: 41, unsent_bytes: 2_310_000, cut_off: now - 12 * MINUTE }, unreached: "the hub is not reached" };
+  if (asked === "cut") return { local: { machine: "desktop", unsent_frames: 41, unsent_bytes: 2_310_000, cut_off: now - 12 * MINUTE, why: "connecting to 203.0.113.7:4433: the connection timed out" }, unreached: "the hub is not reached" };
   const wave = (ago: number) => Math.round(20_000 + 15_000 * Math.sin(ago / (37 * MINUTE)));
   const points = [
     ...line("desktop", now, hours, step, (ago) => (ago % (5 * HOUR) < 12 * MINUTE ? 90_000 + (ago % (12 * MINUTE)) * 6 : wave(ago))),
@@ -57,7 +57,7 @@ export async function specimenSync(_hub: HubId, _account: string, hours: number)
           : {
               machine: "laptop", kind: "computer", online: true, since: now - 9 * HOUR, reported: now - 8_000, behind: 42 * MINUTE,
               left: [["conversations", 48_300_000], ["output", 12_600_000], ["other", 2_100_000]], about: true,
-              unpulled: 2, missing_objects: 14, missing_bytes: 96_000_000, unsent_frames: 0, unsent_bytes: 0, rate: 3_400_000, synced: false,
+              unpulled: 2, unpulled_scopes: ["c/w-specimen/-/me/codex-a51c", "a/w-specimen/me/records-1794000000000"], missing_objects: 14, missing_bytes: 96_000_000, unsent_frames: 0, unsent_bytes: 0, rate: 3_400_000, synced: false,
             },
         all
           ? { machine: "pixel", kind: "phone", online: true, since: now - 2 * HOUR, reported: now - 40_000, behind: 0, unpulled: 0, missing_objects: 0, missing_bytes: 0, unsent_frames: 0, unsent_bytes: 0, rate: 0, synced: true }

@@ -8,6 +8,9 @@ use serde::{Deserialize, Serialize};
 /// How many scopes not yet pulled whole a report names at most.
 pub const UNPULLED_NAMED: usize = 256;
 
+/// How many of them the hub tells the account's page of a device.
+pub const UNPULLED_TOLD: usize = 24;
+
 /// What a device tells the hub of where it stands (design §28.9).
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SyncReport {
@@ -91,6 +94,11 @@ pub struct DeviceSync {
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub about: bool,
     pub unpulled: u32,
+    /// The keys of some of the scopes it has not pulled whole, as it last
+    /// named them, `UNPULLED_TOLD` at most: which conversations and records
+    /// those are, the page says to the account they are of.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub unpulled_scopes: Vec<String>,
     pub missing_objects: u64,
     pub missing_bytes: u64,
     pub unsent_frames: u64,
@@ -140,6 +148,10 @@ pub struct LocalSync {
     /// Since when it is cut off from the hub, if it is.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cut_off: Option<i64>,
+    /// Why, as its link to the hub last said: why the last try to connect
+    /// failed, or why the link was stopped. None where the link said none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub why: Option<String>,
     /// Why what it has not sent could not be counted, when it could not:
     /// then the counts say nothing (KK06).
     #[serde(default, skip_serializing_if = "Option::is_none")]

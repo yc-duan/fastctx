@@ -43,6 +43,9 @@ export interface SyncPageOptions {
   head(title: string, actions?: string): string;
   /** How `account`'s devices stand on `hub` over the last `hours`. */
   read(hub: HubId, account: string, hours: number): Promise<SyncStatusReply>;
+  /** What a conversation is called here, by its id; none where this
+   *  device does not know it. */
+  named?(conversation: string): string | null;
   now(): number;
 }
 
@@ -324,8 +327,9 @@ export class SyncPage implements Page {
     const held = totals
       ? `<p class="sy-held" title="${escape(words.hubSaid)}"><span>${escape(words.conversations(totals.conversations))}</span><span>${escape(words.hubFiles(totals.files, bytesSaid(totals.file_bytes)))}</span><span>${escape(words.records(bytesSaid(totals.record_bytes)))}</span></p>`
       : "";
+    // Why it is cut off is the link's own word for it, as it stands.
     const off = cut
-      ? `<p class="sy-cut"${reply.unreached ? ` title="${escape(reply.unreached)}"` : ""}>${escape(here.cut_off !== undefined ? words.cutOff(words.duration(Math.max(0, now - here.cut_off))) : words.unreached)}</p>`
+      ? `<p class="sy-cut"${reply.unreached ? ` title="${escape(reply.unreached)}"` : ""}>${escape(here.cut_off !== undefined ? words.cutOff(words.duration(Math.max(0, now - here.cut_off))) : words.unreached)}</p>${here.why ? `<p class="sy-cut-why">${escape(here.why)}</p>` : ""}`
       : "";
     return `<div class="sy-top"><div class="sy-link${cut ? " cut" : ""}">
       <div class="sy-node"><span class="sy-node-box">${glyph(kind, 28)}</span><b>${escape(here.machine)}</b><small>${escape(words.here)}</small></div>
@@ -459,6 +463,30 @@ export class SyncPage implements Page {
     </div>`;
   }
 
+  /** What a scope is, by its key (`fastctx_types::assets::Readers::key_prefix`):
+   *  a conversation by what it is called here, else by its id; an account's
+   *  records; a shared machine's; a project's; a working copy. */
+  private scopeSaid(key: string): string {
+    const { scope } = this.options.words;
+    const parts = key.split("/");
+    switch (parts[0]) {
+      case "c": {
+        const id = parts[parts.length - 1] ?? key;
+        return scope.talk(this.options.named?.(id) ?? id);
+      }
+      case "a":
+        return scope.records;
+      case "b":
+        return scope.shared;
+      case "p":
+        return scope.project(parts[1] ?? "");
+      case "w":
+        return scope.working;
+      default:
+        return scope.hub;
+    }
+  }
+
   /** A device opened: what it is doing and why, the facts, its own line. */
   private detail(key: string, status: SyncStatus, device: DeviceSync): string {
     const { words } = this.options;
@@ -486,7 +514,12 @@ export class SyncPage implements Page {
       : "";
     const facts: [string, string][] = [];
     if (device.missing_objects && !device.missing_bytes) facts.push([words.facts.files, String(device.missing_objects)]);
-    if (device.unpulled) facts.push([words.facts.unpulled, words.scopes(device.unpulled)]);
+    if (device.unpulled) {
+      // Which they are, where the hub tells: the first few by name.
+      const named = (device.unpulled_scopes ?? []).slice(0, 3).map((scope) => this.scopeSaid(scope));
+      const rest = device.unpulled - named.length;
+      facts.push([words.facts.unpulled, named.length ? `${named.join("、")}${rest > 0 ? ` ${words.more(rest)}` : ""}` : words.scopes(device.unpulled)]);
+    }
     if (device.unsent_frames) facts.push([words.facts.upload, words.frames(device.unsent_frames, bytesSaid(device.unsent_bytes))]);
     if (device.rate) facts.push([words.facts.rate, words.perSecond(bytesSaid(device.rate))]);
     if (device.reported !== undefined) {

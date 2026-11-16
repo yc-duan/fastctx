@@ -163,6 +163,13 @@
   text-align: center;
 }
 
+.sy-cut-why {
+  margin: 2px 0 0;
+  color: var(--text-3);
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+
 /* What the hub holds, under the hub. */
 .sy-held {
   display: flex;

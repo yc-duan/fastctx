@@ -160,12 +160,12 @@ pub(crate) async fn status(
         Ok(unsent) => (unsent, None),
         Err(why) => ((0, 0), Some(why)),
     };
-    let cut_off = match link.status() {
-        fastctx_net::link::Status::Online { .. } => None,
-        fastctx_net::link::Status::Connecting { since, .. } => Some(since.as_millisecond()),
-        fastctx_net::link::Status::Stopped { .. } => Some(jiff::Timestamp::now().as_millisecond()),
+    let (cut_off, why) = match link.status() {
+        fastctx_net::link::Status::Online { .. } => (None, None),
+        fastctx_net::link::Status::Connecting { since, last_error } => (Some(since.as_millisecond()), last_error),
+        fastctx_net::link::Status::Stopped { reason } => (Some(jiff::Timestamp::now().as_millisecond()), Some(reason)),
     };
-    let local = LocalSync { machine: link.name(), unsent_frames: unsent.0, unsent_bytes: unsent.1, cut_off, unread };
+    let local = LocalSync { machine: link.name(), unsent_frames: unsent.0, unsent_bytes: unsent.1, cut_off, why, unread };
     if cut_off.is_some() {
         return (local, None, Some("the hub is not reached".into()));
     }

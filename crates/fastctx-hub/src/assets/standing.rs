@@ -682,6 +682,9 @@ pub(crate) fn status(hub: &crate::Hub, from: &MachineName, account: &AccountName
             left,
             about,
             unpulled: facts.map_or(0, |facts| facts.unpulled),
+            unpulled_scopes: facts.map_or_else(Vec::new, |facts| {
+                facts.unpulled_scopes.iter().take(fastctx_types::sync_status::UNPULLED_TOLD).cloned().collect()
+            }),
             missing_objects: facts.map_or(0, |facts| facts.missing_objects),
             missing_bytes: facts.map_or(0, |facts| facts.missing_bytes),
             unsent_frames: facts.map_or(0, |facts| facts.unsent_frames),

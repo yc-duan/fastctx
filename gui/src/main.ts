@@ -3246,6 +3246,10 @@ function show(next: Place): void {
         words: english ? enSync : zhSync,
         head,
         read: (hub, account, hours) => (live ? syncStatus(hub, account, hours) : specimenSync(hub, account, hours)),
+        named: (conversation) => {
+          const found = residentsOf(store.world.peek(), true).find((resident) => resident.about.id === conversation);
+          return found ? talkNamed({ resident: found.about.id, machine: found.about.machine }).name : null;
+        },
         now: () => Date.now(),
       });
       break;

@@ -67,6 +67,10 @@ export interface SyncWords {
   toUpload(frames: number, size: string): string;
   /** Said of the way down while the two are cut off. */
   resumes: string;
+  /** What a scope a device has not pulled whole is, said to the account
+   *  it is of. */
+  scope: { talk(name: string): string; records: string; shared: string; project(name: string): string; working: string; hub: string };
+  more(n: number): string;
   /** The list of devices: how many, the standings it is sorted by, the
    *  search, the heads over each standing's columns, and the row that
    *  stands for the rest of a long group. */
@@ -168,6 +172,8 @@ export const zhSync: SyncWords = {
   hub: "中枢",
   toUpload: (frames, size) => `${frames} 条待上传，${size}`,
   resumes: "连接恢复后继续",
+  scope: { talk: (name) => `对话「${name}」`, records: "账号记录", shared: "共享机器的记录", project: (name) => `项目 ${name}`, working: "工作副本", hub: "网络记录" },
+  more: (n) => `等 ${n} 段`,
   devices: (n) => `${n} 台设备`,
   standings: { all: "全部", syncing: "同步中", silent: "未报告", away: "离线", synced: "已同步" },
   find: "搜索设备",
@@ -240,6 +246,8 @@ export const enSync: SyncWords = {
   hub: "Hub",
   toUpload: (frames, size) => `${frames} to send, ${size}`,
   resumes: "Goes on once connected",
+  scope: { talk: (name) => `the conversation “${name}”`, records: "the account's records", shared: "a shared machine's records", project: (name) => `the project ${name}`, working: "a working copy", hub: "the network's records" },
+  more: (n) => `and ${n} more`,
   devices: (n) => `${n} ${n === 1 ? "device" : "devices"}`,
   standings: { all: "All", syncing: "Catching up", silent: "Not reporting", away: "Offline", synced: "Caught up" },
   find: "Find a device",

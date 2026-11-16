@@ -12,12 +12,12 @@ use std::sync::Arc;
 /// The answer to how `account`'s machines stand with the hub of `link`,
 /// over the last `hours`.
 pub(super) async fn of(link: &Arc<Link>, account: AccountName, hours: u32) -> Reply {
-    let cut_off = match link.status() {
-        Status::Online { .. } => None,
-        Status::Connecting { since, .. } => Some(since.as_millisecond()),
-        Status::Stopped { .. } => Some(jiff::Timestamp::now().as_millisecond()),
+    let (cut_off, why) = match link.status() {
+        Status::Online { .. } => (None, None),
+        Status::Connecting { since, last_error } => (Some(since.as_millisecond()), last_error),
+        Status::Stopped { reason } => (Some(jiff::Timestamp::now().as_millisecond()), Some(reason)),
     };
-    let local = LocalSync { machine: link.name(), unsent_frames: 0, unsent_bytes: 0, cut_off, unread: None };
+    let local = LocalSync { machine: link.name(), unsent_frames: 0, unsent_bytes: 0, cut_off, why, unread: None };
     if cut_off.is_some() {
         return Reply::SyncStatus { local, hub: None, unreached: Some("the hub is not reached".into()) };
     }

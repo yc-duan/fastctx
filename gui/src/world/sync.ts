@@ -36,6 +36,9 @@ export interface DeviceSync {
   left?: [Part, number][];
   about?: boolean;
   unpulled: number;
+  /** The keys of some of the scopes it has not pulled whole, as it last
+   *  named them; absent from a hub of before it told them. */
+  unpulled_scopes?: string[];
   missing_objects: number;
   missing_bytes: number;
   unsent_frames: number;
@@ -78,6 +81,8 @@ export interface LocalSync {
   unsent_bytes: number;
   /** Since when it is cut off from the hub, if it is. */
   cut_off?: number;
+  /** Why, as its link to the hub last said. */
+  why?: string;
   /** Why what it has not sent could not be counted. */
   unread?: string;
 }
