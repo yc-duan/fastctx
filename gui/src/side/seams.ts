@@ -15,7 +15,7 @@ import type { SideWords } from "./words";
 /** The colleagues followed: stopped, or asked for more or less of them. */
 export interface Following {
   stop(): void;
-  /** Whether a page shows the colleagues' goals and agents now. */
+  /** Whether a page shows the colleagues' goals now. */
   detail(shown: boolean): void;
 }
 
@@ -46,9 +46,9 @@ export interface SideSeams {
     clear(seen?: number): Promise<boolean>;
   };
   /** The colleagues the conversation asked: who each is and how it
-   *  stands, as the World is pushed; with `detail`, each one's goal and the
-   *  host's agents it sent too, read only while a page shows them. */
-  colleagues(show: (nodes: CollabNode[], reading?: boolean) => void): Following;
+   *  stands, as the World is pushed; with `detail`, each one's goal too,
+   *  read only while a page shows them. */
+  colleagues(show: (nodes: CollabNode[]) => void): Following;
   /** Where it works, followed as the World changes. */
   where(show: (where: WhereShown | null) => void): () => void;
   /** Shows a folder of this computer in the system's own window, where this

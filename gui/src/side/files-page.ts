@@ -5,8 +5,12 @@
 // them, any file opening on a tab to what it holds. Each machine's folder
 // folds away under its head and opens again (the user, 2026-11-17: "每个
 // 电脑得支持收起和展开"), kept so on this device; one folded as the page
-// is drawn is not read until it is opened.
+// is drawn is not read until it is opened. Turned by its switch, what the
+// page then shows comes in from the side the switch moved to, and the page
+// goes from the one height to the other where it stands as tall as what it
+// holds ("这个切换你忘记做动画了").
 
+import { arrive } from "../app/arrive";
 import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
 import { figures, fileRow } from "../files/changed";
@@ -14,6 +18,7 @@ import { commonFolder, tally, within, type ChangedFile } from "../files/model";
 import { FileTree, type Listing } from "../files/tree";
 import type { ViewTab } from "../files/view";
 import type { FilesWords } from "../files/words";
+import { msOf } from "../motion";
 import type { SidePage } from "./pane";
 import type { WhereShown } from "./types";
 
@@ -40,6 +45,12 @@ type Shows = "changes" | "folders";
  *  the latest folded stay. */
 const FOLDED = "side-files-folded";
 const KEPT = 200;
+/** How long a page turned to trees not read yet is held as tall as it
+ *  stood; how long after rows came no more are waited for before it is
+ *  carried to their height; and for how long it follows them at all. */
+const HELD = 400;
+const QUIET = 50;
+const SETTLING = 4000;
 
 function folded(): Set<string> {
   try {
@@ -76,18 +87,18 @@ export class SideFiles implements SidePage {
   /** A folder's tree read for the first time: at once where its folder is
    *  open, else as it is first opened. */
   private readonly starts = new Map<string, () => void>();
+  /** Stops the page following the height of trees still being read. */
+  private settle: (() => void) | null = null;
 
   constructor(private readonly seams: SideFilesSeams) {
     const { words } = seams;
     this.element.className = "sf-page";
-    this.element.innerHTML = `<header class="sf-head"><div class="segmented sf-shows" role="radiogroup" aria-label="${escape(words.side.shows)}"></div><span class="sf-sum"></span></header><div class="sf-changes"></div><div class="sf-folders" hidden></div>`;
+    this.element.innerHTML = `<header class="sf-head"><div class="segmented sf-shows" role="radiogroup" aria-label="${escape(words.side.shows)}"></div><span class="sf-sum"></span></header><div class="sf-body"><div class="sf-changes"></div><div class="sf-folders" hidden></div></div>`;
     this.element.addEventListener("click", (event) => {
       const target = event.target as HTMLElement;
       const shows = target.closest<HTMLElement>("[data-shows]")?.dataset.shows as Shows | undefined;
       if (shows) {
-        if (shows === this.shows) return;
-        this.shows = shows;
-        this.draw();
+        if (shows !== this.shows) this.turnTo(shows);
         return;
       }
       const go = target.closest<HTMLElement>(".sf-root-go");
@@ -122,6 +133,72 @@ export class SideFiles implements SidePage {
 
   shown(): void {
     this.draw();
+  }
+
+  /** Turns the page from the list to the trees, or back. What it then
+   *  shows comes in from the side its switch moved to, its head standing
+   *  still, as a view under one head does everywhere (`app/arrive.ts`).
+   *  Where the page stands as tall as what it holds, on its card of the
+   *  side, it goes from the one height to the other at the same pace,
+   *  rather than leaping there under what comes in. Trees put only now are
+   *  still being read: the page is held as tall as it stood until every
+   *  open one has its rows, or a moment has passed, and goes on to the
+   *  height each later one gives it; carried at once, it went down to the
+   *  height of trees with nothing in them and sprang back up as they
+   *  filled. */
+  private turnTo(shows: Shows): void {
+    const page = this.element;
+    const from = page.getBoundingClientRect().height;
+    const planted = this.planted;
+    this.settle?.();
+    this.shows = shows;
+    this.draw();
+    const body = page.querySelector<HTMLElement>(".sf-body")!;
+    arrive(body, shows === "folders" ? "right" : "left");
+    const style = getComputedStyle(page);
+    const duration = msOf(style.getPropertyValue("--enter"));
+    if (duration <= 0) return;
+    const easing = style.getPropertyValue("--fold-easing").trim() || "ease";
+    /** The height the page last stood at, or was last carried to. */
+    let stood = from;
+    /** Carries the page to the height of what it holds now: from where it
+     *  has come to, while it is held or carried; else from where it stood. */
+    const carry = () => {
+      const moving = page.style.height !== "" || page.getAnimations().length > 0;
+      const at = moving ? page.getBoundingClientRect().height : stood;
+      for (const going of page.getAnimations()) going.cancel();
+      page.style.height = "";
+      stood = page.getBoundingClientRect().height;
+      if (Math.abs(stood - at) >= 1) page.animate([{ height: `${at}px` }, { height: `${stood}px` }], { duration, easing });
+    };
+    /** Whether a tree that is open has no rows of its own yet. */
+    const reading = () => [...this.trees].some(([key, { tree }]) => !this.fold.has(key) && tree.reading);
+    if (shows !== "folders" || this.planted === planted || !reading()) return carry();
+    page.style.height = `${from}px`;
+    // Waited for no longer than this: a tree slow to be read fills in after.
+    let held = true;
+    const release = window.setTimeout(() => {
+      held = false;
+      carry();
+    }, HELD);
+    // Rows that come close together are one change of height.
+    let quiet = 0;
+    const watch = new MutationObserver(() => {
+      window.clearTimeout(quiet);
+      quiet = window.setTimeout(() => {
+        if (!held || !reading()) carry();
+      }, QUIET);
+    });
+    watch.observe(body, { childList: true, subtree: true });
+    const over = window.setTimeout(() => this.settle?.(), SETTLING);
+    this.settle = () => {
+      this.settle = null;
+      watch.disconnect();
+      window.clearTimeout(release);
+      window.clearTimeout(quiet);
+      window.clearTimeout(over);
+      page.style.height = "";
+    };
   }
 
   /** Folds a machine's folder away under its head, or opens it again,

@@ -90,19 +90,8 @@ function stateOf(run: AgentRun): NodeState {
   return "unknown";
 }
 
-/** Whether `id` is `node` or anyone under it. */
-function contains(node: CollabNode, id: string): boolean {
-  return node.id === id || node.children.some((child) => contains(child, id));
-}
-
-/** One of the host's agents as a node, with those it sent under it. */
-function nodeOf(
-  run: AgentRun,
-  host: "claude" | "codex",
-  under: Map<string, AgentRun[]>,
-  now: number,
-  doing?: (run: AgentRun) => string | null,
-): CollabNode {
+/** One of the host's agents as a node. */
+function nodeOf(run: AgentRun, host: "claude" | "codex", now: number, doing?: (run: AgentRun) => string | null): CollabNode {
   const began = run.began ?? now;
   const took = run.duration ?? Math.max(0, (run.ended ?? (run.going ? now : began)) - began);
   return {
@@ -119,7 +108,6 @@ function nodeOf(
     tokens: run.tokens,
     model: run.model,
     steps: run.tools ?? run.steps.length,
-    children: (under.get(run.id) ?? []).map((child) => nodeOf(child, host, under, now, doing)),
   };
 }
 
@@ -141,8 +129,8 @@ export class SideParts implements PartSet {
   history: { part: string; label: string } | null = null;
   private readonly bar: GoalBar;
   private readonly home: SideHome;
-  /** The colleagues it asked, and the host's agents it sent, each read
-   *  whole on its own card of the overview once opened there. */
+  /** The colleagues it asked, and the host's agents it sent, each a page
+   *  set into its own card of the overview. */
   private readonly colleaguesPage: CollabPage;
   private readonly agentsPage: CollabPage;
   private readonly goalPage: GoalPage;
@@ -150,7 +138,6 @@ export class SideParts implements PartSet {
   private readonly planPage: PlanPage;
   private readonly stops: (() => void)[] = [];
   private colleagues: CollabNode[] = [];
-  private teamReading = false;
   /** The colleagues followed, read in full while a page shows them. */
   private following: Following | null = null;
   private detailed = false;
@@ -197,9 +184,9 @@ export class SideParts implements PartSet {
       clear: () => void this.act(seams.goal.clear(version())),
       expand: () => this.frame?.show(PART.goal),
     });
-    // The files it changed and the folders it works in: read whole on their
-    // card of the overview once opened there; in a window of their own, the
-    // window's first page.
+    // The files it changed and the folders it works in: what their card of
+    // the overview turns to; in a window of their own, the window's first
+    // page.
     if (seams.files)
       this.filesPage = new SideFiles({
         words: seams.files.words,
@@ -217,7 +204,6 @@ export class SideParts implements PartSet {
       words,
       {
         page: () => this.frame?.show(PART.goal),
-        node: (node) => this.openNode(node),
         file: (machine, path) => context.openFile?.(machine, path, "changes"),
         // A card taken out stands in a window of its own, its place kept
         // here; the files' goes with the files open, which are shut here.
@@ -234,8 +220,8 @@ export class SideParts implements PartSet {
       !seams.noGoal,
       this.planPage.element,
       seams.files?.words ?? null,
-      // What each card shows opened whole. The files in a window of their
-      // own are that window's first page, not a card's.
+      // The pages set into their cards. The files in a window of their own
+      // are that window's first page, not a card's.
       { colleagues: this.colleaguesPage, agents: this.agentsPage, ...(this.filesPage && ONLY !== "files" ? { files: this.filesPage } : {}) },
     );
     this.parts =
@@ -262,9 +248,8 @@ export class SideParts implements PartSet {
       this.stops.push(history.watch((catalog) => card.show(catalog)));
       if (earlier) this.stops.push(earlier.watch((catalog) => card.showEarlier(catalog)));
     }
-    this.following = seams.colleagues((nodes, reading = false) => {
+    this.following = seams.colleagues((nodes) => {
       this.colleagues = nodes;
-      this.teamReading = reading;
       this.goalPage.showTeam(nodes);
       this.drawTeam();
     });
@@ -375,20 +360,14 @@ export class SideParts implements PartSet {
     for (const tab of this.tabs.splice(0)) tab.leave?.();
   }
 
-  /** One that works with the conversation, pressed on its card or among
-   *  everyone: a colleague opens beside it on the desk; one of the host's
-   *  agents is read in the conversation, under the row of the call that
-   *  sent it, which is brought into view and opened. */
+  /** One that works with the conversation, pressed on its card: a
+   *  colleague opens beside it on the desk; one of the host's agents is
+   *  read in the conversation, under the row of the call that sent it,
+   *  which is brought into view and opened. */
   private openNode(node: CollabNode): void {
     if (this.context.away) return this.context.away.node(node);
     if (node.kind === "colleague" || node.kind === "side") {
       this.frame?.beside({ resident: node.id, machine: node.machine ?? this.context.seams.self.machine });
-      return;
-    }
-    // An agent a colleague sent is read in the colleague's conversation.
-    if (!this.runs.some((run) => run.id === node.id)) {
-      const colleague = this.colleagues.find((one) => contains(one, node.id));
-      if (colleague) this.openNode(colleague);
       return;
     }
     this.context.jump(node.id);
@@ -418,32 +397,27 @@ export class SideParts implements PartSet {
    *  in it, how each stands, and the minutes they have worked. */
   private drawTeam(): void {
     const now = Date.now();
-    const under = new Map<string, AgentRun[]>();
-    const known = new Set(this.runs.map((run) => run.id));
-    const top: AgentRun[] = [];
-    for (const run of this.runs) {
-      if (run.parent && known.has(run.parent)) under.set(run.parent, [...(under.get(run.parent) ?? []), run]);
-      else top.push(run);
-    }
     const doing = this.context.doing?.bind(this.context);
-    const nodes = [...this.colleagues, ...top.map((run) => nodeOf(run, this.context.host, under, now, doing))];
-    const shown = JSON.stringify([nodes, this.teamReading], minutes);
+    // The host's agents are one level with the colleagues: one an agent
+    // sent of its own stands among them, not under it.
+    const nodes = [...this.colleagues, ...this.runs.map((run) => nodeOf(run, this.context.host, now, doing))];
+    const shown = JSON.stringify(nodes, minutes);
     if (shown === this.shownTeam) return;
     this.shownTeam = shown;
     // What is new is told by what the World pushes, the same whether a
-    // page reads the colleagues in full or not: a colleague's goal and its
-    // agents come and go with the page and tell nothing.
+    // page reads the colleagues in full or not: a colleague's goal comes
+    // and goes with the page and tells nothing.
     const colleagues = nodes
       .filter((node) => node.kind === "colleague")
-      .map((node) => ({ ...node, goal: null, branchOf: null, why: null, children: [] }))
+      .map((node) => ({ ...node, goal: null, branchOf: null, why: null }))
       .sort((a, b) => `${a.machine}/${a.id}`.localeCompare(`${b.machine}/${b.id}`));
     const key = JSON.stringify([...colleagues, ...nodes.filter((node) => node.kind !== "colleague")], minutes);
     const fresh = this.drawnTeam !== "" && key !== this.drawnTeam;
     this.drawnTeam = key;
     this.teamNodes = nodes;
     this.tell("team");
-    this.colleaguesPage.show(nodes, this.teamReading);
-    this.agentsPage.show(nodes, this.teamReading);
+    this.colleaguesPage.show(nodes);
+    this.agentsPage.show(nodes);
     this.home.team(nodes);
     if (fresh) {
       this.fresh = true;
@@ -461,7 +435,7 @@ export class SideParts implements PartSet {
       return [plan && { source: plan.source, version: plan.version, when: plan.when }, facts];
     }
     if (topic === "goal") return [this.shownGoal];
-    if (topic === "team") return [this.teamNodes, this.teamReading];
+    if (topic === "team") return [this.teamNodes];
     if (topic === "where") return [this.shownWhere];
     const told: ChangedTold = this.changedFiles.map((file) => ({ ...file, changes: file.changes.map(({ rows, ...change }) => ({ ...change, rowed: !!rows })) }));
     return [told];
@@ -499,13 +473,6 @@ export class SideParts implements PartSet {
         if (topic === "team") this.follow();
       };
     };
-    const find = (nodes: CollabNode[], id: string): CollabNode | null => {
-      for (const node of nodes) {
-        const found = node.id === id ? node : find(node.children, id);
-        if (found) return found;
-      }
-      return null;
-    };
     return {
       calls: {
         hello: () => ({ host: context.host, list: !!seams.files?.list, browse: !!seams.files?.browse, reveal: !!seams.reveal, picture: !!reading?.picture, outside: !!reading?.outside }),
@@ -524,9 +491,10 @@ export class SideParts implements PartSet {
         },
         reveal: (_board, path: string) => seams.reveal?.(path),
         // One who works with the conversation is opened here, as from the
-        // side: a colleague beside it, one of the host's agents in a sheet.
+        // side: a colleague beside it, one of the host's agents at the row
+        // of the conversation that sent it.
         node: (_board, id: string) => {
-          const node = find(this.teamNodes, id);
+          const node = this.teamNodes.find((one) => one.id === id);
           if (!node) return;
           this.openNode(node);
           window.focus();

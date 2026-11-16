@@ -14,7 +14,7 @@ import type { PlanWords } from "../plan/words";
 import { unwatch, type WorldNow } from "../world/bridge";
 import { planRead, planWrite, watchPlan, type PlanAccount, type PlanPage } from "../world/plan";
 import { goalPast, goalShown, goalUpdate, watchGoal, type GoalChange, type GoalView } from "../world/goal";
-import { watchCollaboration, type Branch, type NativeAgent, type Tree } from "../world/collab-tree";
+import { watchCollaboration, type Branch, type Tree } from "../world/collab-tree";
 import type { Address } from "../world/wire";
 import type { GoalStatus } from "./types";
 import { goalSamples, pastSamples, teamSample } from "./samples";
@@ -26,8 +26,10 @@ import { sentinelList, type SentinelSummary } from "../world/sentinels";
 import { accountFeatures, featureAccount } from "../app/account-features";
 
 /** The colleagues the conversation asked, as the World reports them, each
- *  with its goal and the agents it sent. The conversation's own agents come
- *  from its own events, which the panel already follows. */
+ *  with its goal. The agents a colleague sent of its own come with the tree
+ *  and are left there: they are read in the colleague's conversation
+ *  (`types.ts`, `CollabNode`). The conversation's own agents come from its
+ *  own events, which the panel already follows. */
 function treeNodes(tree: Tree, store: Store, now: number): CollabNode[] {
   const agentOf = (resident: string, fallback: "claude" | "codex"): "claude" | "codex" => {
     const found = residentsOf(store.world.peek()).find((r) => r.about.id === resident);
@@ -60,7 +62,6 @@ function branchNode(branch: Branch, agent: "claude" | "codex", store: Store, now
     task: branch.label ?? branch.now?.title ?? "",
     state,
     why: why || null,
-    reading: Boolean(branch.reading),
     goal: treeGoal(branch.goal),
     branchOf: "Ok" in branch.goal ? (branch.goal.Ok?.parent ?? null) : null,
     took: Number.isFinite(born) ? Math.max(0, (busy ? now : Number.isFinite(since) ? since : now) - born) : 0,
@@ -69,44 +70,7 @@ function branchNode(branch: Branch, agent: "claude" | "codex", store: Store, now
     model: found?.about.model ?? null,
     steps: null,
     machine: branch.address.machine,
-    children: branch.agents.map((child) => agentNode(child, agent, now)),
   };
-}
-
-function agentNode(agent: NativeAgent, parent: "claude" | "codex", now: number): CollabNode {
-  const model = agent.model ?? "";
-  const kind: "claude" | "codex" = /codex|gpt/i.test(model) ? "codex" : /claude/i.test(model) ? "claude" : parent;
-  const started = agent.started_at ? Date.parse(agent.started_at) : NaN;
-  const ended = agent.ended_at ? Date.parse(agent.ended_at) : NaN;
-  const state = agentState(agent);
-  return {
-    id: agent.id,
-    kind: "subagent",
-    agent: kind,
-    name: agent.name ?? agent.id,
-    task: agent.task ?? "",
-    state,
-    reading: Boolean(agent.reading),
-    why: agent.unavailable ?? null,
-    goal: null,
-    took: agent.duration_ms ?? (Number.isFinite(started) ? Math.max(0, now - started) : 0),
-    began: Number.isFinite(started) ? started : null,
-    ended: state === "working" ? null : Number.isFinite(ended) ? ended : Number.isFinite(started) && agent.duration_ms != null ? started + agent.duration_ms : null,
-    model: agent.model ?? null,
-    steps: null,
-    children: agent.children.map((child) => agentNode(child, kind, now)),
-  };
-}
-
-/** A native agent's state, `unknown` when only a historical start is known. */
-function agentState(agent: NativeAgent): NodeState {
-  if (agent.state == null) return agent.ended_at ? "done" : "unknown";
-  const state = agent.state.toLowerCase();
-  if (/busy|run|active|work/.test(state)) return "working";
-  if (/fail|error/.test(state)) return "failed";
-  if (/stop|cancel/.test(state)) return "stopped";
-  if (/done|complete|idle|rest|end/.test(state) || agent.ended_at) return "done";
-  return "unknown";
 }
 
 /** A colleague's goal state, or none where it could not be read (Rust Result). */
@@ -167,8 +131,7 @@ export interface LiveSide {
 
 /** The colleagues the conversation at `address` asked, as the World pushes
  *  them: who each is and how it stands, worked out as the tree does. Their
- *  goals and the agents they sent come with the tree, while a page shows
- *  them. */
+ *  goals come with the tree, while a page shows them. */
 function worldColleagues(store: Store, address: Address, now: number): CollabNode[] {
   return residentsOf(store.world.peek()).flatMap((r): CollabNode[] => {
     const origin = r.about.origin;
@@ -192,7 +155,6 @@ function worldColleagues(store: Store, address: Address, now: number): CollabNod
         took: Number.isFinite(born) ? Math.max(0, (busy ? now : Number.isFinite(since) ? since : now) - born) : 0,
         steps: null,
         machine: r.about.machine,
-        children: [],
       },
     ];
   });
@@ -219,7 +181,6 @@ function sideNodes(store: Store, address: Address, words: SideWords, now: number
         took: Number.isFinite(born) ? Math.max(0, (busy ? now : Number.isFinite(since) ? since : now) - born) : 0,
         steps: null,
         machine: r.about.machine,
-        children: [],
       };
     });
 }
@@ -379,8 +340,7 @@ export function liveSide(options: LiveSide): SideSeams {
         const colleagues = told
           ? broken === null ? told : told.map((node) => ({ ...node, state: "unknown" as const, why: broken }))
           : worldColleagues(options.store, options.address, now);
-        const reading = detail && (tree === null || Boolean(tree.conversation.reading) || tree.colleagues.some((branch) => branch.reading));
-        show([...colleagues, ...sideNodes(options.store, options.address, options.words, now)], reading);
+        show([...colleagues, ...sideNodes(options.store, options.address, options.words, now)]);
       };
       const follow = () => {
         const mine = ++following;
@@ -515,7 +475,7 @@ export function specimenSide(
       },
     },
     colleagues: (show) => {
-      show(teamSample(english).filter((node) => node.kind === "colleague"));
+      show(teamSample(english));
       return { stop: () => {}, detail: () => {} };
     },
   };

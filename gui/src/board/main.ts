@@ -22,6 +22,7 @@ import "../app/sheet.css";
 import "../design/head-switch.css";
 import "./board.css";
 import { placeOf } from "../app/places";
+import { followSwitches } from "../app/segment-slide";
 import { installPointerHints } from "../app/pointer-hint";
 import { fileKind } from "../conversation/file-kind";
 import type { FileChange } from "../files/model";
@@ -115,6 +116,8 @@ async function open(): Promise<void> {
   document.title = `${cardNames(words)[ONLY]} - Fastctx`;
   installPointerHints();
   installRules();
+  // A switch's chosen side slides to the one pressed here too, as on the desk.
+  followSwitches();
   applyTheme(() => {});
   const hello = await remote.call<Hello>("hello");
   const detail = (error: unknown) => (error instanceof Error ? error.message : String(error));
@@ -160,7 +163,7 @@ async function open(): Promise<void> {
       },
       // Everyone who works with it, as the desk's side has them: the
       // colleagues and the host's agents already as one.
-      colleagues: (show) => ({ stop: remote.watch("team", (nodes: CollabNode[], reading: boolean) => show(nodes, reading)), detail: () => {} }),
+      colleagues: (show) => ({ stop: remote.watch("team", (nodes: CollabNode[]) => show(nodes)), detail: () => {} }),
       where: (show) => remote.watch("where", (where: WhereShown | null) => show(where)),
       ...(hello.reveal ? { reveal: (path: string) => void remote.call("reveal", path) } : {}),
       files: {

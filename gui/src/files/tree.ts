@@ -90,6 +90,13 @@ export class FileTree {
     this.left = true;
   }
 
+  /** Whether the folder it is to show is not read yet, or not yet known:
+   *  it has no rows of its own so far. */
+  get reading(): boolean {
+    if (this.mode !== "all" || !this.options.list) return false;
+    return this.root === null || (this.listed.get(plain(this.root)) ?? "reading") === "reading";
+  }
+
   /** Shows the folder `root` (none: nothing yet), all it holds or only the
    *  files changed in it. */
   show(root: string | null, mode: TreeMode): void {

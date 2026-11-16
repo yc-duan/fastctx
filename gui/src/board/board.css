@@ -48,7 +48,7 @@
   min-height: 0;
 }
 
-.sb-host .sh-whole {
+.sb-host .sh-frame {
   flex: 1 1 auto;
   max-height: none;
 }

@@ -597,9 +597,9 @@ html.framed .sp-panel.sp-over .sp-line {
   }
 }
 
-/* A card's head: its name, pressed to fold it, and at its end the mark
-   that takes it out of the side. The head is also what the card is carried
-   by. */
+/* A card's head: its name, pressed to fold it, and at its end its marks:
+   the one that turns the files' card to their page, the one that takes a
+   card out of the side. The head is also what the card is carried by. */
 .sh-top {
   display: flex;
   align-items: center;
@@ -610,7 +610,7 @@ html.framed .sp-panel.sp-over .sp-line {
   flex: 1 1 auto;
 }
 
-.sh-pull {
+.sh-mark {
   flex: none;
   display: grid;
   place-items: center;
@@ -622,12 +622,12 @@ html.framed .sp-panel.sp-over .sp-line {
   transition: opacity var(--hover) var(--ease), color var(--hover) var(--ease);
 }
 
-.sh-card:hover .sh-pull,
-.sh-pull:focus-visible {
+.sh-card:hover .sh-mark,
+.sh-mark:focus-visible {
   opacity: 1;
 }
 
-.sh-pull:hover {
+.sh-mark:hover {
   color: var(--text);
 }
 
@@ -842,67 +842,94 @@ html.sh-carrying * {
   text-overflow: ellipsis;
 }
 
-.sh-lines {
+/* What a card holds scrolls in the card past a height: the card stands as
+   tall as what it holds up to that and no taller, and nothing of it is left
+   out to be asked for (the user, 2026-11-17: "全部搞成能滚动的，就没有展开
+   逻辑了"). The page set into a card is what scrolls; its frame is the
+   height it may take. */
+.sh-frame {
   display: flex;
   flex-direction: column;
-}
-
-.sh-lines .cp-line {
-  padding-left: var(--space-2);
-}
-
-/* A card's foot: the way to the whole of what it holds, and back to the
-   glance, where its lines begin; what else the foot says, at its end. */
-.sh-foot {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-2);
-  min-height: 30px;
-  margin-top: var(--space-1);
-  padding: 0 var(--space-3) 0 var(--space-1);
-}
-
-.sh-more {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 0 var(--space-2);
-}
-
-.sh-more > .glyph {
-  flex: none;
-  color: var(--text-3);
-  transition: rotate var(--expand) var(--expand-easing);
-}
-
-.sh-more.whole > .glyph {
-  rotate: 180deg;
-}
-
-.sh-foot .cf-figures {
-  gap: 6px;
-  font-size: var(--size-fine);
-}
-
-/* The whole of what a card holds, set into the card: past a height it
-   scrolls there, the card standing as tall as that and no taller. */
-.sh-whole {
   min-height: 0;
+  max-height: min(38dvh, 280px);
+}
+
+.sh-frame > .cp-page {
+  flex: 0 1 auto;
+}
+
+/* The files' page stands taller: its switch stays at its head, the list or
+   the trees under it scroll. How many files and by how many lines is said
+   at the card's head. */
+.sh-card[data-of="files"] .sh-frame {
   max-height: min(56dvh, 520px);
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  scrollbar-width: thin;
   padding: 0 var(--space-3);
 }
 
-.sh-whole > .cp-page {
-  overflow: visible;
-}
-
-.sh-whole > .sf-page {
+.sh-frame > .sf-page {
+  flex: 0 1 auto;
   display: flex;
   flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.sh-frame .sf-sum {
+  display: none;
+}
+
+/* What scrolls in a card fades out at an edge where more of it lies past
+   the edge, as the plan does, so that there is more is seen before it is
+   scrolled to. */
+.sh-files,
+.sh-frame > .cp-page,
+.sh-frame .sf-changes,
+.sh-frame .sf-folders {
+  -webkit-mask-image: linear-gradient(to bottom, transparent, black var(--sh-fade-head), black calc(100% - var(--sh-fade-foot)), transparent);
+  mask-image: linear-gradient(to bottom, transparent, black var(--sh-fade-head), black calc(100% - var(--sh-fade-foot)), transparent);
+}
+
+@supports (animation-timeline: scroll()) {
+  .sh-files,
+  .sh-frame > .cp-page,
+  .sh-frame .sf-changes,
+  .sh-frame .sf-folders {
+    animation: sh-fade-head linear both, sh-fade-foot linear both;
+    animation-timeline: scroll(self), scroll(self);
+    animation-range: 0 var(--space-6), calc(100% - var(--space-8)) 100%;
+  }
+}
+
+/* The files' card has two things to show, the files a line each and their
+   page, in one place: turned from the one to the other (`home.ts`,
+   `browse`), the card goes from the one height to the other while the one
+   left fades out over the one coming in. */
+.sh-views {
+  display: grid;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.sh-view {
+  grid-area: 1 / 1;
+  min-width: 0;
+  min-height: 0;
+}
+
+.sh-view:not(.shown, .leaving) {
+  display: none;
+}
+
+.sh-view.leaving {
+  align-self: start;
+  pointer-events: none;
+}
+
+/* How many files and by how many lines, after how the card stands. */
+.sh-state > .cf-figures {
+  gap: 6px;
+  margin-left: var(--space-2);
+  vertical-align: bottom;
 }
 
 .sh-none {
@@ -916,48 +943,6 @@ html.sh-carrying * {
   .sh-ask {
     min-height: 44px;
   }
-}
-
-/* Everyone who works with the conversation, and one of the host's agents,
-   in a sheet: the sheet scrolls, its head stays. */
-@media (min-width: 761px) {
-  .cs-sheet > .sheet-body {
-    width: min(640px, 100vw - 32px);
-  }
-}
-
-.cs-sheet .cp-page {
-  overflow: visible;
-}
-
-.cs-sheet .agent-scroll {
-  max-height: none;
-}
-
-.cs-sheet .agent-box {
-  margin: 0;
-  padding: 0;
-  background: transparent;
-}
-
-.cs-head {
-  gap: var(--space-2);
-}
-
-.cs-head .sheet-title {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-
-.cs-head .page-back {
-  max-width: none;
-}
-
-.cs-jump {
-  flex: none;
 }
 
 /* The history a conversation's model works with: its documents one to a
@@ -1733,110 +1718,28 @@ button.gh-goal:hover,
   }
 }
 
-/* Who works with the conversation: a card for each, those at work first;
-   the cards scroll in their own place. */
+/* Who works with the conversation: a row for each, those at work first;
+   the rows scroll in their own place. */
 .cp-page {
   flex: 1;
   min-height: 0;
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
   overflow: auto;
   overscroll-behavior: contain;
   scrollbar-width: thin;
 }
 
-/* A group under its name: the colleagues, the host's agents, the
-   conversations branched off. */
-.cp-group {
-  flex: none;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-}
-
-.cp-group + .cp-group {
-  margin-top: var(--space-3);
-}
-
-.cp-group-name {
-  margin: 0;
-  padding: 0 var(--space-1);
-  color: var(--text-2);
-  font: inherit;
-  font-family: var(--font-emphasis);
-  line-height: 24px;
-}
-
-/* The agents a colleague sent, under its own line: how many, then a short
-   line each, set in under its task. */
-.cp-sent {
-  padding: var(--space-1) var(--space-3) 0 calc(var(--space-3) + 16px + var(--space-2));
-  color: var(--text-3);
-  font-size: var(--size-fine);
-  line-height: 18px;
-}
-
-.cp-sents {
-  display: flex;
-  flex-direction: column;
-  padding: 2px 0 var(--space-2);
-}
-
-.cp-line {
-  display: grid;
-  grid-template-columns: 16px minmax(0, 1fr) auto;
-  column-gap: var(--space-2);
-  align-items: center;
-  margin: 0 var(--space-1);
-  padding: 2px var(--space-2) 2px calc(var(--space-2) + 16px + var(--space-2));
-  border-radius: var(--radius-s);
-  color: var(--text-2);
-  font: inherit;
-  text-align: left;
-  transition: background-color var(--hover) var(--ease);
-}
-
-.cp-line:hover {
-  background: var(--fill-strong);
-}
-
-.cp-line.working,
-.cp-line.waiting {
-  color: var(--text);
-}
-
-.cp-line.failed .cp-state {
-  color: var(--wrong);
-}
-
-.cp-line .cp-took {
-  color: var(--text-3);
-}
-
-.cp-line .cp-end {
-  display: flex;
-  align-items: baseline;
-  gap: var(--space-2);
-  white-space: nowrap;
-}
-
-.cp-card {
-  flex: none;
-  display: flex;
-  flex-direction: column;
-  border-radius: var(--radius-m);
-  background: var(--fill);
-}
-
-/* How it stands at the head, its task, and under the task how long and
-   what it does or spent. */
+/* How it stands at the head, its task, how long; and under the task who
+   it is and what it does or spent. */
 .cp-entry {
+  flex: none;
   display: grid;
   grid-template-columns: 16px minmax(0, 1fr) auto;
   column-gap: var(--space-2);
-  padding: var(--space-2) var(--space-3);
-  border-radius: var(--radius-m);
+  margin: 0 var(--space-1);
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-s);
   color: var(--text-2);
   font: inherit;
   text-align: left;
@@ -1871,10 +1774,6 @@ button.gh-goal:hover,
   line-height: 24px;
 }
 
-.cp-entry.heads .cp-task {
-  font-family: var(--font-emphasis);
-}
-
 .cp-meta {
   grid-column: 2 / 4;
   display: flex;
@@ -1900,6 +1799,7 @@ button.gh-goal:hover,
 
 .cp-took {
   color: var(--text-3);
+  line-height: 24px;
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
 }
@@ -1949,30 +1849,8 @@ button.gh-goal:hover,
   background: currentColor;
 }
 
-/* The line ruled between a colleague and the agents it sent. */
-.cp-rule {
-  display: block;
-  width: calc(100% - 2 * var(--space-3));
-  height: 6px;
-  margin: 0 var(--space-3);
-  fill: var(--pen-trace);
-}
-
-.cp-earlier {
-  flex: none;
-  align-self: flex-start;
-  padding: var(--space-1) var(--space-3);
-  color: var(--text-3);
-  font: inherit;
-  transition: color var(--hover) var(--ease);
-}
-
-.cp-earlier:hover {
-  color: var(--text);
-}
-
 .cp-empty {
-  margin: var(--space-3) 0 0;
+  margin: var(--space-1) var(--space-3) 0;
   color: var(--text-2);
 }
 
@@ -1988,31 +1866,9 @@ button.gh-goal:hover,
 }
 
 @media (pointer: coarse) {
-  .cp-entry,
-  .cp-line,
-  .cp-earlier {
+  .cp-entry {
     min-height: 44px;
   }
-}
-
-/* What one of the host's agents did fills the side's body, to be read;
-   the way to the row that sent it stands at the top. */
-.sp-page.agent-box {
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto auto;
-  overflow: hidden;
-  margin: 0;
-  padding: 0;
-  border-radius: 0;
-  background: transparent;
-}
-
-.sp-page.agent-box > .agent-scroll {
-  max-height: none;
-}
-
-.sp-jump {
-  flex: none;
 }
 
 /* The files the conversation changed: their card on the overview, a line
@@ -2021,9 +1877,14 @@ button.gh-goal:hover,
 .sh-files {
   display: flex;
   flex-direction: column;
+  max-height: min(30dvh, 208px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
 }
 
 .sh-file {
+  flex: none;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -2095,6 +1956,15 @@ button.gh-goal:hover,
   margin-left: auto;
   padding-bottom: 9px;
   font-variant-numeric: tabular-nums;
+}
+
+/* What the switch chooses between, under the head: the one shown comes
+   in from the side the switch moved to (`files-page.ts`, `turnTo`). */
+.sf-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
 }
 
 .sf-changes,

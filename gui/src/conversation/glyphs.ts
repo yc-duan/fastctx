@@ -24,6 +24,7 @@ type Frame =
   | "context" | "cache" | "clock" | "tree" | "rows" | "update" | "bell"
   | "note" | "plug" | "tune" | "skill"
   | "goal" | "pause" | "resume" | "panel" | "repair" | "journal" | "spec" | "sentinel" | "steps" | "dock-right" | "dock-bottom" | "dock-left" | "dock-out" | "split"
+  | "unfold" | "fold"
   | Marks;
 
 /** Which agent and which kind of device, drawn small beside a conversation's
@@ -156,6 +157,10 @@ const paths: Record<Named, string> = {
   "dock-left": '<rect x="3.75" y="4.25" width="12.5" height="11.5" rx="1.5"/><path d="M8.25 4.25v11.5"/>',
   /* A window come away from the one it stood in: the side pulled out. */
   "dock-out": '<path d="M8.75 6.75h-4a1 1 0 0 0-1 1v7a1 1 0 0 0 1 1h9a1 1 0 0 0 1-1v-2.5"/><rect x="10.75" y="3.75" width="5.75" height="5.75" rx="1.25"/>',
+  /* What stands short opened to more of itself where it stands, and drawn
+     back in: two heads apart, two heads together. */
+  unfold: '<path d="M6.75 7.5L10 4.25l3.25 3.25M6.75 12.5L10 15.75l3.25-3.25"/>',
+  fold: '<path d="M6.75 4.25L10 7.5l3.25-3.25M6.75 15.75L10 12.5l3.25 3.25"/>',
   /* Two halves: conversations side by side. */
   split: '<rect x="3.75" y="4.25" width="12.5" height="11.5" rx="1.5"/><path d="M10 4.25v11.5"/>',
   steps: '<path d="M3.75 5h12.5M3.75 15h12.5"/><circle cx="7" cy="10" r="0.9" fill="currentColor"/><circle cx="10" cy="10" r="0.9" fill="currentColor"/><circle cx="13" cy="10" r="0.9" fill="currentColor"/>',

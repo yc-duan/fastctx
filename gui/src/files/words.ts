@@ -97,6 +97,11 @@ export interface FilesWords {
     /** The mark at a machine's folder that goes to the machine's own page
      *  of files. */
     browse: string;
+    /** The mark at the head of the files' card of the side: turns it to
+     *  their page, the list in full and the folders; and back to the files
+     *  a line each. */
+    whole: string;
+    lines: string;
   };
 }
 
@@ -177,6 +182,8 @@ export const zhFiles: FilesWords = {
     shows: "看什么",
     none: "这个对话还没有改动文件",
     browse: "在这台电脑的文件页里打开",
+    whole: "展开改动与目录",
+    lines: "收起",
   },
 };
 
@@ -254,5 +261,7 @@ export const enFiles: FilesWords = {
     shows: "What is shown",
     none: "This conversation has changed no file yet",
     browse: "Open in this computer's files",
+    whole: "Open the changes and folders",
+    lines: "Back to the list",
   },
 };
