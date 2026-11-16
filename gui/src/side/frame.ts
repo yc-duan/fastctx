@@ -146,6 +146,13 @@ export class SideFrame implements PartsFrame {
       const width = `${Math.ceil(this.corner.getBoundingClientRect().width)}px`;
       if (host.style.getPropertyValue("--sp-corner-width") !== width) host.style.setProperty("--sp-corner-width", width);
     }).observe(this.corner);
+    // How wide the side is this moment, while it opens and shuts too: the
+    // head beside it makes room by what is there now, not by what will be,
+    // so its marks never leap to where they will stand and glide back.
+    new ResizeObserver(([entry]) => {
+      const now = `${entry?.contentRect.width ?? 0}px`;
+      if (host.style.getPropertyValue("--side-now") !== now) host.style.setProperty("--side-now", now);
+    }).observe(this.pane.element);
     this.place(true);
     this.fitting = new ResizeObserver(([entry]) => {
       if (!entry) return;

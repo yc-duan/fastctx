@@ -808,6 +808,31 @@ html.on-desk .window-controls {
 .sp-dock {
   position: relative;
   flex: none;
+  display: grid;
+  grid-template-columns: 1fr;
+  transition: grid-template-columns var(--glide) var(--glide-easing), margin-left var(--glide) var(--glide-easing);
+}
+
+/* It comes into the corner's line and leaves it at the side's own pace:
+   the line widens and narrows as the side opens and shuts, and nothing in
+   it, nor the head beside it, leaps. */
+.sp-more-room {
+  min-width: 0;
+  overflow: hidden;
+  transition: opacity var(--glide) var(--glide-easing);
+}
+
+.sp-dock.away {
+  display: grid;
+  grid-template-columns: 0fr;
+  /* The line's own gap, which a thing of no width would keep twice. */
+  margin-left: -2px;
+  visibility: hidden;
+  transition: grid-template-columns var(--glide) var(--glide-easing), margin-left var(--glide) var(--glide-easing), visibility 0s var(--glide);
+}
+
+.sp-dock.away > .sp-more-room {
+  opacity: 0;
 }
 
 .sp-menu {

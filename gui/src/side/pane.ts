@@ -93,9 +93,11 @@ export class SidePane {
     // Where the side stands is the side's own to choose: its "⋯" is there
     // while the side is.
     this.more = document.createElement("div");
-    this.more.className = "sp-dock";
-    this.more.hidden = true;
-    this.more.innerHTML = `<button class="icon-button sp-more" type="button" aria-haspopup="menu" aria-expanded="false" aria-label="${escape(words.more)}" title="${escape(words.more)}">${glyph("more", 18)}</button><div class="sp-menu" role="menu" hidden>${(["right", "bottom", "left"] as const)
+    // Away while the side is shut, not hidden: it leaves the corner's line
+    // and comes back into it at the side's own pace (`side.css`).
+    this.more.className = "sp-dock away";
+    this.more.inert = true;
+    this.more.innerHTML = `<span class="sp-more-room"><button class="icon-button sp-more" type="button" aria-haspopup="menu" aria-expanded="false" aria-label="${escape(words.more)}" title="${escape(words.more)}">${glyph("more", 18)}</button></span><div class="sp-menu" role="menu" hidden>${(["right", "bottom", "left"] as const)
       .map((dock) => `<button class="sp-menu-row" type="button" role="menuitemradio" aria-checked="false" data-dock="${dock}">${glyph(`dock-${dock}`, 16)}<span>${escape(words.docks[dock])}</span></button>`)
       .join("")}</div>`;
     this.sheet = this.element.querySelector(".sp-sheet")!;
@@ -182,7 +184,8 @@ export class SidePane {
       this.shutting = 0;
     }
     this.element.hidden = false;
-    this.more.hidden = false;
+    this.more.classList.remove("away");
+    this.more.inert = false;
     if (part && this.set?.parts.some((one) => one.id === part)) this.select(part);
     else {
       this.drawShown();
@@ -195,7 +198,8 @@ export class SidePane {
   close(): void {
     if (!this.open) return;
     this.openMenu(false);
-    this.more.hidden = true;
+    this.more.classList.add("away");
+    this.more.inert = true;
     const ms = reducedMotion() ? 0 : msOf(getComputedStyle(this.element).getPropertyValue("--glide"));
     this.shutting = window.setTimeout(() => {
       this.shutting = 0;
