@@ -842,6 +842,15 @@
   padding: 0 4px;
 }
 
+/* A long change does not run on down the page (the user, 2026-11-17: "到
+   一定长度给滚动条，不要无限往下延长"): past some twenty lines its lines
+   scroll in their own frame. */
+.turn-changed .cf-diff-lines {
+  max-height: 22lh;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+
 .turn-changed .cf-rest {
   padding: 6px 16px 8px;
 }
