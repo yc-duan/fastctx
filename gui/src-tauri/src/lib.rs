@@ -5,6 +5,8 @@
 //! come. The page speaks as the person at this machine, never as a session.
 
 mod accounts;
+#[cfg(desktop)]
+mod board;
 #[cfg(target_os = "android")]
 mod android;
 mod book;
@@ -1196,9 +1198,18 @@ pub fn run() {
                 && let Some(shell) = webview.app_handle().try_state::<Shell>()
             {
                 shell.close_page();
+                // The cards taken out of it go with the page that served them.
+                #[cfg(desktop)]
+                board::shut_all(webview.app_handle());
             }
         })
         .invoke_handler(tauri::generate_handler![
+            #[cfg(desktop)]
+            board::board_open,
+            #[cfg(desktop)]
+            board::board_front,
+            #[cfg(desktop)]
+            board::board_close,
             startup::startup_state,
             startup::startup_frontend_failed,
             startup::startup_retry,
@@ -1422,7 +1433,13 @@ pub fn run() {
         ]);
     #[cfg(desktop)]
     let builder = builder
-        .plugin(tauri_plugin_window_state::Builder::default().with_state_flags(WINDOW_KEPT).build())
+        .plugin(
+            tauri_plugin_window_state::Builder::default()
+                .with_state_flags(WINDOW_KEPT)
+                // A card's window opens where its card was let go, each time.
+                .with_filter(|label| !label.starts_with("board-"))
+                .build(),
+        )
         .plugin(tauri_plugin_updater::Builder::new().build());
     #[cfg(windows)]
     let builder = builder.plugin(desktop_presence::plugin(desktop, desktop_error));

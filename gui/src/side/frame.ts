@@ -18,6 +18,7 @@ import type { Address } from "../world/wire";
 import { ALONE, PULLS, firstFiles, onBack, pullOut, putBack, standAs } from "./board";
 import { SidePane, type Dock, type Tab } from "./pane";
 import type { PartsFrame, SideParts } from "./parts";
+import { cardNames } from "./shown";
 import type { SideWords } from "./words";
 
 /** Narrower than this, the side lies over the desk. */
@@ -88,7 +89,7 @@ export class SideFrame implements PartsFrame {
     /** The desk, whose size the side's own follows. */
     private readonly host: HTMLElement,
     main: HTMLElement,
-    words: SideWords,
+    private readonly words: SideWords,
     private readonly seams: {
       /** Another conversation, opened beside the one in focus. */
       beside(address: Address): void;
@@ -232,7 +233,7 @@ export class SideFrame implements PartsFrame {
   private pullOut(): void {
     const parts = this.parts;
     if (!parts) return;
-    if (pullOut(parts.self, "files", parts.filesOpen(), this.pane.element.getBoundingClientRect())) this.shutFiles();
+    if (pullOut(parts.self, "files", parts.filesOpen(), this.pane.element.getBoundingClientRect(), `${cardNames(this.words).files} - Fastctx`)) this.shutFiles();
   }
 
   /** The tabs that read files are shut, as the files went to a window of

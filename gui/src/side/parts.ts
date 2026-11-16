@@ -24,6 +24,7 @@ import type { ChangedFile } from "../files/model";
 import type { ViewTab } from "../files/view";
 import { SideWhere } from "./where";
 import { ALONE, ONLY, PULLS, askBack, bringFront, pullOut, sendFile, serve, standsOut, type FileAsked, type Served } from "./board";
+import { cardNames } from "./shown";
 import type { Reading } from "./file-tabs";
 import type { FileLines } from "../files/view";
 import { idsIn, type LiveFact } from "../plan/live";
@@ -212,7 +213,7 @@ export class SideParts implements PartSet {
         back: (card) => card !== "goal" && askBack(seams.self, card),
         pull: PULLS
           ? (card, from) => {
-              if (card === "goal" || !pullOut(seams.self, card, card === "files" ? this.filesOpen() : [], from)) return;
+              if (card === "goal" || !pullOut(seams.self, card, card === "files" ? this.filesOpen() : [], from, `${cardNames(words)[card]} - Fastctx`)) return;
               if (card === "files") this.frame?.shutFiles();
             }
           : undefined,

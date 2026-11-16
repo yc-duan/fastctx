@@ -16,7 +16,8 @@
 // conversation the desk shows no more takes its boards with it.
 
 import { talkLink } from "../app/places";
-import { inShell } from "../world/bridge";
+import { invoke } from "@tauri-apps/api/core";
+import { inShell, onComputer } from "../world/bridge";
 import type { Address } from "../world/wire";
 import type { Card } from "./shown";
 
@@ -62,9 +63,11 @@ export const ALONE = ONLY !== null;
 
 const channel = typeof BroadcastChannel === "function" ? new BroadcastChannel("fastctx-side-board") : null;
 
-/** Whether a card can be taken out of this window's side. The app's shell
- *  opens no window of this kind yet. */
-export const PULLS = !ALONE && channel !== null && !inShell();
+/** Whether a card can be taken out of this window's side: in a browser,
+ *  and in the app's shell on a computer, which opens the window itself
+ *  (`src-tauri/src/board.rs`); not on a phone. */
+const SHELL = inShell();
+export const PULLS = !ALONE && channel !== null && (!SHELL || onComputer());
 
 /** How long a board has to say it got what was sent before it is taken to
  *  be gone; and how long a call waits for its answer. */
@@ -121,7 +124,7 @@ export function onBoards(told: () => void): () => void {
 /** Takes a card out into a window of its own, where it stood on the
  *  screen, or was let go, and no smaller than reads well; the files' with
  *  the files that were open. False where the window could not be opened. */
-export function pullOut(address: Address, scope: Scope, files: FileAsked[], from: { left: number; top: number; width: number; height: number }): boolean {
+export function pullOut(address: Address, scope: Scope, files: FileAsked[], from: { left: number; top: number; width: number; height: number }, title = "Fastctx"): boolean {
   const key = boardKey(address, scope);
   const url = new URL(location.href);
   url.searchParams.set("board", scope);
@@ -132,11 +135,32 @@ export function pullOut(address: Address, scope: Scope, files: FileAsked[], from
   const height = Math.max(scope === "files" ? 560 : 420, Math.round(from.height));
   const left = Math.round(window.screenX + from.left);
   const top = Math.round(window.screenY + (window.outerHeight - window.innerHeight) + from.top);
+  if (SHELL) {
+    // The shell opens it, with the system's own frame: a page of the app.
+    invoke("board_open", { key, path: `index.html${url.search}${url.hash}`, title, left, top: Math.round(window.screenY + from.top), width, height }).catch((error: unknown) => {
+      console.error("taking a card out into a window of its own", error);
+      stands(key, false);
+    });
+    stands(key, true);
+    return true;
+  }
   const opened = window.open(url, `fastctx-board-${key}`, `popup,width=${width},height=${height},left=${left},top=${top}`);
   if (!opened) return false;
   windows.set(key, opened);
   stands(key, true);
   return true;
+}
+
+/** Brings the window of the card `key` forward. */
+function forward(key: string): void {
+  if (SHELL) void invoke("board_front", { key }).catch(() => {});
+  else windows.get(key)?.focus();
+}
+
+/** Shuts this card's own window. */
+function shut(): void {
+  if (SHELL) void invoke("board_close").catch(() => window.close());
+  else window.close();
 }
 
 /** Sends a file pressed in the conversation to the board that reads its
@@ -152,7 +176,7 @@ export function sendFile(address: Address, file: FileAsked, lost: () => void): b
   };
   hearers.add(hear);
   say({ kind: "file", board: key, file });
-  windows.get(key)?.focus();
+  forward(key);
   window.setTimeout(() => {
     hearers.delete(hear);
     if (got) return;
@@ -173,7 +197,7 @@ export function onBack(heard: (of: (address: Address) => boolean, files: FileAsk
 /** Calls a card's window forward. */
 export function bringFront(address: Address, scope: Scope): void {
   const key = boardKey(address, scope);
-  windows.get(key)?.focus();
+  forward(key);
   say({ kind: "front", board: key });
 }
 
@@ -324,7 +348,7 @@ export function standAs(address: Address, open: (file: FileAsked) => void, back:
   hearers.add((said) => {
     if (said.kind === "who") say({ kind: "here", board: key });
     else if (said.kind === "bye") {
-      if (said.talk === talkKey(address)) window.close();
+      if (said.talk === talkKey(address)) shut();
     } else if (said.board !== key) return;
     else if (said.kind === "file") {
       say({ kind: "got", board: key });
@@ -351,5 +375,5 @@ export function firstFiles(): FileAsked[] {
 export function putBack(address: Address, files: FileAsked[]): void {
   if (!ONLY) return;
   say({ kind: "back", board: boardKey(address, ONLY), files });
-  window.close();
+  shut();
 }

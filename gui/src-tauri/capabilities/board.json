@@ -1,0 +1,8 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "board",
+  "description": "A card of a conversation's side in a window of its own: the core's default, and opening web links in the system's browser.",
+  "platforms": ["windows", "macOS", "linux"],
+  "windows": ["board-*"],
+  "permissions": ["core:default", "opener:allow-open-url", "opener:allow-default-urls"]
+}
