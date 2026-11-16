@@ -6,9 +6,17 @@ import type { GoalStatus, NodeState, PausedBy } from "./types";
 
 export interface SideWords {
   /** The conversation's own parts, each a word in the side's first line. */
-  pages: { plan: string; goal: string; collab: string; history: string };
+  pages: { plan: string; goal: string; collab: string; history: string; files: string };
   /** The side's first page: the parts at a glance. */
-  home: { name: string; none: string; all: (n: number) => string };
+  home: {
+    name: string;
+    none: string;
+    all: (n: number) => string;
+    /** What the menu that chooses the overview's cards is called. */
+    shows: string;
+    /** Said where every card was put away. */
+    hidden: string;
+  };
   /** A file read in the side, over the parts. */
   file: FileWords;
   /** The switch that opens the side, and the act that shuts it. */
@@ -151,8 +159,8 @@ function clock(ms: number, now: number, locale: string, today: string, tomorrow:
 }
 
 export const zhSide: SideWords = {
-  pages: { plan: "计划", goal: "目标", collab: "协作", history: "笔记" },
-  home: { name: "概览", none: "暂无计划与协作", all: (n) => `全部 ${n} 个` },
+  pages: { plan: "计划", goal: "目标", collab: "协作", history: "笔记", files: "文件" },
+  home: { name: "概览", none: "暂无计划与协作", all: (n) => `全部 ${n} 个`, shows: "侧栏显示的内容", hidden: "都收起来了，右键选择要显示的内容" },
   file: { outside: "用默认程序打开", reading: "读取中…", missing: "找不到这个文件", failed: "读取失败", interrupted: "连接中断，正在重连…" },
   panel: "侧面板",
   shut: "收起侧面板",
@@ -240,8 +248,8 @@ export const zhSide: SideWords = {
 };
 
 export const enSide: SideWords = {
-  pages: { plan: "Plan", goal: "Goal", collab: "Team", history: "Notes" },
-  home: { name: "Overview", none: "No plan or helpers yet", all: (n) => `All ${n}` },
+  pages: { plan: "Plan", goal: "Goal", collab: "Team", history: "Notes", files: "Files" },
+  home: { name: "Overview", none: "No plan or helpers yet", all: (n) => `All ${n}`, shows: "What the side shows", hidden: "Everything is put away; right-click to choose what is shown" },
   file: { outside: "Open with default app", reading: "Reading…", missing: "File not found", failed: "Could not read this file", interrupted: "Disconnected, reconnecting…" },
   panel: "Side panel",
   shut: "Close the side panel",

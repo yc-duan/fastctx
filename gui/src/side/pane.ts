@@ -12,6 +12,7 @@
 // it lies over the whole desk, where the conversation works said in its
 // own line.
 
+import { cardNames, cardPressed, cardRows, onCardsChosen } from "./shown";
 import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
 import { msOf, reducedMotion } from "../motion";
@@ -97,7 +98,7 @@ export class SidePane {
     // and comes back into it at the side's own pace (`side.css`).
     this.more.className = "sp-dock away";
     this.more.inert = true;
-    this.more.innerHTML = `<span class="sp-more-room"><button class="icon-button sp-more" type="button" aria-haspopup="menu" aria-expanded="false" aria-label="${escape(words.more)}" title="${escape(words.more)}">${glyph("more", 18)}</button></span><div class="sp-menu" role="menu" hidden>${(["right", "bottom", "left"] as const)
+    this.more.innerHTML = `<span class="sp-more-room"><button class="icon-button sp-more" type="button" aria-haspopup="menu" aria-expanded="false" aria-label="${escape(words.more)}" title="${escape(words.more)}">${glyph("more", 18)}</button></span><div class="sp-menu" role="menu" hidden><div class="sp-menu-cards"></div><div class="sp-menu-rule" aria-hidden="true"></div>${(["right", "bottom", "left"] as const)
       .map((dock) => `<button class="sp-menu-row" type="button" role="menuitemradio" aria-checked="false" data-dock="${dock}">${glyph(`dock-${dock}`, 16)}<span>${escape(words.docks[dock])}</span></button>`)
       .join("")}</div>`;
     this.sheet = this.element.querySelector(".sp-sheet")!;
@@ -108,7 +109,17 @@ export class SidePane {
     this.menu = this.more.querySelector(".sp-menu")!;
     const more = this.more.querySelector<HTMLButtonElement>(".sp-more")!;
     more.addEventListener("click", () => this.openMenu(this.menu.hidden));
+    // What the overview shows, over where the side stands: the same rows
+    // the overview's own menu has, drawn again as they are chosen.
+    const cards = this.menu.querySelector<HTMLElement>(".sp-menu-cards")!;
+    const names = cardNames(words);
+    const drawCards = () => {
+      cards.innerHTML = cardRows(names);
+    };
+    drawCards();
+    onCardsChosen(drawCards);
     this.menu.addEventListener("click", (event) => {
+      if (cardPressed(event.target as HTMLElement)) return;
       const dock = (event.target as HTMLElement).closest<HTMLElement>(".sp-menu-row")?.dataset.dock as Dock | undefined;
       if (!dock) return;
       this.openMenu(false);

@@ -263,13 +263,17 @@ html.framed .sp-panel.sp-over .sp-line {
 }
 
 /* The side's first page: a card for each part with anything to say, each
-   folding away under its name, as tall as it needs; the plan's no more than
-   a little over half the side, its plan scrolling in it. */
+   folding away under its name, as tall as it needs. The plan's takes what
+   height the others leave, its plan scrolling in it, and gives way to them
+   down to a few lines; only where they do not fit even so does the page
+   itself scroll, rather than cut a card off. */
 .sh-page.sp-page {
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-width: thin;
   padding-bottom: var(--space-3);
 }
 
@@ -290,11 +294,10 @@ html.framed .sp-panel.sp-over .sp-line {
   display: none;
 }
 
-/* Open or shut, the plan's card keeps its ceiling, and its floor comes and
-   goes with the fold: the card never rises past it as it shuts, nor jumps
-   to it as it opens. */
+/* The plan's card has no ceiling of its own: capped at a little over half
+   the side, it left the rest of the side empty under the other cards
+   while its plan was cut short. Its floor comes and goes with the fold. */
 .sh-card[data-of="plan"] {
-  max-height: 56%;
   transition: min-height var(--expand) var(--expand-easing);
 }
 
@@ -878,6 +881,71 @@ html.on-desk .window-controls {
 .sp-menu-row[aria-checked="true"] {
   background: var(--accent-wash);
   color: var(--text-strong);
+}
+
+/* A card of the overview, shown or put away: its mark, its name, a tick
+   after it while it is shown. */
+.sp-menu-cards {
+  display: flex;
+  flex-direction: column;
+  gap: var(--row-gap);
+}
+
+.sp-menu-card {
+  width: 100%;
+  min-width: 176px;
+  font: inherit;
+  text-align: left;
+}
+
+.sp-menu-card > span {
+  flex: 1;
+}
+
+.sp-menu-card > .glyph:last-child {
+  visibility: hidden;
+  color: var(--text-2);
+}
+
+.sp-menu-card[aria-checked="true"] {
+  background: none;
+  color: var(--text);
+}
+
+.sp-menu-card[aria-checked="true"]:hover {
+  background: var(--hairline);
+}
+
+.sp-menu-card[aria-checked="true"] > .glyph:last-child {
+  visibility: visible;
+}
+
+.sp-menu-card[aria-checked="false"] {
+  color: var(--text-3);
+}
+
+.sp-menu-rule {
+  height: 1px;
+  margin: var(--space-1) var(--space-2);
+  background: var(--divider);
+}
+
+/* The overview's own menu, where the other button was pressed. */
+.sp-menu-float {
+  position: fixed;
+  z-index: 9000;
+  top: 0;
+  right: auto;
+  font-family: var(--font-reading);
+  font-size: var(--size-text);
+  opacity: var(--shown);
+  animation: sp-menu-in var(--enter) var(--fold-easing) both;
+}
+
+@keyframes sp-menu-in {
+  from {
+    --shown: 0;
+  }
 }
 
 /* On a phone the side lies over the whole page, coming up as it opens and

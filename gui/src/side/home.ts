@@ -17,6 +17,7 @@ import type { FilesWords } from "../files/words";
 import type { PlanShape } from "../plan/shape";
 import { anyGoing, going, order, shortLine, workedFor } from "./collab-page";
 import type { SidePage } from "./pane";
+import { CHOSEN, cardHidden, onCardsChosen, openCardsMenu, type Card } from "./shown";
 import type { CollabNode, GoalShown } from "./types";
 import type { SideWords } from "./words";
 
@@ -39,8 +40,6 @@ export interface HomeSeams {
   files?(): void;
   file?(machine: string, path: string): void;
 }
-
-type Card = "goal" | "plan" | "files" | "colleagues" | "agents";
 
 /** The files the card lists, the last changed first. */
 const FILES = 4;
@@ -114,6 +113,22 @@ export class SideHome implements SidePage {
       const node = id ? this.find(this.nodes, id) : null;
       if (node) this.seams.node(node);
     });
+    // Pressed with the other button, the overview offers its cards to be
+    // shown or put away (`shown.ts`); words chosen in it keep the system's
+    // own menu, to be copied.
+    this.element.addEventListener("contextmenu", (event) => {
+      if (getSelection()?.toString() || (event.target as HTMLElement).closest("a, input, textarea")) return;
+      event.preventDefault();
+      openCardsMenu(event.clientX, event.clientY, this.words);
+    });
+    // One overview hears what is chosen for all of them, and is let go with
+    // its conversation.
+    const self = new WeakRef(this);
+    const stop = onCardsChosen(() => {
+      const home = self.deref();
+      if (home) home.draw();
+      else stop();
+    });
     // The times of those at work move only while the page is seen.
     new IntersectionObserver((entries) => {
       this.seen = entries.some((entry) => entry.isIntersecting);
@@ -153,15 +168,19 @@ export class SideHome implements SidePage {
     const now = Date.now();
     this.lined = [];
     const ordered = order(this.nodes, now);
-    const cards = [
-      this.goalCard(now),
-      this.planCard(),
-      this.filesCard(),
-      this.teamCard("colleagues", ordered.filter((node) => node.kind === "colleague" || node.kind === "side"), now),
-      this.teamCard("agents", ordered.filter((node) => node.kind === "subagent"), now),
-    ].filter(Boolean);
-    // Said where no card stands, the goal's left to its bar among them.
-    this.element.innerHTML = `${cards.join("")}<p class="sh-none">${escape(this.words.home.none)}</p>`;
+    // Each card the user has not put away, where it has anything to say.
+    const made: Record<Exclude<Card, "goal">, () => string> = {
+      plan: () => this.planCard(),
+      files: () => this.filesCard(),
+      colleagues: () => this.teamCard("colleagues", ordered.filter((node) => node.kind === "colleague" || node.kind === "side"), now),
+      agents: () => this.teamCard("agents", ordered.filter((node) => node.kind === "subagent"), now),
+    };
+    const chosen = CHOSEN.filter((card): card is Exclude<Card, "goal"> => card !== "goal" && !cardHidden(card));
+    const cards = [this.goalCard(now), ...chosen.map((card) => made[card]())].filter(Boolean);
+    // Said where no card stands, the goal's left to its bar among them; and
+    // where they were all put away, how they are brought back.
+    const none = chosen.length ? this.words.home.none : this.words.home.hidden;
+    this.element.innerHTML = `${cards.join("")}<p class="sh-none">${escape(none)}</p>`;
     this.element.classList.toggle("sh-has-cards", cards.length > 0);
     this.element.classList.toggle("sh-has-unbarred", this.element.querySelector(".sh-card:not(.barred)") !== null);
     // The plan's page is one element, kept as it is drawn anew around it.
