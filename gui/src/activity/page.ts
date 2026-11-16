@@ -103,6 +103,10 @@ export class ActivityPage implements Page {
   private allGroups = false;
   /** The lines of the changes read, by the changes' ids. */
   private readonly lines = new Map<string, DiffRow[] | null | "reading">();
+  /** The changes of opened files folded away or opened by hand (the user,
+   *  2026-11-17: "这内部的一次次修改，都要支持前端上的展开和收起"); one
+   *  not touched stands open where it is a file's latest, else shut. */
+  private readonly changeFolds = new Map<string, boolean>();
   /** The files as last drawn, by what their rows are opened by. */
   private drawnFiles = new Map<string, ChangedFile>();
   /** A file the address asks to be opened, in a development build: for
@@ -316,10 +320,23 @@ export class ActivityPage implements Page {
     const now = this.now();
     const listed = file.changes.slice(0, LISTED);
     const changes = listed
-      .map((change) => `<section class="ay-change" data-change="${escape(change.id)}"><header class="ay-change-head">${changeLine(talk ? { ...change, session: null, agent: null, from: null } : change, files, named, now)}</header><div class="ay-change-body">${this.linesOf(change, file.path)}</div></section>`)
+      .map((change, index) => {
+        const line = changeLine(talk ? { ...change, session: null, agent: null, from: null } : change, files, named, now);
+        // A change with no lines kept is its own line alone; any other
+        // folds its lines away under that line, and opens them again.
+        if (!change.rows) return `<section class="ay-change bare" data-change="${escape(change.id)}"><div class="ay-change-head">${line}</div></section>`;
+        const open = this.changeOpen(change.id, index);
+        return `<section class="ay-change${open ? " open" : ""}" data-change="${escape(change.id)}"><div class="ay-change-head" role="button" tabindex="0" aria-expanded="${open}">${line}${glyph("chevron", 16)}</div><div class="ay-change-fold"><div class="ay-change-body">${open ? this.linesOf(change, file.path) : ""}</div></div></section>`;
+      })
       .join("");
     const earlier = file.changes.length > LISTED ? `<span>${escape(files.view.earlier(file.changes.length - LISTED))}</span>` : "";
     return `${changes}<p class="ay-fold-foot">${earlier}<a href="${escape(this.options.link(file.machine, file.path, file.how === "removed" ? "changes" : "content"))}">${escape(words.openFile)}</a><a href="${escape(this.options.link(file.machine, file.path, "changes"))}">${escape(words.allChanges)}</a></p>`;
+  }
+
+  /** Whether a change of an opened file shows its lines: as the user left
+   *  it, else only the file's latest. */
+  private changeOpen(id: string, index: number): boolean {
+    return this.changeFolds.get(id) ?? index === 0;
   }
 
   /** A change's lines as they are held: drawn, being read, or not kept. */
@@ -338,8 +355,9 @@ export class ActivityPage implements Page {
   private readLines(key: string): void {
     const file = this.drawnFiles.get(key);
     if (!file) return;
-    for (const change of file.changes.slice(0, LISTED)) {
-      if (!change.rows || this.lines.has(change.id)) continue;
+    for (const [index, change] of file.changes.slice(0, LISTED).entries()) {
+      // Lines folded away are not read until they are opened.
+      if (!change.rows || this.lines.has(change.id) || !this.changeOpen(change.id, index)) continue;
       this.lines.set(change.id, "reading");
       void change.rows().then((rows) => rows, () => null).then((rows) => {
         if (this.left) return;
@@ -393,6 +411,28 @@ export class ActivityPage implements Page {
     }
     // A link goes where it says; the row is not pressed.
     if (target.closest("a")) return;
+    // A change's own line folds its lines away, or opens them, where it
+    // stands; opened, its lines are read if they were not yet.
+    const head = target.closest<HTMLElement>(".ay-change-head[role='button']");
+    if (head) {
+      const section = head.parentElement!;
+      const id = section.dataset.change!;
+      const key = section.closest(".cf-file")?.querySelector<HTMLElement>("[data-file]")?.dataset.file ?? "";
+      const file = this.drawnFiles.get(key);
+      const open = !section.classList.contains("open");
+      this.changeFolds.set(id, open);
+      head.setAttribute("aria-expanded", String(open));
+      const change = file?.changes.find((one) => one.id === id);
+      if (open && file && change) {
+        section.querySelector<HTMLElement>(".ay-change-body")!.innerHTML = this.linesOf(change, file.path);
+        this.readLines(key);
+      }
+      // Measured shut before it opens, so it is seen to open.
+      void section.offsetHeight;
+      section.classList.toggle("open", open);
+      this.written = "";
+      return;
+    }
     const row = target.closest<HTMLElement>("[data-file]");
     if (!row) return;
     const key = row.dataset.file!;

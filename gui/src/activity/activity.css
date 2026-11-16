@@ -153,16 +153,54 @@ a.ay-name:hover {
   margin-left: auto;
 }
 
+/* A change's own line folds its lines away under it and opens them
+   again, at the interface's one pace. */
+.ay-change-head[role="button"] {
+  cursor: pointer;
+  transition: color var(--hover) var(--ease);
+}
+
+.ay-change-head[role="button"]:hover {
+  color: var(--text);
+}
+
+.ay-change-head > .glyph {
+  flex: none;
+  margin-left: -4px;
+  color: var(--text-3);
+  --turn: -90deg;
+  rotate: var(--turn);
+  transition: --turn var(--expand) var(--expand-easing);
+}
+
+.ay-change.open > .ay-change-head > .glyph {
+  --turn: 0deg;
+}
+
+.ay-change-fold {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows var(--expand) var(--expand-easing);
+}
+
+.ay-change.open > .ay-change-fold {
+  grid-template-rows: 1fr;
+}
+
 .ay-change-body {
   min-width: 0;
+  min-height: 0;
+  overflow: hidden;
 }
 
-.ay-change-body:empty {
-  display: none;
+.ay-change:not(.open) > .ay-change-fold > .ay-change-body {
+  visibility: hidden;
+  transition: visibility 0s var(--expand);
 }
 
-/* Changes with no lines kept stand close, a list of lines. */
-.ay-change:has(> .ay-change-body:empty) + .ay-change:has(> .ay-change-body:empty) {
+/* Changes with no lines kept, and those folded away, stand close: a list
+   of lines. */
+.ay-change:not(.open) + .ay-change:not(.open) {
   margin-top: 0;
 }
 
