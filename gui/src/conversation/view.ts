@@ -46,7 +46,7 @@ import { answerOf, drawAsk, readAsk, type AskWords } from "./asks";
 import type { Words } from "../words";
 import { forkCard, type ForkFrom } from "./fork-card";
 import { glyph, type GlyphName } from "./glyphs";
-import { figures, fileRow, squaresOf } from "../files/changed";
+import { figures, fileRow } from "../files/changed";
 import { commonFolder, tally, type ChangedFile } from "../files/model";
 import type { FilesWords } from "../files/words";
 import { controlName } from "./control-queue";
@@ -1841,7 +1841,7 @@ export class ConversationView {
     const info = ended?.kind === "ended" ? turnInfo(ended.end, words, this.context.english) : [];
     const icon = (act: string, name: Parameters<typeof glyph>[0], label: string, extra = "") =>
       `<button class="turn-icon" type="button" ${act} aria-label="${escape(label)}" title="${escape(label)}"${extra}>${glyph(name, 16)}</button>`;
-    return `${this.turnChanged(turn)}<div class="turn-acts answer-acts${this.latest(entry.turn) ? " latest" : ""}">${icon(`data-copy-turn="${escape(entry.turn)}"`, "copy", words.copyAnswer)}${icon(
+    return `<div class="turn-acts answer-acts${this.latest(entry.turn) ? " latest" : ""}">${icon(`data-copy-turn="${escape(entry.turn)}"`, "copy", words.copyAnswer)}${icon(
       `data-turn-act="regenerate" data-turn="${escape(entry.turn)}"`,
       "regenerate",
       words.regenerate,
@@ -1852,16 +1852,17 @@ export class ConversationView {
             .map(({ label, text, html }) => `<span class="turn-info-label">${escape(label)}</span><span>${html ?? escape(text)}</span>`)
             .join("")}${this.context.turnCalls ? `<button class="turn-info-calls" type="button" data-turn-calls="${escape(entry.turn)}">${escape(words.turnInfo.requests)}</button>` : ""}</span></span>`
         : ""
-    }</div>`;
+    }</div>${this.turnChanged(turn)}`;
   }
 
-  /** The files a turn changed, under its last words once it is over, as a
-   *  list of changed files is read everywhere: how many and by how many
-   *  lines on its head, then a row to a file, each opening in the side to
-   *  what the turn did to it. The list of the turn that changed something
-   *  last stands open and names what the whole conversation changed, which
-   *  opens as a page of the side; an earlier turn's is its head alone
-   *  until pressed. */
+  /** The files a turn changed, once it is over: a footnote to the turn,
+   *  after its last words and what can be done to them, under a short
+   *  ruled line. A line of words says how many files and by how many
+   *  lines, as a stretch's heading says what it did; under it a row to a
+   *  file, each opening in the side to what the turn did to it. The
+   *  footnote of the turn that changed something last stands open and
+   *  names what the whole conversation changed, which opens as a page of
+   *  the side; an earlier turn's is its line alone until pressed. */
   private turnChanged(turn: string): string {
     const changed = this.context.changed;
     if (!changed || this.context.nested) return "";
@@ -1882,7 +1883,7 @@ export class ConversationView {
     const rest = whole ? "" : `<li class="cf-rest"><button type="button" class="text-button" data-changed-more>${escape(words.moreFiles(files.length - listed.length))}</button></li>`;
     const all = latest ? tally(changed.whole()) : null;
     const total = all ? `<button type="button" class="tc-total" data-changed-all>${escape(words.turn.total(all.files))}${figures(all.added, all.removed)}${glyph("chevron", 12)}</button>` : "";
-    return `<section class="turn-changed${open ? " open" : ""}" data-turn="${escape(turn)}"><header class="tc-head"><button type="button" class="tc-fold" data-changed-fold aria-expanded="${open}"><span class="tc-twist">${glyph("chevron", 12)}</span><b>${escape(words.turn.changed(sum.files))}</b></button>${figures(sum.added, sum.removed)}${squaresOf(sum.added, sum.removed)}${total}</header><div class="tc-box"><div class="tc-inner"><ul class="cf-files">${rows}${rest}</ul></div></div></section>`;
+    return `<section class="turn-changed${open ? " open" : ""}" data-turn="${escape(turn)}"><header class="tc-head"><button type="button" class="tc-fold" data-changed-fold aria-expanded="${open}"><span>${escape(words.turn.changed(sum.files))}</span>${figures(sum.added, sum.removed)}${glyph("chevron", 16)}</button>${total}</header><div class="tc-box"><div class="tc-inner"><ul class="cf-files">${rows}${rest}</ul></div></div></section>`;
   }
 
   /** What a turn's list of changed files is drawn from. */

@@ -702,84 +702,105 @@
   pointer-events: none;
 }
 
-/* The files a turn changed, under its last words once it is over
-   (`view.ts`, `turnChanged`): one filled box, its head saying how many and
-   by how many lines, a row to a file under it as a list of changed files is
-   read everywhere. The head folds the list; on the latest turn's it also
-   names what the whole conversation changed, the way into its side. */
+/* The files a turn changed (`view.ts`, `turnChanged`): a footnote to the
+   turn, after its last words and what can be done to them. A short ruled
+   line sets it off, as a page's footnotes are set off; then a line of
+   quiet words, as a stretch's heading is, saying how many files and by how
+   many lines; opened, a row to a file under it, nothing boxed and nothing
+   filled. On the footnote of the turn that changed something last the
+   line also names what the whole conversation changed, the way into its
+   side. */
 .turn-changed {
+  position: relative;
   max-width: 100%;
-  margin-top: var(--space-3);
-  border-radius: var(--radius-l);
-  background: var(--fill);
-  overflow: hidden;
+  margin-top: var(--space-2);
+  padding-top: var(--space-3);
+  color: var(--text-2);
   font-variant-numeric: tabular-nums;
+}
+
+/* On a touch screen an earlier turn carries no actions under its words:
+   the footnote keeps its own distance from them. */
+@media (hover: none) {
+  .turn-changed {
+    margin-top: var(--space-4);
+  }
+}
+
+/* The rule: the last stretch of a ruled line, where the pen lifts. */
+.turn-changed::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 72px;
+  height: 8px;
+  background: var(--pen-rule);
+  -webkit-mask: var(--pen-rule-2) 100% 50% / 900px 100% no-repeat;
+  mask: var(--pen-rule-2) 100% 50% / 900px 100% no-repeat;
 }
 
 .tc-head {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 0 12px;
-  min-height: 42px;
-  padding: 0 8px 0 6px;
-  color: var(--text-2);
+  gap: 0 var(--space-4);
+  min-height: var(--row-line);
+  line-height: var(--row-leading);
   white-space: nowrap;
 }
 
 .tc-fold {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  min-height: 42px;
-  padding: 0 4px 0 8px;
-  color: var(--text);
+  gap: var(--space-2);
+  min-height: var(--row-line);
+  color: var(--text-2);
   font: inherit;
+  line-height: inherit;
+  text-align: left;
+  transition: color var(--hover) var(--ease);
 }
 
-.tc-fold b {
-  font-family: var(--font-emphasis);
-  font-weight: 400;
-  color: var(--text-strong);
+.tc-fold:hover {
+  color: var(--text);
 }
 
-.tc-twist {
-  display: grid;
-  place-items: center;
-  width: 16px;
+.tc-fold > .glyph {
+  flex: none;
+  margin-left: calc(var(--space-1) * -1);
   color: var(--text-3);
   --turn: -90deg;
   rotate: var(--turn);
-  transition: --turn var(--expand) var(--expand-easing);
+  transition: --turn var(--expand) var(--expand-easing), color var(--hover) var(--ease);
 }
 
-.turn-changed.open .tc-twist {
+.turn-changed.open .tc-fold > .glyph {
   --turn: 0deg;
 }
 
-/* What the whole conversation changed: quiet at the head's end. */
+/* What the whole conversation changed: quieter, at the line's end. */
 .tc-total {
   display: inline-flex;
   align-items: center;
-  gap: 10px;
-  min-height: 30px;
+  gap: var(--space-2);
   margin-left: auto;
-  padding: 0 6px 0 10px;
-  border-radius: var(--radius-m);
-  color: var(--text-2);
+  color: var(--text-3);
   font: inherit;
-  scale: var(--press, 1);
-  transition: background-color var(--hover) var(--ease), color var(--hover) var(--ease);
+  line-height: inherit;
+  transition: color var(--hover) var(--ease);
 }
 
 .tc-total:hover {
-  background: var(--fill);
   color: var(--text);
 }
 
 .tc-total > .glyph {
   rotate: -90deg;
-  color: var(--text-3);
+}
+
+.tc-total:not(:hover) > .cf-figures {
+  opacity: 0.75;
 }
 
 .tc-box {
@@ -802,17 +823,36 @@
   transition: visibility 0s var(--expand);
 }
 
+/* The files: lines of the footnote, in a short measure so that a file's
+   lines stand near its name. */
 .tc-inner > .cf-files {
-  border-top: 1px solid var(--divider);
+  max-width: 34em;
+  margin: 2px 0 0 -8px;
   border-radius: 0;
   background: none;
+  overflow: visible;
+}
+
+.turn-changed .cf-file + .cf-file,
+.turn-changed .cf-file + .cf-rest {
+  border-top: 0;
 }
 
 .turn-changed .cf-row {
-  min-height: 40px;
-  padding: 0 14px;
+  gap: 10px;
+  min-height: 30px;
+  padding: 0 8px;
+  border-radius: 8px;
+}
+
+.turn-changed .cf-squares {
+  display: none;
+}
+
+.turn-changed .cf-row > .cf-figures {
+  min-width: 0;
 }
 
 .turn-changed .cf-rest {
-  padding-left: 42px;
+  padding: 4px 8px 0 34px;
 }
