@@ -918,12 +918,15 @@ fn open(dir: &Path, log: Arc<log::Log>) -> anyhow::Result<Opened> {
     }
     // Members a directory saved before they were kept with it are kept now.
     assets.bodies.settle(&store.book.directory)?;
-    let mut ledgers = ledger::Ledgers::open(dir, &store.hub.id)?;
+    // The projects' ledgers, in the hub's own library (design §28.58).
+    let library = assets.library(&assets::Owner::Hub)?;
+    let (mut ledgers, imported) = ledger::Ledgers::open(dir, &store.hub.id, library)?;
     let swept = ledgers.sweep(&store.book)?;
     let mut said: Vec<String> = swept
         .iter()
         .map(|town| format!("deleted the ledger of {town}, a project deleted before the hub stopped"))
         .collect();
+    said.extend(imported);
     said.extend(store.upgraded.iter().map(|line| format!("took up the directory of an earlier fastctx: {line}")));
     said.extend(store.tidied.iter().map(|line| format!("on opening, {line}")));
     // Revisions the asset library took as the hub stopped, before their files

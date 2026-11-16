@@ -44,7 +44,7 @@ pub(crate) async fn ask(hub: &Arc<Hub>, from: &crate::origin::Origin, question: 
             .sequences
             .get(&fastctx_net::topic_history::path(name, revision.version, "md"))
             .ok_or("the history revision has no ledger entry")?;
-        (ledgers.dir.join(town.as_str()).join(format!("{seq:020}.json")), versions, store.hub.id.clone())
+        (ledgers.entry_at(&town, *seq), versions, store.hub.id.clone())
     };
     let project = town.clone();
     let entry = crate::readers::blocking(move || {

@@ -27,6 +27,7 @@ mod job;
 mod judged;
 mod kind;
 mod layout;
+mod ledger_entries;
 mod letgo;
 mod logs;
 mod activity;
@@ -170,7 +171,7 @@ impl Library {
             page_bytes: Some(PAGE_BYTES),
             ..Default::default()
         };
-        Self::open_shaped(directory, format!("{}{}", schema::SCHEMA, schema::HUB_SCHEMA), shape, true)
+        Self::open_shaped(directory, format!("{}{}{}", schema::SCHEMA, schema::HUB_SCHEMA, ledger_entries::SCHEMA), shape, true)
     }
 
     fn open_shaped(directory: &Path, schema: String, shape: fastctx_storage::Shape, hub: bool) -> Result<(Self, Started)> {

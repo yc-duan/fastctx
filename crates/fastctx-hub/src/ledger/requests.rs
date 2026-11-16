@@ -1,6 +1,6 @@
 //! Account-scoped metadata and document reads, independent of online computers.
 
-use std::path::PathBuf;
+
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -36,12 +36,12 @@ enum Plan {
     Index {
         seq: u64,
         catalog: Catalog,
-        first: (String, PathBuf),
-        last: (String, PathBuf),
-        pages: Vec<(String, PathBuf)>,
+        first: (String, super::EntryAt),
+        last: (String, super::EntryAt),
+        pages: Vec<(String, super::EntryAt)>,
     },
     Document {
-        path: PathBuf,
+        path: super::EntryAt,
         versions: Vec<Revision>,
         evidence: Vec<Evidence>,
     },
@@ -70,7 +70,7 @@ pub(crate) fn ask(hub: &Arc<Hub>, from: &crate::origin::Origin, out: &Outq, id: 
                 authorize(&store.book.directory, &from, &account, &town, body)?;
                 let ledgers = hub.ledgers.lock().expect("never poisoned");
                 let ledger = ledgers.towns.get(&town).ok_or(fastctx_types::memory::words::NO_LEDGER)?;
-                let path = |seq: u64| ledgers.dir.join(town.as_str()).join(format!("{seq:020}.json"));
+                let path = |seq: u64| ledgers.entry_at(&town, seq);
                 let plan = if let Some((name, version)) = &wanted {
                     let versions = ledger.memory.versions(name);
                     let revision = match version {
@@ -141,14 +141,14 @@ impl Plan {
         sign: &dyn Fn(fastctx_net::ledger::Entry) -> fastctx_net::sign::Signed,
         asking: &fastctx_types::MachineName,
     ) -> Result<Told, String> {
-        let entry = |path: &PathBuf| {
+        let entry = |path: &super::EntryAt| {
             let signed = super::reading::entry(path).map_err(|error| error.to_string())?;
             let opened = fastctx_net::ledger::open(&signed, hub, town)?;
             Ok::<_, String>((signed, opened))
         };
         match self {
             Self::Index { seq, catalog, first, last, pages } => {
-                let record = |(file, path): &(String, PathBuf)| {
+                let record = |(file, path): &(String, super::EntryAt)| {
                     let (_, entry) = entry(path)?;
                     let bytes = &entry
                         .files

@@ -5,9 +5,9 @@ use fastctx_types::{
     access::{HubId, TownId},
     pages::{PageSummary, PageVersion, html_path, version_path},
 };
-use std::{collections::BTreeMap, path::PathBuf};
+use std::collections::BTreeMap;
 
-pub(super) fn read(paths: Vec<(String, PathBuf)>, hub: &HubId, town: &TownId) -> Result<Vec<PageSummary>, String> {
+pub(super) fn read(paths: Vec<(String, super::EntryAt)>, hub: &HubId, town: &TownId) -> Result<Vec<PageSummary>, String> {
     let mut pages = BTreeMap::<PageName, PageVersion>::new();
     for (file, path) in paths {
         let parts: Vec<_> = file.split('/').collect();

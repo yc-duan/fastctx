@@ -17,7 +17,8 @@ pub(super) fn open(dir: &Path) -> anyhow::Result<Arc<Hub>> {
     let secrets = fastctx_net::login::HubSecrets::from_bytes(&fastctx_platform::disk::read(Store::secrets_file(dir))?)
         .map_err(anyhow::Error::msg)?;
     let account_records = crate::account_records::Records::open(dir, &store.book.directory)?;
-    let ledgers = crate::ledger::Ledgers::open(dir, &store.hub.id)?;
+    // The change drill writes no project entries: its ledgers stay empty.
+    let ledgers = crate::ledger::Ledgers::default();
     let updates =
         crate::updates::Updates::new(dir, &store.shelf, &store.hub.due, &mut Vec::new()).map_err(anyhow::Error::msg)?;
     let troubles = crate::troubles::Troubles::open(store.shelf.clone(), log.clone())?;

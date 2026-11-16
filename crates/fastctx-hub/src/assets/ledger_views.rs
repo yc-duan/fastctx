@@ -213,8 +213,8 @@ fn project_for(
     let history = |revision: &mut fastctx_types::history::HistoryRevision| revision.author.stamp.for_reader(&usable);
     let mut records = Vec::new();
     for seq in from..next {
-        let path = hub.ledgers.lock().expect("never poisoned").entry_path(town, seq);
-        let signed = crate::ledger::read_entry(&path).map_err(|error| format!("entry {seq}: {error}"))?;
+        let at = hub.ledgers.lock().expect("never poisoned").entry_at(town, seq);
+        let signed = crate::ledger::read_entry(&at).map_err(|error| format!("entry {seq}: {error}"))?;
         let entry = fastctx_net::ledger::open(&signed, hub_id, town)?;
         let projection = crate::ledger::for_reader::entry(seq, &entry, &usable, &history);
         if let Some(record) = record(&scope, &library, &name, &projection)? {
