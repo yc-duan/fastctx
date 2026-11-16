@@ -66,6 +66,8 @@ export function chooseTheme(theme: Theme | null): void {
 }
 
 export const textSizes = ["15", "16", "17", "18"];
+/** The body size where none is chosen, as `--body-size` sets it. */
+export const DEFAULT_SIZE = "16";
 
 /** The body size chosen, or `null` for the screen's own. */
 export function chosenSize(): string | null {

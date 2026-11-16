@@ -462,7 +462,6 @@ export interface SettingsWords {
   themes: Record<"warm-black" | "ink-black" | "warm-white", string>;
   language: string;
   textSize: string;
-  sizeDefault: string;
   /** How much the interface moves: as the system asks, always, or not at
    *  all (`motion.ts`). */
   motion: string;
@@ -596,7 +595,6 @@ export const zhSettings: SettingsWords = {
   themes: { "warm-black": "暖黑", "ink-black": "墨黑", "warm-white": "暖白" },
   language: "语言",
   textSize: "字号",
-  sizeDefault: "默认",
   motion: "动效",
   motions: { system: "跟随系统", always: "总是播放", off: "关闭" },
   sizes: { "15": "小", "16": "标准", "17": "大", "18": "特大" },
@@ -746,7 +744,6 @@ export const enSettings: SettingsWords = {
   textSize: "Text size",
   motion: "Motion",
   motions: { system: "System", always: "Always", off: "Off" },
-  sizeDefault: "Default",
   sizes: { "15": "Small", "16": "Standard", "17": "Large", "18": "Extra large" },
   device: "This device",
   machine: "Name",

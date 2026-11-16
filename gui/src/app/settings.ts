@@ -8,7 +8,7 @@ import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
 import { redrawKeepingFocus } from "./focus";
 import { chooseMotion, chosenMotion, motions, type Motion } from "../motion";
-import { chooseSize, chooseTheme, chosenSize, chosenTheme, textSizes, themes, type Theme } from "../theme";
+import { chooseSize, chooseTheme, chosenSize, chosenTheme, DEFAULT_SIZE, textSizes, themes, type Theme } from "../theme";
 import type { KeptNow, Legacy, Setup, WorldNow } from "../world/bridge";
 import type { Renewing } from "./renewal";
 import { UpdateLine } from "./update-line";
@@ -231,7 +231,8 @@ export class SettingsPage implements Page {
           chooseTheme(value ? (value as Theme) : null);
           break;
         case "size":
-          chooseSize(value || null);
+          // The standard size is the default: chosen, nothing is kept.
+          chooseSize(value && value !== DEFAULT_SIZE ? value : null);
           break;
         case "motion":
           chooseMotion(value as Motion);
@@ -402,7 +403,7 @@ export class SettingsPage implements Page {
         .join("")}</div></div>`;
     this.element.querySelector(".look")!.innerHTML = [
       row("theme", words.theme, [["", words.system], ...themes.map((theme): [string, string] => [theme, words.themes[theme]])], chosenTheme() ?? ""),
-      row("size", words.textSize, [["", words.sizeDefault], ...textSizes.map((size): [string, string] => [size, words.sizes[size]!])], chosenSize() ?? ""),
+      row("size", words.textSize, textSizes.map((size): [string, string] => [size, words.sizes[size]!]), chosenSize() ?? DEFAULT_SIZE),
       row("motion", words.motion, motions.map((motion): [string, string] => [motion, words.motions[motion]]), chosenMotion()),
       row("language", words.language, [["zh", "中文"], ["en", "English"]], language),
       row("workbench", words.workbench, [["on", words.workbenchOn], ["off", words.workbenchOff]], workbenchShown.on.peek() ? "on" : "off", words.workbenchWhat),
