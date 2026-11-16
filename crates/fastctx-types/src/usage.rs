@@ -170,6 +170,9 @@ pub struct UsageHour {
     pub person: u32,
     #[serde(flatten)]
     pub sum: UsageSum,
+    /// What of its dollars went to Fable models. Older nodes do not say.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fable: Option<Usd>,
 }
 
 /// One week of the login's own seven-day window: a week back from a reset a

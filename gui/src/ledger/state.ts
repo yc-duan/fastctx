@@ -28,6 +28,9 @@ export const state = {
   model: null as string | null,
   source: null as Source | null,
   outcome: null as Outcome | null,
+  /** One turn of a conversation whose requests alone are shown, as a link
+   *  to them asked. */
+  turn: null as { conversation: string; turn: string } | null,
   opened: null as number | null,
   editing: null as string | null,
   scanning: false,

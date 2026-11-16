@@ -197,6 +197,8 @@ export interface CallsQuery {
   model: string | null;
   source: Source | null;
   outcome: Outcome | null;
+  /** One turn's requests alone. */
+  turn?: { conversation: string; turn: string } | null;
 }
 
 export interface CallsPage {

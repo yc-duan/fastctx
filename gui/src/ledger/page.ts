@@ -16,6 +16,7 @@ import type { Page } from "../app/shell";
 import { effect } from "../app/signals";
 import type { Store } from "../app/store";
 import { fitInks } from "../app/usage/draw";
+import { glyph } from "../conversation/glyphs";
 import type { AccountChange, Login as AccountLogin } from "../world/accounts";
 import type { ChangePreview, FolderChange, LoginChange, MachineLogins, ModelChange, WorldLogins } from "../world/logins";
 import { followState, LOGINS, type Following } from "../world/topics";
@@ -55,6 +56,8 @@ export interface AgentsPageOptions {
   nameOf(conversation: string): string | null;
   /** Now, as the World the page shows reckons it. */
   now(): Date;
+  /** What the sidebar's button says, where the sidebar folds away. */
+  menuLabel: string;
 }
 
 /** The app's place for a place of the pages, and back. */
@@ -98,6 +101,8 @@ export class AgentsPage implements Page {
   private readonly stop: () => void;
   private resized = 0;
   private reading = false;
+  /** The machines whose nodes page their ledger by 100 alone. */
+  private readonly legacyCalls = new Set<string>();
 
   constructor(private readonly options: AgentsPageOptions, place: AppPlace) {
     this.element.className = "page lg-app";
@@ -126,6 +131,7 @@ export class AgentsPage implements Page {
       return seen?.until ? new Date(seen.until) : null;
     });
     state.place = placeOfApp(place);
+    state.turn = place.kind === "usage" ? (place.turn ?? null) : null;
     if (state.place.kind === "attach") state.machine = state.place.machine;
     else state.machine = pickables(options.store.world.peek()).find((one) => one.here)?.name ?? state.machine;
     this.element.addEventListener("click", (event) => this.click(event));
@@ -153,6 +159,7 @@ export class AgentsPage implements Page {
     if (to.kind === "login" && (from.kind !== "login" || from.id !== to.id)) Object.assign(state, { page: 1, who: null, model: null, source: null, outcome: null, split: "none", chart: "days" });
     state.opened = null;
     state.editing = null;
+    state.turn = place.kind === "usage" ? (place.turn ?? null) : null;
     state.place = to;
     draw(way(from, to));
   }
@@ -173,6 +180,8 @@ export class AgentsPage implements Page {
     const kept = this.main.querySelector<HTMLElement>(".lg-sheet")?.scrollTop ?? 0;
     this.main.dataset.coming = how;
     this.main.innerHTML = state.place.kind === "login" ? loginPage() : homePage();
+    // The sidebar's button, where the sidebar folds away (`shell.ts`).
+    this.main.querySelector(".lg-head")?.insertAdjacentHTML("afterbegin", `<button class="icon-button menu-button" type="button" aria-label="${this.options.menuLabel}">${glyph("menu", 20)}</button>`);
     if (how === "quiet") this.main.querySelector<HTMLElement>(".lg-sheet")?.scrollTo({ top: kept });
     fitInks(this.main);
     fillCharts(this.main, how !== "quiet");
@@ -275,8 +284,16 @@ export class AgentsPage implements Page {
         const { machine, agent, dir, picked } = this.recordOf(login);
         const holder = picked?.ownerLogin ?? null;
         const person = query.who === null ? undefined : query.who === "我" ? (holder ? { account: { hub: holder.hub, account: holder.account }, with_machine: true } : { account: null }) : holder ? { account: { hub: holder.hub, account: query.who } } : undefined;
-        const { ask, skip } = askedOf(query, person);
-        const page = await options.calls(machine, agent, dir, ask);
+        let legacy = this.legacyCalls.has(machine);
+        let { ask, skip } = askedOf(query, person, legacy);
+        let page = await options.calls(machine, agent, dir, ask);
+        // A node that says no size paged by 100: asked again as it pages.
+        if (!legacy && page.size === undefined && query.size !== 100) {
+          this.legacyCalls.add(machine);
+          legacy = true;
+          ({ ask, skip } = askedOf(query, person, legacy));
+          page = await options.calls(machine, agent, dir, ask);
+        }
         const models = this.people.models.get(login.id) ?? new Set<string>();
         const people = this.people.people.get(login.id) ?? new Set<string>();
         this.people.models.set(login.id, models);

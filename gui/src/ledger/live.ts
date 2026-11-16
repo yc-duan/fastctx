@@ -260,6 +260,8 @@ export function daysFrom(report: UsageReport, login: Login, plate: number, world
   const zero = () => new Array<number>(count).fill(0);
   const total: Record<Unit, number[]> = { quota: zero(), tokens: zero() };
   const byPerson: Record<Unit, number[][]> = { quota: names.map(zero), tokens: names.map(zero) };
+  const byModel = [zero(), zero()];
+  const fableSaid = login.family === "claude" && report.hours.some((hour) => hour.fable !== undefined);
   const hours = Array.from({ length: 7 }, () => new Array<number>(24).fill(0));
   const since = now.getTime() - 90 * DAY;
   const fiveWindow = login.five && !login.five.reset ? windowStart(login, now) : null;
@@ -268,8 +270,12 @@ export function daysFrom(report: UsageReport, login: Login, plate: number, world
     const at = new Date(hour.at);
     const index = dayOf(at);
     if (index < 0 || index >= count) continue;
-    const dollars = (hour.usd ?? 0) / 1_000_000;
+    // Quota dollars: API dollars, Fable's counted at its multiplier.
+    const fable = (hour.fable ?? 0) / 1_000_000;
+    const dollars = (hour.usd ?? 0) / 1_000_000 + fable * (FABLE_TIMES - 1);
     total.quota[index]! += dollars;
+    byModel[0]![index]! += fable * FABLE_TIMES;
+    byModel[1]![index]! += dollars - fable * FABLE_TIMES;
     total.tokens[index]! += hour.tokens;
     const who = names.indexOf(people[hour.person] ?? "我");
     if (who >= 0) {
@@ -279,9 +285,10 @@ export function daysFrom(report: UsageReport, login: Login, plate: number, world
     if (at.getTime() >= since) hours[(at.getDay() + 6) % 7]![at.getHours()]! += login.family === "codex" ? hour.tokens : dollars;
     if (fiveWindow && at.getTime() >= fiveWindow) fiveSpent! += dollars;
   }
-  // The days carry API dollars; the week's Fable is known apart, so the
-  // week's figures carry its multiplier.
+  // Days from older nodes carry API dollars alone; the week's Fable is
+  // known apart, so the week's figures carry its multiplier either way.
   const parts: Record<Unit, Partial<Record<Split, Series>>> = { quota: {}, tokens: {} };
+  if (fableSaid) parts.quota.model = { names: ["Fable", "其他型号"], values: byModel };
   if (names.length > 1) {
     parts.quota.person = { names, values: byPerson.quota };
     parts.tokens.person = { names, values: byPerson.tokens };
@@ -360,21 +367,23 @@ function callOf(row: UsageCall, codex: boolean, world: WorldNow | null, nameOf: 
   };
 }
 
-/** The ledger's page of 100 a page of the pages' size falls in, and where
- *  in it the page starts. */
-export function askedOf(query: CallsQuery, person: UsageCallsQuery["person"]): { ask: UsageCallsQuery; skip: number } {
+/** What the ledger is asked for a page: of the page's own size, or, of a
+ *  node that knows no sizes (`legacy`), the page of 100 it falls in and
+ *  where in it the page starts. */
+export function askedOf(query: CallsQuery, person: UsageCallsQuery["person"], legacy: boolean): { ask: UsageCallsQuery; skip: number } {
   const offset = (query.page - 1) * query.size;
   return {
     ask: {
-      page: Math.floor(offset / 100),
+      ...(legacy ? { page: Math.floor(offset / 100) } : { page: query.page - 1, size: query.size }),
       ...(query.from ? { from: query.from.toISOString() } : {}),
       ...(query.until ? { until: query.until.toISOString() } : {}),
       ...(query.model ? { model: query.model } : {}),
       ...(query.source ? { source: query.source } : {}),
       ...(query.outcome ? { outcome: ({ done: "completed", failed: "failed", stopped: "interrupted", held: "held" } as const)[query.outcome] } : {}),
       ...(person !== undefined ? { person } : {}),
+      ...(query.turn ? { conversation: query.turn.conversation, turn: query.turn.turn } : {}),
     },
-    skip: offset % 100,
+    skip: legacy ? offset % 100 : 0,
   };
 }
 
@@ -385,5 +394,6 @@ export function callsFrom(page: UsageCallsPage, query: CallsQuery, skip: number,
     const who = personOf(row.who, world);
     if (who) seen.people.add(who);
   }
-  return { rows, total: page.total ?? null, sum: null, models: [...seen.models].sort((a, b) => Number(isFable(b)) - Number(isFable(a)) || a.localeCompare(b)), people: [...seen.people].sort() };
+  const sum = page.sum ? { input: page.sum.input, output: page.sum.output, quota: (page.sum.usd + (page.sum.fable_usd ?? 0) * (FABLE_TIMES - 1)) / 1_000_000 } : null;
+  return { rows, total: page.total ?? null, sum, models: [...seen.models].sort((a, b) => Number(isFable(b)) - Number(isFable(a)) || a.localeCompare(b)), people: [...seen.people].sort() };
 }

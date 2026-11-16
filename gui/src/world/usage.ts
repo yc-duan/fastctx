@@ -35,6 +35,8 @@ export interface UsageHour extends UsageSum {
   at: Timestamp;
   /** Its place in the report's people. */
   person: number;
+  /** What of its dollars went to Fable models; older nodes do not say. */
+  fable?: number;
 }
 
 export interface Tokens {

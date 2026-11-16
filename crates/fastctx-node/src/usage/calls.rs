@@ -5,8 +5,9 @@ use crate::Node;
 use crate::admission::seen::Looker;
 use fastctx_types::ResidentId;
 use fastctx_types::access::{Acting, HubAccount};
+use fastctx_types::usage::Usd;
 use fastctx_types::usage_calls::{
-    CALLS_PAGE, CallCursor, CallOutcome, CallPhase, CallSource, CallTiming, UsageCall, UsageCallsPage, UsageCallsQuery,
+    CallCursor, CallOutcome, CallPhase, CallSource, CallTiming, UsageCall, UsageCallsPage, UsageCallsQuery, UsageCallsSum,
 };
 use jiff::{SignedDuration, Timestamp};
 use serde::{Deserialize, Serialize};
@@ -75,6 +76,13 @@ struct Call {
     outcome: CallOutcome,
     /// Whether its model may be shown (`row`).
     named: bool,
+    /// What it cost and the tokens it took, for what a query's rows add up
+    /// to; its tokens count only where they are shown (`row`).
+    usd: u64,
+    input: u64,
+    output: u64,
+    observed: bool,
+    fable: bool,
 }
 
 /// Values met many times, each kept once.
@@ -144,6 +152,7 @@ impl Index {
                     self.acting.len() - 1
                 }
             };
+            let fable = fastctx_hosts::claude::pricing::is_fable(&usage.model);
             calls.push(Call {
                 at,
                 key: key(&identity, item),
@@ -157,6 +166,11 @@ impl Index {
                 source: detail.source,
                 outcome: detail.outcome,
                 named: detail.source != CallSource::Background || detail.observed,
+                usd: usage.usd.map_or(0, |usd| usd.0),
+                input: usage.tokens.input + usage.tokens.cache_read + usage.tokens.cache_write,
+                output: usage.tokens.output,
+                observed: detail.observed,
+                fable,
             });
         }
         Ok(())
@@ -257,6 +271,8 @@ pub(crate) fn calls(
         .flatten()
         .min();
     let numbered = query.page.is_some();
+    let size = query.page_size();
+
     let in_range = |at: Timestamp| at >= since && query.until.is_none_or(|until| at < until);
     super::with_book(node, &path, |book| {
         let balances = book.balances();
@@ -275,6 +291,8 @@ pub(crate) fn calls(
         }
         let mut owns: HashMap<u32, bool> = HashMap::new();
         let mut found: Vec<(Timestamp, [u8; 32], Found)> = Vec::new();
+        // What the rows selected add up to, where the query counts them.
+        let mut sum = UsageCallsSum::default();
         for (at_file, file) in files.iter().enumerate() {
             index.refresh(file)?;
             if let Some(kept) = index.days.get(file) {
@@ -300,6 +318,7 @@ pub(crate) fn calls(
                         turn: index.turns.get(call.turn).as_deref().filter(|_| sees),
                     };
                     if shown.selected(query) {
+                        tally(&mut sum, call.usd, call.fable, call.observed.then_some((call.input, call.output)));
                         found.push((call.at, call.key, Found::Kept { file: at_file, line: call.line, item: call.item }));
                     }
                 }
@@ -336,22 +355,24 @@ pub(crate) fn calls(
                         turn: made.turn.as_deref(),
                     };
                     if shown.selected(query) {
+                        let tokens = made.tokens.as_ref().map(|tokens| (tokens.input + tokens.cache_read + tokens.cache_write, tokens.output));
+                        tally(&mut sum, made.usd.map_or(0, |usd| usd.0), made.model.as_deref().is_some_and(fastctx_hosts::claude::pricing::is_fable), tokens);
                         found.push((made.cursor.at, key, Found::Made(Box::new(made))));
                     }
                 }
             }
             // Paged by a cursor, the days older than a page's worth are left unread.
-            if !numbered && found.len() > CALLS_PAGE {
+            if !numbered && found.len() > size {
                 break;
             }
         }
         found.sort_by(|a, b| (b.0, b.1).cmp(&(a.0, a.1)));
         let total = found.len();
-        let start = query.page.map_or(0, |page| (page as usize).saturating_mul(CALLS_PAGE).min(total));
-        let more = total - start > CALLS_PAGE;
+        let start = query.page.map_or(0, |page| (page as usize).saturating_mul(size).min(total));
+        let more = total - start > size;
         let mut rows = Vec::new();
         let mut opened: HashMap<usize, io::BufReader<std::fs::File>> = HashMap::new();
-        for (at, key, found) in found.into_iter().skip(start).take(CALLS_PAGE) {
+        for (at, key, found) in found.into_iter().skip(start).take(size) {
             rows.push(match found {
                 Found::Made(made) => *made,
                 Found::Kept { file, line, item } => {
@@ -374,8 +395,26 @@ pub(crate) fn calls(
             });
         }
         let next = more.then(|| rows.last().expect("full page").cursor.clone());
-        Ok(UsageCallsPage { rows, next, total: numbered.then_some(total as u64) })
+        Ok(UsageCallsPage {
+            rows,
+            next,
+            total: numbered.then_some(total as u64),
+            size: query.size.map(|_| size as u32),
+            sum: numbered.then_some(sum),
+        })
     })
+}
+
+/// Adds one selected row to what the rows add up to.
+fn tally(sum: &mut UsageCallsSum, usd: u64, fable: bool, tokens: Option<(u64, u64)>) {
+    sum.usd = sum.usd.saturating_add(Usd(usd));
+    if fable {
+        sum.fable_usd = sum.fable_usd.saturating_add(Usd(usd));
+    }
+    if let Some((input, output)) = tokens {
+        sum.input = sum.input.saturating_add(input);
+        sum.output = sum.output.saturating_add(output);
+    }
 }
 
 #[cfg(test)]

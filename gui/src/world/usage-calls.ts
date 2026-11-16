@@ -31,6 +31,8 @@ export interface UsageCallsQuery {
   until?: string | null;
   /** The page asked for by its number, from 0; the answer then counts all. */
   page?: number | null;
+  /** Rows a page holds; a node of before pages by 100 and says no size. */
+  size?: number;
 }
 export interface UsageCall {
   cursor: CallCursor;
@@ -52,4 +54,5 @@ export interface UsageCall {
 }
 /** `total` is every row selected, where a page was asked for by number;
  *  an older Fastctx leaves it out. */
-export interface UsageCallsPage { rows: UsageCall[]; next: CallCursor | null; total?: number | null }
+export interface UsageCallsSum { usd: number; fable_usd?: number; input: number; output: number }
+export interface UsageCallsPage { rows: UsageCall[]; next: CallCursor | null; total?: number | null; size?: number; sum?: UsageCallsSum }

@@ -281,7 +281,7 @@ function rangeOf(): { from: Date | null; until: Date | null } {
   return { from: null, until: null };
 }
 
-const queryOf = (): CallsQuery => ({ page: state.page, size: state.size, ...rangeOf(), who: state.who, model: state.model, source: state.source, outcome: state.outcome });
+const queryOf = (): CallsQuery => ({ page: state.page, size: state.size, ...(state.turn ? { from: null, until: null } : rangeOf()), who: state.who, model: state.model, source: state.source, outcome: state.outcome, turn: state.turn });
 
 /** The rows last drawn, for a press on one of them. */
 let drawnRows: Call[] = [];
@@ -346,7 +346,7 @@ function callsView(login: Login): string {
   const none = fetched instanceof Error ? `<p class="lg-none" title="${escape(fetched.message)}">读取失败</p>` : page ? `<p class="lg-none">无匹配记录</p>` : `<p class="lg-none lg-soft">正在读取…</p>`;
   return `<div class="lg-body lg-calls-view">
     <div class="lg-bar">
-      ${field("f-time", "时间", state.time === "全部" ? null : state.time)}${many ? field("f-who", "用户", state.who) : ""}${field("f-model", "型号", state.model)}${field("f-source", "来源", state.source && sourceNames[state.source])}${field("f-outcome", "结果", state.outcome && outcomeNames[state.outcome])}
+      ${state.turn ? `<button type="button" class="lg-field" data-set data-act="f-turn" title="仅显示对话中这一轮的请求；点按显示全部">对话中的一轮${glyph("close", 12)}</button>` : field("f-time", "时间", state.time === "全部" ? null : state.time)}${many ? field("f-who", "用户", state.who) : ""}${field("f-model", "型号", state.model)}${field("f-source", "来源", state.source && sourceNames[state.source])}${field("f-outcome", "结果", state.outcome && outcomeNames[state.outcome])}
     </div>
     <div class="lg-sheet"><div class="lg-list lg-calls" style="--cols:${cols}">
       <div class="lg-heads lg-cols"><span>时间</span>${many ? "<span>用户</span>" : ""}<span>型号</span><span>对话</span><span class="lg-num">输入</span><span class="lg-num">输出</span>${priced ? `<span class="lg-num" title="额度美元：请求的 API 价，Fable 另乘倍率">额度</span>` : `<span class="lg-num">合计</span>`}<span class="lg-num">耗时</span><span></span></div>${rule(1)}
@@ -393,6 +393,10 @@ function filter<K extends "who" | "model" | "source" | "outcome">(key: K, title:
 on("f-who", (anchor) => {
   const login = current();
   if (login) filter("who", "用户", [[null, "全部用户"], ["我", "我"], ...[...new Set([...grantsOf(login).map((grant) => grant.person), ...seen.people])].map((person): [string, string] => [person, person])])(anchor);
+});
+on("f-turn", () => {
+  state.turn = null;
+  refiltered();
 });
 on("f-model", (anchor) => filter("model", "型号", [[null, "全部型号"], ...seen.models.map((model): [string, string] => [model, model])])(anchor));
 on("f-source", (anchor) => filter("source", "来源", [[null, "全部来源"], ["main", "主循环"], ["agent", "子代理"], ...(current()?.family === "claude" ? [["background", "后台"] as [string, string]] : [])])(anchor));

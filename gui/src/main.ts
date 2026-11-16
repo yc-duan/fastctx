@@ -683,6 +683,7 @@ function agentsPage(next: Place): Page {
         return null;
       },
       now: () => (live ? new Date() : specimen!.now),
+      menuLabel: shellWords.openSidebar,
     },
     next,
   );

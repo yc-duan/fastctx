@@ -123,6 +123,7 @@ pub(super) fn summarize(
     people.dedup();
     let person = |who: &Option<HubAccount>| people.iter().position(|known| known == who).expect("known person") as u32;
     let mut hours: BTreeMap<(Timestamp, u32), UsageSum> = BTreeMap::new();
+    let mut fable_hours: BTreeMap<(Timestamp, u32), Usd> = BTreeMap::new();
     let mut used: BTreeMap<(usize, u32), UsageSum> = BTreeMap::new();
     let mut weekly: BTreeMap<u32, UsageSum> = BTreeMap::new();
     let mut fable: BTreeMap<u32, UsageSum> = BTreeMap::new();
@@ -174,6 +175,13 @@ pub(super) fn summarize(
             let count = usage.tokens.total();
             let hour = if matches!(entry, Entry::Summary { .. }) { at } else { bucket(at, &boundaries) };
             hours.entry((hour, index)).or_default().add(count, usage.usd);
+            let on_fable = agent == "claude"
+                && fastctx_hosts::claude::pricing::is_fable(&usage.model)
+                && usage.call.as_ref().is_none_or(|call| call.observed);
+            if on_fable {
+                let spent = fable_hours.entry((hour, index)).or_insert(Usd::ZERO);
+                *spent = spent.saturating_add(usage.usd.unwrap_or(Usd::ZERO));
+            }
             if let Some(span) = span_of(at) {
                 used.entry((span, index)).or_default().add(count, usage.usd);
                 *weights.entry((span, index)).or_default() += weight(agent, Some(&usage.tokens), usage.usd);
@@ -183,9 +191,7 @@ pub(super) fn summarize(
             }
             if in_week(at) {
                 weekly.entry(index).or_default().add(count, usage.usd);
-                if fastctx_hosts::claude::pricing::is_fable(&usage.model)
-                    && usage.call.as_ref().is_none_or(|call| call.observed)
-                {
+                if on_fable {
                     fable.entry(index).or_default().add(count, usage.usd);
                 }
                 went.entry(index).or_default().add(&usage);
@@ -208,7 +214,15 @@ pub(super) fn summarize(
                 }
             })
             .collect(),
-        hours: hours.into_iter().map(|((at, person), sum)| UsageHour { at, person, sum }).collect(),
+        hours: hours
+            .into_iter()
+            .map(|((at, person), sum)| UsageHour {
+                at,
+                person,
+                sum,
+                fable: (agent == "claude").then(|| fable_hours.get(&(at, person)).copied().unwrap_or(Usd::ZERO)),
+            })
+            .collect(),
         week: UsageWeek { start: Some(week.start), end: Some(week.end), window: week.window, went: all.went() },
         readings,
         resets: None,
