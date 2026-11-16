@@ -212,6 +212,16 @@ jobs:
           first=cuts,restart,freeze,half-open,update-policy,skill-folders,plan-copies
           if [[ '${{ matrix.part }}' == first ]]; then part=(--only "$first"); else part=(--skip "$first"); fi
           tests/network_drill.exe --root "$(cygpath -m "$RUNNER_TEMP")" "${part[@]}" "${earlier[@]}"
+      # What a failed drill left behind (each failed scenario's hub and machines, their logs and
+      # stores) is kept: without it a failure seen once on a runner cannot be read afterwards.
+      - if: failure() && env.DRILLS == 'true'
+        name: Keep what a failed network drill left
+        uses: actions/upload-artifact@v4
+        with:
+          name: network-drill-left-${{ matrix.target }}-${{ matrix.part }}
+          path: ${{ runner.temp }}/fastctx-network-drill-*
+          if-no-files-found: ignore
+          retention-days: 7
 
   test-windows-arm:
     needs: kernel-windows
@@ -461,6 +471,16 @@ jobs:
           first=cuts,restart,freeze,half-open,update-policy,skill-folders,plan-copies
           if [[ '${{ matrix.part }}' == first ]]; then part=(--only "$first"); else part=(--skip "$first"); fi
           tests/network_drill --root "$RUNNER_TEMP" "${part[@]}" --earlier "$RUNNER_TEMP/earlier/fastctx"
+      # What a failed drill left behind (each failed scenario's hub and machines, their logs and
+      # stores) is kept: without it a failure seen once on a runner cannot be read afterwards.
+      - if: failure() && env.DRILLS == 'true'
+        name: Keep what a failed network drill left
+        uses: actions/upload-artifact@v4
+        with:
+          name: network-drill-left-${{ matrix.target }}-${{ matrix.part }}
+          path: ${{ runner.temp }}/fastctx-network-drill-*
+          if-no-files-found: ignore
+          retention-days: 7
       # The letter window between machines and their hub, by seed, through every fault of a line
       # and a process: nothing lost, each letter's effect once and in order, no window overrun.
       - if: env.DRILLS == 'true' && matrix.part == 'first'
@@ -839,6 +859,16 @@ jobs:
           first=cuts,restart,freeze,half-open,update-policy,skill-folders,plan-copies
           if [[ '${{ matrix.part }}' == first ]]; then part=(--only "$first"); else part=(--skip "$first"); fi
           tests/network_drill --root "$RUNNER_TEMP" "${part[@]}" --earlier "$RUNNER_TEMP/earlier/fastctx"
+      # What a failed drill left behind (each failed scenario's hub and machines, their logs and
+      # stores) is kept: without it a failure seen once on a runner cannot be read afterwards.
+      - if: failure() && env.DRILLS == 'true'
+        name: Keep what a failed network drill left
+        uses: actions/upload-artifact@v4
+        with:
+          name: network-drill-left-${{ matrix.target }}-${{ matrix.part }}
+          path: ${{ runner.temp }}/fastctx-network-drill-*
+          if-no-files-found: ignore
+          retention-days: 7
 
   test-macos-arm:
     needs: kernel-macos
