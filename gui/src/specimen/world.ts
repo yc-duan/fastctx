@@ -605,6 +605,11 @@ export function specimenWorld(): { world: WorldState; now: Date; lastVisit: Date
               forked_from: { machine: "desktop", resident: "codex-5a11" },
               now: { owed: {}, answering: [], activity: "idle", since: at("11:20:00"), turn: null, trouble: null, desk: false, waiting_for_user: false, title: "图标导出" },
             }),
+            // A conversation whose host sent agents of its own, to look at
+            // them in the list as any other is (`specimen/agents.ts`).
+            resident("claude-ag3nts", "desktop", claude(), null, "claude-opus-5-5", "12:40:00", {
+              now: { owed: {}, answering: [], activity: "idle", since: at("12:52:00"), turn: null, trouble: null, desk: false, waiting_for_user: false, title: "子代理分头查 Q16" },
+            }),
             ...hubbing("desktop"),
           ],
           jobs: [],

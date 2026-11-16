@@ -249,7 +249,7 @@ import { specimenMap } from "./specimen/project";
 import { markdownOf } from "./conversation/export";
 import { specimens, type Specimen } from "./specimen/sessions";
 import { answering, playLater, playTimed, streamSpecimen } from "./specimen/streams";
-import { specimenAgentRecord } from "./specimen/agents";
+import { agentsSpecimen, specimenAgentRecord } from "./specimen/agents";
 import { specimenAgents, specimenAsManaged, specimenAsShared, specimenAsVisitor, specimenChange, specimenNow, specimenRenameHere } from "./specimen/world";
 import { specimenHubMove } from "./specimen/hub-move";
 import { specimenRemote } from "./specimen/remote";
@@ -1819,6 +1819,8 @@ function specimenTalk(address: Address): DeskTalk {
   const name = address.resident;
   const sample: Specimen & { later?: SessionEvent[]; rate?: number; timed?: boolean } = specimenForks.get(talkKey(address)) ?? (name.startsWith("stream")
     ? streamSpecimen(params)
+    : name.endsWith("-ag3nts")
+    ? agentsSpecimen(name.startsWith("codex") ? "codex" : "claude")
     : (specimens[name === "codex-a51c" ? "asking" : name === "claude-5teps" ? "steps" : name === "trips-1" ? "trips" : name === "deeds-1" ? "deeds" : name === "claude-t0ur" ? "tour" : name === "claude-c0ntrols" ? "controls" : name === "claude-v01c" ? "voice" : name === "codex-91c0" ? "colleague" : name === "codex-order" ? "interruptions" : name.startsWith("codex") ? "codex" : "claude"] ?? specimens.claude!)());
   const conversation = new Conversation();
   conversation.thoughtWords = sample.agent !== "codex";
