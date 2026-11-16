@@ -2243,13 +2243,14 @@ function liveTalk(address: Address): DeskTalk {
       // record holds), the largest picture its machine makes of it.
       original: async (picture, max, held) => {
         if (picture.attachment) {
-          if (onComputer() && here) {
-            const fetched = await fetchAttachment(picture.attachment, held).catch(() => null);
-            if (fetched?.source === "original") {
-              const read = await readBytes(here, fetched.path, held);
-              return new Blob([Uint8Array.from(atob(read.base64), (char) => char.charCodeAt(0))]);
-            }
-          }
+          // A computer that is a device of a network, not a machine of its
+          // own, cannot read its own files this way: the picture is asked.
+          const whole = onComputer() && here
+            ? await fetchAttachment(picture.attachment, held)
+                .then((fetched) => (fetched.source === "original" ? readBytes(here, fetched.path, held) : null))
+                .catch(() => null)
+            : null;
+          if (whole) return new Blob([Uint8Array.from(atob(whole.base64), (char) => char.charCodeAt(0))]);
           return blobOf(await attachmentThumbnail(picture.attachment, Math.max(max, WHOLE_PICTURE)));
         }
         const read = await readBytes(picture.machine, picture.path!, held);

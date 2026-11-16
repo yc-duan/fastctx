@@ -58,6 +58,37 @@ pub(crate) fn of(node: &Node, resident: &ResidentId, machine: Option<&Written>) 
     Ok(found.map(|scope| local::Held::at(library, scope)))
 }
 
+/// The key of the scope a conversation of `machine` keeps its streams in
+/// here, as one logged in here reads it: its own, made here, for one that
+/// lives here; else its copy, found as `of` finds it — where it lives, on
+/// its network, never another's of the same name. None where there is no
+/// such scope here, or two could be it.
+pub(crate) fn scope_of_conversation(node: &Node, resident: &ResidentId, machine: &Written) -> Option<String> {
+    let kept = node.assets.as_ref()?;
+    if node.is_here(machine)
+        && let Ok(Some((_, scope))) = super::assets::scope_of(node, resident)
+    {
+        return kept
+            .library
+            .scopes_ending(&format!("/{resident}"))
+            .ok()?
+            .into_iter()
+            .find(|held| held.key == scope && read_here(node, held))
+            .map(|held| held.key);
+    }
+    let library = kept.library.clone();
+    let mut found = None;
+    for scope in library.scopes_ending(&format!("/{resident}")).ok()? {
+        if !(read_here(node, &scope) && lives_on(&library, &scope, &machine.name) && of_network(node, &scope, machine)) {
+            continue;
+        }
+        if found.replace(scope.key).is_some() {
+            return None;
+        }
+    }
+    found
+}
+
 /// Whether the conversation of `scope` lives on `machine` as its copy here
 /// has it, or was born there.
 pub(crate) use fastctx_client::timeline_copy::lives_on;

@@ -1345,9 +1345,10 @@ ${words.assistantWorks(option.assistant.owner ?? "")}` : said,
         filesOn: option.assistant && going.some((item) => !item.image) ? this.filesOn : null,
         mcpOff: this.mcpOff,
       });
-      // Begun: the page is empty again for the next conversation here.
-      this.input.value = "";
-      remember(this.kept, null);
+      // Begun: the page is empty again for the next conversation here; but
+      // words typed while these were on their way stay, for the next.
+      if (!this.starting && this.input.value.trim() === text) this.input.value = "";
+      if (!this.input.value.trim()) remember(this.kept, null);
       this.fit();
       this.tray?.went(going);
       this.draft = null;

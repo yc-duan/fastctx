@@ -364,6 +364,8 @@ async fn records(
         }
     }
     crate::sentinels::deletion::note_deleted(node, id).map_err(Stop::Failed)?;
+    // Its forks keep the small pictures of what they hold of it.
+    crate::attachments::hand_previews(node, id);
     crate::conversation_store::begin(&directory).map_err(|error| Stop::Failed(error.to_string()))?;
     crate::content_upkeep::forgetting(node);
     crate::conversation_store::purge(&node.database, id.as_str()).map_err(|error| Stop::Failed(error.to_string()))?;

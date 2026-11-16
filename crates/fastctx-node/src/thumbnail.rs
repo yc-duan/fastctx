@@ -53,6 +53,10 @@ pub(crate) async fn call(
     here(node, request, None).await
 }
 
+/// The longer side of the small picture kept at home of one sent from
+/// another machine.
+const PREVIEW_SIDE: u32 = 320;
+
 pub(crate) async fn attachment(
     node: &Arc<crate::Node>,
     attachment: fastctx_types::attachments::AttachmentSource,
@@ -87,6 +91,14 @@ pub(crate) async fn attachment(
     if let fastctx_types::attachments::AttachmentSource::Upload(receipt) = &attachment
         && !node.is_me(&receipt.owner.machine)
     {
+        // Asked larger than the small picture kept here, it is drawn from
+        // its original in the asset library here when that is held.
+        if max > PREVIEW_SIDE
+            && let Some(passing) = crate::attachments::kept_here::original(node, receipt).await
+        {
+            let path = crate::world::native(passing.path());
+            return here(node, ThumbnailRequest { path, max }, None).await;
+        }
         return crate::attachments::preview(node, receipt);
     }
     let upload = match &attachment {

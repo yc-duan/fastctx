@@ -18,7 +18,8 @@ pub(crate) fn reference(
 
 /// The small picture kept at home of an attachment whose original is kept
 /// elsewhere. Its conversation deleted, a conversation forked from it keeps
-/// the picture along with the attachment (`keep_inherited`), and is asked.
+/// the picture along with the attachment (`keep_inherited`, `hand_previews`),
+/// and is asked: only the forks of that conversation, not every one here.
 pub(crate) fn preview(node: &Node, wanted: &Attachment) -> Result<fastctx_types::thumbnail::Thumbnail, Failure> {
     let resident = &wanted.conversation().resident;
     let own = reference(node, resident, wanted).and_then(|kept| {
@@ -26,16 +27,60 @@ pub(crate) fn preview(node: &Node, wanted: &Attachment) -> Result<fastctx_types:
         read_json(&preview_in(node, resident, wanted))
     });
     let Err(missing) = own else { return own };
-    for heir in node.residents.everyone().filter(|one| one.id != *resident && one.removed.is_none()) {
-        let path = preview_in(node, &heir.id, wanted);
+    for heir in forks_of(node, wanted.conversation()) {
+        let path = preview_in(node, &heir, wanted);
         if fastctx_platform::disk::is_there(&path)
-            && matches!(super::index::reference(&node.world.conversation(&heir.id), wanted), Ok(Some(_)))
+            && matches!(super::index::reference(&node.world.conversation(&heir), wanted), Ok(Some(_)))
             && let Ok(preview) = read_json(&path)
         {
             return Ok(preview);
         }
     }
     Err(missing)
+}
+
+/// The conversations here forked from `conversation`, archived ones too.
+fn forks_of(node: &Node, conversation: &fastctx_types::Address) -> Vec<ResidentId> {
+    if !node.is_me(&conversation.machine) {
+        return Vec::new();
+    }
+    node.residents.everyone().filter(|one| one.about.forked_from.as_ref() == Some(conversation)).map(|one| one.id).collect()
+}
+
+/// Gives the forks of `parent` the small pictures of its attachments kept
+/// elsewhere that they hold too and have no picture of yet, as `parent` is
+/// deleted: forks made before they kept their own (`keep_inherited`) would
+/// lose them with it.
+pub(crate) fn hand_previews(node: &Node, parent: &ResidentId) {
+    let conversation = fastctx_types::Address { machine: node.machine(), resident: parent.clone() };
+    let forks = forks_of(node, &conversation);
+    if forks.is_empty() {
+        return;
+    }
+    let Ok(listed) = listed(node, parent) else { return };
+    for file in listed.iter().filter(|file| !node.is_me(&file.owner.machine)) {
+        for fork in &forks {
+            if matches!(super::index::reference(&node.world.conversation(fork), file), Ok(Some(_))) {
+                copy_preview(node, parent, fork, file);
+            }
+        }
+    }
+}
+
+/// Copies the small picture of `file` from `from`'s directory to `to`'s,
+/// whole or not at all, where `to` has none yet.
+fn copy_preview(node: &Node, from: &ResidentId, to: &ResidentId, file: &Attachment) {
+    let (source, target) = (preview_in(node, from, file), preview_in(node, to, file));
+    if !fastctx_platform::disk::is_there(&source) || fastctx_platform::disk::is_there(&target) {
+        return;
+    }
+    let copied = target.parent().map(fastctx_platform::ensure_private_dir).transpose().and_then(|_| {
+        let bytes = fastctx_platform::disk::read(&source)?;
+        fastctx_platform::publish(&target, &bytes, fastctx_platform::Permissions::Private)
+    });
+    if let Err(error) = copied {
+        node.log.line(format_args!("keeping a forked attachment's small picture: {error}"));
+    }
 }
 
 fn preview_in(node: &Node, resident: &ResidentId, wanted: &Attachment) -> PathBuf {
@@ -114,16 +159,7 @@ fn keep_inherited(
     // The small picture of one kept elsewhere goes with it, so the fork shows
     // it after the conversation it came from is deleted.
     for file in retained.iter().filter(|file| !node.is_me(&file.owner.machine)) {
-        let (from, to) = (preview_in(node, parent, file), preview_in(node, child, file));
-        if fastctx_platform::disk::is_there(&from) && !fastctx_platform::disk::is_there(&to) {
-            let copied = to.parent().map(fastctx_platform::ensure_private_dir).transpose().and_then(|_| {
-                let bytes = fastctx_platform::disk::read(&from)?;
-                fastctx_platform::disk::write(&to, bytes)
-            });
-            if let Err(error) = copied {
-                node.log.line(format_args!("keeping a forked attachment's small picture: {error}"));
-            }
-        }
+        copy_preview(node, parent, child, file);
     }
     Ok(())
 }

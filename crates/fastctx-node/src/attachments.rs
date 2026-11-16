@@ -9,7 +9,7 @@ pub(crate) mod kept_here;
 pub(crate) mod lifetime;
 mod references;
 pub(crate) mod sent;
-pub(crate) use references::{inherit, inherit_texts, preview};
+pub(crate) use references::{hand_previews, inherit, inherit_texts, preview};
 
 use std::io::{Read as _, Write as _};
 use std::path::{Path, PathBuf};
