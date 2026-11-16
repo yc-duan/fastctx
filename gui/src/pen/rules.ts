@@ -8,8 +8,11 @@
 import { penDefs } from "./filters";
 import { outline, ruled, seeded, type Point } from "./shapes";
 
-function image(width: number, height: number, filter: string, d: string): string {
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}"><defs>${penDefs()}</defs><g filter="url(#${filter})"><path d="${d}" fill="white"/></g></svg>`;
+/** A mark as an image: through one of the pens, or as it is drawn where
+ *  `filter` is none — a ruled line, which is sharp only untouched. */
+function image(width: number, height: number, filter: string | null, d: string): string {
+  const mark = `<path d="${d}" fill="white"/>`;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">${filter ? `<defs>${penDefs()}</defs><g filter="url(#${filter})">${mark}</g>` : mark}</svg>`;
   return `url("data:image/svg+xml,${encodeURIComponent(svg)}")`;
 }
 
@@ -41,9 +44,9 @@ function underline(seed: string): string {
 export function installRules(): void {
   const root = document.documentElement.style;
   for (const index of [1, 2, 3]) {
-    root.setProperty(`--pen-rule-${index}`, image(900, 8, "pen-rule", ruled([2, 4], [898, 4], 1.25, seeded(`rule-${index}`))));
+    root.setProperty(`--pen-rule-${index}`, image(900, 8, null, ruled([2, 4], [898, 4], 1, seeded(`rule-${index}`))));
   }
-  root.setProperty("--pen-rule-down", image(8, 900, "pen-rule", ruled([4, 2], [4, 898], 1.6, seeded("rule-down"))));
+  root.setProperty("--pen-rule-down", image(8, 900, null, ruled([4, 2], [4, 898], 1, seeded("rule-down"))));
   root.setProperty("--pen-swash", swash("swash"));
   root.setProperty("--pen-underline", underline("underline"));
 }

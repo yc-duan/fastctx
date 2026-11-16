@@ -24,6 +24,8 @@ const GAP = 1.5;
 const SHORTEST = 1;
 /** How much of a quarter circle its control points take. */
 const KAPPA = 0.5523;
+/** Whether the screen shows less than a pixel of the page as a mark. */
+const FINE = typeof devicePixelRatio === "number" && devicePixelRatio >= 2;
 
 export interface BarPart {
   /** How much of the whole it is. */
@@ -77,7 +79,9 @@ interface Hand {
 
 function hand(middle: number, thick: number, random: () => number): Hand {
   const radius = thick / 2;
-  const wander = Math.min(0.5, thick * 0.055);
+  // The edges waver only on a screen fine enough to show it; on a coarser
+  // one the waver would be a smudge, and they are straight and sharp.
+  const wander = FINE ? Math.min(0.5, thick * 0.055) : 0;
   const over = drift(random, wander);
   const under = drift(random, wander);
   const top: Edge = (x) => middle - radius + over(x);
@@ -120,7 +124,8 @@ function hand(middle: number, thick: number, random: () => number): Hand {
 export function drawBar(width: number, height: number, parts: BarPart[], random: () => number, thick = Math.min(BAR, height)): BarDrawn {
   const x0 = 0.5;
   const x1 = Math.max(x0 + thick, width - 0.5);
-  const pen = hand(height / 2, thick, random);
+  // Its edges on the screen's rows, whatever the box's height.
+  const pen = hand(Math.round((height - thick) / 2) + thick / 2, thick, random);
   const starts = pen.cap();
   const ends = pen.cap();
   const drawn: BarDrawn = { track: pen.outline(x0, x1, starts, ends), fills: [] };
@@ -149,7 +154,8 @@ export function drawBar(width: number, height: number, parts: BarPart[], random:
  *  ends, on no track: a span of time on a timeline, a short measure beside
  *  a figure. One shorter than it is thick is a dot. */
 export function pill(x0: number, x1: number, y: number, thick: number, random: () => number): string {
-  const pen = hand(y, thick, random);
+  // Its edges on the screen's rows.
+  const pen = hand(Math.round(y - thick / 2) + thick / 2, thick, random);
   return pen.outline(x0, Math.max(x1, x0 + thick), pen.cap(), pen.cap());
 }
 

@@ -6,7 +6,7 @@
 // devices are caught up, for the way in. One ink: the pencil's.
 
 import { escape } from "../conversation/prose";
-import { circle, dashed, dot, outline, ruled, ruledPoints, seeded, type Point } from "../pen/shapes";
+import { circle, dashed, dot, outline, ruled, seeded, type Point } from "../pen/shapes";
 import type { LagPoint } from "../world/sync";
 import type { SyncWords } from "./sync-words";
 
@@ -56,7 +56,8 @@ export function lagLines(input: LinesInput): string {
   const most = Math.max(0, ...lines.flatMap((line) => line.points.filter((point) => point.online).map((point) => point.behind)));
   const ceiling = TOPS.find((value) => value >= most * 1.1) ?? most * 1.1;
   const x = (at: number) => left + ((Math.min(to, Math.max(from, at)) - from) / Math.max(1, to - from)) * w;
-  const y = (behind: number) => top + h - (Math.min(ceiling, behind) / ceiling) * h;
+  // On the screen's rows, so a level stretch of a line is sharp.
+  const y = (behind: number) => Math.round(top + h - (Math.min(ceiling, behind) / ceiling) * h);
   const random = seeded(`sync-lines:${input.seed}`);
   let grid = "";
   let labels = "";
@@ -87,7 +88,7 @@ export function lagLines(input: LinesInput): string {
     const points = [...line.points].sort((a, b) => a.at - b.at);
     let run: Point[] = [];
     const flush = () => {
-      if (run.length > 1) ink += `<path fill="${line.ink}" d="${outline(run, 2, random, { pressure: 0.15, taper: 0.01 })}"/>`;
+      if (run.length > 1) ink += `<path fill="${line.ink}" d="${outline(run, 2, random, { pressure: 0, taper: 0.01 })}"/>`;
       else if (run.length === 1) ink += `<path fill="${line.ink}" d="${dot(run[0]!, 1.6, random)}"/>`;
       run = [];
     };
@@ -135,7 +136,7 @@ export function lagLines(input: LinesInput): string {
  *  into dashes where the two are cut off from each other. */
 export function wayLine(seed: string, cut: boolean): { line: string; head: string } {
   const random = seeded(`sync-way:${seed}`);
-  const d = cut ? dashed([0, 5], [1000, 5], 1.3, random, 14, 12) : outline(ruledPoints([0, 5], [1000, 5], random), 1.3, random, { pressure: 0.2, taper: 0.01 });
+  const d = cut ? dashed([0, 5], [1000, 5], 1, random, 14, 12) : ruled([0, 5], [1000, 5], 1, random);
   const head = outline([[1.5, 1.5], [8.6, 5]], 1.5, random, { pressure: 0.15, taper: 0.1 }) + outline([[1.5, 8.5], [8.6, 5]], 1.5, random, { pressure: 0.15, taper: 0.1 });
   return {
     line: `<svg class="sy-way-line" viewBox="0 0 1000 10" preserveAspectRatio="none" aria-hidden="true"><path d="${d}"/></svg>`,
@@ -160,11 +161,13 @@ export function strip(points: LagPoint[], from: number, to: number, ceiling: num
     most[slot] = Math.max(most[slot] ?? 0, point.behind);
   }
   const x = (slot: number) => 1 + ((slot + 0.5) / slots) * (width - 2);
-  const y = (behind: number) => base - Math.sqrt(Math.min(1, behind / Math.max(1, ceiling))) * rise;
+  // On the row the faint line lies on while it is caught up, so the two
+  // are one sharp line there.
+  const y = (behind: number) => Math.floor(base - Math.sqrt(Math.min(1, behind / Math.max(1, ceiling))) * rise) + 0.5;
   let ink = "";
   let run: Point[] = [];
   const flush = () => {
-    if (run.length > 1) ink += outline(run, 1.6, random, { pressure: 0.15, taper: 0.02 });
+    if (run.length > 1) ink += outline(run, 1, random, { pressure: 0, taper: 0.02 });
     else if (run.length === 1) ink += dot(run[0]!, 1.2, random);
     run = [];
   };

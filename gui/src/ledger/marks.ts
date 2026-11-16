@@ -4,14 +4,14 @@
 // nothing is ringed: what wants looking at is said by the colour of its
 // figure (user 2026-11-15).
 
-import { dot, outline, ruledPoints, seeded } from "../pen/shapes";
+import { dot, outline, ruled, ruledPoints, seeded } from "../pen/shapes";
 
 /** One line ruled across, edge to edge: the pen set down before the page's
  *  edge and lifted after it, so no end of it shows. Drawn a thousand units
  *  long and stretched to the width it rules; its thickness does not stretch. */
 export function rule(which: 1 | 2 | 3 = 1): string {
   const random = seeded(`ledger-rule-${which}`);
-  const d = outline(ruledPoints([-60, 4], [1060, 4], random), 1.1, random, { pressure: 0.25, taper: 0.02 });
+  const d = ruled([-60, 4], [1060, 4], 1, random);
   return `<svg class="lg-rule" viewBox="0 0 1000 8" preserveAspectRatio="none" aria-hidden="true"><path d="${d}"/></svg>`;
 }
 
