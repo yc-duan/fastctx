@@ -143,6 +143,29 @@ export function conversationObject(id: number, generation: number, object: strin
   return invoke("conversation_object", { id, generation, object });
 }
 
+/** One file change as the machine a conversation lives on keeps it
+ *  (`conversation.files`), or its end: `change` none once gone. */
+export interface FileChangeTold {
+  item: string;
+  change?: import("./wire").JsonValue;
+}
+
+/** The file changes of a watched conversation written after `after` ("" for
+ *  all); not known where none are kept, as on a machine of an earlier
+ *  release: they are read from its calls then. */
+export interface FileChangesTold {
+  known: boolean;
+  /** The place given means nothing where they were read: read anew. */
+  reread: boolean;
+  changes: FileChangeTold[];
+  through: string;
+  more: boolean;
+}
+
+export function conversationFiles(id: number, after: string): Promise<FileChangesTold> {
+  return invoke("conversation_files", { id, after });
+}
+
 export function conversationLocate(id: number, generation: number, turn: string): Promise<number | null> {
   return invoke("conversation_locate", { id, generation, turn });
 }

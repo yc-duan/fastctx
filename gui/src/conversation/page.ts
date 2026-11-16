@@ -1089,6 +1089,9 @@ export class ConversationPage {
     if (!changes || !side) return;
     side.changed(changes.whole());
     this.fileTabs?.update();
+    // Those of calls the page does not hold, as the machine it lives on
+    // keeps them.
+    changes.want(() => this.drawChanged());
   }
 
   /** The host's own agents, as the conversation now knows them, to their
@@ -1247,6 +1250,7 @@ export class ConversationPage {
     phoneWide.removeEventListener("change", this.placeDial);
     clearTimeout(this.offersAgain);
     clearTimeout(this.stopWatch);
+    this.changes?.close();
     cancelAnimationFrame(this.frame);
     this.view.destroy();
     this.badge?.dispose();

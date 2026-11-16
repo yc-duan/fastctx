@@ -123,6 +123,10 @@ pub struct MachineFacts {
     /// Answers bounded timeline queries (`RemoteCall::Timeline`).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub timeline_reads: bool,
+    /// Answers the files a conversation changed (`TimelineAsk::Files`); an
+    /// older machine is never asked.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub file_changes: bool,
     /// Tells when a piece of its state changed (`RemoteCall::Topics`), so a
     /// page that shows it waits instead of asking again on a timer.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]

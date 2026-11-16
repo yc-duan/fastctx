@@ -237,6 +237,7 @@ pub(crate) fn view_for_in(
         record_keys: true,
         goal_control: true,
         timeline_pages: true,
+        file_changes: true,
         scratch_locations: true,
         goal_commands: true,
         subagents: true,

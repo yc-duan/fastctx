@@ -986,7 +986,7 @@ fn given(entry: &Entry, mut event: SessionEvent, attach: &dyn Fn(&mut SessionEve
 
 /// The event an entry of the timeline holds: itself, or the object it is
 /// kept whole in; none where that object is not here.
-fn event_of(library: &Library, entry: &Entry) -> Result<Option<SessionEvent>, Failure> {
+pub(super) fn event_of(library: &Library, entry: &Entry) -> Result<Option<SessionEvent>, Failure> {
     match entry.body.split_first() {
         Some((&EVENT, encoded)) => Ok(Some(serde_json::from_slice(encoded).map_err(failure)?)),
         Some((&OVERSIZED, _)) => {

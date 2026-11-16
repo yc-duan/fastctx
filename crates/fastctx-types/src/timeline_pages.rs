@@ -53,7 +53,15 @@ pub enum TimelineAsk {
     /// part of the timeline brings it up to date by these, and reads no
     /// page again.
     Changes { resident: ResidentId, after: u64, max_events: u32, max_bytes: u32 },
+    /// The files the conversation changed, each change a record kept beside
+    /// its timeline (`conversation.files`), those written after the first
+    /// `after` of them: `through` an earlier answer gave, 0 for all. A
+    /// machine that keeps no such records answers that it does not.
+    Files { resident: ResidentId, after: u64, max_items: u32 },
 }
+
+/// The most file changes one answer holds.
+pub const FILES_ITEMS: u32 = 512;
 
 impl TimelineAsk {
     pub fn resident(&self) -> &ResidentId {
@@ -62,7 +70,8 @@ impl TimelineAsk {
             | Self::Moved { resident, .. }
             | Self::Running { resident, .. }
             | Self::Object { resident, .. }
-            | Self::Changes { resident, .. } => resident,
+            | Self::Changes { resident, .. }
+            | Self::Files { resident, .. } => resident,
         }
     }
 }
@@ -123,6 +132,28 @@ pub enum TimelineTold {
     /// The timeline does not hold its records from the place asked after,
     /// as one made anew: the reader reads its pages again.
     Reread,
+    Files {
+        /// Whether the conversation's file changes are kept at all where it
+        /// was read: none from a machine of an earlier release, or before
+        /// they are first written.
+        known: bool,
+        /// In the order they were written; an item may be among them more
+        /// than once, the last as it stands.
+        changes: Vec<FileChangeTold>,
+        /// What to ask `Files` after next.
+        through: u64,
+        /// Whether more were written after these.
+        more: bool,
+    },
+}
+
+/// One file change as it stands from then on, or its end: `change` is the
+/// record (`fastctx_content::v2::ConversationFileChange`), none once gone.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FileChangeTold {
+    pub item: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub change: Option<serde_json::Value>,
 }
 
 /// One record of a timeline: an event as it stands from then on, or its end.

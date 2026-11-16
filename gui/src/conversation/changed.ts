@@ -8,11 +8,19 @@
 // a call the conversation hears more of (a run's facts as they come) is a
 // new thing to work out, every other is the one already held. So a
 // conversation that grows is read only where it grew.
+//
+// The page holds only some of a long conversation's calls. The machine it
+// lives on keeps every change beside its timeline (`conversation.files`),
+// read from where the last reading stopped, as the conversation opens and
+// whenever its calls moved, a while apart: those the page does not hold
+// come from there, named as the page names them, so the two join. One of
+// an earlier release keeps none: the page's own calls are all there is.
 
 import type { ChangedFile, FileChange, How } from "../files/model";
 import { filesOf } from "../files/model";
 import type { Tool } from "../world/events";
-import type { DiffLine, WriteFact } from "../world/run-facts";
+import type { JsonValue } from "../world/wire";
+import type { DiffLine, DiffRef, WriteFact } from "../world/run-facts";
 import type { Conversation } from "./conversation";
 import { counts, parse, type DiffRow } from "./diff";
 import { rowOf } from "./diff-lines";
@@ -40,18 +48,140 @@ function rowsOf(lines: readonly DiffLine[]): DiffRow[] {
 }
 
 const HOW: Record<WriteFact["kind"], How> = { added: "added", modified: "changed", deleted: "removed" };
+const kindOf = (how: How): WriteFact["kind"] => (how === "added" ? "added" : how === "removed" ? "deleted" : "modified");
+
+/** How long apart the kept changes are read again as the calls move. */
+const PULL_APART_MS = 10_000;
+/** The most readings one pull makes. */
+const PULL_PAGES = 64;
 
 export class TalkChanges {
   /** A call's changes, kept while the call stands as it was read. */
   private readonly held = new WeakMap<Tool, FileChange[]>();
   /** What was last put together, and from what. */
-  private all: { sign: number; files: ChangedFile[] } | null = null;
+  private all: { sign: string; files: ChangedFile[] } | null = null;
   private readonly turns = new Map<string, { sign: number; files: ChangedFile[] }>();
+  /** The changes the machine it lives on keeps, by name, and where their
+   *  reading stopped. */
+  private readonly kept = new Map<string, FileChange>();
+  private keptVersion = 0;
+  private through = "";
+  private pulling = false;
+  private pullTimer: ReturnType<typeof setTimeout> | null = null;
+  private pulledAt = 0;
+  /** The calls as they stood when the kept changes were last read. */
+  private pulledSign: number | null = null;
+  private closed = false;
 
   constructor(
     private readonly conversation: Conversation,
     private readonly maker: Maker,
   ) {}
+
+  /** Reads the kept changes again once the calls moved, a while apart;
+   *  `drawn` once something new came. */
+  want(drawn: () => void): void {
+    const tools = this.conversation.toolsOf(null);
+    const sign = tools.reduce((sum, entry) => sum + entry.stamp, tools.length);
+    if (this.closed || sign === this.pulledSign || this.pullTimer || this.pulling) return;
+    const wait = this.pulledSign === null ? 400 : Math.max(0, this.pulledAt + PULL_APART_MS - Date.now());
+    this.pullTimer = setTimeout(() => {
+      this.pullTimer = null;
+      this.pulledSign = sign;
+      void this.pull().then((changed) => {
+        this.pulledAt = Date.now();
+        if (changed && !this.closed) drawn();
+      });
+    }, wait);
+  }
+
+  /** Stops reading the kept changes. */
+  close(): void {
+    this.closed = true;
+    if (this.pullTimer) clearTimeout(this.pullTimer);
+    this.pullTimer = null;
+  }
+
+  /** The kept changes written since the last reading; whether any came. */
+  private async pull(): Promise<boolean> {
+    if (this.pulling) return false;
+    this.pulling = true;
+    let changed = false;
+    try {
+      for (let page = 0; page < PULL_PAGES; page += 1) {
+        const reading = this.conversation.files(this.through);
+        if (!reading) break;
+        const told = await reading;
+        // None kept there: what is held stays as it was read.
+        if (!told.known) break;
+        if (told.reread) {
+          if (this.through === "") break;
+          this.kept.clear();
+          this.through = "";
+          changed = true;
+          continue;
+        }
+        for (const { item, change } of told.changes) {
+          const made = change === undefined ? null : this.keptChange(item, change);
+          if (made) this.kept.set(item, made);
+          else this.kept.delete(item);
+          changed = true;
+        }
+        this.through = told.through;
+        if (!told.more) break;
+      }
+    } catch {
+      // Not now: the page's own calls stand, and the next move reads again.
+    } finally {
+      this.pulling = false;
+    }
+    if (changed) this.keptVersion += 1;
+    return changed;
+  }
+
+  /** A kept change as the page shows one; none where it says too little. */
+  private keptChange(item: string, told: JsonValue): FileChange | null {
+    if (!told || typeof told !== "object" || Array.isArray(told)) return null;
+    const { maker } = this;
+    const path = typeof told.path === "string" && told.path ? told.path : null;
+    const how = told.how === "added" || told.how === "changed" || told.how === "removed" ? told.how : null;
+    if (!path || !how) return null;
+    const added = typeof told.added === "number" ? told.added : null;
+    const removed = typeof told.removed === "number" ? told.removed : null;
+    const machine = typeof told.machine === "string" && told.machine ? told.machine : maker.machine;
+    const write = told.source === "write";
+    let rows: FileChange["rows"];
+    const diff = told.diff;
+    if (!write && typeof diff === "string") {
+      rows = async () => parse(diff);
+    } else if (write && diff && typeof diff === "object" && !Array.isArray(diff)) {
+      const ref = diff as unknown as DiffRef;
+      const kept = maker.kept;
+      if (Array.isArray(ref.lines)) {
+        const lines = ref.lines;
+        rows = async () => rowsOf(lines);
+      } else if (kept && typeof ref.machine === "string" && typeof ref.path === "string") {
+        const fact: WriteFact = { id: item.replace(/^w:/, ""), machine, path, kind: kindOf(how), added, removed, diff: ref };
+        rows = async () => kept(fact).then((lines) => (lines ? rowsOf(lines) : null));
+      }
+    }
+    return {
+      id: item,
+      at: typeof told.at === "number" ? told.at : 0,
+      machine,
+      path,
+      how,
+      added: added ?? 0,
+      removed: removed ?? 0,
+      uncounted: write && added === null && removed === null,
+      seen: false,
+      session: maker.session,
+      agent: maker.agent,
+      from: null,
+      turn: typeof told.turn === "string" ? told.turn : null,
+      rows,
+    };
+  }
 
   /** The files `turn` changed, in the order of their machines and paths. */
   turn(turn: string): ChangedFile[] {
@@ -65,12 +195,19 @@ export class TalkChanges {
     return files;
   }
 
-  /** The files the conversation changed, as far as it is held here. */
+  /** The files the conversation changed: those of the calls the page
+   *  holds, and those kept where it lives of the calls it does not. */
   whole(): ChangedFile[] {
     const tools = this.conversation.toolsOf(null);
-    const sign = tools.reduce((sum, entry) => sum + entry.stamp, tools.length);
+    const sign = `${tools.reduce((sum, entry) => sum + entry.stamp, tools.length)}:${this.keptVersion}`;
     if (this.all?.sign === sign) return this.all.files;
-    const files = filesOf(tools.flatMap((entry) => this.of(entry)));
+    const held = tools.flatMap((entry) => this.of(entry));
+    let changes = held;
+    if (this.kept.size) {
+      const named = new Set(held.map((change) => change.id));
+      changes = held.concat([...this.kept.values()].filter((change) => !named.has(change.id)));
+    }
+    const files = filesOf(changes);
     this.all = { sign, files };
     return files;
   }

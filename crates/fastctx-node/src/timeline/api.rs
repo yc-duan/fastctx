@@ -79,6 +79,13 @@ pub(crate) async fn call(
             continue;
         }
         let facts = link.call(&machine.name, &account, Purpose::Look, RemoteCall::Facts).await.map_err(failure)?;
+        // The files a conversation changed: never asked of a hub or a
+        // machine that does not know the question; none known there.
+        if matches!(request, TimelineAsk::Files { .. })
+            && !(link.view().file_changes && matches!(&facts, Ok(RemoteReply::Facts(facts)) if facts.file_changes))
+        {
+            return Ok(TimelineTold::Files { known: false, changes: Vec::new(), through: 0, more: false });
+        }
         match facts {
             Ok(RemoteReply::Facts(facts)) if facts.timeline_reads => {}
             Err(error) if error.not_run => {
@@ -195,6 +202,14 @@ pub(crate) async fn here(node: &Arc<Node>, request: TimelineAsk) -> Result<Timel
                     through: read.through,
                     more: read.more,
                 })
+            })
+        }
+        TimelineAsk::Files { after, max_items, .. } => {
+            fastctx_platform::roles::in_place("reading a conversation's file changes", || {
+                let none = TimelineTold::Files { known: false, changes: Vec::new(), through: 0, more: false };
+                let Some(kept) = node.assets.as_ref() else { return Ok(none) };
+                let Some(placed) = super::assets::placed(node, &about)? else { return Ok(none) };
+                fastctx_client::timeline_copy::files(&kept.library, &placed.scope, after, max_items)
             })
         }
         TimelineAsk::Object { resident, object, offset, length } => {

@@ -208,7 +208,8 @@ pub(crate) fn kinds() -> Arc<fastctx_content::v2::Kinds> {
         .register::<fastctx_content::v2::AccountCollaboration>()
         .register::<fastctx_content::v2::AccountActivity>()
         .register::<fastctx_content::v2::AccountUsage>()
-        .register::<fastctx_content::v2::ConversationDraft>();
+        .register::<fastctx_content::v2::ConversationDraft>()
+        .register::<fastctx_content::v2::ConversationFileChange>();
     #[cfg(test)]
     let kinds = kinds.register::<super::drill_kinds::Plain>();
     Arc::new(kinds)
@@ -1329,5 +1330,6 @@ mod tests {
         assert_eq!(place("job.output"), Some(usize::from(JobOutput::KIND)));
         assert_eq!(place("conversation.plan"), Some(usize::from(ConversationPlan::KIND)));
         assert_eq!(place("conversation.history"), Some(usize::from(ConversationHistory::KIND)));
+        assert_eq!(place("conversation.files"), Some(usize::from(fastctx_content::v2::ConversationFileChange::KIND)));
     }
 }

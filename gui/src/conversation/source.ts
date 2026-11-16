@@ -4,7 +4,7 @@
 
 import type { Address, SessionEvent } from "../world/events";
 import { after, whyOf } from "../world/again";
-import { conversationSearch, conversationScan, conversationCut, conversationFind, conversationIndex, conversationLocate, conversationFollow, conversationObject, conversationPart, unwatch, watch, type Piece } from "../world/bridge";
+import { conversationSearch, conversationScan, conversationCut, conversationFiles, conversationFind, conversationIndex, conversationLocate, conversationFollow, conversationObject, conversationPart, unwatch, watch, type Piece } from "../world/bridge";
 import type { PartSource, Window } from "./conversation";
 
 export interface ConversationFeed {
@@ -108,6 +108,12 @@ export const watched: ConversationSource = {
         return expanded;
       },
       follow: async (revision, following) => conversationFollow(current(), revision, following),
+      files: async (after) => {
+        const owner = current();
+        const told = await conversationFiles(owner, after);
+        if (closed || id !== owner) throw new Error("the conversation closed while its files were read");
+        return told;
+      },
       locate: async (generation, turn) => conversationLocate(current(), generation, turn),
       cut: async (generation, events) => conversationCut(current(), generation, events),
       index: async (generation, start, end, docs) => conversationIndex(current(), generation, start, end, docs),

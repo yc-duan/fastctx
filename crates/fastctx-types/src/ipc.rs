@@ -131,6 +131,10 @@ pub enum Welcome {
         /// Bounded timer pages and short handles for oversized legacy rows.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         timer_pages: bool,
+        /// Answers the files a conversation changed
+        /// (`TimelineAsk::Files`); an older node is never asked.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        file_changes: bool,
         machine: MachineName,
         version: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]

@@ -649,8 +649,16 @@ impl Device {
                 .await
                 .map_err(failed)?
                 .map_err(failed)?;
-            if !matches!(facts, RemoteReply::Facts(facts) if facts.timeline_reads) {
+            if !matches!(&facts, RemoteReply::Facts(facts) if facts.timeline_reads) {
                 return Err(failed("this machine does not answer timeline pages; update it"));
+            }
+            // The files a conversation changed: never asked of a hub or a
+            // machine that does not know the question.
+            if matches!(&remote, RemoteCall::Timeline { request: fastctx_types::timeline_pages::TimelineAsk::Files { .. } })
+                && !(session.link.view().file_changes
+                    && matches!(&facts, RemoteReply::Facts(facts) if facts.file_changes))
+            {
+                return Err(failed("this machine or its hub does not keep the files conversations changed; update it"));
             }
         }
         if matches!(&remote, RemoteCall::Goal { .. }) {

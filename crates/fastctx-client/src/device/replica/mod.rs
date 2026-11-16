@@ -122,7 +122,8 @@ impl Replica {
                 .register::<fastctx_content::v2::AccountCollaboration>()
                 .register::<fastctx_content::v2::AccountActivity>()
                 .register::<fastctx_content::v2::AccountUsage>()
-                .register::<fastctx_content::v2::ConversationDraft>(),
+                .register::<fastctx_content::v2::ConversationDraft>()
+                .register::<fastctx_content::v2::ConversationFileChange>(),
         );
         library.know(kinds.clone());
         library.reconsider(kinds, true).map_err(|error| io::Error::other(error.to_string()))?;

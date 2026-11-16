@@ -22,6 +22,7 @@ mod local;
 mod artifacts;
 mod attachments;
 mod beside;
+mod file_changes;
 pub(crate) mod draft;
 mod meta;
 pub(crate) mod words;

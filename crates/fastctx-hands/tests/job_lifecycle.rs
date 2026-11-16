@@ -272,6 +272,7 @@ async fn node(mut listener: Listener, world: WorldDir, machine: MachineName, not
                     scratch_locations: false,
                     collaboration_watch: false,
                     timer_pages: true,
+                    file_changes: false,
                     machine: machine.clone(),
                     version: "test".into(),
                     node_lifetime: None,

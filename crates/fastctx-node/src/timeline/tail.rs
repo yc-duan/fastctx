@@ -1615,6 +1615,14 @@ async fn run(node: &Arc<Node>, resident: &ResidentId) -> Outcome {
             node.log.line(format_args!("{resident}'s evidence folders: {error}"));
         }
     }
+    match super::file_changes::produce(node, resident, &PRODUCING).await {
+        Ok(0) => {}
+        Ok(written) => node.log.line(format_args!("{resident}'s file changes: {written} written")),
+        Err(error) => {
+            beside_failed = true;
+            node.log.line(format_args!("{resident}'s file changes: {error}"));
+        }
+    }
     BROUGHT.lock().expect("brought timelines").insert(resident.clone(), Instant::now());
     match produced {
         Ok(produced) if produced.handing => Outcome::Again { after: HANDING_AGAIN },

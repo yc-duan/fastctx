@@ -106,6 +106,8 @@ export interface PartSource {
   part(generation: number, edge: Edge): Promise<PartRead | null>;
   object?(generation: number, object: string): Promise<ExpandedEvent>;
   follow?(revision: number, following: boolean): Promise<void>;
+  /** The files it changed as the machine it lives on keeps them. */
+  files?(after: string): Promise<import("../world/bridge").FileChangesTold>;
   /** Where a turn first appears. */
   locate(generation: number, turn: string): Promise<number | null>;
   cut(generation: number, events: number): Promise<Cut | null>;
@@ -136,6 +138,11 @@ export class Conversation {
   search(request: import("./timeline-find").SearchRequest): Promise<import("./timeline-find").SearchReply> {
     if (!this.source?.search) return Promise.reject(new Error("this source cannot search the complete history"));
     return this.source.search(request);
+  }
+  /** The files it changed as the machine it lives on keeps them, after a
+   *  place an earlier reading gave; none where its source keeps none. */
+  files(after: string): Promise<import("../world/bridge").FileChangesTold> | null {
+    return this.source?.files?.(after) ?? null;
   }
   /** The parts held, in order; the last is the latest, and live. */
   private parts: Held[];

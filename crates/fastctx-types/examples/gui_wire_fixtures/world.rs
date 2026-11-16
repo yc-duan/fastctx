@@ -343,6 +343,7 @@ fn nodes() -> Vec<NodesReply> {
         collaboration_tree: false,
         collaboration_watch: false,
         timeline_reads: false,
+        file_changes: false,
         topics: false,
         watch_live: false,
         completion_receipts: false,

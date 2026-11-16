@@ -715,6 +715,7 @@ pub fn facts(node: &Node) -> MachineFacts {
         collaboration_tree: true,
         collaboration_watch: true,
         timeline_reads: true,
+        file_changes: true,
         topics: true,
         watch_live: true,
         shell: shell(),

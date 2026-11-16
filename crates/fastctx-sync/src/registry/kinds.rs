@@ -1013,4 +1013,23 @@ pub(super) const KINDS: &[Registration] = &[
         Confirmed,
         GenericTombstone
     ),
+    // The files a conversation changed, a record each, made from its
+    // timeline and its runs' facts by the machine it lives on (`gui-files`).
+    kind!(
+        "conversation.files",
+        Asset,
+        Conversation,
+        SourceDevice,
+        SingleWriter,
+        UntilDeleted,
+        Complete,
+        "fastctx-node::timeline::file_changes",
+        Assets,
+        Json,
+        true,
+        false,
+        false,
+        Confirmed,
+        GenericTombstone
+    ),
 ];

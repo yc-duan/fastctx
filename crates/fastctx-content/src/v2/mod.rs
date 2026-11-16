@@ -35,6 +35,7 @@ mod backfill;
 mod aside;
 mod artifact;
 mod attachment;
+mod file_changes;
 mod meta;
 mod names;
 mod words;
@@ -75,6 +76,7 @@ pub use activity::{AccountActivity, AccountUsage};
 pub use artifact::{ConversationArtifact, part_name};
 pub use draft::ConversationDraft;
 pub use attachment::ConversationAttachment;
+pub use file_changes::{ConversationFileChange, FILE_HOWS};
 pub use sentinel_run::ConversationSentinelRun;
 pub use timer::ConversationTimer;
 pub use document::{

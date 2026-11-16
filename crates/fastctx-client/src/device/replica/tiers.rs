@@ -68,6 +68,7 @@ pub(super) fn hold(tier: Tier, stream: &str) -> Hold {
         ("sentinels", Hold::Complete),      // conversation.sentinel
         ("timers", Hold::Complete),         // conversation.timer
         ("draft", Hold::Complete),          // conversation.draft
+        ("files", Hold::Complete),          // conversation.files
         ("settings", Hold::Complete),       // account.settings
         ("profile", Hold::Complete),        // account.profile
         ("collaboration", Hold::Complete),  // account.collaboration

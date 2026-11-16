@@ -147,6 +147,8 @@ pub struct Client {
     pub goal_commands: bool,
     pub collaboration_watch: bool,
     pub timer_pages: bool,
+    /// Answers the files a conversation changed (`TimelineAsk::Files`).
+    pub file_changes: bool,
     /// The connected node's facts, including when another starter won.
     pub node_lifetime: Option<Box<fastctx_types::node_lifetime::NodeLifetime>>,
 }
@@ -206,6 +208,7 @@ impl Client {
                 goal_commands,
                 collaboration_watch,
                 timer_pages,
+                file_changes,
             } => Ok(Self {
                 connection,
                 next: 0,
@@ -227,6 +230,7 @@ impl Client {
                 goal_commands,
                 collaboration_watch,
                 timer_pages,
+                file_changes,
             }),
             Welcome::Refused { reason, mismatch } => {
                 let mismatch = mismatch.or_else(|| renewal::legacy_mismatch(&reason));
@@ -337,6 +341,13 @@ impl Client {
 
     /// Sends `call` and waits for its answer.
     pub async fn call(&mut self, call: Call) -> Result<Reply, CallError> {
+        if !self.file_changes
+            && matches!(&call, Call::Timeline { request: fastctx_types::timeline_pages::TimelineAsk::Files { .. }, .. })
+        {
+            return Err(CallError::Failed(Failure::not_run(
+                "this node does not keep the files conversations changed; update it",
+            )));
+        }
         if !self.timer_pages && matches!(&call, Call::Timer { timer } if timer.needs_pages()) {
             return Err(CallError::Failed(Failure::not_run(
                 "this node does not support timer pages or handles; update it",

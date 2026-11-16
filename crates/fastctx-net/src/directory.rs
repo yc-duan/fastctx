@@ -880,6 +880,10 @@ pub struct View {
     /// whole, as before pages.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub timeline_pages: bool,
+    /// Whether this hub relays the question of the files a conversation
+    /// changed (`TimelineAsk::Files`); an earlier hub is never asked it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub file_changes: bool,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub scratch_locations: bool,
     /// The hub relays resident goal commands and requester controls.
@@ -998,6 +1002,7 @@ impl View {
             record_keys: false,
             goal_control: false,
             timeline_pages: false,
+            file_changes: false,
             scratch_locations: false,
             goal_commands: false,
             subagents: false,

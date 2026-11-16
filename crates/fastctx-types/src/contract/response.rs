@@ -432,7 +432,8 @@ fn timeline(request: &crate::timeline_pages::TimelineAsk) -> Response {
         TimelineAsk::Page { .. }
         | TimelineAsk::Object { .. }
         | TimelineAsk::Running { .. }
-        | TimelineAsk::Changes { .. } => Response::Answer,
+        | TimelineAsk::Changes { .. }
+        | TimelineAsk::Files { .. } => Response::Answer,
     }
 }
 

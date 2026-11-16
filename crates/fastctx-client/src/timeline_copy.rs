@@ -7,7 +7,10 @@
 //! marked (`ELSEWHERE`), and a reader whose place is of the other source is
 //! told to read anew.
 
-use fastctx_content::v2::{ConversationMeta, EVENT, HeldScope, Kind as _, Library, OVERSIZED, Timeline, ViewChange, view_sequence};
+use fastctx_content::v2::{
+    ConversationFileChange, ConversationMeta, EVENT, HeldScope, Kind as _, Library, OVERSIZED, Timeline, ViewChange,
+    view_sequence,
+};
 use fastctx_content::{Anchor, ObjectRef, Place};
 use fastctx_net::directory::Directory;
 use fastctx_types::assets::{Descriptor, Holders, Readers, conversation_classes};
@@ -15,7 +18,8 @@ use fastctx_types::ipc::Failure;
 use fastctx_types::town::{ResidentNow, WhoReply};
 use fastctx_types::{AccountName, MachineName};
 use fastctx_types::timeline_pages::{
-    OBJECT_BYTES, TimelineAsk, TimelineChange, TimelineEvent, TimelineFrom, TimelinePlace, TimelineShown, TimelineTold,
+    FILES_ITEMS, FileChangeTold, OBJECT_BYTES, TimelineAsk, TimelineChange, TimelineEvent, TimelineFrom, TimelinePlace,
+    TimelineShown, TimelineTold,
 };
 use std::time::Duration;
 
@@ -191,6 +195,37 @@ pub fn object(copy: &Copy, hash: &[u8; 32], offset: u64, length: u32) -> Result<
     copy.library.read(hash, offset, length).map(Some).map_err(failure)
 }
 
+/// The most bytes of file changes one answer holds.
+const FILES_BYTES: u32 = 2 << 20;
+
+/// The file changes of the conversation whose scope is `scope` in `library`
+/// (`conversation.files`), those written after `after` — 0 for all — as
+/// the machine it lives on wrote them; none known where none were written
+/// (a machine of an earlier release writes none).
+pub fn files(library: &Library, scope: &str, after: u64, max_items: u32) -> Result<TimelineTold, Failure> {
+    let stream = ConversationFileChange::STREAM;
+    let Some(revision) = library.view_revision(scope, stream).map_err(failure)? else {
+        return Ok(TimelineTold::Files { known: false, changes: Vec::new(), through: 0, more: false });
+    };
+    let from = if after == 0 { revision & !((1u64 << 40) - 1) } else { after };
+    let Some(read) = library.view_changes(scope, stream, from, max_items.clamp(1, FILES_ITEMS), FILES_BYTES).map_err(failure)?
+    else {
+        return Ok(TimelineTold::Reread);
+    };
+    let changes = read
+        .changes
+        .into_iter()
+        .map(|change| match change {
+            ViewChange::Is(entry) => FileChangeTold {
+                item: String::from_utf8_lossy(&entry.item).into_owned(),
+                change: serde_json::from_slice(&entry.body).ok(),
+            },
+            ViewChange::Gone { item } => FileChangeTold { item: String::from_utf8_lossy(&item).into_owned(), change: None },
+        })
+        .collect();
+    Ok(TimelineTold::Files { known: true, changes, through: read.through, more: read.more })
+}
+
 /// Answers `request` from the copy. What the conversation runs now only
 /// the machine it lives on has.
 pub async fn answer(copy: &Copy, request: TimelineAsk) -> Result<TimelineTold, Failure> {
@@ -246,6 +281,11 @@ pub async fn answer(copy: &Copy, request: TimelineAsk) -> Result<TimelineTold, F
             })
         }
         TimelineAsk::Running { .. } => Err(Failure::new("what runs now is read where the conversation lives")),
+        TimelineAsk::Files { after, max_items, .. } => {
+            fastctx_platform::roles::in_place("reading a copy's file changes", || {
+                files(&copy.library, &copy.scope, after, max_items)
+            })
+        }
     }
 }
 
@@ -315,7 +355,9 @@ pub fn hex(bytes: &[u8]) -> String {
 /// The place a reader asks after, where it gives one.
 pub fn after(request: &TimelineAsk) -> Option<u64> {
     match request {
-        TimelineAsk::Moved { after, .. } | TimelineAsk::Changes { after, .. } => Some(*after),
+        TimelineAsk::Moved { after, .. } | TimelineAsk::Changes { after, .. } | TimelineAsk::Files { after, .. } => {
+            Some(*after)
+        }
         _ => None,
     }
 }
@@ -330,7 +372,9 @@ pub fn anew(request: &TimelineAsk) -> TimelineTold {
 
 /// The request as the machine it lives on is asked it: unmarked.
 pub fn unmarked(mut request: TimelineAsk) -> TimelineAsk {
-    if let TimelineAsk::Moved { after, .. } | TimelineAsk::Changes { after, .. } = &mut request {
+    if let TimelineAsk::Moved { after, .. } | TimelineAsk::Changes { after, .. } | TimelineAsk::Files { after, .. } =
+        &mut request
+    {
         *after &= !ELSEWHERE;
     }
     request
@@ -355,6 +399,7 @@ pub fn marked(mut told: TimelineTold) -> TimelineTold {
             }
         }
         TimelineTold::Moved { revision, .. } => revision.iter_mut().for_each(mark),
+        TimelineTold::Files { through, .. } => mark(through),
         TimelineTold::Running { .. } | TimelineTold::Object { .. } | TimelineTold::Reread => {}
     }
     told

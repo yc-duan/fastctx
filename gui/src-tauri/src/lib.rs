@@ -1346,6 +1346,7 @@ pub fn run() {
             transcript::conversation_part,
             transcript::conversation_follow,
             timeline_objects::conversation_object,
+            timeline_objects::conversation_files,
             timeline_scan::conversation_scan,
             timeline_search::conversation_search,
             transcript::conversation_cut,
