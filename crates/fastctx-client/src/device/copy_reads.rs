@@ -237,7 +237,15 @@ async fn page(found: &Found, request: TimelineAsk) -> Result<TimelineTold, Failu
             return Ok(told);
         }
         match cut(events, &low)? {
-            Cut::Whole => return Ok(told),
+            // The copy holds nothing below this run, but the conversation
+            // goes on below it: a light copy's recent part is not where it
+            // begins, so the page still says more is older.
+            Cut::Whole => {
+                if older.is_none() {
+                    *older = events.first().map(|oldest| oldest.place.clone());
+                }
+                return Ok(told);
+            }
             Cut::Below(oldest) => {
                 *older = Some(oldest);
                 return Ok(told);

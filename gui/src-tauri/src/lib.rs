@@ -348,8 +348,11 @@ async fn watch(
     let world = shell.world();
     let resident = resident(resident_id)?;
     let machine = machine(machine_name)?;
-    #[cfg(desktop)]
-    if let Some(opened) = timeline_watch::open(&world, resident.clone(), machine.clone()).await? {
+    #[cfg(not(target_os = "android"))]
+    let opened = timeline_watch::open(&world, resident.clone(), machine.clone()).await?;
+    #[cfg(target_os = "android")]
+    let opened = android::timeline::open(&world, resident.clone(), machine.clone()).await?;
+    if let Some(opened) = opened {
         let id = shell.next.fetch_add(1, Ordering::Relaxed);
         let reader = opened.reader;
         let transcript = reader.lock().await.transcript.clone();
@@ -368,7 +371,10 @@ async fn watch(
             move |pieces, _| {
                 let (reader, watching, readers) = (reader.clone(), initial.take(), readers.clone());
                 async move {
-                    readers.run(id, reader, watching, pieces).await;
+                    #[cfg(not(target_os = "android"))]
+                    readers.run(id, reader, watching, &pieces).await;
+                    #[cfg(target_os = "android")]
+                    android::timeline::run(readers, id, reader, watching, pieces).await;
                 }
             },
         ) {

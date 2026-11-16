@@ -169,7 +169,7 @@ async fn until_closed(closed: &AtomicBool, closing: &tokio::sync::Notify) {
 #[derive(Clone, Default)]
 pub(crate) struct Readers(Arc<Mutex<HashMap<u64, Shared>>>);
 impl Readers {
-    pub async fn run(&self, _id: u64, reader: Shared, initial: Option<Watching>, pieces: Sender<Piece>) {
+    pub async fn run(&self, _id: u64, reader: Shared, initial: Option<Watching>, pieces: &Sender<Piece>) {
         if initial.is_none() {
             let snapshot = reader.lock().await.snapshot();
             let Ok(window) = snapshot else { return };
@@ -293,7 +293,11 @@ pub(crate) async fn open(
         Err((true, error)) if older(&error) => return Ok(None),
         Err((true, error)) if error.is_deleted() || error.is_refused() => return Err(error.into()),
         Err((true, error)) => (None, Some(error)),
-        Err((false, error)) => return Err(error.into()),
+        // Opened but not acknowledged: a passing failure as well, so a
+        // copy that holds the conversation still shows it while the watch
+        // is opened again behind it.
+        Err((false, error)) if error.is_deleted() || error.is_refused() => return Err(error.into()),
+        Err((false, error)) => (None, Some(error)),
     };
     let page = match reader.fetch_typed(TimelineFrom::Latest, PAGE_EVENTS).await {
         Ok(page) => page,
@@ -311,8 +315,13 @@ pub(crate) async fn open(
 
 /// The window opened on `page`, the first read.
 async fn opened(mut reader: Reader, mut page: Page, watching: Option<Watching>) -> Result<Opened, NotWatched> {
-    if page.revision.is_some() {
-        reader.complete_edge(&mut page, true).await.map_err(NotWatched::from)?;
+    // Reading on to the activity's beginning may need what is not here (a
+    // light copy away from the hub); the page opens on what was read, its
+    // first activity shown in part, and reading older pages says why.
+    if page.revision.is_some()
+        && let Err(error) = reader.complete_edge(&mut page, true).await
+    {
+        eprintln!("the latest page opened without its activity's beginning: {error}");
     }
     reader.through = page.through;
     reader.state.preparing = page.initializing.unwrap_or(page.revision.is_none());
@@ -684,7 +693,7 @@ impl Reader {
     }
 }
 
-pub(crate) async fn stream(reader: Shared, mut initial: Option<Watching>, pieces: Sender<Piece>) {
+pub(crate) async fn stream(reader: Shared, mut initial: Option<Watching>, pieces: &Sender<Piece>) {
     let (world, resident, machine) = {
         let r = reader.lock().await;
         (r.world.clone(), r.resident.clone(), r.machine.clone())
@@ -748,7 +757,7 @@ pub(crate) async fn stream(reader: Shared, mut initial: Option<Watching>, pieces
             Ok(watching) => {
                 again.came();
                 owed = None;
-                connected(&reader, &world, &resident, &machine, watching, &pieces).await
+                connected(&reader, &world, &resident, &machine, watching, pieces).await
             }
             Err(error) => Err(error),
         };
