@@ -47,6 +47,9 @@ export function installRules(): void {
     root.setProperty(`--pen-rule-${index}`, image(900, 8, null, ruled([2, 4], [898, 4], 1, seeded(`rule-${index}`))));
   }
   root.setProperty("--pen-rule-down", image(8, 900, null, ruled([4, 2], [4, 898], 1, seeded("rule-down"))));
+  // Where a ruled stroke lifts: its last few pixels, thinning from its
+  // whole width to half, sharp as the line it ends.
+  root.setProperty("--pen-seg-tip", `url("data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="12" height="2" viewBox="0 0 12 2" preserveAspectRatio="none"><path d="M0 0H5L12 0.6V1.4L5 2H0Z" fill="white"/></svg>`)}")`);
   root.setProperty("--pen-swash", swash("swash"));
   root.setProperty("--pen-underline", underline("underline"));
 }

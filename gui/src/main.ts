@@ -1391,6 +1391,8 @@ function versionsHere(look: boolean): void {
 // A switch's chosen side slides to the one pressed, wherever it is drawn.
 followSwitches();
 grabSwitches();
+// A look of the switches tried beside the one in use (`segment-trial.ts`).
+if (import.meta.env.DEV) void import("./design/segment-trial").then((trial) => trial.installSegmentTrial(english));
 followTabs();
 
 const shell = new Shell({

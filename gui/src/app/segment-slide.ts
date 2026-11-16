@@ -49,11 +49,12 @@ export function followSwitches(): void {
       // The side already chosen pressed again moves nothing.
       if (!before || before.contains(target)) return;
       const look = getComputedStyle(before);
-      if (!painted(look.backgroundColor)) return;
+      const own = marksItself(look);
+      if (!own && !painted(look.backgroundColor)) return;
       const from = boxIn(before, track);
       const where = track.getBoundingClientRect();
       const centre = { x: where.left + where.width / 2, y: where.top + where.height / 2 };
-      const wash = { colour: look.backgroundColor, radius: look.borderRadius };
+      const wash = { colour: look.backgroundColor, radius: look.borderRadius, own };
       let frames = 0;
       const landed = () => {
         // The page may have drawn the switch anew where it stood.
@@ -77,6 +78,20 @@ function painted(colour: string): boolean {
   return colour !== "transparent" && !/rgba\([^)]*,\s*0\)$/.test(colour);
 }
 
+/** Whether the chosen side is marked by something other than a fill of its
+ *  own (a stroke under it, a ring round it): its style sheet says so with
+ *  `--seg-own`, and draws the same mark on a `.seg-own` that travels. */
+function marksItself(look: CSSStyleDeclaration): boolean {
+  return look.getPropertyValue("--seg-own").trim() === "1";
+}
+
+/** What travels: a wash of the side's colour, or a mark of its making. */
+function dress(thumb: HTMLElement, wash: { colour: string; radius: string; own: boolean }): void {
+  if (wash.own) thumb.classList.add("seg-own");
+  else thumb.style.background = wash.colour;
+  thumb.style.borderRadius = wash.radius;
+}
+
 /** Where `element` is inside `track`'s padding box. */
 function boxIn(element: HTMLElement, track: HTMLElement): Box {
   const outer = track.getBoundingClientRect();
@@ -86,15 +101,14 @@ function boxIn(element: HTMLElement, track: HTMLElement): Box {
 
 /** A wash from `from` to `to` in `track`, the chosen side's own wash held
  *  back meanwhile. */
-function slide(track: HTMLElement, from: Box, to: Box, wash: { colour: string; radius: string }): void {
+function slide(track: HTMLElement, from: Box, to: Box, wash: { colour: string; radius: string; own: boolean }): void {
   if (Math.abs(from.x - to.x) < 1 && Math.abs(from.y - to.y) < 1) return;
   track.querySelector(":scope > .seg-thumb")?.remove();
   if (getComputedStyle(track).position === "static") track.style.position = "relative";
   const thumb = document.createElement("span");
   thumb.className = "seg-thumb";
   thumb.setAttribute("aria-hidden", "true");
-  thumb.style.background = wash.colour;
-  thumb.style.borderRadius = wash.radius;
+  dress(thumb, wash);
   place(thumb, from);
   track.prepend(thumb);
   track.classList.add("seg-sliding");
@@ -154,7 +168,8 @@ export function grabSwitches(root: Document | HTMLElement = document): void {
     const sides = [...track.children].filter((side): side is HTMLElement => side instanceof HTMLElement && !side.classList.contains("seg-thumb") && !side.hidden);
     if (sides.length < 2) return;
     const look = getComputedStyle(from);
-    if (!painted(look.backgroundColor)) return;
+    const own = marksItself(look);
+    if (!own && !painted(look.backgroundColor)) return;
     const boxes = new Map(sides.map((side) => [side, boxIn(side, track)]));
     const home = boxes.get(from)!;
     const low = boxes.get(sides[0]!)!.x;
@@ -170,8 +185,7 @@ export function grabSwitches(root: Document | HTMLElement = document): void {
         thumb = document.createElement("span");
         thumb.className = "seg-thumb seg-held";
         thumb.setAttribute("aria-hidden", "true");
-        thumb.style.background = look.backgroundColor;
-        thumb.style.borderRadius = look.borderRadius;
+        dress(thumb, { colour: look.backgroundColor, radius: look.borderRadius, own });
         place(thumb, home);
         if (getComputedStyle(track).position === "static") track.style.position = "relative";
         track.prepend(thumb);
