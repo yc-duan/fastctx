@@ -85,6 +85,8 @@ export interface RowOptions {
   /** What opens under the row, and whether it is open. */
   fold?: string;
   open?: boolean;
+  /** What stands at the row's end, after its lines: a button of its own. */
+  act?: string;
 }
 
 /** One file of a list. */
@@ -99,7 +101,7 @@ export function fileRow(file: ChangedFile, words: FilesWords, options: RowOption
       ${pathOf(file, options.under)}
       ${where}${who}
       ${file.uncounted ? `<span class="cf-figures cf-none" title="${escape(words.view.uncounted)}">—</span>` : figures(file.added, file.removed)}
-      ${squaresOf(file.added, file.removed)}
+      ${squaresOf(file.added, file.removed)}${options.act ?? ""}
     </div>${folding ? `<div class="cf-fold"><div class="cf-fold-inner">${options.fold}</div></div>` : ""}
   </li>`;
 }

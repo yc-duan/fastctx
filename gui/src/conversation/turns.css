@@ -800,6 +800,48 @@
   display: none;
 }
 
+/* The button at a row's end that shows the file in the side: quiet until
+   the row or it is pointed at. */
+.turn-changed .cf-act {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  margin: 0 -6px 0 -6px;
+  color: var(--text-3);
+  opacity: 0.6;
+  transition: opacity var(--hover) var(--ease), color var(--hover) var(--ease);
+}
+
+.turn-changed .cf-row:hover > .cf-act,
+.turn-changed .cf-act:focus-visible {
+  opacity: 1;
+}
+
+.turn-changed .cf-act:hover {
+  color: var(--text);
+}
+
+/* What the turn did to a file, under its row. */
+.turn-changed .cf-fold-inner {
+  padding: 0 12px;
+}
+
+.turn-changed .cf-file.open > .cf-fold > .cf-fold-inner {
+  padding-bottom: 12px;
+}
+
+.turn-changed .cf-fold-inner > .cf-diff + .cf-diff,
+.turn-changed .cf-fold-inner > * + .cf-note,
+.turn-changed .cf-fold-inner > .cf-note + * {
+  margin-top: var(--space-2);
+}
+
+.turn-changed .cf-fold-inner > .cf-note {
+  padding: 0 4px;
+}
+
 .turn-changed .cf-rest {
   padding: 6px 16px 8px;
 }

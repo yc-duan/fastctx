@@ -46,8 +46,8 @@ import { answerOf, drawAsk, readAsk, type AskWords } from "./asks";
 import type { Words } from "../words";
 import { forkCard, type ForkFrom } from "./fork-card";
 import { glyph, type GlyphName } from "./glyphs";
-import { figures, fileRow } from "../files/changed";
-import { commonFolder, tally, type ChangedFile } from "../files/model";
+import { diffLines, figures, fileRow } from "../files/changed";
+import { commonFolder, tally, type ChangedFile, type FileChange } from "../files/model";
 import type { FilesWords } from "../files/words";
 import { controlName } from "./control-queue";
 import { saidHtml } from "./said";
@@ -61,7 +61,7 @@ import type { KnownText, SearchEvent, SearchHit } from "./timeline-find";
 import { escape, plain, render } from "./prose";
 import { askedSkill } from "./commands";
 import { askedHtml, askedOf } from "./goal-notice";
-import { numbered, parse } from "./diff";
+import { numbered, parse, type DiffRow } from "./diff";
 import { DiffLines, RemoteDiff, diffPaint, encodeRow, keptDiff, memoryDiff } from "./diff-lines";
 import { readRun } from "./deeds/read";
 import { scriptSaid } from "./deeds/script";
@@ -98,6 +98,9 @@ import { waitingInline } from "../app/waiting";
 
 /** The files of a turn's list drawn before the rest are asked for. */
 const TURN_FILES = 8;
+/** The lines of one change shown under a file's row in such a card; the
+ *  rest are read in the side. */
+const TURN_LINES = 200;
 
 export interface Context {
   words: Words;
@@ -291,6 +294,12 @@ export class ConversationView {
    *  earlier one's shut till opened. */
   private readonly changedFolds = new Map<string, boolean>();
   private readonly changedWhole = new Set<string>();
+  /** The files opened under their rows in a turn's card, by turn and
+   *  file; the lines of their changes as they are read; and how many times
+   *  each turn's card changed for either. */
+  private readonly changedOpen = new Set<string>();
+  private readonly changedRows = new Map<string, DiffRow[] | null | "reading">();
+  private readonly changedMarks = new Map<string, number>();
   /** How many of their latest rows long stretches show, where more than
    *  `STRETCH_ROWS` were asked for. */
   private stretchRows = new Map<string, number>();
@@ -1883,11 +1892,56 @@ export class ConversationView {
     const whole = this.changedWhole.has(turn) || files.length <= TURN_FILES + 1;
     const listed = whole ? files : files.slice(0, TURN_FILES);
     const under = commonFolder(files);
+    // A row pressed opens under itself what the turn did to the file; the
+    // button at its end shows the file in the side.
+    const side = `<button type="button" class="icon-button cf-act" data-changed-side aria-label="${escape(words.turn.side)}" title="${escape(words.turn.side)}">${glyph("dock-right", 16)}</button>`;
     const rows = listed
-      .map((file) => fileRow(file, words, { attrs: `data-changed-file="${escape(file.path)}" data-machine="${escape(file.machine)}"`, where: file.machine !== this.context.residentMachine, under }))
+      .map((file) => {
+        const shown = this.changedOpen.has(`${turn}\n${file.key}`);
+        return fileRow(file, words, {
+          attrs: `data-changed-file="${escape(file.path)}" data-machine="${escape(file.machine)}"`,
+          where: file.machine !== this.context.residentMachine,
+          under,
+          open: shown,
+          fold: shown ? this.changedLines(turn, file) : "",
+          act: side,
+        });
+      })
       .join("");
     const rest = whole ? "" : `<li class="cf-rest"><button type="button" class="text-button" data-changed-more>${escape(words.moreFiles(files.length - listed.length))}</button></li>`;
     return `<section class="turn-changed${open ? " open" : ""}" data-turn="${escape(turn)}"><button type="button" class="tc-fold" data-changed-fold aria-expanded="${open}"><span class="tc-said">${escape(words.turn.changed(sum.files))}</span>${figures(sum.added, sum.removed)}${glyph("chevron", 16)}</button><div class="tc-box"><div class="tc-inner"><ul class="cf-files">${rows}${rest}</ul></div></div></section>`;
+  }
+
+  /** What a turn did to a file, under the file's row: the lines of each
+   *  change it made there, in the order it made them, read as the row is
+   *  first opened. */
+  private changedLines(turn: string, file: ChangedFile): string {
+    const { words } = this.context.changed!;
+    return [...file.changes]
+      .reverse()
+      .map((change) => {
+        if (!change.rows) return `<p class="cf-note">${escape(change.uncounted ? words.view.uncounted : words.view.notKept)}</p>`;
+        const held = this.changedRows.get(change.id);
+        if (held === undefined) this.readChanged(turn, change);
+        if (held === undefined || held === "reading") return `<p class="cf-note">${escape(words.view.reading)}</p>`;
+        if (held === null || !held.length) return `<p class="cf-note">${escape(words.view.notKept)}</p>`;
+        return diffLines(held, file.path, words, TURN_LINES);
+      })
+      .join("");
+  }
+
+  /** Reads a change's lines, and draws the card of its turn again with
+   *  them. */
+  private readChanged(turn: string, change: FileChange): void {
+    this.changedRows.set(change.id, "reading");
+    void change.rows!()
+      .catch(() => null)
+      .then((rows) => {
+        this.changedRows.set(change.id, rows);
+        this.changedMarks.set(turn, (this.changedMarks.get(turn) ?? 0) + 1);
+        const slot = this.slots.get(`e:${turn}`);
+        if (slot) this.draw(slot);
+      });
   }
 
   /** How tall a turn's card of changed files stands, about, before it is
@@ -1909,7 +1963,7 @@ export class ConversationView {
     const files = changed.turn(turn);
     if (!files.length) return "";
     const sum = tally(files);
-    return `|c${sum.files}:${sum.added}:${sum.removed}:${this.changedFolds.get(turn) ?? ""}:${this.changedWhole.has(turn) ? 1 : 0}${changed.last() === turn ? ":l" : ""}`;
+    return `|c${sum.files}:${sum.added}:${sum.removed}:${this.changedFolds.get(turn) ?? ""}:${this.changedWhole.has(turn) ? 1 : 0}:${this.changedMarks.get(turn) ?? 0}${changed.last() === turn ? ":l" : ""}`;
   }
 
   /** What the user attached to their words, above them: pictures, one
@@ -3670,18 +3724,39 @@ export class ConversationView {
       else settler?.remove();
       return;
     }
-    // A turn's list of changed files: its line folds it, a file of it
-    // opens in the side.
-    const changedHit = (event.target as HTMLElement).closest<HTMLElement>("[data-changed-fold], [data-changed-more], [data-changed-file]");
+    // A turn's card of changed files: its head folds it; a file's row
+    // opens under itself what the turn did to the file; the button at the
+    // row's end shows the file in the side.
+    const changedHit = (event.target as HTMLElement).closest<HTMLElement>("[data-changed-fold], [data-changed-more], [data-changed-side], [data-changed-file]");
     const changed = this.context.changed;
     if (changedHit && changed) {
       event.preventDefault();
       event.stopPropagation();
-      if (changedHit.dataset.changedFile !== undefined) return changed.open(changedHit.dataset.machine!, changedHit.dataset.changedFile);
+      if (changedHit.dataset.changedSide !== undefined) {
+        const row = changedHit.closest<HTMLElement>("[data-changed-file]")!;
+        return changed.open(row.dataset.machine!, row.dataset.changedFile!);
+      }
       const box = changedHit.closest<HTMLElement>(".turn-changed")!;
       const turn = box.dataset.turn!;
       const slot = this.slots.get(box.closest<HTMLElement>(".block")?.dataset.key ?? "");
       this.context.reading();
+      if (changedHit.dataset.changedFile !== undefined) {
+        const file = changed.turn(turn).find((one) => one.machine === changedHit.dataset.machine && one.path === changedHit.dataset.changedFile);
+        const item = changedHit.closest<HTMLElement>(".cf-file");
+        if (!file || !item) return;
+        const key = `${turn}\n${file.key}`;
+        const shown = !this.changedOpen.has(key);
+        if (shown) this.changedOpen.add(key);
+        else this.changedOpen.delete(key);
+        this.changedMarks.set(turn, (this.changedMarks.get(turn) ?? 0) + 1);
+        // Filled where it stands and measured shut, so it is seen to open.
+        if (shown) item.querySelector<HTMLElement>(".cf-fold-inner")!.innerHTML = this.changedLines(turn, file);
+        changedHit.setAttribute("aria-expanded", String(shown));
+        void item.offsetHeight;
+        item.classList.toggle("open", shown);
+        if (slot) slot.signature = this.signature(slot.block);
+        return;
+      }
       if (changedHit.dataset.changedMore !== undefined) {
         this.changedWhole.add(turn);
         if (slot) this.draw(slot);

@@ -81,6 +81,8 @@ export interface FilesWords {
   };
   turn: {
     changed(n: number): string;
+    /** The button on a file's row that shows it in the side. */
+    side: string;
   };
   side: {
     name: string;
@@ -161,6 +163,7 @@ export const zhFiles: FilesWords = {
   },
   turn: {
     changed: (n) => `本轮改了 ${n} 个文件`,
+    side: "在侧栏里打开",
   },
   side: {
     name: "文件",
@@ -236,6 +239,7 @@ export const enFiles: FilesWords = {
   },
   turn: {
     changed: (n) => `${n} ${n === 1 ? "file" : "files"} changed this turn`,
+    side: "Open in the side",
   },
   side: {
     name: "Files",
