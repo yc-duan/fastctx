@@ -201,6 +201,13 @@ pub(crate) async fn ask(
                     }
                 }
                 fastctx_platform::ensure_private_dir(slot.root()).map_err(|error| error.to_string())?;
+                // Into the asset library first where the account's records
+                // are described: the committed intent is published only once
+                // the library took it (design §15).
+                let places = changes
+                    .iter()
+                    .map(|change| crate::assets::mirror::place_of(&hub.assets, &account, opened, change))
+                    .collect::<Result<Option<Vec<_>>, String>>()?;
                 let path = crate::skill_storage::intent(&slot);
                 let bytes = serde_json::to_vec(&changes).map_err(|error| error.to_string())?;
                 let (publishing, writer, who) = (hub.clone(), from.clone(), account.clone());
@@ -210,8 +217,19 @@ pub(crate) async fn ask(
                     Ok(store)
                 })
                 .map_err(|error| format!("committing the skill folder: {}", error.error))?;
+                if let Some(places) = &places
+                    && let Err(why) = crate::assets::mirror::take_first(&hub.assets, places, &changes)
+                {
+                    fastctx_platform::disk::remove_file(&path)
+                        .map_err(|error| format!("{why}; withdrawing the skill folder's intent: {error}"))?;
+                    return Err(why);
+                }
                 for metadata in crate::skill_storage::recover(&slot, &mut records)? {
-                    account_records::tell(&hub, &account, opened, &metadata);
+                    if places.is_some() {
+                        account_records::hint(&hub, &account, opened, &metadata);
+                    } else {
+                        account_records::tell(&hub, &account, opened, &metadata);
+                    }
                 }
                 Reply::Written { metadata: saved }
             }

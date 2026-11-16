@@ -1,11 +1,13 @@
-//! The hub's account records written again into the asset library (design
-//! §28.17): as the hub accepts a write of one, the record goes into a stream
-//! the hub orders — a conversation's plan, notes, goals and sentinels in the
-//! conversation's scope, an account's skills and settings in its records'
-//! scope — from where every device holding that scope takes it as a
-//! replica. The account records stay where these are written and merged.
-//! Those of a scope described after they were written are written as it is
-//! described, and all of them once after the hub starts.
+//! The hub's account records in the asset library (design §28.17, §15): a
+//! conversation's plan, notes, goals and sentinels go into streams the hub
+//! orders in the conversation's scope, an account's skills and settings into
+//! its records' scope, from where every device holding that scope takes them
+//! as a replica. A record whose scope is described is taken into the library
+//! first, as its truth, and the hub's file of it is its projection
+//! (`place_of`, `take_first`). One written before its scope was described —
+//! a conversation the hub has not described yet, one on a machine of an
+//! earlier release — is written into the library as the scope is described,
+//! and all of them once after the hub starts.
 
 use super::Assets;
 use super::scopes;
@@ -214,52 +216,135 @@ pub(crate) fn mirrored(kind: &str) -> bool {
     )
 }
 
-/// Writes `record`, an account record of `account` the hub accepted, into
-/// the stream the hub orders in the scope it is of. Call on a thread that
-/// may block.
+/// Where a record goes in the asset library: the scope the hub described
+/// for it, its stream, its item and its kind's number.
+pub(crate) struct Place {
+    scope: scopes::Scope,
+    stream: &'static str,
+    item: Vec<u8>,
+    number: u16,
+}
+
+impl Place {
+    fn key(&self) -> &str {
+        self.scope.descriptor.scope.as_str()
+    }
+}
+
+/// Where `record`, an account record of `account` (opened at `opened`),
+/// goes in the asset library; none for one of a kind that does not go
+/// there, or whose scope the hub has not described yet.
+pub(crate) fn place_of(
+    assets: &Assets,
+    account: &AccountName,
+    opened: jiff::Timestamp,
+    record: &Record,
+) -> Result<Option<Place>, String> {
+    let Some((resident, stream, item, number)) = placed(record) else { return Ok(None) };
+    let scope_key = match &resident {
+        Some(resident) => match conversation_scope(assets, account, opened, resident)? {
+            Some(key) => key,
+            None => return Ok(None),
+        },
+        None => account_scope(assets, account, opened),
+    };
+    let Some(scope) = scopes::scope(assets, &scope_key)? else { return Ok(None) };
+    Ok(Some(Place { scope, stream, item: item_of(&item), number }))
+}
+
+/// The version of the record at `place` the library holds.
+fn held_version(library: &fastctx_content::v2::Library, place: &Place) -> Result<Option<u64>, String> {
+    Ok(library
+        .item(place.key(), place.stream, &place.item)
+        .map_err(|error| error.to_string())?
+        .and_then(|entry| version_of(&entry.body)))
+}
+
+/// The version of `record` the asset library holds, if it has a place there.
+pub(crate) fn version_held(
+    assets: &Assets,
+    account: &AccountName,
+    opened: jiff::Timestamp,
+    record: &Record,
+) -> Result<Option<u64>, String> {
+    let Some(place) = place_of(assets, account, opened, record)? else { return Ok(None) };
+    held_version(&scopes::library(assets, &place.scope)?, &place)
+}
+
+/// Takes `records`, new revisions the hub accepts, into the library at their
+/// places, before anything else is written of them: the write is refused
+/// when they cannot be. Every one at the same scope and stream, so they are
+/// taken together. Call on a thread that may block.
+pub(crate) fn take_first(assets: &Assets, places: &[Place], records: &[Record]) -> Result<(), String> {
+    let Some(first) = places.first() else { return Ok(()) };
+    if places.iter().any(|place| place.key() != first.key() || place.stream != first.stream) {
+        return Err("records written together go into one stream of one scope".into());
+    }
+    let library = scopes::library(assets, &first.scope)?;
+    let _writing = writing(first.key());
+    let mut taken = Vec::with_capacity(records.len());
+    // Each new object kept until its record is taken.
+    let mut _leases = Vec::new();
+    for (place, record) in places.iter().zip(records) {
+        // A later revision there already is one this hub never answered from
+        // its files: the writer reads again.
+        if held_version(&library, place)?.is_some_and(|version| version >= record.metadata.version) {
+            return Err(format!(
+                "the asset library holds a later revision of {} {}; read it again",
+                record.metadata.kind, record.metadata.key
+            ));
+        }
+        homed(assets, first.key(), record)?;
+        let (body, objects, lease) = fitted(&library, serde_json::to_vec(record).map_err(|error| error.to_string())?)?;
+        _leases.extend(lease);
+        taken.push(KindRecord {
+            kind: place.number,
+            schema: 1,
+            record: Item { item: place.item.clone(), order: place.item.clone(), state: State::Is { body, objects } },
+        });
+    }
+    apply(assets, &first.scope, &library, first.stream, taken)
+}
+
+/// A sentinel's home, kept for good: where it lived may begin its stream of
+/// wakes after it moved on (codex-847f57fd #13).
+fn homed(assets: &Assets, scope_key: &str, record: &Record) -> Result<(), String> {
+    if record.metadata.kind == "sentinel"
+        && let Some(home) = record.body["definition"]["home"].as_str()
+    {
+        super::sentinel_homes::record(assets, scope_key, home)?;
+    }
+    Ok(())
+}
+
+/// Writes `record`, an account record of `account` the hub accepted before
+/// its scope was described, into the stream the hub orders in that scope.
+/// Call on a thread that may block.
 pub(crate) fn document(
     assets: &Assets,
     account: &AccountName,
     opened: jiff::Timestamp,
     record: &Record,
 ) -> Result<(), String> {
-    let Some((resident, stream, item, number)) = placed(record) else { return Ok(()) };
-    let item = item_of(&item);
-    let scope_key = match &resident {
-        Some(resident) => match conversation_scope(assets, account, opened, resident)? {
-            Some(key) => key,
-            None => return Ok(()),
-        },
-        None => account_scope(assets, account, opened),
-    };
-    let Some(scope) = scopes::scope(assets, &scope_key)? else { return Ok(()) };
-    let library = scopes::library(assets, &scope)?;
-    let error = |error: fastctx_content::Error| error.to_string();
-    let _writing = writing(&scope_key);
-    // A sentinel's home, kept for good: where it lived may begin its stream
-    // of wakes after it moved on (codex-847f57fd #13).
-    if record.metadata.kind == "sentinel"
-        && let Some(home) = record.body["definition"]["home"].as_str()
-    {
-        super::sentinel_homes::record(assets, &scope_key, home)?;
-    }
+    let Some(place) = place_of(assets, account, opened, record)? else { return Ok(()) };
+    let library = scopes::library(assets, &place.scope)?;
+    let _writing = writing(place.key());
+    homed(assets, place.key(), record)?;
     // This version or a later one written already: nothing. A deleted
     // record stays an item with its version, so a late older write cannot
     // bring it back (AR02).
-    if let Some(entry) = library.item(&scope_key, stream, &item).map_err(error)?
-        && version_of(&entry.body).is_some_and(|version| version >= record.metadata.version)
-    {
+    if held_version(&library, &place)?.is_some_and(|version| version >= record.metadata.version) {
         return Ok(());
     }
     // The lease keeps a new object until the record is taken, for as long
     // as leases last.
     let (body, objects, _lease) = fitted(&library, serde_json::to_vec(record).map_err(|error| error.to_string())?)?;
     let records = vec![KindRecord {
-        kind: number,
+        kind: place.number,
         schema: 1,
-        record: Item { item: item.clone(), order: item, state: State::Is { body, objects } },
+        record: Item { item: place.item.clone(), order: place.item.clone(), state: State::Is { body, objects } },
     }];
-    apply(assets, &scope, &library, stream, records)
+    apply(assets, &place.scope, &library, place.stream, records)
 }
 
 /// Takes `records`, which the hub writes into `stream` of `scope`, into the

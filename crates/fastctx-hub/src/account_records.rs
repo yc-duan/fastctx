@@ -4,6 +4,7 @@
 pub(crate) mod history;
 mod history_submission;
 pub(crate) mod revisions;
+pub(crate) mod staged;
 pub(crate) mod storage;
 
 use std::sync::Arc;
@@ -436,56 +437,56 @@ pub(crate) async fn ask_as(
                     }
                 }
                 let path = slot.path(&record.metadata.kind, &record.metadata.key);
-                let (publishing, author, owner) = (hub.clone(), from.clone(), account.clone());
-                let archive = matches!(
-                    record.metadata.kind.as_str(),
-                    fastctx_types::plan::KIND | fastctx_types::history::RECORD_KIND
-                );
+                let archive = staged::archived(&record.metadata.kind);
                 let historical = archive.then(|| slot.history(&record.metadata.kind, &record.metadata.key));
-                let result = (move || {
-                    fastctx_platform::ensure_private_dir(path.parent().expect("record folder"))
-                        .map_err(|error| fastctx_platform::PublishFailure { error, published: false })?;
-                    if let Some(history) = &historical {
-                        history::preserve(&path, history)
-                            .map_err(|error| fastctx_platform::PublishFailure { error, published: false })?;
+                // A record with a place in the asset library goes there first,
+                // as its truth; the file is its projection (design §15).
+                let place = crate::assets::mirror::place_of(&hub.assets, &account, opened, &record)?;
+                let first = place.is_some();
+                let failure = if let Some(place) = place {
+                    permitted(&hub, &hub.store(), &from, &member_key, &account, opened, access.as_ref())?;
+                    if let Some((history_author, submitted)) = &history_author {
+                        crate::history_author::check(
+                            &hub,
+                            &hub.store(),
+                            &from,
+                            &member_key,
+                            access.as_ref().map_or(&account, |access| &access.actor),
+                            history_author,
+                            *submitted,
+                        )?;
                     }
-                    let published = fastctx_platform::publish_checked(
-                        &path,
-                        &bytes,
-                        fastctx_platform::Permissions::Private,
-                        true,
-                        || {
-                            let store = publishing.edit_store();
-                            permitted(&publishing, &store, &author, &member_key, &owner, opened, access.as_ref())
-                                .map_err(std::io::Error::other)?;
-                            if let Some((history_author, submitted)) = &history_author {
-                                crate::history_author::check(
-                                    &publishing,
-                                    &store,
-                                    &author,
-                                    &member_key,
-                                    access.as_ref().map_or(&owner, |access| &access.actor),
-                                    history_author,
-                                    *submitted,
-                                )
-                                .map_err(std::io::Error::other)?;
-                            }
-                            Ok(store)
-                        },
-                    );
-                    if deleted
-                        && (published.is_ok() || published.as_ref().is_err_and(|error| error.published))
-                        && let Some(history) = historical
+                    let staging = staged::path(&slot, &record.metadata.kind, &record.metadata.key);
+                    staged::stage(&staging, &bytes).map_err(words::store)?;
+                    if let Err(why) =
+                        crate::assets::mirror::take_first(&hub.assets, std::slice::from_ref(&place), std::slice::from_ref(&record))
                     {
-                        history::delete(&history)
-                            .map_err(|error| fastctx_platform::PublishFailure { error, published: true })?;
+                        let _ = fastctx_platform::disk::remove_file(&staging);
+                        return Err(why);
                     }
-                    published
-                })();
-                let failure = match result {
-                    Ok(()) => None,
-                    Err(failure) if failure.published => Some(failure.error.to_string()),
-                    Err(failure) => return Err(words::store(failure.error)),
+                    // Taken: the write stands. A projection not published now
+                    // is published from its staged revision as the hub opens.
+                    if let Err(error) = staged::publish(&path, historical.as_deref(), &staging, &bytes, &record) {
+                        hub.log.line(format_args!(
+                            "publishing {} {} after the asset library took it: {error}",
+                            record.metadata.kind, record.metadata.key
+                        ));
+                    }
+                    None
+                } else {
+                    legacy_publish(
+                        &hub,
+                        &from,
+                        &member_key,
+                        &account,
+                        opened,
+                        access.as_ref(),
+                        history_author.as_ref(),
+                        &path,
+                        historical,
+                        &bytes,
+                        deleted,
+                    )?
                 };
                 if record.metadata.kind == fastctx_types::owned_records::KIND {
                     let ownership = if record.metadata.deleted {
@@ -513,7 +514,11 @@ pub(crate) async fn ask_as(
                 slot.count.store(records.entries.len(), std::sync::atomic::Ordering::Relaxed);
                 slot.bytes.store(total, std::sync::atomic::Ordering::Relaxed);
                 // Keep the account gate until hints are queued, preserving revision order.
-                tell(&hub, &account, opened, &record.metadata);
+                if first {
+                    hint(&hub, &account, opened, &record.metadata);
+                } else {
+                    tell(&hub, &account, opened, &record.metadata);
+                }
                 if let Some(why) = failure {
                     return Err(words::durability(version, why));
                 }
@@ -532,6 +537,65 @@ pub(crate) async fn ask_as(
     .map_err(|error| error.to_string())?
 }
 
+/// Publishes a record that has no place in the asset library yet as the
+/// hub kept every record before it: the file is checked and published under
+/// the directory, and is what the library is written from once the scope
+/// is described. Says why it failed after the file was published.
+#[allow(clippy::too_many_arguments)]
+fn legacy_publish(
+    hub: &Arc<Hub>,
+    from: &MachineName,
+    member_key: &PublicKey,
+    account: &AccountName,
+    opened: Timestamp,
+    access: Option<&crate::owned_records::Access>,
+    history_author: Option<&(fastctx_types::history::Author, bool)>,
+    path: &std::path::Path,
+    historical: Option<std::path::PathBuf>,
+    bytes: &[u8],
+    deleted: bool,
+) -> Result<Option<String>, String> {
+    let result = (|| {
+        fastctx_platform::ensure_private_dir(path.parent().expect("record folder"))
+            .map_err(|error| fastctx_platform::PublishFailure { error, published: false })?;
+        if let Some(history) = &historical {
+            history::preserve(path, history).map_err(|error| fastctx_platform::PublishFailure { error, published: false })?;
+        }
+        let published = fastctx_platform::publish_checked(path, bytes, fastctx_platform::Permissions::Private, true, || {
+            let store = hub.edit_store();
+            permitted(hub, &store, from, member_key, account, opened, access).map_err(std::io::Error::other)?;
+            if let Some((history_author, submitted)) = history_author {
+                crate::history_author::check(
+                    hub,
+                    &store,
+                    from,
+                    member_key,
+                    access.map_or(account, |access| &access.actor),
+                    history_author,
+                    *submitted,
+                )
+                .map_err(std::io::Error::other)?;
+            }
+            Ok(store)
+        });
+        if deleted
+            && (published.is_ok() || published.as_ref().is_err_and(|error| error.published))
+            && let Some(history) = &historical
+        {
+            history::delete(history).map_err(|error| fastctx_platform::PublishFailure { error, published: true })?;
+        }
+        published
+    })();
+    match result {
+        Ok(()) => Ok(None),
+        Err(failure) if failure.published => Ok(Some(failure.error.to_string())),
+        Err(failure) => Err(words::store(failure.error)),
+    }
+}
+
+/// Tells of a record written as the hub kept them before its scope was
+/// described: written into the asset library where it now has a place, and
+/// hinted to the members who follow it.
 pub(crate) fn tell(hub: &Hub, account: &AccountName, opened: Timestamp, metadata: &Metadata) {
     // What of an account and its conversations goes into the asset library
     // goes there too (design §28.17).
@@ -544,6 +608,11 @@ pub(crate) fn tell(hub: &Hub, account: &AccountName, opened: Timestamp, metadata
             crate::assets::mirror::failed(account, opened, path);
         }
     }
+    hint(hub, account, opened, metadata);
+}
+
+/// Hints a written record to the members who follow it.
+pub(crate) fn hint(hub: &Hub, account: &AccountName, opened: Timestamp, metadata: &Metadata) {
     let store = hub.store();
     let directory = store.indexed();
     if directory.account(account).is_none_or(|owner| owner.opened != opened) {

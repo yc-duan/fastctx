@@ -926,6 +926,16 @@ fn open(dir: &Path, log: Arc<log::Log>) -> anyhow::Result<Opened> {
         .collect();
     said.extend(store.upgraded.iter().map(|line| format!("took up the directory of an earlier fastctx: {line}")));
     said.extend(store.tidied.iter().map(|line| format!("on opening, {line}")));
+    // Revisions the asset library took as the hub stopped, before their files
+    // were published, are published before any member is heard (design §15).
+    said.extend(
+        account_records
+            .settle_staged(|account, opened, record| {
+                Ok(assets::mirror::version_held(&assets, account, opened, record)?
+                    .is_some_and(|version| version >= record.metadata.version))
+            })
+            .map_err(anyhow::Error::msg)?,
+    );
     if let Some(why) = assets.sealed() {
         said.push(format!("every asset is sealed until recovery ends: {why}"));
     }
