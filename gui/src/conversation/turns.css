@@ -705,14 +705,14 @@
 /* The files a turn changed (`view.ts`, `turnChanged`): a card where the
    turn ended, as the side's own list of changed files is one. Its head
    says how many files and by how many lines, and folds the rows away;
-   under it a row to a file. No wider than its longest row asks for, so the
-   lines added and removed stand close to the names; never narrower than
-   reads as a card. What the whole conversation changed is not said here:
-   the side's overview says it. */
+   under it a row to a file. It is as wide as the words of the page are
+   set, always (the user, 2026-11-17: "他应该固定是横跨整个正文的长度，
+   不是一个小东西在那"), as a block of code in the answer is. What the
+   whole conversation changed is not said here: the side's overview says
+   it. */
 .turn-changed {
-  width: fit-content;
-  min-width: min(100%, 340px);
-  max-width: 100%;
+  width: 100%;
+  box-sizing: border-box;
   margin-top: var(--space-3);
   border-radius: var(--radius-l);
   background: var(--fill);
