@@ -95,7 +95,10 @@ function pickablesOf(world: WorldNow): Pickable[] {
   }
   const written = new Set(picked.map((one) => one.written));
   for (const assistant of assistantsOf(world)) {
+    // A machine two of whose agents assist the user is one machine: listed
+    // once, not once for each agent.
     if (written.has(assistant.written)) continue;
+    written.add(assistant.written);
     picked.push({ name: assistant.machine, written: assistant.written, here: false, online: assistant.online, since: assistant.since, hold: "assist", owner: assistant.owner, group: null, ownerLogin: null, form: "desktop" });
   }
   // Within a hold, those in no group first, then each group by its name.

@@ -424,6 +424,8 @@ function hubs(two: boolean): { nodes: HubNodes[]; accounts: HubAccounts[] } {
         { name: "ada", level: "member", locked: false, opened: at("00:05:00") },
         { name: "bo", level: "member", locked: false, opened: at("00:06:00") },
         { name: "cy", level: "visitor", locked: false, opened: at("09:12:00") },
+        { name: "chen", level: "member", locked: false, opened: at("00:08:00") },
+        { name: "dai", level: "member", locked: false, opened: at("00:09:00") },
         ...scalePeople().map((name) => ({ name, level: "member" as const, locked: false, opened: at("00:07:00") })),
       ],
       members: [
@@ -473,11 +475,23 @@ function hubs(two: boolean): { nodes: HubNodes[]; accounts: HubAccounts[] } {
           .filter((one) => one.owner === "me" && one.group !== "教学楼2层")
           .map((one) => ({ machine: one.name, account: "bo" })),
       ],
+      // Assistance both ways, every way it is drawn. Given: this computer's
+      // work Codex to ada until a day and to bo with no end, neither with a
+      // limit; its Claude Code to four, ada with a part of its week and a
+      // day's amount until a day, bo with no limit and no end, chen with a
+      // small part nearly used and ending tomorrow, dai with a small part
+      // overrun. Taken: on cy's mac, which this account may not work on,
+      // its Claude Code with a part of its week until a day, and its Codex
+      // with no limit and no end.
       assists: [
         { machine: "desktop", account: "ada", agent: "codex", home: "C:\\Users\\me\\.codex-work", until: daysAhead(3) },
         { machine: "desktop", account: "bo", agent: "codex", home: "C:\\Users\\me\\.codex-work", until: null },
-        { machine: "desktop", account: "ada", agent: "claude", home: null, until: daysAhead(6), weekly: 20_000_000, daily: 5_000_000, five_hour: 80, turns: 3 },
+        { machine: "desktop", account: "ada", agent: "claude", home: null, until: daysAhead(6), share: 25, weekly: 750_000_000, daily: 150_000_000, five_hour: 80, turns: 3 },
         { machine: "desktop", account: "bo", agent: "claude", home: null, until: null, five_hour: 80, turns: 3 },
+        { machine: "desktop", account: "chen", agent: "claude", home: null, until: daysAhead(1), share: 1, weekly: 30_000_000, five_hour: 80, turns: 3 },
+        { machine: "desktop", account: "dai", agent: "claude", home: null, until: null, share: 1, weekly: 30_000_000, five_hour: 80, turns: 3 },
+        { machine: "cy-mac", account: "me", agent: "claude", home: null, until: daysAhead(4), share: 20, weekly: 600_000_000, five_hour: 70, turns: 2 },
+        { machine: "cy-mac", account: "me", agent: "codex", home: null, until: null },
       ],
       plans: [],
       acting: [{ machine: "gpu", account: "me", since: at("03:42:00") }],
@@ -917,6 +931,8 @@ export function specimenAgents(machine: string, at: Date = new Date()): WorldAge
       ? [codex, claude, work, trial, token, personal]
       : machine === "render"
         ? [{ ...claude, limits: { kind: "unavailable" as const, reason: "the windows of the login's account are its owner's to see" } }]
+        : machine === "cy-mac"
+          ? [codex, claude].map((one) => ({ ...one, limits: { kind: "unavailable" as const, reason: "the windows of the login's account are its owner's to see" } }))
         : machine === "server"
           ? [codex, asks]
           : [codex, claude];
