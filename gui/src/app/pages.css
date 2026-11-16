@@ -1321,6 +1321,24 @@ a.details-job {
   overflow-wrap: anywhere;
 }
 
+/* On a phone a label stands over its value, so an address keeps to one
+   line rather than breaking inside its number. */
+@media (max-width: 560px) {
+  .token-sheet .device-facts {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .token-sheet .device-facts dt,
+  .token-sheet .device-facts dd {
+    grid-column: 1;
+  }
+
+  .token-sheet .device-facts dt {
+    min-height: 0;
+    padding-top: var(--space-2);
+  }
+}
+
 .device-added {
   margin: var(--space-3) 0;
   font-size: var(--size-text);
