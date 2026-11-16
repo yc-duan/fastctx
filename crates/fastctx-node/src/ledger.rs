@@ -334,6 +334,14 @@ pub(crate) async fn take_latest(
                 return Err(format!("the hub's projection of {name}'s ledger is not here yet"));
             }
             projected::Seen::Not => return take(node, link, name, town, latest).await,
+            // Shared whole, it reads no projection: what it kept of one for
+            // its owner alone goes, and the entries are replicated.
+            projected::Seen::Whole => {
+                if kept_projected() {
+                    let_go_projected(node, name).await?;
+                }
+                return take(node, link, name, town, latest).await;
+            }
         }
     };
     // Kept for another account, or machines it may no longer all work on:

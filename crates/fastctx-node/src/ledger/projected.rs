@@ -103,11 +103,23 @@ pub(crate) enum Seen {
     /// No account here reads the project, or the hub is of a release before
     /// projections.
     Not,
+    /// This machine is shared whole on the hub, a share waiting among them:
+    /// it holds as a copy only what every one of its holders reads, and an
+    /// account's records, the projections in them, are its account's alone
+    /// (the hub's `holders_read_known`), so none ever comes here. Its
+    /// projects are taken as entries replicated, as before projections and
+    /// as the hub's own rule for who keeps a project allows: what was kept
+    /// of a projection from before it was shared goes first.
+    Whole,
 }
 
 pub(crate) fn source(node: &Node, link: &Link, town: &TownId) -> Seen {
     let view = link.view();
     let hub = link.membership().id.to_string();
+    let me = view.directory.canonical(&link.name()).clone();
+    if view.asset_sync > 0 && view.directory.shares.iter().any(|share| share.machine == me) {
+        return Seen::Whole;
+    }
     let mut accounts = node.accounts_on(link, &Acting::Here);
     accounts.sort();
     let Some(account) =
