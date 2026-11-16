@@ -200,12 +200,12 @@ const FILES_BYTES: u32 = 2 << 20;
 
 /// The file changes of the conversation whose scope is `scope` in `library`
 /// (`conversation.files`), those written after `after` — 0 for all — as
-/// the machine it lives on wrote them; none known where none were written
-/// (a machine of an earlier release writes none).
+/// the machine it lives on wrote them: none yet before the first is written
+/// there, or comes here.
 pub fn files(library: &Library, scope: &str, after: u64, max_items: u32) -> Result<TimelineTold, Failure> {
     let stream = ConversationFileChange::STREAM;
     let Some(revision) = library.view_revision(scope, stream).map_err(failure)? else {
-        return Ok(TimelineTold::Files { known: false, changes: Vec::new(), through: 0, more: false });
+        return Ok(TimelineTold::Files { known: true, changes: Vec::new(), through: 0, more: false });
     };
     let from = if after == 0 { revision & !((1u64 << 40) - 1) } else { after };
     let Some(read) = library.view_changes(scope, stream, from, max_items.clamp(1, FILES_ITEMS), FILES_BYTES).map_err(failure)?

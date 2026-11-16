@@ -213,6 +213,8 @@ on("add-grant", () => {
   let limited = limitable;
   let percent = 25;
   let custom = "";
+  /** A share typed that is none. */
+  let unreadable = false;
   let until: { said: string; at: Date } | null = null;
   sheet.body.innerHTML = `${sheet.head("添加协助", "关闭")}
     <p class="as-of">${escape(login.who)}　${escape(familyName(login.family))}　${escape(login.machine)}</p>
@@ -226,7 +228,7 @@ on("add-grant", () => {
           <button type="button" class="as-mode${limitable ? "" : " chosen"}" data-mode="none"><b>不设上限</b><small>${limitable ? "对方可见整个号的额度" : "Codex 不按人计额度，可用通用限制里的 5 小时额度暂停协助"}</small></button>
         </div>
         <div class="as-swap">
-          <div class="as-percent"></div>
+          <div class="as-percent${limitable ? "" : " off"}"></div>
           <p class="as-shared${limitable ? " off" : ""}">共用全部额度　每周 ${whole(plate)}${fable ? `　Fable 至多 ${whole(plate / 2)}` : ""}</p>
         </div>
       </div>
@@ -251,13 +253,17 @@ on("add-grant", () => {
       .filter((name) => !taken.has(name) && typed && name.startsWith(typed) && name !== typed)
       .map((name) => `<button type="button" data-name="${name}">${glyph("person", 14)}${name}</button>`)
       .join("");
-    go.disabled = !typed || taken.has(typed) || (people.length > 0 && !people.includes(typed));
+    go.disabled = !typed || taken.has(typed) || (people.length > 0 && !people.includes(typed)) || (limited && unreadable);
   };
   input.addEventListener("input", listed);
   percents.addEventListener("input", (event) => {
-    custom = (event.target as HTMLInputElement).value.replace(/[^0-9]/g, "").slice(0, 3);
-    const typed = Number(custom);
-    if (typed >= 1 && typed <= 100) percent = typed;
+    // A whole share from 1 to 100; `1.5` or `-20` is none, and nothing is
+    // added until it is one.
+    custom = (event.target as HTMLInputElement).value.trim().replace(/%$/, "").slice(0, 5);
+    const typed = /^\d{1,3}$/.test(custom) ? Number(custom) : Number.NaN;
+    unreadable = !!custom && !(typed >= 1 && typed <= 100);
+    if (!unreadable && custom) percent = typed;
+    listed();
     for (const one of percents.querySelectorAll(".choice")) one.classList.toggle("chosen", !custom && one.getAttribute("data-value") === String(percent));
     percents.querySelector(".as-custom")!.classList.toggle("chosen", !!custom);
     paint(true);
@@ -275,9 +281,12 @@ on("add-grant", () => {
       for (const one of mode.parentElement!.children) one.classList.toggle("chosen", one === mode);
       percents.classList.toggle("off", !limited);
       sheet.body.querySelector(".as-shared")!.classList.toggle("off", limited);
+      listed();
     } else if (choice) {
       percent = Number(choice.dataset.value);
       custom = "";
+      unreadable = false;
+      listed();
       paint();
   percents.classList.toggle("off", !limited);
     } else if (target.closest("[data-do]") && !go.disabled) {

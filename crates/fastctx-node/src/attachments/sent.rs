@@ -362,8 +362,14 @@ async fn complete_sent(
     let held = prepared._lock.clone();
     let (home, attachment) = (prepared.home.clone(), prepared.attachment.clone());
     let finished = finish_sent(node, from, prepared).await;
-    if let Err(error) = &finished {
-        failed_here(node, &home, &attachment, scope, error).await;
+    // Kept, but the shared draft not told it: its card is failed too.
+    let error = match &finished {
+        Err(error) => Some(error.clone()),
+        Ok(Uploaded { composer: Some(Err(error)), .. }) => Some(error.clone()),
+        Ok(_) => None,
+    };
+    if let Some(error) = error {
+        failed_here(node, &home, &attachment, scope, &error).await;
     }
     drop(held);
     finished

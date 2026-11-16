@@ -774,7 +774,7 @@ fn deeds(
         at["private"]["began"].as_i64().unwrap_or(i64::MIN),
         at["private"]["deed"].as_str().unwrap_or_default().to_string(),
     );
-    let (found, touched) = node
+    let (found, paged, touched) = node
         .book_database
         .read_now(move |db| {
             let mut found = Vec::new();
@@ -786,6 +786,8 @@ fn deeds(
             for deed in new.query_map(params![began, after, DEEDS], deed_of)? {
                 found.push(deed?);
             }
+            // The page after the mark, the deeds still open read again after it.
+            let paged = found.len();
             let mut again = db.prepare_cached(&format!("SELECT {DEED_COLUMNS} FROM book_deeds d WHERE d.deed = ?1 AND {UNFOLDED}"))?;
             for key in &open {
                 if found.iter().any(|deed| &deed.key == key) {
@@ -808,7 +810,7 @@ fn deeds(
                 })?;
                 touched.insert(deed.key.clone(), rows.collect::<Result<Vec<_>, _>>()?);
             }
-            Ok((found, touched))
+            Ok((found, paged, touched))
         })
         .map_err(|error| error.to_string())?;
     let error = |error: fastctx_content::Error| error.to_string();
@@ -816,8 +818,10 @@ fn deeds(
     let mut writes: BTreeMap<String, Writes> = BTreeMap::new();
     let (mut still_open, mut anew) = (BTreeSet::new(), false);
     let (mut last_began, mut last_deed) = (began, at["deed"].as_str().unwrap_or_default().to_string());
-    for mut deed in found {
-        if deed.began > last_began || (deed.began == last_began && deed.key > last_deed) {
+    for (index, mut deed) in found.into_iter().enumerate() {
+        // Only the page moves the mark: an open deed read again may be
+        // newer than deeds after the mark not read yet (an import's).
+        if index < paged && (deed.began > last_began || (deed.began == last_began && deed.key > last_deed)) {
             (last_began, last_deed) = (deed.began, deed.key.clone());
         }
         let before_shared = (deed.began, deed.key.clone()) <= private;

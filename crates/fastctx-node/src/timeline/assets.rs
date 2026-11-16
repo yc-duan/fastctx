@@ -985,7 +985,7 @@ fn given(entry: &Entry, mut event: SessionEvent, attach: &dyn Fn(&mut SessionEve
 }
 
 /// The most an event kept whole in an object is read into memory.
-const EVENT_OBJECT_BYTES: u64 = 64 << 20;
+pub(super) const EVENT_OBJECT_BYTES: u64 = 64 << 20;
 
 /// The bytes of an object kept here, read a piece at a time (one read gives
 /// at most a mebibyte); none where it is not here.
@@ -1013,6 +1013,10 @@ pub(super) fn event_of(library: &Library, entry: &Entry) -> Result<Option<Sessio
         Some((&EVENT, encoded)) => Ok(Some(serde_json::from_slice(encoded).map_err(failure)?)),
         Some((&OVERSIZED, _)) => {
             let Some(object) = entry.objects.first() else { return Ok(None) };
+            // One past what is read whole is passed by, as one not here.
+            if library.size(&object.hash).map_err(failure)?.is_some_and(|size| size > EVENT_OBJECT_BYTES) {
+                return Ok(None);
+            }
             let Some(bytes) = object_whole(library, &object.hash)? else { return Ok(None) };
             Ok(Some(serde_json::from_slice(&bytes).map_err(failure)?))
         }

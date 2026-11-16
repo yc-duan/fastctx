@@ -10,7 +10,7 @@
 //! ride along while they are short; longer ones are read where they are
 //! kept. Looked at by the timeline's job after each building.
 
-use super::assets::object_whole;
+use super::assets::{EVENT_OBJECT_BYTES, object_whole};
 use super::beside::{Beside, writable};
 use crate::Node;
 use fastctx_content::v2::{
@@ -34,9 +34,6 @@ const WRITES_A_LOOK: usize = 4096;
 /// The most bytes of changes one read gathers before they are written: the
 /// records after wait for the next read.
 const FOUND_BYTES: usize = 8 << 20;
-/// The most changes one call is kept of: past them, the page's own reading
-/// of the call still shows them.
-const CHANGES_A_CALL: usize = 512;
 /// The most looks that wait for an event's object to come before what
 /// stands for it in its record is taken instead.
 const AWAITED_LOOKS: u32 = 5;
@@ -52,13 +49,16 @@ fn failure(error: impl std::fmt::Display) -> Failure {
 }
 
 /// Where the last look stopped in the timeline, in which holding period,
-/// and how many looks stopped there waiting for an event's object.
+/// and how many looks stopped before one record (`awaited_at`) waiting for
+/// its event's object.
 #[derive(Serialize, Deserialize)]
 struct Made {
     holding: i64,
     through: u64,
     #[serde(default)]
     awaited: u32,
+    #[serde(default)]
+    awaited_at: u64,
 }
 
 fn checkpoint(scope: &str) -> String {
@@ -97,8 +97,9 @@ fn told(event: Option<SessionEvent>) -> Told {
 
 /// What the record `entry` of the timeline tells. One kept whole in an
 /// object is read whole only when what stands for it in its record says it
-/// is an ended call; one that cannot be read, or is past what is read whole,
-/// is what stands for it. A record that cannot be read tells nothing, never
+/// is an ended call; one past what is read whole, or whose bytes are no
+/// event, is what stands for it; one whose object cannot be read now fails
+/// the look, tried again. A record that cannot be read tells nothing, never
 /// stopping the reading of those after it.
 fn event_in(library: &Library, entry: &Entry) -> Result<Told, Failure> {
     match entry.body.split_first() {
@@ -113,12 +114,15 @@ fn event_in(library: &Library, entry: &Entry) -> Result<Told, Failure> {
                 return Ok(Told::Nothing);
             }
             let Some(object) = entry.objects.first() else { return Ok(told(slim)) };
-            Ok(match object_whole(library, &object.hash) {
-                Ok(Some(bytes)) => match serde_json::from_slice::<SessionEvent>(&bytes) {
-                    Ok(event) => told(Some(event)),
-                    Err(_) => told(slim),
-                },
-                Ok(None) => Told::Awaited(slim.filter(ended_call)),
+            let awaited = || Told::Awaited(slim.clone().filter(ended_call));
+            match library.size(&object.hash).map_err(failure)? {
+                None => return Ok(awaited()),
+                Some(size) if size > EVENT_OBJECT_BYTES => return Ok(told(slim)),
+                Some(_) => {}
+            }
+            let Some(bytes) = object_whole(library, &object.hash)? else { return Ok(awaited()) };
+            Ok(match serde_json::from_slice::<SessionEvent>(&bytes) {
+                Ok(event) => told(Some(event)),
                 Err(_) => told(slim),
             })
         }
@@ -164,7 +168,7 @@ fn changes_of(event: &SessionEvent, into: &mut BTreeMap<String, Option<Vec<u8>>>
     let undone = matches!(tool.status, ToolStatus::Failed | ToolStatus::Declined);
     let mut gathered = 0;
     if let Does::Edit { changes } = &tool.does {
-        for (index, change) in changes.iter().enumerate().take(CHANGES_A_CALL) {
+        for (index, change) in changes.iter().enumerate() {
             let name = format!("i:{turn}:{}#{index}", item.id);
             if name.len() > NAME_BYTES {
                 continue;
@@ -197,7 +201,7 @@ fn changes_of(event: &SessionEvent, into: &mut BTreeMap<String, Option<Vec<u8>>>
             }
         }
     }
-    for write in tool.run.as_ref().map(|run| run.writes.as_slice()).unwrap_or_default().iter().take(CHANGES_A_CALL) {
+    for write in tool.run.as_ref().map(|run| run.writes.as_slice()).unwrap_or_default() {
         let name = format!("w:{}", write.id);
         if name.len() > NAME_BYTES || write.path.is_empty() {
             continue;
@@ -279,26 +283,26 @@ pub(super) async fn produce(
         return Ok(0);
     };
     let signer = node.assets.as_ref().map(|assets| assets.signer()).ok_or_else(|| failure("no asset library"))?;
-    let (written, more) = fastctx_platform::task::blocking(move || {
+    let (written, more, waiting) = fastctx_platform::task::blocking(move || {
         let _held = held;
         let name = checkpoint(&scope);
         let Some(revision) = library.view_revision(&scope, Timeline::STREAM).map_err(failure)? else {
-            return Ok::<_, Failure>((0, false));
+            return Ok::<_, Failure>((0, false, false));
         };
         let made = library
             .checkpoint(&name)
             .map_err(failure)?
             .and_then(|bytes| serde_json::from_slice::<Made>(&bytes).ok())
             .filter(|made| made.holding == holding && start_of(made.through) == start_of(revision));
-        let mut awaited = made.as_ref().map_or(0, |made| made.awaited);
+        let (mut awaited, mut awaited_at) = made.as_ref().map_or((0, 0), |made| (made.awaited, made.awaited_at));
         let mut from = made.map_or(start_of(revision), |made| made.through);
         if from == revision {
-            return Ok((0, false));
+            return Ok((0, false, false));
         }
         let writer = Writer::<ConversationFileChange>::new(&library, &scope, ConversationFileChange::STREAM)
             .map_err(failure)?
             .in_holding(holding);
-        let (mut written, mut more) = (0, true);
+        let (mut written, mut more, mut waiting) = (0, true, false);
         for _ in 0..READS {
             // Made anew meanwhile: the next look starts it again from its
             // start as it stands then, its tag no longer the one kept.
@@ -309,7 +313,7 @@ pub(super) async fn produce(
             };
             // Read through here; one stopped before a record reads it
             // again from there: a mark before it, in the timeline's tag.
-            let (mut through, mut cut, mut waiting) = (read.through, false, false);
+            let (mut through, mut cut) = (read.through, false);
             let before = |entry: &Entry| start_of(read.through) | entry.local.saturating_sub(1);
             let (mut found, mut gathered) = (BTreeMap::new(), 0);
             for change in &read.changes {
@@ -317,16 +321,19 @@ pub(super) async fn produce(
                 let event = match event_in(&library, entry)? {
                     Told::Nothing => continue,
                     Told::Ended(event) => event,
-                    Told::Awaited(slim) if awaited >= AWAITED_LOOKS => match slim {
+                    // Waited for long enough: what stands for it.
+                    Told::Awaited(slim) if awaited_at == before(entry) && awaited >= AWAITED_LOOKS => match slim {
                         Some(slim) => slim,
                         None => continue,
                     },
                     Told::Awaited(_) => {
-                        (through, cut, waiting) = (before(entry), true, true);
+                        let here = before(entry);
+                        awaited = if awaited_at == here { awaited + 1 } else { 1 };
+                        (awaited_at, through, cut, waiting) = (here, here, true, true);
                         break;
                     }
                 };
-                if gathered >= FOUND_BYTES {
+                if gathered >= FOUND_BYTES || written + found.len() >= WRITES_A_LOOK {
                     (through, cut) = (before(entry), true);
                     break;
                 }
@@ -334,10 +341,10 @@ pub(super) async fn produce(
             }
             written += commit(&library, &scope, &writer, found, &signer)?;
             from = through;
-            awaited = if waiting { awaited + 1 } else { 0 };
-            let state = serde_json::to_vec(&Made { holding, through: from, awaited }).map_err(failure)?;
+            let state = serde_json::to_vec(&Made { holding, through: from, awaited, awaited_at }).map_err(failure)?;
             library.keep_checkpoint(&name, state).map_err(failure)?;
-            // Waiting for an object: the next look, whatever brings it.
+            // Waiting for an object: the look fails, and the job comes
+            // again soon.
             if waiting {
                 more = false;
                 break;
@@ -350,9 +357,12 @@ pub(super) async fn produce(
                 break;
             }
         }
-        Ok((written, more))
+        Ok((written, more, waiting))
     })
     .await?;
+    if waiting {
+        return Err(failure(format!("{written} written; an event's object is not here yet, looked at again soon")));
+    }
     // Cut short by its bounds: the rest in the next look.
     if more {
         super::tail::wanted(node, resident);

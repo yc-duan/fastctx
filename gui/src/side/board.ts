@@ -238,7 +238,10 @@ export function serve(address: Address, served: Served): () => void {
   const hear = (said: Said) => {
     if (!("board" in said) || talkOf(said.board) !== talk) return;
     const board = said.board;
-    if (said.kind === "here" || said.kind === "gone" || said.kind === "back") leave(board);
+    // A board says it is here as it opens and whenever the desk asks who
+    // is: what it follows by then stands. One reloaded said it went first;
+    // a watch asked again under its number replaces the one before.
+    if (said.kind === "gone" || said.kind === "back") leave(board);
     else if (said.kind === "call") {
       const { id, method, args } = said;
       const failed = (error: unknown) =>

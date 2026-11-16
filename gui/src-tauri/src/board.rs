@@ -35,7 +35,7 @@ pub(crate) async fn board_open(
 ) -> Result<(), String> {
     let label = label(&key);
     if let Some(window) = app.get_webview_window(&label) {
-        return window.set_focus().map_err(|error| error.to_string());
+        return forward(&window);
     }
     WebviewWindowBuilder::new(&app, &label, WebviewUrl::App(path.into()))
         .title(title)
@@ -51,9 +51,18 @@ pub(crate) async fn board_open(
 #[fastctx_gui_command::command]
 pub(crate) async fn board_front(app: AppHandle, key: String) -> Result<(), String> {
     match app.get_webview_window(&label(&key)) {
-        Some(window) => window.set_focus().map_err(|error| error.to_string()),
+        Some(window) => forward(&window),
         None => Ok(()),
     }
+}
+
+/// Brings a card window forward, out of the taskbar first where it was
+/// minimized: a minimized window takes no focus.
+fn forward(window: &tauri::WebviewWindow) -> Result<(), String> {
+    if window.is_minimized().unwrap_or(false) {
+        window.unminimize().map_err(|error| error.to_string())?;
+    }
+    window.set_focus().map_err(|error| error.to_string())
 }
 
 /// Shuts the card window asking: a card's page shuts its own window, and no

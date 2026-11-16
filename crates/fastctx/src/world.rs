@@ -171,10 +171,11 @@ pub struct AssistArgs {
     /// not given.
     #[arg(long, conflicts_with = "off", value_parser = clap::value_parser!(u16).range(1..))]
     turns: Option<u16>,
-    /// What the account may spend of the login in a week, as a share of the
-    /// login's week (`fastctx week`), in percent from 1 to 100; a node of an
-    /// earlier release holds to `--weekly` instead.
-    #[arg(long, conflicts_with = "off", value_parser = clap::value_parser!(u8).range(1..=100))]
+    /// What the account may spend of a Claude Code login in a week, as a
+    /// share of the login's week (`fastctx week`), in percent from 1 to 100.
+    /// Given with `--weekly`, the same share in dollars, which a node or hub
+    /// of an earlier release holds to instead.
+    #[arg(long, conflicts_with = "off", requires = "weekly", value_parser = clap::value_parser!(u8).range(1..=100))]
     share: Option<u8>,
     #[arg(long = "as")]
     owner: Option<AccountName>,
@@ -637,6 +638,10 @@ pub fn share(args: ShareArgs) -> anyhow::Result<()> {
 }
 
 pub fn assist(args: AssistArgs) -> anyhow::Result<()> {
+    // Only a Claude Code login is held to a share of its week.
+    if args.share.is_some() && args.agent.to_string() != "claude" {
+        anyhow::bail!("a share of the week limits a Claude Code login's assistance only");
+    }
     let owner = account_or_owner(args.hub.as_ref(), args.owner, Some(&args.machine))?;
     let login = args.home.as_ref().map(|home| home.display().to_string()).unwrap_or_else(|| "default".to_string());
     let change = AccountChange::Assist {

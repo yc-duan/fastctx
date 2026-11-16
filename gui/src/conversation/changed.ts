@@ -51,10 +51,10 @@ const HOW: Record<WriteFact["kind"], How> = { added: "added", modified: "changed
 const kindOf = (how: How): WriteFact["kind"] => (how === "added" ? "added" : how === "removed" ? "deleted" : "modified");
 
 /** The page's changes joined by the kept ones: those the page does not
- *  hold are added; a host's edit the page holds is told by the kept record,
- *  whole where the page may hold a shortened stand-in of its call, with the
- *  page's lines where the record keeps none. A run's write is the page's,
- *  told as its facts come, ahead of the record. */
+ *  hold are added; a host's edit the page holds is told by the kept record
+ *  where that keeps its lines — whole, and counted as the page counts,
+ *  where the page may hold a shortened stand-in of its call. A run's write
+ *  is the page's, told as its facts come, ahead of the record. */
 function joined(held: FileChange[], kept: Iterable<FileChange>): FileChange[] {
   const index = new Map<string, number>();
   held.forEach((change, at) => index.set(change.id, at));
@@ -62,7 +62,7 @@ function joined(held: FileChange[], kept: Iterable<FileChange>): FileChange[] {
   for (const change of kept) {
     const at = index.get(change.id);
     if (at === undefined) out.push(change);
-    else if (change.id.startsWith("i:")) out[at] = { ...change, rows: change.rows ?? out[at]!.rows };
+    else if (change.id.startsWith("i:") && change.rows) out[at] = change;
   }
   return out;
 }
@@ -71,6 +71,9 @@ function joined(held: FileChange[], kept: Iterable<FileChange>): FileChange[] {
 const PULL_APART_MS = 10_000;
 /** The most readings one pull makes. */
 const PULL_PAGES = 64;
+/** How many readings that find nothing new are made again a while apart
+ *  before only the calls moving read again. */
+const QUIET_PULLS = 3;
 
 export class TalkChanges {
   /** A call's changes, kept while the call stands as it was read. */
@@ -92,6 +95,9 @@ export class TalkChanges {
   /** Read again a while on, whatever the calls: the last reading failed,
    *  stopped short, or found more (kept as the history is made). */
   private again = false;
+  /** Readings in a row that found nothing new since the last that did: a
+   *  few more are made, as the history may still be being kept. */
+  private quiet = 0;
   private closed = false;
 
   constructor(
@@ -146,7 +152,10 @@ export class TalkChanges {
         if (!reading) break;
         const told = await reading;
         // None kept there: what is held stays as it was read.
-        if (!told.known) break;
+        if (!told.known) {
+          this.quiet = QUIET_PULLS;
+          break;
+        }
         if (told.reread) {
           if (this.through === "") break;
           this.kept.clear();
@@ -164,8 +173,10 @@ export class TalkChanges {
         this.through = told.through;
         if (!told.more) break;
       }
-      // Stopped short of the end, or more may come as its history is kept.
-      again = page >= PULL_PAGES || changed;
+      // Stopped short of the end, or more may come as its history is kept:
+      // read again after one that found some, and after a few that did not.
+      this.quiet = changed ? 0 : this.quiet + 1;
+      again = page >= PULL_PAGES || this.quiet <= QUIET_PULLS;
     } catch {
       // Not now: the page's own calls stand, and it reads again a while on.
       again = true;

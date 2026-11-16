@@ -133,9 +133,9 @@ pub enum TimelineTold {
     /// as one made anew: the reader reads its pages again.
     Reread,
     Files {
-        /// Whether the conversation's file changes are kept at all where it
-        /// was read: none from a machine of an earlier release, or before
-        /// they are first written.
+        /// Whether the conversation's file changes are kept where it was
+        /// read: not by a machine or hub of an earlier release, nor for a
+        /// conversation kept outside the asset library.
         known: bool,
         /// In the order they were written; an item may be among them more
         /// than once, the last as it stands.

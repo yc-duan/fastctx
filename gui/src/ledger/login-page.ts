@@ -639,7 +639,10 @@ function setLimit(element: HTMLElement, limit: number | null): void {
 document.addEventListener("change", (event) => {
   const field = (event.target as HTMLElement | null)?.closest?.<HTMLInputElement>("input[data-limit-of]");
   if (!field) return;
-  const typed = Number(field.value.replace(/[^0-9]/g, ""));
+  // A whole number, perhaps with its percent sign: `1.5`, `-20` or `1e2`
+  // are no share, never read as another number with their marks dropped.
+  const text = field.value.trim().replace(/%$/, "").trim();
+  const typed = /^\d{1,3}$/.test(text) ? Number(text) : Number.NaN;
   if (!(typed >= 1 && typed <= 100)) {
     draw();
     return;
