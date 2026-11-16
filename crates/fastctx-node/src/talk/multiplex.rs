@@ -86,7 +86,8 @@ pub(crate) async fn serve(
     let mut latest = 1;
     let mut views = context.node.views.subscribe();
     let mut retiring = tokio::task::JoinSet::new();
-    loop {
+    let started = std::time::Instant::now();
+    let served = async { loop {
         if workers.0.is_empty() && retiring.is_empty() {
             return Ok(RemoteReply::Watched);
         }
@@ -102,6 +103,12 @@ pub(crate) async fn serve(
                 }
                 Some(watch_mux::commands::ReceivedCommand { command: Command::Unsubscribe { id }, .. }) => {
                     if let Some(worker) = workers.0.remove(&id) {
+                        if worker.subscription.collaboration.is_some() {
+                            context.node.log.line(format_args!(
+                                "{} stopped following {}'s collaboration on watch {watch}: it was cancelled",
+                                context.caller.machine, worker.subscription.resident
+                            ));
+                        }
                         worker.task.abort();
                         let output = context.output.clone();
                         retiring.spawn(async move { cancel(&output, id).await });
@@ -161,7 +168,29 @@ pub(crate) async fn serve(
                 }
             }
         }
+    } }
+    .await;
+    // Why the collaborations it followed stopped being followed, where it
+    // still followed some: a closed connection, or what failed.
+    let following: Vec<String> = workers
+        .0
+        .values()
+        .filter(|worker| worker.subscription.collaboration.is_some())
+        .map(|worker| worker.subscription.resident.to_string())
+        .collect();
+    if !following.is_empty() {
+        let why = match &served {
+            Ok(_) => "its connection closed".to_string(),
+            Err(failure) => failure.message.clone(),
+        };
+        context.node.log.line(format_args!(
+            "watch {watch} from {} ended after {}, following the collaboration of {}: {why}",
+            context.caller.machine,
+            crate::talk::lasted(started),
+            following.join(", ")
+        ));
     }
+    served
 }
 
 struct Context {
