@@ -161,31 +161,60 @@ fn reader_here_as(node: &Node, scope: &fastctx_content::v2::HeldScope, only: Opt
     fastctx_client::timeline_copy::read_by(&link.view().directory, scope, &logins, only)
 }
 
+/// Where the copies here read by one logged in here hold the facts of the
+/// job `job`: its conversation's scope (stream `jobs`), or, for a job run
+/// for a conversation elsewhere or for a page, the records of the account
+/// it ran for (stream `jobs/<machine>`, §28.58) — each with the stream and
+/// the entry.
+pub(crate) fn job_facts(
+    node: &Node,
+    job: &fastctx_types::JobId,
+) -> Vec<(fastctx_content::v2::HeldScope, String, fastctx_content::v2::Entry)> {
+    let Some(assets) = node.assets.as_ref() else { return Vec::new() };
+    let library = &assets.library;
+    let Ok(scopes) = library.held_scopes() else { return Vec::new() };
+    let mut found = Vec::new();
+    for scope in scopes {
+        let streams: Vec<String> = if read_here(node, &scope) {
+            vec![fastctx_content::v2::JobFacts::STREAM.to_string()]
+        } else if records_here(node, &scope) {
+            let prefix = format!("{}/", fastctx_content::v2::JobFacts::STREAM);
+            match library.streams(&scope.key) {
+                Ok(streams) => streams.into_iter().map(|(name, _)| name).filter(|name| name.starts_with(&prefix)).collect(),
+                Err(_) => continue,
+            }
+        } else {
+            continue;
+        };
+        for stream in streams {
+            if let Ok(Some(entry)) = library.item(&scope.key, &stream, job.as_str().as_bytes()) {
+                found.push((scope.clone(), stream, entry));
+            }
+        }
+    }
+    found
+}
+
 /// The record of the job `job`, as a copy here read by one logged in here
 /// holds it: what is known of a command run for a conversation whose
 /// machine is away (§28.33). Job ids are unique on their machine alone:
 /// two copies holding one of that id, and none is told.
 pub(crate) fn job(node: &Node, job: &fastctx_types::JobId) -> Option<fastctx_types::run::JobRecord> {
     let library = &node.assets.as_ref()?.library;
-    let mut found = None;
-    for scope in library.held_scopes().ok()? {
-        if !read_here(node, &scope) {
-            continue;
-        }
-        let Ok(Some(entry)) = library.item(&scope.key, fastctx_content::v2::JobFacts::STREAM, job.as_str().as_bytes()) else {
-            continue;
-        };
-        // A script too large for the record is said, not given (QQ12).
-        let Ok(mut value) = serde_json::from_slice::<serde_json::Value>(&entry.body) else { continue };
-        if let Some(omitted) = value.get("script").filter(|script| script.is_object()).cloned() {
-            let bytes = omitted.get("bytes").and_then(serde_json::Value::as_u64).unwrap_or(0);
-            value["script"] = serde_json::Value::String(format!("(a script of {bytes} bytes, not kept with the record)"));
-        }
-        let Ok(record) = serde_json::from_value::<fastctx_types::run::JobRecord>(value) else { continue };
-        if found.replace(record).is_some() {
-            return None;
-        }
+    let [(_, _, entry)] = job_facts(node, job).try_into().ok()?;
+    let mut value = serde_json::from_slice::<serde_json::Value>(&entry.body).ok()?;
+    // A script too large for the record is its one object (§28.58); one
+    // of before said only how long it was (QQ12).
+    if let Some(said) = value.get("script").filter(|script| script.is_object()).cloned() {
+        let whole = (said.get("in_object").and_then(serde_json::Value::as_bool) == Some(true))
+            .then(|| entry.objects.first().and_then(|object| object_bytes(library, object)))
+            .flatten()
+            .and_then(|bytes| String::from_utf8(bytes).ok());
+        let bytes = said.get("bytes").and_then(serde_json::Value::as_u64).unwrap_or(0);
+        value["script"] = serde_json::Value::String(
+            whole.unwrap_or_else(|| format!("(a script of {bytes} bytes, not kept with the record)")),
+        );
     }
-    found
+    serde_json::from_value::<fastctx_types::run::JobRecord>(value).ok()
 }
 

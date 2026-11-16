@@ -84,7 +84,7 @@ fn routed(account: &str, hub: &HubId, home: Option<&AccountName>) -> Option<Acco
 
 /// The records' scope of `account` and its holding, when this machine
 /// writes `stream` there now; proposed while it is not held.
-fn writable(node: &Node, library: &Library, hub: &HubId, account: &AccountName, stream: &str) -> Result<Option<(String, i64)>, String> {
+pub(crate) fn writable(node: &Node, library: &Library, hub: &HubId, account: &AccountName, stream: &str) -> Result<Option<(String, i64)>, String> {
     let Some(opened) = node.link_of(hub).and_then(|link| link.view().directory.account(account).map(|found| found.opened))
     else {
         return Ok(None);

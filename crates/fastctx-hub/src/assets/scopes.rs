@@ -372,13 +372,15 @@ fn works_for(directory: &Indexed<'_>, machine: &MachineName, scope: &Scope) -> b
         && reads(directory, account, &descriptor.readers, &descriptor.born, None)
 }
 
-/// Whether `stream` of an account's records is the one `machine` keeps what
-/// it did or spent in: `activity/<key>`, `usage/<key>`, by the first eight
-/// bytes of its key, as it names them.
+/// Whether `stream` of an account's records is one `machine` keeps what it
+/// did, ran or spent in: `activity/<key>`, `usage/<key>`, `jobs/<key>`,
+/// `output/<key>`, by the first eight bytes of its key, as it names them.
 fn named_for(directory: &Indexed<'_>, machine: &MachineName, stream: &str) -> bool {
     let Some(member) = directory.member(machine) else { return false };
     let named: String = member.key.as_bytes()[..8].iter().map(|byte| format!("{byte:02x}")).collect();
-    stream.split_once('/').is_some_and(|(kind, name)| matches!(kind, "activity" | "usage") && name == named)
+    stream
+        .split_once('/')
+        .is_some_and(|(kind, name)| matches!(kind, "activity" | "usage" | "jobs" | "output") && name == named)
 }
 
 /// Whether `machine` may hold any stream of the scope (design §2.3, §6.6),

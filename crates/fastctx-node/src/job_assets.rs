@@ -1,15 +1,17 @@
-//! The jobs a conversation started, in its scope of the asset library
-//! (design §13, plan 3-4 group 3): each job's facts as its record stands,
-//! and its output a piece at a time — what came since, as an object of its
-//! bytes — then, once the job ended and every byte is written, its end.
-//! Looked at every few seconds: the jobs running or ended within the day,
-//! and every one begun here and not finished since, however long ago; only
-//! what is new is written, each piece named by where it begins, so a piece
-//! written before a stop is not written again. Made by the machine the job
-//! runs on, for a conversation that lives here and keeps its records with
-//! an account on a network: there the conversation's scope is ordered here.
-//! A job's files go, as their retention says, only once its output is
-//! written and the hub took it (`kept_for_good`).
+//! The jobs run here, in the asset library (design §13, §28.58, plan 3-4
+//! group 3): each job's facts as its record stands, and its output a piece
+//! at a time — what came since, as an object of its bytes — then, once the
+//! job ended and every byte is written, its end. Looked at every few
+//! seconds: the jobs running or ended within the day, and every one begun
+//! here and not finished since, however long ago; only what is new is
+//! written, each piece named by where it begins, so a piece written before a
+//! stop is not written again. Made by the machine the job runs on: a job of
+//! a conversation that lives here goes into the conversation's scope, which
+//! is ordered here; one run here for a conversation elsewhere (an `on`), or
+//! for a page, into the records of the account it ran for, in streams this
+//! machine names after itself. The asset library is where a job is kept for
+//! good and read from elsewhere; its files here go, as their retention says,
+//! only once its output is written and the hub took it (`kept_for_good`).
 
 use crate::Node;
 use fastctx_content::v2::{JobFacts, JobOutput, Kind as _, LEASE, Library, Write, Writer};
@@ -63,11 +65,32 @@ fn checkpoint(job: &JobRecord) -> String {
     format!("job/{}", job.id)
 }
 
-/// The conversation of this machine `job` was started by.
-fn resident_of(node: &Node, job: &JobRecord) -> Option<ResidentId> {
+/// Where a job's assets go.
+enum Home {
+    /// The scope of its conversation, which lives here.
+    Conversation(ResidentId),
+    /// The records of the account it ran for: a job run here for a
+    /// conversation elsewhere, or for a page.
+    Account(fastctx_types::access::HubAccount),
+}
+
+/// Where `job`'s assets go; none for one that ran for no account here.
+fn home_of(node: &Node, job: &JobRecord) -> Option<Home> {
     match &job.owner {
-        JobOwner::Resident(address) if node.is_me(&address.machine) => Some(address.resident.clone()),
-        _ => None,
+        JobOwner::Resident(address) if node.is_me(&address.machine) => Some(Home::Conversation(address.resident.clone())),
+        _ => job.on.as_ref().and_then(|on| on.account.clone()).or_else(|| job.account.clone()).map(Home::Account),
+    }
+}
+
+/// The streams of a job's facts and output at `home`: the conversation's
+/// own, or those this machine names after itself in an account's records.
+fn streams_of(node: &Node, home: &Home) -> (String, String) {
+    match home {
+        Home::Conversation(_) => (JobFacts::STREAM.to_string(), JobOutput::STREAM.to_string()),
+        Home::Account(_) => {
+            let named = node.assets.as_ref().map(|assets| crate::assets::named(&assets.device())).unwrap_or_default();
+            (format!("{}/{named}", JobFacts::STREAM), format!("{}/{named}", JobOutput::STREAM))
+        }
     }
 }
 
@@ -165,8 +188,8 @@ fn look(node: &Arc<Node>, whole: bool, held: u64) -> Result<u64, String> {
     let mut failed = None;
     let mut moved = false;
     for (id, (job, path)) in jobs {
-        let Some(resident) = resident_of(node, &job) else { continue };
-        match write_job(node, &resident, &job) {
+        let Some(home) = home_of(node, &job) else { continue };
+        match write_job(node, &home, &job) {
             Ok(true) => moved |= open.remove(&id).is_some(),
             Ok(false) => moved |= open.insert(id, path).is_none(),
             Err(error) => {
@@ -185,9 +208,30 @@ fn look(node: &Arc<Node>, whole: bool, held: u64) -> Result<u64, String> {
     failed.map_or(Ok(now_held), Err)
 }
 
+/// The scope a job's assets go in at `home`, and its holding, when this
+/// machine orders their streams there.
+fn writable(node: &Arc<Node>, library: &Library, home: &Home) -> Result<Option<(String, i64)>, String> {
+    match home {
+        Home::Conversation(resident) => conversation_writable(node, library, resident),
+        Home::Account(account) => {
+            let (facts, output) = streams_of(node, home);
+            let Some((scope, holding)) =
+                crate::assets::activity::writable(node, library, &account.hub, &account.account, &facts)?
+            else {
+                return Ok(None);
+            };
+            let device = node.assets.as_ref().map(|assets| assets.device()).unwrap_or_default();
+            if library.orderer(&scope, &output).map_err(|error| error.to_string())?.is_some_and(|orderer| orderer != device) {
+                return Ok(None);
+            }
+            Ok(Some((scope, holding)))
+        }
+    }
+}
+
 /// The scope `resident`'s jobs go in, when this machine orders its job
 /// streams there.
-fn writable(node: &Arc<Node>, library: &Library, resident: &ResidentId) -> Result<Option<(String, i64)>, String> {
+fn conversation_writable(node: &Arc<Node>, library: &Library, resident: &ResidentId) -> Result<Option<(String, i64)>, String> {
     let Some((hub, scope)) = crate::timeline::scope_of(node, resident).map_err(|failure| failure.message)? else {
         return Ok(None);
     };
@@ -224,14 +268,15 @@ fn length_of(path: &str) -> Result<Option<u64>, String> {
     }
 }
 
-/// Writes what is new of `job`, started by `resident`: whether everything of
-/// it is written now.
-fn write_job(node: &Arc<Node>, resident: &ResidentId, job: &JobRecord) -> Result<bool, String> {
+/// Writes what is new of `job`, whose assets go at `home`: whether
+/// everything of it is written now.
+fn write_job(node: &Arc<Node>, home: &Home, job: &JobRecord) -> Result<bool, String> {
     let Some(kept) = node.assets.as_ref() else { return Ok(true) };
     let library = &kept.library;
     let error = |error: fastctx_content::Error| error.to_string();
     let name = checkpoint(job);
-    let Some((scope, holding)) = writable(node, library, resident)? else { return Ok(false) };
+    let Some((scope, holding)) = writable(node, library, home)? else { return Ok(false) };
+    let (facts_stream, output_stream) = streams_of(node, home);
     let mut standing: Standing = library
         .checkpoint(&name)
         .map_err(error)?
@@ -245,21 +290,26 @@ fn write_job(node: &Arc<Node>, resident: &ResidentId, job: &JobRecord) -> Result
     }
     let signer = kept.signer();
     let mut changed = false;
-    // Its facts, as its record stands.
+    // Its facts, as its record stands: a script too large for the record is
+    // its one object, whole.
     let mut facts = serde_json::to_value(job).map_err(|error| error.to_string())?;
+    let mut script = None;
     if serde_json::to_vec(&facts).map_or(0, |bytes| bytes.len()) > FACTS_BYTES {
-        facts["script"] = serde_json::json!({ "omitted": "too large", "bytes": job.script.len() });
+        facts["script"] = serde_json::json!({ "in_object": true, "bytes": job.script.len() });
+        script = Some(job.script.as_bytes());
     }
     let facts = serde_json::to_vec(&facts).map_err(|error| error.to_string())?;
     let digest: String = Sha256::digest(&facts).iter().map(|byte| format!("{byte:02x}")).collect();
     if digest != standing.facts {
         let item = job.id.to_string().into_bytes();
-        Writer::<JobFacts>::new(library, &scope, JobFacts::STREAM)
+        let lease = script.map(|mut bytes| library.put(&mut bytes, "job-script", LEASE)).transpose().map_err(error)?;
+        let objects = lease.iter().map(|lease| lease.object.clone()).collect();
+        Writer::<JobFacts>::new(library, &scope, &facts_stream)
             .map_err(error)?
             .in_holding(holding)
             .write_all(
-                vec![Write { order: item.clone(), item, value: Some(facts), objects: Vec::new() }],
-                Vec::new(),
+                vec![Write { order: item.clone(), item, value: Some(facts), objects }],
+                lease.into_iter().collect(),
                 false,
                 signer.clone(),
             )
@@ -268,7 +318,7 @@ fn write_job(node: &Arc<Node>, resident: &ResidentId, job: &JobRecord) -> Result
         changed = true;
     }
     // Its output, what came since.
-    let output = Writer::<JobOutput>::new(library, &scope, JobOutput::STREAM).map_err(error)?.in_holding(holding);
+    let output = Writer::<JobOutput>::new(library, &scope, &output_stream).map_err(error)?.in_holding(holding);
     let mut whole = true;
     // The parts whose file went before all of it was written: the end says
     // so, never that they were written whole (NN09).
@@ -295,7 +345,7 @@ fn write_job(node: &Arc<Node>, resident: &ResidentId, job: &JobRecord) -> Result
             let item = format!("{}/{part}/{:016x}", job.id, *at).into_bytes();
             // Written before a stop that kept no checkpoint: as it was, on
             // from its end (AQ08, MM19, K07).
-            if let Some(entry) = library.item(&scope, JobOutput::STREAM, &item).map_err(error)? {
+            if let Some(entry) = library.item(&scope, &output_stream, &item).map_err(error)? {
                 let written = entry.objects.first().map_or(0, |bytes| bytes.size);
                 if written == 0 {
                     return Err(format!("the piece of {} at {} is empty", job.id, *at));
@@ -338,7 +388,7 @@ fn write_job(node: &Arc<Node>, resident: &ResidentId, job: &JobRecord) -> Result
         || job.end.as_ref().is_some_and(|end| jiff::Timestamp::now().duration_since(end.at).unsigned_abs() > SETTLED);
     if job.end.is_some() && drained && whole {
         let item = format!("{}/end", job.id).into_bytes();
-        if library.item(&scope, JobOutput::STREAM, &item).map_err(error)?.is_none() {
+        if library.item(&scope, &output_stream, &item).map_err(error)?.is_none() {
             let body = serde_json::to_vec(&serde_json::json!({
                 "job": job.id,
                 "end": true,
@@ -373,9 +423,25 @@ fn write_job(node: &Arc<Node>, resident: &ResidentId, job: &JobRecord) -> Result
 /// all. Call on a thread that may block.
 pub(crate) fn kept_for_good(node: &Node, job: &JobRecord) -> bool {
     let Some(kept) = node.assets.as_ref() else { return true };
-    let Some(resident) = resident_of(node, job) else { return true };
-    let Ok(Some((_, scope))) = crate::timeline::scope_of(node, &resident) else { return true };
+    let Some(home) = home_of(node, job) else { return true };
     let library = &kept.library;
+    let scope = match &home {
+        Home::Conversation(resident) => match crate::timeline::scope_of(node, resident) {
+            Ok(Some((_, scope))) => scope,
+            _ => return true,
+        },
+        // The account no longer known here: no one reads it from here, and
+        // it goes as it always did.
+        Home::Account(account) => {
+            let Some(opened) =
+                node.link_of(&account.hub).and_then(|link| link.view().directory.account(&account.account).map(|found| found.opened))
+            else {
+                return true;
+            };
+            fastctx_types::assets::records_key(account.hub.as_str(), &account.account, opened.as_millisecond())
+        }
+    };
+    let (facts_stream, output_stream) = streams_of(node, &home);
     let standing = library
         .checkpoint(&checkpoint(job))
         .ok()
@@ -401,7 +467,7 @@ pub(crate) fn kept_for_good(node: &Node, job: &JobRecord) -> bool {
         }
     }
     // Every frame of the job streams here went up.
-    library.uploads(&scope, &kept.device()).is_ok_and(|uploads| {
-        uploads.iter().all(|(stream, _)| stream != JobOutput::STREAM && stream != JobFacts::STREAM)
-    })
+    library
+        .uploads(&scope, &kept.device())
+        .is_ok_and(|uploads| uploads.iter().all(|(stream, _)| *stream != output_stream && *stream != facts_stream))
 }

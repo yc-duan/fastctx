@@ -248,12 +248,12 @@ pub fn conversation_classes() -> Vec<StreamClass> {
 }
 
 /// The classes of an account's records' scope: held where the account is
-/// logged in, but what a machine did and spent for it, which a machine
-/// working for it writes, held there too (L12).
+/// logged in, but what a machine did, ran and spent for it, which a machine
+/// working for it writes, held there too (L12, §28.58).
 pub fn records_classes() -> Vec<StreamClass> {
     let mut classes = vec![StreamClass { prefix: String::new(), holders: Holders::Logged }];
     classes.extend(
-        ["activity", "usage"]
+        ["activity", "usage", "jobs", "output"]
             .into_iter()
             .map(|prefix| StreamClass { prefix: prefix.to_string(), holders: Holders::Readers }),
     );

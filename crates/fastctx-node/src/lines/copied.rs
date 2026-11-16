@@ -34,20 +34,15 @@ pub(crate) async fn output(node: &Arc<Node>, written: &Written, job: &JobId, pat
     let folder = node.world.path().join("passing");
     fastctx_platform::task::blocking(move || -> Option<(Passing, bool)> {
         // The one scope read here that holds the job: two that do say
-        // nothing of which (as the record's own copy does, §28.34).
-        let mut found = None;
-        for scope in library.held_scopes().ok()? {
-            if !crate::timeline::copy::read_here(&asking, &scope)
-                || hub.as_ref().is_some_and(|hub| scope.hub.as_deref() != Some(hub.as_str()))
-            {
-                continue;
-            }
-            let Ok(Some(entry)) = library.item(&scope.key, JobFacts::STREAM, job.as_str().as_bytes()) else { continue };
-            if found.replace((scope.key.clone(), entry)).is_some() {
-                return None;
-            }
-        }
-        let (scope, entry) = found?;
+        // nothing of which (as the record's own copy does, §28.34). Its
+        // conversation's, or the records of the account it ran for (§28.58).
+        let held: Vec<_> = crate::timeline::copy::job_facts(&asking, &job)
+            .into_iter()
+            .filter(|(scope, _, _)| hub.as_ref().is_none_or(|hub| scope.hub.as_deref() == Some(hub.as_str())))
+            .collect();
+        let [(scope, facts, entry)] = held.try_into().ok()?;
+        let scope = scope.key;
+        let output = format!("{}{}", JobOutput::STREAM, facts.strip_prefix(JobFacts::STREAM).unwrap_or_default());
         let record: serde_json::Value = serde_json::from_slice(&entry.body).ok()?;
         if record.get("machine").and_then(serde_json::Value::as_str) != Some(machine.as_str()) {
             return None;
@@ -60,7 +55,7 @@ pub(crate) async fn output(node: &Arc<Node>, written: &Written, job: &JobId, pat
             return None;
         };
         let end: Option<serde_json::Value> = library
-            .item(&scope, JobOutput::STREAM, format!("{job}/end").as_bytes())
+            .item(&scope, &output, format!("{job}/end").as_bytes())
             .ok()?
             .and_then(|end| serde_json::from_slice(&end.body).ok());
         let length = end.as_ref().and_then(|end| {
@@ -80,7 +75,7 @@ pub(crate) async fn output(node: &Arc<Node>, written: &Written, job: &JobId, pat
         let mut after = Some((prefix.clone().into_bytes(), Vec::new()));
         let mut at = 0u64;
         'pieces: loop {
-            let page = library.page(&scope, JobOutput::STREAM, after.clone(), 500).ok()?;
+            let page = library.page(&scope, &output, after.clone(), 500).ok()?;
             let Some(last) = page.last() else { break };
             after = Some((last.order.clone(), last.item.clone()));
             let full = page.len() == 500;

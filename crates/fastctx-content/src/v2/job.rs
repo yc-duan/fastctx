@@ -36,7 +36,8 @@ impl Kind for JobFacts {
     const SCHEMA: u16 = 1;
     const STREAM: &'static str = "jobs";
     const HOLDING: Holding = Holding::Readers;
-    const ROLES: &'static [&'static str] = &[];
+    /// A script too large for the record is its one object (§28.58).
+    const ROLES: &'static [&'static str] = &["script"];
     const RETENTION: Option<u64> = None;
     const DELETION: Deletion = Deletion::Tombstone;
     /// Made again from the job's record.
@@ -52,11 +53,23 @@ impl Kind for JobFacts {
         Ok(body.to_vec())
     }
 
+    /// A job's facts refer to no object, but its script when the record
+    /// says it is one: `{"in_object": true, "bytes": n}`, the object that
+    /// long.
     fn authorize(_actor: &Actor<'_>, _before: Option<&Entry>, after: &KindRecord) -> Result<(), String> {
-        match &after.record.state {
-            State::Gone => Ok(()),
-            State::Is { body, objects } if objects.is_empty() => Self::decode(body).map(|_| ()),
-            State::Is { .. } => Err("a job's facts refer to no object".into()),
+        let State::Is { body, objects } = &after.record.state else { return Ok(()) };
+        Self::decode(body)?;
+        let script = object(body)?.get("script").cloned();
+        let in_object = script.as_ref().and_then(|script| script.get("in_object")).and_then(serde_json::Value::as_bool) == Some(true);
+        match (objects.as_slice(), in_object) {
+            ([], false) => Ok(()),
+            ([object], true)
+                if script.as_ref().and_then(|script| script.get("bytes")).and_then(serde_json::Value::as_u64)
+                    == Some(object.size) =>
+            {
+                Ok(())
+            }
+            _ => Err("a job's facts refer to no object but its script, the length the record says".into()),
         }
     }
 

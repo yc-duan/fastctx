@@ -37,6 +37,13 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use tokio::sync::Notify;
 
+/// How a machine names the streams it writes alone in an account's records
+/// (`activity/<named>`, `jobs/<named>`): the first eight bytes of its key,
+/// in hexadecimal, as the hub checks them.
+pub(crate) fn named(device: &[u8; 32]) -> String {
+    device[..8].iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
 /// What this machine keeps of one hub's asset sync.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 struct Pinned {
