@@ -7,7 +7,6 @@
 
 import { reachDrawing } from "../app/agents-reach";
 import type { Pickable } from "../app/agent-machines";
-import { loginLine, type LineTag } from "../app/login-line";
 import { agentGlyph, glyph } from "../conversation/glyphs";
 import { converses, daysOf, deeds, familyName, logins, machines, plateOf, usable, type Family, type Login, type Machine } from "./data";
 import { whole } from "./format";
@@ -130,38 +129,58 @@ function quotaBody(): string {
 
 const pickable = (machine: Machine): Pickable => ({ name: machine.id, written: machine.id, here: machine.here, online: machine.online, since: null, owner: machine.owner, group: null, ownerLogin: null, kind: machine.kind }) as unknown as Pickable;
 
-function lineOf(login: Login): string {
-  const tags: LineTag[] = [];
-  if (login.who.includes("@") && !login.isDefault) tags.push({ text: login.dir.split(/[\\/]/).pop()! });
-  // Found in a folder searched for it: which, said by the folder's own name.
-  if (login.under) tags.push({ text: login.under.replace(/[\\/]+$/, "").split(/[\\/]/).pop() || login.under, said: login.under });
-  if (login.plan) tags.push({ text: login.plan });
-  if (login.isDefault) tags.push({ text: "默认" });
-  if (login.token) tags.push({ text: "长期令牌", said: login.planSet ? "以长期令牌登录，套餐由管理员设置" : "以长期令牌登录，无法识别邮箱与套餐" });
-  if (login.loggedOut) tags.push({ text: "未登录", warn: true } as LineTag);
-  if (login.tooOld) tags.push({ text: "版本过旧", said: login.tooOld, warn: true } as LineTag);
-  if (login.lent) tags.push({ text: `来自 ${login.lent.by}`, said: `协助${login.lent.until ? `至 ${login.lent.until}` : "不限期"}；任务在本人机器上运行` });
+/** A folder's own name: the last of its path, or the drive it is. */
+const tail = (dir: string) => dir.replace(/[\\/]+$/, "").split(/[\\/]/).pop() || dir;
+
+/** A login as a row of the machine's list: who it is, led by the plug that
+ *  draws whether Fastctx is connected to it; where it is, said where its
+ *  name does not say it; what is known of it; its workbench's switch; and
+ *  the one deed on it. */
+function rowOf(login: Login): string {
+  const known: { text: string; said?: string; warn?: boolean }[] = [];
+  if (login.plan) known.push({ text: login.plan });
+  if (login.isDefault) known.push({ text: "默认" });
+  if (login.token) known.push({ text: "长期令牌", said: login.planSet ? "以长期令牌登录，套餐由管理员设置" : "以长期令牌登录，无法识别邮箱与套餐" });
+  if (login.loggedOut) known.push({ text: "未登录", warn: true });
+  if (login.tooOld) known.push({ text: "版本过旧", said: login.tooOld, warn: true });
+  if (login.lent) known.push({ text: `来自 ${login.lent.by}`, said: `协助${login.lent.until ? `至 ${login.lent.until}` : "不限期"}；任务在本人机器上运行` });
+  // Found in a folder searched for it, the folder; known by its account,
+  // the directory it is kept in; one named by its directory says no more.
+  const where = login.under ? tail(login.under) : login.who.includes("@") && !login.isDefault ? tail(login.dir) : "";
   const id = escape(login.id);
+  const connected = !login.busy && !login.lent && login.standing !== "found" && login.standing !== "renew";
+  const bench = connected && converses(login.family) ? toggle("bench", login.workbench, "", `data-id="${id}" aria-label="工作台" title="在 Fastctx 中对话，记录用量与额度"`) : "";
   const act = login.busy
     ? `<span class="lg-soft">${escape(login.busy)}</span>`
     : login.lent
-      ? `<button type="button" class="text-button ll-quiet" data-act="new-talk" data-id="${id}">新对话</button>`
+      ? `<button type="button" class="lg-word" data-act="new-talk" data-id="${id}">新对话</button>`
       : login.standing === "found"
-        ? `<button type="button" class="text-button ll-go" data-act="attach" data-id="${id}">接入</button>`
+        ? `<button type="button" class="lg-word lg-accent" data-act="attach" data-id="${id}">接入</button>`
         : login.standing === "renew"
-          ? `<button type="button" class="text-button ll-go" data-act="attach" data-id="${id}" title="${escape(login.drift ?? "接入后其设置被修改")}">更新接入</button>`
+          ? `<button type="button" class="lg-word lg-accent" data-act="attach" data-id="${id}" title="${escape(login.drift ?? "接入后其设置被修改")}">更新接入</button>`
           : converses(login.family)
-            ? `${toggle("bench", login.workbench, "工作台", `data-id="${id}" title="在 Fastctx 中对话，记录用量与额度"`)}<button type="button" class="lg-more" data-act="line-more" data-id="${id}" aria-label="更多">${glyph("more", 16)}</button>`
-            : `<button type="button" class="text-button ll-quiet" data-act="detach" data-id="${id}">移除</button>`;
-  const line = loginLine({ standing: login.standing, who: login.who, whoSaid: login.dir, tags, act, ...(state.fresh === login.id ? { fresh: ` lg-lit"` } : {}) });
-  return login.workbench ? line.replace(`<span class="ll-who"`, `<span class="ll-who lg-link" role="link" tabindex="0" data-go="${loginPlace(login)}"`) : line;
+            ? `<button type="button" class="lg-more" data-act="line-more" data-id="${id}" aria-label="更多">${glyph("more", 16)}</button>`
+            : `<button type="button" class="lg-word" data-act="detach" data-id="${id}">移除</button>`;
+  const who = login.workbench
+    ? `<b class="lg-link" role="link" tabindex="0" data-go="${loginPlace(login)}" title="${escape(login.dir)}">${escape(login.who)}</b>`
+    : `<b title="${escape(login.dir)}">${escape(login.who)}</b>`;
+  return `<div class="lg-row lg-cols lg-still at-row${state.fresh === login.id ? " lg-lit" : ""}" data-standing="${login.standing}">
+    <span class="at-who"><span class="at-plug" aria-hidden="true">${glyph("plug", 16)}</span>${who}</span>
+    <span class="at-where"${login.under ? ` title="${escape(login.under)}"` : ""}>${escape(where)}</span>
+    <span class="at-known">${known.map((one) => `<span${one.warn ? ` class="at-warn"` : ""}${one.said ? ` title="${escape(one.said)}"` : ""}>${escape(one.text)}</span>`).join("")}</span>
+    <span class="at-bench">${bench}</span>
+    <span class="at-act">${act}</span>
+  </div>`;
 }
 
 const order: Family[] = ["claude", "codex", "antigravity", "cursor", "opencode"];
-/** The logins a card shows before it folds the rest. */
-const FEW = 6;
 const ordered = (families: Family[]) => [...order.filter((family) => families.includes(family)), ...families.filter((family) => !order.includes(family)).sort()];
 
+/** A machine's logins as one list, as the page of limits is one: a group
+ *  for each agent under its own head, a row a login, every row on the same
+ *  columns; then the folders searched for more, a row each. Cards of
+ *  unlike heights side by side left gaps no one meant (the user,
+ *  2026-11-16). */
 function attachBody(machine: Machine): string {
   if (machine.silent) return `<div class="lg-body lg-empty">${glyph(machine.kind, 40)}<p>${escape(machine.id)} 无应答</p><p class="lg-soft">${escape(machine.silent)}</p></div>`;
   if (!machine.online) return `<div class="lg-body lg-empty">${glyph(machine.kind, 40)}<p>${escape(machine.id)} 离线</p></div>`;
@@ -169,37 +188,37 @@ function attachBody(machine: Machine): string {
   if (!machine.scanned && !here.length && !machine.owner)
     return `<div class="lg-body lg-empty">${glyph("scan", 40)}<p>尚未扫描${machine.here ? "本机" : ` ${escape(machine.id)}`}</p><button type="button" class="lg-go" data-act="scan">扫描</button></div>`;
   const families = ordered([...new Set(here.map((login) => login.family))]);
-  // A family's logins, those connected first, then those found and not yet
-  // connected, the ones a searched folder turned up last; a long card shows
-  // its first few and folds the rest.
-  const card = (family: Family, of: Login[]) => {
+  // A family's logins: those connected first, then those found and not yet
+  // connected, the ones a searched folder turned up last. Its head names
+  // the columns its rows fill: the workbench only where its logins have one.
+  const group = (family: Family, at: number) => {
     const rank = (login: Login) => (login.under ? 2 : login.standing === "found" ? 1 : 0);
-    const sorted = [...of].sort((a, b) => rank(a) - rank(b));
-    const key = `${machine.id}:${family}`;
-    const whole = sorted.length <= FEW + 1 || state.whole.has(key);
-    const shown = whole ? sorted : sorted.slice(0, FEW);
-    const rest = whole ? "" : `<li class="lg-rest"><button type="button" class="lg-word" data-act="whole" data-key="${escape(key)}">其余 ${sorted.length - shown.length} 个</button></li>`;
-    return `<section class="ao-card"><header class="ao-head"><span class="ao-mark">${agentGlyph(family as never, 22)}</span><h2 class="ao-name">${escape(familyName(family))}</h2></header><ul class="ao-logins">${shown.map(lineOf).join("")}${rest}</ul></section>`;
+    const of = here.filter((login) => login.family === family).sort((a, b) => rank(a) - rank(b));
+    const heads = [of.some((login) => login.under || (login.who.includes("@") && !login.isDefault)) ? "位置" : "", of.some((login) => login.plan) ? "套餐" : "", converses(family) && !machine.owner ? "工作台" : ""];
+    return `<section class="lg-family"><div class="lg-family-head lg-cols"><h2>${agentGlyph(family as never, 20)}<span>${escape(familyName(family))}</span></h2>${heads.map((head) => `<span>${head}</span>`).join("")}<span></span></div>${rule(((at % 3) + 1) as 1 | 2 | 3)}${of.map(rowOf).join("")}</section>`;
   };
+  const groups = families.map(group).join("");
   if (machine.owner)
-    return `<div class="lg-body lg-sheet"><div class="ao-cards">${families.map((family) => card(family, here.filter((login) => login.family === family))).join("")}</div><p class="lg-note">${here.length ? `${escape(machine.owner)} 的登录正在协助你；任务在本人机器上运行。` : `${escape(machine.owner)} 的智能体未协助你。`}</p></div>`;
-  // What a folder's search turned up stands with its agent's other logins;
-  // the folders themselves are a card of their own, a line each as a login
-  // is: where it is, how its search stands, and the one deed on it.
-  const cards = families.map((family) => card(family, here.filter((login) => login.family === family))).join("");
+    return `<div class="lg-body lg-sheet"><div class="lg-attach">${groups}</div><p class="lg-note">${here.length ? `${escape(machine.owner)} 的登录正在协助你；任务在本人机器上运行。` : `${escape(machine.owner)} 的智能体未协助你。`}</p></div>`;
+  // The folders searched for more logins, the last group: where each is,
+  // how its search stands, and the one deed on it; the deed that adds one
+  // stands at the group's head, over the rows' own.
   const changes = machine.here || !!deeds;
-  const folderLine = (folder: NonNullable<Machine["folders"]>[number]) =>
-    `<li class="ll-line lg-folder"><span class="ll-row"><span class="ll-plug" aria-hidden="true">${glyph("folder", 16)}</span><span class="ll-who" title="${escape(folder.dir)}"><bdi>${escape(folder.dir)}</bdi></span><span class="ll-tags"><span class="ll-tag">${escape(folder.said)}</span></span><span class="ll-act">${changes ? `<button type="button" class="text-button ll-quiet" data-act="folder" data-change="${folder.busy ? "stop" : "forget"}" data-dir="${escape(folder.dir)}">${folder.busy ? "停止" : "移除"}</button>` : ""}</span></span></li>`;
+  const folderRow = (folder: NonNullable<Machine["folders"]>[number]) =>
+    `<div class="lg-row lg-cols lg-still at-row at-folder">
+      <span class="at-who"><span class="at-plug" aria-hidden="true">${glyph("folder", 16)}</span><b title="${escape(folder.dir)}"><bdi>${escape(folder.dir)}</bdi></b></span>
+      <span class="at-said">${escape(folder.said)}</span>
+      <span class="at-act">${changes ? `<button type="button" class="lg-word" data-act="folder" data-change="${folder.busy ? "stop" : "forget"}" data-dir="${escape(folder.dir)}">${folder.busy ? "停止" : "移除"}</button>` : ""}</span>
+    </div>`;
   const folders = machine.folders
-    ? `<section class="ao-card lg-folders"><header class="ao-head"><span class="ao-mark">${glyph("folder", 22)}</span><h2 class="ao-name">搜索的文件夹</h2>${changes ? `<button type="button" class="text-button ll-quiet" data-act="add-folder">${glyph("plus", 14)}添加…</button>` : ""}</header>
-        <ul class="ao-logins">${machine.folders.map(folderLine).join("")}${machine.folders.length ? "" : `<li class="lg-folder-none">尚未添加</li>`}</ul></section>`
+    ? `<section class="lg-family"><div class="lg-family-head lg-cols"><h2>${glyph("folder", 20)}<span>搜索的文件夹</span></h2><span></span><span></span><span></span><span class="at-act">${changes ? `<button type="button" class="lg-word" data-act="add-folder">${glyph("plus", 14)}添加</button>` : ""}</span></div>${rule(((families.length % 3) + 1) as 1 | 2 | 3)}${machine.folders.map(folderRow).join("")}${machine.folders.length ? "" : `<p class="lg-none at-none">尚未添加</p>`}</section>`
     : "";
   const others = machines.filter((one) => one !== machine && !one.owner);
   const reach = reachDrawing({ machine: pickable(machine), agents: families.map((family) => ({ agent: family, connected: here.some((login) => login.family === family && login.standing !== "found") })), others: others.map(pickable) } as never, 680, (more) => `另有 ${more} 台`);
   const missing = machine.missing ?? [];
   return `<div class="lg-body lg-sheet">
     <div class="ao-reach" title="${machine.here ? "本机" : "该机器"}已接入的智能体，可经 Fastctx 到达这些机器">${reach}</div>
-    <div class="ao-cards">${cards}${folders}</div>
+    <div class="lg-attach">${groups}${folders}</div>
     ${missing.length ? `<p class="lg-note">${machine.here ? "本机" : "该机器"}未找到 ${missing.map(escape).join("、")}</p>` : ""}
     ${machine.scanFailed ? `<p class="lg-note">扫描未完成：${escape(machine.scanFailed)}</p>` : ""}
   </div>`;
@@ -223,11 +242,6 @@ on("machines", (anchor) => {
       goTo({ kind: "attach", machine: id });
     },
   );
-});
-
-on("whole", (anchor) => {
-  state.whole.add(anchor.dataset.key!);
-  draw();
 });
 
 on("scan", () => {

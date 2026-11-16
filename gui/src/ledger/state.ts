@@ -36,9 +36,6 @@ export const state = {
   scanning: false,
   /** The login or person a deed just touched, shown lit for a moment. */
   fresh: null as string | null,
-  /** The cards of logins shown whole, each a machine and an agent: one of
-   *  many logins shows its first few until asked for the rest. */
-  whole: new Set<string>(),
 };
 
 const tabs: Tab[] = ["usage", "calls", "assist", "settings"];

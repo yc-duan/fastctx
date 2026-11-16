@@ -760,36 +760,122 @@
   color: var(--text-3);
 }
 
-/* 「接入」: the app's own cards and lines (`agents-overview.css`,
-   `login-line.css`); what is added here is the folders searched and the
-   words under the cards. */
+/* 「接入」: a machine's logins as one list, as 「额度」 is: a group for
+   each agent, a row a login on the columns every row shares — who it is,
+   where it is, what is known of it, its workbench's switch, the one deed
+   on it — then the folders searched for more. Above it, what the machine's
+   agents reach, drawn (`agents-overview.css`). */
 :is(.lg, .lg-app) .ao-reach {
   margin-top: 0;
 }
-:is(.lg, .lg-app) .ao-head .text-button {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
+.lg-attach {
+  --cols: minmax(12em, 1.5fr) minmax(8em, 1fr) minmax(8em, 1fr) 4.5em 5.5em;
+  padding-top: 8px;
 }
-/* A folder searched is a line as a login is: where it is, how its search
-   stands under that, the one deed on it at the line's end. A long path
-   gives way from its start, so the folder's own name stays in sight. */
-.lg-folder .ll-who {
+.at-row {
+  min-height: var(--lg-row);
+}
+.at-who {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+.at-who b {
+  font-family: inherit;
+  font-weight: 400;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* Whether Fastctx is connected to it is drawn by its plug: ink connected,
+   faint found and not yet connected, clay asking to be renewed. */
+.at-plug {
+  flex: none;
+  display: inline-flex;
+  color: var(--text);
+}
+.at-row[data-standing="found"] .at-plug,
+.at-row[data-standing="busy"] .at-plug {
+  color: var(--text-3);
+}
+.at-row[data-standing="found"] .at-who b {
+  color: var(--text-2);
+}
+.at-row[data-standing="renew"] .at-plug {
+  color: var(--accent);
+}
+.at-where,
+.at-known,
+.at-said {
+  min-width: 0;
+  color: var(--text-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.at-known > span + span {
+  margin-left: 14px;
+}
+.at-known .at-warn {
+  color: var(--caution);
+}
+.at-bench {
+  display: inline-flex;
+}
+.at-act {
+  display: inline-flex;
+  justify-content: flex-end;
+}
+/* A folder is where it is, how its search stands across the columns
+   between, and its deed under the logins' own. A long path gives way from
+   its start, so the folder's own name stays in sight. */
+.at-folder .at-plug {
+  color: var(--text-2);
+}
+.at-folder .at-who b {
   direction: rtl;
   text-align: left;
 }
-.lg-folder-none {
-  list-style: none;
-  line-height: 36px;
-  color: var(--text-3);
+.at-folder .at-said {
+  grid-column: 2 / 5;
 }
-.lg-rest {
-  list-style: none;
-  padding-top: 2px;
+.at-none {
+  padding-block: 14px;
 }
-.lg-rest .lg-word {
-  min-height: 32px;
-  color: var(--text-3);
+@media (max-width: 760px) {
+  :is(.lg, .lg-app) .lg-attach {
+    --cols: minmax(0, 1fr) auto auto;
+  }
+  :is(.lg, .lg-app) .lg-attach .lg-family-head > span:not(.at-act) {
+    display: none;
+  }
+  :is(.lg, .lg-app) .lg-attach .lg-family-head > .at-act {
+    grid-column: 3;
+  }
+  :is(.lg, .lg-app) .lg-attach .at-row {
+    row-gap: 2px;
+    padding-block: 10px;
+  }
+  :is(.lg, .lg-app) .lg-attach .at-who {
+    grid-area: 1 / 1;
+  }
+  :is(.lg, .lg-app) .lg-attach .at-where:empty,
+  :is(.lg, .lg-app) .lg-attach .at-known:empty {
+    display: none;
+  }
+  :is(.lg, .lg-app) .lg-attach .at-where,
+  :is(.lg, .lg-app) .lg-attach .at-known,
+  :is(.lg, .lg-app) .lg-attach .at-folder .at-said {
+    grid-column: 1;
+    padding-left: calc(round(nearest, 16px * var(--icon-scale), 1px) + 12px);
+    color: var(--text-3);
+  }
+  :is(.lg, .lg-app) .lg-attach .at-bench {
+    grid-area: 1 / 2;
+  }
+  :is(.lg, .lg-app) .lg-attach .at-act {
+    grid-area: 1 / 3;
+  }
 }
 .lg-note {
   margin: 28px 0 0;
