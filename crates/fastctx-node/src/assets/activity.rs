@@ -135,11 +135,19 @@ fn opened_ms(node: &Node, hub: &HubId, account: &AccountName) -> Option<i64> {
 }
 
 /// Whether what was done at `at` (milliseconds) is `account`'s: done before
-/// the account of that name was opened, it was another's of that name, made
-/// again since, and goes into none of this one's records (codex-357de52a).
-fn of_this(node: &Node, hub: &HubId, account: &AccountName, at: i64) -> bool {
-    opened_ms(node, hub, account).is_none_or(|opened| opened <= at.saturating_add(CLOCKS))
+/// the account of that name was opened, or before this machine first saw it
+/// opened so, it was another's of that name, made again since, and goes
+/// into none of this one's records (codex-357de52a; `incarnations`).
+pub(crate) fn of_this(node: &Node, hub: &HubId, account: &AccountName, at: i64) -> bool {
+    opened_ms(node, hub, account).is_none_or(|opened| {
+        opened <= at.saturating_add(CLOCKS)
+            && node.incarnations.since(node, hub, account, opened).is_none_or(|since| at >= since)
+    })
 }
+
+/// An hour of activity, as an activity book of before kept it: from its
+/// first millisecond, as the book rounds what was done in it down to it.
+const HOUR_MS: i64 = 60 * 60 * 1000;
 
 /// The body's `records` scope this machine, shared whole as `body` and owned
 /// by `owner`, writes `stream` in now, and its holding; proposed while it is
@@ -325,7 +333,10 @@ fn hours(node: &Arc<Node>, hub: &HubId, home: Option<&AccountName>, stream: &str
     let mut by_account: BTreeMap<AccountName, Hours> = BTreeMap::new();
     for hour in &rows {
         let Some(account) = routed(&hour.account, hub, home) else { continue };
-        if !of_this(node, hub, &account, hour.at) {
+        // The book rounds what was done down to its hour: an hour that ends
+        // after the account was opened may hold what was done for it
+        // (codex-357de52a, third round #5).
+        if !of_this(node, hub, &account, hour.at.saturating_add(HOUR_MS - 1)) {
             continue;
         }
         let key = format!("{HOURS}{}/{}/{}/{}/{}", hour.at, hour.session, hour.agent, hour.held, hour.account);

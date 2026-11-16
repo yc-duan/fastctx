@@ -1763,6 +1763,9 @@ impl fastctx_net::link::Node for Handler {
     fn directory_changed(&self) {
         let Some(node) = self.node.upgrade() else { return };
         let Some(link) = node.link_of(&self.hub) else { return };
+        // An account made again is seen so before anything is asked here
+        // for it (`incarnations`).
+        node.incarnations.saw(&node, &self.hub, &link.view().directory);
         // Who came in, and the MCP commands given up, are kept on disk.
         let swept = self.changes.changed(link.view());
         let (keeping, hub) = (node.clone(), self.hub.clone());

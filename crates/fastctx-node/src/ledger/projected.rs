@@ -6,10 +6,13 @@
 //! Each is kept under `projected/` by its number, under this machine's own
 //! word, and written out into the project's files. A project this machine
 //! kept as signed entries before is made again from the projection beside
-//! them, then put in their place. A hub that writes no projection, or
-//! records not pulled here yet, leave a project not taken from one yet
-//! replicated as before (`ledger::take`).
+//! them, then put in their place. A hub of a release before projections
+//! leaves a project replicated as before (`ledger::take`); one that writes
+//! them is waited for, never replicated from beside them: replicated, an
+//! entry tells what the account may not know (codex-357de52a, third round
+//! #1).
 
+use std::collections::BTreeSet;
 use std::io;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -20,30 +23,46 @@ use fastctx_net::ledger::Projection;
 use fastctx_net::link::Link;
 use fastctx_net::sign::{Domain, SecretKey, Signed};
 use fastctx_platform::ensure_private_dir;
-use fastctx_types::TownName;
 use fastctx_types::access::{Acting, TownId};
+use fastctx_types::{MachineName, TownName};
 use fastctx_types::layout::TownDir;
 
 use crate::Node;
 
 /// Where a project's projection is read from here: the account's records'
-/// scope and the stream in it.
+/// scope and the stream in it, and the machines the account may work on,
+/// which the stream is of.
+#[derive(Clone)]
 pub(crate) struct Source {
     scope: String,
     stream: String,
+    machines: BTreeSet<MachineName>,
 }
 
 impl Source {
     /// What a project kept from it is kept as: another account, or the
     /// machines it may work on changed, tell its entries otherwise under
-    /// the same numbers, so the project is made again from the first.
+    /// the same numbers, so the project is made again from the first. A
+    /// project kept before its entries were kept as `KeptEntry`, named
+    /// without `kept`, is made again too (codex-357de52a, third round #7).
     fn named(&self) -> String {
-        format!("{} {}", self.scope, self.stream)
+        format!("{} {} kept", self.scope, self.stream)
     }
 }
 
 /// Where what a project is kept from is written down, beside it.
 pub(crate) const FROM: &str = "projected-from.json";
+
+/// Where the scope and the machines a project is kept for are written down,
+/// beside it: kept for machines the account may still all work on, it may
+/// be read on while the projection for more comes (third round #6).
+const FOR: &str = "projected-for.json";
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct KeptFor {
+    scope: String,
+    machines: BTreeSet<MachineName>,
+}
 
 /// Where a project is made again before it is put in place.
 pub(crate) const NEXT: (&str, &str) = ("projected.next", "ledger.next");
@@ -73,9 +92,14 @@ pub(crate) enum Seen {
     /// machines it may work on changed, or the hub has not written one for
     /// it yet. Never another stream of the project in its place: one made
     /// for other machines tells what this account may no longer know
-    /// (codex-357de52a #2).
-    Awaited,
-    /// No account here reads the project from records pulled whole.
+    /// (codex-357de52a #2). Named are the scope and machines it is awaited
+    /// for.
+    Awaited { scope: String, machines: BTreeSet<MachineName> },
+    /// The hub writes projections and that account's records are not here
+    /// whole yet: waited for.
+    Pulling,
+    /// No account here reads the project from records, or the hub is of a
+    /// release before them.
     Not,
 }
 
@@ -92,20 +116,37 @@ pub(crate) fn source(node: &Node, link: &Link, town: &TownId) -> Seen {
         return Seen::Not;
     };
     let Some(opened) = view.directory.account(&account).map(|found| found.opened) else { return Seen::Not };
+    // A hub that speaks the asset sync writes projections: what is not here
+    // of one is waited for.
+    let otherwise = if view.asset_sync > 0 { Seen::Pulling } else { Seen::Not };
     let scope = fastctx_types::assets::records_key(&hub, &account, opened.as_millisecond());
     let Some(held) = library.held_scopes().ok().and_then(|held| held.into_iter().find(|held| held.key == scope)) else {
-        return Seen::Not;
+        return otherwise;
     };
     if held.pulled != Some(held.holding) {
-        return Seen::Not;
+        return otherwise;
     }
-    let usable = fastctx_net::ledger::reader_machines(&view.directory, &account, None);
-    let stream = fastctx_net::ledger::reader_stream(town, &fastctx_net::ledger::reader_digest(&usable));
+    let machines = fastctx_net::ledger::reader_machines(&view.directory, &account, None);
+    let stream = fastctx_net::ledger::reader_stream(town, &fastctx_net::ledger::reader_digest(&machines));
     match library.streams(&scope) {
-        Ok(streams) if streams.iter().any(|(name, _)| *name == stream) => Seen::At(Source { scope, stream }),
-        Ok(_) => Seen::Awaited,
-        Err(_) => Seen::Not,
+        Ok(streams) if streams.iter().any(|(name, _)| *name == stream) => {
+            Seen::At(Source { scope, stream, machines })
+        }
+        Ok(_) => Seen::Awaited { scope, machines },
+        Err(_) => otherwise,
     }
+}
+
+/// Whether what is kept of `name` was kept for `scope` and machines all
+/// among `machines`: it tells nothing the account may not know now, and is
+/// read on while the projection for them comes. One that does not say what
+/// it was kept for is not.
+pub(crate) fn still_readable(node: &Node, name: &TownName, scope: &str, machines: &BTreeSet<MachineName>) -> bool {
+    let path = node.world.town(name).path().join(FOR);
+    fastctx_net::link::state::read_or::<Option<KeptFor>>(&path, None)
+        .ok()
+        .flatten()
+        .is_some_and(|kept| kept.scope == scope && kept.machines.is_subset(machines))
 }
 
 /// What this machine keeps of a projected entry, under its own word: the
@@ -159,6 +200,7 @@ pub(crate) fn clear(node: &Node, name: &TownName) -> io::Result<()> {
     let directory = node.world.town(name);
     let _map_changed = node.topics.writing(format!("{}{}", fastctx_types::topics::MAP_PREFIX, name));
     forget(&directory.path().join(FROM))?;
+    forget(&directory.path().join(FOR))?;
     for folder in
         [directory.projected(), directory.ledger(), directory.path().join(NEXT.0), directory.path().join(NEXT.1)]
     {
@@ -181,8 +223,7 @@ pub(crate) async fn take(
     let library = node.assets.as_ref().ok_or("the asset library is not open")?.library.clone();
     let until = Instant::now() + WAITS;
     loop {
-        let (reading, looked) =
-            (library.clone(), Source { scope: source.scope.clone(), stream: source.stream.clone() });
+        let (reading, looked) = (library.clone(), source.clone());
         let here = fastctx_platform::task::spawn_blocking(move || last(&reading, &looked))
             .await
             .map_err(|error| error.to_string())??;
@@ -270,6 +311,7 @@ fn again(library: &Library, source: &Source, directory: &TownDir, town: &TownId,
     // What it was kept from goes first: a stop past here leaves it naming
     // nothing, and the project is made again.
     forget(&root.join(FROM))?;
+    forget(&root.join(FOR))?;
     super::remove(&directory.ledger())?;
     fastctx_platform::durable_file::rename_durably(&ledger, &directory.ledger())?;
     super::remove(&directory.projected())?;
@@ -278,6 +320,10 @@ fn again(library: &Library, source: &Source, directory: &TownDir, town: &TownId,
     for kept in ["projection-through.json", "refused.json"] {
         forget(&root.join(kept))?;
     }
+    fastctx_net::link::state::write(
+        &root.join(FOR),
+        &Some(KeptFor { scope: source.scope.clone(), machines: source.machines.clone() }),
+    )?;
     fastctx_net::link::state::write(&root.join(FROM), &source.named())
 }
 

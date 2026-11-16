@@ -84,6 +84,7 @@ mod homes;
 mod hub_arrival;
 mod hub_moving;
 mod inbox;
+mod incarnations;
 mod initializing;
 mod inspect;
 mod intake;
@@ -355,6 +356,8 @@ pub(crate) struct Node {
     stuck: stuck::Stuck,
     /// What the agents' logins here were used for (`usage`).
     usage: usage::Usage,
+    /// When this machine first saw each account as it is now (`incarnations`).
+    incarnations: incarnations::Incarnations,
     /// Held while the projects' ledgers are taken or written, one at a time.
     syncing: ranked::Syncing,
     ledger_updates: ledger::syncing::Updates,
@@ -899,6 +902,7 @@ pub async fn run_prepared(
                 forget_asks: forget::Asks::default(),
                 stuck: Default::default(),
                 usage: usage::Usage::default(),
+                incarnations: Default::default(),
                 syncing: Default::default(),
                 ledger_updates: Default::default(),
                 taking: Default::default(),

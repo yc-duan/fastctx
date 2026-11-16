@@ -295,10 +295,24 @@ pub(crate) async fn take_latest(
     let kept_projected = fastctx_platform::disk::is_dir(node.world.town(name).projected());
     let source = match source {
         projected::Seen::At(source) => source,
+        // A project of no entries waits for nothing.
+        projected::Seen::Awaited { .. } | projected::Seen::Pulling if latest == 0 => return Ok(()),
         // The machines its account may work on changed: what was kept of
         // the projection for those of before goes now, not once the new one
-        // came; it is taken from that one then (codex-357de52a #2).
-        projected::Seen::Awaited if kept_projected => {
+        // came, unless they are all among those it may work on now
+        // (codex-357de52a #2, third round #6); it is taken from that one
+        // then. Never replicated meanwhile (third round #1).
+        projected::Seen::Awaited { scope, machines } => {
+            let readable = {
+                let (looking, name) = (node.clone(), name.clone());
+                fastctx_platform::task::blocking(move || {
+                    Ok::<_, String>(projected::still_readable(&looking, &name, &scope, &machines))
+                })
+                .await?
+            };
+            if !kept_projected || readable {
+                return Err(format!("the hub's projection of {name}'s ledger is not here yet"));
+            }
             let _syncing = node.syncing.lock().await;
             let (clearing, cleared) = (node.clone(), name.clone());
             fastctx_platform::task::blocking(move || projected::clear(&clearing, &cleared))
@@ -311,9 +325,13 @@ pub(crate) async fn take_latest(
             ));
         }
         // A project kept from its projection is never mixed with entries
-        // replicated beside it: it waits for the projection to be here.
-        _ if kept_projected => return Err(format!("the hub's projection of {name}'s ledger is not here yet")),
-        _ => return take(node, link, name, town, latest).await,
+        // replicated beside it, and a hub that writes projections is never
+        // replicated from: it waits for the projection to be here.
+        projected::Seen::Pulling => return Err(format!("the hub's projection of {name}'s ledger is not here yet")),
+        projected::Seen::Not if kept_projected => {
+            return Err(format!("the hub's projection of {name}'s ledger is not here yet"));
+        }
+        projected::Seen::Not => return take(node, link, name, town, latest).await,
     };
     if !link.view().member_keeps_project(&link.view().me, town) {
         return Err("an assisting host keeps only the project index".into());

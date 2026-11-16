@@ -87,11 +87,6 @@ fn item_of(home: &Home, job: &JobRecord) -> String {
     }
 }
 
-/// How far a job may have begun before the account it ran for was opened,
-/// as the hub's clock and this machine's may differ: one begun earlier ran
-/// for an account of that name before it, not for this one.
-const CLOCKS: jiff::SignedDuration = jiff::SignedDuration::from_mins(2);
-
 /// When the account `account` was opened, as the hub this machine is on
 /// tells it; none when it is not known here now.
 fn opened_of(node: &Node, account: &fastctx_types::access::HubAccount) -> Option<jiff::Timestamp> {
@@ -99,9 +94,12 @@ fn opened_of(node: &Node, account: &fastctx_types::access::HubAccount) -> Option
         .and_then(|link| link.view().directory.account(&account.account).map(|found| found.opened))
 }
 
-/// Whether `job` ran for the account of its name opened at `opened`.
-fn ran_for(job: &JobRecord, opened: jiff::Timestamp) -> bool {
-    opened <= job.started_at + CLOCKS
+/// Whether `job` ran for `account` as it is now: one begun before it was
+/// opened, or before this machine first saw it opened so, ran for an
+/// account of that name before it, not for this one
+/// (`assets::activity::of_this`).
+fn ran_for(node: &Node, account: &fastctx_types::access::HubAccount, job: &JobRecord) -> bool {
+    crate::assets::activity::of_this(node, &account.hub, &account.account, job.started_at.as_millisecond())
 }
 
 /// Where a job's assets go.
@@ -273,7 +271,7 @@ fn writable(
             // An account opened after the job began is another of that
             // name: what ran for the one before goes into no records of
             // this one's, and stays here as it is (`kept_for_good`).
-            if !opened_of(node, account).is_some_and(|opened| ran_for(job, opened)) {
+            if opened_of(node, account).is_none() || !ran_for(node, account, job) {
                 return Ok(None);
             }
             let (facts, output) = streams_of(node, home);
@@ -512,7 +510,7 @@ pub(crate) fn kept_for_good(node: &Node, job: &JobRecord) -> bool {
         // sees, not one gone, and one opened after the job began another of
         // its name: what was written of the job cannot be told taken by the
         // hub, so its files stay.
-        Home::Account(account) => opened_of(node, account).filter(|opened| ran_for(job, *opened)).map(|opened| {
+        Home::Account(account) => opened_of(node, account).filter(|_| ran_for(node, account, job)).map(|opened| {
             fastctx_types::assets::records_key(account.hub.as_str(), &account.account, opened.as_millisecond())
         }),
     };
