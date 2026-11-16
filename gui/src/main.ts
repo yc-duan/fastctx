@@ -111,6 +111,13 @@ import { FeaturesPage } from "./app/features";
 import { workbenchShown } from "./app/workbench-shown";
 import { ActivityPage } from "./activity/page";
 import { enActivity, zhActivity } from "./activity/words";
+import { bookChanges, type RowsOf } from "./files/book";
+import type { FileChange } from "./files/model";
+import type { FilesPage } from "./files/page";
+import type { ViewSeams } from "./files/view";
+import type { SideSeams } from "./side/seams";
+import { enFiles, zhFiles } from "./files/words";
+import { specimenFileLines, specimenFilePicture, specimenList, specimenPlaces, specimenRows } from "./specimen/files-world";
 import { specimenBook, specimenBookMachines } from "./specimen/activity";
 import { readBook } from "./world/book";
 import { setLanguage } from "./world/features";
@@ -205,6 +212,7 @@ import { ClaudeConsent } from "./app/claude-consent";
 import { Conversation } from "./conversation/conversation";
 import { LocalTranscript } from "./specimen/transcript";
 import { ConversationPage, type Sent, type Someone } from "./conversation/page";
+import { gone } from "./conversation/view";
 import { KeptPages } from "./conversation/kept";
 import { Desk, type DeskTalk } from "./desk/desk";
 import { enDesk, zhDesk } from "./desk/words";
@@ -507,7 +515,7 @@ function inner(at: Place): boolean {
   // An agent's own page is a step in from the agents' overview, which the
   // sidebar names; the agents themselves it does not.
   if (at.kind === "agents" && (at.section === "claude" || at.section === "codex")) return true;
-  return ["feature", "data", "sync", "history", "talk-history", "file", "login", "talks", "archived", "machine", "usage", "subagents", "prompt", "sentinel", "sentinels"].includes(at.kind);
+  return ["feature", "data", "sync", "history", "talk-history", "file", "files", "login", "talks", "archived", "machine", "usage", "subagents", "prompt", "sentinel", "sentinels"].includes(at.kind);
 }
 
 /** Where a page's back goes when it was not come into from another page,
@@ -530,6 +538,8 @@ function parentOf(at: Place): Place {
       return { kind: "account" };
     case "machine":
       return { kind: "machines" };
+    case "files":
+      return { kind: "activity" };
     case "history":
       return at.from ? { kind: "talk", address: at.from } : { kind: "project", town: at.town };
     case "talk-history":
@@ -579,6 +589,8 @@ function placeName(at: Place): string {
       return (english ? enSentinel : zhSentinel).title;
     case "sentinels":
       return (english ? enSentinel : zhSentinel).overview.title;
+    case "files":
+      return (english ? enFiles : zhFiles).title;
     default:
       return "";
   }
@@ -1847,12 +1859,13 @@ function specimenTalk(address: Address): DeskTalk {
     listedTitle: () => listedTitle(address),
     toSource: (source, turn) => desk().toSource(address, source, turn),
     conversation,
-    side: specimenSide(sideWords, planWords, { ...planSample, facts: (id) => planSample.facts[id] ?? null }, english, {
+    side: withFiles(specimenSide(sideWords, planWords, { ...planSample, facts: (id) => planSample.facts[id] ?? null }, english, {
       self: address,
       goal: params.get("goal"),
       history: sideHistory(address, known ? known.town : sample.town),
       where: () => whereOf(specimen!.world, address, (name) => link({ kind: "machine", name })),
-    }),
+    })),
+    filesLink: (machine, path) => link({ kind: "files", machine, path, tab: null }),
     opening: { open: notLive, reveal: notLive },
     pictures: {
       thumbnail: async (_machine, path, max) => {
@@ -1958,9 +1971,18 @@ function specimenTalk(address: Address): DeskTalk {
     watchLink,
     // `?slowlines=<ms>`: a file's lines come from a machine that takes that
     // long to answer.
-    lines: async (_machine, path) => {
+    lines: async (machine, path) => {
       await new Promise((resolve) => setTimeout(resolve, Number(params.get("slowlines") ?? 0)));
-      return specimenLines(path);
+      // What a call kept, else a file of the specimen machine's folders.
+      try {
+        return specimenLines(path);
+      } catch (error) {
+        try {
+          return specimenFileLines(machine, path);
+        } catch {
+          throw error;
+        }
+      }
     },
     agentRecord: (agent) => specimenAgentRecord(agent),
     calls: (turn) => void openCalls(known?.about ?? { machine: address.machine, host: { agent: sample.agent } }, address, turn),
@@ -2166,7 +2188,7 @@ function liveTalk(address: Address): DeskTalk {
     listedTitle: () => listedTitle(address),
     toSource: (source, turn) => desk().toSource(address, source, turn),
     conversation,
-    side: liveSide({
+    side: withFiles(liveSide({
       words: sideWords,
       planWords,
       store,
@@ -2177,7 +2199,8 @@ function liveTalk(address: Address): DeskTalk {
       openId: (id) => openWorldId(id),
       machineLink: (name) => link({ kind: "machine", name }),
       reveal: onComputer() ? reveal : undefined,
-    }),
+    })),
+    filesLink: (machine, path) => link({ kind: "files", machine, path, tab: null }),
     controls: {
       words: composerWords,
       offers: () => offers(address),
@@ -2791,7 +2814,82 @@ function bookMachines(world: WorldNow | null): { written: string | null; name: s
   return asked;
 }
 
+/** What a session (`resident@machine`) is called here and where it is
+ *  opened, where this device knows it as a conversation. */
+function sessionNamed(session: string): { name: string; link: string } | null {
+  const at = session.lastIndexOf("@");
+  if (at <= 0) return null;
+  const address = { resident: session.slice(0, at), machine: session.slice(at + 1) };
+  const world = live ? store.world.peek() : specimen!.world;
+  return residentAt(world, address) || listedAt(world, address) ? { name: talkNamed(address).name, link: link({ kind: "talk", address }) } : null;
+}
+
+/** The lines of a specimen change, made up to its counts. */
+const specimenRowsOf: RowsOf = (_machine, deed, touched) => () => specimenRows(touched.path, touched.how, touched.added ?? 0, touched.removed ?? 0, `${deed.job}:${touched.path}`);
+
+/** How far back a machine's files page reads what was changed there. */
+const FILES_DAYS = 30;
+
+/** A machine's changes of late, as its activity book tells them. */
+function machineChanges(machine: string): Promise<FileChange[]> {
+  const now = live ? Date.now() : specimen!.now.getTime();
+  const from = now - FILES_DAYS * 86_400_000;
+  const query = { ask: "deeds" as const, from: new Date(from).toISOString(), to: new Date(now + 60_000).toISOString(), limit: 2000 };
+  if (!live) return specimenBook(machine, query, now).then((answer) => bookChanges(answer, from, specimenRowsOf));
+  const asked = bookMachines(store.world.peek()).find((one) => one.name === machine);
+  return asked ? readBook(asked.written, query).then((answer) => bookChanges(answer, from)) : Promise.resolve([]);
+}
+
+/** How an opened file is read: its lines and pictures from the machine
+ *  holding it, the rest with this device's program. */
+function fileSeams(): ViewSeams {
+  return {
+    lines: live
+      ? (machine, path) => RemoteLines.open(machine, path, { kind: "file", encoding: null })
+      : async (machine, path) => {
+          try {
+            return specimenFileLines(machine, path);
+          } catch {
+            return specimenLines(path);
+          }
+        },
+    picture: live ? async (machine, path, max) => thumbnailUrl(await thumbnail(machine, path, max)) : () => specimenFilePicture(),
+    // A file elsewhere is brought to this device first; a program is not
+    // run at a click: the user chooses.
+    outside: live ? (machine, path) => void fetchFile(machine, path).then(openFile).catch((error: unknown) => console.warn("a file could not be opened", error)) : undefined,
+    open: (machine, path) => {
+      location.hash = link({ kind: "files", machine, path, tab: null });
+    },
+    gone,
+    detail: whyOf,
+    named: sessionNamed,
+  };
+}
+
+/** A conversation's side with the files it changed and the folders it
+ *  works in. */
+const withFiles = (seams: SideSeams): SideSeams => ({ ...seams, files: sideFiles() });
+
+/** How a conversation's side reads the folders it works in. */
+function sideFiles(): NonNullable<SideSeams["files"]> {
+  return {
+    words: english ? enFiles : zhFiles,
+    // Machines do not list their files yet: the trees show what was changed.
+    list: live ? null : specimenList,
+    home: async (machine) => (live ? (await foldersOf(machine, null)).home : (await specimenPlaces(machine)).home),
+  };
+}
+
+/** A machine's files page while it is shown: another file of it asked for
+ *  is opened in it, the page staying as it is. */
+let filesShown: { shell: Page | null; page: FilesPage | null } | null = null;
+
 function show(next: Place): void {
+  if (next.kind === "files" && place.kind === "files" && filesShown && filesShown.shell === shownPage && filesShown.page) {
+    place = next;
+    filesShown.page.go(next.machine, next.path, next.tab);
+    return;
+  }
   // The front page belongs to the workbench: without it, the interface opens on
   // the agents (`world-gui.md`, 界面的结构).
   if (!workbenchShown.on.peek() && WORKBENCH_PLACES.includes(next.kind)) next = { kind: "agents", machine: null };
@@ -3141,17 +3239,50 @@ function show(next: Place): void {
         words: english ? enActivity : zhActivity,
         head,
         machines: () => (live ? bookMachines(store.world.peek()) : specimenBookMachines),
+        files: english ? enFiles : zhFiles,
         read: (machine, query) => (live ? readBook(machine, query) : specimenBook(machine, query, specimen!.now.getTime())),
-        named: (session) => {
-          const at = session.lastIndexOf("@");
-          if (at <= 0) return null;
-          const address = { resident: session.slice(0, at), machine: session.slice(at + 1) };
-          const world = live ? store.world.peek() : specimen!.world;
-          return residentAt(world, address) || listedAt(world, address) ? { name: talkNamed(address).name, link: link({ kind: "talk", address }) } : null;
-        },
-        ...(live ? {} : { now: () => specimen!.now.getTime() }),
+        named: sessionNamed,
+        link: (machine, path, tab) => link({ kind: "files", machine, path, tab }),
+        ...(live ? {} : { now: () => specimen!.now.getTime(), rows: specimenRowsOf }),
       });
       break;
+    case "files": {
+      const at = next;
+      const holder: { shell: Page | null; page: FilesPage | null } = { shell: null, page: null };
+      page = deferredPage((english ? enFiles : zhFiles).title, async () => {
+        const { FilesPage } = await import("./files/page");
+        const made = new FilesPage({
+          words: english ? enFiles : zhFiles,
+          head,
+          machine: at.machine,
+          path: at.path,
+          tab: at.tab,
+          machines: () => (live ? bookMachines(store.world.peek()) : specimenBookMachines).map(({ name, online }) => ({ name, online })),
+          places: async (machine) => {
+            if (!live) return specimenPlaces(machine);
+            const asked = bookMachines(store.world.peek()).find((one) => one.name === machine);
+            const top = await foldersOf(asked?.written ?? machine, null);
+            return { home: top.home, places: top.folders.filter((folder) => folder.path !== top.home).map(({ name, path }) => ({ name, path })) };
+          },
+          // Machines do not list their files yet: the tree shows what was
+          // changed, which the changes themselves tell.
+          list: live ? null : specimenList,
+          changes: machineChanges,
+          seams: fileSeams(),
+          link: (machine, path, tab) => link({ kind: "files", machine, path, tab }),
+          moved: (to) => {
+            history.replaceState(null, "", to);
+            place = placeOf(to);
+          },
+          now: () => (live ? Date.now() : specimen!.now.getTime()),
+        });
+        holder.page = made;
+        return made;
+      });
+      holder.shell = page;
+      filesShown = holder;
+      break;
+    }
     case "login": {
       // The World's drawing, for the moment this computer is in it.
       const loginMap = new MachineMap({ words: english ? enMachines : zhMachines, storageKey: MAP_ORDER, still: true, event: () => {} });

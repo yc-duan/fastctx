@@ -2,6 +2,8 @@
 // and the colleagues it asked, followed as they change, and what the user
 // does to them. Each `watch` returns how to stop following.
 
+import type { Listing } from "../files/tree";
+import type { FilesWords } from "../files/words";
 import type { PageSeams, PlanShown } from "../plan/panel";
 import type { HistoryWords } from "../project/history-words";
 import type { HistoryCatalog } from "../world/history";
@@ -52,6 +54,13 @@ export interface SideSeams {
   /** Shows a folder of this computer in the system's own window, where this
    *  is a computer. */
   reveal?: (path: string) => void;
+  /** The files the conversation changed and the folders it works in
+   *  (`files-page.ts`): their words, and how a machine's folders are read. */
+  files?: {
+    words: FilesWords;
+    list: ((machine: string, path: string) => Promise<Listing>) | null;
+    home(machine: string): Promise<string | null>;
+  };
   /** The history its model works with (`world-history.md`): its project's,
    *  or, in no project, its own. */
   history?: HistorySeam & {

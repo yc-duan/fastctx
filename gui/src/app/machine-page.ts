@@ -600,6 +600,7 @@ export class MachinePage implements Page {
         managed || !this.options.workbench.peek() ? "" : button("talk", "plus", machines.talk),
         managed ? "" : `<a class="text-button quiet-button mp-act" href="${link({ kind: "agents", machine: machine.written })}" title="${escape(machines.hosts)}">${glyph("agents", 15)}<span>${escape(machines.hosts)}</span></a>`,
         giver ? button("share", "colleague", machines.share) : "",
+        managed ? "" : `<a class="text-button quiet-button mp-act" href="${link({ kind: "files", machine: machine.here ? machine.name : machine.written, path: null, tab: null })}" title="${escape(words.files)}">${glyph("folder", 15)}<span>${escape(words.files)}</span></a>`,
         `<a class="icon-button mp-act-map" href="${link({ kind: "machines", focus: machine.written })}" aria-label="${escape(words.onMap)}" title="${escape(words.onMap)}">${glyph("machine", 17)}</a>`,
       ].join(""),
     );

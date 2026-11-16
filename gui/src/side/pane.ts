@@ -121,7 +121,10 @@ export class SidePane {
     this.historyMark.addEventListener("click", () => this.turnToHistory());
     this.back.addEventListener("click", (event) => {
       const home = this.set?.parts[0]?.id;
-      if (home && (event.target as HTMLElement).closest(".sp-home")) this.select(home);
+      if (!home || !(event.target as HTMLElement).closest(".sp-home")) return;
+      // What was read over a page of the side goes, and the page is there
+      // again; from the page, or over the overview, back is the overview.
+      this.select(this.peeked && this.set?.part && this.set.part !== home ? this.set.part : home);
     });
     this.element.addEventListener("keydown", (event) => {
       if (event.key === "Escape" && this.element.classList.contains("sp-over")) this.close();
@@ -295,7 +298,8 @@ export class SidePane {
   private drawBack(): void {
     const home = this.set?.parts[0];
     const away = !!home && (this.peeked !== null || this.shown() !== home.id);
-    const html = away ? `<button class="text-button page-back sp-home" type="button">${glyph("back", 18)}<span>${escape(home.name)}</span></button>` : "";
+    const under = this.peeked ? this.set?.parts.find((part) => part.id === this.set?.part) : undefined;
+    const html = away ? `<button class="text-button page-back sp-home" type="button">${glyph("back", 18)}<span>${escape((under ?? home).name)}</span></button>` : "";
     if (this.back.innerHTML !== html) this.back.innerHTML = html;
     this.back.hidden = !away;
   }

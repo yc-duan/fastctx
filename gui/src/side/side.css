@@ -1601,3 +1601,162 @@ button.gh-goal:hover,
 .sp-jump {
   flex: none;
 }
+
+/* The files the conversation changed: their card on the overview, a line
+   to a file; their page (`files-page.ts`), the list or the trees of the
+   folders it works in; and a file read over the parts (`files/view.ts`). */
+.sh-files {
+  display: flex;
+  flex-direction: column;
+}
+
+.sh-file {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  margin: 0 var(--space-1);
+  padding: 5px var(--space-2);
+  border-radius: var(--radius-s);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  transition: background-color var(--hover) var(--ease);
+}
+
+.sh-file:hover {
+  background: var(--fill-strong);
+}
+
+.sh-file-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.sh-file .cf-figures,
+.sh-files-foot .cf-figures {
+  gap: 6px;
+  font-size: var(--size-fine);
+}
+
+.sh-files-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-right: var(--space-3);
+}
+
+.sf-page.sp-page {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding-bottom: var(--space-3);
+}
+
+.sf-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 0 0 var(--space-3);
+}
+
+.sf-shows .segment small {
+  margin-left: 6px;
+  font-size: var(--size-fine);
+  color: var(--text-3);
+}
+
+.sf-sum {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+}
+
+.sf-changes,
+.sf-folders {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.sf-changes[hidden],
+.sf-folders[hidden] {
+  display: none;
+}
+
+/* The folder every file of the list lies in, said once over it. */
+.sf-under {
+  margin: 0 4px var(--space-2);
+  overflow: hidden;
+  color: var(--text-3);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  direction: rtl;
+  text-align: left;
+}
+
+.sf-none {
+  margin: var(--space-3) var(--space-1);
+  color: var(--text-2);
+}
+
+.sf-page .cf-row {
+  min-height: 40px;
+  padding: 0 12px;
+}
+
+.sf-page .cf-squares {
+  display: none;
+}
+
+.sf-root + .sf-root {
+  margin-top: var(--space-4);
+}
+
+.sf-root-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  margin: 0 0 4px;
+  padding: 0 6px;
+  font: inherit;
+  color: var(--text-3);
+  white-space: nowrap;
+}
+
+.sf-root-head > .glyph,
+.sf-root-head > b {
+  flex: none;
+}
+
+.sf-root-head > b {
+  font-weight: 400;
+  color: var(--text-2);
+}
+
+.sf-root-head > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  direction: rtl;
+}
+
+.sf-root > .ft-tree {
+  padding-inline: 0;
+  padding-bottom: 0;
+}
+
+.sp-page.fx-view {
+  height: auto;
+  overflow: hidden;
+  padding-bottom: var(--space-4);
+}
+
+.sp-page.fx-view .fx-name {
+  font-size: var(--size-text);
+}

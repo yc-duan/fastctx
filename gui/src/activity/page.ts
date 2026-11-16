@@ -3,9 +3,15 @@
 // as a list of changed files is read everywhere: a file's path, the lines
 // added to it in green and removed from it in red, five squares for how
 // they divide; a mark before the path says whether the file is new,
-// changed, gone or a copy. The files of a machine stand together under its
-// name, in the order of their paths. A file pressed opens under itself to
-// each of its changes: when, by which session, how many lines.
+// changed, gone or a copy.
+//
+// Who changed them is the page's other half: the files stand under the
+// conversation that changed them, its agent's mark before its name and the
+// machines it changed them on after, the conversation that changed
+// something last first; or, by the switch in the head, under the machine
+// holding them, each row then saying whose it is. A file pressed opens
+// under itself to its changes, each under who made it and when, its lines
+// a row to a line; from there the file opens among its machine's folders.
 //
 // Every machine keeps its own book of what `run` did there; the page asks
 // each it can reach and puts their answers together, saying which did not
@@ -13,18 +19,27 @@
 // now and then.
 
 import { BOOK, followState } from "../world/topics";
-import { glyph } from "../conversation/glyphs";
+import { agentGlyph, glyph } from "../conversation/glyphs";
+import type { DiffRow } from "../conversation/diff";
 import { escape } from "../conversation/prose";
 import type { Page } from "../app/shell";
-import type { BookAnswer, BookQuery, TouchHow } from "../world/book";
-import { agentName } from "../world/names";
-import { DAY_MS, changedFiles, dayOf, squares, type Change, type FileChanged, type MachineChanged, type Placed } from "./model";
-import type { ActivityWords, Span } from "./words";
+import { waiting } from "../app/waiting";
+import type { BookAnswer, BookQuery } from "../world/book";
+import { bookChanges, type RowsOf } from "../files/book";
+import { changeLine, diffLines, figures, fileRow, sessionName, type Named } from "../files/changed";
+import { byMachine, byTalk, filesOf, tally, type ChangedFile, type FileChange, type MachineGroup, type TalkGroup } from "../files/model";
+import type { ViewTab } from "../files/view";
+import type { FilesWords } from "../files/words";
+import type { ActivityWords, Grouping, Span } from "./words";
+import "../files/files.css";
 import "./activity.css";
 
 const SPANS: readonly Span[] = ["day", "week", "month", "quarter"];
 const SPAN_DAYS: Record<Span, number> = { day: 1, week: 7, month: 30, quarter: 90 };
+const GROUPINGS: readonly Grouping[] = ["talk", "machine"];
 const KEPT_SPAN = "activity.span";
+const KEPT_GROUPING = "activity.grouping";
+const DAY_MS = 24 * 3_600_000;
 /** How often this computer's book is read again at most, as it changes; and
  *  how often the other machines are asked. */
 const HERE_MS = 4000;
@@ -32,8 +47,13 @@ const THERE_MS = 30_000;
 /** How long the answer from an offline machine's copy stands. */
 const COPY_AGAIN_MS = 60_000;
 const LIMIT = 2000;
-/** The changes an opened file lists, the latest. */
-const LISTED = 10;
+/** The files a group lists, and the groups the page lists, before the rest
+ *  are asked for. */
+const FEW = 12;
+const GROUPS = 40;
+/** The changes an opened file shows, the latest, and the lines of each. */
+const LISTED = 5;
+const LINES = 120;
 
 export interface BookMachine {
   /** None for this computer. */
@@ -44,49 +64,53 @@ export interface BookMachine {
 
 export interface ActivityOptions {
   words: ActivityWords;
+  files: FilesWords;
   head(title: string, actions?: string): string;
   machines(): BookMachine[];
   read(machine: string | null, query: BookQuery): Promise<BookAnswer>;
   /** What a session (`resident@machine`) is called here and where it is
    *  opened, where this device knows it as a conversation. */
-  named?(session: string): { name: string; link: string } | null;
+  named?: Named;
+  /** The lines of one change, where its machine kept them. */
+  rows?: RowsOf;
+  /** Where a file is opened among its machine's folders. */
+  link(machine: string, path: string | null, tab: ViewTab | null): string;
   /** The page's own clock, for the specimen. */
   now?(): number;
 }
 
-const figure = (n: number) => n.toLocaleString("en-US");
-
-/** The lines added and removed, as they are written beside a file. */
-function figures(added: number, removed: number): string {
-  return `<span class="ay-figures">${added ? `<span class="ay-add">+${figure(added)}</span>` : ""}${removed ? `<span class="ay-del">−${figure(removed)}</span>` : ""}</span>`;
-}
-
-/** The mark before a path: a small square holding a plus for a new file, a
- *  dot for a changed one, a minus for one gone, an arrow for a copy. */
-function mark(how: TouchHow, said: string): string {
-  const inside =
-    how === "added" ? `<path d="M8 4.75v6.5M4.75 8h6.5"/>` : how === "removed" ? `<path d="M4.75 8h6.5"/>` : how === "copied" ? `<path d="M4.75 8h6M8.5 5.5 11 8l-2.5 2.5"/>` : `<circle cx="8" cy="8" r="1.6" class="ay-dot"/>`;
-  return `<svg class="ay-mark ay-${how}" viewBox="0 0 16 16" width="16" height="16" role="img" aria-label="${escape(said)}"><title>${escape(said)}</title><rect x="1.5" y="1.5" width="13" height="13" rx="3.5"/>${inside}</svg>`;
+/** Local midnight of the day holding `at`. */
+function dayOf(at: number): number {
+  const date = new Date(at);
+  date.setHours(0, 0, 0, 0);
+  return date.getTime();
 }
 
 export class ActivityPage implements Page {
   readonly element = document.createElement("section");
   readonly title: string;
   private span: Span = kept(KEPT_SPAN, SPANS, "week");
-  private deeds: Placed[] = [];
+  private grouping: Grouping = kept(KEPT_GROUPING, GROUPINGS, "talk");
+  private changes: FileChange[] = [];
   /** Machines asked that did not answer, and whether some machine left
    *  runs out past the limit. */
   private away: string[] = [];
   private more = false;
-  /** The files opened, each its machine and path. */
+  /** The files opened, each its group and its own key; the groups whose
+   *  files are all listed; whether every group is. */
   private readonly opened = new Set<string>();
+  private readonly whole = new Set<string>();
+  private allGroups = false;
+  /** The lines of the changes read, by the changes' ids. */
+  private readonly lines = new Map<string, DiffRow[] | null | "reading">();
+  /** The files as last drawn, by what their rows are opened by. */
+  private drawnFiles = new Map<string, ChangedFile>();
   /** A file the address asks to be opened, in a development build: for
    *  looking at an opened file without a hand to press it. */
   private wanted = import.meta.env.DEV ? new URLSearchParams(location.search).get("open") : null;
   /** What the page shows, as last written. */
   private written = "";
   private readonly body: HTMLElement;
-  private readonly switcher: HTMLElement;
   private readonly subscriptions: (() => void)[] = [];
   private readonly answers = new Map<string, Map<string, BookAnswer | null>>();
   private localFailed = false;
@@ -101,10 +125,12 @@ export class ActivityPage implements Page {
     const { words } = options;
     this.title = words.title;
     this.element.className = "page ay-page";
-    this.element.innerHTML = `${options.head(escape(words.title), `<div class="segmented ay-spans" role="radiogroup" aria-label="${escape(words.spanLabel)}"></div>`)}<div class="ay-body scroller"></div>`;
-    this.switcher = this.element.querySelector<HTMLElement>(".ay-spans")!;
+    this.element.innerHTML = `${options.head(
+      escape(words.title),
+      `<div class="segmented ay-groupings" role="radiogroup" aria-label="${escape(words.groupingLabel)}"></div><div class="segmented ay-spans" role="radiogroup" aria-label="${escape(words.spanLabel)}"></div>`,
+    )}<div class="ay-body scroller"></div>`;
     this.body = this.element.querySelector<HTMLElement>(".ay-body")!;
-    this.drawSwitcher();
+    this.drawSwitches();
     this.element.addEventListener("click", (event) => this.pressed(event));
     this.element.addEventListener("keydown", (event) => {
       const target = event.target as HTMLElement;
@@ -187,14 +213,15 @@ export class ActivityPage implements Page {
         this.again.add(group);
         return;
       }
-      const deeds: Placed[] = [];
+      const changes: FileChange[] = [];
+      const from = this.from();
       let more = false;
       for (const answer of answers) {
         if (answer.kind !== "deeds") continue;
         more ||= answer.more;
-        for (const deed of answer.deeds) deeds.push({ ...deed, machine: answer.machine });
+        changes.push(...bookChanges(answer, from, this.options.rows));
       }
-      this.deeds = deeds;
+      this.changes = changes;
       this.away = away;
       this.more = more;
       this.draw();
@@ -204,35 +231,42 @@ export class ActivityPage implements Page {
     }
   }
 
-  private drawSwitcher(): void {
+  private drawSwitches(): void {
     const { words } = this.options;
-    this.switcher.innerHTML = SPANS.map((span) => `<button type="button" class="segment${span === this.span ? " chosen" : ""}" role="radio" aria-checked="${span === this.span}" data-span="${span}">${escape(words.spans[span])}</button>`).join("");
+    const segment = (name: string, value: string, chosen: boolean, said: string) => `<button type="button" class="segment${chosen ? " chosen" : ""}" role="radio" aria-checked="${chosen}" data-${name}="${value}">${escape(said)}</button>`;
+    this.element.querySelector<HTMLElement>(".ay-spans")!.innerHTML = SPANS.map((span) => segment("span", span, span === this.span, words.spans[span])).join("");
+    this.element.querySelector<HTMLElement>(".ay-groupings")!.innerHTML = GROUPINGS.map((grouping) => segment("grouping", grouping, grouping === this.grouping, words.groupings[grouping])).join("");
   }
 
   /** Draws the files changed. Drawn again only where it differs from what
    *  is shown, so a reading that changed nothing moves nothing; `anew` says
-   *  the reader asked for another span, and what comes fades in. */
+   *  the reader asked for another look, and what comes fades in. */
   private draw(anew = false): void {
-    const { words } = this.options;
-    const machines = changedFiles(this.deeds, this.from());
-    const asked = this.wanted && machines.flatMap((machine) => machine.files).find((file) => file.name === this.wanted);
-    if (asked) {
-      this.opened.add(`${asked.machine}\n${asked.path}`);
-      this.wanted = null;
+    const { words, files } = this.options;
+    const groups: (TalkGroup | MachineGroup)[] = this.grouping === "talk" ? byTalk(this.changes) : byMachine(this.changes);
+    this.drawnFiles = new Map(groups.flatMap((group) => group.files.map((file): [string, ChangedFile] => [`${group.key}\n${file.key}`, file])));
+    if (this.wanted) {
+      const asked = [...this.drawnFiles].find(([, file]) => file.name === this.wanted);
+      if (asked) {
+        this.opened.add(asked[0]);
+        this.wanted = null;
+      }
     }
-    const count = machines.reduce((sum, machine) => sum + machine.files.length, 0);
-    const added = machines.reduce((sum, machine) => sum + machine.added, 0);
-    const removed = machines.reduce((sum, machine) => sum + machine.removed, 0);
+    const sum = tally(filesOf(this.changes));
     const notes = [this.more ? words.truncated(LIMIT) : "", this.away.length ? words.unanswered(this.away.join("、")) : ""].filter(Boolean);
     const foot = notes.length ? `<p class="ay-notes">${notes.map((note) => `<span>${escape(note)}</span>`).join("")}</p>` : "";
-    const html = count
-      ? `<div class="ay-sheet"><p class="ay-summary"><b>${escape(words.changed(count))}</b>${figures(added, removed)}</p>${machines.map((machine) => this.machine(machine)).join("")}${foot}</div>`
+    const shown = this.allGroups ? groups : groups.slice(0, GROUPS);
+    const rest = groups.length > shown.length ? `<button type="button" class="text-button ay-rest" data-groups>${escape(words.moreGroups(groups.length - shown.length))}</button>` : "";
+    const html = sum.files
+      ? `<div class="ay-sheet"><p class="ay-summary"><b>${escape(files.changed(sum.files))}</b>${figures(sum.added, sum.removed)}</p>${shown.map((group) => this.group(group)).join("")}${rest}${foot}</div>`
       : `<div class="ay-sheet ay-quiet"><p>${escape(words.quiet)}</p>${foot}</div>`;
     if (html === this.written && !anew) return;
     this.written = html;
     const kept = this.body.scrollTop;
     this.body.innerHTML = html;
     this.body.scrollTop = anew ? 0 : kept;
+    // An opened file's changes not yet read are read now.
+    for (const key of this.opened) if (this.drawnFiles.has(key)) this.readLines(key);
     if (anew) {
       this.body.classList.remove("ay-in");
       void this.body.offsetWidth;
@@ -240,48 +274,84 @@ export class ActivityPage implements Page {
     }
   }
 
-  /** A machine's files, under its name. */
-  private machine(machine: MachineChanged): string {
-    const { words } = this.options;
-    return `<section class="ay-machine">
-      <header class="ay-machine-head">${glyph("desktop", 18)}<b>${escape(machine.machine)}</b><small>${escape(words.files(machine.files.length))}</small>${figures(machine.added, machine.removed)}</header>
-      <ul class="ay-files">${machine.files.map((file) => this.file(file)).join("")}</ul>
+  /** A group's files under its name: a conversation's, or a machine's. */
+  private group(group: TalkGroup | MachineGroup): string {
+    const { words, files, named } = this.options;
+    const talk = "machines" in group;
+    let name: string;
+    if (talk) {
+      const said = sessionName(group, files, named);
+      name = `${group.agent ? agentGlyph(group.agent, 18) : glyph("agents", 18)}${said.link ? `<a class="ay-name" href="${escape(said.link)}">${escape(said.name)}</a>` : `<b class="ay-name">${escape(said.name)}</b>`}<span class="ay-on">${glyph("machine", 14)}${escape(group.machines.join("、"))}</span>`;
+    } else {
+      name = `${glyph("desktop", 18)}<a class="ay-name" href="${escape(this.options.link(group.machine, null, null))}" title="${escape(words.folders)}">${escape(group.machine)}</a>`;
+    }
+    const all = this.whole.has(group.key) || group.files.length <= FEW + 1;
+    const listed = all ? group.files : group.files.slice(0, FEW);
+    const rows = listed.map((file) => this.file(group, file, talk)).join("");
+    const rest = all ? "" : `<li class="cf-rest"><button type="button" class="text-button" data-whole="${escape(group.key)}">${escape(files.moreFiles(group.files.length - listed.length))}</button></li>`;
+    return `<section class="ay-group">
+      <header class="ay-group-head">${name}<small>${escape(files.files(group.files.length))}</small>${figures(group.added, group.removed)}<time>${escape(files.stamp(group.last, this.now()))}</time></header>
+      <ul class="cf-files">${rows}${rest}</ul>
     </section>`;
   }
 
-  private file(file: FileChanged): string {
-    const { words } = this.options;
-    const key = `${file.machine}\n${file.path}`;
+  private file(group: TalkGroup | MachineGroup, file: ChangedFile, talk: boolean): string {
+    const { files, named } = this.options;
+    const key = `${group.key}\n${file.key}`;
     const open = this.opened.has(key);
-    const blocks = squares(file.added, file.removed)
-      .map((kind) => `<i class="${kind}"></i>`)
-      .join("");
-    return `<li class="ay-file${open ? " open" : ""}">
-      <div class="ay-row" role="button" tabindex="0" aria-expanded="${open}" data-file="${escape(key)}">
-        ${mark(file.how, words.how[file.how])}
-        <span class="ay-path" title="${escape(file.path)}"><span class="ay-folder"><bdi>${escape(file.folder)}</bdi></span><b>${escape(file.name)}</b></span>
-        ${figures(file.added, file.removed)}
-        <span class="ay-squares" aria-hidden="true">${blocks}</span>
-      </div>
-      <div class="ay-fold"><div class="ay-fold-inner"><ul class="ay-changes">${file.changes.slice(0, LISTED).map((change) => this.change(change)).join("")}${file.changes.length > LISTED ? `<li class="ay-earlier">${escape(words.earlier(file.changes.length - LISTED))}</li>` : ""}</ul></div></div>
-    </li>`;
+    return fileRow(file, files, {
+      attrs: `data-file="${escape(key)}"`,
+      named,
+      who: !talk,
+      where: talk && (group as TalkGroup).machines.length > 1,
+      open,
+      fold: open ? this.fold(file, talk) : "",
+    });
   }
 
-  /** One change of a file: when, by which session, how, how many lines. */
-  private change(change: Change): string {
-    const { words } = this.options;
-    const { deed } = change;
-    const known = deed.session ? (this.options.named?.(deed.session) ?? null) : null;
-    const agent = deed.agent ? agentName(deed.agent) : "";
-    const name = known?.name ?? (agent ? words.own(agent) : (deed.session?.split("@")[0] ?? ""));
-    const who = known ? `<a href="${escape(known.link)}">${escape(name)}</a>` : escape(name);
-    const from = deed.from ? `<small>${escape(words.from(deed.from))}</small>` : "";
-    return `<li>
-      <time>${escape(words.stamp(change.at, this.now()))}</time>
-      <span class="ay-who">${deed.agent ? glyph(deed.agent, 16) : ""}<span>${who}</span>${from}</span>
-      <span class="ay-how"${change.seen ? ` title="${escape(words.seen)}"` : ""}>${change.how === "changed" ? "" : escape(words.how[change.how])}</span>
-      ${figures(change.added, change.removed)}
-    </li>`;
+  /** What an opened file shows: its latest changes, each under who made
+   *  it and when, and the way to the file among its folders. */
+  private fold(file: ChangedFile, talk: boolean): string {
+    const { words, files, named } = this.options;
+    const now = this.now();
+    const listed = file.changes.slice(0, LISTED);
+    const changes = listed
+      .map((change) => `<section class="ay-change" data-change="${escape(change.id)}"><header class="ay-change-head">${changeLine(talk ? { ...change, session: null, agent: null, from: null } : change, files, named, now)}</header><div class="ay-change-body">${this.linesOf(change, file.path)}</div></section>`)
+      .join("");
+    const earlier = file.changes.length > LISTED ? `<span>${escape(files.view.earlier(file.changes.length - LISTED))}</span>` : "";
+    return `${changes}<p class="ay-fold-foot">${earlier}<a href="${escape(this.options.link(file.machine, file.path, file.how === "removed" ? "changes" : "content"))}">${escape(words.openFile)}</a><a href="${escape(this.options.link(file.machine, file.path, "changes"))}">${escape(words.allChanges)}</a></p>`;
+  }
+
+  /** A change's lines as they are held: drawn, being read, or not kept. */
+  private linesOf(change: FileChange, path: string): string {
+    const { files } = this.options;
+    const held = this.lines.get(change.id);
+    // What has no lines kept is its own line alone, as a list of changes.
+    if (!change.rows) return "";
+    if (held === undefined || held === "reading") return waiting({ label: files.view.reading, shape: "lines", rows: Math.min(6, Math.max(2, change.added + change.removed)) });
+    if (held === null || !held.length) return `<p class="cf-note">${escape(change.uncounted ? files.view.uncounted : files.view.notKept)}</p>`;
+    return diffLines(held, path, files, LINES);
+  }
+
+  /** Reads the lines of an opened file's changes that were not read yet,
+   *  each drawn where it stands as it comes. */
+  private readLines(key: string): void {
+    const file = this.drawnFiles.get(key);
+    if (!file) return;
+    for (const change of file.changes.slice(0, LISTED)) {
+      if (!change.rows || this.lines.has(change.id)) continue;
+      this.lines.set(change.id, "reading");
+      void change.rows().then((rows) => rows, () => null).then((rows) => {
+        if (this.left) return;
+        this.lines.set(change.id, rows);
+        if (this.lines.size > 400) this.lines.delete(this.lines.keys().next().value!);
+        for (const body of this.body.querySelectorAll<HTMLElement>(".ay-change")) {
+          if (body.dataset.change === change.id) body.querySelector<HTMLElement>(".ay-change-body")!.innerHTML = this.linesOf(change, file.path);
+        }
+        // What is shown is no longer what was written.
+        this.written = "";
+      });
+    }
   }
 
   private pressed(event: MouseEvent): void {
@@ -291,23 +361,56 @@ export class ActivityPage implements Page {
       if (span === this.span) return;
       this.span = span;
       keep(KEPT_SPAN, span);
-      this.drawSwitcher();
+      this.drawSwitches();
       // What is read of the span chosen before is not this one's.
-      this.deeds = [];
+      this.changes = [];
       this.written = "";
       void Promise.all([this.read("local"), this.read("remote")]).then(() => this.draw(true));
       return;
     }
-    // A link in an opened file goes where it says; the row is not pressed.
+    const grouping = target.closest<HTMLElement>("[data-grouping]")?.dataset.grouping as Grouping | undefined;
+    if (grouping) {
+      if (grouping === this.grouping) return;
+      this.grouping = grouping;
+      keep(KEPT_GROUPING, grouping);
+      this.drawSwitches();
+      this.opened.clear();
+      this.whole.clear();
+      this.allGroups = false;
+      this.draw(true);
+      return;
+    }
+    const whole = target.closest<HTMLElement>("[data-whole]")?.dataset.whole;
+    if (whole !== undefined) {
+      this.whole.add(whole);
+      this.draw();
+      return;
+    }
+    if (target.closest("[data-groups]")) {
+      this.allGroups = true;
+      this.draw();
+      return;
+    }
+    // A link goes where it says; the row is not pressed.
     if (target.closest("a")) return;
     const row = target.closest<HTMLElement>("[data-file]");
     if (!row) return;
     const key = row.dataset.file!;
+    const file = this.drawnFiles.get(key);
+    if (!file) return;
     const open = !this.opened.has(key);
     if (open) this.opened.add(key);
     else this.opened.delete(key);
     row.setAttribute("aria-expanded", String(open));
-    row.parentElement!.classList.toggle("open", open);
+    const item = row.parentElement!;
+    const inner = item.querySelector<HTMLElement>(".cf-fold-inner")!;
+    if (open && !inner.innerHTML.trim()) {
+      inner.innerHTML = this.fold(file, this.grouping === "talk");
+      this.readLines(key);
+    }
+    // Measured shut before it opens, so it is seen to open.
+    void item.offsetHeight;
+    item.classList.toggle("open", open);
     // What is shown is no longer what was written: the next reading that
     // differs draws it with the file as it stands now.
     this.written = "";

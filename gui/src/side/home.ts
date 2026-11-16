@@ -11,6 +11,9 @@
 
 import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
+import { figures, mark } from "../files/changed";
+import { tally, type ChangedFile } from "../files/model";
+import type { FilesWords } from "../files/words";
 import type { PlanShape } from "../plan/shape";
 import { anyGoing, going, order, shortLine, workedFor } from "./collab-page";
 import type { SidePage } from "./pane";
@@ -31,9 +34,16 @@ export interface HomeSeams {
   node(node: CollabNode): void;
   /** Everyone who works with it, in a sheet. */
   team(): void;
+  /** The files it changed, as a page of the side; and one of them, opened
+   *  to its changes. */
+  files?(): void;
+  file?(machine: string, path: string): void;
 }
 
-type Card = "goal" | "plan" | "colleagues" | "agents";
+type Card = "goal" | "plan" | "files" | "colleagues" | "agents";
+
+/** The files the card lists, the last changed first. */
+const FILES = 4;
 
 function folded(): Set<string> {
   try {
@@ -59,6 +69,7 @@ export class SideHome implements SidePage {
   private planShown: PlanShape | null = null;
   private planned = false;
   private nodes: CollabNode[] = [];
+  private changed: ChangedFile[] = [];
   private readonly fold = folded();
   /** Those on short lines, in the order their times stand on the page. */
   private lined: CollabNode[] = [];
@@ -71,6 +82,8 @@ export class SideHome implements SidePage {
     private readonly seams: HomeSeams,
     private readonly goals: boolean,
     private readonly planPage: HTMLElement,
+    /** The words of the files it changed; none where they are not shown. */
+    private readonly fileWords: FilesWords | null = null,
   ) {
     this.element = document.createElement("section");
     this.element.className = "sh-page";
@@ -94,6 +107,9 @@ export class SideHome implements SidePage {
       const open = target.closest<HTMLElement>("[data-open]")?.dataset.open;
       if (open === "team") return this.seams.team();
       if (open === "goal") return this.seams.page(open);
+      if (open === "files") return this.seams.files?.();
+      const file = target.closest<HTMLElement>("[data-file]");
+      if (file) return this.seams.file?.(file.dataset.machine!, file.dataset.file!);
       const id = target.closest<HTMLElement>("[data-id]")?.dataset.id;
       const node = id ? this.find(this.nodes, id) : null;
       if (node) this.seams.node(node);
@@ -125,6 +141,14 @@ export class SideHome implements SidePage {
     this.draw();
   }
 
+  /** The files the conversation changed, as they now stand. */
+  files(files: ChangedFile[]): void {
+    const sign = (all: ChangedFile[]) => all.map((file) => `${file.key}|${file.how}|${file.added}|${file.removed}|${file.changes[0]?.at ?? 0}`).join("\n");
+    if (sign(files) === sign(this.changed)) return;
+    this.changed = files;
+    this.draw();
+  }
+
   private draw(): void {
     const now = Date.now();
     this.lined = [];
@@ -132,6 +156,7 @@ export class SideHome implements SidePage {
     const cards = [
       this.goalCard(now),
       this.planCard(),
+      this.filesCard(),
       this.teamCard("colleagues", ordered.filter((node) => node.kind === "colleague" || node.kind === "side"), now),
       this.teamCard("agents", ordered.filter((node) => node.kind === "subagent"), now),
     ].filter(Boolean);
@@ -177,6 +202,20 @@ export class SideHome implements SidePage {
     else if (shape?.checks.length) count = words.planCount(shape.checks.filter((check) => check.done).length, shape.checks.length);
     const asks = shape?.asks.length ? words.collab.states.waiting : "";
     return this.card("plan", words.pages.plan, count, `<div class="sh-plan"></div>`, asks);
+  }
+
+  /** The files the conversation changed: how many and by how many lines
+   *  after the name, the last changed a line each, the rest in their page. */
+  private filesCard(): string {
+    const words = this.fileWords;
+    if (!words || !this.changed.length) return "";
+    const sum = tally(this.changed);
+    const latest = [...this.changed].sort((a, b) => (b.changes[0]?.at ?? 0) - (a.changes[0]?.at ?? 0)).slice(0, FILES);
+    const lines = latest
+      .map((file) => `<button class="sh-file" type="button" data-file="${escape(file.path)}" data-machine="${escape(file.machine)}" title="${escape(file.path)}">${mark(file.how, words.how[file.how])}<span class="sh-file-name">${escape(file.name)}</span>${figures(file.added, file.removed)}</button>`)
+      .join("");
+    const all = `<button class="text-button sh-all" type="button" data-open="files">${escape(words.side.all(sum.files))}</button>`;
+    return this.card("files", words.side.name, words.files(sum.files), `<div class="sh-files">${lines}</div><div class="sh-files-foot">${all}${figures(sum.added, sum.removed)}</div>`);
   }
 
   /** The colleagues, or the host's agents: those at work first, a short line

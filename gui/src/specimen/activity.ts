@@ -22,9 +22,9 @@ const HABITS: Habit[] = [
     machine: "desktop",
     rate: 6,
     sessions: [
-      { session: "claude-3f2a@desktop", agent: "claude", held: true, project: "mark50" },
-      { session: "codex-7b1c@desktop", agent: "codex", held: false },
-      { session: "codex-a41d@desktop", agent: "codex", held: true, project: "telemetry" },
+      { session: "claude-2b1c@laptop", agent: "claude", held: true, project: "mark50" },
+      { session: "codex-5e2a@desktop", agent: "codex", held: false },
+      { session: "codex-6b19@desktop", agent: "codex", held: true, project: "telemetry" },
     ],
     scripts: [
       { script: "on desktop cargo test -p firmware-sim", seconds: 48, fails: 0.18 },
@@ -44,7 +44,7 @@ const HABITS: Habit[] = [
   {
     machine: "server",
     rate: 3,
-    sessions: [{ session: "claude-3f2a@desktop", agent: "claude", held: true, project: "telemetry" }],
+    sessions: [{ session: "claude-41aa@server", agent: "claude", held: true, project: "telemetry" }],
     scripts: [
       { script: "on server <<'RUN'\ncd /srv/telemetry && journalctl -u ingest --since -1h | tail -80\nRUN", seconds: 3 },
       { script: "on server systemctl restart ingest", seconds: 4, fails: 0.08 },
@@ -55,7 +55,7 @@ const HABITS: Habit[] = [
   {
     machine: "gpu",
     rate: 0.6,
-    sessions: [{ session: "codex-a41d@desktop", agent: "codex", held: true, project: "telemetry" }],
+    sessions: [{ session: "codex-6b19@desktop", agent: "codex", held: true, project: "telemetry" }],
     scripts: [
       { script: "on gpu <<'RUN'\ncd ~/runs && python train.py --epochs 3 --batch 64\nRUN", seconds: 2600, fails: 0.2, touched: [{ path: "/home/bo/runs/checkpoints/epoch-3.pt", how: "added" }] },
       { script: "on gpu nvidia-smi", seconds: 1 },
@@ -120,10 +120,10 @@ function deedsOf(habit: Habit, from: number, to: number, now: number): Deed[] {
   // Something runs this very minute on the computer and the server.
   if (now >= from && now < to + HOUR) {
     if (habit.machine === "desktop") {
-      deeds.push({ job: "j-runnow", began: new Date(now - 140_000).toISOString(), session: "claude-3f2a@desktop", agent: "claude", held: true, project: "mark50", script: "on desktop cargo test -p firmware-sim -- --include-ignored", outcome: "running", output: 18_200, looked: 0, copied: 0 });
+      deeds.push({ job: "j-runnow", began: new Date(now - 140_000).toISOString(), from: "laptop", session: "claude-2b1c@laptop", agent: "claude", held: true, project: "mark50", script: "on desktop cargo test -p firmware-sim -- --include-ignored", outcome: "running", output: 18_200, looked: 0, copied: 0 });
     }
     if (habit.machine === "gpu") {
-      deeds.push({ job: "j-trains", began: new Date(now - 41 * 60_000).toISOString(), from: "desktop", session: "codex-a41d@desktop", agent: "codex", held: true, project: "telemetry", script: "on gpu <<'RUN'\ncd ~/runs && python train.py --epochs 3 --batch 64\nRUN", outcome: "running", output: 2_400_000, looked: 0, copied: 0 });
+      deeds.push({ job: "j-trains", began: new Date(now - 41 * 60_000).toISOString(), from: "desktop", session: "codex-6b19@desktop", agent: "codex", held: true, project: "telemetry", script: "on gpu <<'RUN'\ncd ~/runs && python train.py --epochs 3 --batch 64\nRUN", outcome: "running", output: 2_400_000, looked: 0, copied: 0 });
     }
   }
   return deeds;

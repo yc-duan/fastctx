@@ -927,6 +927,14 @@ export class Conversation {
     return this.foldOf(turn)?.lastMessageOf(turn) ?? null;
   }
 
+  /** The calls of `turn`, in the order they came; with no turn named, of
+   *  every turn the page holds, the earliest part first. */
+  toolsOf(turn: string | null): Extract<Entry, { kind: "tool" }>[] {
+    const tools = (entries: readonly Entry[]) => entries.filter((entry): entry is Extract<Entry, { kind: "tool" }> => entry.kind === "tool");
+    if (turn !== null) return tools(this.foldOf(turn)?.turnEntries(turn) ?? []);
+    return this.parts.flatMap((part) => tools(part.fold.entries));
+  }
+
   /** Where a fork from `turn`, or from where the conversation is now, would
    *  begin: the user's words that asked, the answer to them, and the key of
    *  the block the answer is drawn in. */

@@ -1,8 +1,8 @@
-/* The activity page (`page.ts`): the files agents changed, as a list of
-   changed files is read everywhere — a path, the lines added in green and
-   removed in red, five squares for how they divide. A machine's files are
-   one filled box of rows; a row pressed opens under itself. Every class of
-   its own begins `ay-`. */
+/* The activity page (`page.ts`): the files agents changed, under the
+   conversation that changed them or the machine holding them. The rows and
+   a change's lines are the files' own (`files/files.css`); what begins
+   `ay-` here is the page round them: the sum over the list, a group's name,
+   an opened file's changes. */
 
 .ay-page {
   display: flex;
@@ -23,7 +23,7 @@
   padding-top: var(--space-2);
 }
 
-/* Another span asked for, what comes fades in; a reading that only brings
+/* Another look asked for, what comes fades in; a reading that only brings
    what changed is put in place as it is. */
 .ay-body.ay-in > .ay-sheet {
   opacity: var(--shown);
@@ -34,21 +34,6 @@
   from {
     --shown: 0;
   }
-}
-
-/* The lines added and removed: green and red, as they are everywhere. */
-.ay-figures {
-  display: inline-flex;
-  gap: 10px;
-  white-space: nowrap;
-}
-
-.ay-add {
-  color: var(--add-fg);
-}
-
-.ay-del {
-  color: var(--del-fg);
 }
 
 .ay-summary {
@@ -66,243 +51,152 @@
   color: var(--text-strong);
 }
 
-/* A machine: its name, how many of its files changed and by how many
-   lines, then the files. */
-.ay-machine {
+/* A group: who changed the files (or where they are), how many and by how
+   many lines, when last; then the files. */
+.ay-group {
   margin-top: var(--space-6);
 }
 
-.ay-machine-head {
+.ay-group-head {
   display: flex;
   align-items: center;
   gap: 10px;
+  min-width: 0;
   padding: 0 4px var(--space-2);
   color: var(--text-2);
+  white-space: nowrap;
 }
 
-.ay-machine-head .glyph {
+.ay-group-head > .glyph {
   flex: none;
 }
 
-.ay-machine-head b {
+.ay-name {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   font-family: var(--font-emphasis);
   font-weight: 400;
   color: var(--text-strong);
-}
-
-.ay-machine-head small {
-  font-size: inherit;
-  color: var(--text-3);
-}
-
-.ay-machine-head .ay-figures {
-  margin-left: auto;
-}
-
-.ay-files {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  border-radius: var(--radius-l);
-  background: var(--fill);
-  overflow: hidden;
-}
-
-.ay-file + .ay-file {
-  border-top: 1px solid var(--divider);
-}
-
-/* A file: its mark, its path, its lines, its squares. The folder gives way
-   from its start, so the file's own name is always in sight. */
-.ay-row {
-  display: grid;
-  grid-template-columns: 16px minmax(0, 1fr) auto 48px;
-  align-items: center;
-  column-gap: 12px;
-  min-height: 44px;
-  padding: 0 16px;
-  cursor: pointer;
-  transition: background-color var(--hover) var(--ease);
-}
-
-.ay-row:hover {
-  background: var(--fill);
-}
-
-.ay-row:active {
-  background: var(--fill-strong);
-}
-
-.ay-mark {
-  display: block;
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 1.3;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-}
-
-.ay-mark .ay-dot {
-  fill: currentColor;
-  stroke: none;
-}
-
-.ay-mark.ay-added {
-  color: var(--add-fg);
-}
-
-.ay-mark.ay-changed {
-  color: var(--caution);
-}
-
-.ay-mark.ay-removed {
-  color: var(--del-fg);
-}
-
-.ay-mark.ay-copied {
-  color: var(--text-3);
-}
-
-.ay-path {
-  display: flex;
-  min-width: 0;
-  white-space: nowrap;
-}
-
-.ay-folder {
-  flex: 0 1 auto;
-  min-width: 0;
-  direction: rtl;
-  text-align: left;
-  color: var(--text-2);
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.ay-path b {
-  flex: none;
-  max-width: 100%;
-  font-family: inherit;
-  font-weight: 400;
-  color: var(--text);
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.ay-row .ay-figures {
-  justify-content: flex-end;
-}
-
-.ay-squares {
-  display: inline-flex;
-  gap: 2px;
-}
-
-.ay-squares i {
-  width: 8px;
-  height: 8px;
-  border-radius: 2px;
-  background: var(--fill-strong);
-}
-
-.ay-squares i.add {
-  background: var(--add-fg);
-}
-
-.ay-squares i.del {
-  background: var(--del-fg);
-}
-
-/* A file opened: each of its changes on a line, folding open and shut at
-   the interface's one pace. */
-.ay-fold {
-  display: grid;
-  grid-template-rows: 0fr;
-  transition: grid-template-rows var(--expand) var(--expand-easing);
-}
-
-.ay-file.open > .ay-fold {
-  grid-template-rows: 1fr;
-}
-
-.ay-fold-inner {
-  min-height: 0;
-  overflow: hidden;
-}
-
-.ay-file:not(.open) > .ay-fold > .ay-fold-inner {
-  visibility: hidden;
-  transition: visibility 0s var(--expand);
-}
-
-.ay-changes {
-  margin: 0;
-  padding: 2px 16px 12px 44px;
-  list-style: none;
-}
-
-.ay-changes li {
-  display: grid;
-  grid-template-columns: 9em minmax(0, 1fr) 6em auto;
-  align-items: center;
-  column-gap: 16px;
-  min-height: 32px;
-  color: var(--text-2);
-}
-
-.ay-changes time {
-  color: var(--text-3);
-  white-space: nowrap;
-}
-
-.ay-who {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-  white-space: nowrap;
-}
-
-.ay-who .glyph {
-  flex: none;
-}
-
-.ay-who > span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.ay-who a {
-  color: inherit;
   text-decoration: none;
 }
 
-.ay-who a:hover {
-  color: var(--text-strong);
+a.ay-name:hover {
   text-decoration: underline;
   text-decoration-color: var(--text-3);
+  text-underline-offset: 3px;
 }
 
-.ay-who small {
+/* The machines a conversation changed files on. */
+.ay-on {
+  flex: 0 1 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-3);
+}
+
+.ay-on .glyph {
+  flex: none;
+}
+
+.ay-group-head small {
   flex: none;
   font-size: inherit;
   color: var(--text-3);
 }
 
-.ay-how {
+.ay-group-head .cf-figures {
+  margin-left: auto;
+}
+
+.ay-group-head time {
+  flex: none;
+  min-width: 5.5em;
+  text-align: right;
   color: var(--text-3);
+}
+
+/* An opened file: its changes, each under who made it and when. */
+.ay-change {
+  padding: 0 16px 0 44px;
+}
+
+.ay-change + .ay-change {
+  margin-top: var(--space-2);
+}
+
+.ay-change-head {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-height: 34px;
+  color: var(--text-2);
   white-space: nowrap;
 }
 
-.ay-changes .ay-figures {
-  justify-content: flex-end;
-  min-width: 5em;
+.ay-change-head > time {
+  flex: none;
+  color: var(--text-3);
 }
 
-.ay-changes .ay-earlier {
-  display: block;
-  padding-top: 6px;
+.ay-change-head > .cf-who {
+  flex: 0 1 auto;
+  max-width: none;
+}
+
+.ay-change-head > .cf-figures {
+  margin-left: auto;
+}
+
+.ay-change-body {
+  min-width: 0;
+}
+
+.ay-change-body:empty {
+  display: none;
+}
+
+/* Changes with no lines kept stand close, a list of lines. */
+.ay-change:has(> .ay-change-body:empty) + .ay-change:has(> .ay-change-body:empty) {
+  margin-top: 0;
+}
+
+.ay-change-body > .cf-note {
+  padding-bottom: 4px;
+}
+
+.ay-fold-foot {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 20px;
+  margin: 0;
+  padding: 10px 16px 14px 44px;
   color: var(--text-3);
+}
+
+.ay-fold-foot > span {
+  margin-right: auto;
+}
+
+.ay-fold-foot a {
+  color: var(--text-2);
+  text-decoration: underline;
+  text-decoration-color: var(--text-3);
+  text-underline-offset: 3px;
+}
+
+.ay-fold-foot a:hover {
+  color: var(--text-strong);
+}
+
+.ay-rest {
+  display: block;
+  margin: var(--space-5) 4px 0;
 }
 
 /* Nothing changed, said in the page's middle; and what is not whole, said
@@ -327,36 +221,48 @@
   color: var(--text-3);
 }
 
-/* A phone: the squares go, and a change's how. */
+/* A phone: the two switches take a line of their own under the page's
+   name, the page keeps its narrow margins, a group's time goes. */
 @media (max-width: 760px) {
+  .ay-page > .page-head {
+    flex-wrap: wrap;
+    row-gap: 4px;
+    padding-bottom: 8px;
+  }
+
+  .ay-page > .page-head > .page-head-actions {
+    flex: 1 0 100%;
+    justify-content: flex-start;
+    gap: 8px;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .ay-page > .page-head .segmented {
+    flex: none;
+  }
+
+  .ay-page > .page-head .segment {
+    padding-inline: 12px;
+    white-space: nowrap;
+  }
+
+  /* Whose a change is keeps the room: how it changed is on the row's mark. */
+  .ay-change-head > .cf-how {
+    display: none;
+  }
+
   .ay-body {
     padding-inline: var(--gutter);
   }
 
-  .ay-row {
-    grid-template-columns: 16px minmax(0, 1fr) auto;
-    padding: 0 12px;
-  }
-
-  .ay-squares {
+  .ay-group-head time {
     display: none;
   }
 
-  .ay-changes {
-    padding: 2px 12px 10px 40px;
-  }
-
-  .ay-changes li {
-    grid-template-columns: minmax(0, 1fr) auto;
-    row-gap: 0;
-    padding-block: 4px;
-  }
-
-  .ay-changes time {
-    grid-column: 1 / -1;
-  }
-
-  .ay-how {
-    display: none;
+  .ay-change,
+  .ay-fold-foot {
+    padding-left: 12px;
+    padding-right: 12px;
   }
 }

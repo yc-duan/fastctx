@@ -68,6 +68,9 @@ export type Place =
   | { kind: "sync" }
   /** A file on a machine, read whole, or its end when it keeps growing. */
   | { kind: "file"; machine: string; path: string; tail: boolean }
+  /** A machine's folders, and a file among them opened to what it holds or
+   *  to its changes. */
+  | { kind: "files"; machine: string; path: string | null; tab: "content" | "changes" | null }
   /** What one of a conversation's watchers did, read on the machine it
    *  lives on: the life of it `generation` names. */
   | { kind: "sentinel"; home: string; id: string; generation: number }
@@ -133,6 +136,8 @@ export function link(place: Place): string {
       return "#/sync";
     case "file":
       return `#/file/${part(place.machine)}/${place.tail ? "tail" : "whole"}/${part(place.path)}`;
+    case "files":
+      return place.path === null ? `#/files/${part(place.machine)}` : `#/files/${part(place.machine)}/${place.tab ?? "content"}/${part(place.path)}`;
     case "sentinel":
       return `#/sentinel/${part(place.home)}/${part(place.id)}/${place.generation}`;
     case "sentinels":
@@ -227,6 +232,9 @@ export function placeOf(hash: string): Place {
       return { kind: "machines" };
     case "file":
       if (parts[1] && parts[3]) return { kind: "file", machine: parts[1], path: parts.slice(3).join("/"), tail: parts[2] === "tail" };
+      break;
+    case "files":
+      if (parts[1]) return { kind: "files", machine: parts[1], path: parts[3] ? parts.slice(3).join("/") : null, tab: parts[2] === "changes" ? "changes" : parts[2] === "content" && parts[3] ? "content" : null };
       break;
     case "sentinel": {
       const generation = Number(parts[3]);

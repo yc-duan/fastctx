@@ -22,6 +22,8 @@ export interface MachinePageWords {
   renameFailed(why: string): string;
   /** The way to the drawing, with this machine chosen on it. */
   onMap: string;
+  /** The way to its folders and the files agents changed there. */
+  files: string;
   /** No machine of this name is reached from here. */
   gone: string;
   /** The names it had, each still naming it. */
@@ -191,6 +193,7 @@ export const zhMachinePage: MachinePageWords = {
   renamed: (from, to) => `已将 ${from} 改名为 ${to}`,
   renameFailed: failure(zhProblems, "改名失败"),
   onMap: "在图上查看",
+  files: "文件",
   gone: "找不到该机器",
   formerly: (names) => `曾用名 ${names.join("、")}`,
   notFollowed: (hubs) => `${hubs.join("、")} 上仍为旧名称，连接后同步`,
@@ -320,6 +323,7 @@ export const enMachinePage: MachinePageWords = {
   renamed: (from, to) => `Renamed ${from} to ${to}`,
   renameFailed: failure(enProblems, "Could not rename"),
   onMap: "Show on the map",
+  files: "Files",
   gone: "Machine not found",
   formerly: (names) => `Formerly ${names.join(", ")}`,
   notFollowed: (hubs) => `Still the old name on ${hubs.join(", ")} until it connects`,

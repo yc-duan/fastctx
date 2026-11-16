@@ -25,7 +25,9 @@ import { effortLabel } from "./effort-slider";
 import { fileRow, mentionAt, mentioned, type FileWords, type FoundFile } from "./mention";
 import { FileLinks } from "./file-links";
 import { fileKind } from "./file-kind";
-import { FilePage } from "../side/file-page";
+import { FileView, type ViewTab } from "../files/view";
+import type { DiffLine, WriteFact } from "../world/run-facts";
+import { TalkChanges } from "./changed";
 import { whyOf } from "../world/again";
 import { JobsPanel, type Job, type OutputLines } from "./jobs-panel";
 import { AgentBox } from "./agent-box";
@@ -84,6 +86,21 @@ const NAMING_LOOK_MS = 50;
 
 /** The mark of an agent named "Claude" or "Codex". */
 const markOf = (agent: string) => (/claude/i.test(agent) ? "claude" : "codex");
+
+/** The lines of a write, read where its machine keeps them: a record to a
+ *  line, no more of them than a change is drawn to. */
+async function keptLines(lines: (machine: string, path: string, decoding: Decoding) => Promise<OutputLines>, write: WriteFact): Promise<DiffLine[] | null> {
+  const diff = write.diff;
+  if (!diff) return null;
+  const raw = await lines(diff.machine, diff.path, { kind: "file", encoding: "utf-8" });
+  try {
+    const length = Math.min(raw.extent.length, 2000);
+    const read = length ? await raw.read(0, length, new AbortController().signal) : [];
+    return read.map((line) => JSON.parse(line) as DiffLine);
+  } finally {
+    void raw.close().catch(() => {});
+  }
+}
 
 export interface Someone {
   /** "Claude" or "Codex": the agent by the name it goes by. */
@@ -208,6 +225,8 @@ export interface PageOptions {
   /** The panel beside the conversation: its plan, its goal, and who works
    *  with it (`side/parts.ts`). */
   side?: SideSeams | undefined;
+  /** Where a file is shown among its machine's folders. */
+  filesLink?: ((machine: string, path: string) => string) | undefined;
   /** How the list names another conversation, and its family. */
   named?: ((address: Address) => { name: string; agent: "claude" | "codex" }) | undefined;
   /** What the list calls this conversation, where it calls it anything:
@@ -517,6 +536,20 @@ export class ConversationPage {
     if (options.attach) this.attaching(options.attach);
     if (options.composer) void this.share(options.composer);
     const controls = options.controls;
+    // The files it changed (`changed.ts`), read from its own calls: listed
+    // under each turn's last words, and summed in its side.
+    const fileWords = options.side?.files?.words;
+    if (options.side && fileWords) {
+      const self = options.side.self;
+      const lines = options.lines;
+      this.changes = new TalkChanges(options.conversation, {
+        session: `${self.resident}@${self.machine}`,
+        agent: markOf(someone.agent),
+        machine: someone.machine,
+        kept: lines ? (write) => keptLines(lines, write) : undefined,
+      });
+    }
+    const changes = this.changes;
     this.view = new ConversationView(main, options.conversation, {
       words,
       english: words.english,
@@ -549,6 +582,17 @@ export class ConversationPage {
       turnCalls: options.calls,
       openAgent: options.side ? (id) => this.side?.openAgent(id) ?? false : undefined,
       openFile: (machine, path) => this.openFile(machine, path),
+      changed:
+        changes && fileWords
+          ? {
+              words: fileWords,
+              turn: (turn) => changes.turn(turn),
+              whole: () => changes.whole(),
+              last: () => changes.last(),
+              open: (machine, path) => void this.readFile(machine, path, null, "changes"),
+              all: () => void this.side?.openChanges(),
+            }
+          : undefined,
       named: options.named,
     });
     // The card at a fork's head goes back to where it came from.
@@ -593,6 +637,8 @@ export class ConversationPage {
           const said = headline(step.tool, null, words, () => null, true);
           return [said.action, said.object].filter(Boolean).join(" ");
         },
+        openFile: (machine, path, tab) => void this.readFile(machine, path, null, tab),
+        detail: whyOf,
       });
     }
     // For how long a way has been broken, and why, as the note says it.
@@ -998,6 +1044,7 @@ export class ConversationPage {
     this.view.update(this.read);
     this.read = false;
     this.drawAgents();
+    this.drawChanged();
     this.drawTurnActs();
     this.finder.refresh();
     this.drawState();
@@ -1016,6 +1063,22 @@ export class ConversationPage {
   /** The desk's own buttons in the head. */
   private tools: HTMLElement[] = [];
   private agentsSeen = "";
+  /** The files the conversation changed, as its calls now tell them. */
+  private changes: TalkChanges | null = null;
+  /** The file read in the side, whose changes follow the conversation. */
+  private fileRead: { machine: string; path: string; view: FileView } | null = null;
+
+  /** What the conversation changed, to its side: its card and its page,
+   *  and the file read there. A reading of the calls that found nothing
+   *  new is the one already drawn. */
+  private drawChanged(): void {
+    const { changes, side } = this;
+    if (!changes || !side) return;
+    side.changed(changes.whole());
+    const read = this.fileRead;
+    if (read?.view.element.isConnected) read.view.update(changes.file(read.machine, read.path));
+    else this.fileRead = null;
+  }
 
   /** The host's own agents, as the conversation now knows them, to their
    *  picture whenever one of them moved or the parts held changed. */
@@ -1790,27 +1853,38 @@ export class ConversationPage {
     return kind === "text" && this.readFile(machine, path, attachment);
   }
 
-  /** A file read in the side, over the conversation's parts; false where
-   *  there is no side to read it in. */
-  private readFile(machine: MachineName, path: string, attachment: AttachmentSource | null): boolean {
+  /** A file read in the side, over the conversation's parts, at what it
+   *  holds or at what the conversation did to it; false where there is no
+   *  side to read it in. */
+  private readFile(machine: MachineName, path: string, attachment: AttachmentSource | null, tab: ViewTab | null = null): boolean {
     const { side, options } = this;
     const lines = options.lines;
-    const words = options.side?.words.file;
+    const words = options.side?.files?.words;
     if (!side || !lines || !words) return false;
     const pictures = options.pictures;
-    const page = new FilePage({
+    const view = new FileView({
       words,
+      seams: {
+        lines: (on, at) => lines(on, at, { kind: "file", encoding: null }),
+        picture: pictures ? (on, at, max) => pictures.thumbnail(on, at, max) : undefined,
+        outside: (on, at) => this.fileLinks?.openOutside(on, at, on === machine && at === path ? attachment : null),
+        open: (on, at) => this.openFile(on, at),
+        gone,
+        detail: whyOf,
+      },
       machine,
       path,
-      lines: (on, at) => lines(on, at, { kind: "file", encoding: null }),
-      outside: () => this.fileLinks?.openOutside(machine, path, attachment),
-      open: (on, at) => this.openFile(on, at),
-      picture: pictures ? (on, at, max) => pictures.thumbnail(on, at, max) : undefined,
-      gone,
-      detail: whyOf,
+      changes: this.changes?.file(machine, path) ?? [],
+      tab: tab ?? undefined,
+      now: () => Date.now(),
+      own: true,
+      folders: options.filesLink?.(machine, path),
     });
-    if (side.openFile(page)) return true;
-    page.leave();
+    if (side.openFile(view)) {
+      this.fileRead = { machine, path, view };
+      return true;
+    }
+    view.leave();
     return false;
   }
 

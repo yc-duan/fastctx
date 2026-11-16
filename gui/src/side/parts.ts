@@ -20,13 +20,16 @@ import { GoalBar } from "./goal-bar";
 import { GoalPage } from "./goal-page";
 import { HistoryCard } from "./history-card";
 import { SideHome } from "./home";
+import { SideFiles } from "./files-page";
+import { tally, type ChangedFile } from "../files/model";
+import type { ViewTab } from "../files/view";
 import { SideWhere } from "./where";
 import type { PanePart, PartSet, Peek } from "./pane";
 import type { Following, SideSeams } from "./seams";
 import type { CollabNode, GoalShown, NodeState } from "./types";
 
 /** The side's own parts, as their marks are named. */
-export const PART = { home: "part:home", goal: "part:goal", history: "part:history" } as const;
+export const PART = { home: "part:home", goal: "part:goal", files: "part:files", history: "part:history" } as const;
 
 export interface PartsContext {
   host: "claude" | "codex";
@@ -41,6 +44,10 @@ export interface PartsContext {
   jump(id: string): void;
   /** What one of the host's agents does this moment, in a few words. */
   doing?(run: AgentRun): string | null;
+  /** Opens a file of the conversation's over the side's parts: to what it
+   *  holds, or to its changes. */
+  openFile?(machine: string, path: string, tab: ViewTab | null): void;
+  detail?(error: unknown): string;
 }
 
 /** The side showing these parts, while their conversation is in focus. */
@@ -119,6 +126,7 @@ export class SideParts implements PartSet {
   /** Everyone who works with the conversation, while their sheet is open. */
   private teamSheet: Sheet | null = null;
   private readonly goalPage: GoalPage;
+  private readonly filesPage: SideFiles | null = null;
   private readonly planPage: PlanPage;
   private readonly stops: (() => void)[] = [];
   private colleagues: CollabNode[] = [];
@@ -172,14 +180,29 @@ export class SideParts implements PartSet {
         page: () => this.frame?.show(PART.goal),
         node: (node) => this.openNode(node),
         team: () => this.openTeam(),
+        files: () => this.frame?.show(PART.files),
+        file: (machine, path) => context.openFile?.(machine, path, "changes"),
       },
       !seams.noGoal,
       this.planPage.element,
+      seams.files?.words ?? null,
     );
     this.parts = [
       { id: PART.home, name: words.home.name, page: this.home },
       ...(seams.noGoal ? [] : [{ id: PART.goal, name: words.pages.goal, page: this.goalPage }]),
     ];
+    if (seams.files) {
+      this.filesPage = new SideFiles({
+        words: seams.files.words,
+        machine: seams.self.machine,
+        list: seams.files.list,
+        home: seams.files.home,
+        open: (machine, path, tab) => context.openFile?.(machine, path, tab),
+        detail: (error) => context.detail?.(error) ?? String(error),
+      });
+      this.parts.push({ id: PART.files, name: seams.files.words.side.name, page: this.filesPage });
+      this.where.files = () => void this.openChanges();
+    }
     // The history its model works with, a page of its own that the mark in
     // the desk's corner opens: its project's, else its own.
     if (seams.history) {
@@ -208,7 +231,10 @@ export class SideParts implements PartSet {
     });
     const following = this.following;
     this.stops.push(
-      seams.where((where) => this.where.show(where)),
+      seams.where((where) => {
+        this.where.show(where);
+        this.filesPage?.place(where);
+      }),
       seams.plan.watch((plan) => this.plan(plan)),
       ...(seams.noGoal ? [] : [seams.goal.watch((goal) => this.goal(goal))]),
       () => following.stop(),
@@ -232,6 +258,21 @@ export class SideParts implements PartSet {
     const run = this.runs.find((at) => at.id === id);
     if (!run) return false;
     this.openNode(nodeOf(run, this.context.host, new Map(), Date.now()));
+    return true;
+  }
+
+  /** The files the conversation changed, as they now stand. */
+  changed(files: ChangedFile[]): void {
+    this.home.files(files);
+    this.filesPage?.changed(files);
+    const words = this.context.seams.files?.words;
+    if (words) this.where.changed(files.length ? tally(files) : null, words.turn.total(files.length));
+  }
+
+  /** All the conversation changed, as a page of the side. */
+  openChanges(): boolean {
+    if (!this.frame || !this.filesPage) return false;
+    this.frame.show(PART.files);
     return true;
   }
 

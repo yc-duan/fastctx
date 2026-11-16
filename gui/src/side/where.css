@@ -202,3 +202,36 @@ button.sw-folder:hover {
     margin-top: 0;
   }
 }
+
+/* What the conversation changed, before where it works: a mark, how many
+   files, the lines added and removed; pressed, its files in the side. */
+.sw-changed {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+  height: 32px;
+  margin-right: var(--space-1);
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-m);
+  color: var(--text-2);
+  font-family: var(--font-reading);
+  font-size: var(--size-text);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  scale: var(--press, 1);
+  transition: background-color var(--hover) var(--ease), color var(--hover) var(--ease);
+}
+
+.sw-changed[hidden] {
+  display: none;
+}
+
+.sw-changed:hover {
+  background: var(--hairline);
+  color: var(--text);
+}
+
+.sw-changed .cf-figures {
+  gap: 6px;
+}

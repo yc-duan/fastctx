@@ -702,3 +702,117 @@
   pointer-events: none;
 }
 
+/* The files a turn changed, under its last words once it is over
+   (`view.ts`, `turnChanged`): one filled box, its head saying how many and
+   by how many lines, a row to a file under it as a list of changed files is
+   read everywhere. The head folds the list; on the latest turn's it also
+   names what the whole conversation changed, the way into its side. */
+.turn-changed {
+  max-width: 100%;
+  margin-top: var(--space-3);
+  border-radius: var(--radius-l);
+  background: var(--fill);
+  overflow: hidden;
+  font-variant-numeric: tabular-nums;
+}
+
+.tc-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0 12px;
+  min-height: 42px;
+  padding: 0 8px 0 6px;
+  color: var(--text-2);
+  white-space: nowrap;
+}
+
+.tc-fold {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 42px;
+  padding: 0 4px 0 8px;
+  color: var(--text);
+  font: inherit;
+}
+
+.tc-fold b {
+  font-family: var(--font-emphasis);
+  font-weight: 400;
+  color: var(--text-strong);
+}
+
+.tc-twist {
+  display: grid;
+  place-items: center;
+  width: 16px;
+  color: var(--text-3);
+  --turn: -90deg;
+  rotate: var(--turn);
+  transition: --turn var(--expand) var(--expand-easing);
+}
+
+.turn-changed.open .tc-twist {
+  --turn: 0deg;
+}
+
+/* What the whole conversation changed: quiet at the head's end. */
+.tc-total {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 30px;
+  margin-left: auto;
+  padding: 0 6px 0 10px;
+  border-radius: var(--radius-m);
+  color: var(--text-2);
+  font: inherit;
+  scale: var(--press, 1);
+  transition: background-color var(--hover) var(--ease), color var(--hover) var(--ease);
+}
+
+.tc-total:hover {
+  background: var(--fill);
+  color: var(--text);
+}
+
+.tc-total > .glyph {
+  rotate: -90deg;
+  color: var(--text-3);
+}
+
+.tc-box {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows var(--expand) var(--expand-easing);
+}
+
+.turn-changed.open > .tc-box {
+  grid-template-rows: 1fr;
+}
+
+.tc-inner {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.turn-changed:not(.open) > .tc-box > .tc-inner {
+  visibility: hidden;
+  transition: visibility 0s var(--expand);
+}
+
+.tc-inner > .cf-files {
+  border-top: 1px solid var(--divider);
+  border-radius: 0;
+  background: none;
+}
+
+.turn-changed .cf-row {
+  min-height: 40px;
+  padding: 0 14px;
+}
+
+.turn-changed .cf-rest {
+  padding-left: 42px;
+}
