@@ -79,7 +79,39 @@ pub(crate) fn verified_path(
 
 pub(crate) fn verified(world: &Path, conversation: &str, source: &Path, expected: &Signature) -> io::Result<()> {
     let target = verified_path(world, conversation, source, expected)?;
+    // An earlier release that stopped after moving the original to its own
+    // archive, before it wrote down that it had, left it there: it is
+    // archived, under that release's name.
+    if !disk::is_there(source)
+        && !disk::is_there(&target)
+        && archived_by_another(world, conversation, source, expected)?
+    {
+        return Ok(());
+    }
     verified_at(source, &target, expected)
+}
+
+/// Whether the original `source` lies in the archive of another release,
+/// as the bytes it was verified to be.
+fn archived_by_another(world: &Path, conversation: &str, source: &Path, expected: &Signature) -> io::Result<bool> {
+    let relative = relative(world, conversation, source)?;
+    let releases = match disk::read_dir(world.join("archive")) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(error),
+    };
+    for release in releases {
+        let original = release?.path().join(conversation).join(&relative);
+        let Some(name) = original.file_name() else { continue };
+        let kept = original.with_file_name(format!("{}.{}", name.to_string_lossy(), expected.digest));
+        match fingerprint(&kept) {
+            Ok(stored) if stored == *expected => return Ok(true),
+            Ok(_) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(false)
 }
 
 /// Completes an archive at the destination recorded before a restart or upgrade.

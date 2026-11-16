@@ -610,6 +610,10 @@ fn mark(node: &Node, hub: &HubId) -> Result<(), String> {
     Ok(())
 }
 
+/// How long after it ended a deed is looked at again for what is seen of
+/// its files afterwards.
+const LINGER_MS: i64 = 30 * 60 * 1000;
+
 /// Every usage file here, as `<ledger>/<date>` with its path, in order.
 fn usage_files(node: &Node) -> Result<Vec<(String, std::path::PathBuf)>, String> {
     let root = node.world.path().join("usage");
@@ -623,6 +627,11 @@ fn usage_files(node: &Node) -> Result<Vec<(String, std::path::PathBuf)>, String>
     for ledger in ledgers {
         let ledger = ledger.map_err(|error| format!("looking at {}: {error}", root.display()))?;
         let Some(dir) = ledger.file_name().to_str().map(str::to_string) else { continue };
+        // Files beside the ledgers (`claude-costs.json`, kept from earlier
+        // releases) are no ledger.
+        if !ledger.file_type().is_ok_and(|kind| kind.is_dir()) {
+            continue;
+        }
         let days = fastctx_platform::disk::read_dir(ledger.path())
             .map_err(|error| format!("looking at {}: {error}", ledger.path().display()))?;
         for day in days {
@@ -747,6 +756,14 @@ fn deeds(
         at["began"] = serde_json::json!(i64::MIN);
         at["deed"] = serde_json::json!("");
     }
+    // What earlier releases kept comes into the book in the background,
+    // older than what came since: once all of it is in, the book is read
+    // again from its start, what is kept already passed by as it is.
+    let imported = crate::activity_book::imported(node);
+    if imported && !at["imported"].as_bool().unwrap_or(false) {
+        at["began"] = serde_json::json!(i64::MIN);
+        at["deed"] = serde_json::json!("");
+    }
     let (began, after) =
         (at["began"].as_i64().unwrap_or(i64::MIN), at["deed"].as_str().unwrap_or_default().to_string());
     let open: BTreeSet<String> =
@@ -837,7 +854,10 @@ fn deeds(
         // Whose it is, as a body's records hold several accounts'.
         deed.body["account"] = serde_json::json!(deed.account);
         anew |= held_anew(&mut at, &scope, holding);
-        if !deed.complete {
+        // Ended lately, it is looked at again for a while: what is seen of
+        // its files in their repository comes after it ends (`seen`).
+        let lately = deed.body["ended"].as_i64().is_some_and(|ended| jiff::Timestamp::now().as_millisecond() - ended < LINGER_MS);
+        if !deed.complete || lately {
             still_open.insert(deed.key.clone());
         }
         deed.body["touched"] = serde_json::json!(touched.get(&deed.key).cloned().unwrap_or_default());
@@ -895,6 +915,7 @@ fn deeds(
     at["began"] = serde_json::json!(last_began);
     at["deed"] = serde_json::json!(last_deed);
     at["open"] = serde_json::json!(still_open);
+    at["imported"] = serde_json::json!(imported);
     library.keep_checkpoint(&name, serde_json::to_vec(&at).map_err(|error| error.to_string())?).map_err(error)
 }
 

@@ -82,7 +82,7 @@ impl Tail {
         let mut line = from;
         for raw in bytes[..end].split_inclusive(|b| *b == b'\n') {
             let content = &raw[..raw.len() - 1];
-            if !content.is_empty() {
+            if !super::quarantine::blank(content) {
                 let Ok(entry) = serde_json::from_slice::<Entry>(content) else {
                     return Ok(Err(Damaged));
                 };

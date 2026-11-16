@@ -587,7 +587,7 @@ function assist(login: Login): string {
           <span class="lg-mark-end">${chevron()}</span>
         </div>
         <div class="lg-fold"><div class="lg-fold-inner"><div class="lg-edit">
-          <div class="choice-row"><span class="choice-name">额度</span><div>${limitRow(grant.limit, who)}<p class="lg-edit-note">${limitSaid(login, grant.limit)}</p></div></div>
+          <div class="choice-row"><span class="choice-name">额度</span><div>${login.family === "claude" ? `${limitRow(grant.limit, who)}<p class="lg-edit-note">${limitSaid(login, grant.limit)}</p>` : `<p class="lg-edit-note">Codex 不按人计额度；可用下方通用限制里的 5 小时额度暂停协助。</p>`}</div></div>
           <div class="choice-row"><span class="choice-name">期限</span>${choices("grant-until", [["none", "不限期"], ["pick", until === "pick" ? escape(grant.until!) : "指定…"]], until, `data-person="${who}"`)}</div>
           <div class="lg-edit-end"><button type="button" class="lg-word lg-danger" data-act="grant-end" data-person="${who}">收回</button></div>
         </div></div></div>

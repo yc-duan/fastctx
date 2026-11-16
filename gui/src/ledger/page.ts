@@ -25,7 +25,7 @@ import type { UsageReport } from "../world/usage";
 import type { UsageCallsPage, UsageCallsQuery } from "../world/usage-calls";
 import { forget, grantsOf, lines, logins as shownLogins, plateOf, setHost, setNet, type Deeds, type Feed, type Login } from "./data";
 import { homePage } from "./home";
-import { askedOf, callsFrom, daysFrom, idOf, netOf, partsOf, type Seen } from "./live";
+import { askedOf, callsFrom, daysFrom, idOf, limitOf, netOf, partsOf, type Seen } from "./live";
 import { fillCharts, loginPage, setUntils } from "./login-page";
 import "./sheets";
 import { actOf, draw, drawnBy, setLinker, state, toast, type How, type Place } from "./state";
@@ -318,6 +318,20 @@ export class AgentsPage implements Page {
     };
     const assisted = (login: Login, person: string, limit: number | null, until: Date | null, line = lines[login.id]): AccountChange => {
       const { machine, agent, home } = this.recordOf(login);
+      // The assistance as the hub keeps it: what of it is not changed now
+      // goes back as it was, never worked out again from what is shown (an
+      // earlier release's dollars, a daily limit this page does not show).
+      const kept = options.store.world
+        .peek()
+        ?.accounts.hubs.flatMap((hub) => hub.assists)
+        .find((one) => one.account === person && one.machine === machine && one.agent === agent && (one.home ?? null) === (home ?? null));
+      const same = !!kept && limitOf(kept, plateOf(login)) === limit;
+      const limits = same
+        ? { ...(kept.weekly ? { weekly: kept.weekly } : {}), ...(kept.share ? { share: kept.share } : {}), ...(kept.daily ? { daily: kept.daily } : {}) }
+        : limit !== null
+          ? // Dollars for a node that knows no shares; a share for one that does.
+            { weekly: Math.round(((plateOf(login) * limit) / 100) * 1_000_000), share: limit, ...(kept?.daily ? { daily: kept.daily } : {}) }
+          : {};
       return {
         change: "assist",
         machine,
@@ -326,8 +340,7 @@ export class AgentsPage implements Page {
         ...(home ? { home } : {}),
         assisting: true,
         ...(until ? { until: until.toISOString() } : {}),
-        // Dollars for a node that knows no shares; a share for one that does.
-        ...(limit !== null ? { weekly: Math.round(((plateOf(login) * limit) / 100) * 1_000_000), share: limit } : {}),
+        ...limits,
         ...(line?.fiveStop ? { five_hour: line.fiveStop } : {}),
         ...(line?.turns ? { turns: line.turns } : {}),
       } as AccountChange;

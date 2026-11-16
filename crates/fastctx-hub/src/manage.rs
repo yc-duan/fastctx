@@ -495,6 +495,19 @@ fn apply(
             if assisting && share.is_some_and(|share| share == 0 || share > 100) {
                 return Err("the share of the login's week is a percent from 1 to 100".to_string());
             }
+            // A sender that knows no shares (an earlier release) sends the
+            // weekly dollars it was shown and no share: where those dollars
+            // are what was kept, it changed something else of the
+            // assistance, and the share it does not know stays. Other dollars
+            // are a limit it set in dollars.
+            let share = share.or_else(|| {
+                directory
+                    .assists
+                    .iter()
+                    .find(|existing| existing.machine == machine && existing.account == to && existing.agent == agent && existing.home == home)
+                    .filter(|existing| existing.weekly.is_some() && existing.weekly == weekly)
+                    .and_then(|existing| existing.share)
+            });
             let assist = Assist {
                 machine,
                 account: to,

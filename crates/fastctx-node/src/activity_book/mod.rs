@@ -361,6 +361,11 @@ fn kept(db: &rusqlite::Connection, deed: &str) -> fastctx_storage::Result<bool> 
 /// deleted while it could not be told (`sealing::reconcile`).
 /// Opens the book, or a handle that says why it did not open
 /// (`fastctx_storage::Database::open_or_unavailable`).
+/// Whether everything earlier releases kept of the book is in it now.
+pub(crate) fn imported(node: &Node) -> bool {
+    migrate::ready(&node.book_database).unwrap_or(false)
+}
+
 pub(crate) fn open(world: &fastctx_types::layout::WorldDir) -> fastctx_storage::Database {
     fastctx_storage::Database::open_or_unavailable(&world.path().join("book.sqlite3"), "", |db| {
         fastctx_storage::versions::apply(

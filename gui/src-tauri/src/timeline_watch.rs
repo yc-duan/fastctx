@@ -303,15 +303,22 @@ pub(crate) async fn open(
         }
         Err((false, error)) => (None, Some(error)),
     };
+    // The watch acknowledged as one the conversation's machine cannot give
+    // (an older release there, said only once the request reached it): the
+    // conversation opens the older way unless a copy here holds it.
+    let unwatched_older = unwatched.as_ref().is_some_and(older);
     let page = match reader.fetch_typed(TimelineFrom::Latest, PAGE_EVENTS).await {
         Ok(page) => page,
-        Err(error) if older(&error) && unwatched.is_none() => return Ok(None),
+        Err(error) if older(&error) && (unwatched.is_none() || unwatched_older) => return Ok(None),
         Err(error) => return Err(unwatched.unwrap_or(error).into()),
     };
     // Unwatched, only a copy that holds the conversation opens it.
     if let Some(error) = unwatched
         && page.revision.is_none()
     {
+        if older(&error) {
+            return Ok(None);
+        }
         return Err(error.into());
     }
     opened(reader, page, watching).await.map(Some)

@@ -1314,7 +1314,11 @@ export class ConversationPage {
       // Nothing was kept here.
     }
     this.unbindShared = bindComposer(this.input, session.draft, undefined, this.textNote, (this.options.words.english ? enText : zhText).limit);
-    if (typed.trim() && !this.input.value.trim()) this.setWords(typed, caret);
+    // Words this page kept on its own join the shared draft: in its place
+    // where that is empty, after it where it holds other words.
+    const shared = this.input.value;
+    if (typed.trim() && !shared.trim()) this.setWords(typed, caret);
+    else if (typed.trim() && !shared.includes(typed.trim())) this.setWords(`${shared}${shared.endsWith("\n") ? "" : "\n"}${typed}`);
     // A chip kept here went with its draft if that was sent meanwhile.
     if (this.picked) {
       const now = this.draftEpoch()!;

@@ -207,7 +207,10 @@ on("add-grant", () => {
   const taken = new Set(grantsOf(login).map((grant) => grant.person));
   const plate = plateOf(login);
   const fable = login.family === "claude";
-  let limited = true;
+  // Only Claude Code's spending is counted per person; a Codex login's
+  // assistance is held to its five-hour line alone.
+  const limitable = login.family === "claude";
+  let limited = limitable;
   let percent = 25;
   let custom = "";
   let until: { said: string; at: Date } | null = null;
@@ -219,12 +222,12 @@ on("add-grant", () => {
       <span class="as-label">额度</span>
       <div>
         <div class="as-modes">
-          <button type="button" class="as-mode chosen" data-mode="limit"><b>设上限</b><small>对方仅可见本人额度与用量</small></button>
-          <button type="button" class="as-mode" data-mode="none"><b>不设上限</b><small>对方可见整个号的额度</small></button>
+          ${limitable ? `<button type="button" class="as-mode chosen" data-mode="limit"><b>设上限</b><small>对方仅可见本人额度与用量</small></button>` : ""}
+          <button type="button" class="as-mode${limitable ? "" : " chosen"}" data-mode="none"><b>不设上限</b><small>${limitable ? "对方可见整个号的额度" : "Codex 不按人计额度，可用通用限制里的 5 小时额度暂停协助"}</small></button>
         </div>
         <div class="as-swap">
           <div class="as-percent"></div>
-          <p class="as-shared off">共用全部额度　每周 ${whole(plate)}${fable ? `　Fable 至多 ${whole(plate / 2)}` : ""}</p>
+          <p class="as-shared${limitable ? " off" : ""}">共用全部额度　每周 ${whole(plate)}${fable ? `　Fable 至多 ${whole(plate / 2)}` : ""}</p>
         </div>
       </div>
       <span class="as-label">期限</span>
@@ -276,6 +279,7 @@ on("add-grant", () => {
       percent = Number(choice.dataset.value);
       custom = "";
       paint();
+  percents.classList.toggle("off", !limited);
     } else if (target.closest("[data-do]") && !go.disabled) {
       const person = input.value.trim().toLowerCase();
       if (deeds) {
