@@ -397,32 +397,63 @@ pub(super) async fn upload(
     if node.is_here(&machine) {
         check_project(node, acting, &target).await?;
     }
+    let scope = composer.clone();
     let mut prepared = prepare_sent(node, &from, acting, &machine, target, file.clone(), operation, composer).await?;
     if prepared.arriving.is_none() {
         return complete_sent(node, &from, prepared).await;
     }
-    let arriving = prepared.arriving.as_mut().expect("unfinished");
-    let mut skipped = Skipping(arriving.received);
-    let mut sent = 0u64;
-    loop {
-        let piece = source
-            .recv_up_to(UPLOAD_CHUNK)
-            .await
-            .map_err(broke)?
-            .ok_or_else(|| broke("the uploader disconnected before ending the file"))?;
-        if piece.is_empty() {
-            break;
+    let (home, attachment) = (prepared.home.clone(), prepared.attachment.clone());
+    let result = async {
+        let arriving = prepared.arriving.as_mut().expect("unfinished");
+        let mut skipped = Skipping(arriving.received);
+        let mut sent = 0u64;
+        loop {
+            let piece = source
+                .recv_up_to(UPLOAD_CHUNK)
+                .await
+                .map_err(broke)?
+                .ok_or_else(|| broke("the uploader disconnected before ending the file"))?;
+            if piece.is_empty() {
+                break;
+            }
+            sent = sent.checked_add(piece.len() as u64).ok_or_else(|| failure("upload length overflow"))?;
+            if sent > file.size {
+                return Err(failure("the source exceeded its declared length"));
+            }
+            arriving.write(skipped.past(&piece))?;
         }
-        sent = sent.checked_add(piece.len() as u64).ok_or_else(|| failure("upload length overflow"))?;
-        if sent > file.size {
-            return Err(failure("the source exceeded its declared length"));
+        if sent != file.size {
+            return Err(broke("the source ended before its declared length"));
         }
-        arriving.write(skipped.past(&piece))?;
+        complete_sent(node, &from, prepared).await
     }
-    if sent != file.size {
-        return Err(broke("the source ended before its declared length"));
+    .await;
+    if let Err(error) = &result {
+        failed_here(node, &home, &attachment, scope.as_ref(), error).await;
     }
-    complete_sent(node, &from, prepared).await
+    result
+}
+
+/// An upload into a draft kept on this machine that did not complete
+/// leaves its card failed, not arriving, on every device showing the draft:
+/// the device that sent it may be gone and never try again. Asked again
+/// under the same operation, it arrives from what is already here. A draft
+/// kept on another machine hears of it only when its upload is tried again.
+async fn failed_here(
+    node: &Arc<Node>,
+    home: &Written,
+    attachment: &Attachment,
+    scope: Option<&UploadScope>,
+    error: &Failure,
+) {
+    let Some(scope) = scope else { return };
+    if !node.is_here(home) {
+        return;
+    }
+    let resident = attachment.conversation().resident.clone();
+    if let Err(failure) = crate::composer::uploads::failed(node, &resident, scope, &error.message).await {
+        node.log.line(format_args!("recording a sent attachment's failure: {failure}"));
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -441,30 +472,39 @@ pub(super) async fn receive(
     if !node.is_here(&machine) {
         return Err(failure("a device uploads to the conversation's machine"));
     }
+    let scope = composer.clone();
     let mut prepared = prepare_sent(node, from, acting, &machine, target, file.clone(), operation, composer).await?;
     if prepared.arriving.is_none() {
         return complete_sent(node, from, prepared).await;
     }
-    let mut arriving = prepared.arriving.take().expect("unfinished");
-    if resumes {
-        stream.say(&UploadStart { from: arriving.received }).await.map_err(broke)?;
+    let (home, attachment) = (prepared.home.clone(), prepared.attachment.clone());
+    let result = async {
+        let mut arriving = prepared.arriving.take().expect("unfinished");
+        if resumes {
+            stream.say(&UploadStart { from: arriving.received }).await.map_err(broke)?;
+        }
+        let skip = Skipping(if resumes { 0 } else { arriving.received });
+        let wanted = if resumes { file.size - arriving.received } else { file.size };
+        let ((back, _), taken) = stream
+            .take_writing(wanted, (arriving, skip), |(arriving, skip), bytes| {
+                arriving.write(skip.past(bytes)).map_err(|e| e.message)
+            })
+            .await
+            .map_err(broke)?;
+        arriving = back;
+        taken.map_err(broke)?;
+        let end: String = stream.hear_step("uploaded").await.map_err(broke)?;
+        if end != "uploaded" {
+            return Err(failure("the uploader did not end the file"));
+        }
+        prepared.arriving = Some(arriving);
+        let uploaded = complete_sent(node, from, prepared).await?;
+        stream.done().await.map_err(broke)?;
+        Ok(uploaded)
     }
-    let skip = Skipping(if resumes { 0 } else { arriving.received });
-    let wanted = if resumes { file.size - arriving.received } else { file.size };
-    let ((back, _), taken) = stream
-        .take_writing(wanted, (arriving, skip), |(arriving, skip), bytes| {
-            arriving.write(skip.past(bytes)).map_err(|e| e.message)
-        })
-        .await
-        .map_err(broke)?;
-    arriving = back;
-    taken.map_err(broke)?;
-    let end: String = stream.hear_step("uploaded").await.map_err(broke)?;
-    if end != "uploaded" {
-        return Err(failure("the uploader did not end the file"));
+    .await;
+    if let Err(error) = &result {
+        failed_here(node, &home, &attachment, scope.as_ref(), error).await;
     }
-    prepared.arriving = Some(arriving);
-    let uploaded = complete_sent(node, from, prepared).await?;
-    stream.done().await.map_err(broke)?;
-    Ok(uploaded)
+    result
 }

@@ -180,11 +180,16 @@ pub(super) async fn produce(
         let (found, unread) = kept(&room).map_err(failure)?;
         for (slot, attachment, original) in found {
             let item = slot.into_bytes();
-            if library.item(&scope, ConversationAttachment::STREAM, &item).map_err(failure)?.is_some() {
+            let image = attachment.file.media_type.starts_with("image/");
+            // One described alone before, its original not here then, is
+            // described again with it once it is: a missing original was
+            // missing for a while, not for good.
+            if let Some(entry) = library.item(&scope, ConversationAttachment::STREAM, &item).map_err(failure)?
+                && !(entry.objects.is_empty() && original.is_some() && (image || !pictures_only))
+            {
                 continue;
             }
             let mut objects = Vec::new();
-            let image = attachment.file.media_type.starts_with("image/");
             if let Some(path) = original.filter(|_| image || !pictures_only) {
                 let mut file = fastctx_platform::disk::open(&path).map_err(failure)?;
                 let lease = library.put(&mut file, "attachments", LEASE).map_err(failure)?;

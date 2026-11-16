@@ -319,12 +319,12 @@ pub async fn composer_attach_path(
     epoch: u64,
     path: String,
     sent: Channel<u64>,
-) -> Result<AttachmentAdded, String> {
+) -> Result<AttachmentAdded, crate::NotSaid> {
     let world = shell.world();
-    let resident = resident(resident_id)?;
-    let machine = machine(machine_name)?;
+    let resident = resident(resident_id).map_err(refused)?;
+    let machine = machine(machine_name).map_err(refused)?;
     #[cfg(target_os = "android")]
-    crate::android::readiness::wait(&world, machine.as_ref()).await?;
+    crate::android::readiness::wait(&world, machine.as_ref()).await.map_err(refused)?;
     let attachment = crate::uploading::composer_path(
         &world,
         resident,
@@ -344,7 +344,27 @@ pub async fn composer_attach_path(
 pub async fn composer_attach_bytes(
     shell: tauri::State<'_, Shell>,
     request: tauri::ipc::Request<'_>,
-) -> Result<AttachmentAdded, String> {
+) -> Result<AttachmentAdded, crate::NotSaid> {
+    attach_bytes(shell, request).await.map_err(|failed| match failed {
+        Attaching::Refused(message) => refused(message),
+        Attaching::NotDone(said) => said,
+    })
+}
+
+/// How taking bytes into the shared input came to nothing: what the page
+/// sent could not be taken, or the upload itself did not go.
+enum Attaching {
+    Refused(String),
+    NotDone(crate::NotSaid),
+}
+
+impl From<String> for Attaching {
+    fn from(message: String) -> Self {
+        Attaching::Refused(message)
+    }
+}
+
+async fn attach_bytes(shell: tauri::State<'_, Shell>, request: tauri::ipc::Request<'_>) -> Result<AttachmentAdded, Attaching> {
     let header = |name: &str| -> Result<String, String> {
         crate::decoded(
             request
@@ -365,7 +385,7 @@ pub async fn composer_attach_bytes(
     #[cfg(not(target_os = "android"))]
     let bytes = match request.body() {
         tauri::ipc::InvokeBody::Raw(bytes) => bytes.clone(),
-        _ => return Err("the attachment did not come as bytes".into()),
+        _ => return Err(Attaching::Refused("the attachment did not come as bytes".into())),
     };
     let world = shell.world();
     #[cfg(target_os = "android")]
@@ -379,7 +399,8 @@ pub async fn composer_attach_bytes(
         header("type")?,
         bytes,
     )
-    .await?;
+    .await
+    .map_err(Attaching::NotDone)?;
     Ok(AttachmentAdded {
         attachment: attachment.attachment,
         updated: attachment.updated.map_err(|error| error.message),

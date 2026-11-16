@@ -16,10 +16,30 @@ pub(crate) fn reference(
     super::index::reference(&node.world.conversation(resident), wanted).map_err(failure)
 }
 
+/// The small picture kept at home of an attachment whose original is kept
+/// elsewhere. Its conversation deleted, a conversation forked from it keeps
+/// the picture along with the attachment (`keep_inherited`), and is asked.
 pub(crate) fn preview(node: &Node, wanted: &Attachment) -> Result<fastctx_types::thumbnail::Thumbnail, Failure> {
     let resident = &wanted.conversation().resident;
-    reference(node, resident, wanted)?.ok_or_else(|| failure("this attachment has no registered original"))?;
-    read_json(&node.world.conversation(resident).attachments().join(wanted.id.as_str()).join("preview.json"))
+    let own = reference(node, resident, wanted).and_then(|kept| {
+        kept.ok_or_else(|| failure("this attachment has no registered original"))?;
+        read_json(&preview_in(node, resident, wanted))
+    });
+    let Err(missing) = own else { return own };
+    for heir in node.residents.everyone().filter(|one| one.id != *resident && one.removed.is_none()) {
+        let path = preview_in(node, &heir.id, wanted);
+        if fastctx_platform::disk::is_there(&path)
+            && matches!(super::index::reference(&node.world.conversation(&heir.id), wanted), Ok(Some(_)))
+            && let Ok(preview) = read_json(&path)
+        {
+            return Ok(preview);
+        }
+    }
+    Err(missing)
+}
+
+fn preview_in(node: &Node, resident: &ResidentId, wanted: &Attachment) -> PathBuf {
+    node.world.conversation(resident).attachments().join(wanted.id.as_str()).join("preview.json")
 }
 
 pub(crate) fn listed(node: &Node, resident: &ResidentId) -> Result<Vec<Attachment>, Failure> {
@@ -90,7 +110,22 @@ fn keep_inherited(
     if node.residents.deleted(child).is_some() || node.residents.is_deleting(child) {
         return Err(failure("the destination conversation was deleted before its attachments were inherited"));
     }
-    super::index::inherit(&node.world.conversation(parent), &node.world.conversation(child), retained).map_err(failure)
+    super::index::inherit(&node.world.conversation(parent), &node.world.conversation(child), retained).map_err(failure)?;
+    // The small picture of one kept elsewhere goes with it, so the fork shows
+    // it after the conversation it came from is deleted.
+    for file in retained.iter().filter(|file| !node.is_me(&file.owner.machine)) {
+        let (from, to) = (preview_in(node, parent, file), preview_in(node, child, file));
+        if fastctx_platform::disk::is_there(&from) && !fastctx_platform::disk::is_there(&to) {
+            let copied = to.parent().map(fastctx_platform::ensure_private_dir).transpose().and_then(|_| {
+                let bytes = fastctx_platform::disk::read(&from)?;
+                fastctx_platform::disk::write(&to, bytes)
+            });
+            if let Err(error) = copied {
+                node.log.line(format_args!("keeping a forked attachment's small picture: {error}"));
+            }
+        }
+    }
+    Ok(())
 }
 
 pub(super) fn optional<T: serde::de::DeserializeOwned>(path: &Path) -> Result<Option<T>, Failure> {

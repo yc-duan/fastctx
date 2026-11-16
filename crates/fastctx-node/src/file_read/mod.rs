@@ -148,7 +148,7 @@ async fn from_library(
     range: FileRange,
     sender: &Sender,
 ) -> Option<FileReadResult> {
-    let passing = crate::attachments::kept_here::original(node, &receipt.file).await?;
+    let passing = crate::attachments::kept_here::original(node, receipt).await?;
     let description = fastctx_types::attachments::AttachmentFile {
         name: receipt.file.name.clone(),
         media_type: receipt.file.media_type.clone(),

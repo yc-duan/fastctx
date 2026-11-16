@@ -66,6 +66,9 @@ let serial = 0;
 export class AttachTray {
   readonly element: HTMLElement;
   private items: Attached[] = [];
+  /** What went with words already shown in the conversation, out of the
+   *  tray while it is still on its way (`setAside`). */
+  private readonly aside = new Set<Attached>();
   private readonly rows: AttachmentRows;
   private sent = new Map<string, number>();
   /** Whether files other than images are taken now: why not, when not. */
@@ -187,21 +190,49 @@ export class AttachTray {
     return this.items.filter((item) => !item.image).length;
   }
 
-  /** What the World answered for each attached file that has arrived. */
-  get arrived(): unknown[] {
-    return this.items.filter((item) => item.state === "ready").map((item) => item.ref);
-  }
-
-  /** Sends what is held, one after another, since the first may make the
-   *  place the rest go to; resolves when all have arrived, or rejects with
-   *  the first that did not. */
-  async sendAll(): Promise<void> {
-    for (const item of [...this.items]) {
+  /** Sends `items`, what is held now unless said, one after another, since
+   *  the first may make the place the rest go to; resolves when all have
+   *  arrived, or rejects with the first that did not. What is attached
+   *  meanwhile is not among them: it stays held for the next words. */
+  async sendAll(items: readonly Attached[] = this.items): Promise<void> {
+    for (const item of [...items]) {
       // One taken out while the others went is not sent.
-      if (item.state === "ready" || !this.items.includes(item)) continue;
+      if (item.state === "ready" || (!this.items.includes(item) && !this.aside.has(item))) continue;
       await this.send(item);
       if (item.state === "failed") throw new Error(item.why ?? item.name);
     }
+  }
+
+  /** Takes `items` out of the tray while they go on their way: the words
+   *  they went with already show them in the conversation, so they are not
+   *  shown twice (`putBack` returns them if the words did not go). */
+  setAside(items: readonly Attached[]): void {
+    for (const item of items) if (this.items.includes(item)) this.aside.add(item);
+    this.items = this.items.filter((item) => !this.aside.has(item));
+    this.draw();
+    this.changed();
+  }
+
+  /** Puts what was set aside back at the head of the tray, as it was: its
+   *  words did not go, and it goes again with the next. */
+  putBack(items: readonly Attached[]): void {
+    const back = items.filter((item) => this.aside.delete(item));
+    if (!back.length) return;
+    this.items = [...back, ...this.items];
+    this.draw();
+    this.changed();
+  }
+
+  /** Lets go of `items`, which went with their words; what was attached
+   *  since stays. Their pictures stay with the words they went with. */
+  went(items: readonly Attached[]): void {
+    for (const item of items) {
+      this.aside.delete(item);
+      this.sent.delete(item.key);
+    }
+    this.items = this.items.filter((item) => !items.includes(item));
+    this.draw();
+    this.changed();
   }
 
   /** What was sent no longer fits where the words will go (another

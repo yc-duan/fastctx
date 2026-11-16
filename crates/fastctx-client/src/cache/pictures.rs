@@ -117,9 +117,12 @@ pub(crate) fn thumbnail(root: &Path, key: &str, max: u32) -> io::Result<Option<T
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(error),
     };
-    let damaged = || io::Error::new(io::ErrorKind::InvalidData, format!("the kept picture {key}-{max} is damaged"));
-    let split = bytes.iter().position(|byte| *byte == b'\n').ok_or_else(damaged)?;
-    let shape: Shape = serde_json::from_slice(&bytes[..split]).map_err(|_| damaged())?;
+    // A kept picture that cannot be read is let go of and made again.
+    let Some(split) = bytes.iter().position(|byte| *byte == b'\n') else { return forgotten(root, key, max) };
+    let Ok(shape) = serde_json::from_slice::<Shape>(&bytes[..split]) else { return forgotten(root, key, max) };
+    if split + 1 >= bytes.len() {
+        return forgotten(root, key, max);
+    }
     use base64::Engine as _;
     Ok(Some(Thumbnail {
         content: shape.content,
@@ -128,6 +131,14 @@ pub(crate) fn thumbnail(root: &Path, key: &str, max: u32) -> io::Result<Option<T
         mime: shape.mime,
         base64: base64::engine::general_purpose::STANDARD.encode(&bytes[split + 1..]),
     }))
+}
+
+fn forgotten(root: &Path, key: &str, max: u32) -> io::Result<Option<Thumbnail>> {
+    match std::fs::remove_file(thumbnail_path(root, key, max)) {
+        Ok(()) => Ok(None),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error),
+    }
 }
 
 /// Keeps a picture made at `max` pixels.
@@ -166,10 +177,14 @@ pub(crate) fn original(root: &Path, key: &str) -> io::Result<Option<(PathBuf, At
 }
 
 /// Where a file named `name` goes in `folder`; `None` when the name cannot
-/// name a file there on its own.
+/// name a file there on its own. A name that begins with a dot, as
+/// `.gitignore` does, is a file's name like any other; the folder's own
+/// record of what it keeps is not.
 pub(crate) fn place(folder: &Path, name: &str) -> Option<PathBuf> {
     let path = folder.join(name);
-    let plain = path.parent() == Some(folder) && !name.starts_with('.') && !(cfg!(windows) && name.contains(':'));
+    let plain = path.parent() == Some(folder)
+        && !matches!(name, "" | "." | ".." | ".file.json")
+        && !(cfg!(windows) && name.contains(':'));
     plain.then_some(path)
 }
 

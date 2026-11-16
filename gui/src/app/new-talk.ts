@@ -1305,22 +1305,27 @@ ${words.assistantWorks(option.assistant.owner ?? "")}` : said,
     }
     keepChoice(option.agent, this.model, this.effort);
     const { words } = this.options;
-    // The words go into the conversation at once; what happens on the way
-    // stays out of sight unless it fails.
+    // What goes with these words is what is attached now; anything attached
+    // while they are on their way stays for the next words.
+    const going = [...(this.tray?.held ?? [])];
+    // The words go into the conversation at once, with what they carry,
+    // which leaves the input then; what happens on the way stays out of
+    // sight unless it fails.
     if (this.starting) {
       this.starting.begin({
         text,
-        attached: (this.tray?.held ?? []).map(({ name, size, image, preview }) => ({ name, size, image, preview })),
+        attached: going.map(({ name, size, image, preview }) => ({ name, size, image, preview })),
       });
+      this.tray?.setAside(going);
       this.element.classList.add("begun");
       this.input.value = "";
       this.fit();
     }
     try {
-      if (this.tray?.count) {
+      if (going.length && this.tray) {
         if (!this.starting) this.note.textContent = words.sendingFiles;
         try {
-          await this.tray.sendAll();
+          await this.tray.sendAll(going);
         } catch (error) {
           throw new NotSent(String(error));
         }
@@ -1333,18 +1338,18 @@ ${words.assistantWorks(option.assistant.owner ?? "")}` : said,
         text,
         model: this.model,
         effort: this.effort,
-        attachments: (this.tray?.arrived ?? []) as Attachment[],
+        attachments: going.filter((item) => item.state === "ready").map((item) => item.ref) as Attachment[],
         account: login ? { hub: login.hub, account: login.account } : null,
         focus: this.focus,
         home: option.home,
-        filesOn: option.assistant && (this.tray?.files ?? 0) > 0 ? this.filesOn : null,
+        filesOn: option.assistant && going.some((item) => !item.image) ? this.filesOn : null,
         mcpOff: this.mcpOff,
       });
       // Begun: the page is empty again for the next conversation here.
       this.input.value = "";
       remember(this.kept, null);
       this.fit();
-      this.tray?.take();
+      this.tray?.went(going);
       this.draft = null;
       this.town = this.options.town;
       this.focusTouched = false;
@@ -1357,6 +1362,7 @@ ${words.assistantWorks(option.assistant.owner ?? "")}` : said,
       this.options.opened(address, this.starting?.seed() ?? null);
     } catch (error) {
       this.busy = false;
+      this.tray?.putBack(going);
       const why = error instanceof Error ? error.message : String(error);
       if (this.starting) {
         // Said under the words that went; the words come back to the input

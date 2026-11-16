@@ -2238,10 +2238,20 @@ function liveTalk(address: Address): DeskTalk {
     pictures: {
       thumbnail: async (machine, path, max) => thumbnailUrl(await thumbnail(machine, path, max)),
       attachmentThumbnail: async (attachment, max) => thumbnailUrl(await attachmentThumbnail(attachment, max)),
-      // A file the user sent is asked for as large as it is known to be,
-      // which a gone original's host record answers too.
+      // A file the user sent is its original, brought to this computer and
+      // read whole here; where it cannot be (a phone, or one only its host's
+      // record holds), the largest picture its machine makes of it.
       original: async (picture, max, held) => {
-        if (picture.attachment) return blobOf(await attachmentThumbnail(picture.attachment, max));
+        if (picture.attachment) {
+          if (onComputer() && here) {
+            const fetched = await fetchAttachment(picture.attachment, held).catch(() => null);
+            if (fetched?.source === "original") {
+              const read = await readBytes(here, fetched.path, held);
+              return new Blob([Uint8Array.from(atob(read.base64), (char) => char.charCodeAt(0))]);
+            }
+          }
+          return blobOf(await attachmentThumbnail(picture.attachment, Math.max(max, WHOLE_PICTURE)));
+        }
         const read = await readBytes(picture.machine, picture.path!, held);
         return new Blob([Uint8Array.from(atob(read.base64), (char) => char.charCodeAt(0))]);
       },
@@ -2544,6 +2554,9 @@ function openWorldId(id: string): void {
 /** How long a page whose machine does not tell what holds of it now hears
  *  nothing before it holds to the World's listing instead. */
 const QUIET_BEFORE_LISTED = 10_000;
+/** The longer side asked of a sent picture's machine when its original
+ *  cannot be read whole here: as large as pictures are. */
+const WHOLE_PICTURE = 8192;
 
 /** The conversations looked at last, alive (`conversation/kept.ts`). */
 const keptTalks = new KeptPages<DeskTalk>();

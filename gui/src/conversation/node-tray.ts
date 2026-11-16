@@ -7,6 +7,7 @@ import type { Attachment } from "../world/attachments";
 import type { ComposerAttachmentAdded, ComposerUpdated } from "../world/composer";
 import { viewAttached } from "./attached-pictures";
 import { AttachmentRows, type AttachmentRow } from "./attachment-rows";
+import { onPhone } from "../app/phone";
 
 /** A failure in the World's words, with interface wording where available. */
 export type Failed = (why: string, said?: string) => void;
@@ -46,6 +47,9 @@ export class NodeTray {
   private readonly removals = new Set<Promise<void>>();
   private state: ComposerSessionState | null = null;
   private closed = false;
+  /** On a phone each file is read whole into memory to go: the last one
+   *  started there, which the next waits for. */
+  private going: Promise<void> = Promise.resolve();
 
   constructor(
     private readonly words: AttachWords,
@@ -167,7 +171,11 @@ export class NodeTray {
 
   private send(upload: Upload): Promise<void> {
     if (upload.flight) return upload.flight;
-    const flight = this.perform(upload);
+    // Several picked at once go one after another on a phone, not all
+    // held in memory together.
+    const alone = onPhone();
+    const flight = alone ? this.going.then(() => this.perform(upload)) : this.perform(upload);
+    if (alone) this.going = flight.catch(() => {});
     upload.flight = flight;
     const finished = () => { delete upload.flight; };
     void flight.then(finished, finished);

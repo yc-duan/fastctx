@@ -35,7 +35,16 @@ impl World {
         })
         .await?;
         if let Some(found) = found {
-            return Ok(Some(found));
+            let fitting = match &attachment {
+                AttachmentSource::Upload(receipt) => {
+                    let receipt = receipt.file.clone();
+                    blocking(move || as_sent(found, &receipt)).await?
+                }
+                _ => Some(found),
+            };
+            if let Some(found) = fitting {
+                return Ok(Some(found));
+            }
         }
         let mut reading = self.read_attachment(attachment.clone());
         told(reading.progress());
@@ -122,6 +131,31 @@ impl World {
         .await
         .map(Some)
     }
+}
+
+/// A kept original as the receipt asking for it names it. One whose length
+/// is not what was sent was changed on this device (a program saved into
+/// it): it is let go of and read again. The same bytes sent under another
+/// name are given under that name, beside the first, so a program chosen by
+/// the name opens it.
+fn as_sent(
+    (path, file): (PathBuf, AttachmentFile),
+    sent: &fastctx_types::attachments::UploadFile,
+) -> std::io::Result<Option<(PathBuf, AttachmentFile)>> {
+    let folder = path.parent().expect("a kept original has a folder").to_path_buf();
+    if std::fs::metadata(&path)?.len() != sent.size {
+        std::fs::remove_dir_all(&folder)?;
+        return Ok(None);
+    }
+    if file.name == sent.name {
+        return Ok(Some((path, file)));
+    }
+    let Some(named) = pictures::place(&folder, &sent.name) else { return Ok(Some((path, file))) };
+    if !named.try_exists()? && std::fs::hard_link(&path, &named).is_err() {
+        std::fs::copy(&path, &named)?;
+    }
+    let file = AttachmentFile { name: sent.name.clone(), media_type: sent.media_type.clone(), source: file.source };
+    Ok(Some((named, file)))
 }
 
 struct Pending(PathBuf);

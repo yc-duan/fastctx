@@ -180,12 +180,12 @@ async fn fetch(
     base: &Path,
 ) -> Result<(), (&'static str, String)> {
     let holder = &attachment.owner.machine;
-    if !node.is_me(holder)
-        && node.links().iter().any(|link| link.view().member(holder).is_some_and(|member| !member.online))
-    {
-        return Err((OFFLINE, format!("{holder} is offline")));
-    }
-    let unread = |why: String| (UNREAD, why);
+    // Its machine offline, its original may still be in the asset library
+    // here: it is read all the same, and only a read that fails is told as
+    // that machine being offline.
+    let offline = !node.is_me(holder)
+        && node.links().iter().any(|link| link.view().member(holder).is_some_and(|member| !member.online));
+    let unread = |why: String| if offline { (OFFLINE, format!("{holder} is offline")) } else { (UNREAD, why) };
     let unplaced = |why: String| (UNPLACED, why);
     let part = base.join(format!(".{}.part", attachment.id));
     let name = file_name(&attachment.file.name);

@@ -63,7 +63,7 @@ pub(crate) async fn attachment(
     // that machine offline or not (§28.27).
     if !node.is_here(&machine)
         && let fastctx_types::attachments::AttachmentSource::Upload(receipt) = &attachment
-        && let Some(passing) = crate::attachments::kept_here::original(node, &receipt.file).await
+        && let Some(passing) = crate::attachments::kept_here::original(node, receipt).await
     {
         let path = crate::world::native(passing.path());
         return here(node, ThumbnailRequest { path, max }, None).await;
@@ -90,13 +90,13 @@ pub(crate) async fn attachment(
         return crate::attachments::preview(node, receipt);
     }
     let upload = match &attachment {
-        fastctx_types::attachments::AttachmentSource::Upload(receipt) => Some(receipt.file.clone()),
+        fastctx_types::attachments::AttachmentSource::Upload(receipt) => Some(receipt.clone()),
         _ => None,
     };
     match here(node, ThumbnailRequest { path: String::new(), max }, Some(attachment)).await {
         // Its own copy here gone: drawn from the asset library here (QQ17).
         Err(failure) => match upload {
-            Some(file) => match crate::attachments::kept_here::original(node, &file).await {
+            Some(receipt) => match crate::attachments::kept_here::original(node, &receipt).await {
                 Some(passing) => {
                     let path = crate::world::native(passing.path());
                     here(node, ThumbnailRequest { path, max }, None).await

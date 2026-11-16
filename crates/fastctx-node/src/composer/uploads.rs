@@ -270,8 +270,17 @@ pub async fn failed(node: &Arc<Node>, id: &ResidentId, scope: &UploadScope, why:
     }
     let attachment = record.attachment.id.clone();
     next.uploads.get_mut(&scope.operation).expect("known upload").outcome = Outcome::Failed { why: why.into() };
-    mark(&mut next, scope, &attachment, Some(why), "");
-    storage::publish_then(node, id, &mut cell, next, clear_failure(node, id, &scope.operation)).await
+    let listed = mark(&mut next, scope, &attachment, Some(why), "");
+    storage::publish_then(node, id, &mut cell, next, clear_failure(node, id, &scope.operation)).await?;
+    // Taken out of its words while it arrived, it goes on no more: what
+    // arrived of it is let go of now, not kept until the node next starts.
+    if !listed {
+        let (forsaking, whose) = (node.clone(), id.clone());
+        fastctx_platform::task::spawn_blocking(move || crate::attachments::forsake(&forsaking, &whose, &[attachment]))
+            .await
+            .map_err(|error| Failure::new(error.to_string()))?;
+    }
+    Ok(())
 }
 
 /// A disconnected writer remains known even if persisting its failure failed.

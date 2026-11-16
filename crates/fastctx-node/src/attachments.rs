@@ -330,12 +330,15 @@ async fn arrival(
         Prior::Again(attachment, mut guard) => {
             let directory = Path::new(&attachment.path).parent().map(Path::to_path_buf);
             let arriving = match directory {
-                Some(directory) => {
-                    fastctx_platform::task::spawn_blocking(move || arriving_in(&directory, *attachment, resume))
-                        .await
-                        .map_err(failure)
-                        .and_then(|arriving| arriving)
-                }
+                // Its directory may have gone with its part as the node
+                // started (`unpublished`): it arrives again from nothing.
+                Some(directory) => fastctx_platform::task::spawn_blocking(move || {
+                    fastctx_platform::disk::create_dir_all(&directory).map_err(failure)?;
+                    arriving_in(&directory, *attachment, resume)
+                })
+                .await
+                .map_err(failure)
+                .and_then(|arriving| arriving),
                 None => Err(failure("the upload's receipt names no directory")),
             };
             match arriving {
@@ -534,7 +537,10 @@ pub async fn receive(
             return Err(failure("the uploader did not end the file"));
         }
         let uploaded = finish(arriving, guard.as_mut(), Some(stream.receipt_work())).await?;
-        stream.done().await.map_err(failure)?;
+        // The file is attached by now: a receipt that could not be said is a
+        // broken connection, and the same operation asked again answers with
+        // it, rather than an upload that failed.
+        stream.done().await.map_err(broke)?;
         Ok(uploaded)
     }
     .await;
