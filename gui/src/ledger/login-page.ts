@@ -529,11 +529,15 @@ export const limitSaid = (login: Login, limit: number | null) =>
     ? "与号主共用全部额度。对方可见整个号的 5 小时、7 天与 Fable 额度条，不可见他人用量与设置。"
     : `每周 ${whole((plateOf(login) * limit) / 100)}${login.family === "claude" ? `，其中 Fable 至多 ${whole((plateOf(login) * limit) / 200)}` : ""}。对方仅可见本人额度与用量。`;
 
-export const limitChoices = (limit: number | null): [string, string][] => {
-  const of: [string, string][] = [["none", "不设上限"], ["10", "10%"], ["15", "15%"], ["20", "20%"], ["25", "25%"], ["50", "50%"]];
-  if (limit !== null && !of.some(([value]) => value === String(limit))) of.push([String(limit), `${limit}%`]);
-  return of;
-};
+/** The ways a person's limit is set: none, a few shares, or any share
+ *  from 1 to 100 typed in its field, which takes effect as it is left or
+ *  Enter is pressed (the user, 2026-11-17: "应该能输入一个特定的百分比"). */
+const LIMITS = ["10", "25", "50"];
+function limitRow(limit: number | null, who: string): string {
+  const typed = limit !== null && !LIMITS.includes(String(limit)) ? String(limit) : "";
+  const options = choices("grant-limit", [["none", "不设上限"], ...LIMITS.map((value): [string, string] => [value, `${value}%`])], typed ? "" : String(limit ?? "none"), `data-person="${who}"`);
+  return `<div class="as-limit">${options}<label class="as-custom${typed ? " chosen" : ""}"><input type="text" inputmode="numeric" placeholder="自定" value="${typed}" data-limit-of="${who}" aria-label="自定比例"><span>%</span></label></div>`;
+}
 
 /** This week's quota dollars by person, as the login's usage says. */
 function spent(login: Login): { mine: number; mineFable: number; of: (person: string) => { week: number; fable: number }; elsewhere: number } | null {
@@ -583,7 +587,7 @@ function assist(login: Login): string {
           <span class="lg-mark-end">${chevron()}</span>
         </div>
         <div class="lg-fold"><div class="lg-fold-inner"><div class="lg-edit">
-          <div class="choice-row"><span class="choice-name">额度</span><div>${choices("grant-limit", limitChoices(grant.limit), String(grant.limit ?? "none"), `data-person="${who}"`)}<p class="lg-edit-note">${limitSaid(login, grant.limit)}</p></div></div>
+          <div class="choice-row"><span class="choice-name">额度</span><div>${limitRow(grant.limit, who)}<p class="lg-edit-note">${limitSaid(login, grant.limit)}</p></div></div>
           <div class="choice-row"><span class="choice-name">期限</span>${choices("grant-until", [["none", "不限期"], ["pick", until === "pick" ? escape(grant.until!) : "指定…"]], until, `data-person="${who}"`)}</div>
           <div class="lg-edit-end"><button type="button" class="lg-word lg-danger" data-act="grant-end" data-person="${who}">收回</button></div>
         </div></div></div>
@@ -618,16 +622,34 @@ on("edit-grant", (row) => {
   item.classList.toggle("open", open);
   state.editing = open ? row.dataset.person! : null;
 });
-on("grant-limit", (button) => {
+on("grant-limit", (button) => setLimit(button, button.dataset.value === "none" ? null : Number(button.dataset.value)));
+/** Sets the limit of the person `element` names. */
+function setLimit(element: HTMLElement, limit: number | null): void {
   const login = current();
-  const grant = grantOf(button);
-  if (!login || !grant) return;
-  const limit = button.dataset.value === "none" ? null : Number(button.dataset.value);
+  const grant = grantOf(element);
+  if (!login || !grant || grant.limit === limit) return;
   if (deeds) void deeds.assist(login, grant.person, limit, grant.until === null ? null : untilOf(login, grant.person)).then(() => draw());
   else {
     grant.limit = limit;
     draw();
   }
+}
+// A share typed in its field takes effect as the field is left, or Enter
+// is pressed in it; what is not a share from 1 to 100 is put back.
+document.addEventListener("change", (event) => {
+  const field = (event.target as HTMLElement | null)?.closest?.<HTMLInputElement>("input[data-limit-of]");
+  if (!field) return;
+  const typed = Number(field.value.replace(/[^0-9]/g, ""));
+  if (!(typed >= 1 && typed <= 100)) {
+    draw();
+    return;
+  }
+  field.dataset.person = field.dataset.limitOf;
+  setLimit(field, typed);
+});
+document.addEventListener("keydown", (event) => {
+  const field = (event.target as HTMLElement | null)?.closest?.<HTMLInputElement>("input[data-limit-of]");
+  if (field && event.key === "Enter") field.blur();
 });
 /** When an assistance ends, as the World said it; the specimen keeps none. */
 let untilOf: (login: Login, person: string) => Date | null = () => null;
