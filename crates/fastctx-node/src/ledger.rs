@@ -296,43 +296,34 @@ pub(crate) async fn take_latest(
     let source = match source {
         projected::Seen::At(source) => source,
         // A project of no entries waits for nothing.
-        projected::Seen::Awaited { .. } | projected::Seen::Pulling if latest == 0 => return Ok(()),
-        // The machines its account may work on changed: what was kept of
-        // the projection for those of before goes now, not once the new one
-        // came, unless they are all among those it may work on now
-        // (codex-357de52a #2, third round #6); it is taken from that one
-        // then. Never replicated meanwhile (third round #1).
-        projected::Seen::Awaited { scope, machines } => {
-            let readable = {
-                let (looking, name) = (node.clone(), name.clone());
-                fastctx_platform::task::blocking(move || {
-                    Ok::<_, String>(projected::still_readable(&looking, &name, &scope, &machines))
-                })
-                .await?
-            };
-            if !kept_projected || readable {
-                return Err(format!("the hub's projection of {name}'s ledger is not here yet"));
+        projected::Seen::Waiting { .. } if latest == 0 => return Ok(()),
+        // The projection for the account and machines of now is not here:
+        // what was kept of one for others goes now, not once that one came,
+        // unless it was for the same account and machines all among those it
+        // may work on now (codex-357de52a #2, third round #6, fourth round
+        // #3). Never replicated meanwhile (third round #1).
+        projected::Seen::Waiting { scope, machines } => {
+            if kept_projected && !projected_readable(node, name, move |node, name| projected::still_readable(node, name, &scope, &machines)).await? {
+                let_go_projected(node, name).await?;
             }
-            let _syncing = node.syncing.lock().await;
-            let (clearing, cleared) = (node.clone(), name.clone());
-            fastctx_platform::task::blocking(move || projected::clear(&clearing, &cleared))
-                .await
-                .map_err(|error| format!("letting go of {name}'s ledger as it was projected before: {error}"))?;
-            crate::context::invalidations::project(node, name);
-            node.memory_changed();
-            return Err(format!(
-                "the hub's projection of {name}'s ledger for the machines its account may work on now is not here yet"
-            ));
+            return Err(format!("the hub's projection of {name}'s ledger is not here yet"));
         }
         // A project kept from its projection is never mixed with entries
-        // replicated beside it, and a hub that writes projections is never
-        // replicated from: it waits for the projection to be here.
-        projected::Seen::Pulling => return Err(format!("the hub's projection of {name}'s ledger is not here yet")),
+        // replicated beside it.
         projected::Seen::Not if kept_projected => {
             return Err(format!("the hub's projection of {name}'s ledger is not here yet"));
         }
         projected::Seen::Not => return take(node, link, name, town, latest).await,
     };
+    // Kept for another account, or machines it may no longer all work on:
+    // gone before anything is taken, so nothing of it is read while the
+    // projection is made again (codex-357de52a, fourth round #3).
+    if kept_projected {
+        let looked = source.clone();
+        if !projected_readable(node, name, move |node, name| projected::readable_for(node, name, &looked)).await? {
+            let_go_projected(node, name).await?;
+        }
+    }
     if !link.view().member_keeps_project(&link.view().me, town) {
         return Err("an assisting host keeps only the project index".into());
     }
@@ -342,6 +333,30 @@ pub(crate) async fn take_latest(
     if changed {
         crate::context::invalidations::project(node, name);
     }
+    node.memory_changed();
+    Ok(())
+}
+
+/// Whether what is kept of `name` from a projection may be read on, as
+/// `readable` says, looked at off the runtime.
+async fn projected_readable(
+    node: &Arc<Node>,
+    name: &TownName,
+    readable: impl FnOnce(&Node, &TownName) -> bool + Send + 'static,
+) -> Result<bool, String> {
+    let (looking, name) = (node.clone(), name.clone());
+    fastctx_platform::task::spawn_blocking(move || readable(&looking, &name)).await.map_err(|error| error.to_string())
+}
+
+/// Lets go of what is kept of `name` from a projection it may no longer be
+/// read from, with the ledgers' sync held.
+async fn let_go_projected(node: &Arc<Node>, name: &TownName) -> Result<(), String> {
+    let _syncing = node.syncing.lock().await;
+    let (clearing, cleared) = (node.clone(), name.clone());
+    fastctx_platform::task::blocking(move || projected::clear(&clearing, &cleared))
+        .await
+        .map_err(|error| format!("letting go of {name}'s ledger as it was projected before: {error}"))?;
+    crate::context::invalidations::project(node, name);
     node.memory_changed();
     Ok(())
 }

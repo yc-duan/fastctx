@@ -62,7 +62,9 @@ pub(crate) fn register(node: &Arc<Node>) {
             node,
             family,
             |_node, _asked: serde_json::Value, _resolved: serde_json::Value| async move {
-                Err::<(), _>(Failure::new("pages were removed in Fastctx beta.18; this page's call was not carried out"))
+                Err::<(), _>(Failure::new(
+                    "pages were removed in Fastctx beta.18: this page's call is not done now, and whether an attempt before the update took effect is not known",
+                ))
             },
         );
     }

@@ -56,7 +56,7 @@ pub(crate) const FROM: &str = "projected-from.json";
 /// Where the scope and the machines a project is kept for are written down,
 /// beside it: kept for machines the account may still all work on, it may
 /// be read on while the projection for more comes (third round #6).
-const FOR: &str = "projected-for.json";
+pub(crate) const FOR: &str = "projected-for.json";
 
 #[derive(serde::Serialize, serde::Deserialize)]
 struct KeptFor {
@@ -88,24 +88,20 @@ pub(crate) enum Seen {
     /// the machines that account may work on now, as the directory here
     /// tells them — what the hub writes too (`for_reader::usable`).
     At(Source),
-    /// That account's records are here whole and hold no such stream: the
-    /// machines it may work on changed, or the hub has not written one for
-    /// it yet. Never another stream of the project in its place: one made
-    /// for other machines tells what this account may no longer know
-    /// (codex-357de52a #2). Named are the scope and machines it is awaited
-    /// for.
-    Awaited { scope: String, machines: BTreeSet<MachineName> },
-    /// The hub writes projections and that account's records are not here
-    /// whole yet: waited for.
-    Pulling,
-    /// No account here reads the project from records, or the hub is of a
-    /// release before them.
+    /// The hub writes projections and that stream is not here yet: the
+    /// account's records not here whole yet, or the asset library not open,
+    /// or the machines it may work on changed, or the hub has not written
+    /// one for it yet. Never another stream of the project in its place, nor
+    /// entries replicated beside: they tell what this account may not know
+    /// (codex-357de52a #2, third round #1, fourth round #4). Named are the
+    /// scope and machines it is waited for.
+    Waiting { scope: String, machines: BTreeSet<MachineName> },
+    /// No account here reads the project, or the hub is of a release before
+    /// projections.
     Not,
 }
 
 pub(crate) fn source(node: &Node, link: &Link, town: &TownId) -> Seen {
-    let Some(assets) = node.assets.as_ref() else { return Seen::Not };
-    let library = &assets.library;
     let view = link.view();
     let hub = link.membership().id.to_string();
     let mut accounts = node.accounts_on(link, &Acting::Here);
@@ -116,25 +112,33 @@ pub(crate) fn source(node: &Node, link: &Link, town: &TownId) -> Seen {
         return Seen::Not;
     };
     let Some(opened) = view.directory.account(&account).map(|found| found.opened) else { return Seen::Not };
+    let scope = fastctx_types::assets::records_key(&hub, &account, opened.as_millisecond());
+    let machines = fastctx_net::ledger::reader_machines(&view.directory, &account, None);
     // A hub that speaks the asset sync writes projections: what is not here
     // of one is waited for.
-    let otherwise = if view.asset_sync > 0 { Seen::Pulling } else { Seen::Not };
-    let scope = fastctx_types::assets::records_key(&hub, &account, opened.as_millisecond());
+    let otherwise =
+        |scope, machines| if view.asset_sync > 0 { Seen::Waiting { scope, machines } } else { Seen::Not };
+    let Some(assets) = node.assets.as_ref() else { return otherwise(scope, machines) };
+    let library = &assets.library;
     let Some(held) = library.held_scopes().ok().and_then(|held| held.into_iter().find(|held| held.key == scope)) else {
-        return otherwise;
+        return otherwise(scope, machines);
     };
     if held.pulled != Some(held.holding) {
-        return otherwise;
+        return otherwise(scope, machines);
     }
-    let machines = fastctx_net::ledger::reader_machines(&view.directory, &account, None);
     let stream = fastctx_net::ledger::reader_stream(town, &fastctx_net::ledger::reader_digest(&machines));
     match library.streams(&scope) {
         Ok(streams) if streams.iter().any(|(name, _)| *name == stream) => {
             Seen::At(Source { scope, stream, machines })
         }
-        Ok(_) => Seen::Awaited { scope, machines },
-        Err(_) => otherwise,
+        Ok(_) => Seen::Waiting { scope, machines },
+        Err(_) => otherwise(scope, machines),
     }
+}
+
+/// `still_readable`, for what the project is to be taken from now.
+pub(crate) fn readable_for(node: &Node, name: &TownName, source: &Source) -> bool {
+    still_readable(node, name, &source.scope, &source.machines)
 }
 
 /// Whether what is kept of `name` was kept for `scope` and machines all

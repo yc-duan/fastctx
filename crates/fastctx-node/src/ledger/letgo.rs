@@ -158,7 +158,7 @@ pub(super) async fn remove_copy(node: &Arc<Node>, town: &TownName) -> io::Result
         for folder in COPY {
             super::remove(&directory.path().join(folder))?;
         }
-        for file in ["refused.json", super::projected::FROM] {
+        for file in ["refused.json", super::projected::FROM, super::projected::FOR] {
             match fastctx_platform::disk::remove_file(directory.path().join(file)) {
                 Err(error) if error.kind() != io::ErrorKind::NotFound => return Err(error),
                 _ => {}
@@ -195,6 +195,7 @@ pub(super) async fn remove(node: &Arc<Node>, town: &TownName) -> io::Result<()> 
             "projection-through.json",
             "ledger-import.json",
             super::projected::FROM,
+            super::projected::FOR,
         ] {
             match fastctx_platform::disk::remove_file(directory.path().join(file)) {
                 Err(error) if error.kind() != io::ErrorKind::NotFound => return Err(error),

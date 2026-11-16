@@ -90,8 +90,8 @@ fn item_of(home: &Home, job: &JobRecord) -> String {
 /// When the account `account` was opened, as the hub this machine is on
 /// tells it; none when it is not known here now.
 fn opened_of(node: &Node, account: &fastctx_types::access::HubAccount) -> Option<jiff::Timestamp> {
-    node.link_of(&account.hub)
-        .and_then(|link| link.view().directory.account(&account.account).map(|found| found.opened))
+    crate::assets::activity::opened_ms(node, &account.hub, &account.account)
+        .and_then(|opened| jiff::Timestamp::from_millisecond(opened).ok())
 }
 
 /// Whether `job` ran for `account` as it is now: one begun before it was
@@ -197,6 +197,9 @@ fn holdings(library: &Library) -> Result<u64, String> {
 /// scopes are held as now.
 fn look(node: &Arc<Node>, whole: bool, held: u64) -> Result<u64, String> {
     let Some(kept) = node.assets.as_ref() else { return Ok(held) };
+    // Whose each job was and where it goes are judged by one account
+    // (`assets::activity::Pinned`).
+    let _pinned = crate::assets::activity::Pinned::begin();
     let library = &kept.library;
     let error = |error: fastctx_content::Error| error.to_string();
     let written_since = library

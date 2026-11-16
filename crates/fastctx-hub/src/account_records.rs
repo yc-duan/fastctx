@@ -476,9 +476,21 @@ pub(crate) async fn ask_as(
                     ) {
                         Ok(()) => {}
                         // Refused before anything was written: nothing of it
-                        // stands.
+                        // stands. An earlier write of it given up on as its
+                        // answer did not come may have been taken since —
+                        // the library's writer goes on with it — and its staged
+                        // revision written over by this one: what the library
+                        // holds is published, so neither the file nor the
+                        // index is left behind it (codex-357de52a, fourth
+                        // round #9).
                         Err(crate::assets::mirror::NotTaken::Refused(why)) => {
                             let _ = fastctx_platform::disk::remove_file(&staging);
+                            if let Err(error) = caught_up(&hub, &slot, &mut records, &account, opened, &record) {
+                                hub.log.line(format_args!(
+                                    "publishing {} {} from the asset library after a write was refused: {error}",
+                                    record.metadata.kind, record.metadata.key
+                                ));
+                            }
                             return Err(why);
                         }
                         // Failed as it wrote: taken if the library holds this

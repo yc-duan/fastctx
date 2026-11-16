@@ -105,12 +105,8 @@ pub(crate) fn writable(
     account: &AccountName,
     stream: &str,
 ) -> Result<Option<(String, i64)>, String> {
-    let Some(opened) =
-        node.link_of(hub).and_then(|link| link.view().directory.account(account).map(|found| found.opened))
-    else {
-        return Ok(None);
-    };
-    let name = fastctx_types::assets::records_key("", account, opened.as_millisecond());
+    let Some(opened) = opened_ms(node, hub, account) else { return Ok(None) };
+    let name = fastctx_types::assets::records_key("", account, opened);
     let name = name.rsplit('/').next().unwrap_or_default().to_string();
     let Some(scope) = proposed(node, hub, Readers::Account { account: account.clone() }, &name)? else {
         return Ok(None);
@@ -128,10 +124,65 @@ pub(crate) fn writable(
 /// hub's clock and this machine's differ, in milliseconds.
 const CLOCKS: i64 = 2 * 60 * 1000;
 
+/// When each account, by network and name, was opened, as a look found it
+/// first: none for one not known then.
+type Openings = BTreeMap<(String, String), Option<i64>>;
+
+std::thread_local! {
+    /// The openings of the look running on this thread (`Pinned`).
+    static PINNED: std::cell::RefCell<Option<Openings>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Holds, on this thread, when each account was opened as a look finds it
+/// first, till it is dropped: what was judged an account's and the scope it
+/// is written into are of the same account, even one made again as the look
+/// ran (codex-357de52a, fourth round #1). Nested, the outer one holds.
+pub(crate) struct Pinned(bool);
+
+impl Pinned {
+    pub(crate) fn begin() -> Self {
+        Pinned(PINNED.with(|pinned| {
+            let mut pinned = pinned.borrow_mut();
+            let first = pinned.is_none();
+            if first {
+                *pinned = Some(BTreeMap::new());
+            }
+            first
+        }))
+    }
+}
+
+impl Drop for Pinned {
+    fn drop(&mut self) {
+        if self.0 {
+            PINNED.with(|pinned| *pinned.borrow_mut() = None);
+        }
+    }
+}
+
 /// When `account` of `hub` was opened, in milliseconds, as the hub this
-/// machine is on tells it; none when it is not known here now.
-fn opened_ms(node: &Node, hub: &HubId, account: &AccountName) -> Option<i64> {
-    node.link_of(hub).and_then(|link| link.view().directory.account(account).map(|found| found.opened.as_millisecond()))
+/// machine is on tells it — as the look running found it first; none when
+/// it is not known here now.
+pub(crate) fn opened_ms(node: &Node, hub: &HubId, account: &AccountName) -> Option<i64> {
+    let read = || {
+        node.link_of(hub).and_then(|link| link.view().directory.account(account).map(|found| found.opened.as_millisecond()))
+    };
+    let pinned = PINNED.with(|pinned| {
+        pinned.borrow().as_ref().map(|pinned| pinned.get(&(hub.to_string(), account.to_string())).copied())
+    });
+    match pinned {
+        None => read(),
+        Some(Some(opened)) => opened,
+        Some(None) => {
+            let opened = read();
+            PINNED.with(|pinned| {
+                if let Some(pinned) = pinned.borrow_mut().as_mut() {
+                    pinned.insert((hub.to_string(), account.to_string()), opened);
+                }
+            });
+            opened
+        }
+    }
 }
 
 /// Whether what was done at `at` (milliseconds) is `account`'s: done before
@@ -139,9 +190,17 @@ fn opened_ms(node: &Node, hub: &HubId, account: &AccountName) -> Option<i64> {
 /// opened so, it was another's of that name, made again since, and goes
 /// into none of this one's records (codex-357de52a; `incarnations`).
 pub(crate) fn of_this(node: &Node, hub: &HubId, account: &AccountName, at: i64) -> bool {
+    of_this_between(node, hub, account, at, at)
+}
+
+/// As `of_this`, for what was done from `began` to `ended`: done at all
+/// after the account was opened, as the hub's clock tells, and all of it
+/// after this machine first saw it so, as its own tells — an hour across
+/// that moment may hold what the one before did (fourth round #2).
+fn of_this_between(node: &Node, hub: &HubId, account: &AccountName, began: i64, ended: i64) -> bool {
     opened_ms(node, hub, account).is_none_or(|opened| {
-        opened <= at.saturating_add(CLOCKS)
-            && node.incarnations.since(node, hub, account, opened).is_none_or(|since| at >= since)
+        opened <= ended.saturating_add(CLOCKS)
+            && node.incarnations.since(node, hub, account, opened).is_none_or(|since| began >= since)
     })
 }
 
@@ -193,6 +252,7 @@ fn look(
 ) -> Result<(), String> {
     let Some(assets) = node.assets.as_ref() else { return Ok(()) };
     let _looking = LOOKING.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let _pinned = Pinned::begin();
     let machine: String = assets.device()[..8].iter().map(|byte| format!("{byte:02x}")).collect();
     let shared = Shared { body: crate::timeline::born_shared::shared_body(node, hub), owner };
     came_into_force(node, hub, shared.body.as_deref())?;
@@ -336,7 +396,7 @@ fn hours(node: &Arc<Node>, hub: &HubId, home: Option<&AccountName>, stream: &str
         // The book rounds what was done down to its hour: an hour that ends
         // after the account was opened may hold what was done for it
         // (codex-357de52a, third round #5).
-        if !of_this(node, hub, &account, hour.at.saturating_add(HOUR_MS - 1)) {
+        if !of_this_between(node, hub, &account, hour.at, hour.at.saturating_add(HOUR_MS - 1)) {
             continue;
         }
         let key = format!("{HOURS}{}/{}/{}/{}/{}", hour.at, hour.session, hour.agent, hour.held, hour.account);

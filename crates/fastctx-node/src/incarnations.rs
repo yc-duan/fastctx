@@ -11,9 +11,12 @@
 //! The moment is noted as the directory comes (`world::directory_changed`),
 //! before anything can be asked here for the account made again: work for an
 //! account comes through a hub whose directory holds it. An account this
-//! machine never saw another of, or saw first when it began noting — an
-//! install from before this, a network joined — has no moment: the margin
-//! alone tells.
+//! machine never saw another of its name — one seen here first, as an
+//! install from before this began noting, a network joined, an account new
+//! or shown to this machine anew — has no moment: nothing done here was
+//! another's of its name that this machine knew, and the margin alone tells
+//! (codex-357de52a, fourth round #7). A clock set back past the moment can
+//! let what was done before it seem done after: not guarded.
 
 use std::collections::BTreeMap;
 use std::sync::Mutex;
@@ -41,19 +44,24 @@ type Book = BTreeMap<String, BTreeMap<String, Seen>>;
 
 #[derive(Default)]
 pub(crate) struct Incarnations {
-    book: Mutex<Option<Book>>,
+    book: Mutex<Option<Held>>,
+}
+
+/// The book, and whether it changed since it was last kept.
+struct Held {
+    book: Book,
+    unkept: bool,
 }
 
 impl Incarnations {
     /// Notes the accounts `directory` of `hub` holds: one opened otherwise
-    /// than it was seen before, or not seen before on a network seen before,
-    /// is seen so from now on. Call as the directory comes.
+    /// than it was seen before is seen so from now on; one not seen before
+    /// has no moment. Call as the directory comes.
     pub(crate) fn saw(&self, node: &Node, hub: &HubId, directory: &Directory) {
         let now = jiff::Timestamp::now().as_millisecond();
         self.with(node, |book| {
-            let watched = book.contains_key(hub.as_str());
             let accounts = book.entry(hub.to_string()).or_default();
-            let mut changed = !watched;
+            let mut changed = false;
             for account in &directory.accounts {
                 let opened = account.opened.as_millisecond();
                 match accounts.get_mut(account.name.as_str()) {
@@ -63,7 +71,7 @@ impl Incarnations {
                         changed = true;
                     }
                     None => {
-                        accounts.insert(account.name.to_string(), Seen { opened, since: watched.then_some(now) });
+                        accounts.insert(account.name.to_string(), Seen { opened, since: None });
                         changed = true;
                     }
                 }
@@ -79,7 +87,6 @@ impl Incarnations {
         let now = jiff::Timestamp::now().as_millisecond();
         let mut found = None;
         self.with(node, |book| {
-            let watched = book.contains_key(hub.as_str());
             let accounts = book.entry(hub.to_string()).or_default();
             match accounts.get(account.as_str()) {
                 Some(seen) if seen.opened == opened => {
@@ -92,8 +99,7 @@ impl Incarnations {
                     true
                 }
                 None => {
-                    found = watched.then_some(now);
-                    accounts.insert(account.to_string(), Seen { opened, since: found });
+                    accounts.insert(account.to_string(), Seen { opened, since: None });
                     true
                 }
             }
@@ -102,21 +108,25 @@ impl Incarnations {
     }
 
     /// Runs `change` on the book, read first where it is not yet, and keeps
-    /// it where `change` says it changed. A book that cannot be read is begun
-    /// again, as from an install from before it.
+    /// it where `change` says it changed, or an earlier change could not be
+    /// kept (fourth round #8). A book that cannot be read is begun again, as
+    /// from an install from before it.
     fn with(&self, node: &Node, change: impl FnOnce(&mut Book) -> bool) {
         let path = node.world.path().join(FILE);
         let mut held = self.book.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        let book = held.get_or_insert_with(|| {
-            fastctx_net::link::state::read_or(&path, Book::new()).unwrap_or_else(|error| {
+        let held = held.get_or_insert_with(|| Held {
+            book: fastctx_net::link::state::read_or(&path, Book::new()).unwrap_or_else(|error| {
                 node.log.line(format_args!("reading when accounts were first seen here: {error}"));
                 Book::new()
-            })
+            }),
+            unkept: false,
         });
-        if change(book)
-            && let Err(error) = fastctx_net::link::state::write(&path, &*book)
-        {
-            node.log.line(format_args!("keeping when accounts were first seen here: {error}"));
+        held.unkept |= change(&mut held.book);
+        if held.unkept {
+            match fastctx_net::link::state::write(&path, &held.book) {
+                Ok(()) => held.unkept = false,
+                Err(error) => node.log.line(format_args!("keeping when accounts were first seen here: {error}")),
+            }
         }
     }
 }
