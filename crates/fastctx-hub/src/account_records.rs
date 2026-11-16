@@ -155,6 +155,8 @@ pub(crate) async fn ask_as(
                     return Err("this record belongs to another conversation".into());
                 }
 
+                let probe = probe(&slot, &records, &kind, &key, Value::Null)?;
+                caught_up(&hub, &slot, &mut records, &account, opened, &probe)?;
                 let record = if records.entries.contains_key(&(kind.clone(), key.clone())) {
                     let path = slot.path(&kind, &key);
                     Some(storage::read(&path)?)
@@ -200,6 +202,11 @@ pub(crate) async fn ask_as(
                 if kind == fastctx_types::history::RECORD_KIND && deleted && !parent_deleted {
                     return Err("history documents are retired as a new revision; their versions are preserved".into());
                 }
+                // A revision the asset library took whose file was not
+                // published is published first: what is checked against is
+                // what was accepted.
+                let probe = probe(&slot, &records, &kind, &key, if deleted { Value::Null } else { body.clone() })?;
+                caught_up(&hub, &slot, &mut records, &account, opened, &probe)?;
                 let identity = (kind.clone(), key.clone());
                 let before = records.entries.get(&identity);
                 if let Some(access) = &access
@@ -443,6 +450,7 @@ pub(crate) async fn ask_as(
                 // as its truth; the file is its projection (design §15).
                 let place = crate::assets::mirror::place_of(&hub.assets, &account, opened, &record)?;
                 let first = place.is_some();
+                let mut projected = true;
                 let failure = if let Some(place) = place {
                     permitted(&hub, &hub.store(), &from, &member_key, &account, opened, access.as_ref())?;
                     if let Some((history_author, submitted)) = &history_author {
@@ -461,12 +469,24 @@ pub(crate) async fn ask_as(
                     if let Err(why) =
                         crate::assets::mirror::take_first(&hub.assets, std::slice::from_ref(&place), std::slice::from_ref(&record))
                     {
-                        let _ = fastctx_platform::disk::remove_file(&staging);
-                        return Err(why);
+                        // Not taken is not known from the error alone: what the
+                        // library holds says. Not known, the staged revision
+                        // stays for whoever reads it next, or the next opening.
+                        match crate::assets::mirror::version_held(&hub.assets, &account, opened, &record) {
+                            Ok(Some(held)) if held >= record.metadata.version => {}
+                            Ok(_) => {
+                                let _ = fastctx_platform::disk::remove_file(&staging);
+                                return Err(why);
+                            }
+                            Err(_) => return Err(why),
+                        }
                     }
-                    // Taken: the write stands. A projection not published now
-                    // is published from its staged revision as the hub opens.
+                    // Taken: the write stands. A file not published now is
+                    // published from the library as the record is next asked
+                    // for (`caught_up`), or from its staged revision as the hub
+                    // opens; till then the index stays with the file.
                     if let Err(error) = staged::publish(&path, historical.as_deref(), &staging, &bytes, &record) {
+                        projected = false;
                         hub.log.line(format_args!(
                             "publishing {} {} after the asset library took it: {error}",
                             record.metadata.kind, record.metadata.key
@@ -501,18 +521,20 @@ pub(crate) async fn ask_as(
                         ownership,
                     );
                 }
-                records.bytes = total;
-                records.entries.insert(
-                    identity,
-                    storage::Entry {
-                        metadata: record.metadata.clone(),
-                        size,
-                        history: storage::history_head(&record).map_err(|error| error.to_string())?,
-                        conversation: storage::record_conversation(&record),
-                    },
-                );
-                slot.count.store(records.entries.len(), std::sync::atomic::Ordering::Relaxed);
-                slot.bytes.store(total, std::sync::atomic::Ordering::Relaxed);
+                if projected {
+                    records.bytes = total;
+                    records.entries.insert(
+                        identity,
+                        storage::Entry {
+                            metadata: record.metadata.clone(),
+                            size,
+                            history: storage::history_head(&record).map_err(|error| error.to_string())?,
+                            conversation: storage::record_conversation(&record),
+                        },
+                    );
+                    slot.count.store(records.entries.len(), std::sync::atomic::Ordering::Relaxed);
+                    slot.bytes.store(total, std::sync::atomic::Ordering::Relaxed);
+                }
                 // Keep the account gate until hints are queued, preserving revision order.
                 if first {
                     hint(&hub, &account, opened, &record.metadata);
@@ -535,6 +557,67 @@ pub(crate) async fn ask_as(
     })
     .await
     .map_err(|error| error.to_string())?
+}
+
+/// What finds a record's place in the asset library: the file the hub keeps
+/// of it where there is one, otherwise `body` under its kind and key.
+fn probe(slot: &storage::Slot, records: &storage::Account, kind: &str, key: &str, body: Value) -> Result<Record, String> {
+    if records.entries.contains_key(&(kind.to_string(), key.to_string())) && body.is_null() {
+        return storage::read(&slot.path(kind, key));
+    }
+    Ok(Record {
+        metadata: Metadata { kind: kind.into(), key: key.into(), version: 0, by: None, at: Timestamp::now(), deleted: false },
+        body,
+    })
+}
+
+/// Publishes the revision the asset library holds of `probe`'s record where
+/// the hub's file of it is behind — one the library took whose file was not
+/// published — so the record is read and checked as it was accepted. Call
+/// with the account's records held.
+fn caught_up(
+    hub: &Hub,
+    slot: &storage::Slot,
+    records: &mut storage::Account,
+    account: &AccountName,
+    opened: Timestamp,
+    probe: &Record,
+) -> Result<(), String> {
+    if !crate::assets::mirror::mirrored(&probe.metadata.kind) {
+        return Ok(());
+    }
+    let Some(held) = crate::assets::mirror::held_record(&hub.assets, account, opened, probe)? else { return Ok(()) };
+    let identity = (held.metadata.kind.clone(), held.metadata.key.clone());
+    if identity != (probe.metadata.kind.clone(), probe.metadata.key.clone()) {
+        return Err("the asset library holds another record at this one's place".into());
+    }
+    if records.entries.get(&identity).is_some_and(|entry| entry.metadata.version >= held.metadata.version) {
+        return Ok(());
+    }
+    let bytes = serde_json::to_vec(&held).map_err(|error| error.to_string())?;
+    let (kind, key) = (&held.metadata.kind, &held.metadata.key);
+    let staging = staged::path(slot, kind, key);
+    staged::stage(&staging, &bytes).map_err(words::store)?;
+    let history = staged::archived(kind).then(|| slot.history(kind, key));
+    staged::publish(&slot.path(kind, key), history.as_deref(), &staging, &bytes, &held).map_err(words::store)?;
+    let before = records.entries.get(&identity).map_or(0, |entry| entry.size);
+    records.bytes = records.bytes - before + bytes.len();
+    records.entries.insert(
+        identity,
+        storage::Entry {
+            metadata: held.metadata.clone(),
+            size: bytes.len(),
+            history: storage::history_head(&held).map_err(|error| error.to_string())?,
+            conversation: storage::record_conversation(&held),
+        },
+    );
+    slot.count.store(records.entries.len(), std::sync::atomic::Ordering::Relaxed);
+    slot.bytes.store(records.bytes, std::sync::atomic::Ordering::Relaxed);
+    hub.log.line(format_args!(
+        "published {kind} {key} at revision {} from the asset library, which took it before its file was",
+        held.metadata.version
+    ));
+    Ok(())
 }
 
 /// Publishes a record that has no place in the asset library yet as the

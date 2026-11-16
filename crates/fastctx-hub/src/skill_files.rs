@@ -220,9 +220,26 @@ pub(crate) async fn ask(
                 if let Some(places) = &places
                     && let Err(why) = crate::assets::mirror::take_first(&hub.assets, places, &changes)
                 {
-                    fastctx_platform::disk::remove_file(&path)
-                        .map_err(|error| format!("{why}; withdrawing the skill folder's intent: {error}"))?;
-                    return Err(why);
+                    // Not taken is not known from the error alone: what the
+                    // library holds says. Taken, the intent is published as
+                    // ever; not known, it stays and is published as the hub
+                    // next opens, the library written from it then.
+                    let held = changes
+                        .iter()
+                        .map(|change| {
+                            crate::assets::mirror::version_held(&hub.assets, &account, opened, change)
+                                .map(|held| held.is_some_and(|held| held >= change.metadata.version))
+                        })
+                        .collect::<Result<Vec<bool>, String>>();
+                    match held {
+                        Ok(held) if held.iter().all(|taken| *taken) => {}
+                        Ok(_) => {
+                            fastctx_platform::disk::remove_file(&path)
+                                .map_err(|error| format!("{why}; withdrawing the skill folder's intent: {error}"))?;
+                            return Err(why);
+                        }
+                        Err(_) => return Err(why),
+                    }
                 }
                 for metadata in crate::skill_storage::recover(&slot, &mut records)? {
                     if places.is_some() {

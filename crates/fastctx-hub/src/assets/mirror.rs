@@ -260,6 +260,40 @@ fn held_version(library: &fastctx_content::v2::Library, place: &Place) -> Result
         .and_then(|entry| version_of(&entry.body)))
 }
 
+/// The revision of `record`'s record the asset library holds, whole, if it
+/// has a place there.
+pub(crate) fn held_record(
+    assets: &Assets,
+    account: &AccountName,
+    opened: jiff::Timestamp,
+    record: &Record,
+) -> Result<Option<Record>, String> {
+    let Some(place) = place_of(assets, account, opened, record)? else { return Ok(None) };
+    let library = scopes::library(assets, &place.scope)?;
+    let error = |error: fastctx_content::Error| error.to_string();
+    let Some(entry) = library.item(place.key(), place.stream, &place.item).map_err(error)? else { return Ok(None) };
+    let in_object = serde_json::from_slice::<serde_json::Value>(&entry.body)
+        .ok()
+        .and_then(|value| value.get("in_object").and_then(serde_json::Value::as_bool))
+        == Some(true);
+    let body = if in_object {
+        let [object] = entry.objects.as_slice() else { return Err("a record kept as an object names no one object".into()) };
+        let (mut bytes, mut at) = (Vec::new(), 0u64);
+        while at < object.size {
+            let piece = library.read(&object.hash, at, 1 << 20).map_err(error)?;
+            if piece.is_empty() {
+                return Err("a record's object is not whole in the asset library".into());
+            }
+            at += piece.len() as u64;
+            bytes.extend_from_slice(&piece);
+        }
+        bytes
+    } else {
+        entry.body
+    };
+    serde_json::from_slice(&body).map(Some).map_err(|error| error.to_string())
+}
+
 /// The version of `record` the asset library holds, if it has a place there.
 pub(crate) fn version_held(
     assets: &Assets,
