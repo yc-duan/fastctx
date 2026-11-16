@@ -17,6 +17,7 @@ use fastctx_content::v2::Library;
 use fastctx_net::authorization::Action;
 use fastctx_net::ledger::Projection;
 use fastctx_net::link::Link;
+use fastctx_net::sign::{Domain, SecretKey, Signed};
 use fastctx_platform::ensure_private_dir;
 use fastctx_types::TownName;
 use fastctx_types::access::{Acting, TownId};
@@ -29,6 +30,25 @@ use crate::Node;
 pub(crate) struct Source {
     scope: String,
     stream: String,
+}
+
+impl Source {
+    /// What a project kept from it is kept as: another account, or the
+    /// machines it may work on changed, tell its entries otherwise under
+    /// the same numbers, so the project is made again from the first.
+    fn named(&self) -> String {
+        format!("{} {}", self.scope, self.stream)
+    }
+}
+
+/// Where what a project is kept from is written down, beside it.
+pub(crate) const FROM: &str = "projected-from.json";
+
+/// What `directory`'s project is kept from now: none for one replicated,
+/// or not kept yet. Caches of what its entries say are of what it is kept
+/// from, as of the ledger they were read from.
+pub(crate) fn kept_from(directory: &TownDir) -> io::Result<Option<String>> {
+    fastctx_net::link::state::read_or(&directory.path().join(FROM), None)
 }
 
 /// How long a take waits for the projection to come up to the latest entry.
@@ -150,9 +170,16 @@ pub(crate) async fn take(
         super::check_place(&keeping, &link, &name, &town)?;
         let directory = keeping.world.town(&name);
         let _map_changed = keeping.topics.writing(format!("{}{}", fastctx_types::topics::MAP_PREFIX, name));
-        if fastctx_platform::disk::is_dir(directory.signed()) {
-            again(&library, &source, &directory)
-                .map_err(|error| format!("making {name}'s ledger again from its projection: {error}"))?;
+        let key = super::own_key(&keeping.world).map_err(|error| format!("this machine's key: {error}"))?;
+        // Kept as signed entries, from another projection, or not at all
+        // yet: made from the first.
+        let from = kept_from(&directory).map_err(|error| error.to_string())?;
+        if fastctx_platform::disk::is_dir(directory.signed())
+            || !fastctx_platform::disk::is_dir(directory.projected())
+            || from.as_deref() != Some(source.named().as_str())
+        {
+            again(&library, &source, &directory, &key)
+                .map_err(|error| format!("making {name}'s ledger from its projection: {error}"))?;
             return Ok(true);
         }
         let mut after = super::cursor(&directory, &Default::default()).map_err(|error| error.to_string())?;
@@ -161,7 +188,7 @@ pub(crate) async fn take(
             let page = entries(&library, &source, after, 256)?;
             let Some(last) = page.last().map(|projection| projection.seq) else { break };
             for projection in &page {
-                keep(&directory.projected(), &directory.ledger(), projection)
+                keep(&directory.projected(), &directory.ledger(), projection, &key)
                     .map_err(|error| format!("keeping entry {} of {name}: {error}", projection.seq))?;
             }
             after = last;
@@ -172,19 +199,25 @@ pub(crate) async fn take(
     .await
 }
 
-/// Keeps `projection` under `projected` and writes its files under `ledger`.
-fn keep(projected: &std::path::Path, ledger: &std::path::Path, projection: &Projection) -> io::Result<()> {
+/// Keeps `projection` under `projected`, under this machine's word, and
+/// writes its files under `ledger`.
+fn keep(
+    projected: &std::path::Path,
+    ledger: &std::path::Path,
+    projection: &Projection,
+    key: &SecretKey,
+) -> io::Result<()> {
     ensure_private_dir(projected)?;
-    let bytes = serde_json::to_vec(projection).map_err(io::Error::other)?;
+    let bytes = serde_json::to_vec(&Signed::new(key, Domain::LedgerKept, projection)).map_err(io::Error::other)?;
     super::same_or_new(&projected.join(format!("{:020}.json", projection.seq)), &bytes)?;
     super::write_files(ledger, &projection.files)
 }
 
-/// Makes a project kept as signed entries again from its projection: every
-/// entry kept and written out beside the old ones, then put in their place,
-/// the signed entries and what their reading kept let go of. A stop on the
-/// way makes it again from the start.
-fn again(library: &Library, source: &Source, directory: &TownDir) -> io::Result<()> {
+/// Makes a project from its projection: every entry kept and written out
+/// beside what is kept of it now, then put in its place, with what it is
+/// kept from; the signed entries of before and what their reading kept let
+/// go of. A stop on the way makes it again from the start.
+fn again(library: &Library, source: &Source, directory: &TownDir, key: &SecretKey) -> io::Result<()> {
     let root = directory.path();
     let (projected, ledger) = (root.join("projected.next"), root.join("ledger.next"));
     super::remove(&projected)?;
@@ -194,22 +227,30 @@ fn again(library: &Library, source: &Source, directory: &TownDir) -> io::Result<
         let page = entries(library, source, after, 256).map_err(io::Error::other)?;
         let Some(last) = page.last().map(|projection| projection.seq) else { break };
         for projection in &page {
-            keep(&projected, &ledger, projection)?;
+            keep(&projected, &ledger, projection, key)?;
         }
         after = last;
     }
     ensure_private_dir(&ledger)?;
     ensure_private_dir(&projected)?;
+    // What it was kept from goes first: a stop past here leaves it naming
+    // nothing, and the project is made again.
+    forget(&root.join(FROM))?;
     super::remove(&directory.ledger())?;
     fastctx_platform::durable_file::rename_durably(&ledger, &directory.ledger())?;
     super::remove(&directory.projected())?;
     fastctx_platform::durable_file::rename_durably(&projected, &directory.projected())?;
     super::remove(&directory.signed())?;
     for kept in ["projection-through.json", "refused.json"] {
-        match fastctx_platform::disk::remove_file(root.join(kept)) {
-            Err(error) if error.kind() != io::ErrorKind::NotFound => return Err(error),
-            _ => {}
-        }
+        forget(&root.join(kept))?;
     }
-    Ok(())
+    fastctx_net::link::state::write(&root.join(FROM), &source.named())
+}
+
+/// Removes the file at `path`, if there is one.
+fn forget(path: &std::path::Path) -> io::Result<()> {
+    match fastctx_platform::disk::remove_file(path) {
+        Err(error) if error.kind() != io::ErrorKind::NotFound => Err(error),
+        _ => Ok(()),
+    }
 }

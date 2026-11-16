@@ -38,9 +38,9 @@ pub(crate) async fn output(node: &Arc<Node>, written: &Written, job: &JobId, pat
         // conversation's, or the records of the account it ran for (§28.58).
         let held: Vec<_> = crate::timeline::copy::job_facts(&asking, &job)
             .into_iter()
-            .filter(|(scope, _, _)| hub.as_ref().is_none_or(|hub| scope.hub.as_deref() == Some(hub.as_str())))
+            .filter(|(scope, _, _, _)| hub.as_ref().is_none_or(|hub| scope.hub.as_deref() == Some(hub.as_str())))
             .collect();
-        let [(scope, facts, entry)] = held.try_into().ok()?;
+        let [(scope, facts, named, entry)] = held.try_into().ok()?;
         let scope = scope.key;
         let output = format!("{}{}", JobOutput::STREAM, facts.strip_prefix(JobFacts::STREAM).unwrap_or_default());
         let record: serde_json::Value = serde_json::from_slice(&entry.body).ok()?;
@@ -55,23 +55,28 @@ pub(crate) async fn output(node: &Arc<Node>, written: &Written, job: &JobId, pat
             return None;
         };
         let end: Option<serde_json::Value> = library
-            .item(&scope, &output, format!("{job}/end").as_bytes())
+            .item(&scope, &output, format!("{named}/end").as_bytes())
             .ok()?
             .and_then(|end| serde_json::from_slice(&end.body).ok());
         let length = end.as_ref().and_then(|end| {
-            let lost = end.get("missing").and_then(serde_json::Value::as_array).is_some_and(|missing| {
-                missing.iter().any(|lost| lost.as_str() == Some(part))
-            });
+            let lost = end
+                .get("missing")
+                .and_then(serde_json::Value::as_array)
+                .is_some_and(|missing| missing.iter().any(|lost| lost.as_str() == Some(part)));
             (!lost).then(|| end.get(part).and_then(serde_json::Value::as_u64)).flatten()
         });
         if length.is_none() && !away {
             return None;
         }
         fastctx_platform::disk::create_dir_all(&folder).ok()?;
-        let path = folder.join(format!("output-{}-{part}-{}", job, std::process::id() as u64 ^ jiff::Timestamp::now().as_nanosecond() as u64));
+        let path = folder.join(format!(
+            "output-{}-{part}-{}",
+            job,
+            std::process::id() as u64 ^ jiff::Timestamp::now().as_nanosecond() as u64
+        ));
         let passing = Passing::new(path.clone());
         let mut out = fastctx_platform::disk::create(&path).ok()?;
-        let prefix = format!("{job}/{part}/");
+        let prefix = format!("{named}/{part}/");
         let mut after = Some((prefix.clone().into_bytes(), Vec::new()));
         let mut at = 0u64;
         'pieces: loop {
@@ -115,4 +120,3 @@ pub(crate) async fn output(node: &Arc<Node>, written: &Written, job: &JobId, pat
     })
     .await
 }
-

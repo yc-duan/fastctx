@@ -56,6 +56,11 @@ pub enum Domain {
     /// A device letting a stream it orders go to another machine (sync v2
     /// design §28.10).
     AssetRelease,
+    /// A machine's word, to itself, on an entry of a project's ledger it
+    /// took from the hub's projection for the account it reads the project
+    /// as (design §28.58): what it keeps of it is checked as a ledger it
+    /// signs itself is, never taken from a file anyone could write.
+    LedgerKept,
 }
 
 impl Domain {
@@ -72,6 +77,7 @@ impl Domain {
             Domain::AssetHub => "fastctx-asset/hub/v1",
             Domain::ShareCleared => "fastctx-share/cleared/v1",
             Domain::AssetRelease => "fastctx-asset/release/v1",
+            Domain::LedgerKept => "fastctx-ledger/kept/v1",
         }
     }
 }

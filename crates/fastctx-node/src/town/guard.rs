@@ -211,6 +211,9 @@ async fn set_town_right(
 struct Expected {
     /// The ledger it was read from: one moved, or read anew, starts over.
     place: Option<crate::ledger::names::Place>,
+    /// What the ledger is kept from: made again from another projection,
+    /// its entries are other under the same numbers (§28.58).
+    from: Option<String>,
     /// The last entry read.
     through: u64,
     /// Each file an entry wrote: its digest, and the entry that holds it.
@@ -221,8 +224,9 @@ impl Expected {
     /// Reads the entries taken since; whether one wrote the town's record.
     fn refresh(&mut self, world: &WorldDir, town: &TownName) -> io::Result<bool> {
         let place = crate::ledger::names::place(world, town)?;
-        if place != self.place || crate::ledger::replica_seq(world, town)? < self.through {
-            *self = Self { place, ..Self::default() };
+        let from = crate::ledger::projected::kept_from(&world.town(town))?;
+        if place != self.place || from != self.from || crate::ledger::replica_seq(world, town)? < self.through {
+            *self = Self { place, from, ..Self::default() };
         }
         let mut record = false;
         for (seq, entry) in crate::ledger::entries_after(world, town, self.through)? {

@@ -14,8 +14,8 @@ use super::local::{self, Held};
 use crate::Node;
 use fastctx_content::v2::{Kind as _, Timeline};
 use fastctx_types::access::Written;
-use fastctx_types::{AccountName, ResidentId};
 use fastctx_types::ipc::Failure;
+use fastctx_types::{AccountName, ResidentId};
 
 /// The mark of a place read from another machine.
 pub(super) use fastctx_client::timeline_copy::{ELSEWHERE, after, anew, marked, unmarked};
@@ -102,7 +102,8 @@ pub(crate) fn read_here_as(node: &Node, scope: &fastctx_content::v2::HeldScope, 
 /// by one logged in here, pulled whole in its holding period: what a
 /// machine did and spent, read from here while it is away (plan 3-5).
 pub(crate) fn records_here(node: &Node, scope: &fastctx_content::v2::HeldScope) -> bool {
-    let account = scope.key.starts_with("a/") && scope.key.rsplit('/').next().is_some_and(|last| last.starts_with("records-"));
+    let account =
+        scope.key.starts_with("a/") && scope.key.rsplit('/').next().is_some_and(|last| last.starts_with("records-"));
     let body = scope.key.starts_with("b/") && scope.key.ends_with("/records");
     (account || body) && scope.pulled == Some(scope.holding) && reader_here(node, scope)
 }
@@ -154,7 +155,8 @@ fn reader_here(node: &Node, scope: &fastctx_content::v2::HeldScope) -> bool {
 
 /// `reader_here`, of `only` alone where given.
 fn reader_here_as(node: &Node, scope: &fastctx_content::v2::HeldScope, only: Option<&AccountName>) -> bool {
-    let Some(link) = node.links().into_iter().find(|link| Some(link.membership().id.as_str()) == scope.hub.as_deref()) else {
+    let Some(link) = node.links().into_iter().find(|link| Some(link.membership().id.as_str()) == scope.hub.as_deref())
+    else {
         return false;
     };
     let logins: Vec<AccountName> = node.accounts_on(&link, &fastctx_types::access::Acting::Here).into_iter().collect();
@@ -166,29 +168,39 @@ fn reader_here_as(node: &Node, scope: &fastctx_content::v2::HeldScope, only: Opt
 /// for a conversation elsewhere or for a page, the records of the account
 /// it ran for (stream `jobs/<machine>`, §28.58) — each with the stream and
 /// the entry.
+///
+/// Each with what the job is named by there: its id in its conversation's
+/// scope; in an account's records, which hold the jobs of many, its id and
+/// a digest of what it ran for and when it began (`job_assets::key_of`).
 pub(crate) fn job_facts(
     node: &Node,
     job: &fastctx_types::JobId,
-) -> Vec<(fastctx_content::v2::HeldScope, String, fastctx_content::v2::Entry)> {
+) -> Vec<(fastctx_content::v2::HeldScope, String, String, fastctx_content::v2::Entry)> {
     let Some(assets) = node.assets.as_ref() else { return Vec::new() };
     let library = &assets.library;
     let Ok(scopes) = library.held_scopes() else { return Vec::new() };
     let mut found = Vec::new();
     for scope in scopes {
-        let streams: Vec<String> = if read_here(node, &scope) {
-            vec![fastctx_content::v2::JobFacts::STREAM.to_string()]
-        } else if records_here(node, &scope) {
-            let prefix = format!("{}/", fastctx_content::v2::JobFacts::STREAM);
-            match library.streams(&scope.key) {
-                Ok(streams) => streams.into_iter().map(|(name, _)| name).filter(|name| name.starts_with(&prefix)).collect(),
-                Err(_) => continue,
-            }
-        } else {
-            continue;
-        };
-        for stream in streams {
+        if read_here(node, &scope) {
+            let stream = fastctx_content::v2::JobFacts::STREAM.to_string();
             if let Ok(Some(entry)) = library.item(&scope.key, &stream, job.as_str().as_bytes()) {
-                found.push((scope.clone(), stream, entry));
+                found.push((scope.clone(), stream, job.to_string(), entry));
+            }
+            continue;
+        }
+        if !records_here(node, &scope) {
+            continue;
+        }
+        let prefix = format!("{}/", fastctx_content::v2::JobFacts::STREAM);
+        let Ok(streams) = library.streams(&scope.key) else { continue };
+        let keyed = format!("{job}~");
+        for (stream, _) in streams.into_iter().filter(|(name, _)| name.starts_with(&prefix)) {
+            let Ok(page) = library.page(&scope.key, &stream, Some((keyed.clone().into_bytes(), Vec::new())), 8) else {
+                continue;
+            };
+            for entry in page.into_iter().take_while(|entry| entry.item.starts_with(keyed.as_bytes())) {
+                let Ok(named) = String::from_utf8(entry.item.clone()) else { continue };
+                found.push((scope.clone(), stream.clone(), named, entry));
             }
         }
     }
@@ -201,7 +213,7 @@ pub(crate) fn job_facts(
 /// two copies holding one of that id, and none is told.
 pub(crate) fn job(node: &Node, job: &fastctx_types::JobId) -> Option<fastctx_types::run::JobRecord> {
     let library = &node.assets.as_ref()?.library;
-    let [(_, _, entry)] = job_facts(node, job).try_into().ok()?;
+    let [(_, _, _, entry)] = job_facts(node, job).try_into().ok()?;
     let mut value = serde_json::from_slice::<serde_json::Value>(&entry.body).ok()?;
     // A script too large for the record is its one object (§28.58); one
     // of before said only how long it was (QQ12).
@@ -217,4 +229,3 @@ pub(crate) fn job(node: &Node, job: &fastctx_types::JobId) -> Option<fastctx_typ
     }
     serde_json::from_value::<fastctx_types::run::JobRecord>(value).ok()
 }
-

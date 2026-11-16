@@ -70,7 +70,8 @@ pub(super) fn fitted(library: &fastctx_content::v2::Library, body: Vec<u8>) -> R
     if body.len() <= BODY_MOST {
         return Ok((body, Vec::new(), None));
     }
-    let metadata = serde_json::from_slice::<serde_json::Value>(&body).ok().and_then(|value| value.get("metadata").cloned());
+    let metadata =
+        serde_json::from_slice::<serde_json::Value>(&body).ok().and_then(|value| value.get("metadata").cloned());
     let lease = library.put(&mut body.as_slice(), "mirror", LEASE).map_err(|error| error.to_string())?;
     let mut said = serde_json::json!({ "in_object": true, "bytes": body.len() });
     if let Some(metadata) = metadata {
@@ -145,7 +146,8 @@ fn conversation_scope(
             }
             (super::owners::Owner::Body(_), Readers::Body { opener, .. }) => {
                 opener == account
-                    && scope.descriptor.born.get(&format!("account:{account}")) == Some(&opened.as_millisecond().to_string())
+                    && scope.descriptor.born.get(&format!("account:{account}"))
+                        == Some(&opened.as_millisecond().to_string())
             }
             _ => false,
         };
@@ -277,7 +279,9 @@ pub(crate) fn held_record(
         .and_then(|value| value.get("in_object").and_then(serde_json::Value::as_bool))
         == Some(true);
     let body = if in_object {
-        let [object] = entry.objects.as_slice() else { return Err("a record kept as an object names no one object".into()) };
+        let [object] = entry.objects.as_slice() else {
+            return Err("a record kept as an object names no one object".into());
+        };
         let (mut bytes, mut at) = (Vec::new(), 0u64);
         while at < object.size {
             let piece = library.read(&object.hash, at, 1 << 20).map_err(error)?;
@@ -294,15 +298,17 @@ pub(crate) fn held_record(
     serde_json::from_slice(&body).map(Some).map_err(|error| error.to_string())
 }
 
-/// The version of `record` the asset library holds, if it has a place there.
-pub(crate) fn version_held(
+/// Whether the asset library holds `record` itself: this revision as it was
+/// written, not another of its number nor a later one. What a write whose
+/// taking failed is told by: one taken late, and another writer's of the
+/// same number, look alike by their number alone (codex-357de52a #3).
+pub(crate) fn holds_revision(
     assets: &Assets,
     account: &AccountName,
     opened: jiff::Timestamp,
     record: &Record,
-) -> Result<Option<u64>, String> {
-    let Some(place) = place_of(assets, account, opened, record)? else { return Ok(None) };
-    held_version(&scopes::library(assets, &place.scope)?, &place)
+) -> Result<bool, String> {
+    Ok(held_record(assets, account, opened, record)?.is_some_and(|held| held == *record))
 }
 
 /// Takes `records`, new revisions the hub accepts, into the library at their
@@ -430,7 +436,6 @@ pub(super) fn apply(
     Ok(())
 }
 
-
 /// A stream the hub orders, last ordered under a key of the hub's own that
 /// it has retired since: handed over to the key in use, a new epoch from
 /// where the stream stands, in the hub's chain before any device hears of
@@ -456,7 +461,8 @@ fn under_key_in_use(
         .into_iter()
         .find(|(name, _, _)| name == stream)
         .map_or((0, [0; 32]), |(_, sequence, head)| (sequence + 1, head));
-    let successor = fastctx_content::v2::Successor { device: current, key: current, kind: fastctx_content::v2::EpochKind::Source };
+    let successor =
+        fastctx_content::v2::Successor { device: current, key: current, kind: fastctx_content::v2::EpochKind::Source };
     let cutoff = fastctx_content::v2::Cutoff { next, head };
     let (signed, _) = library
         .handover_from(scope_key, stream, successor, cutoff, Some(epoch), super::serve::kinds(), assets.signer())
@@ -503,7 +509,8 @@ pub(crate) async fn again(hub: std::sync::Arc<crate::Hub>) {
         by_account.entry((account, opened)).or_default().push(path);
     }
     for ((account, opened), paths) in by_account {
-        let (Ok(account), Ok(opened)) = (AccountName::try_from(account), jiff::Timestamp::from_millisecond(opened)) else {
+        let (Ok(account), Ok(opened)) = (AccountName::try_from(account), jiff::Timestamp::from_millisecond(opened))
+        else {
             continue;
         };
         write_all(&hub, account, opened, paths).await;

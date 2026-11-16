@@ -61,8 +61,47 @@ struct Standing {
     done: bool,
 }
 
+/// A job's ids are unique within the folder of what it ran for alone: the
+/// key it is kept under here, and in an account's records, names that too —
+/// what it ran for, and when it began, as a digest (§28.58).
+fn key_of(job: &JobRecord) -> String {
+    let mut digest = Sha256::new();
+    digest.update(job.owner.tag().as_bytes());
+    digest.update(b"\n");
+    digest.update(job.started_at.to_string().as_bytes());
+    let named: String = digest.finalize().iter().take(6).map(|byte| format!("{byte:02x}")).collect();
+    format!("{}~{named}", job.id)
+}
+
 fn checkpoint(job: &JobRecord) -> String {
-    format!("job/{}", job.id)
+    format!("job/{}", key_of(job))
+}
+
+/// What `job` is named by in the streams at `home`: its id in its
+/// conversation's own, where ids are unique; its key in an account's
+/// records, which hold the jobs of many.
+fn item_of(home: &Home, job: &JobRecord) -> String {
+    match home {
+        Home::Conversation(_) => job.id.to_string(),
+        Home::Account(_) => key_of(job),
+    }
+}
+
+/// How far a job may have begun before the account it ran for was opened,
+/// as the hub's clock and this machine's may differ: one begun earlier ran
+/// for an account of that name before it, not for this one.
+const CLOCKS: jiff::SignedDuration = jiff::SignedDuration::from_mins(10);
+
+/// When the account `account` was opened, as the hub this machine is on
+/// tells it; none when it is not known here now.
+fn opened_of(node: &Node, account: &fastctx_types::access::HubAccount) -> Option<jiff::Timestamp> {
+    node.link_of(&account.hub)
+        .and_then(|link| link.view().directory.account(&account.account).map(|found| found.opened))
+}
+
+/// Whether `job` ran for the account of its name opened at `opened`.
+fn ran_for(job: &JobRecord, opened: jiff::Timestamp) -> bool {
+    opened <= job.started_at + CLOCKS
 }
 
 /// Where a job's assets go.
@@ -77,7 +116,9 @@ enum Home {
 /// Where `job`'s assets go; none for one that ran for no account here.
 fn home_of(node: &Node, job: &JobRecord) -> Option<Home> {
     match &job.owner {
-        JobOwner::Resident(address) if node.is_me(&address.machine) => Some(Home::Conversation(address.resident.clone())),
+        JobOwner::Resident(address) if node.is_me(&address.machine) => {
+            Some(Home::Conversation(address.resident.clone()))
+        }
         _ => job.on.as_ref().and_then(|on| on.account.clone()).or_else(|| job.account.clone()).map(Home::Account),
     }
 }
@@ -172,48 +213,69 @@ fn look(node: &Arc<Node>, whole: bool, held: u64) -> Result<u64, String> {
         Some(written) if whole || now_held != held => crate::job_index::ended_since(&node.world, written.min(day)),
         _ => crate::job_index::recent(&node.world, day),
     };
-    let mut jobs: BTreeMap<String, (JobRecord, PathBuf)> = found
-        .map_err(|error| error.to_string())?
-        .into_iter()
-        .map(|(job, path)| (job.id.to_string(), (job, path)))
-        .collect();
-    let mut open = open_jobs(library)?;
-    for (id, path) in &open {
-        if !jobs.contains_key(id)
-            && let Ok(job) = fastctx_hands::run::record::read(path)
-        {
-            jobs.insert(id.clone(), (job, path.clone()));
+    let mut jobs: BTreeMap<String, (JobRecord, PathBuf)> =
+        found.map_err(|error| error.to_string())?.into_iter().map(|(job, path)| (key_of(&job), (job, path))).collect();
+    let open = open_jobs(library)?;
+    // Those open whose record cannot be read now stay open as they are.
+    let mut still = BTreeMap::new();
+    for (key, path) in &open {
+        if jobs.contains_key(key) {
+            continue;
+        }
+        match fastctx_hands::run::record::read(path) {
+            Ok(job) => {
+                jobs.entry(key_of(&job)).or_insert((job, path.clone()));
+            }
+            Err(_) => {
+                still.insert(key.clone(), path.clone());
+            }
         }
     }
     let mut failed = None;
-    let mut moved = false;
-    for (id, (job, path)) in jobs {
-        let Some(home) = home_of(node, &job) else { continue };
+    for (key, (job, path)) in jobs {
+        let Some(home) = home_of(node, &job) else {
+            if open.contains_key(&key) {
+                still.insert(key, path);
+            }
+            continue;
+        };
         match write_job(node, &home, &job) {
-            Ok(true) => moved |= open.remove(&id).is_some(),
-            Ok(false) => moved |= open.insert(id, path).is_none(),
+            Ok(true) => {}
+            Ok(false) => {
+                still.insert(key, path);
+            }
             Err(error) => {
-                moved |= open.insert(id.clone(), path).is_none();
-                failed.get_or_insert(format!("{id}: {error}"));
+                failed.get_or_insert(format!("{}: {error}", job.id));
+                still.insert(key, path);
             }
         }
     }
     // A job whose record is gone is open no more; one that cannot be
     // looked at now stays (NN08).
-    let before = open.len();
-    open.retain(|_, path| !matches!(fastctx_platform::disk::metadata(path), Err(error) if error.kind() == std::io::ErrorKind::NotFound));
-    if moved || open.len() != before {
-        library.keep_checkpoint(OPEN, serde_json::to_vec(&open).map_err(|error| error.to_string())?).map_err(error)?;
+    still.retain(|_, path| !matches!(fastctx_platform::disk::metadata(path), Err(error) if error.kind() == std::io::ErrorKind::NotFound));
+    if still != open {
+        library.keep_checkpoint(OPEN, serde_json::to_vec(&still).map_err(|error| error.to_string())?).map_err(error)?;
     }
     failed.map_or(Ok(now_held), Err)
 }
 
 /// The scope a job's assets go in at `home`, and its holding, when this
 /// machine orders their streams there.
-fn writable(node: &Arc<Node>, library: &Library, home: &Home) -> Result<Option<(String, i64)>, String> {
+fn writable(
+    node: &Arc<Node>,
+    library: &Library,
+    home: &Home,
+    job: &JobRecord,
+) -> Result<Option<(String, i64)>, String> {
     match home {
         Home::Conversation(resident) => conversation_writable(node, library, resident),
         Home::Account(account) => {
+            // An account opened after the job began is another of that
+            // name: what ran for the one before goes into no records of
+            // this one's, and stays here as it is (`kept_for_good`).
+            if !opened_of(node, account).is_some_and(|opened| ran_for(job, opened)) {
+                return Ok(None);
+            }
             let (facts, output) = streams_of(node, home);
             let Some((scope, holding)) =
                 crate::assets::activity::writable(node, library, &account.hub, &account.account, &facts)?
@@ -221,7 +283,11 @@ fn writable(node: &Arc<Node>, library: &Library, home: &Home) -> Result<Option<(
                 return Ok(None);
             };
             let device = node.assets.as_ref().map(|assets| assets.device()).unwrap_or_default();
-            if library.orderer(&scope, &output).map_err(|error| error.to_string())?.is_some_and(|orderer| orderer != device) {
+            if library
+                .orderer(&scope, &output)
+                .map_err(|error| error.to_string())?
+                .is_some_and(|orderer| orderer != device)
+            {
                 return Ok(None);
             }
             Ok(Some((scope, holding)))
@@ -231,7 +297,11 @@ fn writable(node: &Arc<Node>, library: &Library, home: &Home) -> Result<Option<(
 
 /// The scope `resident`'s jobs go in, when this machine orders its job
 /// streams there.
-fn conversation_writable(node: &Arc<Node>, library: &Library, resident: &ResidentId) -> Result<Option<(String, i64)>, String> {
+fn conversation_writable(
+    node: &Arc<Node>,
+    library: &Library,
+    resident: &ResidentId,
+) -> Result<Option<(String, i64)>, String> {
     let Some((hub, scope)) = crate::timeline::scope_of(node, resident).map_err(|failure| failure.message)? else {
         return Ok(None);
     };
@@ -275,7 +345,8 @@ fn write_job(node: &Arc<Node>, home: &Home, job: &JobRecord) -> Result<bool, Str
     let library = &kept.library;
     let error = |error: fastctx_content::Error| error.to_string();
     let name = checkpoint(job);
-    let Some((scope, holding)) = writable(node, library, home)? else { return Ok(false) };
+    let named = item_of(home, job);
+    let Some((scope, holding)) = writable(node, library, home, job)? else { return Ok(false) };
     let (facts_stream, output_stream) = streams_of(node, home);
     let mut standing: Standing = library
         .checkpoint(&name)
@@ -301,7 +372,7 @@ fn write_job(node: &Arc<Node>, home: &Home, job: &JobRecord) -> Result<bool, Str
     let facts = serde_json::to_vec(&facts).map_err(|error| error.to_string())?;
     let digest: String = Sha256::digest(&facts).iter().map(|byte| format!("{byte:02x}")).collect();
     if digest != standing.facts {
-        let item = job.id.to_string().into_bytes();
+        let item = named.clone().into_bytes();
         let lease = script.map(|mut bytes| library.put(&mut bytes, "job-script", LEASE)).transpose().map_err(error)?;
         let objects = lease.iter().map(|lease| lease.object.clone()).collect();
         Writer::<JobFacts>::new(library, &scope, &facts_stream)
@@ -333,8 +404,14 @@ fn write_job(node: &Arc<Node>, home: &Home, job: &JobRecord) -> Result<bool, Str
                 // the output's or the stderr's, as their loss records it, or
                 // as much as was written before the file went (OO07).
                 let lost = if part == "output" { job.output_lost.as_ref() } else { job.stderr_lost.as_ref() };
-                let drained = job.output_drained.as_ref().map(|drained| if part == "output" { drained.stdout } else { drained.stderr });
-                if lost.is_some_and(|lost| lost.kept_bytes > *at) || drained.is_some_and(|drained| drained > *at) || *at > 0 {
+                let drained = job
+                    .output_drained
+                    .as_ref()
+                    .map(|drained| if part == "output" { drained.stdout } else { drained.stderr });
+                if lost.is_some_and(|lost| lost.kept_bytes > *at)
+                    || drained.is_some_and(|drained| drained > *at)
+                    || *at > 0
+                {
                     missing.push(part);
                 }
                 *at
@@ -342,7 +419,7 @@ fn write_job(node: &Arc<Node>, home: &Home, job: &JobRecord) -> Result<bool, Str
         };
         let mut budget = A_PART;
         while *at < length && budget > 0 {
-            let item = format!("{}/{part}/{:016x}", job.id, *at).into_bytes();
+            let item = format!("{named}/{part}/{:016x}", *at).into_bytes();
             // Written before a stop that kept no checkpoint: as it was, on
             // from its end (AQ08, MM19, K07).
             if let Some(entry) = library.item(&scope, &output_stream, &item).map_err(error)? {
@@ -364,7 +441,8 @@ fn write_job(node: &Arc<Node>, home: &Home, job: &JobRecord) -> Result<bool, Str
             }
             let lease = library.put(&mut bytes.as_slice(), "job-output", LEASE).map_err(error)?;
             let body = serde_json::to_vec(
-                &serde_json::json!({ "job": job.id, "part": part, "offset": *at, "length": bytes.len() }),
+                // Named as the job is in this stream (`JobOutput::authorize`).
+                &serde_json::json!({ "job": named, "part": part, "offset": *at, "length": bytes.len() }),
             )
             .map_err(|error| error.to_string())?;
             output
@@ -387,10 +465,10 @@ fn write_job(node: &Arc<Node>, home: &Home, job: &JobRecord) -> Result<bool, Str
         || job.output_drained.is_some()
         || job.end.as_ref().is_some_and(|end| jiff::Timestamp::now().duration_since(end.at).unsigned_abs() > SETTLED);
     if job.end.is_some() && drained && whole {
-        let item = format!("{}/end", job.id).into_bytes();
+        let item = format!("{named}/end").into_bytes();
         if library.item(&scope, &output_stream, &item).map_err(error)?.is_none() {
             let body = serde_json::to_vec(&serde_json::json!({
-                "job": job.id,
+                "job": named,
                 "end": true,
                 "output": standing.output,
                 "stderr": standing.stderr,
@@ -427,19 +505,16 @@ pub(crate) fn kept_for_good(node: &Node, job: &JobRecord) -> bool {
     let library = &kept.library;
     let scope = match &home {
         Home::Conversation(resident) => match crate::timeline::scope_of(node, resident) {
-            Ok(Some((_, scope))) => scope,
+            Ok(Some((_, scope))) => Some(scope),
             _ => return true,
         },
-        // The account no longer known here: no one reads it from here, and
-        // it goes as it always did.
-        Home::Account(account) => {
-            let Some(opened) =
-                node.link_of(&account.hub).and_then(|link| link.view().directory.account(&account.account).map(|found| found.opened))
-            else {
-                return true;
-            };
+        // An account not known here now may be one this machine no longer
+        // sees, not one gone, and one opened after the job began another of
+        // its name: what was written of the job cannot be told taken by the
+        // hub, so its files stay.
+        Home::Account(account) => opened_of(node, account).filter(|opened| ran_for(job, *opened)).map(|opened| {
             fastctx_types::assets::records_key(account.hub.as_str(), &account.account, opened.as_millisecond())
-        }
+        }),
     };
     let (facts_stream, output_stream) = streams_of(node, &home);
     let standing = library
@@ -466,6 +541,7 @@ pub(crate) fn kept_for_good(node: &Node, job: &JobRecord) -> bool {
             };
         }
     }
+    let Some(scope) = scope else { return false };
     // Every frame of the job streams here went up.
     library
         .uploads(&scope, &kept.device())

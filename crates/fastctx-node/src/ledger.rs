@@ -483,9 +483,11 @@ pub(crate) fn finish(node: &Node) -> io::Result<Vec<String>> {
             continue;
         }
         let directory = world.town(&town);
-        for (seq, path, projected) in kept_files(&directory)? {
+        let kept = kept_files(&directory)?;
+        let key = kept_key(world, &kept)?;
+        for (seq, path, _) in kept {
             let finished =
-                read_kept(world, &path, projected).and_then(|kept| write_files(&directory.ledger(), &kept.files));
+                read_kept(world, &path, key.as_ref()).and_then(|kept| write_files(&directory.ledger(), &kept.files));
             if let Err(error) = finished {
                 problems.push(format!("entry {seq} of {town}: {error}"));
             }
@@ -525,11 +527,24 @@ fn kept_files(directory: &TownDir) -> io::Result<Vec<(u64, PathBuf, bool)>> {
     Ok(numbered(&directory.signed())?.into_iter().map(|(seq, path)| (seq, path, false)).collect())
 }
 
-/// The entry kept at `path`.
-fn read_kept(world: &WorldDir, path: &Path, projected: bool) -> io::Result<Kept> {
-    if projected {
-        let projection: ledger::Projection = serde_json::from_slice(&fastctx_platform::disk::read(path)?)
-            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, format!("{}: {error}", path.display())))?;
+/// The key what this machine keeps of a project's projection is checked
+/// with, where `files` hold one (`projected::keep`).
+fn kept_key(world: &WorldDir, files: &[(u64, PathBuf, bool)]) -> io::Result<Option<fastctx_net::sign::PublicKey>> {
+    match files.iter().any(|(_, _, projected)| *projected) {
+        true => Ok(Some(own_key(world)?.public())),
+        false => Ok(None),
+    }
+}
+
+/// The entry kept at `path`: one taken from the hub's projection, under
+/// this machine's word `key`, checked as one it signs itself is.
+fn read_kept(world: &WorldDir, path: &Path, key: Option<&fastctx_net::sign::PublicKey>) -> io::Result<Kept> {
+    let invalid = |error: String| io::Error::new(io::ErrorKind::InvalidData, format!("{}: {error}", path.display()));
+    if let Some(key) = key {
+        let signed: Signed =
+            serde_json::from_slice(&fastctx_platform::disk::read(path)?).map_err(|error| invalid(error.to_string()))?;
+        let projection: ledger::Projection =
+            signed.open(key, fastctx_net::sign::Domain::LedgerKept).map_err(|error| invalid(error.to_string()))?;
         return Ok(projection.into());
     }
     Ok(read_entry(world, path)?.0.into())
@@ -552,11 +567,12 @@ pub(crate) fn entry(world: &WorldDir, town: &TownName, seq: u64) -> io::Result<O
     if let Some(entries) = carry_source::entries(world, town)? {
         return Ok(entries.into_iter().find(|(number, _)| *number == seq).map(|(_, entry)| entry.into()));
     }
-    let Some((_, path, projected)) = kept_files(&world.town(town))?.into_iter().find(|(number, _, _)| *number == seq)
-    else {
+    let kept = kept_files(&world.town(town))?;
+    let key = kept_key(world, &kept)?;
+    let Some((_, path, _)) = kept.into_iter().find(|(number, _, _)| *number == seq) else {
         return Ok(None);
     };
-    Ok(Some(read_kept(world, &path, projected)?))
+    Ok(Some(read_kept(world, &path, key.as_ref())?))
 }
 
 /// The full copy's cursor; an index-only cache is never a replicated entry.
@@ -578,10 +594,12 @@ pub fn entries_after(world: &WorldDir, town: &TownName, after: u64) -> io::Resul
             .map(|(seq, entry)| (seq, entry.into()))
             .collect());
     }
+    let kept = kept_files(&world.town(town))?;
+    let key = kept_key(world, &kept)?;
     let mut entries = Vec::new();
-    for (seq, path, projected) in kept_files(&world.town(town))? {
+    for (seq, path, _) in kept {
         if seq > after {
-            entries.push((seq, read_kept(world, &path, projected)?));
+            entries.push((seq, read_kept(world, &path, key.as_ref())?));
         }
     }
     Ok(entries)
@@ -616,11 +634,12 @@ pub fn entries_since(world: &WorldDir, town: &TownName, after: u64) -> io::Resul
         ));
     }
     let numbered = kept_files(&world.town(town))?;
+    let key = kept_key(world, &numbered)?;
     let last = numbered.last().map_or(0, |(seq, _, _)| *seq);
     let mut entries = Vec::new();
-    for (seq, path, projected) in numbered {
+    for (seq, path, _) in numbered {
         if seq > after {
-            entries.push((seq, read_kept(world, &path, projected)?));
+            entries.push((seq, read_kept(world, &path, key.as_ref())?));
         }
     }
     Ok((last, entries))

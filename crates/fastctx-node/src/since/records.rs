@@ -668,10 +668,25 @@ impl Scan<'_> {
             }
         }
         // A project taken from the hub's projection (design §28.58): each
-        // entry as the hub told it, checked against its record on intake.
-        for path in self.json_files(&world.town(town).projected()) {
-            let Some(projection) = self.optional::<fastctx_net::ledger::Projection>(&path) else { continue };
-            self.ledger_entry(town, &path, &place.hub, projection.files)
+        // entry as the hub told it, checked against its record on intake and
+        // kept under this machine's word.
+        let projected = self.json_files(&world.town(town).projected());
+        if projected.is_empty() {
+            return;
+        }
+        let key = match crate::ledger::own_key(world) {
+            Ok(key) => key.public(),
+            Err(error) => {
+                self.issue(&world.town(town).projected(), error);
+                return;
+            }
+        };
+        for path in projected {
+            let Some(signed) = self.optional::<Signed>(&path) else { continue };
+            match signed.open::<fastctx_net::ledger::Projection>(&key, fastctx_net::sign::Domain::LedgerKept) {
+                Ok(projection) => self.ledger_entry(town, &path, &place.hub, projection.files),
+                Err(error) => self.issue(&path, error),
+            }
         }
     }
 

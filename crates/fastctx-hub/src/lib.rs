@@ -77,9 +77,9 @@ mod skill_files;
 mod skill_storage;
 mod store;
 mod strain;
-mod submitted;
 #[cfg(feature = "submission-drill")]
 mod submission_drill;
+mod submitted;
 pub mod third;
 mod troubles;
 mod updates;
@@ -933,10 +933,7 @@ fn open(dir: &Path, log: Arc<log::Log>) -> anyhow::Result<Opened> {
     // were published, are published before any member is heard (design §15).
     said.extend(
         account_records
-            .settle_staged(|account, opened, record| {
-                Ok(assets::mirror::version_held(&assets, account, opened, record)?
-                    .is_some_and(|version| version >= record.metadata.version))
-            })
+            .settle_staged(|account, opened, record| assets::mirror::holds_revision(&assets, account, opened, record))
             .map_err(anyhow::Error::msg)?,
     );
     if let Some(why) = assets.sealed() {

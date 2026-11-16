@@ -17,6 +17,7 @@
 //! mark goes to the body.
 
 use super::logs::proposed;
+use super::usage_marks::{Marked, marked_run, marks_at, marks_through};
 use crate::Node;
 use fastctx_content::v2::{AccountActivity, AccountUsage, Kind as _, LEASE, Library, Write, Writer};
 use fastctx_net::ids::HubId;
@@ -26,7 +27,6 @@ use fastctx_types::assets::Readers;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Weak};
 use std::time::Duration;
-use super::usage_marks::{Marked, marked_run, marks_at, marks_through};
 
 /// The most a body holds as it is.
 const BODY_MOST: usize = fastctx_content::RECORD_BYTES - 4096;
@@ -74,7 +74,8 @@ pub(crate) fn start(node: &Arc<Node>) {
                 let owner = me.home.clone();
                 drop(view);
                 if let Err(error) =
-                    fastctx_platform::task::blocking(move || look(&working, &hub, home.as_ref(), waits, owner.as_ref())).await
+                    fastctx_platform::task::blocking(move || look(&working, &hub, home.as_ref(), waits, owner.as_ref()))
+                        .await
                 {
                     node.log.line(format_args!("writing what was done here into the asset library: {error}"));
                 }
@@ -97,8 +98,15 @@ fn routed(account: &str, hub: &HubId, home: Option<&AccountName>) -> Option<Acco
 
 /// The records' scope of `account` and its holding, when this machine
 /// writes `stream` there now; proposed while it is not held.
-pub(crate) fn writable(node: &Node, library: &Library, hub: &HubId, account: &AccountName, stream: &str) -> Result<Option<(String, i64)>, String> {
-    let Some(opened) = node.link_of(hub).and_then(|link| link.view().directory.account(account).map(|found| found.opened))
+pub(crate) fn writable(
+    node: &Node,
+    library: &Library,
+    hub: &HubId,
+    account: &AccountName,
+    stream: &str,
+) -> Result<Option<(String, i64)>, String> {
+    let Some(opened) =
+        node.link_of(hub).and_then(|link| link.view().directory.account(account).map(|found| found.opened))
     else {
         return Ok(None);
     };
@@ -119,7 +127,14 @@ pub(crate) fn writable(node: &Node, library: &Library, hub: &HubId, account: &Ac
 /// The body's `records` scope this machine, shared whole as `body` and owned
 /// by `owner`, writes `stream` in now, and its holding; proposed while it is
 /// not held.
-fn body_scope(node: &Node, library: &Library, hub: &HubId, body: &str, owner: Option<&AccountName>, stream: &str) -> Result<Option<(String, i64)>, String> {
+fn body_scope(
+    node: &Node,
+    library: &Library,
+    hub: &HubId,
+    body: &str,
+    owner: Option<&AccountName>,
+    stream: &str,
+) -> Result<Option<(String, i64)>, String> {
     let Some(owner) = owner else { return Ok(None) };
     let readers = Readers::Body { body: body.to_string(), opener: owner.clone() };
     let Some(scope) = proposed(node, hub, readers, "records")? else { return Ok(None) };
@@ -144,7 +159,13 @@ struct Shared<'a> {
 static LOOKING: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 /// One look at what was done here for the accounts of `hub`.
-fn look(node: &Arc<Node>, hub: &HubId, home: Option<&AccountName>, waits: bool, owner: Option<&AccountName>) -> Result<(), String> {
+fn look(
+    node: &Arc<Node>,
+    hub: &HubId,
+    home: Option<&AccountName>,
+    waits: bool,
+    owner: Option<&AccountName>,
+) -> Result<(), String> {
     let Some(assets) = node.assets.as_ref() else { return Ok(()) };
     let _looking = LOOKING.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let machine: String = assets.device()[..8].iter().map(|byte| format!("{byte:02x}")).collect();
@@ -174,8 +195,11 @@ fn forgotten(node: &Arc<Node>, hub: &HubId, stream: &str) -> Result<(), String> 
     let device = assets.device();
     let accounts = format!("a/{hub}/");
     for scope in library.held_scopes().map_err(error)? {
-        let account = scope.key.starts_with(&accounts) && scope.key.rsplit('/').next().is_some_and(|last| last.starts_with("records-"));
-        let body = scope.key.starts_with("b/") && scope.key.ends_with("/records") && scope.hub.as_deref() == Some(hub.as_str());
+        let account = scope.key.starts_with(&accounts)
+            && scope.key.rsplit('/').next().is_some_and(|last| last.starts_with("records-"));
+        let body = scope.key.starts_with("b/")
+            && scope.key.ends_with("/records")
+            && scope.hub.as_deref() == Some(hub.as_str());
         if !(account || body) || scope.pulled != Some(scope.holding) {
             continue;
         }
@@ -184,7 +208,8 @@ fn forgotten(node: &Arc<Node>, hub: &HubId, stream: &str) -> Result<(), String> 
         }
         // Where this scope's look stood, in this holding period.
         let kept = &at["forgotten"][&scope.key];
-        let after = if kept["holding"].as_i64() == Some(scope.holding) { kept["after"].as_i64().unwrap_or(0) } else { 0 };
+        let after =
+            if kept["holding"].as_i64() == Some(scope.holding) { kept["after"].as_i64().unwrap_or(0) } else { 0 };
         let keys: Vec<(i64, String)> = node
             .book_database
             .read_now(move |db| {
@@ -202,7 +227,12 @@ fn forgotten(node: &Arc<Node>, hub: &HubId, stream: &str) -> Result<(), String> 
             for key in [deed.clone(), elsewhere(deed)] {
                 let item = fastctx_content::v2::item_of(&key);
                 if library.item(&scope.key, stream, &item).map_err(error)?.is_some() {
-                    writes.push(Write::<AccountActivity> { order: item.clone(), item, value: None, objects: Vec::new() });
+                    writes.push(Write::<AccountActivity> {
+                        order: item.clone(),
+                        item,
+                        value: None,
+                        objects: Vec::new(),
+                    });
                 }
             }
         }
@@ -294,16 +324,54 @@ fn hours(node: &Arc<Node>, hub: &HubId, home: Option<&AccountName>, stream: &str
         let order = format!("{HOURS}{:020}", hour.at).into_bytes();
         by_account.entry(account).or_default().insert(fastctx_content::v2::item_of(&key), (order, body));
     }
+    // The deeds folded into those hours, which a copy of before may hold
+    // beside them: let go of, as the book tells them by their hour alone.
+    let folded: Vec<Vec<u8>> = node
+        .book_database
+        .read_now(|db| {
+            Ok(db
+                .prepare_cached("SELECT deed FROM book_folding WHERE applied = 1 ORDER BY deed")?
+                .query_map([], |row| row.get::<_, String>(0))?
+                .collect::<Result<Vec<_>, _>>()?)
+        })
+        .map_err(|error| error.to_string())?
+        .iter()
+        .map(|deed| fastctx_content::v2::item_of(deed))
+        .collect();
     let name = format!("activity-hours/{hub}");
     let mut at = standing(library, &name)?;
+    // Each scope to write: those of the accounts with hours now, and those
+    // written before whose hours all went since (codex-357de52a #6).
+    let mut targets: BTreeMap<String, (i64, BTreeMap<Vec<u8>, (Vec<u8>, Vec<u8>)>)> = BTreeMap::new();
     for (account, wanted) in by_account {
-        let Some((scope, holding)) = writable(node, library, hub, &account, stream)? else { continue };
+        if let Some((scope, holding)) = writable(node, library, hub, &account, stream)? {
+            targets.insert(scope, (holding, wanted));
+        }
+    }
+    let device = assets.device();
+    let before: Vec<String> =
+        at["written"].as_object().map(|written| written.keys().cloned().collect()).unwrap_or_default();
+    for scope in before {
+        if targets.contains_key(&scope) {
+            continue;
+        }
+        let Some(holding) = library.holding(&scope).map_err(error)? else { continue };
+        if library.orderer(&scope, stream).map_err(error)?.is_some_and(|orderer| orderer != device) {
+            continue;
+        }
+        targets.insert(scope, (holding, BTreeMap::new()));
+    }
+    for (scope, (holding, wanted)) in targets {
         use sha2::Digest as _;
         let mut digest = sha2::Sha256::new();
         digest.update(holding.to_be_bytes());
         for (item, (_, body)) in &wanted {
             digest.update(item);
             digest.update(body);
+        }
+        for item in &folded {
+            digest.update(b"folded");
+            digest.update(item);
         }
         let digest: String = digest.finalize().iter().map(|byte| format!("{byte:02x}")).collect();
         if at["written"][&scope].as_str() == Some(digest.as_str()) {
@@ -343,6 +411,16 @@ fn hours(node: &Arc<Node>, hub: &HubId, home: Option<&AccountName>, stream: &str
             }
             writes.push(Write::<AccountActivity> { order, item, value: Some(body), objects: Vec::new() });
         }
+        for item in &folded {
+            if let Some(entry) = library.item(&scope, stream, item).map_err(error)? {
+                writes.push(Write::<AccountActivity> {
+                    order: entry.order,
+                    item: item.clone(),
+                    value: None,
+                    objects: Vec::new(),
+                });
+            }
+        }
         while !writes.is_empty() {
             let batch: Vec<_> = writes.drain(..writes.len().min(256)).collect();
             Writer::<AccountActivity>::new(library, &scope, stream)
@@ -374,7 +452,9 @@ fn came_into_force(node: &Node, hub: &HubId, body: Option<&str>) -> Result<(), S
     }
     let mut at = standing(library, &name)?;
     at["shared_as"] = body.map_or(serde_json::Value::Null, |body| serde_json::json!(body));
-    library.keep_checkpoint(&name, serde_json::to_vec(&at).map_err(|error| error.to_string())?).map_err(|error| error.to_string())
+    library
+        .keep_checkpoint(&name, serde_json::to_vec(&at).map_err(|error| error.to_string())?)
+        .map_err(|error| error.to_string())
 }
 
 /// Marks where the book and each usage file stand for `hub` now, as this
@@ -407,10 +487,15 @@ fn mark(node: &Node, hub: &HubId) -> Result<(), String> {
         if let Some((began, deed)) = last {
             let name = format!("activity/{hub}");
             let mut at = standing(library, &name)?;
-            let was = (at["private"]["began"].as_i64().unwrap_or(i64::MIN), at["private"]["deed"].as_str().unwrap_or_default().to_string());
+            let was = (
+                at["private"]["began"].as_i64().unwrap_or(i64::MIN),
+                at["private"]["deed"].as_str().unwrap_or_default().to_string(),
+            );
             if (began, deed.clone()) > was {
                 at["private"] = serde_json::json!({ "began": began, "deed": deed });
-                library.keep_checkpoint(&name, serde_json::to_vec(&at).map_err(|error| error.to_string())?).map_err(error)?;
+                library
+                    .keep_checkpoint(&name, serde_json::to_vec(&at).map_err(|error| error.to_string())?)
+                    .map_err(error)?;
             }
         }
     }
@@ -418,8 +503,8 @@ fn mark(node: &Node, hub: &HubId) -> Result<(), String> {
     let mut at = standing(library, &name)?;
     let mut moved = false;
     for (file, path) in usage_files(node)? {
-        let metadata =
-            fastctx_platform::disk::metadata(&path).map_err(|error| format!("looking at {}: {error}", path.display()))?;
+        let metadata = fastctx_platform::disk::metadata(&path)
+            .map_err(|error| format!("looking at {}: {error}", path.display()))?;
         if at["private"][&file].as_u64().is_none_or(|was| was < metadata.len()) {
             at["private"][&file] = serde_json::json!(metadata.len());
             moved = true;
@@ -448,7 +533,8 @@ fn usage_files(node: &Node) -> Result<Vec<(String, std::path::PathBuf)>, String>
             .map_err(|error| format!("looking at {}: {error}", ledger.path().display()))?;
         for day in days {
             let day = day.map_err(|error| format!("looking at {}: {error}", ledger.path().display()))?;
-            let Some(date) = day.file_name().to_str().and_then(|name| name.strip_suffix(".jsonl")).map(str::to_string) else {
+            let Some(date) = day.file_name().to_str().and_then(|name| name.strip_suffix(".jsonl")).map(str::to_string)
+            else {
                 continue;
             };
             files.push((format!("{dir}/{date}"), day.path()));
@@ -515,6 +601,8 @@ struct Deed {
     sharing: Option<Marked>,
 }
 
+/// A deed not folded into an hour by an earlier version.
+const UNFOLDED: &str = "NOT EXISTS (SELECT 1 FROM book_folding f WHERE f.deed = d.deed AND f.applied = 1)";
 
 const DEED_COLUMNS: &str = "d.deed, d.job, d.began, d.ended, d.from_machine, d.session, d.agent, d.held, d.project, d.account, d.script, d.outcome, d.code, d.output, d.went, d.looked, d.copied, EXISTS(SELECT 1 FROM book_complete c WHERE c.deed = d.deed), d.sharing";
 
@@ -546,7 +634,14 @@ fn deed_of(row: &fastctx_storage::rusqlite::Row<'_>) -> fastctx_storage::rusqlit
 
 /// Writes the deeds since the last look, and those still read, of the
 /// accounts of `hub`.
-fn deeds(node: &Arc<Node>, hub: &HubId, home: Option<&AccountName>, waits: bool, shared: &Shared<'_>, stream: &str) -> Result<(), String> {
+fn deeds(
+    node: &Arc<Node>,
+    hub: &HubId,
+    home: Option<&AccountName>,
+    waits: bool,
+    shared: &Shared<'_>,
+    stream: &str,
+) -> Result<(), String> {
     let Some(assets) = node.assets.as_ref() else { return Ok(()) };
     let library = &assets.library;
     if node.book_database.fault().is_some() {
@@ -558,23 +653,29 @@ fn deeds(node: &Arc<Node>, hub: &HubId, home: Option<&AccountName>, waits: bool,
         at["began"] = serde_json::json!(i64::MIN);
         at["deed"] = serde_json::json!("");
     }
-    let (began, after) = (at["began"].as_i64().unwrap_or(i64::MIN), at["deed"].as_str().unwrap_or_default().to_string());
+    let (began, after) =
+        (at["began"].as_i64().unwrap_or(i64::MIN), at["deed"].as_str().unwrap_or_default().to_string());
     let open: BTreeSet<String> =
         at["open"].as_array().into_iter().flatten().filter_map(|deed| deed.as_str().map(str::to_string)).collect();
     // Up to where the book stood as this machine cleared for a share: its
     // accounts' own, never the body's.
-    let private = (at["private"]["began"].as_i64().unwrap_or(i64::MIN), at["private"]["deed"].as_str().unwrap_or_default().to_string());
+    let private = (
+        at["private"]["began"].as_i64().unwrap_or(i64::MIN),
+        at["private"]["deed"].as_str().unwrap_or_default().to_string(),
+    );
     let (found, touched) = node
         .book_database
         .read_now(move |db| {
             let mut found = Vec::new();
+            // A deed an earlier version folded into its hour is told by the
+            // hour alone (`hours`), as the book reads it (`query::hours`).
             let mut new = db.prepare_cached(&format!(
-                "SELECT {DEED_COLUMNS} FROM book_deeds d WHERE (d.began, d.deed) > (?1, ?2) ORDER BY d.began, d.deed LIMIT ?3"
+                "SELECT {DEED_COLUMNS} FROM book_deeds d WHERE (d.began, d.deed) > (?1, ?2) AND {UNFOLDED} ORDER BY d.began, d.deed LIMIT ?3"
             ))?;
             for deed in new.query_map(params![began, after, DEEDS], deed_of)? {
                 found.push(deed?);
             }
-            let mut again = db.prepare_cached(&format!("SELECT {DEED_COLUMNS} FROM book_deeds d WHERE d.deed = ?1"))?;
+            let mut again = db.prepare_cached(&format!("SELECT {DEED_COLUMNS} FROM book_deeds d WHERE d.deed = ?1 AND {UNFOLDED}"))?;
             for key in &open {
                 if found.iter().any(|deed| &deed.key == key) {
                     continue;
@@ -702,7 +803,14 @@ fn deeds(node: &Arc<Node>, hub: &HubId, home: Option<&AccountName>, waits: bool,
 
 /// Writes the usage lines since the last look of the accounts of `hub`,
 /// each account's lines of a piece as one object.
-fn usage(node: &Arc<Node>, hub: &HubId, home: Option<&AccountName>, waits: bool, shared: &Shared<'_>, stream: &str) -> Result<(), String> {
+fn usage(
+    node: &Arc<Node>,
+    hub: &HubId,
+    home: Option<&AccountName>,
+    waits: bool,
+    shared: &Shared<'_>,
+    stream: &str,
+) -> Result<(), String> {
     let Some(assets) = node.assets.as_ref() else { return Ok(()) };
     let library = &assets.library;
     let files = usage_files(node)?;
@@ -896,7 +1004,12 @@ fn usage(node: &Arc<Node>, hub: &HubId, home: Option<&AccountName>, waits: bool,
                 .map_err(error)?
                 .in_holding(holding)
                 .write_all(
-                    vec![Write { order: item.clone(), item: item.clone(), value: Some(body), objects: vec![lease.object] }],
+                    vec![Write {
+                        order: item.clone(),
+                        item: item.clone(),
+                        value: Some(body),
+                        objects: vec![lease.object],
+                    }],
                     vec![lease],
                     false,
                     assets.signer(),
@@ -917,7 +1030,6 @@ fn usage(node: &Arc<Node>, hub: &HubId, home: Option<&AccountName>, waits: bool,
     }
     library.keep_checkpoint(&name, serde_json::to_vec(&at).map_err(|error| error.to_string())?).map_err(error)
 }
-
 
 /// The lines of a piece of the usage ledger as a body's records keep them:
 /// a call made for a conversation an account was assisted in names neither
@@ -947,7 +1059,8 @@ fn for_body(node: &Node, bytes: &[u8]) -> Vec<u8> {
 /// (§28.47).
 fn elsewhere(key: &str) -> String {
     use sha2::Digest as _;
-    let digest: String = sha2::Sha256::digest(key.as_bytes()).iter().take(16).map(|byte| format!("{byte:02x}")).collect();
+    let digest: String =
+        sha2::Sha256::digest(key.as_bytes()).iter().take(16).map(|byte| format!("{byte:02x}")).collect();
     format!("elsewhere {digest}")
 }
 
@@ -994,4 +1107,3 @@ fn unname(node: &Node, value: &mut serde_json::Value) -> bool {
         _ => false,
     }
 }
-

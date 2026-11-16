@@ -33,6 +33,9 @@ pub struct Page {
 #[derive(Default)]
 struct Kept {
     of: Option<crate::ledger::names::Place>,
+    /// What the ledger is kept from: made again from another projection,
+    /// its entries are other under the same numbers (§28.58).
+    from: Option<String>,
     through: u64,
     pages: BTreeMap<PageName, Page>,
 }
@@ -50,9 +53,10 @@ fn with<R>(world: &WorldDir, town: &TownName, read: impl FnOnce(&BTreeMap<PageNa
     // entering one called the same, or one shorter than what was read: what
     // is kept is of a ledger that is gone.
     let of = crate::ledger::names::place(world, town)?;
+    let from = crate::ledger::projected::kept_from(&world.town(town))?;
     let (mut last, mut entries) = crate::ledger::entries_since(world, town, kept.through)?;
-    if kept.of != of || last < kept.through {
-        *kept = Kept { of, ..Kept::default() };
+    if kept.of != of || kept.from != from || last < kept.through {
+        *kept = Kept { of, from, ..Kept::default() };
         (last, entries) = crate::ledger::entries_since(world, town, 0)?;
     }
     for (seq, entry) in entries {

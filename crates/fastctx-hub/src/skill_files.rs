@@ -226,10 +226,7 @@ pub(crate) async fn ask(
                     // next opens, the library written from it then.
                     let held = changes
                         .iter()
-                        .map(|change| {
-                            crate::assets::mirror::version_held(&hub.assets, &account, opened, change)
-                                .map(|held| held.is_some_and(|held| held >= change.metadata.version))
-                        })
+                        .map(|change| crate::assets::mirror::holds_revision(&hub.assets, &account, opened, change))
                         .collect::<Result<Vec<bool>, String>>();
                     match held {
                         Ok(held) if held.iter().all(|taken| *taken) => {}

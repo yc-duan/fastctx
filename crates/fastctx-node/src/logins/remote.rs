@@ -344,18 +344,28 @@ pub(crate) async fn usage(
     if node.is_here(&machine) {
         return here_usage(node, agent, dir, None, true).await;
     }
-    // From the copies here, where they hold every line the accounts here
-    // read, or the machine is away (§28.58); otherwise the machine.
-    let (asking, written, named, path) = (node.clone(), machine.clone(), agent.clone(), dir.clone());
-    if let Ok(Some(report)) =
-        fastctx_platform::task::spawn_blocking(move || crate::usage::copied::report(&asking, &written, named.as_str(), &path))
-            .await
+    // The machine, which tells all of it as the asker may see it; from the
+    // copies here where it is away or does not answer (§28.58): they hold
+    // only the lines of the accounts logged in here, never another's the
+    // asker may see on that machine (codex-357de52a #5).
+    let copied = || {
+        let (asking, written, named, path) = (node.clone(), machine.clone(), agent.clone(), dir.clone());
+        fastctx_platform::task::spawn_blocking(move || {
+            crate::usage::copied::report(&asking, &written, named.as_str(), &path)
+        })
+    };
+    if crate::timeline::copy::away(node, &machine.name)
+        && let Ok(Some(report)) = copied().await
     {
         return Ok(report);
     }
-    match ask(node, &machine, Purpose::Look, RemoteCall::AgentUsage { agent, dir }).await? {
-        RemoteReply::AgentUsage(report) => Ok(*report),
-        _ => Err(other(&machine)),
+    match ask(node, &machine, Purpose::Look, RemoteCall::AgentUsage { agent: agent.clone(), dir: dir.clone() }).await {
+        Ok(RemoteReply::AgentUsage(report)) => Ok(*report),
+        Ok(_) => Err(other(&machine)),
+        Err(failure) => match copied().await {
+            Ok(Some(report)) => Ok(report),
+            _ => Err(failure),
+        },
     }
 }
 
@@ -370,18 +380,34 @@ pub(crate) async fn calls(
     if node.is_here(&machine) {
         return here_calls(node, agent, dir, None, query).await;
     }
-    // From the copies here, as the report (`usage`).
-    let (asking, written, named, path, asked) = (node.clone(), machine.clone(), agent.clone(), dir.clone(), query.clone());
-    if let Ok(Some(page)) = fastctx_platform::task::spawn_blocking(move || {
-        crate::usage::copied::calls(&asking, &written, named.as_str(), &path, &asked)
-    })
-    .await
+    // The machine, or the copies here where it is away, as the report
+    // (`usage`).
+    let copied = || {
+        let (asking, written, named, path, asked) =
+            (node.clone(), machine.clone(), agent.clone(), dir.clone(), query.clone());
+        fastctx_platform::task::spawn_blocking(move || {
+            crate::usage::copied::calls(&asking, &written, named.as_str(), &path, &asked)
+        })
+    };
+    if crate::timeline::copy::away(node, &machine.name)
+        && let Ok(Some(page)) = copied().await
     {
         return Ok(page);
     }
-    match ask(node, &machine, Purpose::Look, RemoteCall::AgentCalls { agent, dir, query }).await? {
-        RemoteReply::AgentCalls(page) => Ok(*page),
-        _ => Err(other(&machine)),
+    match ask(
+        node,
+        &machine,
+        Purpose::Look,
+        RemoteCall::AgentCalls { agent: agent.clone(), dir: dir.clone(), query: query.clone() },
+    )
+    .await
+    {
+        Ok(RemoteReply::AgentCalls(page)) => Ok(*page),
+        Ok(_) => Err(other(&machine)),
+        Err(failure) => match copied().await {
+            Ok(Some(page)) => Ok(page),
+            _ => Err(failure),
+        },
     }
 }
 
