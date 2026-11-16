@@ -83,6 +83,10 @@ export interface FilesWords {
     changed(n: number): string;
     /** The button on a file's row that shows it in the side. */
     side: string;
+    /** Under a card's first few files: shows the rest; and, with all of
+     *  them shown, only the first few again. */
+    rest(n: number): string;
+    fewer: string;
   };
   side: {
     name: string;
@@ -164,6 +168,8 @@ export const zhFiles: FilesWords = {
   turn: {
     changed: (n) => `本轮改了 ${n} 个文件`,
     side: "在侧栏里打开",
+    rest: (n) => `展开其余 ${n} 个文件`,
+    fewer: "收起",
   },
   side: {
     name: "文件",
@@ -240,6 +246,8 @@ export const enFiles: FilesWords = {
   turn: {
     changed: (n) => `${n} ${n === 1 ? "file" : "files"} changed this turn`,
     side: "Open in the side",
+    rest: (n) => `Show ${n} more ${n === 1 ? "file" : "files"}`,
+    fewer: "Show fewer",
   },
   side: {
     name: "Files",

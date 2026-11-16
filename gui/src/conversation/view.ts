@@ -97,7 +97,7 @@ import { composing } from "../typing";
 import { waitingInline } from "../app/waiting";
 
 /** The files of a turn's list drawn before the rest are asked for. */
-const TURN_FILES = 8;
+const TURN_FILES = 5;
 /** The lines of one change shown under a file's row in such a card; the
  *  rest are read in the side. */
 const TURN_LINES = 200;
@@ -1876,21 +1876,24 @@ export class ConversationView {
    *  turn's end, not to its last words, which a turn cut short may not
    *  have. Its head says how many files and by how many lines; under it a
    *  row to a file, as the side's own list of them, each opening in the
-   *  side to what the turn did to it. The card of the turn that changed
-   *  something last stands open; an earlier turn's is its head alone until
-   *  pressed. */
+   *  side to what the turn did to it. Every turn's card stands open until
+   *  it is folded by hand, showing a few files; with more than a few, the
+   *  rest come at a press at its foot, and the whole list then scrolls in
+   *  a frame of its own (the user, 2026-11-17: "默认展开，然后默认显示
+   *  几条；如果很多，下面有一个在最下面的展开…然后有一个这个部分的文件
+   *  层级的滚动条"). */
   private turnChanged(turn: string): string {
     const changed = this.context.changed;
     if (!changed || this.context.nested) return "";
     const files = changed.turn(turn);
     if (!files.length) return "";
     const { words } = changed;
-    // The list of the turn that changed something last stands open and
-    // names the conversation's sum, whether or not later turns only talked.
-    const latest = changed.last() === turn;
-    const open = this.changedFolds.get(turn) ?? latest;
+    const open = this.changedFolds.get(turn) ?? true;
     const sum = tally(files);
-    const whole = this.changedWhole.has(turn) || files.length <= TURN_FILES + 1;
+    // A few files at first; with more than a few, the rest come at a press
+    // under them, and the whole list then scrolls in its own frame.
+    const many = files.length > TURN_FILES + 1;
+    const whole = !many || this.changedWhole.has(turn);
     const listed = whole ? files : files.slice(0, TURN_FILES);
     const under = commonFolder(files);
     // A row pressed opens under itself what the turn did to the file; the
@@ -1909,8 +1912,8 @@ export class ConversationView {
         });
       })
       .join("");
-    const rest = whole ? "" : `<li class="cf-rest"><button type="button" class="text-button" data-changed-more>${escape(words.moreFiles(files.length - listed.length))}</button></li>`;
-    return `<section class="turn-changed${open ? " open" : ""}" data-turn="${escape(turn)}"><button type="button" class="tc-fold" data-changed-fold aria-expanded="${open}"><span class="tc-said">${escape(words.turn.changed(sum.files))}</span>${figures(sum.added, sum.removed)}${glyph("chevron", 16)}</button><div class="tc-box"><div class="tc-inner"><ul class="cf-files">${rows}${rest}</ul></div></div></section>`;
+    const rest = many ? `<button type="button" class="tc-rest${whole ? " whole" : ""}" data-changed-more aria-expanded="${whole}"><span>${escape(whole ? words.turn.fewer : words.turn.rest(files.length - listed.length))}</span>${glyph("chevron", 16)}</button>` : "";
+    return `<section class="turn-changed${open ? " open" : ""}${many && whole ? " whole" : ""}" data-turn="${escape(turn)}"><button type="button" class="tc-fold" data-changed-fold aria-expanded="${open}"><span class="tc-said">${escape(words.turn.changed(sum.files))}</span>${figures(sum.added, sum.removed)}${glyph("chevron", 16)}</button><div class="tc-box"><div class="tc-inner"><ul class="cf-files">${rows}</ul>${rest}</div></div></section>`;
   }
 
   /** What a turn did to a file, under the file's row: the lines of each
@@ -1952,8 +1955,8 @@ export class ConversationView {
     if (!changed || this.context.nested) return 0;
     const files = changed.turn(turn).length;
     if (!files) return 0;
-    const open = this.changedFolds.get(turn) ?? changed.last() === turn;
-    const rows = this.changedWhole.has(turn) || files <= TURN_FILES + 1 ? files : TURN_FILES + 1;
+    const open = this.changedFolds.get(turn) ?? true;
+    const rows = files <= TURN_FILES + 1 ? files : this.changedWhole.has(turn) ? Math.min(files, 12) + 1 : TURN_FILES + 1;
     return 56 + (open ? rows * 38 : 0);
   }
 
@@ -3759,7 +3762,8 @@ export class ConversationView {
         return;
       }
       if (changedHit.dataset.changedMore !== undefined) {
-        this.changedWhole.add(turn);
+        // The rest of the files come, or go again.
+        if (!this.changedWhole.delete(turn)) this.changedWhole.add(turn);
         if (slot) this.draw(slot);
         return;
       }

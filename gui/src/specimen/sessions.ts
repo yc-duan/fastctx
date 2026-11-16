@@ -204,6 +204,11 @@ function claude(): Specimen {
               same(44, 45, "        self.last = error;"),
             ]),
             wrote("9b04f1d3", 0, "laptop", "/home/me/mark50/src/ctrl/tests/step_vectors.rs", "added", [hunk(1, 1), ...vectors.map((line, n) => put(n + 1, line))]),
+            // `?files=N`: the turn made N more small files, for looking at
+            // a turn that changed many.
+            ...Array.from({ length: Number(new URLSearchParams(location.search).get("files") ?? 0) }, (_, n) =>
+              wrote(`c0ffee${String(n).padStart(2, "0")}`, 0, "laptop", `/home/me/mark50/src/ctrl/gen/table_${n + 1}.rs`, "added", [hunk(1, 1), put(1, `pub const TABLE_${n + 1}: [i32; 4] = [0, ${n + 1}, ${2 * (n + 1)}, ${3 * (n + 1)}];`)]),
+            ),
           ],
         ),
       },

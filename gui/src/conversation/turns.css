@@ -851,6 +851,39 @@
   scrollbar-width: thin;
 }
 
-.turn-changed .cf-rest {
-  padding: 6px 16px 8px;
+/* With all of many files shown, the list scrolls in a frame of its own:
+   a dozen rows of it at a time. */
+.turn-changed.whole .tc-inner > .cf-files {
+  max-height: calc(38px * 12);
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+
+/* At the card's foot, under the first few files: the rest of them, and
+   back to the few. */
+.tc-rest {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  min-height: 36px;
+  border-top: 1px solid var(--divider);
+  color: var(--text-3);
+  font: inherit;
+  transition: color var(--hover) var(--ease), background-color var(--hover) var(--ease);
+}
+
+.tc-rest:hover {
+  background: var(--fill);
+  color: var(--text);
+}
+
+.tc-rest > .glyph {
+  flex: none;
+  transition: rotate var(--expand) var(--expand-easing);
+}
+
+.tc-rest.whole > .glyph {
+  rotate: 180deg;
 }
