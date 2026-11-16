@@ -771,21 +771,25 @@
   align-items: center;
   gap: 6px;
 }
-.lg-folders {
-  grid-column: 1 / -1;
+/* A folder searched is a line as a login is: where it is, how its search
+   stands under that, the one deed on it at the line's end. A long path
+   gives way from its start, so the folder's own name stays in sight. */
+.lg-folder .ll-who {
+  direction: rtl;
+  text-align: left;
 }
-.lg-folder {
-  display: flex;
-  align-items: baseline;
-  gap: 14px;
-  padding: 12px 0 2px;
+.lg-folder-none {
   list-style: none;
-}
-.lg-folder small {
+  line-height: 36px;
   color: var(--text-3);
 }
-.lg-folder ~ .ll-line {
-  padding-left: 22px;
+.lg-rest {
+  list-style: none;
+  padding-top: 2px;
+}
+.lg-rest .lg-word {
+  min-height: 32px;
+  color: var(--text-3);
 }
 .lg-note {
   margin: 28px 0 0;
@@ -1709,9 +1713,6 @@
 }
 .lg-app .lg-head .segmented {
   align-self: center;
-}
-.lg-folder .lg-word {
-  margin-left: auto;
 }
 
 /* A phone: a page's head wraps, a login's switch on a line of its own

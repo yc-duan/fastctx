@@ -10,7 +10,7 @@ import { grantsOf, plateOf, timesOf, type Call, type CallsPage, type CallsQuery,
 export const NOW = new Date("2026-11-15T10:04:38+08:00");
 
 const machines: Machine[] = [
-  { id: "desktop", kind: "desktop", here: true, online: true, owner: null, scanned: true, folders: [{ dir: "D:\\CodexHomes", said: "找到 1 个登录", busy: false }, { dir: "D:\\", said: "已停止　已扫描 12,345 个文件夹", busy: false }], missing: [] },
+  { id: "desktop", kind: "desktop", here: true, online: true, owner: null, scanned: true, folders: [{ dir: "C:\\Users\\me\\CodexHomes", said: "找到 4 个登录", busy: false }, { dir: "D:\\", said: "已停止　已扫描 564,000 个文件夹", busy: false }], missing: [] },
   { id: "laptop", kind: "laptop", here: false, online: true, owner: null, scanned: true },
   { id: "lab", kind: "desktop", here: false, online: true, owner: null, scanned: true },
   { id: "server", kind: "server", here: false, online: true, owner: null, scanned: true },
@@ -24,7 +24,11 @@ const logins: Login[] = [
   { id: "review", family: "claude", machine: "desktop", dir: "C:\\Users\\me\\.claude-review", who: ".claude-review", plan: null, standing: "found", workbench: false },
   { id: "cx", family: "codex", machine: "desktop", dir: "C:\\Users\\me\\.codex", who: "me@example.com", plan: "Pro", standing: "in", workbench: true, isDefault: true, five: { used: 27, resets: "3 小时 40 分后" }, week: { used: 55, resets: "周五 09:00" }, autoTitle: true, program: "codex 0.98.0　官方安装　在 PATH 中", readAt: "1 分钟前" },
   { id: "cx-work", family: "codex", machine: "desktop", dir: "C:\\Users\\me\\.codex-work", who: "work@example.com", plan: "Plus", standing: "in", workbench: false },
-  { id: "cx-team", family: "codex", machine: "desktop", dir: "D:\\CodexHomes\\team", who: "team", plan: null, standing: "found", workbench: false, under: "D:\\CodexHomes" },
+  { id: "cx-team", family: "codex", machine: "desktop", dir: "C:\\Users\\me\\CodexHomes\\team", who: "team", plan: null, standing: "found", workbench: false, under: "C:\\Users\\me\\CodexHomes" },
+  { id: "cx-trial", family: "codex", machine: "desktop", dir: "C:\\Users\\me\\CodexHomes\\trial", who: "trial", plan: null, standing: "found", workbench: false, under: "C:\\Users\\me\\CodexHomes" },
+  { id: "cx-old-plus", family: "codex", machine: "desktop", dir: "C:\\Users\\me\\CodexHomes\\old-plus", who: "old-plus", plan: null, standing: "found", workbench: false, under: "C:\\Users\\me\\CodexHomes" },
+  { id: "cl-review", family: "claude", machine: "desktop", dir: "C:\\Users\\me\\CodexHomes\\claude-review", who: "claude-review", plan: null, standing: "found", workbench: false, under: "C:\\Users\\me\\CodexHomes" },
+  { id: "cx-old", family: "codex", machine: "desktop", dir: "D:\\.codex-old", who: ".codex-old", plan: null, standing: "found", workbench: false, under: "D:\\" },
   { id: "gemini", family: "antigravity", machine: "desktop", dir: "C:\\Users\\me\\.gemini", who: ".gemini", plan: null, standing: "in", workbench: false },
   { id: "cursor", family: "cursor", machine: "desktop", dir: "C:\\Users\\me\\.cursor", who: ".cursor", plan: null, standing: "found", workbench: false },
   { id: "opencode", family: "opencode", machine: "desktop", dir: "C:\\Users\\me\\.config\\opencode", who: "opencode", plan: null, standing: "renew", workbench: false },

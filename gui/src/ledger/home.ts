@@ -133,6 +133,8 @@ const pickable = (machine: Machine): Pickable => ({ name: machine.id, written: m
 function lineOf(login: Login): string {
   const tags: LineTag[] = [];
   if (login.who.includes("@") && !login.isDefault) tags.push({ text: login.dir.split(/[\\/]/).pop()! });
+  // Found in a folder searched for it: which, said by the folder's own name.
+  if (login.under) tags.push({ text: login.under.replace(/[\\/]+$/, "").split(/[\\/]/).pop() || login.under, said: login.under });
   if (login.plan) tags.push({ text: login.plan });
   if (login.isDefault) tags.push({ text: "默认" });
   if (login.token) tags.push({ text: "长期令牌", said: login.planSet ? "以长期令牌登录，套餐由管理员设置" : "以长期令牌登录，无法识别邮箱与套餐" });
@@ -156,6 +158,8 @@ function lineOf(login: Login): string {
 }
 
 const order: Family[] = ["claude", "codex", "antigravity", "cursor", "opencode"];
+/** The logins a card shows before it folds the rest. */
+const FEW = 6;
 const ordered = (families: Family[]) => [...order.filter((family) => families.includes(family)), ...families.filter((family) => !order.includes(family)).sort()];
 
 function attachBody(machine: Machine): string {
@@ -165,16 +169,30 @@ function attachBody(machine: Machine): string {
   if (!machine.scanned && !here.length && !machine.owner)
     return `<div class="lg-body lg-empty">${glyph("scan", 40)}<p>尚未扫描${machine.here ? "本机" : ` ${escape(machine.id)}`}</p><button type="button" class="lg-go" data-act="scan">扫描</button></div>`;
   const families = ordered([...new Set(here.map((login) => login.family))]);
-  const card = (family: Family, of: Login[]) => `<section class="ao-card"><header class="ao-head"><span class="ao-mark">${agentGlyph(family as never, 22)}</span><h2 class="ao-name">${escape(familyName(family))}</h2></header><ul class="ao-logins">${of.map(lineOf).join("")}</ul></section>`;
+  // A family's logins, those connected first, then those found and not yet
+  // connected, the ones a searched folder turned up last; a long card shows
+  // its first few and folds the rest.
+  const card = (family: Family, of: Login[]) => {
+    const rank = (login: Login) => (login.under ? 2 : login.standing === "found" ? 1 : 0);
+    const sorted = [...of].sort((a, b) => rank(a) - rank(b));
+    const key = `${machine.id}:${family}`;
+    const whole = sorted.length <= FEW + 1 || state.whole.has(key);
+    const shown = whole ? sorted : sorted.slice(0, FEW);
+    const rest = whole ? "" : `<li class="lg-rest"><button type="button" class="lg-word" data-act="whole" data-key="${escape(key)}">其余 ${sorted.length - shown.length} 个</button></li>`;
+    return `<section class="ao-card"><header class="ao-head"><span class="ao-mark">${agentGlyph(family as never, 22)}</span><h2 class="ao-name">${escape(familyName(family))}</h2></header><ul class="ao-logins">${shown.map(lineOf).join("")}${rest}</ul></section>`;
+  };
   if (machine.owner)
     return `<div class="lg-body lg-sheet"><div class="ao-cards">${families.map((family) => card(family, here.filter((login) => login.family === family))).join("")}</div><p class="lg-note">${here.length ? `${escape(machine.owner)} 的登录正在协助你；任务在本人机器上运行。` : `${escape(machine.owner)} 的智能体未协助你。`}</p></div>`;
-  const cards = families.map((family) => card(family, here.filter((login) => login.family === family && !login.under))).join("");
-  const found = here.filter((login) => login.under);
+  // What a folder's search turned up stands with its agent's other logins;
+  // the folders themselves are a card of their own, a line each as a login
+  // is: where it is, how its search stands, and the one deed on it.
+  const cards = families.map((family) => card(family, here.filter((login) => login.family === family))).join("");
+  const changes = machine.here || !!deeds;
+  const folderLine = (folder: NonNullable<Machine["folders"]>[number]) =>
+    `<li class="ll-line lg-folder"><span class="ll-row"><span class="ll-plug" aria-hidden="true">${glyph("folder", 16)}</span><span class="ll-who" title="${escape(folder.dir)}"><bdi>${escape(folder.dir)}</bdi></span><span class="ll-tags"><span class="ll-tag">${escape(folder.said)}</span></span><span class="ll-act">${changes ? `<button type="button" class="text-button ll-quiet" data-act="folder" data-change="${folder.busy ? "stop" : "forget"}" data-dir="${escape(folder.dir)}">${folder.busy ? "停止" : "移除"}</button>` : ""}</span></span></li>`;
   const folders = machine.folders
-    ? `<section class="ao-card lg-folders"><header class="ao-head"><span class="ao-mark">${glyph("folder", 22)}</span><h2 class="ao-name">搜索的文件夹</h2>${machine.here || deeds ? `<button type="button" class="text-button ll-go" data-act="add-folder">${glyph("plus", 14)}添加文件夹…</button>` : ""}</header>
-        <ul class="ao-logins">${machine.folders
-          .map((folder) => `<li class="lg-folder"><span>${escape(folder.dir)}</span><small>${escape(folder.said)}</small>${machine.here || deeds ? `<button type="button" class="lg-word" data-act="folder" data-change="${folder.busy ? "stop" : "forget"}" data-dir="${escape(folder.dir)}">${folder.busy ? "停止" : "移除"}</button>` : ""}</li>${found.filter((login) => login.under === folder.dir).map(lineOf).join("")}`)
-          .join("")}${machine.folders.length ? "" : `<li class="lg-folder lg-soft">尚未添加</li>`}</ul></section>`
+    ? `<section class="ao-card lg-folders"><header class="ao-head"><span class="ao-mark">${glyph("folder", 22)}</span><h2 class="ao-name">搜索的文件夹</h2>${changes ? `<button type="button" class="text-button ll-quiet" data-act="add-folder">${glyph("plus", 14)}添加…</button>` : ""}</header>
+        <ul class="ao-logins">${machine.folders.map(folderLine).join("")}${machine.folders.length ? "" : `<li class="lg-folder-none">尚未添加</li>`}</ul></section>`
     : "";
   const others = machines.filter((one) => one !== machine && !one.owner);
   const reach = reachDrawing({ machine: pickable(machine), agents: families.map((family) => ({ agent: family, connected: here.some((login) => login.family === family && login.standing !== "found") })), others: others.map(pickable) } as never, 680, (more) => `另有 ${more} 台`);
@@ -205,6 +223,11 @@ on("machines", (anchor) => {
       goTo({ kind: "attach", machine: id });
     },
   );
+});
+
+on("whole", (anchor) => {
+  state.whole.add(anchor.dataset.key!);
+  draw();
 });
 
 on("scan", () => {
