@@ -1,6 +1,7 @@
 //! Build native-agent trees from existing host facts and child histories.
 
 mod history;
+mod paged;
 
 use crate::Node;
 use fastctx_types::{
@@ -303,7 +304,7 @@ pub(super) async fn open(
             deadline,
             in_turn(node, waiting.clone(), {
                 let (node, id) = (node.clone(), id.clone());
-                async move { crate::talk::history_quietly(&node, &id).await }
+                async move { paged::parent(&node, &id).await }
             }),
         );
         tokio::pin!(history);
@@ -321,9 +322,9 @@ pub(super) async fn open(
         read.waited += waiting.waited();
         match result {
             Ok(Ok((Ok(history), turn))) => {
-                read.folded += history.history.len();
+                read.folded += history.read;
                 let reconnecting = read.events.is_none();
-                read.fold = folded(read.fold, history.history, None, turn).await;
+                read.fold = folded_facts(read.fold, history.facts, turn).await;
                 read.unavailable = history.unavailable;
                 read.goal_changed |= reconnecting && read.history_seen;
                 read.history_seen = true;
@@ -470,6 +471,18 @@ async fn in_turn<T: Send + 'static>(
         Ok((Err(_), _)) => Err(Missed::Late),
         Err(_) => Err(Missed::Failed),
     }
+}
+
+/// The parent's history taken down to facts, folded on a thread that may
+/// block, its turn let go once it is.
+async fn folded_facts(mut fold: Fold, facts: Vec<paged::Fact>, turn: crate::colleagues::live::Turn) -> Fold {
+    fastctx_platform::task::blocking(move || {
+        fold.facts(&facts);
+        drop(facts);
+        drop(turn);
+        fold
+    })
+    .await
 }
 
 /// A whole history is folded on a thread that may block; its turn among the
