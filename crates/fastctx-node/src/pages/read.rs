@@ -56,14 +56,14 @@ fn with<R>(world: &WorldDir, town: &TownName, read: impl FnOnce(&BTreeMap<PageNa
         (last, entries) = crate::ledger::entries_since(world, town, 0)?;
     }
     for (seq, entry) in entries {
-        apply(&mut kept.pages, seq, &entry.author, &entry.files);
+        apply(&mut kept.pages, seq, entry.author.as_ref(), &entry.files);
     }
     kept.through = last;
     Ok(read(&kept.pages))
 }
 
 /// Takes what one entry says of pages.
-fn apply(pages: &mut BTreeMap<PageName, Page>, seq: u64, author: &MachineName, files: &[File]) {
+fn apply(pages: &mut BTreeMap<PageName, Page>, seq: u64, author: Option<&MachineName>, files: &[File]) {
     for file in files {
         let parts: Vec<_> = file.path.split('/').collect();
         match parts.as_slice() {
@@ -90,6 +90,9 @@ fn apply(pages: &mut BTreeMap<PageName, Page>, seq: u64, author: &MachineName, f
                 {
                     continue;
                 }
+                // Given on a machine the account this machine reads the
+                // project as may not work on: not one it acts on (§28.58).
+                let Some(author) = author else { continue };
                 let page = pages.entry(name).or_default();
                 if page.consents.get(&identity).is_none_or(|(old, _)| old.version < consent.version) {
                     page.consents.insert(identity, (consent, author.clone()));

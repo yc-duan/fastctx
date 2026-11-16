@@ -46,8 +46,10 @@ const NAMED_BY: usize = 16;
 /// The stream of `town`'s ledger in a reader's records, for the machines
 /// whose digest is `machines`.
 pub(crate) fn stream(town: &TownId, machines: &[u8]) -> String {
-    let named: String = machines.iter().map(|byte| format!("{byte:02x}")).collect::<String>().chars().take(NAMED_BY).collect();
-    format!("{}/{town}/{named}", ProjectLedger::STREAM)
+    let named = fastctx_net::ledger::reader_stream(town, machines);
+    debug_assert_eq!(named.rsplit('/').next().map(str::len), Some(NAMED_BY));
+    debug_assert!(named.starts_with(ProjectLedger::STREAM));
+    named
 }
 
 /// Whether `account` holds the stream `name` (after `ledger/`) of its
@@ -268,7 +270,8 @@ fn kept(assets: &Assets) -> Result<Kept, String> {
     assets
         .control
         .read_now(|c| {
-            let mut statement = c.prepare_cached("SELECT account, opened, town, machines, through FROM asset_ledger_views")?;
+            let mut statement =
+                c.prepare_cached("SELECT account, opened, town, machines, through FROM asset_ledger_views")?;
             let rows = statement.query_map([], |row| {
                 Ok(((row.get(0)?, row.get(1)?, row.get(2)?), (row.get(3)?, row.get::<_, i64>(4)? as u64)))
             })?;

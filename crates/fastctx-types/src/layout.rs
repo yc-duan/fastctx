@@ -337,7 +337,9 @@ impl WorldDir {
         let mut towns = Vec::new();
         for path in self.town_directories()? {
             if let Some(town) = path.file_name().and_then(|name| TownName::try_from(name.to_str()?).ok())
-                && (self.town(&town).signed().is_dir() || self.town(&town).path().join("index.json").is_file())
+                && (self.town(&town).signed().is_dir()
+                    || self.town(&town).projected().is_dir()
+                    || self.town(&town).path().join("index.json").is_file())
             {
                 towns.push(town);
             }
@@ -470,6 +472,12 @@ impl TownDir {
     /// number.
     pub fn signed(&self) -> PathBuf {
         self.path.join("signed")
+    }
+
+    /// Each entry of the ledger as the hub projects it for the account this
+    /// machine reads the project as, named by its number (design §28.58).
+    pub fn projected(&self) -> PathBuf {
+        self.path.join("projected")
     }
 
     /// Attachments too large for a ledger entry, kept on the machine whose

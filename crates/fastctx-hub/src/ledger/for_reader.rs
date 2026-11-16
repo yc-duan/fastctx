@@ -7,7 +7,6 @@
 
 use std::collections::BTreeSet;
 
-use fastctx_net::authorization::Action;
 use fastctx_net::directory::Directory;
 use fastctx_net::ledger::{Entry, File, Projection};
 use fastctx_net::sign::Bytes;
@@ -17,30 +16,20 @@ use fastctx_types::pages::{PageConsent, PageVersion};
 use fastctx_types::project::Record;
 use fastctx_types::{AccountName, MachineName};
 use serde::{Serialize, de::DeserializeOwned};
-use sha2::{Digest, Sha256};
 
 /// The machines `account` may work on, by every name each had, and the
 /// machine `from` that asks for it, if any.
-pub(crate) fn usable(directory: &Directory, account: &AccountName, from: Option<&MachineName>) -> BTreeSet<MachineName> {
-    directory
-        .members
-        .iter()
-        .filter(|member| {
-            from.is_some_and(|from| directory.same(&member.name, from))
-                || directory.authorize(account, Action::Work(&member.name)).is_ok()
-        })
-        .flat_map(|member| std::iter::once(member.name.clone()).chain(member.was.iter().cloned()))
-        .collect()
+pub(crate) fn usable(
+    directory: &Directory,
+    account: &AccountName,
+    from: Option<&MachineName>,
+) -> BTreeSet<MachineName> {
+    fastctx_net::ledger::reader_machines(directory, account, from)
 }
 
 /// What a projection was made by: the machines it took as usable.
 pub(crate) fn digest(usable: &BTreeSet<MachineName>) -> Vec<u8> {
-    let mut hasher = Sha256::new();
-    for name in usable {
-        hasher.update(name.as_str().as_bytes());
-        hasher.update(b"\n");
-    }
-    hasher.finalize().to_vec()
+    fastctx_net::ledger::reader_digest(usable)
 }
 
 /// The entry `entry`, numbered `seq`, as one reads it who may work on the
@@ -58,7 +47,10 @@ pub(crate) fn entry(
         seq,
         at: entry.at,
         author: Some(entry.author.clone()).filter(|author| usable(author)),
-        machines: entry.machines.as_ref().map(|machines| machines.iter().filter(|machine| usable(machine)).cloned().collect()),
+        machines: entry
+            .machines
+            .as_ref()
+            .map(|machines| machines.iter().filter(|machine| usable(machine)).cloned().collect()),
         files,
     }
 }
@@ -77,7 +69,9 @@ pub(crate) fn filter(
         let parts: Vec<&str> = file.path.split('/').collect();
         let bytes = &file.bytes.0;
         let rewritten = match parts.as_slice() {
-            ["project", name] if name.ends_with(".json") => rewrite(bytes, |record: &mut Record| record.for_reader(usable)),
+            ["project", name] if name.ends_with(".json") => {
+                rewrite(bytes, |record: &mut Record| record.for_reader(usable))
+            }
             ["pages", _, "versions", _, "page.json"] => {
                 rewrite(bytes, |version: &mut PageVersion| version.for_reader(usable))
             }
@@ -92,12 +86,14 @@ pub(crate) fn filter(
                 }
             }),
             // Evidence may be named under folders of its own: every depth.
-            ["memory", _, "evidence", .., name] if name.ends_with(".json") => rewrite(bytes, |evidence: &mut Evidence| {
-                evidence.author.for_reader(usable);
-                if evidence.location.as_ref().is_some_and(|location| !usable(&location.machine)) {
-                    evidence.location = None;
-                }
-            }),
+            ["memory", _, "evidence", .., name] if name.ends_with(".json") => {
+                rewrite(bytes, |evidence: &mut Evidence| {
+                    evidence.author.for_reader(usable);
+                    if evidence.location.as_ref().is_some_and(|location| !usable(&location.machine)) {
+                        evidence.location = None;
+                    }
+                })
+            }
             ["history", _, name] if name.ends_with(".json") => {
                 rewrite(bytes, |revision: &mut fastctx_net::topic_history::Revision| history(&mut revision.revision))
             }
@@ -120,7 +116,10 @@ pub(crate) fn filter(
 
 /// The file `bytes` as `filter` leaves its value, when it changes it; a
 /// file that is not such a value is left as it is.
-fn rewrite<T: Serialize + DeserializeOwned + PartialEq + Clone>(bytes: &[u8], filter: impl FnOnce(&mut T)) -> Option<Vec<u8>> {
+fn rewrite<T: Serialize + DeserializeOwned + PartialEq + Clone>(
+    bytes: &[u8],
+    filter: impl FnOnce(&mut T),
+) -> Option<Vec<u8>> {
     let mut value: T = serde_json::from_slice(bytes).ok()?;
     let written = value.clone();
     filter(&mut value);

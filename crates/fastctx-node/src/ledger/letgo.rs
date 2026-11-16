@@ -123,7 +123,7 @@ pub(crate) async fn leave_kept(
 }
 
 /// What `remove_copy` takes of a project kept here, beside its signed entries.
-const COPY: [&str; 7] = ["ledger", "attachments", "journals", "specs", "pages", "tampering", "history"];
+const COPY: [&str; 8] = ["projected", "ledger", "attachments", "journals", "specs", "pages", "tampering", "history"];
 
 /// Whether this computer still keeps any of what `remove_copy` takes of `town`.
 fn holds_copy(node: &Node, town: &TownName) -> bool {
@@ -167,6 +167,7 @@ pub(super) async fn remove(node: &Arc<Node>, town: &TownName) -> io::Result<()> 
         // The signed entries go first: without them the folder is no
         // project any more, and the guard puts nothing back.
         super::remove(&directory.signed())?;
+        super::remove(&directory.projected())?;
         super::remove(&directory.ledger())?;
         super::remove(&directory.attachments())?;
         for folder in ["journals", "specs", "pages", "tampering", "history"] {

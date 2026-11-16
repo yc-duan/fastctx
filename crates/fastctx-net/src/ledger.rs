@@ -60,6 +60,45 @@ pub struct Projection {
     pub files: Vec<File>,
 }
 
+/// The machines `account` may work on, by every name each had, and the
+/// machine `from` that asks, if any: what a projection of a project's
+/// ledger for that account is made by (§29, 2.4). The hub and each machine
+/// work it out alike from the directory they hold.
+pub fn reader_machines(
+    directory: &crate::directory::Directory,
+    account: &fastctx_types::AccountName,
+    from: Option<&MachineName>,
+) -> std::collections::BTreeSet<MachineName> {
+    directory
+        .members
+        .iter()
+        .filter(|member| {
+            from.is_some_and(|from| directory.same(&member.name, from))
+                || directory.authorize(account, crate::authorization::Action::Work(&member.name)).is_ok()
+        })
+        .flat_map(|member| std::iter::once(member.name.clone()).chain(member.was.iter().cloned()))
+        .collect()
+}
+
+/// What a projection was made by: the digest of the machines it took as
+/// usable.
+pub fn reader_digest(usable: &std::collections::BTreeSet<MachineName>) -> Vec<u8> {
+    use sha2::Digest as _;
+    let mut hasher = sha2::Sha256::new();
+    for name in usable {
+        hasher.update(name.as_str().as_bytes());
+        hasher.update(b"\n");
+    }
+    hasher.finalize().to_vec()
+}
+
+/// The stream of `town`'s ledger in a reader's records, for the machines
+/// whose digest is `machines`: `ledger/<town>/<its first sixteen hex digits>`.
+pub fn reader_stream(town: &TownId, machines: &[u8]) -> String {
+    let named: String = machines.iter().take(8).map(|byte| format!("{byte:02x}")).collect();
+    format!("ledger/{town}/{named}")
+}
+
 /// The entry `signed` holds, if the key it names signed it, for `town` of
 /// `hub`, with paths a ledger can hold.
 pub fn open(signed: &Signed, hub: &HubId, town: &TownId) -> Result<Entry, String> {

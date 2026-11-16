@@ -41,6 +41,7 @@ pub(crate) mod deletion;
 pub(crate) mod letgo;
 pub(crate) mod metadata;
 pub(crate) mod names;
+pub(crate) mod projected;
 pub(crate) mod query;
 pub(crate) mod syncing;
 pub(crate) mod third;
@@ -147,7 +148,7 @@ async fn write_for(
             }
             .map_err(Failure::new)?;
             if link.view().member_keeps_project(&link.view().me, &place.town) {
-                take(node, &link, town, &place.town, accepted).await.map_err(Failure::new)
+                take_latest(node, &link, town, &place.town, accepted).await.map_err(Failure::new)
             } else {
                 metadata::refresh(node, &link, Some(&place.town)).await.map_err(Failure::new)
             }
@@ -224,7 +225,7 @@ pub async fn sync(node: &Arc<Node>, hub: &HubId, town: Option<TownId>) -> Result
         };
         match name {
             Ok(Some(name)) => {
-                if let Err(error) = take(node, &link, &name, &id, latest).await {
+                if let Err(error) = take_latest(node, &link, &name, &id, latest).await {
                     problems.push(error);
                 }
             }
@@ -275,14 +276,45 @@ fn sync_name(node: &Node, link: &Link, id: &TownId) -> Result<Option<TownName>, 
     })
 }
 
-/// Takes `town`'s entries through `latest`.
-pub(crate) async fn take(
+/// Takes `town`'s entries through `latest`: from the hub's projection for
+/// the account this machine reads it as, where it writes one and the copy
+/// here holds it (design §28.58); otherwise replicated as before.
+pub(crate) async fn take_latest(
     node: &Arc<Node>,
     link: &Arc<Link>,
     name: &TownName,
     town: &TownId,
     latest: u64,
 ) -> Result<(), String> {
+    let source = {
+        let (looking, link, town) = (node.clone(), link.clone(), town.clone());
+        fastctx_platform::task::spawn_blocking(move || projected::source(&looking, &link, &town))
+            .await
+            .map_err(|error| error.to_string())?
+    };
+    let Some(source) = source else {
+        // A project kept from its projection is never mixed with entries
+        // replicated beside it: it waits for the projection to be here.
+        if fastctx_platform::disk::is_dir(node.world.town(name).projected()) {
+            return Err(format!("the hub's projection of {name}'s ledger is not here yet"));
+        }
+        return take(node, link, name, town, latest).await;
+    };
+    if !link.view().member_keeps_project(&link.view().me, town) {
+        return Err("an assisting host keeps only the project index".into());
+    }
+    let changed = projected::take(node, link, name, town, latest, source).await?;
+    let _syncing = node.syncing.lock().await;
+    check_place(node, link, name, town)?;
+    if changed {
+        crate::context::invalidations::project(node, name);
+    }
+    node.memory_changed();
+    Ok(())
+}
+
+/// Takes `town`'s entries through `latest`, replicated from the hub.
+async fn take(node: &Arc<Node>, link: &Arc<Link>, name: &TownName, town: &TownId, latest: u64) -> Result<(), String> {
     if !link.view().member_keeps_project(&link.view().me, town) {
         return Err("an assisting host keeps only the project index".into());
     }
@@ -325,7 +357,8 @@ pub(crate) async fn take(
                     }
                     match (taken.entry, taken.refused) {
                         (Some(entry), None) => {
-                            let _map_changed = keeping.topics.writing(format!("{}{}", fastctx_types::topics::MAP_PREFIX, name));
+                            let _map_changed =
+                                keeping.topics.writing(format!("{}{}", fastctx_types::topics::MAP_PREFIX, name));
                             apply(&keeping.world, &name, seq, &entry, &taken.signed)
                                 .map_err(|error| format!("keeping entry {seq} of {name}: {error}"))?;
                         }
@@ -419,14 +452,13 @@ fn apply(world: &WorldDir, town: &TownName, seq: u64, entry: &Entry, signed: &Si
     let record = directory.signed().join(format!("{seq:020}.json"));
     let bytes = serde_json::to_vec(signed).map_err(io::Error::other)?;
     same_or_new(&record, &bytes)?;
-    write_files(&directory, entry)
+    write_files(&directory.ledger(), &entry.files)
 }
 
-/// Writes an entry's files, each new or already the same.
-fn write_files(directory: &TownDir, entry: &Entry) -> io::Result<()> {
-    let ledger = directory.ledger();
-    for file in &entry.files {
-        let path = file.path.split('/').fold(ledger.clone(), |path, name| path.join(name));
+/// Writes an entry's files under `ledger`, each new or already the same.
+fn write_files(ledger: &Path, files: &[File]) -> io::Result<()> {
+    for file in files {
+        let path = file.path.split('/').fold(ledger.to_path_buf(), |path, name| path.join(name));
         if let Some(parent) = path.parent() {
             ensure_private_dir(parent)?;
         }
@@ -451,8 +483,9 @@ pub(crate) fn finish(node: &Node) -> io::Result<Vec<String>> {
             continue;
         }
         let directory = world.town(&town);
-        for (seq, path) in numbered(&directory.signed())? {
-            let finished = read_entry(world, &path).and_then(|(entry, _)| write_files(&directory, &entry));
+        for (seq, path, projected) in kept_files(&directory)? {
+            let finished =
+                read_kept(world, &path, projected).and_then(|kept| write_files(&directory.ledger(), &kept.files));
             if let Err(error) = finished {
                 problems.push(format!("entry {seq} of {town}: {error}"));
             }
@@ -461,10 +494,52 @@ pub(crate) fn finish(node: &Node) -> io::Result<Vec<String>> {
     Ok(problems)
 }
 
+/// An entry this machine keeps of a project: one its author signed, or the
+/// hub's projection of one for the account this machine reads the project
+/// as (design §28.58), which names its author only where that account may
+/// work.
+pub struct Kept {
+    pub author: Option<MachineName>,
+    pub files: Vec<File>,
+}
+
+impl From<Entry> for Kept {
+    fn from(entry: Entry) -> Self {
+        Self { author: Some(entry.author), files: entry.files }
+    }
+}
+
+impl From<ledger::Projection> for Kept {
+    fn from(projection: ledger::Projection) -> Self {
+        Self { author: projection.author, files: projection.files }
+    }
+}
+
+/// The entries this machine keeps of a project, in order, each with its
+/// file and whether the hub projected it: a project taken from its
+/// projection keeps those alone.
+fn kept_files(directory: &TownDir) -> io::Result<Vec<(u64, PathBuf, bool)>> {
+    if fastctx_platform::disk::is_dir(directory.projected()) {
+        return Ok(numbered(&directory.projected())?.into_iter().map(|(seq, path)| (seq, path, true)).collect());
+    }
+    Ok(numbered(&directory.signed())?.into_iter().map(|(seq, path)| (seq, path, false)).collect())
+}
+
+/// The entry kept at `path`.
+fn read_kept(world: &WorldDir, path: &Path, projected: bool) -> io::Result<Kept> {
+    if projected {
+        let projection: ledger::Projection = serde_json::from_slice(&fastctx_platform::disk::read(path)?)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, format!("{}: {error}", path.display())))?;
+        return Ok(projection.into());
+    }
+    Ok(read_entry(world, path)?.0.into())
+}
+
 /// The number of the latest entry this machine has of `town`; 0 when none.
 pub fn seq(world: &WorldDir, town: &TownName) -> io::Result<u64> {
     let directory = world.town(town);
     if !fastctx_platform::disk::is_dir(directory.signed())
+        && !fastctx_platform::disk::is_dir(directory.projected())
         && let Some(index) = metadata::read(world, town)?
     {
         return Ok(index.seq);
@@ -473,20 +548,15 @@ pub fn seq(world: &WorldDir, town: &TownName) -> io::Result<u64> {
 }
 
 /// The entry of `town` numbered `seq`, when this machine has it.
-pub(crate) fn entry(world: &WorldDir, town: &TownName, seq: u64) -> io::Result<Option<Entry>> {
+pub(crate) fn entry(world: &WorldDir, town: &TownName, seq: u64) -> io::Result<Option<Kept>> {
     if let Some(entries) = carry_source::entries(world, town)? {
-        return Ok(entries.into_iter().find(|(number, _)| *number == seq).map(|(_, entry)| entry));
+        return Ok(entries.into_iter().find(|(number, _)| *number == seq).map(|(_, entry)| entry.into()));
     }
-    let directory = world.town(town).signed();
-    let path = directory.join(format!("{seq:020}.json"));
-    let path = match fastctx_platform::disk::exists(&path)? {
-        true => path,
-        false => match numbered(&directory)?.into_iter().find(|(number, _)| *number == seq) {
-            Some((_, path)) => path,
-            None => return Ok(None),
-        },
+    let Some((_, path, projected)) = kept_files(&world.town(town))?.into_iter().find(|(number, _, _)| *number == seq)
+    else {
+        return Ok(None);
     };
-    Ok(Some(read_entry(world, &path)?.0))
+    Ok(Some(read_kept(world, &path, projected)?))
 }
 
 /// The full copy's cursor; an index-only cache is never a replicated entry.
@@ -500,7 +570,27 @@ pub(crate) fn replica_seq(world: &WorldDir, town: &TownName) -> io::Result<u64> 
 
 /// The entries of `town` this machine has after the one numbered `after`,
 /// in order.
-pub fn entries_after(world: &WorldDir, town: &TownName, after: u64) -> io::Result<Vec<(u64, Entry)>> {
+pub fn entries_after(world: &WorldDir, town: &TownName, after: u64) -> io::Result<Vec<(u64, Kept)>> {
+    if let Some(entries) = carry_source::entries(world, town)? {
+        return Ok(entries
+            .into_iter()
+            .filter(|(seq, _)| *seq > after)
+            .map(|(seq, entry)| (seq, entry.into()))
+            .collect());
+    }
+    let mut entries = Vec::new();
+    for (seq, path, projected) in kept_files(&world.town(town))? {
+        if seq > after {
+            entries.push((seq, read_kept(world, &path, projected)?));
+        }
+    }
+    Ok(entries)
+}
+
+/// The signed entries of `town` this machine has after the one numbered
+/// `after`, in order: those of a project kept on no hub, which this machine
+/// signs itself.
+pub(crate) fn signed_after(world: &WorldDir, town: &TownName, after: u64) -> io::Result<Vec<(u64, Entry)>> {
     if let Some(entries) = carry_source::entries(world, town)? {
         return Ok(entries.into_iter().filter(|(seq, _)| *seq > after).collect());
     }
@@ -517,17 +607,20 @@ pub fn entries_after(world: &WorldDir, town: &TownName, after: u64) -> io::Resul
 /// number of the last entry this machine has: what a reader that keeps
 /// what earlier entries said goes on from, and how it notices a ledger
 /// shorter than the one it read.
-pub fn entries_since(world: &WorldDir, town: &TownName, after: u64) -> io::Result<(u64, Vec<(u64, Entry)>)> {
+pub fn entries_since(world: &WorldDir, town: &TownName, after: u64) -> io::Result<(u64, Vec<(u64, Kept)>)> {
     if let Some(entries) = carry_source::entries(world, town)? {
         let last = entries.last().map_or(0, |(seq, _)| *seq);
-        return Ok((last, entries.into_iter().filter(|(seq, _)| *seq > after).collect()));
+        return Ok((
+            last,
+            entries.into_iter().filter(|(seq, _)| *seq > after).map(|(seq, entry)| (seq, entry.into())).collect(),
+        ));
     }
-    let numbered = numbered(&world.town(town).signed())?;
-    let last = numbered.last().map_or(0, |(seq, _)| *seq);
+    let numbered = kept_files(&world.town(town))?;
+    let last = numbered.last().map_or(0, |(seq, _, _)| *seq);
     let mut entries = Vec::new();
-    for (seq, path) in numbered {
+    for (seq, path, projected) in numbered {
         if seq > after {
-            entries.push((seq, read_entry(world, &path)?.0));
+            entries.push((seq, read_kept(world, &path, projected)?));
         }
     }
     Ok((last, entries))
@@ -535,7 +628,7 @@ pub fn entries_since(world: &WorldDir, town: &TownName, after: u64) -> io::Resul
 
 /// The last entry taken or refused.
 fn cursor(directory: &TownDir, refused: &BTreeMap<u64, String>) -> io::Result<u64> {
-    let taken = numbered(&directory.signed())?.last().map(|(seq, _)| *seq).unwrap_or(0);
+    let taken = kept_files(directory)?.last().map(|(seq, _, _)| *seq).unwrap_or(0);
     let through: u64 = fastctx_net::link::state::read_or(&directory.path().join("projection-through.json"), 0)?;
     Ok(taken.max(refused.keys().next_back().copied().unwrap_or(0)).max(through))
 }

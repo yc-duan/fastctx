@@ -102,7 +102,7 @@ fn write_checked(
     if checked.place.as_ref() != Some(place) || super::replica_seq(world, town).map_err(reading)? < checked.through {
         *checked = Checked { place: Some(place.clone()), ..Checked::default() };
     }
-    for (seq, entry) in super::entries_after(world, town, checked.through).map_err(reading)? {
+    for (seq, entry) in super::signed_after(world, town, checked.through).map_err(reading)? {
         checked.take(seq, &entry)?;
     }
     if checked.through == 0 && machines.is_none() {

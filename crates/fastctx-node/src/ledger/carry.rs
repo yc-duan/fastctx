@@ -182,7 +182,8 @@ async fn one(node: &Arc<Node>, link: &Arc<Link>, home: &AccountName, town: &Town
         }
         let recovering = originals(&node.world, town).map_err(|error| error.to_string())?.is_some();
         {
-            let _map_changed = recovering.then(|| node.topics.writing(format!("{}{town}", fastctx_types::topics::MAP_PREFIX)));
+            let _map_changed =
+                recovering.then(|| node.topics.writing(format!("{}{town}", fastctx_types::topics::MAP_PREFIX)));
             recover(&node.world, town, history_enabled).map_err(|error| error.to_string())?;
         }
         if recovering {

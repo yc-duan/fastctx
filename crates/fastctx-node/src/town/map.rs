@@ -8,11 +8,13 @@ pub async fn view(node: &Arc<Node>, town: &TownName, acting: &Acting) -> Result<
     super::access::ready(node, acting, town).await?;
     let (world, name) = (node.world.clone(), town.clone());
     let (records, pages) = fastctx_platform::task::spawn_blocking(move || {
-        let pages = if !fastctx_platform::disk::is_dir(world.town(&name).signed()) {
-            crate::ledger::metadata::read(&world, &name)?.map(|index| index.pages).unwrap_or_default()
-        } else {
-            crate::pages::read::summaries(&world, &name)?
-        };
+        let kept = world.town(&name);
+        let pages =
+            if !fastctx_platform::disk::is_dir(kept.signed()) && !fastctx_platform::disk::is_dir(kept.projected()) {
+                crate::ledger::metadata::read(&world, &name)?.map(|index| index.pages).unwrap_or_default()
+            } else {
+                crate::pages::read::summaries(&world, &name)?
+            };
         std::io::Result::Ok((super::read::current(&world, &name)?, pages))
     })
     .await

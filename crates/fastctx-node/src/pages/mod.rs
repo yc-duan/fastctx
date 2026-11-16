@@ -28,7 +28,10 @@ pub async fn call(
 }
 
 pub(crate) async fn selected(
-    node: &Arc<Node>, caller: &Caller, opened_on: &MachineName, call: PageCall,
+    node: &Arc<Node>,
+    caller: &Caller,
+    opened_on: &MachineName,
+    call: PageCall,
     identity: Option<&fastctx_types::pages::PageIdentity>,
 ) -> Result<Reply, Failure> {
     let mut reply = answer(node, caller, opened_on, call, identity).await?;
@@ -56,7 +59,10 @@ pub(crate) async fn selected(
 }
 
 async fn answer(
-    node: &Arc<Node>, caller: &Caller, opened_on: &MachineName, call: PageCall,
+    node: &Arc<Node>,
+    caller: &Caller,
+    opened_on: &MachineName,
+    call: PageCall,
     fixed: Option<&fastctx_types::pages::PageIdentity>,
 ) -> Result<Reply, Failure> {
     match call {
@@ -138,7 +144,10 @@ async fn answer(
             check_base(&page, Some(version), stored.current().map(|v| v.version))?;
             let current = stored.current().expect("checked current version");
             let identity = match fixed {
-                Some(identity) => { identity::check(node, caller, opened_on, &town, identity)?; identity.clone() }
+                Some(identity) => {
+                    identity::check(node, caller, opened_on, &town, identity)?;
+                    identity.clone()
+                }
                 None => identity::resolve(node, caller, opened_on, &town, account.as_ref())?,
             };
             let consent = stored.consents.get(&identity).map(|(consent, _)| consent);
@@ -173,7 +182,10 @@ async fn answer(
             user(caller)?;
             let town = caller.town_or(node, town)?;
             let identity = match fixed {
-                Some(identity) => { identity::check(node, caller, opened_on, &town, identity)?; identity.clone() }
+                Some(identity) => {
+                    identity::check(node, caller, opened_on, &town, identity)?;
+                    identity.clone()
+                }
                 None => identity::resolve(node, caller, opened_on, &town, account.as_ref())?,
             };
             actions::relay(node, opened_on, identity, town, page, version, action)
@@ -228,7 +240,7 @@ async fn current(node: &Arc<Node>, town: &TownName, required: bool) -> Result<()
         .find(|(listed, _)| *listed == place.town)
         .map(|(_, seq)| seq)
         .ok_or_else(|| crate::town::map::no_ledger(node, town))?;
-    crate::ledger::take(node, &link, town, &place.town, latest).await.map_err(Failure::new)?;
+    crate::ledger::take_latest(node, &link, town, &place.town, latest).await.map_err(Failure::new)?;
     require_town(node, town)
 }
 

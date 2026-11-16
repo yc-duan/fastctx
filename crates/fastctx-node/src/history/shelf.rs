@@ -161,7 +161,12 @@ impl Shelf {
     }
 
     fn refresh_project(&mut self, world: &WorldDir, town: &TownName) -> Result<(), String> {
-        let entries = world.town(town).signed();
+        // The entries kept: the hub's projection where taken from it (§28.58).
+        let directory = world.town(town);
+        let entries = match fastctx_platform::disk::is_dir(directory.projected()) {
+            true => directory.projected(),
+            false => directory.signed(),
+        };
         let now = changed(&entries)?;
         if self.ledger.is_some() && self.seen.holds(now) {
             return Ok(());
