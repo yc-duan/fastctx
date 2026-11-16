@@ -1,13 +1,16 @@
-// How much the interface moves (`world-gui.md`, 外观): as the system asks,
-// always, or not at all. Its one switch, `data-reduced` on the root, is set
-// before the first paint (`index.html`) and again whenever the choice or
-// the system changes; every rule and script that moves asks this switch,
-// never the system on its own. Information that moves, such as a
-// conversation's working dots, is not motion it takes away.
+// How much the interface moves (`world-gui.md`, 外观): always, as the
+// system asks, or not at all. It moves always until the user chooses
+// otherwise: following the system is a choice, not where it starts (the
+// user, 2026-11-17: "默认是总是播放，而不是跟随系统"). Its one switch,
+// `data-reduced` on the root, is set before the first paint (`index.html`)
+// and again whenever the choice or the system changes; every rule and
+// script that moves asks this switch, never the system on its own.
+// Information that moves, such as a conversation's working dots, is not
+// motion it takes away.
 
-export type Motion = "system" | "always" | "off";
+export type Motion = "always" | "system" | "off";
 
-export const motions: Motion[] = ["system", "always", "off"];
+export const motions: Motion[] = ["always", "system", "off"];
 
 const KEPT = "motion";
 // Asked of the system in a page; none where there is no page, as when the
@@ -15,13 +18,13 @@ const KEPT = "motion";
 const asked = typeof matchMedia === "function" ? matchMedia("(prefers-reduced-motion: reduce)") : null;
 const listeners = new Set<() => void>();
 
-/** The choice kept on this device; following the system when none is. */
+/** The choice kept on this device; always moving when none is. */
 export function chosenMotion(): Motion {
   try {
     const kept = localStorage.getItem(KEPT);
-    return kept === "always" || kept === "off" ? kept : "system";
+    return kept === "system" || kept === "off" ? kept : "always";
   } catch {
-    return "system";
+    return "always";
   }
 }
 
@@ -40,7 +43,7 @@ export function reducedMotion(): boolean {
 
 export function chooseMotion(motion: Motion): void {
   try {
-    if (motion === "system") localStorage.removeItem(KEPT);
+    if (motion === "always") localStorage.removeItem(KEPT);
     else localStorage.setItem(KEPT, motion);
   } catch {
     // Not kept: the choice holds until the window closes.
