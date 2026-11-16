@@ -50,7 +50,7 @@ fn filter(
     reply: &mut Reply,
     fixed: Option<&fastctx_types::TownName>,
 ) -> Result<(), Failure> {
-    let town = fixed.or_else(|| match call {
+    let town = fixed.or(match call {
         Call::Project(fastctx_types::ProjectCall::New { town, .. } | fastctx_types::ProjectCall::Enter { town }) => {
             Some(town)
         }

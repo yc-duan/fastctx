@@ -61,11 +61,8 @@ impl Resolved {
     }
 
     pub(super) fn bind(&self, call: &mut Call) -> Result<(), Failure> {
-        match (self, call) {
-            (Self::ProjectEdit { town }, Call::Project(ProjectCall::Edit { town: selected, .. })) => {
-                *selected = Some(town.clone())
-            }
-            _ => {}
+        if let (Self::ProjectEdit { town }, Call::Project(ProjectCall::Edit { town: selected, .. })) = (self, call) {
+            *selected = Some(town.clone())
         }
         Ok(())
     }
