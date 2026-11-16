@@ -164,7 +164,7 @@ async fn relieve_now(node: &Arc<Node>, target: u64, except: Option<&ResidentId>,
     if crate::memory_room::available().is_none_or(|available| available >= target) {
         return 0;
     }
-    let mut scan = crate::claude::lifecycle::Scan::default();
+    let mut scan = deadline.map_or_else(Default::default, crate::claude::lifecycle::Scan::until);
     let mut idle = Vec::new();
     for resident in node.residents.everyone() {
         if late() {

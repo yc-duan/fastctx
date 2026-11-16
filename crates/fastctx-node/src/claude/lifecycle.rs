@@ -3,7 +3,13 @@
 use crate::Node;
 use fastctx_hosts::claude::{background, lifecycle::IdleWorker};
 use fastctx_types::{ipc::Failure, residents::About};
-use std::{collections::HashMap, ffi::OsString, path::PathBuf, sync::Arc, time::Duration};
+use std::{
+    collections::HashMap,
+    ffi::OsString,
+    path::PathBuf,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 // The retirement gate must be released well before an external caller's
 // thirty-second admission deadline, even if Claude Code stops responding.
@@ -60,17 +66,33 @@ async fn list(command: super::Command, timeout: Duration) -> Result<String, Fail
 
 /// A scan owns its listings; failed listings are shared too, never retried per session.
 #[derive(Default)]
-pub(crate) struct Scan(HashMap<PathBuf, Result<String, Failure>>);
+pub(crate) struct Scan {
+    listed: HashMap<PathBuf, Result<String, Failure>>,
+    /// When a listing must have answered by: a wake waits no longer for
+    /// memory (codex-4bf06087, second round #2).
+    until: Option<Instant>,
+}
 
 impl Scan {
+    /// A scan whose listings answer by `until`.
+    pub(crate) fn until(until: Instant) -> Self {
+        Self { listed: HashMap::new(), until: Some(until) }
+    }
+
     pub(crate) async fn idle(&mut self, node: &Arc<Node>, about: &About) -> Result<Option<IdleWorker>, Failure> {
         let Some(session) = &about.session else { return Ok(None) };
         let (command, home) = command_home(node, about)?;
-        if !self.0.contains_key(&home) {
-            let listed = list(command, Duration::from_secs(30)).await;
-            self.0.insert(home.clone(), listed);
+        if !self.listed.contains_key(&home) {
+            let most = Duration::from_secs(30);
+            let within = self.until.map_or(most, |until| until.saturating_duration_since(Instant::now()).min(most));
+            let listed = if within.is_zero() {
+                Err(Failure::new("no time is left to list Claude Code's sessions"))
+            } else {
+                list(command, within).await
+            };
+            self.listed.insert(home.clone(), listed);
         }
-        let listed = self.0.get(&home).expect("the login was listed").as_ref().map_err(Clone::clone)?;
+        let listed = self.listed.get(&home).expect("the login was listed").as_ref().map_err(Clone::clone)?;
         fastctx_hosts::claude::lifecycle::idle_worker(&home, session, listed).map_err(Failure::new)
     }
 }

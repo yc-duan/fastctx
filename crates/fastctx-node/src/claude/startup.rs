@@ -428,6 +428,11 @@ fn submitted_since(path: &std::path::Path, since: jiff::Timestamp, queued: bool)
     Ok(unreadable)
 }
 
+/// When the words `id` were last handed over or woke the session with.
+fn handed_at(node: &Node, resident: &ResidentId, id: &NoticeId) -> std::io::Result<Option<jiff::Timestamp>> {
+    Ok(crate::inbox::read(&node.world.conversation(resident), id)?.and_then(|pending| pending.since))
+}
+
 fn pending(node: &Node, resident: &ResidentId, id: &NoticeId, waking: bool) -> std::io::Result<bool> {
     if (!waking && super::paired(node, resident)) || node.residents.removed(resident).is_some() {
         return Ok(false);
@@ -487,6 +492,11 @@ async fn watch(
         if !pending(node, resident, id, waking)? {
             return Ok(());
         }
+        // The handover this look's evidence is of: words woken with again
+        // since — retried after the host was seen gone — are another's, and
+        // what is seen here of the host before says nothing of them
+        // (codex-4bf06087, second round #1).
+        let handed = handed_at(node, resident, id)?;
         let listed = listing.agents(command, after).await;
         after = None;
         if !pending(node, resident, id, waking)? {
@@ -581,6 +591,10 @@ async fn watch(
                         let Some((births, held)) = decided else { return Ok(()) };
                         if node.residents.about(resident).is_none() {
                             return Ok(());
+                        }
+                        if waking && handed_at(node, resident, id)? != handed {
+                            drop((births, held));
+                            continue;
                         }
                         let directory = node.world.conversation(resident);
                         // Words that woke a session which ended before taking
