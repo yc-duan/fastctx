@@ -298,11 +298,16 @@ html.framed .sp-panel.sp-over .sp-line {
    the side, it left the rest of the side empty under the other cards
    while its plan was cut short. Its floor comes and goes with the fold. */
 .sh-card[data-of="plan"] {
+  /* It gives way to the others open or shut alike. Shut, it used to stop
+     giving way at once, and so sprang to its whole height before folding:
+     its foot, and the fade there, leapt down and came back up. */
+  flex: 0 1 auto;
+  min-height: 40px;
+  min-height: calc(1lh + 2 * var(--space-2));
   transition: min-height var(--expand) var(--expand-easing);
 }
 
 .sh-card[data-of="plan"]:not(.shut) {
-  flex: 0 1 auto;
   min-height: 160px;
 }
 

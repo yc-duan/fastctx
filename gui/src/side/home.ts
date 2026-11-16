@@ -60,6 +60,20 @@ function keepFolded(cards: Set<string>): void {
   }
 }
 
+/** Carries the plan's card from the height it stands at down to its name
+ *  as it shuts. Its plan is taller than the room the card has, so folded by
+ *  its rows alone the card stood at that height, emptying, until the rows
+ *  had fallen below it, and only then came down: the plan gone from a card
+ *  still standing. */
+function shutFrom(card: HTMLElement, head: HTMLElement, from: number): void {
+  const style = getComputedStyle(card);
+  const token = style.getPropertyValue("--expand").trim();
+  const duration = parseFloat(token) * (token.endsWith("ms") ? 1 : 1000) || 0;
+  const to = head.getBoundingClientRect().height;
+  if (duration <= 0 || from <= to + 1) return;
+  card.animate([{ height: `${from}px` }, { height: `${to}px` }], { duration, easing: style.getPropertyValue("--expand-easing").trim() || "ease" });
+}
+
 export class SideHome implements SidePage {
   readonly element: HTMLElement;
   private goalShown: GoalShown | null = null;
@@ -74,6 +88,12 @@ export class SideHome implements SidePage {
   private lined: CollabNode[] = [];
   private timer: number | null = null;
   private seen = false;
+  /** The cards on the page, by what they are of, each with what it said
+   *  when it was set; what each says now, as it was last made; and the
+   *  line said where no card stands. */
+  private readonly standing = new Map<string, { sign: string; element: HTMLElement }>();
+  private readonly signs = new Map<string, string>();
+  private readonly none = document.createElement("p");
 
   /** `plan` is the plan's own page, drawn in its card. */
   constructor(
@@ -86,6 +106,7 @@ export class SideHome implements SidePage {
   ) {
     this.element = document.createElement("section");
     this.element.className = "sh-page";
+    this.none.className = "sh-none";
     this.element.addEventListener("click", (event) => {
       const target = event.target as HTMLElement;
       const head = target.closest<HTMLElement>(".sh-head");
@@ -98,9 +119,12 @@ export class SideHome implements SidePage {
         // Folded where it stands, so it eases shut or open as a
         // conversation's steps do; the next drawing finds it as it is.
         const section = head.closest<HTMLElement>(".sh-card");
+        // How tall the plan's card stands as it is shut, before it changes.
+        const from = card === "plan" && shut && section ? section.getBoundingClientRect().height : 0;
         section?.classList.toggle("shut", shut);
         section?.querySelector(":scope > .sh-fold")?.classList.toggle("open", !shut);
         head.setAttribute("aria-expanded", String(!shut));
+        if (from && section) shutFrom(section, head, from);
         return;
       }
       const open = target.closest<HTMLElement>("[data-open]")?.dataset.open;
@@ -180,12 +204,51 @@ export class SideHome implements SidePage {
     // Said where no card stands, the goal's left to its bar among them; and
     // where they were all put away, how they are brought back.
     const none = chosen.length ? this.words.home.none : this.words.home.hidden;
-    this.element.innerHTML = `${cards.join("")}<p class="sh-none">${escape(none)}</p>`;
+    this.put(cards);
+    if (this.none.textContent !== none) this.none.textContent = none;
     this.element.classList.toggle("sh-has-cards", cards.length > 0);
     this.element.classList.toggle("sh-has-unbarred", this.element.querySelector(".sh-card:not(.barred)") !== null);
-    // The plan's page is one element, kept as it is drawn anew around it.
-    this.element.querySelector(".sh-plan")?.append(this.planPage);
     this.tick();
+  }
+
+  /** Puts the cards on the page, changing only what changed: a card whose
+   *  words are what they were is left standing as it is, folded or open,
+   *  mid-fold or scrolled; one whose words changed is set anew in its
+   *  place. The whole page used to be written again at every change (a
+   *  helper's minute passing among them), which took the plan's page off
+   *  the page and put it back, and a page put back is scrolled to its top:
+   *  the plan came back to its beginning under the reader. Where the plan's
+   *  card itself must be set anew, its page is moved into the new card and
+   *  left scrolled where it was. */
+  private put(cards: string[]): void {
+    const top = this.planPage.scrollTop;
+    const wanted = new Map<string, string>();
+    for (const html of cards) wanted.set(/ data-of="([a-z]+)"/.exec(html)?.[1] ?? html, html);
+    for (const [key, card] of this.standing) {
+      if (wanted.has(key)) continue;
+      card.element.remove();
+      this.standing.delete(key);
+    }
+    let previous: Element | null = null;
+    for (const [key, html] of wanted) {
+      const sign = this.signs.get(key) ?? html;
+      let card = this.standing.get(key);
+      if (!card || card.sign !== sign) {
+        const made = document.createElement("template");
+        made.innerHTML = html;
+        const element = made.content.firstElementChild as HTMLElement;
+        // The plan's page is one element, kept as its card is set anew.
+        if (key === "plan") element.querySelector(".sh-plan")?.append(this.planPage);
+        if (card) card.element.replaceWith(element);
+        card = { sign, element };
+        this.standing.set(key, card);
+      }
+      const place: Element | null = previous ? previous.nextElementSibling : this.element.firstElementChild;
+      if (card.element !== place) this.element.insertBefore(card.element, place);
+      previous = card.element;
+    }
+    if (this.element.lastElementChild !== this.none) this.element.append(this.none);
+    if (this.planPage.scrollTop !== top) this.planPage.scrollTop = top;
   }
 
   /** A card under its name, folding away when the name is pressed; how it
@@ -193,6 +256,9 @@ export class SideHome implements SidePage {
    *  goal's bar above the input says it, so it stands only where the side
    *  lies over the conversation. */
   private card(card: Card, name: string, state: string, body: string, waiting = "", waits = false, barred = false): string {
+    // What it says, apart from whether it is folded: folding is done where
+    // the card stands, and is no reason to set it anew.
+    this.signs.set(card, [name, state, body, waiting, waits, barred].join("\u0001"));
     const shut = this.fold.has(card);
     const said = `${escape(state)}${waiting ? `<span class="sh-waits">${escape(waiting)}</span>` : ""}`;
     return `<section class="sh-card${shut ? " shut" : ""}${barred ? " barred" : ""}" data-of="${card}"><button class="sh-head" type="button" data-card="${card}" aria-expanded="${!shut}"><span class="sh-name">${escape(name)}</span><span class="sh-turn">${glyph("chevron", 12)}</span><span class="sh-state${waits ? " waiting" : ""}">${said}</span></button><div class="sh-fold${shut ? "" : " open"}"><div class="sh-fold-inner"><div class="sh-body">${body}</div></div></div></section>`;
