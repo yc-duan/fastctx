@@ -1396,7 +1396,7 @@ export class ConversationPage {
       this.onTheirWay.set(id, "");
       return;
     }
-    const shown = attachments.map((one) => ({ name: one.name, size: one.size, image: one.media_type.startsWith("image/"), preview: null, ...(one.media_type.startsWith("text/plain") ? { kept: one } : {}) }));
+    const shown = attachments.map((one) => ({ name: one.name, size: one.size, image: one.media_type.startsWith("image/"), preview: null, digest: one.sha256, ...(one.media_type.startsWith("text/plain") ? { kept: one } : {}) }));
     this.onTheirWay.set(id, this.options.conversation.sending(text, this.options.here || null, shown));
   }
 
@@ -1591,7 +1591,7 @@ export class ConversationPage {
     const connected = session.state.connected;
     const queued = connected && this.queues();
     const going = session.state.attachmentsOnTheirWay;
-    const shown = (recovered?.attachments ?? (draft?.draft.attachments ?? []).filter((one) => !going.has(one.id))).map((one) => ({ name: one.name, size: one.size, image: one.media_type.startsWith("image/"), preview: null, ...(one.media_type.startsWith("text/plain") ? { kept: one } : {}) }));
+    const shown = (recovered?.attachments ?? (draft?.draft.attachments ?? []).filter((one) => !going.has(one.id))).map((one) => ({ name: one.name, size: one.size, image: one.media_type.startsWith("image/"), preview: null, digest: one.sha256, ...(one.media_type.startsWith("text/plain") ? { kept: one } : {}) }));
     let key = queued ? null : conversation.sending(text, here || null, shown);
     if (key && !connected) conversation.sent(key, { state: "waiting", why: session.state.error?.message ?? "" });
     // Words that will wait for the turn to end are in the queue at once, as

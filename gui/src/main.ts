@@ -1837,7 +1837,13 @@ function specimenTalk(address: Address): DeskTalk {
     conversation.sending = (text, here, attached) => {
       const key = sending(text, here, attached);
       turns += 1;
-      playTimed(answering(text, `answer-${turns}`), (event) => {
+      // The pictures sent come back kept, by the digests they went with.
+      const came = (attached ?? []).flatMap((one, at): Attachment[] =>
+        one.image && one.digest
+          ? [{ id: `answer-${turns}-${at}`, name: one.name, media_type: "image/png", size: one.size ?? 0, sha256: one.digest, owner: address, town: null, path: `C:/Users/me/.fastctx/attachments/${one.name}` }]
+          : [],
+      );
+      playTimed(answering(text, `answer-${turns}`, came), (event) => {
         conversation.happened(kept.add(event), event);
         page.update();
         return true;
@@ -1875,7 +1881,15 @@ function specimenTalk(address: Address): DeskTalk {
         if (path.includes("/deleted/")) throw new Error("No such file or directory (os error 2)");
         return specimenPicture(path, max);
       },
-      attachmentThumbnail: async (attachment, max) => specimenPicture("path" in attachment ? attachment.name : "picture", max),
+      // `?pictureDelay=MS`: a picture the user sent takes that long to come,
+      // for looking at its frame while it waits; `?pictureDelay=never`, it
+      // cannot be had.
+      attachmentThumbnail: async (attachment, max) => {
+        const delay = params.get("pictureDelay");
+        if (delay === "never") throw new Error("the computer keeping it is off");
+        if (delay) await new Promise((resolve) => setTimeout(resolve, Number(delay)));
+        return specimenPicture("path" in attachment ? attachment.name : "picture", max);
+      },
       original: async (picture) => (await fetch(specimenPicture(picture.path ?? picture.name, 2400))).blob(),
       save: async () => true,
     },

@@ -277,7 +277,7 @@ export class NodeTray {
         const own = local.get(one.id);
         const removing = own?.removed || this.removing.has(one.id);
         return { key: own?.key ?? one.id, name: one.name, image: one.media_type.startsWith("image/") || IMAGE.test(one.name),
-          preview: own?.preview ?? null,
+          preview: own?.preview ?? null, digest: one.sha256,
           open: open(own?.file ?? this.session.getFile(one.id)) ?? (this.openText && one.media_type.startsWith("text/plain") ? () => this.openText!(one) : undefined),
           state: removing ? "sending" : "ready", fact: removing ? this.words.removing : this.words.size(one.size), remove: own?.key ?? one.id };
       }),

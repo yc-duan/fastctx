@@ -113,6 +113,10 @@ export interface ShownAttachment {
   size: number | null;
   image: boolean;
   preview: string | null;
+  /** Its bytes' digest, where it is known before the World's telling of
+   *  the words comes: what a picture on its way is known by
+   *  (`picture-frame.ts`). */
+  digest?: string;
   /** The file as the World kept it, once it has: what a small picture is
    *  asked for and the original opened from. */
   kept?: Attachment;

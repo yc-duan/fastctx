@@ -86,7 +86,10 @@ export function specimenComposer(who: Address, busy: () => boolean, queued: stri
   };
   const attachment = (target: ComposerTarget, name: string, type: string, size: number): { attachment: Attachment; updated: { Ok: ComposerUpdated } } => {
     serial += 1;
-    const one: Attachment = { id: `a-${serial}`, name, media_type: type || "application/octet-stream", size, sha256: "", owner: who, town: null, path: `C:/Users/me/.fastctx/attachments/${name}` };
+    // A digest made up for it, its own as a real one is: what a picture is
+    // known by once it is sent.
+    const sha256 = Array.from({ length: 64 }, (_, at) => ((serial * 31 + size + name.charCodeAt(at % Math.max(1, name.length)) + at * 7) % 16).toString(16)).join("");
+    const one: Attachment = { id: `a-${serial}`, name, media_type: type || "application/octet-stream", size, sha256, owner: who, town: null, path: `C:/Users/me/.fastctx/attachments/${name}` };
     return { attachment: one, updated: { Ok: changed(withDraft(target, (draft) => ({ ...draft, attachments: [...draft.attachments, one] }))) } };
   };
 

@@ -58,6 +58,7 @@ import { toldSaid, type AgentRun } from "./agents";
 import { Conversation } from "./conversation";
 import { eventParts, searchText } from "./event-find";
 import type { KnownText, SearchEvent, SearchHit } from "./timeline-find";
+import { pictureFrame } from "./picture-frame";
 import { escape, plain, render } from "./prose";
 import { askedSkill } from "./commands";
 import { askedHtml, askedOf } from "./goal-notice";
@@ -1971,15 +1972,30 @@ export class ConversationView {
   }
 
   /** What the user attached to their words, above them: pictures, one
-   *  larger or several in a row, and the other files as chips. */
-  private attached(items: ShownAttachment[]): string {
+   *  larger or several in a row, and the other files as chips. A picture
+   *  stands in its frame from the moment the words are said, waiting there
+   *  until it has come (`picture-frame.ts`); `sending` is how the words
+   *  themselves stand while they are on their way. */
+  private attached(items: ShownAttachment[], sending: SendState | null = null): string {
     if (!items.length) return "";
-    const pictures = items.filter((item) => item.image && (item.preview || item.kept || item.recorded));
-    const files = items.filter((item) => !pictures.includes(item));
-    const picture = (item: ShownAttachment) =>
-      `<li class="bubble-picture"><img data-picture ${item.preview ? `src="${escape(item.preview)}"` : `data-attachment="${escape(JSON.stringify(item.kept ?? item.recorded))}"`} alt="${escape(item.name)}"${item.name ? ` title="${escape(item.name)}"` : ""} tabindex="0"></li>`;
+    const pictures = items.filter((item) => item.image);
+    const files = items.filter((item) => !item.image);
+    // Words that did not go, or wait for a turn, bring no picture yet.
+    const stalled = sending?.state === "failed" || sending?.state === "unknown" || sending?.state === "queued";
+    const picture = (item: ShownAttachment) => {
+      const kept = item.kept ?? item.recorded;
+      const source = item.preview ? `src="${escape(item.preview)}"` : kept ? `data-attachment="${escape(JSON.stringify(kept))}"` : "";
+      return pictureFrame({
+        image: source ? `<img data-picture ${source} alt="${escape(item.name)}" tabindex="0">` : "",
+        // A picture its agent's host recorded is named by where it stands there.
+        keys: [item.kept?.sha256, item.digest, item.preview, item.recorded ? JSON.stringify(item.recorded) : null],
+        alone: pictures.length === 1,
+        name: item.name,
+        still: !source && stalled,
+      });
+    };
     const file = (item: ShownAttachment) => {
-      const label = `${glyph(item.image ? "image" : "file", 16)}<span class="bubble-file-name">${escape(item.name)}</span>${item.size === null ? "" : `<span class="bubble-file-size">${escape(sizeOf(item.size))}</span>`}`;
+      const label = `${glyph("file", 16)}<span class="bubble-file-name">${escape(item.name)}</span>${item.size === null ? "" : `<span class="bubble-file-size">${escape(sizeOf(item.size))}</span>`}`;
       return item.kept
         ? `<li><a class="bubble-file" href="#" data-file="${escape(item.kept.path)}" data-file-machine="${escape(item.kept.owner.machine)}" data-attachment="${escape(JSON.stringify(item.kept))}">${label}</a></li>`
         : `<li class="bubble-file">${label}</li>`;
@@ -2096,13 +2112,13 @@ export class ConversationView {
     const notice = this.noticeOf(entry);
     if (notice) return this.noticeLine(entry, notice);
     const agent = agentWords(entry);
-    if (agent) return this.attached(entry.attached ?? []) + this.agentLine(entry, agent);
+    if (agent) return this.attached(entry.attached ?? [], entry.sending) + this.agentLine(entry, agent);
     const mine = !entry.from || entry.from.kind === "user";
     const acts = mine && entry.turn && !entry.sending && this.conversation.turnEnded(entry.turn) ? this.userActs(entry) : "";
     // Words sent into the turn under way are said: the turn takes them in
     // where it next can, and only a failure is told.
     const sending = entry.intoTurn && entry.sending?.state !== "failed" ? null : (entry.sending ?? null);
-    return this.attached(entry.attached ?? []) + this.heard(entry.from, entry.text, sending, entry.key) + acts;
+    return this.attached(entry.attached ?? [], entry.sending) + this.heard(entry.from, entry.text, sending, entry.key) + acts;
   }
 
   /** Under the user's own words once their turn is over: copy them, or
