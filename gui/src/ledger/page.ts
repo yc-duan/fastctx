@@ -7,6 +7,7 @@
 
 import { AgentChangeSheet, type AgentChangeTarget } from "../app/agent-change";
 import { pickables } from "../app/agent-machines";
+import { FolderPicker } from "../app/folder-picker";
 import type { AgentChangeWords } from "../app/agent-change";
 import type { AgentLoginsWords } from "../app/agent-logins-words";
 import { dirName, programLine } from "../app/agent-login-row";
@@ -20,6 +21,7 @@ import { glyph } from "../conversation/glyphs";
 import type { AccountChange, Login as AccountLogin } from "../world/accounts";
 import type { ChangePreview, FolderChange, LoginChange, MachineLogins, ModelChange, WorldLogins } from "../world/logins";
 import { followState, LOGINS, type Following } from "../world/topics";
+import type { Folders } from "../world/focus";
 import type { UsageReport } from "../world/usage";
 import type { UsageCallsPage, UsageCallsQuery } from "../world/usage-calls";
 import { forget, grantsOf, lines, logins as shownLogins, plateOf, setHost, setNet, type Deeds, type Feed, type Login } from "./data";
@@ -39,6 +41,9 @@ export interface AgentsPageOptions {
   folder(machine: string, dir: string, change: FolderChange): Promise<MachineLogins>;
   /** This computer's own folder picker, where it has one. */
   pick: (() => Promise<string | null>) | null;
+  /** A machine's folders as its node lists them, to walk where there is
+   *  no picker of its own. */
+  folders(machine: string, path: string | null, cursor?: string | null): Promise<Folders>;
   preview(machine: string, agent: string, dir: string, into: boolean, takeBack: boolean, workbench?: boolean): Promise<ChangePreview>;
   change(machine: string, agent: string, dir: string, into: boolean, raise: boolean, takeBack: boolean, expected?: string, workbench?: boolean): Promise<LoginChange>;
   limits(machine: string, agent: string, dir: string): Promise<MachineLogins>;
@@ -96,6 +101,7 @@ export class AgentsPage implements Page {
   private readonly seen: Seen = { records: new Map(), plates: new Map() };
   private readonly sheet: AgentChangeSheet;
   private readonly models: LoginModelsSheet;
+  private readonly choosing: FolderPicker;
   private readonly people = { models: new Map<string, Set<string>>(), people: new Map<string, Set<string>>() };
   private following: Following | null = null;
   private readonly stop: () => void;
@@ -122,6 +128,7 @@ export class AgentsPage implements Page {
       benched: (open) => options.benched(open),
     });
     this.models = new LoginModelsSheet(options.words);
+    this.choosing = new FolderPicker(options.words.picker);
     setLinker((to) => link(appPlaceOf(to)));
     setHost({ feed: this.feed(), deeds: this.deeds() });
     drawnBy((how) => this.paint(how));
@@ -346,12 +353,16 @@ export class AgentsPage implements Page {
         forget();
         refreshed(options.scan(machine.id, false)).catch((error: unknown) => toast(error instanceof Error ? error.message : "扫描失败"));
       },
+      // This computer's own picker where it has one; any other machine's
+      // folders walked as its node lists them, as a picker that cannot
+      // open is.
       addFolder: (machine) => {
-        if (!options.pick || !machine.here) return toast("仅可在本机选择文件夹");
-        options.pick().then(
-          (dir) => (dir ? refreshed(options.folder(machine.id, dir, { change: "choose" })) : undefined),
-          (error: unknown) => toast(error instanceof Error ? error.message : "无法打开文件夹选择"),
-        );
+        const choose = (dir: string) => {
+          refreshed(options.folder(machine.id, dir, { change: "choose" })).catch((error: unknown) => toast(error instanceof Error ? error.message : "添加失败"));
+        };
+        const walk = () => this.choosing.open({ machine: machine.id, folders: (path, cursor) => options.folders(machine.id, path, cursor), chosen: choose });
+        if (!options.pick || !machine.here) return walk();
+        options.pick().then((dir) => (dir ? choose(dir) : undefined), walk);
       },
       folder: (machine, dir, change) => {
         refreshed(options.folder(machine.id, dir, { change })).catch((error: unknown) => toast(error instanceof Error ? error.message : "操作失败"));

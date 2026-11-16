@@ -658,6 +658,7 @@ function agentsPage(next: Place): Page {
       add: (machine, agent, dir) => (live ? addAgentLogin(machine, agent, dir) : specimenTakeUp(machine, agent as "claude" | "codex", dir, specimen!.now)),
       folder: (machine, dir, change) => (live ? agentFolder(machine, dir, change) : specimenFolder(machine, dir, change, specimen!.now)),
       pick: live && onComputer() ? pickFolder : null,
+      folders: (machine, path, cursor) => (live ? foldersOf(machine, path, cursor) : specimenFolders(machine, path)),
       preview: (machine, agent, dir, into, takeBack, workbench) => (live ? previewAgentChange(machine, agent, dir, into, takeBack, workbench) : specimenPreview(machine, agent, dir, into, workbench)),
       change: (machine, agent, dir, into, raise, takeBack, expected, workbench) => (live ? changeAgentLogin(machine, agent, dir, into, raise, takeBack, expected, workbench) : specimenLoginChange(machine, agent, dir, into, workbench)),
       limits: (machine, agent, dir) => (live ? readAgentLimits(machine, agent, dir) : notLive()),

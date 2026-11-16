@@ -161,7 +161,7 @@ function attachBody(machine: Machine): string {
   if (!machine.online) return `<div class="lg-body lg-empty">${glyph(machine.kind, 40)}<p>${escape(machine.id)} 离线</p></div>`;
   const here = logins.filter((login) => login.machine === machine.id);
   if (!machine.scanned && !here.length && !machine.owner)
-    return `<div class="lg-body lg-empty">${glyph("scan", 40)}<p>尚未扫描${machine.here ? "本机" : escape(machine.id)}</p><button type="button" class="lg-go" data-act="scan">扫描</button></div>`;
+    return `<div class="lg-body lg-empty">${glyph("scan", 40)}<p>尚未扫描${machine.here ? "本机" : ` ${escape(machine.id)}`}</p><button type="button" class="lg-go" data-act="scan">扫描</button></div>`;
   const families = ordered([...new Set(here.map((login) => login.family))]);
   const card = (family: Family, of: Login[]) => `<section class="ao-card"><header class="ao-head"><span class="ao-mark">${agentGlyph(family as never, 22)}</span><h2 class="ao-name">${escape(familyName(family))}</h2></header><ul class="ao-logins">${of.map(lineOf).join("")}</ul></section>`;
   if (machine.owner)
