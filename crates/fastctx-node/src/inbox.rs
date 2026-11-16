@@ -128,13 +128,6 @@ pub fn reclaim(directory: &ConversationDir, ids: &[String]) -> io::Result<()> {
     }
     Ok(())
 }
-/// What is let go before it went in keeps a mark that it was, for as long
-/// as the asset library's account of the user's words may still say they
-/// are on their way: words it holds and the inbox never had are kept again
-/// from it (`timeline::words::produce`, design §28.58); these never are.
-pub(crate) const WITHDRAWN: &str = "withdrawn-inputs";
-const WITHDRAWN_FOR: jiff::SignedDuration = jiff::SignedDuration::from_hours(30 * 24);
-
 pub fn withdraw(directory: &ConversationDir, id: &NoticeId) -> io::Result<()> {
     let key = id.to_string();
     change(directory, key.len(), move |rows| {
@@ -143,7 +136,6 @@ pub fn withdraw(directory: &ConversationDir, id: &NoticeId) -> io::Result<()> {
                 return Err(fastctx_storage::Error::new("cannot withdraw an input crossing the host boundary"));
             }
             rows.delete("pending-inputs", &key)?;
-            rows.put_until(WITHDRAWN, &key, &true, Some(jiff::Timestamp::now() + WITHDRAWN_FOR))?;
         }
         Ok(())
     })

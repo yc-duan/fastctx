@@ -26,11 +26,8 @@ pub(crate) enum Stood {
     Uncertain,
     /// The host refused them.
     Refused,
-    /// Let go before they went in.
+    /// None of these: let go before they went in.
     Gone,
-    /// Nothing of them here at all: never kept by this inbox, as when the
-    /// node stopped between the asset library keeping them and the inbox.
-    Lost,
 }
 
 /// Where words of the inbox stand: those asked of, in their order, and the
@@ -61,17 +58,15 @@ pub(crate) fn words(
                     if pending.state == PendingState::Waiting { Stood::Kept } else { Stood::Delivering }
                 } else if rows.get::<Pending>("uncertain-inputs", id)?.is_some() {
                     Stood::Uncertain
-                } else if rows.get::<bool>(super::WITHDRAWN, id)?.is_some() {
-                    Stood::Gone
                 } else {
-                    Stood::Lost
+                    Stood::Gone
                 };
             stood.push(found);
         }
         Ok(stood)
     })?;
     for (id, found) in ids.iter().zip(stood.iter_mut()) {
-        if matches!(*found, Stood::Gone | Stood::Lost)
+        if *found == Stood::Gone
             && let Ok(id) = NoticeId::try_from(id.as_str())
             && crate::lifecycle::refused::contains(directory, &id)?
         {

@@ -69,19 +69,9 @@ fn state_of(stood: Stood) -> (&'static str, bool) {
         Stood::Uncertain => ("uncertain", false),
         Stood::Delivered => ("delivered", true),
         Stood::Refused => ("refused", true),
-        Stood::Gone | Stood::Lost => ("gone", true),
+        Stood::Gone => ("gone", true),
     }
 }
-
-/// How long words this machine kept are seen nowhere in the inbox before
-/// they are kept there again from the asset library: the inbox keeps what
-/// was just said right after it (MM03, K02).
-const KEPT_AGAIN_AFTER: std::time::Duration = std::time::Duration::from_secs(30);
-
-/// The words kept again in the inbox from the asset library by this node as
-/// it runs: once each, then let go as ever when the inbox still has none.
-static KEPT_AGAIN: std::sync::LazyLock<std::sync::Mutex<std::collections::HashSet<String>>> =
-    std::sync::LazyLock::new(Default::default);
 
 /// An item's order: settled or not, then when the words were said.
 fn order(settled: bool, at: jiff::Timestamp) -> Vec<u8> {
@@ -129,15 +119,13 @@ type Stored = (Vec<u8>, Vec<fastctx_content::ObjectRef>, Vec<fastctx_content::v2
 
 fn stored(library: &Library, state: &str, delivery: &Delivery, why: Option<String>) -> fastctx_content::Result<Stored> {
     let invalid = |error: serde_json::Error| fastctx_content::Error::Invalid(error.to_string());
-    let whole = serde_json::to_vec(&Body { state: state.into(), delivery: delivery.clone(), why: why.clone() })
-        .map_err(invalid)?;
+    let whole = serde_json::to_vec(&Body { state: state.into(), delivery: delivery.clone(), why: why.clone() }).map_err(invalid)?;
     if whole.len() <= BODY_MOST {
         return Ok((whole, Vec::new(), Vec::new()));
     }
     let delivered = serde_json::to_vec(delivery).map_err(invalid)?;
     let lease = library.put(&mut delivered.as_slice(), "words", fastctx_content::v2::LEASE)?;
-    let said =
-        serde_json::json!({ "state": state, "why": why, "in_object": true, "id": delivery.id, "at": delivery.at });
+    let said = serde_json::json!({ "state": state, "why": why, "in_object": true, "id": delivery.id, "at": delivery.at });
     Ok((serde_json::to_vec(&said).map_err(invalid)?, vec![lease.object], vec![lease]))
 }
 
@@ -249,8 +237,7 @@ async fn keep(node: &Arc<Node>, to: &ResidentId, delivery: &Delivery) -> Result<
     // Let go to another machine with its export: the inbox keeps them
     // alone (J08), once what is held here of this number was looked at
     // (PP03).
-    let released =
-        crate::assets::release::released_away(node.world.conversation(to).path(), &placed.scope, &kept.device());
+    let released = crate::assets::release::released_away(node.world.conversation(to).path(), &placed.scope, &kept.device());
     // Come from another machine, its scope is begun here by the hub's
     // description alone (AG10), and nothing is written to it before every
     // stream of it was pulled here once: what orders each is known (MM02).
@@ -428,38 +415,24 @@ pub(super) async fn produce(
     .map_err(failure)?;
     let mut writes = Vec::new();
     let mut ways = Vec::new();
-    let mut again = Vec::new();
     for ((entry, said, ours), stood) in open.iter().zip(stood) {
-        let Some(said) = said else {
-            return Err(failure(format!("{resident}'s words {} cannot be read", String::from_utf8_lossy(&entry.item))));
-        };
-        // The asset library is where the user's words are taken (§28.58):
-        // kept by this machine and never by its inbox — the node stopped
-        // between the two — they are kept there again from it, once, and
-        // go on to the host as if just said. Not at once: kept here just
-        // now, the inbox keeps them next (MM03, K02). Still nowhere long
-        // after, they are taken as let go; their sender, keeping them until
-        // they landed, sends them again meanwhile (NN03).
+        let Some(said) = said else { return Err(failure(format!("{resident}'s words {} cannot be read", String::from_utf8_lossy(&entry.item)))) };
+        // Nothing of them in the inbox yet is not their being let go: kept
+        // here just now, the inbox keeps them next (MM03, K02). Only long
+        // after this node first saw them missing, they are taken as let go;
+        // their sender, keeping them until they landed, sends them again
+        // meanwhile, and said again they are on their way again (NN03).
         let id = said.delivery.id.to_string();
-        if stood == Stood::Lost {
-            let first =
-                *MISSING.lock().expect("missing words").entry(id.clone()).or_insert_with(std::time::Instant::now);
-            if *ours
-                && said.state == "kept"
-                && first.elapsed() >= KEPT_AGAIN_AFTER
-                && KEPT_AGAIN.lock().expect("kept again").insert(id.clone())
-            {
-                again.push(said.delivery.clone());
-            }
+        if stood == Stood::Gone {
+            let first = *MISSING.lock().expect("missing words").entry(id.clone()).or_insert_with(std::time::Instant::now);
             if first.elapsed() < GONE_AFTER {
                 continue;
             }
         }
         MISSING.lock().expect("missing words").remove(&id);
         // Not this machine's and nowhere here: whether they went in where
-        // they were kept before is not known, never let go (M05, §3 N02);
-        // nor crossing into the host, as they were last seen.
-        let stood = if stood == Stood::Lost && (!ours || said.state != "kept") { Stood::Uncertain } else { stood };
+        // they were kept before is not known, never let go (M05, §3 N02).
+        let stood = if stood == Stood::Gone && !ours { Stood::Uncertain } else { stood };
         let (state, settled) = state_of(stood);
         if state == said.state {
             continue;
@@ -471,18 +444,6 @@ pub(super) async fn produce(
             Stood::Delivered => ways.push((said.delivery.id.to_string(), Way::Delivered)),
             _ => {}
         }
-    }
-    for delivery in again {
-        let (node, to) = (node.clone(), resident.clone());
-        fastctx_platform::task::spawn(async move {
-            let id = delivery.id.clone();
-            node.log.line(format_args!(
-                "{to}'s words {id} are in the asset library and not in its inbox: kept there again"
-            ));
-            if let Err(failure) = crate::speech::tell_here(&node, &to, delivery, crate::speech::Owed::Nobody).await {
-                node.log.line(format_args!("keeping {to}'s words {id} again: {}", failure.message));
-            }
-        });
     }
     let count = writes.len() + others.len();
     if count == 0 {
