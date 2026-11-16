@@ -372,7 +372,8 @@ pub(super) fn retry_untaken(
 /// turn running (`attachment`). Both are written before the model is asked.
 /// Words only queued — an `enqueue`, even a `dequeue`, with neither after
 /// it — never reached the model when the host was stopped first, as Claude
-/// Code's daemon does with a session it retires (2026-11-16, 洛杉矶linux);
+/// Code's daemon does with a session it retires (seen 2026-11-16 on a Linux
+/// server);
 /// while it may run on they still may, and count when `queued` says so.
 /// Its lines are in the order they were written. One that cannot be read, as a row cut short
 /// when the host was killed, may hold an accepted prompt: it counts as

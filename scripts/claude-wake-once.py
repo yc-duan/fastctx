@@ -3,7 +3,7 @@
 
 Linux, root, iproute2 and unshare are required; tested with Claude Code 2.1.322.
 No account or API key is used.
-Example (WSL lingsh):
+Example (WSL):
   python3 scripts/claude-wake-once.py --kernel /path/to/fastctx \
     --claude /path/to/claude --root /root/wake-drill-001 --rounds 3
 The root must not exist. Each invocation creates a network/mount namespace,
