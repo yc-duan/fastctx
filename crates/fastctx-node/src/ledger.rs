@@ -150,8 +150,7 @@ async fn write_for(
             if link.view().member_keeps_project(&link.view().me, &place.town) {
                 // The hub accepted the entry: its projection is on its way
                 // here, and is waited for.
-                let until = std::time::Instant::now() + projected::WAITS;
-                take_latest(node, &link, town, &place.town, accepted, until).await.map_err(Failure::new)
+                take_latest(node, &link, town, &place.town, accepted, true).await.map_err(Failure::new)
             } else {
                 metadata::refresh(node, &link, Some(&place.town)).await.map_err(Failure::new)
             }
@@ -214,10 +213,6 @@ pub async fn sync(node: &Arc<Node>, hub: &HubId, town: Option<TownId>) -> Result
         return Ok(());
     }
     let mut problems = Vec::new();
-    // The hub tells of an entry before its projection is written: a pass
-    // waits for what is on its way here, one while for all it takes, so a
-    // project whose projection does not come holds the others up no longer.
-    let until = std::time::Instant::now() + projected::WAITS;
     for (id, latest) in link.ledger_catalog().await? {
         if !link.view().member_keeps_project(&link.view().me, &id) {
             continue;
@@ -232,7 +227,10 @@ pub async fn sync(node: &Arc<Node>, hub: &HubId, town: Option<TownId>) -> Result
         };
         match name {
             Ok(Some(name)) => {
-                if let Err(error) = take_latest(node, &link, &name, &id, latest, until).await {
+                // A projection not here yet is taken by a later pass, which
+                // this worker comes to by itself: a pass that waited for it
+                // would hold up all that goes after it here.
+                if let Err(error) = take_latest(node, &link, &name, &id, latest, false).await {
                     problems.push(error);
                 }
             }
@@ -286,18 +284,19 @@ fn sync_name(node: &Node, link: &Link, id: &TownId) -> Result<Option<TownName>, 
 /// Takes `town`'s entries through `latest`: from the hub's projection for
 /// the account this machine reads it as, where it writes one and the copy
 /// here holds it (design §28.58); otherwise replicated as before. A
-/// projection not here yet, or not up to `latest`, is waited for until
-/// `until`: an entry the hub just accepted is written to it and pulled here
-/// a moment after the hub answered or told of it, and neither the write that
-/// made it nor a pass that heard of it fails for that moment.
+/// projection not here yet is waited for a while where `waits`: an entry the
+/// hub just accepted is written to it and pulled here a moment after the
+/// hub's answer, and the write that made it is not failed for that moment.
 pub(crate) async fn take_latest(
     node: &Arc<Node>,
     link: &Arc<Link>,
     name: &TownName,
     town: &TownId,
     latest: u64,
-    until: std::time::Instant,
+    waits: bool,
 ) -> Result<(), String> {
+    // One while for the projection to be here and to come up to `latest`.
+    let until = std::time::Instant::now() + projected::WAITS;
     let kept_projected = || fastctx_platform::disk::is_dir(node.world.town(name).projected());
     let source = loop {
         let seen = {
@@ -324,7 +323,7 @@ pub(crate) async fn take_latest(
                 {
                     let_go_projected(node, name).await?;
                 }
-                if std::time::Instant::now() >= until {
+                if !waits || std::time::Instant::now() >= until {
                     return Err(format!("the hub's projection of {name}'s ledger is not here yet"));
                 }
                 tokio::time::sleep(projected::LOOKS).await;
