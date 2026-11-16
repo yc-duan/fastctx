@@ -80,7 +80,7 @@ const enTitle = (trouble: Trouble, what: string): string => {
     case "violations":
       return `${machine} is misbehaving`;
     case "migration":
-      return `${machine} can't move its earlier records`;
+      return `${machine} cannot move its earlier records`;
     default:
       return `${machine}: ${what.charAt(0).toLowerCase()}${what.slice(1)}`;
   }

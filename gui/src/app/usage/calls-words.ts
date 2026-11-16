@@ -176,7 +176,7 @@ export const enCalls: CallsWords = {
   older: "Next page",
   newest: "Back to newest",
   at: (at) => `${enWeekday[(at.getDay() + 6) % 7]} ${enMonth[at.getMonth()]} ${at.getDate()}, ${at.getHours()}:${two(at.getMinutes())}:${two(at.getSeconds())}`,
-  backgroundSaid: "Claude Code's own background request (compacting, titles, web pages); its tokens and model aren't visible",
+  backgroundSaid: "Claude Code's own background request (compacting, titles, web pages); its tokens and model are not visible",
   agentSaid: "A subagent's request",
   effortSaid: (value) => `${effortLabel(value, true)} effort`,
   took: (ms) => `Took ${short(ms)}`,

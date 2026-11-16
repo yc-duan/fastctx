@@ -188,7 +188,7 @@ export interface LoginWords {
 
 export const zhPasswordRule: Record<PasswordProblem, string> = { short: "至少 8 位", "one-kind": "需包含字母、数字、符号中的两种", name: "不能包含账号名", common: "这个密码太常见" };
 
-export const enPasswordRule: Record<PasswordProblem, string> = { short: "At least 8 characters", "one-kind": "Use two of letters, digits and symbols", name: "Can't contain the account name", common: "This password is too common" };
+export const enPasswordRule: Record<PasswordProblem, string> = { short: "At least 8 characters", "one-kind": "Use two of letters, digits and symbols", name: "Cannot contain the account name", common: "This password is too common" };
 // The bar a new password must clear, and how strong one is, wherever one is set.
 export const zhPasswordFloor = "至少 8 位，字母、数字、符号中至少两种";
 export const enPasswordFloor = "At least 8 characters, with two of letters, numbers and symbols";
@@ -361,12 +361,12 @@ export const enLogin: LoginWords = {
   sudoWanted: "sudo needs a password",
   proxy: "Proxy",
   proxyWhat: "Where the server reaches the internet through an HTTP proxy, as http://127.0.0.1:7890; it reaches the hub through it from then on",
-  portClosed: (port) => `Port ${port} can't be reached; allow it in the firewall or security group`,
-  sshRefused: "The server didn't accept this user and password or key",
-  sshUnreachable: "Can't reach this server's SSH port",
+  portClosed: (port) => `Port ${port} cannot be reached; allow it in the firewall or security group`,
+  sshRefused: "The server did not accept this user and password or key",
+  sshUnreachable: "Cannot reach this server's SSH port",
   sudoWrong: "Wrong sudo password",
-  notLinux: "This server isn't Linux",
-  notArch: "This server's architecture isn't supported; only x86_64 and aarch64 are",
+  notLinux: "This server is not Linux",
+  notArch: "This server's architecture is not supported; only x86_64 and aarch64 are",
   addGo: "Add",
   adding: "Adding…",
   remoteSteps: { connect: "Connect", check: "Look at the server", bring: "Download the program for the server", upload: "Upload the program", hub: "Set up the network", login: "Sign this computer in", join: "Add the server", arrive: "Move the hub there", withdraw: "Take the network down" },
@@ -385,7 +385,7 @@ export const enLogin: LoginWords = {
   signInThere: "Sign in as its administrator",
   withdrawGo: "Take it down and start over",
   withdrawTitle: (world) => (world ? `Take down “${world}”` : "Take down the unfinished network"),
-  withdrawWhat: "Fastctx goes from the server entirely: the network, its accounts and records go, and devices connected to it can't connect again.",
+  withdrawWhat: "Fastctx goes from the server entirely: the network, its accounts and records go, and devices connected to it cannot connect again.",
   withdrawType: (world) => `Type “${world}” to confirm`,
   withdrawConfirm: "Take down",
   withdrawing: "Taking it down…",
@@ -431,7 +431,7 @@ export const enLogin: LoginWords = {
     unknown: "Whether agents on this computer have Fastctx in them is not known.",
   },
   removeFirst: "Remove everything first",
-  scanFailed: "Couldn't scan",
+  scanFailed: "Could not scan",
   alone: "Not now",
   aloneWhat: "Use this computer on its own and join or create a network any time",
   worldName: "Network name",
@@ -451,7 +451,7 @@ export const enLogin: LoginWords = {
   creating: "Creating…",
   joined: (hub) => `Joined ${hub}`,
   created: (world) => `${world} is ready`,
-  kept: { declined: "Start at boot isn't set up", unsupported: "This system doesn't support start at boot" },
+  kept: { declined: "Start at boot is not set up", unsupported: "This system does not support start at boot" },
   keepGo: "Set up",
   keptCommand: "To start at boot, run in a terminal",
   addDevice: "Add a device",
@@ -459,7 +459,7 @@ export const enLogin: LoginWords = {
   back: "Back",
   already: (logins) => `Logged in: ${logins}`,
   separator: ", ",
-  placeMissing: "Fastctx components aren't installed",
+  placeMissing: "Fastctx components are not installed",
   place: "Install",
   problems: enProblems,
 };
@@ -1163,7 +1163,7 @@ export const enMachines: MachinesWords = {
   strainWhy: { busy: "Busy: work waited over a second for its turn in the last minute", stuck: "Stuck: some work has not moved for over 30 seconds" },
   offline: (since) => (since ? `offline since ${since}` : "offline"),
   unknown: "status unknown",
-  factsUnknown: () => "Couldn't load status",
+  factsUnknown: () => "Could not load status",
   formerly: (names) => `formerly ${names.join(", ")}`,
   hubOnline: "connected",
   hubConnecting: "connecting",
@@ -1206,7 +1206,7 @@ export const enMachines: MachinesWords = {
   home: "Home",
   hosts: "Agents",
   asking: "Checking…",
-  notAsked: () => "Couldn't load agents",
+  notAsked: () => "Could not load agents",
   notInstalled: "not installed",
   loggedIn: "signed in",
   loggedOut: "not signed in",
@@ -1218,7 +1218,7 @@ export const enMachines: MachinesWords = {
   takeOut: "Remove",
   renew: "Update",
   applied: "Done",
-  notApplied: failure(enProblems, "Couldn't complete"),
+  notApplied: failure(enProblems, "Could not complete"),
   unattendedYes: "allowed to run unattended",
   unattendedNo: "not allowed to run unattended",
   allow: "Allow",
@@ -1231,7 +1231,7 @@ export const enMachines: MachinesWords = {
   hideHome: "Hide",
   hideHomeWhat: "Stop listing and using this login; add its directory again to restore it",
   homeHidden: (name) => `Hid ${name}`,
-  homeNotChanged: failure(enProblems, "Couldn't complete"),
+  homeNotChanged: failure(enProblems, "Could not complete"),
   share: "Share",
   assist: "Assist",
   remove: "Remove",
@@ -1364,7 +1364,7 @@ export const enMachines: MachinesWords = {
   dissolve: "Dissolve network",
   dissolveTitle: (hub) => `Dissolve ${hub}?`,
   dissolveWhat: (hub, away) =>
-    `Every machine and phone leaves ${hub}, its codes stop working, and no one can join it again. This can't be undone.${away ? ` The ${away} offline now leave when they're next online.` : ""} Fastctx stays on every computer; what this network synced to them is cleared.`,
+    `Every machine and phone leaves ${hub}, its codes stop working, and no one can join it again. This cannot be undone.${away ? ` The ${away} offline now leave when they're next online.` : ""} Fastctx stays on every computer; what this network synced to them is cleared.`,
   dissolveGo: "Dissolve",
   assetSeal: "Seal assets at every start",
   assetSealTitle: (sealing) => (sealing ? "Seal assets at every start?" : "Stop sealing assets at start?"),
@@ -1426,7 +1426,7 @@ export const enMachines: MachinesWords = {
   log: "Changes",
   logEmpty: "No changes yet",
   logEarlier: "Earlier",
-  logFailed: "Couldn't load",
+  logFailed: "Could not load",
   logBy: (account, device) => [account, device].filter(Boolean).join(", "),
   logUnverified: "unverified",
   logSaid: (a) => {
@@ -1705,7 +1705,7 @@ export const enAccess: AccessWords = {
   fiveHourOf: (percent) => `Stop at ${percent}%`,
   fiveHourBad: "Enter a whole number from 1 to 100",
   fiveHourRead: (percent, resets) => `${percent}% used${resets ? `, resets ${resets}` : ""}`,
-  fiveHourUnread: "This login's 5-hour limit hasn't been read yet",
+  fiveHourUnread: "This login's 5-hour limit has not been read yet",
   fiveHourReset: "Reset",
   turns: "Turns at once",
   turnsHint: "The most turns this login runs at once, yours included; past it they queue, yours first. Left empty, it follows the vendor's rate limits.",
@@ -1735,7 +1735,7 @@ export const enAccess: AccessWords = {
   reasonDefault: "removed",
   working: "Working…",
   close: "Close",
-  failed: failure(enProblems, "Couldn't complete"),
+  failed: failure(enProblems, "Could not complete"),
 };
 
 /** The sheet that adds another device to an account. */

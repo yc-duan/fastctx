@@ -29,9 +29,9 @@ export const zhStartup: StartupWords = {
 
 export const enStartup: StartupWords = {
   opening: "Opening Fastctx",
-  failed: "Fastctx didn't open",
+  failed: "Fastctx did not open",
   steps: {
-    open_connection: "Couldn't connect to Fastctx on this device.",
+    open_connection: "Could not connect to Fastctx on this device.",
     interface: "The interface could not load. Try again.",
   },
   stepOther: "Something went wrong while opening.",

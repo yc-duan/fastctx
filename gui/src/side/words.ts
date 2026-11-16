@@ -242,7 +242,7 @@ export const zhSide: SideWords = {
 export const enSide: SideWords = {
   pages: { plan: "Plan", goal: "Goal", collab: "Team", history: "Notes" },
   home: { name: "Overview", none: "No plan or helpers yet", all: (n) => `All ${n}` },
-  file: { outside: "Open with default app", reading: "Reading…", missing: "File not found", failed: "Couldn't read this file", interrupted: "Disconnected, reconnecting…" },
+  file: { outside: "Open with default app", reading: "Reading…", missing: "File not found", failed: "Could not read this file", interrupted: "Disconnected, reconnecting…" },
   panel: "Side panel",
   shut: "Close the side panel",
   resize: "Resize the side panel",
@@ -274,7 +274,7 @@ export const enSide: SideWords = {
     expand: "Expand",
     cleared: "Goal cleared",
     undo: "Undo",
-    failed: "Couldn't change the goal",
+    failed: "Could not change the goal",
     changed: "Changed elsewhere; review before changing",
     ask: "Describe the goal",
     start: "Set as goal",

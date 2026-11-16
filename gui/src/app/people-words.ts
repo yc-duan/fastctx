@@ -203,7 +203,7 @@ export const enPeople: PeopleWords = {
   removeTitle: (account) => `Remove ${account}?`,
   removeWhat: (machines, projects) =>
     [
-      "This can't be undone. ",
+      "This cannot be undone. ",
       machines.length ? `Their machines ${machines.join(", ")} are removed with them. ` : "",
       projects.length ? `Projects ${projects.join(", ")} are archived and can be handed to someone else. ` : "",
       "Their shares and assistance end.",
@@ -218,5 +218,5 @@ export const enPeople: PeopleWords = {
   signUpClosed: "Sign-up closed",
   cancel: "Cancel",
   working: "Working…",
-  failed: failure(enProblems, "Couldn't complete"),
+  failed: failure(enProblems, "Could not complete"),
 };

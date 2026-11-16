@@ -33,7 +33,7 @@ const en: typeof zh = {
   device: "device",
   agents: (n) => (n ? `${n} agent${n === 1 ? "" : "s"}` : "no agents"),
   more: "Earlier",
-  notFound: (what) => `${what} isn't here`,
+  notFound: (what) => `${what} is not here`,
   notText: "Not text",
   run: "Run",
   running: "Running…",
@@ -41,7 +41,7 @@ const en: typeof zh = {
   say: "Say",
   saying: "Sending…",
   delivered: "Delivered",
-  notDone: "Didn't work",
+  notDone: "Failed",
   signal: (n) => `ended by signal ${n}`,
   jobState: { running: "running", exited: "finished", stopped: "stopped", interrupted: "interrupted", failed: "failed" },
 };

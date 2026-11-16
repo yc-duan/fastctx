@@ -83,7 +83,7 @@ export interface AgentChangeWords {
 export const zhAgentChange: AgentChangeWords = {
   applyTitle: (who, machine) => `接入 ${machine} 上的 ${who}`,
   removeTitle: (who, machine) => `移除 ${machine} 上的 ${who}`,
-  putIn: "换上",
+  putIn: "启用",
   putInWhat: "Fastctx 的 run：执行命令、查看文件与图片、修改文件、访问其他机器",
   putInTags: ["run"],
   turnOff: "停用",
@@ -155,7 +155,7 @@ export const enAgentChange: AgentChangeWords = {
   programsWhat: "Programs using this login get run too",
   details: "Details",
   hideDetails: "Hide details",
-  reading: "Working out what changes",
+  reading: "Computing the changes",
   created: "New",
   changed: "Changed",
   removed: "Removed",
@@ -170,8 +170,8 @@ export const enAgentChange: AgentChangeWords = {
   close: "Close",
   done: "Connected",
   removedDone: "Removed",
-  failed: (reason) => known(reason, enProblems) ?? "Not done",
-  previewFailed: "Couldn't work out the change",
+  failed: (reason) => known(reason, enProblems) ?? "Failed",
+  previewFailed: "Could not compute the changes",
   elsewhere: (machine) => `${machine} makes the change itself`,
   disclose: enDisclose,
 };

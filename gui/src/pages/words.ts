@@ -156,5 +156,5 @@ export const enPages: PageWords = {
   bringBackLast: (n) => `Restore version ${n}`,
   close: "Close",
   working: "Working…",
-  failed: failure(enProblems, "Couldn't complete"),
+  failed: failure(enProblems, "Could not complete"),
 };

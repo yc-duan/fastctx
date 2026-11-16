@@ -37,15 +37,15 @@ export const enNameSaid: NameSaid = (problem) => {
     case "too_long":
       return "That name is too long: 32 characters at most, 21 in Chinese";
     case "space":
-      return "A name can't contain spaces";
+      return "A name cannot contain spaces";
     case "not_allowed":
-      return invisible(problem.character) ? "That name contains an invisible character" : `A name can't contain “${problem.character}”: use letters, digits and hyphens`;
+      return invisible(problem.character) ? "That name contains an invisible character" : `A name cannot contain “${problem.character}”: use letters, digits and hyphens`;
     case "bad_start":
-      return problem.character === "-" ? "A name can't start with a hyphen" : `A name can't start with “${problem.character}”`;
+      return problem.character === "-" ? "A name cannot start with a hyphen" : `A name cannot start with “${problem.character}”`;
     case "ends_with_hyphen":
-      return "A name can't end with a hyphen";
+      return "A name cannot end with a hyphen";
     case "mixed_scripts":
-      return `“${problem.first}” and “${problem.second}” are from scripts that can't be mixed in one name`;
+      return `“${problem.first}” and “${problem.second}” are from scripts that cannot be mixed in one name`;
     case "reserved":
       return "That name is reserved for the hub";
   }

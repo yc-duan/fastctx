@@ -290,5 +290,5 @@ export const enMe: MeWords = {
   undo: "Undo",
   working: "Working…",
   close: "Close",
-  failed: failure(enProblems, "Couldn't complete"),
+  failed: failure(enProblems, "Could not complete"),
 };

@@ -98,6 +98,6 @@ export const enSentinel: SentinelWords = {
     tokens: (count) => `${count} tokens`,
     took: (wakes, tokens, time) => `${wakes} wake${wakes === 1 ? "" : "s"}, ${tokens} tokens, ${time} in all`,
     nothing: "No watchers yet",
-    unreachable: "A machine some watchers live on can't be read now",
+    unreachable: "A machine some watchers live on cannot be read now",
   },
 };

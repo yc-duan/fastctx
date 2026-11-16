@@ -48,7 +48,7 @@ export const enManaged: ManagedWords = {
   removedWhose: (owner, hub) => `It was ${owner}'s machine on ${hub}`,
   rejoin: "Join again with a code",
   uninstall: "Uninstall",
-  unkept: "The startup service isn't installed: while no one is signed in to this system account, this computer is disconnected",
+  unkept: "The startup service is not installed: while no one is signed in to this system account, this computer is disconnected",
   keep: "Install",
   keeping: "Installing…",
   keepCommand: "Run in this account's terminal:",

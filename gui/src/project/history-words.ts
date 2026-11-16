@@ -125,7 +125,7 @@ export const enHistory: HistoryWords = {
   changedElsewhere: "Changed elsewhere just now",
   loadThat: "Load that version",
   notSaved: "Not saved",
-  unreadable: "This one can't be read",
+  unreadable: "This one cannot be read",
   you: "You",
   youOn: (machine) => `You on ${machine}`,
   elsewhere: (page) => (page ? "A page" : "A conversation"),

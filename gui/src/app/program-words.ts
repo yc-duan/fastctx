@@ -27,5 +27,5 @@ export const enProgram: ProgramWords = {
   show: "Show in folder",
   run: "Run",
   close: "Close",
-  failed: "That didn't work",
+  failed: "That did not work",
 };
