@@ -41,8 +41,9 @@ export interface SyncPageOptions {
   store: Store;
   words: SyncWords;
   head(title: string, actions?: string): string;
-  /** How `account`'s devices stand on `hub` over the last `hours`. */
-  read(hub: HubId, account: string, hours: number): Promise<SyncStatusReply>;
+  /** How `account`'s devices stand on `hub` over the last `hours`; with
+   *  `machine`, that device's line in full, the others' left out. */
+  read(hub: HubId, account: string, hours: number, machine?: string): Promise<SyncStatusReply>;
   /** What a conversation is called here, by its id; none where this
    *  device does not know it. */
   named?(conversation: string): string | null;
@@ -110,6 +111,9 @@ export class SyncPage implements Page {
   private readonly seen = new Map<string, Seen>();
   /** The device opened: its login and its name. */
   private opened: string | null = null;
+  /** The opened device's own line in full, for the span it was read for:
+   *  the list's lines are coarser where an account has many devices. */
+  private line: { name: string; span: Span; status: SyncStatus } | null = null;
   /** A device the address asks to be opened, in a development build: for
    *  looking at an opened row without a hand to press it. */
   private wanted = import.meta.env.DEV ? new URLSearchParams(location.search).get("open") : null;
@@ -201,6 +205,7 @@ export class SyncPage implements Page {
         this.wanted = null;
       }
       this.draw();
+      if (this.opened?.startsWith(`${key}\n`)) void this.readLine(login, this.opened.slice(key.length + 1));
     }
     if (this.again.delete(key) || span !== this.span) await this.askOne(login);
   }
@@ -248,6 +253,8 @@ export class SyncPage implements Page {
     this.body.querySelectorAll(".lg-item.open").forEach((one) => one.classList.remove("open"));
     this.opened = shut ? null : name;
     if (shut) return;
+    const login = this.logins().find((one) => `${one.hub}\n${one.account}` === key);
+    if (login) void this.readLine(login, machine);
     const read = this.read.get(key);
     const status = read && "reply" in read ? read.reply.hub : undefined;
     const device = status?.devices.find((one) => one.machine === machine);
@@ -487,6 +494,32 @@ export class SyncPage implements Page {
     }
   }
 
+  /** Reads the opened device's own line in full, and draws it in where the
+   *  device is still the one opened. */
+  private async readLine(login: Login, machine: string): Promise<void> {
+    const key = `${login.hub}\n${login.account}`;
+    const name = `${key}\n${machine}`;
+    const span = this.span;
+    let status: SyncStatus | undefined;
+    try {
+      status = (await this.options.read(login.hub, login.account, HOURS[span], machine)).hub;
+    } catch {
+      return;
+    }
+    if (!status || this.timer === null || this.opened !== name || this.span !== span) return;
+    this.line = { name, span, status };
+    const read = this.read.get(key);
+    const listed = read && "reply" in read ? read.reply.hub : undefined;
+    const device = listed?.devices.find((one) => one.machine === machine);
+    const item = this.body.querySelector<HTMLElement>(`.lg-item.open [data-machine="${CSS.escape(machine)}"]`)?.closest<HTMLElement>(".lg-item");
+    const chart = item?.querySelector<HTMLElement>(".sy-line");
+    if (!listed || !device || !chart) return;
+    const drawn = document.createElement("div");
+    drawn.innerHTML = this.detail(key, listed, device);
+    const fresh = drawn.querySelector<HTMLElement>(".sy-line");
+    if (fresh) chart.replaceWith(fresh);
+  }
+
   /** A device opened: what it is doing and why, the facts, its own line. */
   private detail(key: string, status: SyncStatus, device: DeviceSync): string {
     const { words } = this.options;
@@ -527,10 +560,12 @@ export class SyncPage implements Page {
       if (standing !== "synced") facts.push([words.facts.reported, words.ago(words.duration(Math.max(0, now - device.reported)))]);
     }
     const figures = facts.length ? `<dl class="sy-facts">${facts.map(([name, value]) => `<div><dt>${escape(name)}</dt><dd>${escape(value)}</dd></div>`).join("")}</dl>` : "";
-    const points = status.points.filter((point) => point.machine === device.machine);
+    // Its own line in full where it was read; else the list's.
+    const own = this.line?.name === `${key}\n${device.machine}` && this.line.span === this.span ? this.line.status : status;
+    const points = own.points.filter((point) => point.machine === device.machine);
     const width = Math.max(280, Math.min(this.width || 900, 1120) - 48);
     const line = points.length
-      ? lagLines({ width, height: 180, from: status.at - status.hours * 3_600_000, to: status.at, step: status.step, span: this.span, lines: [{ machine: device.machine, name: device.machine, ink: "var(--pen-graphite)", points }], words, seed: `${key}:${device.machine}` })
+      ? lagLines({ width, height: 180, from: own.at - own.hours * 3_600_000, to: own.at, step: own.step, span: this.span, lines: [{ machine: device.machine, name: device.machine, ink: "var(--pen-graphite)", points }], words, seed: `${key}:${device.machine}` })
       : `<p class="lg-none">${escape(words.lineEmpty)}</p>`;
     const spans = `<div class="ledger-switch" role="radiogroup" aria-label="${escape(words.spanLabel)}">${(["day", "week"] as const).map((span) => `<button type="button" role="radio" aria-checked="${span === this.span}" class="${span === this.span ? "current" : ""}" data-act="span" data-value="${span}">${escape(words.spans[span])}</button>`).join("")}</div>`;
     const chart = standing === "silent" ? "" : `<div class="sy-line"><div class="sy-line-head"><h3 title="${escape(words.lineSaid)}">${escape(words.lineTitle)}</h3>${spans}</div>${line}</div>`;

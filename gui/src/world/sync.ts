@@ -94,8 +94,10 @@ export interface SyncStatusReply {
   unreached?: string;
 }
 
-export function syncStatus(hub: HubId, account: string, hours: number): Promise<SyncStatusReply> {
-  return invoke("sync_status", { hub, account, hours });
+/** How `account`'s machines stand with `hub` over the last `hours`; with
+ *  `machine`, that machine's line in full, the others' left out. */
+export function syncStatus(hub: HubId, account: string, hours: number, machine: string | null = null): Promise<SyncStatusReply> {
+  return invoke("sync_status", { hub, account, hours, machine });
 }
 
 /** What the accounts logged in here amount to on every hub, summed: the

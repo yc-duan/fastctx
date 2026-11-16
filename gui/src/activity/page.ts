@@ -77,6 +77,9 @@ export interface ActivityOptions {
   link(machine: string, path: string | null, tab: ViewTab | null): string;
   /** The page's own clock, for the specimen. */
   now?(): number;
+  /** Makes a Codex session the user opened on their own on this computer a
+   *  conversation of Fastctx's; none where the workbench is not open. */
+  bringIn?: ((resident: string) => Promise<void>) | undefined;
 }
 
 /** Local midnight of the day holding `at`. */
@@ -88,6 +91,10 @@ function dayOf(at: number): number {
 
 export class ActivityPage implements Page {
   readonly element = document.createElement("section");
+  /** The Codex sessions of this computer's own, as the book names them,
+   *  that the World holds not; and those being brought in now. */
+  private readonly unheld = new Set<string>();
+  private readonly bringing = new Set<string>();
   readonly title: string;
   private span: Span = kept(KEPT_SPAN, SPANS, "week");
   private grouping: Grouping = kept(KEPT_GROUPING, GROUPINGS, "talk");
@@ -224,6 +231,11 @@ export class ActivityPage implements Page {
         if (answer.kind !== "deeds") continue;
         more ||= answer.more;
         changes.push(...bookChanges(answer, from, this.options.rows));
+        // The Codex sessions of this computer's own the World holds not:
+        // each a press from being brought in.
+        const here = this.options.machines().find((machine) => machine.written === null)?.name;
+        if (answer.machine === here)
+          for (const deed of answer.deeds) if (!deed.held && deed.agent === "codex" && deed.session?.endsWith(`@${here}`)) this.unheld.add(deed.session);
       }
       this.changes = changes;
       this.away = away;
@@ -285,7 +297,12 @@ export class ActivityPage implements Page {
     let name: string;
     if (talk) {
       const said = sessionName(group, files, named);
-      name = `${group.agent ? agentGlyph(group.agent, 18) : glyph("agents", 18)}${said.link ? `<a class="ay-name" href="${escape(said.link)}">${escape(said.name)}</a>` : `<b class="ay-name">${escape(said.name)}</b>`}<span class="ay-on">${glyph("machine", 14)}${escape(group.machines.join("、"))}</span>`;
+      const resident = group.session?.slice(0, group.session.lastIndexOf("@")) ?? "";
+      const bring =
+        this.options.bringIn && group.session && this.unheld.has(group.session)
+          ? `<button type="button" class="text-button ay-bring" data-bring="${escape(resident)}" title="${escape(words.bringInWhy)}"${this.bringing.has(resident) ? " disabled" : ""}>${escape(words.bringIn)}</button>`
+          : "";
+      name = `${group.agent ? agentGlyph(group.agent, 18) : glyph("agents", 18)}${said.link ? `<a class="ay-name" href="${escape(said.link)}">${escape(said.name)}</a>` : `<b class="ay-name">${escape(said.name)}</b>`}<span class="ay-on">${glyph("machine", 14)}${escape(group.machines.join("、"))}</span>${bring}`;
     } else {
       name = `${glyph("desktop", 18)}<a class="ay-name" href="${escape(this.options.link(group.machine, null, null))}" title="${escape(words.folders)}">${escape(group.machine)}</a>`;
     }
@@ -396,6 +413,24 @@ export class ActivityPage implements Page {
       this.whole.clear();
       this.allGroups = false;
       this.draw(true);
+      return;
+    }
+    const bring = target.closest<HTMLElement>("[data-bring]")?.dataset.bring;
+    if (bring && this.options.bringIn) {
+      this.bringing.add(bring);
+      this.draw();
+      void this.options.bringIn(bring).then(
+        () => {
+          this.unheld.delete(`${bring}@${this.options.machines().find((machine) => machine.written === null)?.name ?? ""}`);
+          this.bringing.delete(bring);
+          this.draw();
+        },
+        (error: unknown) => {
+          this.bringing.delete(bring);
+          console.error("bringing a session in", error);
+          this.draw();
+        },
+      );
       return;
     }
     const whole = target.closest<HTMLElement>("[data-whole]")?.dataset.whole;

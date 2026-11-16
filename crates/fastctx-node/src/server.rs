@@ -1529,7 +1529,7 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
             crate::assets::takeover::adopt(node, &resident).map_err(Failure::new)?;
             Ok(Reply::Done)
         }
-        Call::SyncStatus { hub, account, hours } => {
+        Call::SyncStatus { hub, account, hours, machine } => {
             users_voice(node, peer)?;
             let assets =
                 node.assets.as_ref().ok_or_else(|| Failure::new("the asset library is unavailable".to_string()))?;
@@ -1538,7 +1538,7 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
                 .into_iter()
                 .find(|link| link.membership().id == hub)
                 .ok_or_else(|| Failure::new(format!("this machine is not on {hub}")))?;
-            let (local, hub, unreached) = crate::assets::standing::status(assets, &link, account, hours).await;
+            let (local, hub, unreached) = crate::assets::standing::status(assets, &link, account, hours, machine).await;
             Ok(Reply::SyncStatus { local, hub, unreached })
         }
         Call::DoctorReadings => {

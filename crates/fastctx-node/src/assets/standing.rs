@@ -152,6 +152,7 @@ pub(crate) async fn status(
     link: &Arc<Link>,
     account: fastctx_types::AccountName,
     hours: u32,
+    machine: Option<fastctx_types::MachineName>,
 ) -> (LocalSync, Option<Box<SyncStatus>>, Option<String>) {
     let hub = link.membership().id;
     let (theirs, device) = (hub.as_str().to_string(), assets.device());
@@ -169,7 +170,7 @@ pub(crate) async fn status(
     if cut_off.is_some() {
         return (local, None, Some("the hub is not reached".into()));
     }
-    match ask(assets, link, Request::SyncStatus { account, hours }).await {
+    match ask(assets, link, Request::SyncStatus { account, hours, machine }).await {
         Ok(Reply::SyncStatus { status }) => (local, Some(status), None),
         Ok(other) => (local, None, Some(format!("the hub answered otherwise: {other:?}"))),
         Err(why) => (local, None, Some(why)),

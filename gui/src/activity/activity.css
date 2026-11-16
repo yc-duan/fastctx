@@ -304,3 +304,15 @@ a.ay-name:hover {
     padding-right: 12px;
   }
 }
+
+/* A Codex session of this computer's own, a press from being brought in:
+   a word at the end of its group's head. */
+.ay-bring {
+  margin-left: var(--space-2);
+  color: var(--accent);
+  font-size: var(--size-fine);
+}
+
+.ay-bring:disabled {
+  color: var(--text-3);
+}

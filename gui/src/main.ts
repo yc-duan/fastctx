@@ -120,7 +120,7 @@ import type { SideSeams } from "./side/seams";
 import { enFiles, zhFiles } from "./files/words";
 import { specimenFileLines, specimenFilePicture, specimenList, specimenPlaces, specimenRows } from "./specimen/files-world";
 import { specimenBook, specimenBookMachines } from "./specimen/activity";
-import { readBook } from "./world/book";
+import { bringIn, readBook } from "./world/book";
 import { setLanguage } from "./world/features";
 import { type Asked, untilAnswered, whyOf } from "./world/again";
 import { enFeatures, zhFeatures } from "./app/features-words";
@@ -3276,6 +3276,7 @@ function show(next: Place): void {
         read: (machine, query) => (live ? readBook(machine, query) : specimenBook(machine, query, specimen!.now.getTime())),
         named: sessionNamed,
         link: (machine, path, tab) => link({ kind: "files", machine, path, tab }),
+        ...(live && workbenchShown.on.peek() ? { bringIn: (resident: string) => bringIn(resident).then(() => store.refresh()) } : {}),
         ...(live ? {} : { now: () => specimen!.now.getTime(), rows: specimenRowsOf }),
       });
       break;
@@ -3415,7 +3416,7 @@ function show(next: Place): void {
         store,
         words: english ? enSync : zhSync,
         head,
-        read: (hub, account, hours) => (live ? syncStatus(hub, account, hours) : specimenSync(hub, account, hours)),
+        read: (hub, account, hours, machine) => (live ? syncStatus(hub, account, hours, machine ?? null) : specimenSync(hub, account, hours)),
         named: (conversation) => {
           const found = residentsOf(store.world.peek(), true).find((resident) => resident.about.id === conversation);
           return found ? talkNamed({ resident: found.about.id, machine: found.about.machine }).name : null;

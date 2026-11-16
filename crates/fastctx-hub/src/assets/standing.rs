@@ -46,6 +46,11 @@ const DAY: i64 = 24 * HOUR;
 const KEPT: i64 = 30 * DAY;
 /// The step of a day's line: what a page draws, not every minute.
 const DAY_STEP: i64 = 5 * MINUTE;
+/// The steps of the lines of an account's machines asked all at once when
+/// it has more than `MANY` of them: a row's short line, a day's and longer.
+const COARSE_DAY_STEP: i64 = 30 * MINUTE;
+const COARSE_STEP: i64 = 4 * HOUR;
+const MANY: usize = 24;
 /// How far behind a machine may stand and still count as caught up: what a
 /// minute's sampling cannot tell from catching up as it goes.
 const CAUGHT_UP: u64 = 60_000;
@@ -61,7 +66,7 @@ const POINTS_AT_ONCE: usize = 4096;
 const STATUSES_AT_MOST: usize = 64;
 
 /// A status reckoned: for the account as it was opened, over a span.
-type StatusKey = (AccountName, i64, u32);
+type StatusKey = (AccountName, i64, u32, Option<MachineName>);
 /// A report as kept: the machine's name, its device key, the report, when
 /// it came and when the machine was last seen.
 type ReportRow = (String, Vec<u8>, Vec<u8>, i64, Option<i64>);
@@ -591,10 +596,16 @@ fn totals(assets: &Assets, directory: &Indexed<'_>, account: &AccountName) -> Hu
 }
 
 /// Each machine's line over the last `hours`: how far behind it stood in
-/// what `account` reads, a point a step.
-fn points(assets: &Assets, machines: &[MachineName], hours: u32, now: i64) -> io::Result<(i64, Vec<LagPoint>)> {
+/// what `account` reads, a point a step. Lines of many machines at once are
+/// drawn coarser (`coarse`): a row's short line needs no more.
+fn points(assets: &Assets, machines: &[MachineName], hours: u32, now: i64, coarse: bool) -> io::Result<(i64, Vec<LagPoint>)> {
     let since = now - i64::from(hours) * HOUR;
-    let step = if hours <= 24 { DAY_STEP } else { HOUR };
+    let step = match (hours <= 24, coarse) {
+        (true, false) => DAY_STEP,
+        (true, true) => COARSE_DAY_STEP,
+        (false, false) => HOUR,
+        (false, true) => COARSE_STEP,
+    };
     let mut points = Vec::new();
     for machine in machines {
         let name = machine.to_string();
@@ -639,7 +650,13 @@ fn kind_of(member: &Member) -> String {
 
 /// How `account`'s machines stand over the last `hours`, asked by `from`,
 /// on which the account must be logged in.
-pub(crate) fn status(hub: &crate::Hub, from: &MachineName, account: &AccountName, hours: u32) -> Result<Reply, String> {
+pub(crate) fn status(
+    hub: &crate::Hub,
+    from: &MachineName,
+    account: &AccountName,
+    hours: u32,
+    only: Option<&MachineName>,
+) -> Result<Reply, String> {
     let hours = hours.clamp(1, 24 * 30);
     let assets = &hub.assets;
     let store = hub.store();
@@ -648,7 +665,7 @@ pub(crate) fn status(hub: &crate::Hub, from: &MachineName, account: &AccountName
         return Err(format!("{account} is not logged in on {from}"));
     }
     let opened = directory.all.account(account).map_or(0, |found| found.opened.as_millisecond());
-    let key = (account.clone(), opened, hours);
+    let key = (account.clone(), opened, hours, only.cloned());
     let cached = assets.standing.statuses.lock().expect("statuses").get(&key).filter(|(at, _)| at.elapsed() < STATUS_STANDS).map(|(_, status)| status.clone());
     if let Some(status) = cached {
         // Logged out meanwhile, not even a page kept is given (AP12).
@@ -695,9 +712,12 @@ pub(crate) fn status(hub: &crate::Hub, from: &MachineName, account: &AccountName
                 .is_some_and(|(kept, reckoned)| synced(kept, reckoned, online.contains_key(&member.name), now)),
         });
     }
-    let machines: Vec<MachineName> = members.iter().map(|member| member.name.clone()).collect();
-    let (step, points) =
-        points(assets, &machines, hours, now).map_err(|error| error.to_string())?;
+    // One machine asked: its line alone, in full. All of them: coarser when
+    // there are many.
+    let machines: Vec<MachineName> =
+        members.iter().map(|member| member.name.clone()).filter(|name| only.is_none_or(|only| only == name)).collect();
+    let coarse = only.is_none() && machines.len() > MANY;
+    let (step, points) = points(assets, &machines, hours, now, coarse).map_err(|error| error.to_string())?;
     let totals = totals(assets, &directory, account);
     let status = SyncStatus { at: now, hours, step, devices, points, totals };
     {

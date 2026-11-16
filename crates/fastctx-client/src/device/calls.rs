@@ -131,13 +131,13 @@ impl Device {
                 let view = session.link.profile_subagents(&account, operation).await.map_err(failed)?;
                 return Ok((Reply::ProfileSubagents(Box::new(view)), here()));
             }
-            Call::SyncStatus { hub, account, hours } => {
+            Call::SyncStatus { hub, account, hours, machine } => {
                 let session = self
                     .sessions()
                     .into_iter()
                     .find(|session| session.link.membership().id == hub)
                     .ok_or_else(|| failed(format!("this device is not on {hub}")))?;
-                return Ok((super::sync_status::of(&session.link, account, hours).await, here()));
+                return Ok((super::sync_status::of(&session.link, account, hours, machine).await, here()));
             }
             Call::PlanRead { hub, account, owner, machine } => {
                 let session = self.on_hub(hub.as_ref())?;

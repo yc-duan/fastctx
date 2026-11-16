@@ -44,6 +44,10 @@ pub enum Call {
         hub: crate::access::HubId,
         account: crate::AccountName,
         hours: u32,
+        /// The one machine whose line is drawn in full: the others' lines
+        /// come coarser where the account has many (`assets::Request`).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        machine: Option<crate::MachineName>,
     },
     /// The account that opened the conversation `resident`, logged in here,
     /// has it written on here from now on, the device it lived on lost

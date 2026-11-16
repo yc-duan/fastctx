@@ -485,7 +485,17 @@ pub enum Request {
     Report { report: crate::sync_status::SyncReport },
     /// How `account`'s machines stand, over the last `hours` (design §28.9):
     /// asked by a machine the account is logged in on.
-    SyncStatus { account: crate::AccountName, hours: u32 },
+    ///
+    /// With `machine`, that machine's line alone, at its full step; without,
+    /// every machine's, coarser where the account has many machines, so a
+    /// page of a hundred is not a hundred full lines a minute. A hub that
+    /// knows no `machine` gives every line as it always did.
+    SyncStatus {
+        account: crate::AccountName,
+        hours: u32,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        machine: Option<crate::MachineName>,
+    },
     /// Asks for a challenge, to prove it holds `object`, which the hub asked
     /// it lately to prove for a frame it sent (design §28.45). From version
     /// `CHALLENGES` on.

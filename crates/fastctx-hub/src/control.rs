@@ -1140,10 +1140,10 @@ fn handle(
                         }
                         // How an account's machines stand is reckoned beside
                         // the sessions, where who is online is known.
-                        if let fastctx_types::assets::Request::SyncStatus { account, hours } = &request {
+                        if let fastctx_types::assets::Request::SyncStatus { account, hours, machine } = &request {
                             let answer = origin
                                 .check(&hub.store().book.directory)
-                                .and_then(|()| crate::assets::standing::status(&hub, &from, account, *hours));
+                                .and_then(|()| crate::assets::standing::status(&hub, &from, account, *hours, machine.as_ref()));
                             return (answer, Vec::new());
                         }
                         let scope = crate::assets::serve::scope_of(&request).map(str::to_string);
