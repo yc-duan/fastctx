@@ -1,11 +1,12 @@
-//! Another machine's activity, from the copies here while it is away (plan
-//! 3-5, design §28.27). Each account's records' scope holds what each
-//! machine did for it as `activity/<machine>` (`assets::activity`), a body's
-//! `records` scope what a machine shared whole did for its members. While
-//! the machine is away from every network both are on, its book is answered
-//! from them as it would answer the accounts asking: what it did for them,
-//! and for its own user where one of them owns it. Otherwise the machine is
-//! asked.
+//! Another machine's activity, from the copies here (plan 3-5, design
+//! §28.27, §28.58). Each account's records' scope holds what each machine
+//! did for it as `activity/<machine>` (`assets::activity`), with the hours an
+//! earlier version kept without their deeds; a body's `records` scope what a
+//! machine shared whole did for its members. Its book is answered from them
+//! as it would answer the accounts asking — what it did for them, and for
+//! its own user where one of them owns it — once every one of those
+//! accounts' records is pulled whole here, or while the machine is away.
+//! Otherwise the machine is asked.
 
 use crate::Node;
 use fastctx_content::v2::{AccountActivity, Entry, Kind as _, Library};
@@ -25,9 +26,7 @@ const HOUR: i64 = 3_600_000;
 /// it.
 pub(crate) fn answer(node: &Node, acting: &Acting, written: &Written, query: &BookQuery) -> Option<BookAnswer> {
     let machine = &written.name;
-    if !crate::timeline::copy::away(node, machine) {
-        return None;
-    }
+    let away = crate::timeline::copy::away(node, machine);
     let library = &node.assets.as_ref()?.library;
     // Its stream on the network it is named on, or on each that lists it
     // as the same machine, and whose the accounts asking are.
@@ -48,11 +47,35 @@ pub(crate) fn answer(node: &Node, acting: &Acting, written: &Written, query: &Bo
     if keys.len() > 1 {
         return None;
     }
+    // Reached, it is answered from here only when every account asking has
+    // its records pulled whole here: no deed of one is missing.
+    if !away {
+        let pulled: BTreeSet<String> = library
+            .held_scopes()
+            .ok()?
+            .into_iter()
+            .filter(|scope| crate::timeline::copy::records_here(node, scope))
+            .map(|scope| scope.key)
+            .collect();
+        let all = node.links().into_iter().all(|link| {
+            let hub = link.membership().id.to_string();
+            let view = link.view();
+            node.accounts_on(&link, acting).iter().all(|account| {
+                view.directory.account(account).is_some_and(|found| {
+                    pulled.contains(&fastctx_types::assets::records_key(&hub, account, found.opened.as_millisecond()))
+                })
+            })
+        });
+        if !all {
+            return None;
+        }
+    }
     // The window asked: what lies outside it is passed over as it is read.
     let (from, to) = match query {
         BookQuery::Deeds { from, to, .. } | BookQuery::Hours { from, to } => (*from, *to),
     };
     let mut deeds: BTreeMap<String, Deed> = BTreeMap::new();
+    let mut legacy: Vec<Hour> = Vec::new();
     let mut found = false;
     for scope in library.held_scopes().ok()? {
         if !crate::timeline::copy::records_here(node, &scope) {
@@ -74,6 +97,10 @@ pub(crate) fn answer(node: &Node, acting: &Acting, written: &Written, query: &Bo
                 for entry in page {
                     // A deed whose body is not all here: no whole answer.
                     let value = read(library, &entry)?;
+                    if value.get("hour").and_then(serde_json::Value::as_bool) == Some(true) {
+                        legacy.extend(hour_of(&value).filter(|hour| hour.at >= from && hour.at < to));
+                        continue;
+                    }
                     let key = value.get("deed").and_then(serde_json::Value::as_str).unwrap_or_default().to_string();
                     if let Some(deed) = deed_of(&value).filter(|deed| deed.began >= from && deed.began < to) {
                         deeds.insert(key, deed);
@@ -120,8 +147,28 @@ pub(crate) fn answer(node: &Node, acting: &Acting, written: &Written, query: &Bo
                 hour.busy += (deed.ended.unwrap_or(deed.began).as_millisecond() - began).max(0) as u64;
                 hour.files += deed.touched.len() as u32;
             }
-            BookAnswer::Hours { machine: machine.clone(), hours: hours.into_values().collect() }
+            let mut hours: Vec<Hour> = hours.into_values().collect();
+            hours.extend(legacy);
+            hours.sort_by_key(|hour| hour.at);
+            BookAnswer::Hours { machine: machine.clone(), hours }
         }
+    })
+}
+
+/// An hour an earlier version kept without its deeds, as `assets::activity`
+/// writes it.
+fn hour_of(value: &serde_json::Value) -> Option<Hour> {
+    let text = |name: &str| value.get(name).and_then(serde_json::Value::as_str).filter(|text| !text.is_empty());
+    let number = |name: &str| value.get(name).and_then(serde_json::Value::as_i64).unwrap_or(0).max(0);
+    Some(Hour {
+        at: jiff::Timestamp::from_millisecond(value.get("at")?.as_i64()?).ok()?,
+        session: text("session").map(str::to_string),
+        agent: text("agent").and_then(|agent| agent.parse().ok()),
+        held: value.get("held").and_then(serde_json::Value::as_bool).unwrap_or(false),
+        runs: u32::try_from(number("runs")).unwrap_or(u32::MAX),
+        failed: u32::try_from(number("failed")).unwrap_or(u32::MAX),
+        busy: number("busy") as u64,
+        files: u32::try_from(number("files")).unwrap_or(u32::MAX),
     })
 }
 

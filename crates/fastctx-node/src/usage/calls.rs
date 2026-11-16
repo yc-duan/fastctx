@@ -261,6 +261,19 @@ pub(crate) fn calls(
     query: &UsageCallsQuery,
 ) -> io::Result<UsageCallsPage> {
     let path = super::ledger(node, agent, dir);
+    super::with_book(node, &path, |book| calls_in(node, book, &path, only, looker, query))
+}
+
+/// The page of calls `query` asks for of the ledger at `path`, loaded as
+/// `book`: this machine's own, or one put back together from copies.
+pub(super) fn calls_in(
+    node: &Node,
+    book: &mut super::ledger::Book,
+    path: &Path,
+    only: Option<&HubAccount>,
+    looker: Looker<'_>,
+    query: &UsageCallsQuery,
+) -> io::Result<UsageCallsPage> {
     let kept = Timestamp::now() - SignedDuration::from_hours(24 * DETAIL_DAYS);
     let since = query.from.map_or(kept, |from| from.max(kept));
     // An entry is filed under its own day, so the days after the cursor, or
@@ -274,7 +287,7 @@ pub(crate) fn calls(
     let size = query.page_size();
 
     let in_range = |at: Timestamp| at >= since && query.until.is_none_or(|until| at < until);
-    super::with_book(node, &path, |book| {
+    {
         let balances = book.balances();
         let index = &mut book.calls;
         // The days no query reaches any longer are let go, and with them the
@@ -284,7 +297,7 @@ pub(crate) fn calls(
         if index.days.keys().any(|file| file.file_stem().and_then(|s| s.to_str()).is_none_or(|s| s < oldest.as_str())) {
             *index = Index::default();
         }
-        let mut files = ledger::days(&path, since)?;
+        let mut files = ledger::days(path, since)?;
         files.reverse();
         if let Some(last) = &last {
             files.retain(|file| file.file_stem().and_then(|s| s.to_str()).is_none_or(|day| day <= last.as_str()));
@@ -323,7 +336,7 @@ pub(crate) fn calls(
                     }
                 }
             }
-            for entry in balances.iter().filter(|row| ledger::day_file(&path, row.at()) == *file) {
+            for entry in balances.iter().filter(|row| ledger::day_file(path, row.at()) == *file) {
                 if !in_range(entry.usage_at()) {
                     continue;
                 }
@@ -402,7 +415,7 @@ pub(crate) fn calls(
             size: query.size.map(|_| size as u32),
             sum: numbered.then_some(sum),
         })
-    })
+    }
 }
 
 /// Adds one selected row to what the rows add up to.

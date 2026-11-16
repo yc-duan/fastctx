@@ -31,19 +31,32 @@ use super::usage_marks::{Marked, marked_run, marks_at, marks_through};
 /// The most a body holds as it is.
 const BODY_MOST: usize = fastctx_content::RECORD_BYTES - 4096;
 
-/// How often what was done here is looked at.
+/// How often what was done here is looked at, and how soon after something
+/// here changed: copies elsewhere are read first (§28.58), so they keep up.
 const EVERY: Duration = Duration::from_secs(60);
+const SOON: Duration = Duration::from_secs(5);
 /// The most deeds, and usage bytes, a look writes; the most a piece holds.
 const DEEDS: i64 = 512;
 const USAGE_BYTES: u64 = 16 << 20;
 const PIECE: u64 = 1 << 20;
 
-/// Starts looking at what was done here every minute.
+/// Starts looking at what was done here every minute, and a few seconds
+/// after anything here changed.
 pub(crate) fn start(node: &Arc<Node>) {
     let weak: Weak<Node> = Arc::downgrade(node);
+    let mut moves = node.topics.moves();
     fastctx_platform::task::spawn(async move {
         loop {
-            tokio::time::sleep(EVERY).await;
+            tokio::select! {
+                () = tokio::time::sleep(EVERY) => {}
+                moved = moves.changed() => {
+                    if moved.is_err() {
+                        return;
+                    }
+                    tokio::time::sleep(SOON).await;
+                    moves.mark_unchanged();
+                }
+            }
             let Some(node) = weak.upgrade() else { return };
             if node.assets.is_none() {
                 continue;
@@ -139,6 +152,7 @@ fn look(node: &Arc<Node>, hub: &HubId, home: Option<&AccountName>, waits: bool, 
     came_into_force(node, hub, shared.body.as_deref())?;
     deeds(node, hub, home, waits, &shared, &format!("{}/{machine}", AccountActivity::STREAM))?;
     forgotten(node, hub, &format!("{}/{machine}", AccountActivity::STREAM))?;
+    hours(node, hub, home, &format!("{}/{machine}", AccountActivity::STREAM))?;
     usage(node, hub, home, waits, &shared, &format!("{}/{machine}", AccountUsage::STREAM))
 }
 
@@ -200,6 +214,144 @@ fn forgotten(node: &Arc<Node>, hub: &HubId, stream: &str) -> Result<(), String> 
                 .map_err(error)?;
         }
         at["forgotten"][&scope.key] = serde_json::json!({ "holding": scope.holding, "after": last });
+    }
+    library.keep_checkpoint(&name, serde_json::to_vec(&at).map_err(|error| error.to_string())?).map_err(error)
+}
+
+/// An hour the book kept from an earlier version without its deeds.
+struct LegacyHour {
+    at: i64,
+    session: String,
+    agent: String,
+    held: bool,
+    account: String,
+    runs: i64,
+    failed: i64,
+    busy: i64,
+    files: i64,
+}
+
+/// The order an hour of the book is kept under, beside the deeds.
+const HOURS: &str = "hour/";
+
+/// The hours the book keeps from an earlier version, whose deeds it never
+/// kept (`book_hour`, written by its migration alone, §28.58): written into
+/// the activity stream of their accounts as they stand, each under
+/// `hour/…`, and let go of as the book lets go of them. Looked at again only
+/// as they change or a scope is held anew. Its accounts' own, never a
+/// body's: they are of before any sharing was kept.
+fn hours(node: &Arc<Node>, hub: &HubId, home: Option<&AccountName>, stream: &str) -> Result<(), String> {
+    let Some(assets) = node.assets.as_ref() else { return Ok(()) };
+    let library = &assets.library;
+    if node.book_database.fault().is_some() {
+        return Ok(());
+    }
+    let rows: Vec<LegacyHour> = node
+        .book_database
+        .read_now(|db| {
+            Ok(db
+                .prepare_cached(
+                    "SELECT at, session, agent, held, account, runs, failed, busy, files FROM book_hour \
+                     ORDER BY at, session, agent, held, account",
+                )?
+                .query_map([], |row| {
+                    Ok(LegacyHour {
+                        at: row.get(0)?,
+                        session: row.get(1)?,
+                        agent: row.get(2)?,
+                        held: row.get::<_, i64>(3)? != 0,
+                        account: row.get(4)?,
+                        runs: row.get(5)?,
+                        failed: row.get(6)?,
+                        busy: row.get(7)?,
+                        files: row.get(8)?,
+                    })
+                })?
+                .collect::<Result<Vec<_>, _>>()?)
+        })
+        .map_err(|error| error.to_string())?;
+    let error = |error: fastctx_content::Error| error.to_string();
+    // Each account's hours, by item, with their bodies.
+    let mut by_account: BTreeMap<AccountName, BTreeMap<Vec<u8>, (Vec<u8>, Vec<u8>)>> = BTreeMap::new();
+    for hour in &rows {
+        let Some(account) = routed(&hour.account, hub, home) else { continue };
+        let key = format!("{HOURS}{}/{}/{}/{}/{}", hour.at, hour.session, hour.agent, hour.held, hour.account);
+        // Named by its key as a deed is (`AccountActivity::authorize`).
+        let body = serde_json::to_vec(&serde_json::json!({
+            "deed": key,
+            "hour": true,
+            "at": hour.at,
+            "session": hour.session,
+            "agent": hour.agent,
+            "held": hour.held,
+            "account": hour.account,
+            "runs": hour.runs,
+            "failed": hour.failed,
+            "busy": hour.busy,
+            "files": hour.files,
+        }))
+        .map_err(|error| error.to_string())?;
+        let order = format!("{HOURS}{:020}", hour.at).into_bytes();
+        by_account.entry(account).or_default().insert(fastctx_content::v2::item_of(&key), (order, body));
+    }
+    let name = format!("activity-hours/{hub}");
+    let mut at = standing(library, &name)?;
+    for (account, wanted) in by_account {
+        let Some((scope, holding)) = writable(node, library, hub, &account, stream)? else { continue };
+        use sha2::Digest as _;
+        let mut digest = sha2::Sha256::new();
+        digest.update(holding.to_be_bytes());
+        for (item, (_, body)) in &wanted {
+            digest.update(item);
+            digest.update(body);
+        }
+        let digest: String = digest.finalize().iter().map(|byte| format!("{byte:02x}")).collect();
+        if at["written"][&scope].as_str() == Some(digest.as_str()) {
+            continue;
+        }
+        // What the stream holds of them now: let go of where the book did.
+        let mut writes = Vec::new();
+        let mut after = Some((HOURS.as_bytes().to_vec(), Vec::new()));
+        loop {
+            let page = library.page(&scope, stream, after.take(), 500).map_err(error)?;
+            let full = page.len() == 500;
+            let mut past = false;
+            for entry in &page {
+                if !entry.order.starts_with(HOURS.as_bytes()) {
+                    past = true;
+                    break;
+                }
+                match wanted.get(&entry.item) {
+                    Some((_, body)) if *body == entry.body => {}
+                    Some(_) => {}
+                    None => writes.push(Write::<AccountActivity> {
+                        order: entry.order.clone(),
+                        item: entry.item.clone(),
+                        value: None,
+                        objects: Vec::new(),
+                    }),
+                }
+            }
+            match page.last() {
+                Some(last) if full && !past => after = Some((last.order.clone(), last.item.clone())),
+                _ => break,
+            }
+        }
+        for (item, (order, body)) in wanted {
+            if library.item(&scope, stream, &item).map_err(error)?.is_some_and(|entry| entry.body == body) {
+                continue;
+            }
+            writes.push(Write::<AccountActivity> { order, item, value: Some(body), objects: Vec::new() });
+        }
+        while !writes.is_empty() {
+            let batch: Vec<_> = writes.drain(..writes.len().min(256)).collect();
+            Writer::<AccountActivity>::new(library, &scope, stream)
+                .map_err(error)?
+                .in_holding(holding)
+                .write_all(batch, Vec::new(), false, assets.signer())
+                .map_err(error)?;
+        }
+        at["written"][&scope] = serde_json::json!(digest);
     }
     library.keep_checkpoint(&name, serde_json::to_vec(&at).map_err(|error| error.to_string())?).map_err(error)
 }
@@ -648,7 +800,10 @@ fn usage(node: &Arc<Node>, hub: &HubId, home: Option<&AccountName>, waits: bool,
             continue;
         }
         // Each account's lines; and whether any is the machine's own user's
-        // with its owner not logged in now, which waits (OO17).
+        // with its owner not logged in now, which waits (OO17). A line used
+        // for several accounts at once books each an even share (`usage
+        // ledger::uses`): each of the others gets it too, naming no
+        // conversation of the first's (§28.58).
         let split = |bytes: &[u8]| {
             let mut lines: BTreeMap<AccountName, Vec<u8>> = BTreeMap::new();
             let mut unowned = false;
@@ -658,18 +813,39 @@ fn usage(node: &Arc<Node>, hub: &HubId, home: Option<&AccountName>, waits: bool,
                 if value.get("kind").and_then(serde_json::Value::as_str) == Some("shared") {
                     continue;
                 }
+                let named = |who: &serde_json::Value| -> Option<Option<AccountName>> {
+                    let (of, name) = (who["hub"].as_str()?, who["account"].as_str()?);
+                    Some(routed(&format!("{of}/{name}"), hub, home))
+                };
                 let account = match value.get("who").filter(|who| !who.is_null()) {
                     Some(who) => {
-                        let (Some(of), Some(name)) = (who["hub"].as_str(), who["account"].as_str()) else { continue };
-                        routed(&format!("{of}/{name}"), hub, home)
+                        let Some(account) = named(who) else { continue };
+                        account
                     }
                     None => {
                         unowned |= waits;
                         home.cloned()
                     }
                 };
+                let sharing: BTreeSet<AccountName> = value
+                    .get("with")
+                    .and_then(serde_json::Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|who| named(who).flatten())
+                    .filter(|other| Some(other) != account.as_ref())
+                    .collect();
                 if let Some(account) = account {
                     lines.entry(account).or_default().extend_from_slice(line);
+                }
+                if !sharing.is_empty() {
+                    let mut shared = value.clone();
+                    unname_all(&mut shared);
+                    let Ok(mut text) = serde_json::to_vec(&shared) else { continue };
+                    text.push(b'\n');
+                    for other in sharing {
+                        lines.entry(other).or_default().extend_from_slice(&text);
+                    }
                 }
             }
             (lines, unowned)
@@ -773,6 +949,22 @@ fn elsewhere(key: &str) -> String {
     use sha2::Digest as _;
     let digest: String = sha2::Sha256::digest(key.as_bytes()).iter().take(16).map(|byte| format!("{byte:02x}")).collect();
     format!("elsewhere {digest}")
+}
+
+/// Takes out of `value`, at any depth, every conversation and turn: a line
+/// another account shares names nothing of the conversation it was used in
+/// (§28.58). Whom it worked for stays, its accounts named already.
+fn unname_all(value: &mut serde_json::Value) {
+    match value {
+        serde_json::Value::Object(map) => {
+            for name in ["conversation", "turn"] {
+                map.remove(name);
+            }
+            map.values_mut().for_each(unname_all);
+        }
+        serde_json::Value::Array(items) => items.iter_mut().for_each(unname_all),
+        _ => {}
+    }
 }
 
 /// Takes out of `value`, at any depth, the conversation and turn of each

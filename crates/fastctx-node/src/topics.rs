@@ -40,6 +40,11 @@ impl Topics {
         self.moved.send_modify(|moves| *moves = moves.wrapping_add(1));
     }
 
+    /// Moves whenever any topic changes.
+    pub(crate) fn moves(&self) -> tokio::sync::watch::Receiver<u64> {
+        self.moved.subscribe()
+    }
+
     /// Invalidates a family's topics without walking the towns or readers.
     pub(crate) fn changed_prefix(&self, prefix: &str) {
         self.changed(prefix);

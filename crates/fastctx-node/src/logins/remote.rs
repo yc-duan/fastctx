@@ -344,18 +344,18 @@ pub(crate) async fn usage(
     if node.is_here(&machine) {
         return here_usage(node, agent, dir, None, true).await;
     }
-    match ask(node, &machine, Purpose::Look, RemoteCall::AgentUsage { agent: agent.clone(), dir: dir.clone() }).await {
-        Ok(RemoteReply::AgentUsage(report)) => Ok(*report),
-        Ok(_) => Err(other(&machine)),
-        // The machine away: its use as the copies here hold it (plan 3-5).
-        Err(failure) => {
-            let (asking, written) = (node.clone(), machine.clone());
-            fastctx_platform::task::spawn_blocking(move || crate::usage::copied::report(&asking, &written, agent.as_str(), &dir))
-                .await
-                .ok()
-                .flatten()
-                .ok_or(failure)
-        }
+    // From the copies here, where they hold every line the accounts here
+    // read, or the machine is away (§28.58); otherwise the machine.
+    let (asking, written, named, path) = (node.clone(), machine.clone(), agent.clone(), dir.clone());
+    if let Ok(Some(report)) =
+        fastctx_platform::task::spawn_blocking(move || crate::usage::copied::report(&asking, &written, named.as_str(), &path))
+            .await
+    {
+        return Ok(report);
+    }
+    match ask(node, &machine, Purpose::Look, RemoteCall::AgentUsage { agent, dir }).await? {
+        RemoteReply::AgentUsage(report) => Ok(*report),
+        _ => Err(other(&machine)),
     }
 }
 
@@ -369,6 +369,15 @@ pub(crate) async fn calls(
 ) -> Result<fastctx_types::usage_calls::UsageCallsPage, Failure> {
     if node.is_here(&machine) {
         return here_calls(node, agent, dir, None, query).await;
+    }
+    // From the copies here, as the report (`usage`).
+    let (asking, written, named, path, asked) = (node.clone(), machine.clone(), agent.clone(), dir.clone(), query.clone());
+    if let Ok(Some(page)) = fastctx_platform::task::spawn_blocking(move || {
+        crate::usage::copied::calls(&asking, &written, named.as_str(), &path, &asked)
+    })
+    .await
+    {
+        return Ok(page);
     }
     match ask(node, &machine, Purpose::Look, RemoteCall::AgentCalls { agent, dir, query }).await? {
         RemoteReply::AgentCalls(page) => Ok(*page),
