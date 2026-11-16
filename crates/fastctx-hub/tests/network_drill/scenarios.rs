@@ -144,12 +144,17 @@ pub async fn refused(world: &World, report: &mut Report) -> anyhow::Result<()> {
     report.check(twice == 0, "none recorded twice", format!("{twice} twice"));
 
     // Once alpha's heartbeat said how far it heard, the next letter it sends
-    // has its count kept with no refusal left to tell.
+    // has its count kept with no refusal left to tell. The hub hands a letter
+    // to its receiver before it keeps the sender's count, so the letter
+    // arriving does not say the count is written: the count is waited for
+    // by its own number.
     tokio::time::sleep(fastctx_net::wire::HEARTBEAT + Duration::from_secs(2)).await;
+    let counted_before = counted();
     let gamma = world.machine("gamma");
     let mut after = send(world, &["alpha"], "gamma", "refused-after", 1);
     after.sent().await?;
     let came = arrived(&gamma.lab, &after.wanted, DRAIN).await;
+    let written = until(DRAIN, || counted() > counted_before).await;
     let epoch = world
         .hub
         .letters()
@@ -160,9 +165,13 @@ pub async fn refused(world: &World, report: &mut Report) -> anyhow::Result<()> {
     let count = Some(count);
     let kept = count.as_ref().map(|count| count["refused"].as_object().map_or(0, serde_json::Map::len));
     report.check(
-        came.missing.is_empty() && kept == Some(0),
+        came.missing.is_empty() && written.is_some() && kept == Some(0),
         "and the hub keeps why it refused none of them once alpha heard",
-        format!("{}; {kept:?} kept", came.first_missing()),
+        format!(
+            "{}; {kept:?} kept{}",
+            came.first_missing(),
+            if written.is_some() { "" } else { "; the count of the letter after was not written" }
+        ),
     );
     Ok(())
 }
