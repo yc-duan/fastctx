@@ -1,23 +1,25 @@
-// What is taken out of the side into a window of its own (`world-gui.md`,
-// 对话的侧面板): the whole side of a conversation, its overview and the tabs
-// open; or one card of the overview, the plan, the files, those who work
-// with it. The page is opened again in the new window with `?board`, on
-// the same conversation, and lays over the whole of it what was taken out
-// and nothing else. That window reads the conversation itself, as any
-// window does; what the windows tell each other goes over a channel of
-// this origin. A board says it stands, and that it went; the desk leaves
-// out of its side what stands in a window, and sends the files pressed in
-// the conversation to the board that reads files, where they open on tabs;
-// put back, a board hands over the files it has open and shuts.
+// A card of the side taken out into a window of its own (`world-gui.md`,
+// 对话的侧面板; the user, 2026-11-17: "不是整个侧栏拉出去哦，是里面的卡片，
+// 每个卡片都能拉出去"): the plan, the files, the colleagues, the host's
+// agents. The page is opened again in the new window with `?board=<card>`,
+// on the same conversation, and lays that card over the whole of it and
+// nothing else; the files' is their page with each file read on a tab
+// after it. That window reads the conversation itself, as any window does;
+// what the windows tell each other goes over a channel of this origin. A
+// board says it stands, and that it went; the desk keeps the card's place
+// in its side, where it is called forward or back; the files pressed in
+// the conversation go to the board that reads files, where they open on
+// tabs; put back, a board hands over the files it has open and shuts.
 
 import { talkLink } from "../app/places";
 import { inShell } from "../world/bridge";
 import type { Address } from "../world/wire";
 import type { Card } from "./shown";
 
-/** What a board holds: the whole side, or one of its cards. */
-export type Scope = "side" | Exclude<Card, "goal">;
-const SCOPES: readonly Scope[] = ["side", "plan", "files", "colleagues", "agents"];
+/** What a board holds: one of the side's cards. The goal's is not one:
+ *  its bar stands above the input. */
+export type Scope = Exclude<Card, "goal">;
+const SCOPES: readonly Scope[] = ["plan", "files", "colleagues", "agents"];
 
 /** A file to open on a tab: at what it holds, or at its changes. */
 export interface FileAsked {
@@ -27,20 +29,18 @@ export interface FileAsked {
 }
 
 type Said =
-  | { kind: "here" | "gone" | "got"; board: string }
+  | { kind: "here" | "gone" | "got" | "return" | "front"; board: string }
   | { kind: "who" }
   | { kind: "file"; board: string; file: FileAsked }
   | { kind: "back"; board: string; files: FileAsked[] };
 
 const asked = new URLSearchParams(location.search);
 
-/** What this window holds of one conversation's side, where it is a
+/** The one card this window holds of a conversation's side, where it is a
  *  board; none in the desk's own window. */
-export const SCOPE: Scope | null = asked.has("board") ? (SCOPES.find((scope) => scope === asked.get("board")) ?? "side") : null;
+export const ONLY: Scope | null = SCOPES.find((scope) => scope === asked.get("board")) ?? null;
 /** This window is a board, with nothing of the desk beside it. */
-export const ALONE = SCOPE !== null;
-/** The one card this window holds, where it holds one. */
-export const ONLY: Exclude<Scope, "side"> | null = SCOPE !== null && SCOPE !== "side" ? SCOPE : null;
+export const ALONE = ONLY !== null;
 if (ALONE) document.documentElement.classList.add("side-board");
 
 const channel = typeof BroadcastChannel === "function" ? new BroadcastChannel("fastctx-side-board") : null;
@@ -61,7 +61,7 @@ const hearers = new Set<(said: Said) => void>();
 const watchers = new Set<() => void>();
 
 const talkKey = (address: Address) => `${address.resident}@${address.machine}`;
-export const boardKey = (address: Address, scope: Scope = "side") => `${scope}:${talkKey(address)}`;
+const boardKey = (address: Address, scope: Scope) => `${scope}:${talkKey(address)}`;
 
 const say = (said: Said) => channel?.postMessage(said);
 
@@ -97,9 +97,9 @@ export function onBoards(told: () => void): () => void {
   return () => watchers.delete(told);
 }
 
-/** Takes the side, or one card of it, out into a window of its own, where
- *  it stood on the screen and no smaller than reads well, with the files it
- *  had open; false where the window could not be opened. */
+/** Takes a card out into a window of its own, where it stood on the
+ *  screen, or was let go, and no smaller than reads well; the files' with
+ *  the files that were open. False where the window could not be opened. */
 export function pullOut(address: Address, scope: Scope, files: FileAsked[], from: { left: number; top: number; width: number; height: number }): boolean {
   const key = boardKey(address, scope);
   const url = new URL(location.href);
@@ -108,7 +108,7 @@ export function pullOut(address: Address, scope: Scope, files: FileAsked[], from
   else url.searchParams.delete("open");
   url.hash = talkLink(address);
   const width = Math.max(440, Math.round(from.width));
-  const height = Math.max(scope === "side" || scope === "files" ? 560 : 420, Math.round(from.height));
+  const height = Math.max(scope === "files" ? 560 : 420, Math.round(from.height));
   const left = Math.round(window.screenX + from.left);
   const top = Math.round(window.screenY + (window.outerHeight - window.innerHeight) + from.top);
   const opened = window.open(url, `fastctx-board-${key}`, `popup,width=${width},height=${height},left=${left},top=${top}`);
@@ -123,8 +123,8 @@ export function pullOut(address: Address, scope: Scope, files: FileAsked[], from
  *  `lost` where it does not answer, and is then taken to be gone. */
 export function sendFile(address: Address, file: FileAsked, lost: () => void): boolean {
   if (ALONE) return false;
-  const key = [boardKey(address, "files"), boardKey(address, "side")].find((one) => standing.has(one));
-  if (!key) return false;
+  const key = boardKey(address, "files");
+  if (!standing.has(key)) return false;
   let got = false;
   const hear = (said: Said) => {
     if (said.kind === "got" && said.board === key) got = true;
@@ -149,11 +149,27 @@ export function onBack(heard: (address: (address: Address) => boolean, files: Fi
   });
 }
 
+/** Calls a card's window forward. */
+export function bringFront(address: Address, scope: Scope): void {
+  const key = boardKey(address, scope);
+  windows.get(key)?.focus();
+  say({ kind: "front", board: key });
+}
+
+/** Asks a card back from its window into the desk. One that does not
+ *  answer is taken to be gone, and its card is here again. */
+export function askBack(address: Address, scope: Scope): void {
+  const key = boardKey(address, scope);
+  say({ kind: "return", board: key });
+  window.setTimeout(() => stands(key, false), ANSWER);
+}
+
 /** In a board's window: says it stands, to those who ask too, and that it
- *  went as the window shuts; takes the files the desk sends. */
-export function standAs(address: Address, open: (file: FileAsked) => void): void {
-  if (!SCOPE) return;
-  const key = boardKey(address, SCOPE);
+ *  went as the window shuts; takes the files the desk sends, comes forward
+ *  when called, and goes `back` when asked back. */
+export function standAs(address: Address, open: (file: FileAsked) => void, back: () => void): void {
+  if (!ONLY) return;
+  const key = boardKey(address, ONLY);
   say({ kind: "here", board: key });
   hearers.add((said) => {
     if (said.kind === "who") say({ kind: "here", board: key });
@@ -161,7 +177,8 @@ export function standAs(address: Address, open: (file: FileAsked) => void): void
       say({ kind: "got", board: key });
       open(said.file);
       window.focus();
-    }
+    } else if (said.kind === "front" && said.board === key) window.focus();
+    else if (said.kind === "return" && said.board === key) back();
   });
   window.addEventListener("pagehide", () => say({ kind: "gone", board: key }));
 }
@@ -179,7 +196,7 @@ export function firstFiles(): FileAsked[] {
 /** A board goes back into the desk: its files are handed over, and its
  *  window shuts. */
 export function putBack(address: Address, files: FileAsked[]): void {
-  if (!SCOPE) return;
-  say({ kind: "back", board: boardKey(address, SCOPE), files });
+  if (!ONLY) return;
+  say({ kind: "back", board: boardKey(address, ONLY), files });
   window.close();
 }

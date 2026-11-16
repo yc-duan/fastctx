@@ -7,7 +7,11 @@
 // what a card shows opens it: the goal as a page of the side, a colleague
 // beside the conversation, one of the host's agents, or everyone who works
 // with it, in a sheet. The history is no card: what is kept to look things up
-// in has its own mark in the desk's corner.
+// in has its own mark in the desk's corner. A card is a thing of its own:
+// taken by its head it is carried to another place among the cards, or out
+// of the side, where it is let go into a window of its own (`board.ts`), as
+// the mark at its head's end does at a press; its place is kept in the side
+// meanwhile, and from there it is called forward or put back.
 
 import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
@@ -18,7 +22,7 @@ import type { PlanShape } from "../plan/shape";
 import { anyGoing, going, order, shortLine, workedFor } from "./collab-page";
 import type { SidePage } from "./pane";
 import { ONLY, onBoards } from "./board";
-import { CHOSEN, cardHidden, onCardsChosen, openCardsMenu, type Card } from "./shown";
+import { cardHidden, cardNames, cardOrder, moveCard, onCardsChosen, openCardsMenu, type Card } from "./shown";
 import type { CollabNode, GoalShown } from "./types";
 import type { SideWords } from "./words";
 
@@ -40,8 +44,11 @@ export interface HomeSeams {
    *  to its changes. */
   files?(): void;
   file?(machine: string, path: string): void;
-  /** Whether a card stands in a window of its own, and so not here. */
+  /** Whether a card stands in a window of its own, its place kept here. */
   away?(card: Card): boolean;
+  /** Calls a card's window forward; asks a card back out of its window. */
+  front?(card: Card): void;
+  back?(card: Card): void;
   /** Takes a card out into a window of its own, from where it stands on
    *  the screen; none where that cannot be. */
   pull?: ((card: Card, from: { left: number; top: number; width: number; height: number }) => void) | undefined;
@@ -49,6 +56,10 @@ export interface HomeSeams {
 
 /** The files the card lists, the last changed first. */
 const FILES = 4;
+/** How far a card's head is moved before it is being carried, not pressed;
+ *  and how long after it is let go a press is taken for the end of that. */
+const CARRIED = 6;
+const SETTLE = 400;
 
 function folded(): Set<string> {
   try {
@@ -100,6 +111,8 @@ export class SideHome implements SidePage {
   private readonly standing = new Map<string, { sign: string; element: HTMLElement }>();
   private readonly signs = new Map<string, string>();
   private readonly none = document.createElement("p");
+  /** When a card was last let go after being carried. */
+  private carriedAt = -SETTLE;
 
   /** `plan` is the plan's own page, drawn in its card. */
   constructor(
@@ -115,6 +128,18 @@ export class SideHome implements SidePage {
     this.none.className = "sh-none";
     this.element.addEventListener("click", (event) => {
       const target = event.target as HTMLElement;
+      // The press that ends a card's being carried does nothing more.
+      if (performance.now() - this.carriedAt < SETTLE) return;
+      const pulled = target.closest<HTMLElement>("[data-pull]");
+      if (pulled) {
+        const section = pulled.closest<HTMLElement>(".sh-card");
+        if (section) this.seams.pull?.(pulled.dataset.pull as Card, section.getBoundingClientRect());
+        return;
+      }
+      const back = target.closest<HTMLElement>("[data-back]")?.dataset.back as Card | undefined;
+      if (back) return this.seams.back?.(back);
+      const front = target.closest<HTMLElement>("[data-front]")?.dataset.front as Card | undefined;
+      if (front) return this.seams.front?.(front);
       const head = target.closest<HTMLElement>(".sh-head");
       if (head) {
         // Alone in its window a card does not fold: there is nothing else
@@ -133,7 +158,7 @@ export class SideHome implements SidePage {
         section?.classList.toggle("shut", shut);
         section?.querySelector(":scope > .sh-fold")?.classList.toggle("open", !shut);
         head.setAttribute("aria-expanded", String(!shut));
-        if (from && section) shutFrom(section, head, from);
+        if (from && section) shutFrom(section, head.parentElement ?? head, from);
         return;
       }
       const open = target.closest<HTMLElement>("[data-open]")?.dataset.open;
@@ -146,6 +171,7 @@ export class SideHome implements SidePage {
       const node = id ? this.find(this.nodes, id) : null;
       if (node) this.seams.node(node);
     });
+    this.element.addEventListener("pointerdown", (event) => this.take(event));
     // Pressed with the other button, the overview offers its cards to be
     // shown or put away (`shown.ts`); words chosen in it keep the system's
     // own menu, to be copied.
@@ -154,7 +180,7 @@ export class SideHome implements SidePage {
       event.preventDefault();
       if (ONLY) return;
       // On a card, the menu first offers to take that card out.
-      const section = (event.target as HTMLElement).closest<HTMLElement>(".sh-card");
+      const section = (event.target as HTMLElement).closest<HTMLElement>(".sh-card:not(.sh-away)");
       const card = section?.dataset.of as Card | undefined;
       // Not where the side lies over the whole desk, as on a phone.
       const pull = this.element.closest(".sp-over") ? undefined : this.seams.pull;
@@ -220,13 +246,15 @@ export class SideHome implements SidePage {
       colleagues: () => this.teamCard("colleagues", ordered.filter((node) => node.kind === "colleague" || node.kind === "side"), now),
       agents: () => this.teamCard("agents", ordered.filter((node) => node.kind === "subagent"), now),
     };
-    // In a window of its own a card stands alone, put away or not.
-    const chosen = CHOSEN.filter((card): card is Exclude<Card, "goal"> => card !== "goal" && (ONLY ? card === ONLY : !cardHidden(card) && !this.seams.away?.(card)));
-    const cards = [ONLY ? "" : this.goalCard(now), ...chosen.map((card) => made[card]())].filter(Boolean);
+    // In the order the user put them. In a window of its own a card stands
+    // alone, put away or not; one taken out keeps its place here, said in
+    // a line.
+    const chosen = cardOrder().filter((card): card is Exclude<Card, "goal"> => card !== "goal" && (ONLY ? card === ONLY : !cardHidden(card)));
+    const names = cardNames(this.words);
+    const cards = [ONLY ? "" : this.goalCard(now), ...chosen.map((card) => (!ONLY && this.seams.away?.(card) ? this.awayCard(card, names[card]) : made[card]()))].filter(Boolean);
     // Said where no card stands, the goal's left to its bar among them; and
     // where they were all put away, how they are brought back.
-    const away = !ONLY && CHOSEN.some((card) => !cardHidden(card) && this.seams.away?.(card));
-    const none = away ? this.words.home.away : chosen.length ? this.words.home.none : this.words.home.hidden;
+    const none = chosen.length ? this.words.home.none : this.words.home.hidden;
     this.put(cards);
     if (this.none.textContent !== none) this.none.textContent = none;
     this.element.classList.toggle("sh-has-cards", cards.length > 0);
@@ -284,7 +312,109 @@ export class SideHome implements SidePage {
     this.signs.set(card, [name, state, body, waiting, waits, barred].join("\u0001"));
     const shut = !ONLY && this.fold.has(card);
     const said = `${escape(state)}${waiting ? `<span class="sh-waits">${escape(waiting)}</span>` : ""}`;
-    return `<section class="sh-card${shut ? " shut" : ""}${barred ? " barred" : ""}" data-of="${card}"><button class="sh-head" type="button" data-card="${card}" aria-expanded="${!shut}"><span class="sh-name">${escape(name)}</span><span class="sh-turn">${glyph("chevron", 12)}</span><span class="sh-state${waits ? " waiting" : ""}">${said}</span></button><div class="sh-fold${shut ? "" : " open"}"><div class="sh-fold-inner"><div class="sh-body">${body}</div></div></div></section>`;
+    // At the head's end, the mark that takes the card out into a window of
+    // its own, where that can be.
+    const out = this.words.board.out;
+    const pull = !ONLY && card !== "goal" && this.seams.pull ? `<button class="icon-button sh-pull" type="button" data-pull="${card}" aria-label="${escape(out)}" title="${escape(out)}">${glyph("dock-out", 16)}</button>` : "";
+    return `<section class="sh-card${shut ? " shut" : ""}${barred ? " barred" : ""}" data-of="${card}"><div class="sh-top"><button class="sh-head" type="button" data-card="${card}" aria-expanded="${!shut}"><span class="sh-name">${escape(name)}</span><span class="sh-turn">${glyph("chevron", 12)}</span><span class="sh-state${waits ? " waiting" : ""}">${said}</span></button>${pull}</div><div class="sh-fold${shut ? "" : " open"}"><div class="sh-fold-inner"><div class="sh-body">${body}</div></div></div></section>`;
+  }
+
+  /** The place of a card that stands in a window of its own: its name and
+   *  where it is, in a line; pressed, its window comes forward; the mark at
+   *  the line's end puts it back. */
+  private awayCard(card: Card, name: string): string {
+    const words = this.words;
+    this.signs.set(card, "away");
+    return `<section class="sh-card sh-away" data-of="${card}"><div class="sh-top"><button class="sh-head" type="button" data-front="${card}" title="${escape(words.board.front)}"><span class="sh-name">${escape(name)}</span><span class="sh-state">${escape(words.home.away)}</span></button><button class="icon-button sh-pull" type="button" data-back="${card}" aria-label="${escape(words.board.back)}" title="${escape(words.board.back)}">${glyph("dock-right", 16)}</button></div></section>`;
+  }
+
+  /** A card taken by its head and carried: among the cards, to the place
+   *  a line marks, where it then stands on every overview; or out of the
+   *  side, where it is let go into a window of its own, there. A head only
+   *  pressed folds its card as before. Not by a finger, which scrolls the
+   *  page; nor where the side lies over the whole desk. */
+  private take(event: PointerEvent): void {
+    if (ONLY || event.button !== 0 || event.pointerType === "touch") return;
+    const target = event.target as HTMLElement;
+    const top = target.closest<HTMLElement>(".sh-top");
+    const section = top?.closest<HTMLElement>(".sh-card");
+    const card = section?.dataset.of as Card | undefined;
+    if (!top || !section || !card || card === "goal" || target.closest(".sh-pull") || this.element.closest(".sp-over")) return;
+    const panel = this.element.closest<HTMLElement>(".sp-panel") ?? this.element;
+    const from = section.getBoundingClientRect();
+    const grab = { x: event.clientX - from.left, y: event.clientY - from.top };
+    const pull = section.classList.contains("sh-away") ? undefined : this.seams.pull;
+    let ghost: HTMLElement | null = null;
+    let line: HTMLElement | null = null;
+    /** The card it would stand before, none for last; undefined while it
+     *  is carried outside the side. */
+    let before: Card | null | undefined;
+    const move = (at: PointerEvent) => {
+      if (!ghost) {
+        if (Math.hypot(at.clientX - event.clientX, at.clientY - event.clientY) < CARRIED) return;
+        // Held, so it is followed past the window's edge too.
+        top.setPointerCapture(event.pointerId);
+        ghost = top.cloneNode(true) as HTMLElement;
+        ghost.className = "sh-ghost";
+        ghost.style.width = `${from.width}px`;
+        line = document.createElement("div");
+        line.className = "sh-drop";
+        document.body.append(ghost, line);
+        section.classList.add("lifted");
+        document.documentElement.classList.add("sh-carrying");
+      }
+      ghost.style.transform = `translate(${at.clientX - grab.x}px, ${at.clientY - grab.y}px)`;
+      const box = panel.getBoundingClientRect();
+      const inside = at.clientX >= box.left && at.clientX <= box.right && at.clientY >= box.top && at.clientY <= box.bottom;
+      ghost.classList.toggle("leaving", !inside && !!pull);
+      before = undefined;
+      line!.hidden = true;
+      if (!inside) return;
+      // Before the first card whose middle is under the pointer, else last.
+      const cards = [...this.element.querySelectorAll<HTMLElement>(".sh-card")].filter((one) => one.dataset.of !== "goal");
+      const next = cards.find((one) => {
+        const rect = one.getBoundingClientRect();
+        return at.clientY < rect.top + rect.height / 2;
+      });
+      before = (next?.dataset.of as Card | undefined) ?? null;
+      // Where it already stands, no line is drawn.
+      const at0 = cards.indexOf(section);
+      if (next === section || (next ? cards.indexOf(next) : cards.length) === at0 + 1) return;
+      const page = this.element.getBoundingClientRect();
+      const edge = next ? next.getBoundingClientRect().top - 4 : cards[cards.length - 1]!.getBoundingClientRect().bottom + 4;
+      line!.hidden = false;
+      line!.style.cssText = `left:${page.left + 8}px;width:${page.width - 16}px;top:${Math.round(edge) - 1}px`;
+    };
+    const stop = () => {
+      removeEventListener("pointermove", move, true);
+      removeEventListener("pointerup", up, true);
+      removeEventListener("pointercancel", stop, true);
+      removeEventListener("keydown", key, true);
+      if (!ghost) return;
+      ghost.remove();
+      line?.remove();
+      section.classList.remove("lifted");
+      document.documentElement.classList.remove("sh-carrying");
+      if (top.hasPointerCapture(event.pointerId)) top.releasePointerCapture(event.pointerId);
+      this.carriedAt = performance.now();
+    };
+    const up = (at: PointerEvent) => {
+      const carried = ghost !== null;
+      const leaving = ghost?.classList.contains("leaving") ?? false;
+      stop();
+      if (!carried) return;
+      if (before !== undefined) moveCard(card, before === card ? null : before);
+      else if (leaving) pull?.(card, { left: at.clientX - grab.x, top: at.clientY - grab.y, width: from.width, height: from.height });
+    };
+    const key = (pressed: KeyboardEvent) => {
+      if (pressed.key === "Escape") stop();
+    };
+    // Heard on the window: a quick hand is past the head before it has
+    // moved far enough to be carrying.
+    addEventListener("pointermove", move, true);
+    addEventListener("pointerup", up, true);
+    addEventListener("pointercancel", stop, true);
+    addEventListener("keydown", key, true);
   }
 
   private goalCard(now: number): string {

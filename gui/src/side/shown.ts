@@ -11,11 +11,12 @@ import type { SideWords } from "./words";
 
 export type Card = "goal" | "plan" | "files" | "colleagues" | "agents";
 
-/** The cards chosen among, in the order they stand on the overview. The
- *  goal's is not one: beside the conversation its bar says it. */
+/** The cards chosen among, in the order they stand on the overview at
+ *  first. The goal's is not one: beside the conversation its bar says it. */
 export const CHOSEN: readonly Card[] = ["plan", "files", "colleagues", "agents"];
 
 const KEPT = "side-home-hidden";
+const ORDER_KEPT = "side-home-order";
 const MARK: Record<Card, GlyphName> = { goal: "goal", plan: "steps", files: "file", colleagues: "colleague", agents: "agents" };
 
 let hidden: Set<Card> | null = null;
@@ -34,6 +35,37 @@ function read(): Set<Card> {
 
 export function cardHidden(card: Card): boolean {
   return read().has(card);
+}
+
+let order: Card[] | null = null;
+
+/** The cards in the order the user put them, this device's as what is
+ *  shown is: those it keeps first, any it does not know after them. */
+export function cardOrder(): readonly Card[] {
+  if (order) return order;
+  let kept: Card[] = [];
+  try {
+    kept = (JSON.parse(localStorage.getItem(ORDER_KEPT) ?? "[]") as Card[]).filter((card, at, all) => CHOSEN.includes(card) && all.indexOf(card) === at);
+  } catch {
+    // As they stand at first.
+  }
+  order = [...kept, ...CHOSEN.filter((card) => !kept.includes(card))];
+  return order;
+}
+
+/** Puts a card before another, or last, and tells every overview. */
+export function moveCard(card: Card, before: Card | null): void {
+  const next = cardOrder().filter((one) => one !== card);
+  const at = before === null ? -1 : next.indexOf(before);
+  next.splice(at < 0 ? next.length : at, 0, card);
+  if (next.join() === cardOrder().join()) return;
+  order = next;
+  try {
+    localStorage.setItem(ORDER_KEPT, JSON.stringify(next));
+  } catch {
+    // Ordered for this visit only.
+  }
+  for (const told of [...heard]) told();
 }
 
 /** Shows a card or puts it away, and tells every overview. */
@@ -62,7 +94,7 @@ export function cardNames(words: SideWords): Record<Card, string> {
 
 /** The menu's rows: a card's mark and name, a tick where it is shown. */
 export function cardRows(names: Record<Card, string>): string {
-  return CHOSEN.map(
+  return cardOrder().map(
     (card) => `<button class="sp-menu-row sp-menu-card" type="button" role="menuitemcheckbox" aria-checked="${!cardHidden(card)}" data-card="${card}">${glyph(MARK[card], 16)}<span>${escape(names[card])}</span>${glyph("check", 14)}</button>`,
   ).join("");
 }

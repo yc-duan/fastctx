@@ -203,7 +203,11 @@ export class SideFrame implements PartsFrame {
       requestAnimationFrame(() => {
         this.place();
         if (ALONE) {
-          standAs(parts.self, (file) => parts.reopen([file]));
+          standAs(
+            parts.self,
+            (file) => parts.reopen([file]),
+            () => this.putBack(),
+          );
           parts.reopen(firstFiles());
         } else if (!kept(OPEN_KEPT) || this.placed === "over") return;
         if (this.pane.open) return;
@@ -223,12 +227,12 @@ export class SideFrame implements PartsFrame {
     this.pane.add(tab);
   }
 
-  /** The side goes into a window of its own, with the files it has open,
-   *  and folds away here. */
+  /** The files read on tabs go into a window of their own, as their card
+   *  does, where the side stands on the screen; their tabs are shut here. */
   private pullOut(): void {
     const parts = this.parts;
     if (!parts) return;
-    if (pullOut(parts.self, "side", parts.filesOpen(), this.pane.element.getBoundingClientRect())) this.pane.close();
+    if (pullOut(parts.self, "files", parts.filesOpen(), this.pane.element.getBoundingClientRect())) this.shutFiles();
   }
 
   /** The tabs that read files are shut, as the files went to a window of
@@ -237,7 +241,7 @@ export class SideFrame implements PartsFrame {
     for (const tab of [...(this.parts?.tabs ?? [])]) if (tab.file) this.pane.shut(tab.id);
   }
 
-  /** Alone in its window, the side goes back into the desk. */
+  /** What stands alone in this window goes back into the desk. */
   private putBack(): void {
     const parts = this.parts;
     if (!parts) return;

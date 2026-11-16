@@ -26,7 +26,7 @@ import { SideFiles } from "./files-page";
 import type { ChangedFile } from "../files/model";
 import type { ViewTab } from "../files/view";
 import { SideWhere } from "./where";
-import { ONLY, PULLS, pullOut, sendFile, standsOut, type FileAsked } from "./board";
+import { ONLY, PULLS, askBack, bringFront, pullOut, sendFile, standsOut, type FileAsked } from "./board";
 import type { PanePart, PartSet, Tab } from "./pane";
 import type { Following, SideSeams } from "./seams";
 import type { CollabNode, GoalShown, NodeState } from "./types";
@@ -188,9 +188,11 @@ export class SideParts implements PartSet {
         team: () => this.openTeam(),
         files: () => this.frame?.show(PART.files),
         file: (machine, path) => context.openFile?.(machine, path, "changes"),
-        // A card taken out stands in a window of its own, and not here;
-        // the files' goes with the files open, which are shut here.
+        // A card taken out stands in a window of its own, its place kept
+        // here; the files' goes with the files open, which are shut here.
         away: (card) => card !== "goal" && standsOut(seams.self, card),
+        front: (card) => card !== "goal" && bringFront(seams.self, card),
+        back: (card) => card !== "goal" && askBack(seams.self, card),
         pull: PULLS
           ? (card, from) => {
               if (card === "goal" || !pullOut(seams.self, card, card === "files" ? this.filesOpen() : [], from)) return;

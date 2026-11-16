@@ -597,6 +597,106 @@ html.framed .sp-panel.sp-over .sp-line {
   }
 }
 
+/* A card's head: its name, pressed to fold it, and at its end the mark
+   that takes it out of the side. The head is also what the card is carried
+   by. */
+.sh-top {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.sh-top > .sh-head {
+  flex: 1 1 auto;
+}
+
+.sh-pull {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  margin-right: var(--space-1);
+  color: var(--text-3);
+  opacity: 0.55;
+  transition: opacity var(--hover) var(--ease), color var(--hover) var(--ease);
+}
+
+.sh-card:hover .sh-pull,
+.sh-pull:focus-visible {
+  opacity: 1;
+}
+
+.sh-pull:hover {
+  color: var(--text);
+}
+
+/* Not where the side lies over the whole desk: a phone opens no window. */
+.sp-over .sh-pull {
+  display: none;
+}
+
+/* The place of a card that stands in a window of its own: its outline,
+   and a line saying so. */
+.sh-page .sh-card.sh-away {
+  flex: none;
+  min-height: 0;
+  background: none;
+  outline: 1px dashed var(--hairline);
+  outline-offset: -1px;
+}
+
+.sh-away .sh-name {
+  color: var(--text-3);
+}
+
+/* A card being carried: where it stood it fades; its head goes with the
+   pointer, lifted; a line in clay marks where among the cards it would
+   stand. Past the side's edge the head is ruled round, as a window is. */
+.sh-card.lifted {
+  opacity: 0.35;
+}
+
+.sh-ghost {
+  position: fixed;
+  z-index: 9500;
+  top: 0;
+  left: 0;
+  display: flex;
+  align-items: center;
+  border-radius: var(--radius-m);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-pop);
+  color: var(--text);
+  font-family: var(--font-reading);
+  font-size: var(--size-text);
+  pointer-events: none;
+}
+
+.sh-ghost.leaving {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.sh-drop {
+  position: fixed;
+  z-index: 9400;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--accent);
+  pointer-events: none;
+}
+
+.sh-drop[hidden] {
+  display: none;
+}
+
+html.sh-carrying,
+html.sh-carrying * {
+  cursor: grabbing !important;
+  user-select: none !important;
+}
+
 .sh-head {
   display: flex;
   align-items: center;

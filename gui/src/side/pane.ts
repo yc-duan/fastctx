@@ -101,10 +101,11 @@ export class SidePane {
       changed: () => void;
       /** The user chose where the side stands. */
       dock: (dock: Dock) => void;
-      /** The user pulled the side out into a window of its own; none where
-       *  it cannot be. */
+      /** The user took the files read on tabs out into a window of their
+       *  own; none where that cannot be. */
       out?: (() => void) | undefined;
-      /** The user asked the side, alone in its window, back into the desk. */
+      /** The user asked what stands alone in this window back into the
+       *  desk. */
       back?: (() => void) | undefined;
     },
   ) {
@@ -122,7 +123,7 @@ export class SidePane {
     this.more.inert = true;
     this.more.innerHTML = `<span class="sp-more-room"><button class="icon-button sp-more" type="button" aria-haspopup="menu" aria-expanded="false" aria-label="${escape(words.more)}" title="${escape(words.more)}">${glyph("more", 18)}</button></span><div class="sp-menu" role="menu" hidden><div class="sp-menu-cards"></div><div class="sp-menu-rule" aria-hidden="true"></div>${(["right", "bottom", "left"] as const)
       .map((dock) => `<button class="sp-menu-row" type="button" role="menuitemradio" aria-checked="false" data-dock="${dock}">${glyph(`dock-${dock}`, 16)}<span>${escape(words.docks[dock])}</span></button>`)
-      .join("")}${seams.out ? `<button class="sp-menu-row" type="button" role="menuitem" data-out>${glyph("dock-out", 16)}<span>${escape(words.board.window)}</span></button>` : ""}</div>`;
+      .join("")}</div>`;
     this.sheet = this.element.querySelector(".sp-sheet")!;
     this.whereSlot = this.element.querySelector(".sp-where")!;
     this.strip = this.element.querySelector(".sp-tabs")!;
@@ -143,11 +144,6 @@ export class SidePane {
     onCardsChosen(drawCards);
     this.menu.addEventListener("click", (event) => {
       if (cardPressed(event.target as HTMLElement)) return;
-      if ((event.target as HTMLElement).closest("[data-out]")) {
-        this.openMenu(false);
-        this.seams.out?.();
-        return;
-      }
       const dock = (event.target as HTMLElement).closest<HTMLElement>(".sp-menu-row")?.dataset.dock as Dock | undefined;
       if (!dock) return;
       this.openMenu(false);
