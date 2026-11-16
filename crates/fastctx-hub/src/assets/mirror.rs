@@ -311,16 +311,24 @@ pub(crate) fn holds_revision(
     Ok(held_record(assets, account, opened, record)?.is_some_and(|held| held == *record))
 }
 
+/// Why `take_first` took nothing: refused before anything was written, or
+/// failed as it wrote — taken or not, then, the library alone tells, and
+/// a read of it may not see a write still finishing (codex-357de52a #6).
+pub(crate) enum NotTaken {
+    Refused(String),
+    Unknown(String),
+}
+
 /// Takes `records`, new revisions the hub accepts, into the library at their
 /// places, before anything else is written of them: the write is refused
 /// when they cannot be. Every one at the same scope and stream, so they are
 /// taken together. Call on a thread that may block.
-pub(crate) fn take_first(assets: &Assets, places: &[Place], records: &[Record]) -> Result<(), String> {
+pub(crate) fn take_first(assets: &Assets, places: &[Place], records: &[Record]) -> Result<(), NotTaken> {
     let Some(first) = places.first() else { return Ok(()) };
     if places.iter().any(|place| place.key() != first.key() || place.stream != first.stream) {
-        return Err("records written together go into one stream of one scope".into());
+        return Err(NotTaken::Refused("records written together go into one stream of one scope".into()));
     }
-    let library = scopes::library(assets, &first.scope)?;
+    let library = scopes::library(assets, &first.scope).map_err(NotTaken::Refused)?;
     let _writing = writing(first.key());
     let mut taken = Vec::with_capacity(records.len());
     // Each new object kept until its record is taken.
@@ -328,14 +336,19 @@ pub(crate) fn take_first(assets: &Assets, places: &[Place], records: &[Record]) 
     for (place, record) in places.iter().zip(records) {
         // A later revision there already is one this hub never answered from
         // its files: the writer reads again.
-        if held_version(&library, place)?.is_some_and(|version| version >= record.metadata.version) {
-            return Err(format!(
+        if held_version(&library, place)
+            .map_err(NotTaken::Refused)?
+            .is_some_and(|version| version >= record.metadata.version)
+        {
+            return Err(NotTaken::Refused(format!(
                 "the asset library holds a later revision of {} {}; read it again",
                 record.metadata.kind, record.metadata.key
-            ));
+            )));
         }
-        homed(assets, first.key(), record)?;
-        let (body, objects, lease) = fitted(&library, serde_json::to_vec(record).map_err(|error| error.to_string())?)?;
+        homed(assets, first.key(), record).map_err(NotTaken::Refused)?;
+        let (body, objects, lease) =
+            fitted(&library, serde_json::to_vec(record).map_err(|error| NotTaken::Refused(error.to_string()))?)
+                .map_err(NotTaken::Refused)?;
         _leases.extend(lease);
         taken.push(KindRecord {
             kind: place.number,
@@ -343,7 +356,7 @@ pub(crate) fn take_first(assets: &Assets, places: &[Place], records: &[Record]) 
             record: Item { item: place.item.clone(), order: place.item.clone(), state: State::Is { body, objects } },
         });
     }
-    apply(assets, &first.scope, &library, first.stream, taken)
+    apply(assets, &first.scope, &library, first.stream, taken).map_err(NotTaken::Unknown)
 }
 
 /// A sentinel's home, kept for good: where it lived may begin its stream of

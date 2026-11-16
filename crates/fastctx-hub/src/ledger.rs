@@ -81,10 +81,9 @@ impl EntryAt {
     /// The entry, as its author signed it. Call on a thread that may block.
     pub(crate) fn read(&self) -> io::Result<Signed> {
         let library = self.library.as_ref().ok_or_else(|| io::Error::other("the hub's ledgers are not open"))?;
-        let bytes = library
-            .ledger_entry(self.town.as_str(), self.seq)
-            .map_err(io::Error::other)?
-            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, format!("entry {} of {} is not kept", self.seq, self.town)))?;
+        let bytes = library.ledger_entry(self.town.as_str(), self.seq).map_err(io::Error::other)?.ok_or_else(|| {
+            io::Error::new(io::ErrorKind::NotFound, format!("entry {} of {} is not kept", self.seq, self.town))
+        })?;
         // A damaged entry must not make a read allocate beyond the multipart limit.
         if bytes.len() > wire::PARTS_AT_MOST {
             return Err(io::Error::new(io::ErrorKind::InvalidData, "the entry is larger than the multipart limit"));
@@ -126,8 +125,9 @@ pub struct Checked {
     prepared: Arc<Prepared>,
 }
 
-/// How many entries a read of the library takes at a time as the hub opens.
-const OPENING_PAGE: usize = 256;
+/// Entries read at a time as the hub opens: each may be as large as an entry
+/// may be, so a few (codex-357de52a #4).
+const OPENING_PAGE: usize = 8;
 
 impl Ledgers {
     /// Where the entry `seq` of `town` is kept.
@@ -150,8 +150,9 @@ impl Ledgers {
                 let Some((last, _)) = page.last() else { break };
                 after = *last;
                 for (seq, bytes) in page {
-                    let signed: Signed = serde_json::from_slice(&bytes)
-                        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, format!("entry {seq} of {town}: {error}")))?;
+                    let signed: Signed = serde_json::from_slice(&bytes).map_err(|error| {
+                        io::Error::new(io::ErrorKind::InvalidData, format!("entry {seq} of {town}: {error}"))
+                    })?;
                     let entry = fastctx_net::ledger::open(&signed, identity, &id)
                         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
                     ledger.memory.take(&entry).map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
@@ -418,7 +419,6 @@ fn numbered(directory: &Path) -> io::Result<Vec<(u64, std::path::PathBuf)>> {
     Ok(found)
 }
 
-
 fn json(value: &impl serde::Serialize) -> io::Result<Vec<u8>> {
     serde_json::to_vec(value).map_err(io::Error::other)
 }
@@ -476,16 +476,29 @@ pub(crate) async fn write_as(
         hub.ledgers.lock().expect("never poisoned").check(&store, from, &town, &prepared)?
     };
     let (seq, proposed) = (checked.seq, prepared.clone());
-    let library = hub.ledgers.lock().expect("never poisoned").library.clone().ok_or("the hub's ledgers are not open")?;
+    let library =
+        hub.ledgers.lock().expect("never poisoned").library.clone().ok_or("the hub's ledgers are not open")?;
     let (keeping, author, project) = (hub.clone(), from.clone(), town.clone());
     // Checked again under the directory as it is kept, as nothing that
-    // changed meanwhile lets an entry in that it would not now.
+    // changed meanwhile lets an entry in that it would not now; kept with the
+    // directory let go, so a slow disk holds up no other edit of it; and
+    // checked once more: changed as it was written, it is taken back before
+    // anyone reads it — none does before it is committed (codex-357de52a #5).
     fastctx_platform::task::spawn_blocking(move || {
-        let store = keeping.edit_store();
-        proposed.check_author(&keeping, &store, &author)?;
-        keeping.ledgers.lock().expect("never poisoned").check(&store, &author, &project, &proposed)?;
+        let recheck = || -> Result<(), String> {
+            let store = keeping.edit_store();
+            proposed.check_author(&keeping, &store, &author)?;
+            keeping.ledgers.lock().expect("never poisoned").check(&store, &author, &project, &proposed)?;
+            Ok(())
+        };
+        recheck()?;
         library.ledger_keep(project.as_str(), seq, proposed.bytes.clone()).map_err(|error| error.to_string())?;
-        drop(store);
+        if let Err(why) = recheck() {
+            library
+                .ledger_withdraw(project.as_str(), seq)
+                .map_err(|error| format!("{why}; taking the entry back: {error}"))?;
+            return Err(why);
+        }
         Ok::<_, String>(())
     })
     .await

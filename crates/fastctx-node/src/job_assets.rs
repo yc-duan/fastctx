@@ -90,7 +90,7 @@ fn item_of(home: &Home, job: &JobRecord) -> String {
 /// How far a job may have begun before the account it ran for was opened,
 /// as the hub's clock and this machine's may differ: one begun earlier ran
 /// for an account of that name before it, not for this one.
-const CLOCKS: jiff::SignedDuration = jiff::SignedDuration::from_mins(10);
+const CLOCKS: jiff::SignedDuration = jiff::SignedDuration::from_mins(2);
 
 /// When the account `account` was opened, as the hub this machine is on
 /// tells it; none when it is not known here now.

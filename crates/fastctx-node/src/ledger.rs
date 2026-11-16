@@ -292,13 +292,28 @@ pub(crate) async fn take_latest(
             .await
             .map_err(|error| error.to_string())?
     };
-    let Some(source) = source else {
+    let kept_projected = fastctx_platform::disk::is_dir(node.world.town(name).projected());
+    let source = match source {
+        projected::Seen::At(source) => source,
+        // The machines its account may work on changed: what was kept of
+        // the projection for those of before goes now, not once the new one
+        // came; it is taken from that one then (codex-357de52a #2).
+        projected::Seen::Awaited if kept_projected => {
+            let _syncing = node.syncing.lock().await;
+            let (clearing, cleared) = (node.clone(), name.clone());
+            fastctx_platform::task::blocking(move || projected::clear(&clearing, &cleared))
+                .await
+                .map_err(|error| format!("letting go of {name}'s ledger as it was projected before: {error}"))?;
+            crate::context::invalidations::project(node, name);
+            node.memory_changed();
+            return Err(format!(
+                "the hub's projection of {name}'s ledger for the machines its account may work on now is not here yet"
+            ));
+        }
         // A project kept from its projection is never mixed with entries
         // replicated beside it: it waits for the projection to be here.
-        if fastctx_platform::disk::is_dir(node.world.town(name).projected()) {
-            return Err(format!("the hub's projection of {name}'s ledger is not here yet"));
-        }
-        return take(node, link, name, town, latest).await;
+        _ if kept_projected => return Err(format!("the hub's projection of {name}'s ledger is not here yet")),
+        _ => return take(node, link, name, town, latest).await,
     };
     if !link.view().member_keeps_project(&link.view().me, town) {
         return Err("an assisting host keeps only the project index".into());
@@ -537,15 +552,26 @@ fn kept_key(world: &WorldDir, files: &[(u64, PathBuf, bool)]) -> io::Result<Opti
 }
 
 /// The entry kept at `path`: one taken from the hub's projection, under
-/// this machine's word `key`, checked as one it signs itself is.
+/// this machine's word `key`, checked as one it signs itself is, and as one
+/// of the project it is kept in.
 fn read_kept(world: &WorldDir, path: &Path, key: Option<&fastctx_net::sign::PublicKey>) -> io::Result<Kept> {
     let invalid = |error: String| io::Error::new(io::ErrorKind::InvalidData, format!("{}: {error}", path.display()));
     if let Some(key) = key {
         let signed: Signed =
             serde_json::from_slice(&fastctx_platform::disk::read(path)?).map_err(|error| invalid(error.to_string()))?;
-        let projection: ledger::Projection =
+        let kept: projected::KeptEntry =
             signed.open(key, fastctx_net::sign::Domain::LedgerKept).map_err(|error| invalid(error.to_string()))?;
-        return Ok(projection.into());
+        let town = path
+            .parent()
+            .and_then(Path::parent)
+            .and_then(Path::file_name)
+            .and_then(|name| name.to_str())
+            .and_then(|name| TownName::try_from(name).ok())
+            .ok_or_else(|| invalid("the kept entry is outside a project directory".into()))?;
+        if names::place(world, &town)?.map(|place| place.town) != Some(kept.town) {
+            return Err(invalid("the kept entry is another project's".into()));
+        }
+        return Ok(kept.projection.into());
     }
     Ok(read_entry(world, path)?.0.into())
 }

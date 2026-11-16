@@ -469,21 +469,28 @@ pub(crate) async fn ask_as(
                     }
                     let staging = staged::path(&slot, &record.metadata.kind, &record.metadata.key);
                     staged::stage(&staging, &bytes).map_err(words::store)?;
-                    if let Err(why) = crate::assets::mirror::take_first(
+                    match crate::assets::mirror::take_first(
                         &hub.assets,
                         std::slice::from_ref(&place),
                         std::slice::from_ref(&record),
                     ) {
-                        // Not taken is not known from the error alone: what the
-                        // library holds says. Not known, the staged revision
-                        // stays for whoever reads it next, or the next opening.
-                        match crate::assets::mirror::holds_revision(&hub.assets, &account, opened, &record) {
-                            Ok(true) => {}
-                            Ok(false) => {
-                                let _ = fastctx_platform::disk::remove_file(&staging);
+                        Ok(()) => {}
+                        // Refused before anything was written: nothing of it
+                        // stands.
+                        Err(crate::assets::mirror::NotTaken::Refused(why)) => {
+                            let _ = fastctx_platform::disk::remove_file(&staging);
+                            return Err(why);
+                        }
+                        // Failed as it wrote: taken if the library holds this
+                        // very revision; else not known — a write may still be
+                        // finishing — and the staged revision stays for whoever
+                        // reads it next, or the next opening (codex-357de52a #6).
+                        Err(crate::assets::mirror::NotTaken::Unknown(why)) => {
+                            if !crate::assets::mirror::holds_revision(&hub.assets, &account, opened, &record)
+                                .unwrap_or(false)
+                            {
                                 return Err(why);
                             }
-                            Err(_) => return Err(why),
                         }
                     }
                     // Taken: the write stands. A file not published now is

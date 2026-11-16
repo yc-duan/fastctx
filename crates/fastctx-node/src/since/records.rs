@@ -683,8 +683,11 @@ impl Scan<'_> {
         };
         for path in projected {
             let Some(signed) = self.optional::<Signed>(&path) else { continue };
-            match signed.open::<fastctx_net::ledger::Projection>(&key, fastctx_net::sign::Domain::LedgerKept) {
-                Ok(projection) => self.ledger_entry(town, &path, &place.hub, projection.files),
+            match signed.open::<crate::ledger::projected::KeptEntry>(&key, fastctx_net::sign::Domain::LedgerKept) {
+                Ok(kept) if kept.town == place.town => {
+                    self.ledger_entry(town, &path, &place.hub, kept.projection.files)
+                }
+                Ok(_) => self.issue(&path, "entry belongs to another project"),
                 Err(error) => self.issue(&path, error),
             }
         }

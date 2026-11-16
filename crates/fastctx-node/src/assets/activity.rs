@@ -124,6 +124,23 @@ pub(crate) fn writable(
     Ok(Some((scope, holding)))
 }
 
+/// How far something may seem done before its account was opened, as the
+/// hub's clock and this machine's differ, in milliseconds.
+const CLOCKS: i64 = 2 * 60 * 1000;
+
+/// When `account` of `hub` was opened, in milliseconds, as the hub this
+/// machine is on tells it; none when it is not known here now.
+fn opened_ms(node: &Node, hub: &HubId, account: &AccountName) -> Option<i64> {
+    node.link_of(hub).and_then(|link| link.view().directory.account(account).map(|found| found.opened.as_millisecond()))
+}
+
+/// Whether what was done at `at` (milliseconds) is `account`'s: done before
+/// the account of that name was opened, it was another's of that name, made
+/// again since, and goes into none of this one's records (codex-357de52a).
+fn of_this(node: &Node, hub: &HubId, account: &AccountName, at: i64) -> bool {
+    opened_ms(node, hub, account).is_none_or(|opened| opened <= at.saturating_add(CLOCKS))
+}
+
 /// The body's `records` scope this machine, shared whole as `body` and owned
 /// by `owner`, writes `stream` in now, and its holding; proposed while it is
 /// not held.
@@ -308,6 +325,9 @@ fn hours(node: &Arc<Node>, hub: &HubId, home: Option<&AccountName>, stream: &str
     let mut by_account: BTreeMap<AccountName, Hours> = BTreeMap::new();
     for hour in &rows {
         let Some(account) = routed(&hour.account, hub, home) else { continue };
+        if !of_this(node, hub, &account, hour.at) {
+            continue;
+        }
         let key = format!("{HOURS}{}/{}/{}/{}/{}", hour.at, hour.session, hour.agent, hour.held, hour.account);
         // Named by its key as a deed is (`AccountActivity::authorize`).
         let body = serde_json::to_vec(&serde_json::json!({
@@ -732,6 +752,9 @@ fn deeds(
                     }
                     continue;
                 };
+                if !of_this(node, hub, &account, deed.began) {
+                    continue;
+                }
                 writable(node, library, hub, &account, stream)?
             }
         };
@@ -928,6 +951,13 @@ fn usage(
                     let (of, name) = (who["hub"].as_str()?, who["account"].as_str()?);
                     Some(routed(&format!("{of}/{name}"), hub, home))
                 };
+                // Done before an account of its name was opened: that one's
+                // made again since, and none of this line goes to it.
+                let at = value
+                    .get("at")
+                    .and_then(serde_json::Value::as_str)
+                    .and_then(|at| at.parse::<jiff::Timestamp>().ok());
+                let fits = |account: &AccountName| at.is_none_or(|at| of_this(node, hub, account, at.as_millisecond()));
                 let account = match value.get("who").filter(|who| !who.is_null()) {
                     Some(who) => {
                         let Some(account) = named(who) else { continue };
@@ -945,8 +975,9 @@ fn usage(
                     .flatten()
                     .filter_map(|who| named(who).flatten())
                     .filter(|other| Some(other) != account.as_ref())
+                    .filter(|other| fits(other))
                     .collect();
-                if let Some(account) = account {
+                if let Some(account) = account.filter(|account| fits(account)) {
                     lines.entry(account).or_default().extend_from_slice(line);
                 }
                 if !sharing.is_empty() {

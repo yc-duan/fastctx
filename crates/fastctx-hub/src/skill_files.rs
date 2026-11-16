@@ -217,25 +217,28 @@ pub(crate) async fn ask(
                     Ok(store)
                 })
                 .map_err(|error| format!("committing the skill folder: {}", error.error))?;
-                if let Some(places) = &places
-                    && let Err(why) = crate::assets::mirror::take_first(&hub.assets, places, &changes)
-                {
-                    // Not taken is not known from the error alone: what the
-                    // library holds says. Taken, the intent is published as
-                    // ever; not known, it stays and is published as the hub
-                    // next opens, the library written from it then.
-                    let held = changes
-                        .iter()
-                        .map(|change| crate::assets::mirror::holds_revision(&hub.assets, &account, opened, change))
-                        .collect::<Result<Vec<bool>, String>>();
-                    match held {
-                        Ok(held) if held.iter().all(|taken| *taken) => {}
-                        Ok(_) => {
+                if let Some(places) = &places {
+                    match crate::assets::mirror::take_first(&hub.assets, places, &changes) {
+                        Ok(()) => {}
+                        // Refused before anything was written: the intent goes.
+                        Err(crate::assets::mirror::NotTaken::Refused(why)) => {
                             fastctx_platform::disk::remove_file(&path)
                                 .map_err(|error| format!("{why}; withdrawing the skill folder's intent: {error}"))?;
                             return Err(why);
                         }
-                        Err(_) => return Err(why),
+                        // Failed as it wrote: taken if the library holds every
+                        // revision; else not known, and the intent stays and is
+                        // published as the hub next opens, the library written
+                        // from it then (codex-357de52a #6).
+                        Err(crate::assets::mirror::NotTaken::Unknown(why)) => {
+                            let held = changes.iter().all(|change| {
+                                crate::assets::mirror::holds_revision(&hub.assets, &account, opened, change)
+                                    .unwrap_or(false)
+                            });
+                            if !held {
+                                return Err(why);
+                            }
+                        }
                     }
                 }
                 for metadata in crate::skill_storage::recover(&slot, &mut records)? {

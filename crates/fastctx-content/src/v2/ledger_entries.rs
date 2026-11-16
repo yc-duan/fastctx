@@ -37,7 +37,10 @@ impl Library {
                 .optional()?;
             match kept {
                 Some(kept) if kept == entry => Ok(()),
-                Some(_) => Err(Error::with_kind(ErrorKind::Invalid, format!("entry {seq} of {town} is kept already as another"))),
+                Some(_) => Err(Error::with_kind(
+                    ErrorKind::Invalid,
+                    format!("entry {seq} of {town} is kept already as another"),
+                )),
                 None => {
                     db.prepare_cached("INSERT INTO ledger_entries (town, seq, entry) VALUES (?1, ?2, ?3)")?
                         .execute(params![town, seq, entry])?;
@@ -65,7 +68,9 @@ impl Library {
         let most = i64::try_from(most).unwrap_or(i64::MAX);
         self.database().read_now(move |db| {
             Ok(db
-                .prepare_cached("SELECT seq, entry FROM ledger_entries WHERE town = ?1 AND seq > ?2 ORDER BY seq LIMIT ?3")?
+                .prepare_cached(
+                    "SELECT seq, entry FROM ledger_entries WHERE town = ?1 AND seq > ?2 ORDER BY seq LIMIT ?3",
+                )?
                 .query_map(params![town, after, most], |row| Ok((row.get::<_, i64>(0)? as u64, row.get(1)?)))?
                 .collect::<std::result::Result<Vec<_>, _>>()?)
         })
@@ -78,6 +83,17 @@ impl Library {
                 .prepare_cached("SELECT DISTINCT town FROM ledger_entries ORDER BY town")?
                 .query_map([], |row| row.get(0))?
                 .collect::<std::result::Result<Vec<_>, _>>()?)
+        })
+    }
+
+    /// Takes back entry `seq` of `town`, kept and never yet read: what let it
+    /// in changed as it was written (`fastctx_hub::ledger::write_as`).
+    pub fn ledger_withdraw(&self, town: &str, seq: u64) -> Result<()> {
+        let (town, seq) = (town.to_string(), number(seq)?);
+        self.database().write_now_settled_at(Priority::Normal, 64 + town.len(), move |db| {
+            db.prepare_cached("DELETE FROM ledger_entries WHERE town = ?1 AND seq = ?2")?
+                .execute(params![town, seq])?;
+            Ok(())
         })
     }
 

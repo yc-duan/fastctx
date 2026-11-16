@@ -3,11 +3,12 @@
 //! hub writes each entry, as that account may know it, into the account's
 //! records as `ledger/<project>/<machines>`, and this machine takes them
 //! from its copy of those records — no ledger is replicated beside them.
-//! Each is kept under `projected/` by its number and written out into the
-//! project's files. A project this machine kept as signed entries before is
-//! made again from the projection beside them, then put in their place. A
-//! hub that writes no projection, or records not pulled here yet, leave the
-//! project replicated as before (`ledger::take`).
+//! Each is kept under `projected/` by its number, under this machine's own
+//! word, and written out into the project's files. A project this machine
+//! kept as signed entries before is made again from the projection beside
+//! them, then put in their place. A hub that writes no projection, or
+//! records not pulled here yet, leave a project not taken from one yet
+//! replicated as before (`ledger::take`).
 
 use std::io;
 use std::sync::Arc;
@@ -44,6 +45,9 @@ impl Source {
 /// Where what a project is kept from is written down, beside it.
 pub(crate) const FROM: &str = "projected-from.json";
 
+/// Where a project is made again before it is put in place.
+pub(crate) const NEXT: (&str, &str) = ("projected.next", "ledger.next");
+
 /// What `directory`'s project is kept from now: none for one replicated,
 /// or not kept yet. Caches of what its entries say are of what it is kept
 /// from, as of the ledger they were read from.
@@ -54,47 +58,63 @@ pub(crate) fn kept_from(directory: &TownDir) -> io::Result<Option<String>> {
 /// How long a take waits for the projection to come up to the latest entry.
 const WAITS: Duration = Duration::from_secs(10);
 
-/// The projection of `town`'s ledger for the first account logged in here,
-/// by name, that reads the project, where the copy here holds that
-/// account's records pulled whole; none otherwise.
-///
-/// The stream is the one of the machines that account may work on as the
-/// directory here tells them; a directory cut for this machine may tell
-/// fewer than the hub's, so where the records here hold no such stream but
-/// one other of the project, that one is it — the hub has the account hold
-/// the stream of its machines now alone.
-pub(crate) fn source(node: &Node, link: &Link, town: &TownId) -> Option<Source> {
-    let library = &node.assets.as_ref()?.library;
+/// Entries of a projection read at a time: each may be as large as an
+/// entry may be, so a few (codex-357de52a #4).
+const AT_ONCE: usize = 8;
+
+/// What this machine reads `town`'s ledger from.
+pub(crate) enum Seen {
+    /// The projection for the first account logged in here, by name, that
+    /// reads the project, in its records pulled here whole: the stream of
+    /// the machines that account may work on now, as the directory here
+    /// tells them — what the hub writes too (`for_reader::usable`).
+    At(Source),
+    /// That account's records are here whole and hold no such stream: the
+    /// machines it may work on changed, or the hub has not written one for
+    /// it yet. Never another stream of the project in its place: one made
+    /// for other machines tells what this account may no longer know
+    /// (codex-357de52a #2).
+    Awaited,
+    /// No account here reads the project from records pulled whole.
+    Not,
+}
+
+pub(crate) fn source(node: &Node, link: &Link, town: &TownId) -> Seen {
+    let Some(assets) = node.assets.as_ref() else { return Seen::Not };
+    let library = &assets.library;
     let view = link.view();
     let hub = link.membership().id.to_string();
     let mut accounts = node.accounts_on(link, &Acting::Here);
     accounts.sort();
-    let account =
-        accounts.into_iter().find(|account| view.directory.authorize(account, Action::Project(town)).is_ok())?;
-    let opened = view.directory.account(&account)?.opened;
+    let Some(account) =
+        accounts.into_iter().find(|account| view.directory.authorize(account, Action::Project(town)).is_ok())
+    else {
+        return Seen::Not;
+    };
+    let Some(opened) = view.directory.account(&account).map(|found| found.opened) else { return Seen::Not };
     let scope = fastctx_types::assets::records_key(&hub, &account, opened.as_millisecond());
-    let held = library.held_scopes().ok()?.into_iter().find(|held| held.key == scope)?;
+    let Some(held) = library.held_scopes().ok().and_then(|held| held.into_iter().find(|held| held.key == scope)) else {
+        return Seen::Not;
+    };
     if held.pulled != Some(held.holding) {
-        return None;
+        return Seen::Not;
     }
     let usable = fastctx_net::ledger::reader_machines(&view.directory, &account, None);
-    let named = fastctx_net::ledger::reader_stream(town, &fastctx_net::ledger::reader_digest(&usable));
-    let prefix = format!("ledger/{town}/");
-    let streams: Vec<String> = library
-        .streams(&scope)
-        .ok()?
-        .into_iter()
-        .map(|(name, _)| name)
-        .filter(|name| name.starts_with(&prefix))
-        .collect();
-    let stream = match streams.contains(&named) {
-        true => named,
-        false => match streams.as_slice() {
-            [only] => only.clone(),
-            _ => return None,
-        },
-    };
-    Some(Source { scope, stream })
+    let stream = fastctx_net::ledger::reader_stream(town, &fastctx_net::ledger::reader_digest(&usable));
+    match library.streams(&scope) {
+        Ok(streams) if streams.iter().any(|(name, _)| *name == stream) => Seen::At(Source { scope, stream }),
+        Ok(_) => Seen::Awaited,
+        Err(_) => Seen::Not,
+    }
+}
+
+/// What this machine keeps of a projected entry, under its own word: the
+/// project's too, so one entry cannot pass for another project's
+/// (codex-357de52a #7).
+#[derive(serde::Serialize, serde::Deserialize)]
+pub(crate) struct KeptEntry {
+    pub town: TownId,
+    pub projection: Projection,
 }
 
 /// The entries of the projection after `after`, at most `most`, each
@@ -123,16 +143,28 @@ fn entries(library: &Library, source: &Source, after: u64, most: usize) -> Resul
     Ok(found)
 }
 
-/// The number of the last entry of the projection here.
+/// The number of the last entry of the projection here, as its record
+/// says: the stream is ordered by number (codex-357de52a #8).
 fn last(library: &Library, source: &Source) -> Result<u64, String> {
-    let mut at = 0;
-    loop {
-        let page = entries(library, source, at, 256)?;
-        match page.last() {
-            Some(projection) => at = projection.seq,
-            None => return Ok(at),
-        }
+    let page = library.page_before(&source.scope, &source.stream, None, 1).map_err(|error| error.to_string())?;
+    let Some(entry) = page.first() else { return Ok(0) };
+    let said: serde_json::Value = serde_json::from_slice(&entry.body).map_err(|error| error.to_string())?;
+    said.get("seq").and_then(serde_json::Value::as_u64).ok_or_else(|| "a projected entry says no number".into())
+}
+
+/// Lets go of what this machine kept of `name` from a projection it may no
+/// longer read: its entries, files and what they were kept from, and any
+/// making of it again left half done. Call with the ledgers' sync held.
+pub(crate) fn clear(node: &Node, name: &TownName) -> io::Result<()> {
+    let directory = node.world.town(name);
+    let _map_changed = node.topics.writing(format!("{}{}", fastctx_types::topics::MAP_PREFIX, name));
+    forget(&directory.path().join(FROM))?;
+    for folder in
+        [directory.projected(), directory.ledger(), directory.path().join(NEXT.0), directory.path().join(NEXT.1)]
+    {
+        super::remove(&folder)?;
     }
+    Ok(())
 }
 
 /// Takes `town`'s entries through `latest` from its projection, kept as
@@ -178,17 +210,17 @@ pub(crate) async fn take(
             || !fastctx_platform::disk::is_dir(directory.projected())
             || from.as_deref() != Some(source.named().as_str())
         {
-            again(&library, &source, &directory, &key)
+            again(&library, &source, &directory, &town, &key)
                 .map_err(|error| format!("making {name}'s ledger from its projection: {error}"))?;
             return Ok(true);
         }
         let mut after = super::cursor(&directory, &Default::default()).map_err(|error| error.to_string())?;
         let mut changed = false;
         loop {
-            let page = entries(&library, &source, after, 256)?;
+            let page = entries(&library, &source, after, AT_ONCE)?;
             let Some(last) = page.last().map(|projection| projection.seq) else { break };
             for projection in &page {
-                keep(&directory.projected(), &directory.ledger(), projection, &key)
+                keep(&directory.projected(), &directory.ledger(), &town, projection, &key)
                     .map_err(|error| format!("keeping entry {} of {name}: {error}", projection.seq))?;
             }
             after = last;
@@ -199,16 +231,18 @@ pub(crate) async fn take(
     .await
 }
 
-/// Keeps `projection` under `projected`, under this machine's word, and
-/// writes its files under `ledger`.
+/// Keeps `projection` of `town` under `projected`, under this machine's
+/// word, and writes its files under `ledger`.
 fn keep(
     projected: &std::path::Path,
     ledger: &std::path::Path,
+    town: &TownId,
     projection: &Projection,
     key: &SecretKey,
 ) -> io::Result<()> {
     ensure_private_dir(projected)?;
-    let bytes = serde_json::to_vec(&Signed::new(key, Domain::LedgerKept, projection)).map_err(io::Error::other)?;
+    let kept = KeptEntry { town: town.clone(), projection: projection.clone() };
+    let bytes = serde_json::to_vec(&Signed::new(key, Domain::LedgerKept, &kept)).map_err(io::Error::other)?;
     super::same_or_new(&projected.join(format!("{:020}.json", projection.seq)), &bytes)?;
     super::write_files(ledger, &projection.files)
 }
@@ -217,17 +251,17 @@ fn keep(
 /// beside what is kept of it now, then put in its place, with what it is
 /// kept from; the signed entries of before and what their reading kept let
 /// go of. A stop on the way makes it again from the start.
-fn again(library: &Library, source: &Source, directory: &TownDir, key: &SecretKey) -> io::Result<()> {
+fn again(library: &Library, source: &Source, directory: &TownDir, town: &TownId, key: &SecretKey) -> io::Result<()> {
     let root = directory.path();
-    let (projected, ledger) = (root.join("projected.next"), root.join("ledger.next"));
+    let (projected, ledger) = (root.join(NEXT.0), root.join(NEXT.1));
     super::remove(&projected)?;
     super::remove(&ledger)?;
     let mut after = 0;
     loop {
-        let page = entries(library, source, after, 256).map_err(io::Error::other)?;
+        let page = entries(library, source, after, AT_ONCE).map_err(io::Error::other)?;
         let Some(last) = page.last().map(|projection| projection.seq) else { break };
         for projection in &page {
-            keep(&projected, &ledger, projection, key)?;
+            keep(&projected, &ledger, town, projection, key)?;
         }
         after = last;
     }
