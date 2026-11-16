@@ -369,7 +369,8 @@
         "Moved",
         "Object",
         "Changes",
-        "Running"
+        "Running",
+        "Files"
       ]
     }
   },
@@ -387,7 +388,8 @@
         "Object",
         "Changes",
         "Reread",
-        "Running"
+        "Running",
+        "Files"
       ]
     }
   },
