@@ -15,7 +15,8 @@
 import { makeGrip } from "../app/grip";
 import { glyph } from "../conversation/glyphs";
 import type { Address } from "../world/wire";
-import { SidePane, type Dock, type Peek } from "./pane";
+import { ALONE, PULLS, firstFiles, onBack, pullOut, putBack, standAs } from "./board";
+import { SidePane, type Dock, type Tab } from "./pane";
 import type { PartsFrame, SideParts } from "./parts";
 import type { SideWords } from "./words";
 
@@ -99,7 +100,18 @@ export class SideFrame implements PartsFrame {
         this.parts?.seen(this.pane.visible);
       },
       dock: (dock) => this.setDock(dock),
+      out: PULLS ? () => this.pullOut() : undefined,
+      back: ALONE ? () => this.putBack() : undefined,
     });
+    // A board put back into the desk: the side opens beside its
+    // conversation, where that is the one in focus, with the files it had.
+    if (PULLS)
+      onBack((of, files) => {
+        const parts = this.parts;
+        if (!parts || !of(parts.self)) return;
+        if (!this.pane.open) this.pane.show(parts.firstPart());
+        parts.reopen(files);
+      });
     this.split = document.createElement("div");
     this.split.className = "sp-split";
     this.split.append(main, this.pane.element);
@@ -186,10 +198,15 @@ export class SideFrame implements PartsFrame {
     if (parts && !this.reopened) {
       this.reopened = true;
       // Open as it was left, once the desk is laid out on the screen: no
-      // glide, as if it had never shut.
+      // glide, as if it had never shut. Alone in its window it is always
+      // open, and takes what its conversation's desk sends it.
       requestAnimationFrame(() => {
         this.place();
-        if (!kept(OPEN_KEPT) || this.placed === "over" || this.pane.open) return;
+        if (ALONE) {
+          standAs(parts.self, (file) => parts.reopen([file]));
+          parts.reopen(firstFiles());
+        } else if (!kept(OPEN_KEPT) || this.placed === "over") return;
+        if (this.pane.open) return;
         this.pane.show(parts.part ?? parts.firstPart());
         this.host.classList.add("sp-shown");
         this.drawSwitch();
@@ -201,9 +218,30 @@ export class SideFrame implements PartsFrame {
     this.pane.show(part);
   }
 
-  peek(peek: Peek): void {
+  add(tab: Tab): void {
     if (!this.pane.open) this.pane.show();
-    this.pane.peek(peek);
+    this.pane.add(tab);
+  }
+
+  /** The side goes into a window of its own, with the files it has open,
+   *  and folds away here. */
+  private pullOut(): void {
+    const parts = this.parts;
+    if (!parts) return;
+    if (pullOut(parts.self, "side", parts.filesOpen(), this.pane.element.getBoundingClientRect())) this.pane.close();
+  }
+
+  /** The tabs that read files are shut, as the files went to a window of
+   *  their own. */
+  shutFiles(): void {
+    for (const tab of [...(this.parts?.tabs ?? [])]) if (tab.file) this.pane.shut(tab.id);
+  }
+
+  /** Alone in its window, the side goes back into the desk. */
+  private putBack(): void {
+    const parts = this.parts;
+    if (!parts) return;
+    putBack(parts.self, parts.filesOpen());
   }
 
   restate(): void {
@@ -258,7 +296,7 @@ export class SideFrame implements PartsFrame {
   /** Where the side stands when put at `dock`: there where it fits, else
    *  along the other edge where that fits, else over the whole desk. */
   private placement(dock: Dock, size: DeskSize): Dock | "over" {
-    if (OVER.matches) return "over";
+    if (ALONE || OVER.matches) return "over";
     if (this.fits(dock, size)) return dock;
     const other: Dock = dock === "bottom" ? "right" : "bottom";
     return this.fits(other, size) ? other : "over";

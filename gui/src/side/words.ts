@@ -16,8 +16,10 @@ export interface SideWords {
     shows: string;
     /** Said where every card was put away. */
     hidden: string;
+    /** Said where the cards stand in windows of their own. */
+    away: string;
   };
-  /** A file read in the side, over the parts. */
+  /** A file read in the side, on a tab of its own. */
   file: FileWords;
   /** The switch that opens the side, and the act that shuts it. */
   panel: string;
@@ -32,6 +34,9 @@ export interface SideWords {
   /** The side's "⋯", and each place it may stand at, in it. */
   more: string;
   docks: { right: string; bottom: string; left: string };
+  /** The side in a window of its own: the place in its menu, the act that
+   *  pulls it out, and the one that puts it back into the desk. */
+  board: { window: string; out: string; back: string };
   /** How another conversation comes into the side, said until one has. */
   dropHint: string;
   /** How far along the plan is, on its tab. */
@@ -160,7 +165,7 @@ function clock(ms: number, now: number, locale: string, today: string, tomorrow:
 
 export const zhSide: SideWords = {
   pages: { plan: "计划", goal: "目标", collab: "协作", history: "笔记", files: "文件" },
-  home: { name: "概览", none: "暂无计划与协作", all: (n) => `全部 ${n} 个`, shows: "侧栏显示的内容", hidden: "都收起来了，右键选择要显示的内容" },
+  home: { name: "概览", none: "暂无计划与协作", all: (n) => `全部 ${n} 个`, shows: "侧栏显示的内容", hidden: "都收起来了，右键选择要显示的内容", away: "卡片在各自的独立窗口里" },
   file: { outside: "用默认程序打开", reading: "读取中…", missing: "找不到这个文件", failed: "读取失败", interrupted: "连接中断，正在重连…" },
   panel: "侧面板",
   shut: "收起侧面板",
@@ -170,6 +175,7 @@ export const zhSide: SideWords = {
   dropHere: "分屏",
   more: "更多",
   docks: { right: "停靠右侧", bottom: "停靠底部", left: "停靠左侧" },
+  board: { window: "独立窗口", out: "拉出为独立窗口", back: "放回侧栏" },
   dropHint: "拖入对话以分屏查看",
   planCount: (reached, stops) => `${reached}/${stops}`,
   sideTalk: "侧边对话",
@@ -249,7 +255,7 @@ export const zhSide: SideWords = {
 
 export const enSide: SideWords = {
   pages: { plan: "Plan", goal: "Goal", collab: "Team", history: "Notes", files: "Files" },
-  home: { name: "Overview", none: "No plan or helpers yet", all: (n) => `All ${n}`, shows: "What the side shows", hidden: "Everything is put away; right-click to choose what is shown" },
+  home: { name: "Overview", none: "No plan or helpers yet", all: (n) => `All ${n}`, shows: "What the side shows", hidden: "Everything is put away; right-click to choose what is shown", away: "The cards are in windows of their own" },
   file: { outside: "Open with default app", reading: "Reading…", missing: "File not found", failed: "Could not read this file", interrupted: "Disconnected, reconnecting…" },
   panel: "Side panel",
   shut: "Close the side panel",
@@ -259,6 +265,7 @@ export const enSide: SideWords = {
   dropHere: "Split view",
   more: "More",
   docks: { right: "On the right", bottom: "At the foot", left: "On the left" },
+  board: { window: "In its own window", out: "Pull out into its own window", back: "Put back beside the conversation" },
   dropHint: "Drag a conversation here to split the view",
   planCount: (reached, stops) => `${reached}/${stops}`,
   sideTalk: "Side conversation",

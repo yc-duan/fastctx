@@ -25,6 +25,7 @@ import { effortLabel } from "./effort-slider";
 import { fileRow, mentionAt, mentioned, type FileWords, type FoundFile } from "./mention";
 import { FileLinks } from "./file-links";
 import { fileKind } from "./file-kind";
+import { split as splitPath } from "../files/model";
 import { FileView, type ViewTab } from "../files/view";
 import type { DiffLine, WriteFact } from "../world/run-facts";
 import { TalkChanges } from "./changed";
@@ -1063,8 +1064,9 @@ export class ConversationPage {
   private agentsSeen = "";
   /** The files the conversation changed, as its calls now tell them. */
   private changes: TalkChanges | null = null;
-  /** The file read in the side, whose changes follow the conversation. */
-  private fileRead: { machine: string; path: string; view: FileView } | null = null;
+  /** The files read in the side, each on its tab, whose changes follow
+   *  the conversation. */
+  private readonly filesRead = new Map<string, { machine: string; path: string; view: FileView }>();
 
   /** What the conversation changed, to its side: its card and its page,
    *  and the file read there. A reading of the calls that found nothing
@@ -1073,9 +1075,7 @@ export class ConversationPage {
     const { changes, side } = this;
     if (!changes || !side) return;
     side.changed(changes.whole());
-    const read = this.fileRead;
-    if (read?.view.element.isConnected) read.view.update(changes.file(read.machine, read.path));
-    else this.fileRead = null;
+    for (const read of this.filesRead.values()) read.view.update(changes.file(read.machine, read.path));
   }
 
   /** The host's own agents, as the conversation now knows them, to their
@@ -1851,14 +1851,25 @@ export class ConversationPage {
     return kind === "text" && this.readFile(machine, path, attachment);
   }
 
-  /** A file read in the side, over the conversation's parts, at what it
-   *  holds or at what the conversation did to it; false where there is no
-   *  side to read it in. */
+  /** A file read in the side on a tab of its own, at what it holds or at
+   *  what the conversation did to it: the tab it already has is turned to;
+   *  where the side stands in a window of its own, it opens there. False
+   *  where there is no side to read it in. */
   private readFile(machine: MachineName, path: string, attachment: AttachmentSource | null, tab: ViewTab | null = null): boolean {
     const { side, options } = this;
     const lines = options.lines;
     const words = options.side?.files?.words;
     if (!side || !lines || !words) return false;
+    const key = `${machine}\n${path}`;
+    const id = `file:${key}`;
+    const read = this.filesRead.get(key);
+    if (read && side.showTab(id)) {
+      if (tab) read.view.turn(tab);
+      return true;
+    }
+    // A file the user sent is read where the World keeps it, which only
+    // this window knows.
+    if (!attachment && !read && side.sendOut({ machine, path, tab }, () => void this.readFile(machine, path, null, tab))) return true;
     const pictures = options.pictures;
     const view = new FileView({
       words,
@@ -1876,14 +1887,25 @@ export class ConversationPage {
       tab: tab ?? undefined,
       now: () => Date.now(),
       own: true,
+      tabbed: true,
       folders: options.filesLink?.(machine, path),
     });
-    if (side.openFile(view)) {
-      this.fileRead = { machine, path, view };
-      return true;
-    }
-    view.leave();
-    return false;
+    const { folder, name } = splitPath(path);
+    const opened = side.openTab({
+      id,
+      name,
+      hint: splitPath(folder.replace(/[\\/]+$/, "")).name,
+      title: `${machine}  ${path}`,
+      file: { machine, path },
+      page: view,
+      leave: () => {
+        this.filesRead.delete(key);
+        view.leave();
+      },
+    });
+    if (opened) this.filesRead.set(key, { machine, path, view });
+    else view.leave();
+    return opened;
   }
 
   /** `waits`: what is said is awaited (`sayWaiting`). */

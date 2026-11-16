@@ -552,6 +552,36 @@ a.fx-place:hover {
 }
 
 /* The name and its lines on one baseline. */
+/* On a tab that says its name, the head is this line alone: where it is,
+   what was done to it, and the switch. */
+.fx-brief {
+  align-items: center;
+  gap: 0 var(--space-2);
+  padding-bottom: 6px;
+  color: var(--text-3);
+  font-size: var(--size-fine);
+}
+
+.fx-brief > .fx-tabs {
+  font-size: var(--size-text);
+}
+
+/* In a narrow side the machine is its mark alone, its name on the pointer:
+   the room goes to the folders. */
+.fx-head {
+  container-type: inline-size;
+}
+
+@container (max-width: 460px) {
+  .fx-brief .fx-machine {
+    display: none;
+  }
+}
+
+.fx-brief > .fx-out {
+  margin-left: -4px;
+}
+
 .fx-named {
   flex: 0 1 auto;
   min-width: 0;

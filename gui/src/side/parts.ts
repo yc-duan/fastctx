@@ -1,6 +1,8 @@
 // A conversation's own parts, for the side of the desk while it is in focus
 // (`world-gui.md`, 对话的侧面板): its overview first, a card for each part,
-// then its goal, its plan and its history, each a page of the side; the
+// then its goal, its files and its history, each a page of the side opened
+// on a tab, as each file read there is; a card, or the whole side, can be
+// taken out into a window of its own (`board.ts`) and put back; the
 // goal's bar above the input while the goal is worked toward. Who works with
 // it is drawn from two places: the colleagues it asked, from the World, and
 // the host's own agents, from the conversation itself as it goes. A colleague
@@ -24,7 +26,8 @@ import { SideFiles } from "./files-page";
 import type { ChangedFile } from "../files/model";
 import type { ViewTab } from "../files/view";
 import { SideWhere } from "./where";
-import type { PanePart, PartSet, Peek } from "./pane";
+import { ONLY, PULLS, pullOut, sendFile, standsOut, type FileAsked } from "./board";
+import type { PanePart, PartSet, Tab } from "./pane";
 import type { Following, SideSeams } from "./seams";
 import type { CollabNode, GoalShown, NodeState } from "./types";
 
@@ -54,8 +57,10 @@ export interface PartsContext {
 export interface PartsFrame {
   /** Opens the side at one of these parts. */
   show(part: string): void;
-  /** Reads something over the parts, the side opened for it. */
-  peek(peek: Peek): void;
+  /** Opens a page on a tab of the side, the side opened for it. */
+  add(tab: Tab): void;
+  /** Shuts the tabs that read files. */
+  shutFiles(): void;
   /** How these parts stand changed. */
   restate(): void;
   /** Whether the side lies over the whole desk, with no room beside. */
@@ -111,6 +116,7 @@ const minutes = (name: string, value: unknown) => (name === "took" ? Math.floor(
 
 export class SideParts implements PartSet {
   readonly parts: PanePart[];
+  readonly tabs: Tab[] = [];
   readonly where: SideWhere;
   part: string | null = null;
   /** Someone new works with the conversation while its side was not seen. */
@@ -141,7 +147,7 @@ export class SideParts implements PartSet {
   private shownTeam = "";
   /** The goal as last shown, whose version a change is made against. */
   private shownGoal: GoalShown | null = null;
-  /** The box of the host's agent read over the parts, followed as it goes. */
+  /** The box of the host's agent read in a sheet, followed as it goes. */
   private box: { id: string; update(run: AgentRun): void } | null = null;
 
   constructor(
@@ -182,6 +188,15 @@ export class SideParts implements PartSet {
         team: () => this.openTeam(),
         files: () => this.frame?.show(PART.files),
         file: (machine, path) => context.openFile?.(machine, path, "changes"),
+        // A card taken out stands in a window of its own, and not here;
+        // the files' goes with the files open, which are shut here.
+        away: (card) => card !== "goal" && standsOut(seams.self, card),
+        pull: PULLS
+          ? (card, from) => {
+              if (card === "goal" || !pullOut(seams.self, card, card === "files" ? this.filesOpen() : [], from)) return;
+              if (card === "files") this.frame?.shutFiles();
+            }
+          : undefined,
       },
       !seams.noGoal,
       this.planPage.element,
@@ -201,10 +216,13 @@ export class SideParts implements PartSet {
         detail: (error) => context.detail?.(error) ?? String(error),
       });
       this.parts.push({ id: PART.files, name: seams.files.words.side.name, page: this.filesPage });
+      // The files in a window of their own: their page is the first there,
+      // each file read on a tab after it.
+      if (ONLY === "files") this.parts.splice(0, this.parts.length - 1);
     }
     // The history its model works with, a page of its own that the mark in
     // the desk's corner opens: its project's, else its own.
-    if (seams.history) {
+    if (seams.history && !ONLY) {
       const history = seams.history;
       const earlier = history.earlier;
       const card = new HistoryCard({
@@ -266,13 +284,44 @@ export class SideParts implements PartSet {
     this.filesPage?.changed(files);
   }
 
-  /** A file read in the side over the parts, the side opened for it, over
-   *  the whole desk where there is no room beside; false where the side is
+  /** The conversation these are the parts of. */
+  get self(): Address {
+    return this.context.seams.self;
+  }
+
+  /** A page opened on a tab of the side, the side opened for it, over the
+   *  whole desk where there is no room beside; false where the side is
    *  showing another conversation's parts. */
-  openFile(page: Peek): boolean {
+  openTab(tab: Tab): boolean {
     if (!this.frame) return false;
-    this.frame.peek(page);
+    this.frame.add(tab);
     return true;
+  }
+
+  /** Turns the side to a tab already open; false where there is none, or
+   *  the side is showing another conversation's parts. */
+  showTab(id: string): boolean {
+    if (!this.frame || !this.tabs.some((tab) => tab.id === id)) return false;
+    this.frame.show(id);
+    return true;
+  }
+
+  /** Files opened here on tabs: those a board had open as it came back,
+   *  or the ones the desk sent a board. */
+  reopen(files: FileAsked[]): void {
+    for (const file of files) this.context.openFile?.(file.machine, file.path, file.tab);
+  }
+
+  /** The files read on tabs here. */
+  filesOpen(): FileAsked[] {
+    return this.tabs.flatMap((tab) => (tab.file ? [{ ...tab.file, tab: null }] : []));
+  }
+
+  /** A file pressed in the conversation goes to where its files are read
+   *  in a window of their own: true where it was sent there. `lost` where
+   *  the window turns out to be gone. */
+  sendOut(file: FileAsked, lost: () => void): boolean {
+    return sendFile(this.self, file, lost);
   }
 
   /** Whether a goal may be set here, from the input among others. */
@@ -287,7 +336,7 @@ export class SideParts implements PartSet {
 
   /** Where the side opens with nothing chosen: at the overview. */
   firstPart(): string {
-    return PART.home;
+    return this.parts[0]!.id;
   }
 
   /** The part in view, none while the side is shut or shows another
@@ -360,6 +409,7 @@ export class SideParts implements PartSet {
 
   leave(): void {
     for (const stop of this.stops) stop();
+    for (const tab of this.tabs.splice(0)) tab.leave?.();
   }
 
   /** One that works with the conversation, pressed in its whole or in the

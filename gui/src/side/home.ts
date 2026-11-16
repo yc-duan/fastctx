@@ -17,6 +17,7 @@ import type { FilesWords } from "../files/words";
 import type { PlanShape } from "../plan/shape";
 import { anyGoing, going, order, shortLine, workedFor } from "./collab-page";
 import type { SidePage } from "./pane";
+import { ONLY, onBoards } from "./board";
 import { CHOSEN, cardHidden, onCardsChosen, openCardsMenu, type Card } from "./shown";
 import type { CollabNode, GoalShown } from "./types";
 import type { SideWords } from "./words";
@@ -39,6 +40,11 @@ export interface HomeSeams {
    *  to its changes. */
   files?(): void;
   file?(machine: string, path: string): void;
+  /** Whether a card stands in a window of its own, and so not here. */
+  away?(card: Card): boolean;
+  /** Takes a card out into a window of its own, from where it stands on
+   *  the screen; none where that cannot be. */
+  pull?: ((card: Card, from: { left: number; top: number; width: number; height: number }) => void) | undefined;
 }
 
 /** The files the card lists, the last changed first. */
@@ -111,6 +117,9 @@ export class SideHome implements SidePage {
       const target = event.target as HTMLElement;
       const head = target.closest<HTMLElement>(".sh-head");
       if (head) {
+        // Alone in its window a card does not fold: there is nothing else
+        // for it to make room for.
+        if (ONLY) return;
         const card = head.dataset.card!;
         const shut = !this.fold.has(card);
         if (shut) this.fold.add(card);
@@ -143,7 +152,13 @@ export class SideHome implements SidePage {
     this.element.addEventListener("contextmenu", (event) => {
       if (getSelection()?.toString() || (event.target as HTMLElement).closest("a, input, textarea")) return;
       event.preventDefault();
-      openCardsMenu(event.clientX, event.clientY, this.words);
+      if (ONLY) return;
+      // On a card, the menu first offers to take that card out.
+      const section = (event.target as HTMLElement).closest<HTMLElement>(".sh-card");
+      const card = section?.dataset.of as Card | undefined;
+      // Not where the side lies over the whole desk, as on a phone.
+      const pull = this.element.closest(".sp-over") ? undefined : this.seams.pull;
+      openCardsMenu(event.clientX, event.clientY, this.words, pull && section && card && card !== "goal" ? () => pull(card, section.getBoundingClientRect()) : undefined);
     });
     // One overview hears what is chosen for all of them, and is let go with
     // its conversation.
@@ -152,6 +167,12 @@ export class SideHome implements SidePage {
       const home = self.deref();
       if (home) home.draw();
       else stop();
+    });
+    // A card taken out leaves the overview, and is back as its window goes.
+    const still = onBoards(() => {
+      const home = self.deref();
+      if (home) home.draw();
+      else still();
     });
     // The times of those at work move only while the page is seen.
     new IntersectionObserver((entries) => {
@@ -199,11 +220,13 @@ export class SideHome implements SidePage {
       colleagues: () => this.teamCard("colleagues", ordered.filter((node) => node.kind === "colleague" || node.kind === "side"), now),
       agents: () => this.teamCard("agents", ordered.filter((node) => node.kind === "subagent"), now),
     };
-    const chosen = CHOSEN.filter((card): card is Exclude<Card, "goal"> => card !== "goal" && !cardHidden(card));
-    const cards = [this.goalCard(now), ...chosen.map((card) => made[card]())].filter(Boolean);
+    // In a window of its own a card stands alone, put away or not.
+    const chosen = CHOSEN.filter((card): card is Exclude<Card, "goal"> => card !== "goal" && (ONLY ? card === ONLY : !cardHidden(card) && !this.seams.away?.(card)));
+    const cards = [ONLY ? "" : this.goalCard(now), ...chosen.map((card) => made[card]())].filter(Boolean);
     // Said where no card stands, the goal's left to its bar among them; and
     // where they were all put away, how they are brought back.
-    const none = chosen.length ? this.words.home.none : this.words.home.hidden;
+    const away = !ONLY && CHOSEN.some((card) => !cardHidden(card) && this.seams.away?.(card));
+    const none = away ? this.words.home.away : chosen.length ? this.words.home.none : this.words.home.hidden;
     this.put(cards);
     if (this.none.textContent !== none) this.none.textContent = none;
     this.element.classList.toggle("sh-has-cards", cards.length > 0);
@@ -259,7 +282,7 @@ export class SideHome implements SidePage {
     // What it says, apart from whether it is folded: folding is done where
     // the card stands, and is no reason to set it anew.
     this.signs.set(card, [name, state, body, waiting, waits, barred].join("\u0001"));
-    const shut = this.fold.has(card);
+    const shut = !ONLY && this.fold.has(card);
     const said = `${escape(state)}${waiting ? `<span class="sh-waits">${escape(waiting)}</span>` : ""}`;
     return `<section class="sh-card${shut ? " shut" : ""}${barred ? " barred" : ""}" data-of="${card}"><button class="sh-head" type="button" data-card="${card}" aria-expanded="${!shut}"><span class="sh-name">${escape(name)}</span><span class="sh-turn">${glyph("chevron", 12)}</span><span class="sh-state${waits ? " waiting" : ""}">${said}</span></button><div class="sh-fold${shut ? "" : " open"}"><div class="sh-fold-inner"><div class="sh-body">${body}</div></div></div></section>`;
   }

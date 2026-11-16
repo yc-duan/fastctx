@@ -53,14 +53,16 @@ html.framed .sp-host {
   display: none;
 }
 
-/* Beside the conversations the side has no ground of its own: its cards
-   stand on the page. Over the whole page, as on a phone, it keeps the
-   page's ground over what it covers. */
+/* Beside the conversations the side is a sheet of its own from the window's
+   top to its foot, a shade under the page as the sidebar across the desk
+   is (`shell.css`): the conversations are the page between two margins.
+   Over the whole page, as on a phone, it keeps the page's ground over what
+   it covers. */
 .sp-split > .sp-panel:not(.sp-over) {
   flex: none;
   width: 0;
   overflow: hidden;
-  background: transparent;
+  background: var(--bg-sunken);
   transition: width var(--glide) var(--glide-easing), height var(--glide) var(--glide-easing);
 }
 
@@ -107,6 +109,37 @@ html.framed .sp-host {
   display: block;
   width: 4px;
   height: 100%;
+}
+
+/* Its edge is a line ruled by hand, as the sidebar's is. */
+.sp-margin::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -3px;
+  width: 6px;
+  background: var(--pen-rule);
+  opacity: 0.55;
+  -webkit-mask: var(--pen-rule-down) 50% 0 / 100% 100% no-repeat;
+  mask: var(--pen-rule-down) 50% 0 / 100% 100% no-repeat;
+}
+
+.sp-split[data-dock="left"] .sp-margin::before {
+  left: auto;
+  right: -3px;
+}
+
+.sp-split[data-dock="bottom"] .sp-margin::before {
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: auto;
+  width: auto;
+  height: 1px;
+  -webkit-mask: none;
+  mask: none;
+  opacity: 0.4;
 }
 
 /* The same stroke in ink over it, coming up while the line is held or
@@ -216,14 +249,10 @@ html.framed .sp-panel.sp-over .sp-line {
   --sp-end: var(--gutter);
 }
 
-.sp-split[data-dock="right"] > .sp-panel:not(.sp-over) {
-  --sp-start: var(--space-1);
-  --sp-end: var(--space-3);
-}
-
+.sp-split[data-dock="right"] > .sp-panel:not(.sp-over),
 .sp-split[data-dock="left"] > .sp-panel:not(.sp-over) {
-  --sp-start: var(--space-3);
-  --sp-end: var(--space-1);
+  --sp-start: var(--space-2);
+  --sp-end: var(--space-2);
 }
 
 .sp-page {
@@ -236,21 +265,168 @@ html.framed .sp-panel.sp-over .sp-line {
   line-height: var(--leading-prose);
 }
 
-/* The way back, over the page it left: its arrow at the page's left edge,
-   where what the page shows begins. */
-.sp-back {
+/* The pages open in the side, each on its tab: the overview's first, then
+   what was opened from it, a part or a file. They stand on one line ruled
+   across the sheet, the one in view in the page's ink with a pen's stroke
+   under it in clay, as the views in a page's head do
+   (`design/head-switch.css`); with the overview alone there is no line of
+   tabs at all. More than the line holds, it moves along them. */
+.sp-tabs {
+  position: relative;
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-1);
+  min-width: 0;
+  margin-bottom: var(--space-2);
   padding: 0 var(--sp-end) 0 var(--sp-start);
 }
 
-.sp-back[hidden] {
+.sp-tabs[hidden] {
   display: none;
 }
 
-/* It has a line of its own, so a phone keeps its name too. */
-@media (max-width: 640px) {
-  .sp-back .page-back span {
-    display: inline;
+.sp-tabs::after {
+  content: "";
+  position: absolute;
+  left: calc(var(--sp-start) + var(--space-3));
+  right: calc(var(--sp-end) + var(--space-3));
+  bottom: 0;
+  height: 8px;
+  background: var(--pen-rule);
+  -webkit-mask: var(--pen-rule-1) 0 50% / 100% 100% no-repeat;
+  mask: var(--pen-rule-1) 0 50% / 100% 100% no-repeat;
+  pointer-events: none;
+}
+
+.sp-tabs-run {
+  flex: 1 1 auto;
+  display: flex;
+  min-width: 0;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+}
+
+.sp-tabs-run::-webkit-scrollbar {
+  display: none;
+}
+
+.sp-tab {
+  position: relative;
+  flex: none;
+  display: flex;
+  align-items: center;
+  max-width: 220px;
+  min-height: 36px;
+  padding: 0 2px 7px var(--space-3);
+  color: var(--text-2);
+  transition: color var(--hover) var(--ease);
+}
+
+.sp-tab.fixed {
+  padding-right: var(--space-3);
+}
+
+.sp-tab:hover,
+.sp-tab.chosen {
+  color: var(--text);
+}
+
+.sp-tab.chosen {
+  color: var(--text-strong);
+}
+
+.sp-tab-name {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  padding: 3px 0;
+  font: inherit;
+  color: inherit;
+  white-space: nowrap;
+}
+
+.sp-tab-name > span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sp-tab-hint {
+  flex: none;
+  color: var(--text-3);
+  font-size: var(--size-fine);
+}
+
+/* The stroke under the one in view; under a name the pointer rests on, the
+   faint line of one about to be drawn. */
+.sp-tab::after {
+  content: "";
+  position: absolute;
+  left: var(--space-3);
+  right: 10px;
+  bottom: 3px;
+  height: 2px;
+  -webkit-mask:
+    linear-gradient(#000, #000) 0 0 / calc(100% - 12px) 100% no-repeat,
+    var(--pen-seg-tip) 100% 0 / 12px 100% no-repeat;
+  mask:
+    linear-gradient(#000, #000) 0 0 / calc(100% - 12px) 100% no-repeat,
+    var(--pen-seg-tip) 100% 0 / 12px 100% no-repeat;
+  background: transparent;
+  transition: background-color var(--hover) var(--ease);
+}
+
+.sp-tab:hover:not(.chosen)::after {
+  background: var(--pen-rule);
+}
+
+.sp-tab.chosen::after {
+  background: var(--accent);
+}
+
+/* A tab's cross keeps its room, so no name moves as it comes: it is there
+   on the tab in view, and on one the pointer rests on. */
+.sp-tab-shut {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  margin-left: 2px;
+  border-radius: var(--radius-s);
+  color: var(--text-3);
+  opacity: 0;
+  transition: opacity var(--hover) var(--ease), color var(--hover) var(--ease), background-color var(--hover) var(--ease);
+}
+
+.sp-tab:hover > .sp-tab-shut,
+.sp-tab.chosen > .sp-tab-shut,
+.sp-tab-shut:focus-visible {
+  opacity: 1;
+}
+
+.sp-tab-shut:hover {
+  background: var(--hairline);
+  color: var(--text);
+}
+
+/* Where no pointer rests on anything, every tab keeps its cross. */
+@media (hover: none) {
+  .sp-tab-shut {
+    opacity: 1;
   }
+}
+
+/* The side pulled out into a window of its own, at the line's end. */
+.sp-out {
+  flex: none;
+  margin-bottom: 6px;
+  color: var(--text-3);
+}
+
+.sp-panel.sp-over .sp-out {
+  display: none;
 }
 
 /* With the side open beside them, the conversations keep a narrow margin. */
@@ -277,6 +453,10 @@ html.framed .sp-panel.sp-over .sp-line {
   padding-bottom: var(--space-3);
 }
 
+/* A card is a thing of its own on the side's sheet (the user, 2026-11-16:
+   "要做成一个个卡片的形式…只是加上一个背景而已"): a box that folds away
+   under its name, and can be taken out of the side and put back, which a
+   part of the sheet ruled off from the next would not look like. */
 .sh-card {
   flex: none;
   display: flex;
@@ -692,7 +872,6 @@ html.framed .sp-panel.sp-over .sp-line {
   align-items: center;
   gap: 2px;
   max-width: calc(100% - var(--sp-switch-right) - var(--space-4));
-  background: var(--bg);
 }
 
 .sp-corner-bar[hidden] {
@@ -720,11 +899,6 @@ html.framed .sp-panel.sp-over .sp-line {
   display: none;
 }
 
-/* On the desk the window's buttons stand on the paper's own ground too, so
-   the side slides in beneath them. */
-html.on-desk .window-controls {
-  background: var(--bg);
-}
 
 .sp-host.sp-over.sp-visible .sp-corner-bar {
   display: none;
@@ -782,6 +956,16 @@ html.on-desk .window-controls {
 .sp-split[data-dock="bottom"] > .sp-panel:not(.sp-over) > .sp-sheet {
   width: 100%;
   height: var(--side-height);
+}
+
+/* Along the foot nothing of the corner stands over it: it keeps no line
+   for a head, only a little room over its cards. */
+.sp-split[data-dock="bottom"] > .sp-panel:not(.sp-over) .sp-head {
+  display: none;
+}
+
+.sp-split[data-dock="bottom"] > .sp-panel:not(.sp-over) > .sp-sheet {
+  padding-top: var(--space-2);
 }
 
 .sp-split[data-dock="left"] .sp-margin,
@@ -1680,29 +1864,13 @@ button.gh-goal:hover,
   max-height: none;
 }
 
-/* An agent read over the parts: the way back, named by its task, and the
-   way to the row that sent it. */
-.sp-peek-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-3);
-  min-width: 0;
-  padding: var(--space-2) var(--space-4) 0;
-}
-
-.sp-peek-head .page-back {
-  max-width: none;
-  margin-left: calc(var(--space-2) * -1);
-}
-
 .sp-jump {
   flex: none;
 }
 
 /* The files the conversation changed: their card on the overview, a line
    to a file; their page (`files-page.ts`), the list or the trees of the
-   folders it works in; and a file read over the parts (`files/view.ts`). */
+   folders it works in; and a file read on a tab (`files/view.ts`). */
 .sh-files {
   display: flex;
   flex-direction: column;
@@ -1869,7 +2037,19 @@ button.gh-goal:hover,
 .sp-page.fx-view {
   height: auto;
   overflow: hidden;
-  padding-bottom: var(--space-4);
+  padding: 0 calc(var(--sp-end) + var(--space-3)) var(--space-4) calc(var(--sp-start) + var(--space-3));
+}
+
+/* Alone in its window (`board.ts`) the side is the whole of it: always
+   open, no conversation under it, nothing coming up or going down. */
+html.side-board .desk-panes {
+  display: none;
+}
+
+html.side-board .sp-panel.sp-over {
+  opacity: 1;
+  transform: none;
+  transition: none;
 }
 
 .sp-page.fx-view .fx-name {

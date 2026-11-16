@@ -79,8 +79,10 @@ let floating: { element: HTMLElement; shut(): void } | null = null;
 
 /** Opens the menu at a point of the window, as a press with the other
  *  button asks; it stays while cards are chosen and goes at a press
- *  outside it, Escape, or the window being left. */
-export function openCardsMenu(x: number, y: number, words: SideWords): void {
+ *  outside it, Escape, or the window being left. `pull`, where the press
+ *  was on a card that can be taken out: the menu's first row takes it out
+ *  into a window of its own. */
+export function openCardsMenu(x: number, y: number, words: SideWords, pull?: () => void): void {
   floating?.shut();
   const names = cardNames(words);
   const menu = document.createElement("div");
@@ -88,7 +90,7 @@ export function openCardsMenu(x: number, y: number, words: SideWords): void {
   menu.setAttribute("role", "menu");
   menu.setAttribute("aria-label", words.home.shows);
   const draw = () => {
-    menu.innerHTML = cardRows(names);
+    menu.innerHTML = `${pull ? `<button class="sp-menu-row" type="button" role="menuitem" data-pull>${glyph("dock-out", 16)}<span>${escape(words.board.out)}</span></button><div class="sp-menu-rule" aria-hidden="true"></div>` : ""}${cardRows(names)}`;
   };
   draw();
   document.body.append(menu);
@@ -112,7 +114,12 @@ export function openCardsMenu(x: number, y: number, words: SideWords): void {
     menu.remove();
     if (floating?.element === menu) floating = null;
   }
-  menu.addEventListener("click", (event) => void cardPressed(event.target as HTMLElement));
+  menu.addEventListener("click", (event) => {
+    if (pull && (event.target as HTMLElement).closest("[data-pull]")) {
+      shut();
+      pull();
+    } else cardPressed(event.target as HTMLElement);
+  });
   menu.addEventListener("contextmenu", (event) => event.preventDefault());
   document.addEventListener("pointerdown", outside, true);
   document.addEventListener("keydown", key, true);

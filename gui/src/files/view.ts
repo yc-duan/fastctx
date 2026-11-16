@@ -58,6 +58,9 @@ export interface FileViewOptions {
   folders?: string | undefined;
   /** Its changes are all one conversation's, which is not said on each. */
   own?: boolean | undefined;
+  /** It stands on a tab that says its name: its head is one line, where it
+   *  is and the switch. */
+  tabbed?: boolean | undefined;
 }
 
 /** Markdown up to this many lines is set as prose; a longer one is shown
@@ -106,10 +109,13 @@ export class FileView {
       ? `<a class="fx-place" href="${escape(options.folders)}" title="${escape(`${words.view.inFolders}\n${machine}  ${path}`)}">${place}</a>`
       : `<span class="fx-place" title="${escape(`${machine}  ${path}`)}">${place}</span>`;
     const out = options.seams.outside ? `<button class="icon-button fx-out" type="button" data-act="outside" aria-label="${escape(words.view.outside)}" title="${escape(words.view.outside)}">${glyph("launch", 16)}</button>` : "";
-    this.element.innerHTML = `<header class="fx-head">
-        <div class="fx-where">${where}${out}</div>
-        <div class="fx-title"><div class="fx-named"><h2 class="fx-name">${escape(name)}</h2><span class="fx-sum"></span></div><div class="segmented fx-tabs" role="radiogroup" aria-label="${escape(words.view.tabs)}"></div></div>
-      </header>
+    const tabs = `<div class="segmented fx-tabs" role="radiogroup" aria-label="${escape(words.view.tabs)}"></div>`;
+    this.element.innerHTML = `<header class="fx-head">${
+      options.tabbed
+        ? `<div class="fx-title fx-brief">${where}<span class="fx-sum"></span>${tabs}${out}</div>`
+        : `<div class="fx-where">${where}${out}</div>
+        <div class="fx-title"><div class="fx-named"><h2 class="fx-name">${escape(name)}</h2><span class="fx-sum"></span></div>${tabs}</div>`
+    }</header>
       <div class="fx-body"></div>`;
     this.body = this.element.querySelector<HTMLElement>(".fx-body")!;
     this.content.className = "fx-content";
@@ -137,6 +143,14 @@ export class FileView {
     const source = this.source;
     this.source = null;
     if (source) void source.close().catch((error: unknown) => console.warn("a file's lines could not be let go", error));
+  }
+
+  /** Turns it to what it holds, or to its changes where it has any. */
+  turn(tab: ViewTab): void {
+    if (tab === this.tab || (tab === "changes" && !this.changes.length)) return;
+    this.tab = tab;
+    this.drawTabs();
+    this.show();
   }
 
   /** Its changes as they now stand: drawn again only where they differ. */

@@ -271,6 +271,7 @@ import type { Address, SessionEvent } from "./world/events";
 import type { MachineLogins, WorldLogins } from "./world/logins";
 import { ownerResident, type ResidentNow, type WorldWho } from "./world/world";
 import { agentName, titleOf } from "./world/names";
+import { ALONE } from "./side/board";
 import { liveSide, specimenSide } from "./side/live";
 import { whereOf } from "./side/where-live";
 import { enSide, zhSide } from "./side/words";
@@ -2919,7 +2920,9 @@ function show(next: Place): void {
   // 受管机器上的界面); so has the mode while it is asked, the whole window
   // its question.
   const managed = !!managedOf(store.world.peek()?.accounts);
-  shell.alone(managed);
+  // A side pulled out into a window of its own has nothing beside it
+  // either.
+  shell.alone(managed || ALONE);
   let page: Page;
   if (managed) page = managedPage();
   else switch (next.kind) {
