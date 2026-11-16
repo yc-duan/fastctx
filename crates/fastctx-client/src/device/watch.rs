@@ -84,6 +84,14 @@ impl Device {
             }
             None => session.account_for(&machine, fastctx_types::access::Purpose::Agents)?,
         };
+        // Paged, a conversation is read through calls an earlier hub cannot
+        // relay; it is watched whole then (`timeline_pages`).
+        if live_only && !session.link.view().timeline_pages {
+            return Err(CallError::Failed(Failure::unsupported(
+                "this network's hub does not relay timeline pages; update the hub",
+            ))
+            .into());
+        }
         if collaboration.is_some() || live_only {
             let facts = session
                 .link

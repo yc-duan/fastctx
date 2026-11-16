@@ -236,6 +236,7 @@ pub(crate) fn view_for_in(
         skill_files: true,
         record_keys: true,
         goal_control: true,
+        timeline_pages: true,
         scratch_locations: true,
         goal_commands: true,
         subagents: true,

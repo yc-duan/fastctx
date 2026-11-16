@@ -296,7 +296,11 @@ pub(crate) async fn open(
         // Opened but not acknowledged: a passing failure as well, so a
         // copy that holds the conversation still shows it while the watch
         // is opened again behind it.
-        Err((false, error)) if error.is_deleted() || error.is_refused() => return Err(error.into()),
+        // A snapshot that cannot fit the window is not passing: opened
+        // again, it is the same.
+        Err((false, error)) if error.is_deleted() || error.is_refused() || over_budget(&error) => {
+            return Err(error.into());
+        }
         Err((false, error)) => (None, Some(error)),
     };
     let page = match reader.fetch_typed(TimelineFrom::Latest, PAGE_EVENTS).await {
@@ -339,6 +343,11 @@ async fn opened(mut reader: Reader, mut page: Page, watching: Option<Watching>) 
     });
     Ok(Opened { reader: shared, watching, window })
 }
+/// What `ready` says of pending requests the window cannot hold.
+const OVER_BUDGET: &str = "the pending-request snapshot exceeds the conversation window budget";
+fn over_budget(error: &Error) -> bool {
+    matches!(error, Error::Other(message) if message == OVER_BUDGET)
+}
 fn older(error: &Error) -> bool {
     matches!(error, Error::Call(CallError::Failed(failure)) if failure.not_run && failure.code == Some(fastctx_types::ipc::FailureCode::Unsupported))
 }
@@ -354,9 +363,7 @@ async fn ready(watching: &mut Watching) -> Result<timeline_window::Window, Error
                     pending.observe_likeness(&event, likeness.map(|value| *value));
                     pending.retired.clear();
                     if pending.pending_over_budget {
-                        return Err(Error::Other(
-                            "the pending-request snapshot exceeds the conversation window budget".into(),
-                        ));
+                        return Err(Error::Other(OVER_BUDGET.into()));
                     }
                 }
                 Some(_) => {

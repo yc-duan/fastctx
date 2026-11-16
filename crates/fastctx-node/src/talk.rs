@@ -211,6 +211,12 @@ pub async fn watch(
     let mut refused = None;
     for (link, account) in node.speakers(&acting, &machine, Purpose::Agents).map_err(|e| Failure::new(e.to_string()))? {
         if live_only {
+            // Paged, a conversation is read through calls an earlier hub
+            // cannot relay; it is watched whole then (`timeline_pages`).
+            if !link.view().timeline_pages {
+                refused = Some(Failure::unsupported("this network's hub does not relay timeline pages; update the hub"));
+                continue;
+            }
             match link.call(&machine.name, &account, Purpose::Look, fastctx_types::remote::RemoteCall::Facts).await {
                 Ok(Ok(RemoteReply::Facts(facts))) if facts.timeline_reads && facts.watch_live => {}
                 Ok(Err(failure)) => return Err(failure),

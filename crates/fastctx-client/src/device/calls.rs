@@ -645,6 +645,12 @@ impl Device {
             None => session.account_for(&machine, purpose)?,
         };
         if matches!(&remote, RemoteCall::Timeline { .. }) {
+            if !session.link.view().timeline_pages {
+                return Err(crate::CallError::Failed(fastctx_types::ipc::Failure::unsupported(
+                    "this network's hub does not relay timeline pages; update the hub",
+                ))
+                .into());
+            }
             let facts = session
                 .link
                 .call(&machine, &account, fastctx_types::access::Purpose::Look, RemoteCall::Facts)

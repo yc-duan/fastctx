@@ -874,6 +874,12 @@ pub struct View {
     /// The hub understands the account-scoped goal control call.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub goal_control: bool,
+    /// Whether this hub relays a conversation's timeline pages
+    /// (`RemoteCall::Timeline`). Earlier hubs cannot read such a call and
+    /// refuse it, so a conversation on another machine is then watched
+    /// whole, as before pages.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub timeline_pages: bool,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub scratch_locations: bool,
     /// The hub relays resident goal commands and requester controls.
@@ -991,6 +997,7 @@ impl View {
             skill_files: false,
             record_keys: false,
             goal_control: false,
+            timeline_pages: false,
             scratch_locations: false,
             goal_commands: false,
             subagents: false,

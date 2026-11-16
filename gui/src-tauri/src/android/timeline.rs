@@ -70,7 +70,8 @@ async fn hidden(visible: &mut watch::Receiver<bool>) {
 }
 
 /// Follows the reader as `Readers::run` does while the page is shown; a
-/// hidden page holds no live stream and nothing queued for it.
+/// hidden page holds no live stream, and nothing more is queued for it than
+/// was before it was hidden.
 pub(crate) async fn run(readers: Readers, id: u64, reader: Shared, mut initial: Option<Watching>, pieces: Sender<Piece>) {
     let mut visible = super::visibility();
     loop {

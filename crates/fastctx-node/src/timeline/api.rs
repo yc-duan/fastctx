@@ -74,6 +74,10 @@ pub(crate) async fn call(
     let request = super::copy::unmarked(request);
     let mut refused = None;
     for (link, account) in node.speakers(&Acting::Here, &machine, Purpose::Agents).map_err(failure)? {
+        if !link.view().timeline_pages {
+            refused = Some(Failure::unsupported("this network's hub does not relay timeline pages; update the hub"));
+            continue;
+        }
         let facts = link.call(&machine.name, &account, Purpose::Look, RemoteCall::Facts).await.map_err(failure)?;
         match facts {
             Ok(RemoteReply::Facts(facts)) if facts.timeline_reads => {}
