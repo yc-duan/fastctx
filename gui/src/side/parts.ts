@@ -266,13 +266,6 @@ export class SideParts implements PartSet {
     this.filesPage?.changed(files);
   }
 
-  /** All the conversation changed, as a page of the side. */
-  openChanges(): boolean {
-    if (!this.frame || !this.filesPage) return false;
-    this.frame.show(PART.files);
-    return true;
-  }
-
   /** A file read in the side over the parts, the side opened for it, over
    *  the whole desk where there is no room beside; false where the side is
    *  showing another conversation's parts. */

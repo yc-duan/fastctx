@@ -587,10 +587,8 @@ export class ConversationPage {
           ? {
               words: fileWords,
               turn: (turn) => changes.turn(turn),
-              whole: () => changes.whole(),
               last: () => changes.last(),
               open: (machine, path) => void this.readFile(machine, path, null, "changes"),
-              all: () => void this.side?.openChanges(),
             }
           : undefined,
       named: options.named,

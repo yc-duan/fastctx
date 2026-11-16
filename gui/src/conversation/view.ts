@@ -118,18 +118,16 @@ export interface Context {
   /** Opens a file a row or a card names (`file-kind.ts`): one that reads as
    *  text in the panel beside the conversation, a picture in the viewer. */
   openFile?: ((machine: MachineName, path: string) => void) | undefined;
-  /** The files the conversation changed (`changed.ts`): a turn's are listed
-   *  under its last words once it is over, the conversation's are a page of
-   *  its side, and a file of either opens there to its changes. */
+  /** The files the conversation changed (`changed.ts`): a turn's are its
+   *  footnote once it is over, and a file of them opens in the side to its
+   *  changes. What the whole conversation changed is the side's to say. */
   changed?:
     | {
         words: FilesWords;
         turn(turn: string): ChangedFile[];
-        whole(): ChangedFile[];
         /** The turn that changed a file last. */
         last(): string | null;
         open(machine: string, path: string): void;
-        all(): void;
       }
     | undefined;
   /** The reader opened or closed something: the page stops keeping the
@@ -1860,9 +1858,8 @@ export class ConversationView {
    *  ruled line. A line of words says how many files and by how many
    *  lines, as a stretch's heading says what it did; under it a row to a
    *  file, each opening in the side to what the turn did to it. The
-   *  footnote of the turn that changed something last stands open and
-   *  names what the whole conversation changed, which opens as a page of
-   *  the side; an earlier turn's is its line alone until pressed. */
+   *  footnote of the turn that changed something last stands open; an
+   *  earlier turn's is its line alone until pressed. */
   private turnChanged(turn: string): string {
     const changed = this.context.changed;
     if (!changed || this.context.nested) return "";
@@ -1881,9 +1878,7 @@ export class ConversationView {
       .map((file) => fileRow(file, words, { attrs: `data-changed-file="${escape(file.path)}" data-machine="${escape(file.machine)}"`, where: file.machine !== this.context.residentMachine, under }))
       .join("");
     const rest = whole ? "" : `<li class="cf-rest"><button type="button" class="text-button" data-changed-more>${escape(words.moreFiles(files.length - listed.length))}</button></li>`;
-    const all = latest ? tally(changed.whole()) : null;
-    const total = all ? `<button type="button" class="tc-total" data-changed-all>${escape(words.turn.total(all.files))}${figures(all.added, all.removed)}${glyph("chevron", 12)}</button>` : "";
-    return `<section class="turn-changed${open ? " open" : ""}" data-turn="${escape(turn)}"><header class="tc-head"><button type="button" class="tc-fold" data-changed-fold aria-expanded="${open}"><span>${escape(words.turn.changed(sum.files))}</span>${figures(sum.added, sum.removed)}${glyph("chevron", 16)}</button>${total}</header><div class="tc-box"><div class="tc-inner"><ul class="cf-files">${rows}${rest}</ul></div></div></section>`;
+    return `<section class="turn-changed${open ? " open" : ""}" data-turn="${escape(turn)}"><header class="tc-head"><button type="button" class="tc-fold" data-changed-fold aria-expanded="${open}"><span>${escape(words.turn.changed(sum.files))}</span>${figures(sum.added, sum.removed)}${glyph("chevron", 16)}</button></header><div class="tc-box"><div class="tc-inner"><ul class="cf-files">${rows}${rest}</ul></div></div></section>`;
   }
 
   /** What a turn's list of changed files is drawn from. */
@@ -1893,8 +1888,7 @@ export class ConversationView {
     const files = changed.turn(turn);
     if (!files.length) return "";
     const sum = tally(files);
-    const all = changed.last() === turn ? tally(changed.whole()) : null;
-    return `|c${sum.files}:${sum.added}:${sum.removed}:${this.changedFolds.get(turn) ?? ""}:${this.changedWhole.has(turn) ? 1 : 0}${all ? `:${all.files}:${all.added}:${all.removed}` : ""}`;
+    return `|c${sum.files}:${sum.added}:${sum.removed}:${this.changedFolds.get(turn) ?? ""}:${this.changedWhole.has(turn) ? 1 : 0}${changed.last() === turn ? ":l" : ""}`;
   }
 
   /** What the user attached to their words, above them: pictures, one
@@ -3655,14 +3649,13 @@ export class ConversationView {
       else settler?.remove();
       return;
     }
-    // A turn's list of changed files: its head folds it, a file of it and
-    // the conversation's sum open in the side.
-    const changedHit = (event.target as HTMLElement).closest<HTMLElement>("[data-changed-fold], [data-changed-more], [data-changed-file], [data-changed-all]");
+    // A turn's list of changed files: its line folds it, a file of it
+    // opens in the side.
+    const changedHit = (event.target as HTMLElement).closest<HTMLElement>("[data-changed-fold], [data-changed-more], [data-changed-file]");
     const changed = this.context.changed;
     if (changedHit && changed) {
       event.preventDefault();
       event.stopPropagation();
-      if (changedHit.dataset.changedAll !== undefined) return changed.all();
       if (changedHit.dataset.changedFile !== undefined) return changed.open(changedHit.dataset.machine!, changedHit.dataset.changedFile);
       const box = changedHit.closest<HTMLElement>(".turn-changed")!;
       const turn = box.dataset.turn!;

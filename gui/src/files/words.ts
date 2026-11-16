@@ -81,7 +81,6 @@ export interface FilesWords {
   };
   turn: {
     changed(n: number): string;
-    total(n: number): string;
   };
   side: {
     name: string;
@@ -159,7 +158,6 @@ export const zhFiles: FilesWords = {
   },
   turn: {
     changed: (n) => `本轮改了 ${n} 个文件`,
-    total: (n) => `对话共 ${n} 个文件`,
   },
   side: {
     name: "文件",
@@ -234,7 +232,6 @@ export const enFiles: FilesWords = {
   },
   turn: {
     changed: (n) => `${n} ${n === 1 ? "file" : "files"} changed this turn`,
-    total: (n) => `${n} ${n === 1 ? "file" : "files"} in this conversation`,
   },
   side: {
     name: "Files",

@@ -707,9 +707,8 @@
    line sets it off, as a page's footnotes are set off; then a line of
    quiet words, as a stretch's heading is, saying how many files and by how
    many lines; opened, a row to a file under it, nothing boxed and nothing
-   filled. On the footnote of the turn that changed something last the
-   line also names what the whole conversation changed, the way into its
-   side. */
+   filled. What the whole conversation changed is not said here: the
+   side's overview says it. */
 .turn-changed {
   position: relative;
   max-width: 100%;
@@ -779,30 +778,6 @@
   --turn: 0deg;
 }
 
-/* What the whole conversation changed: quieter, at the line's end. */
-.tc-total {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
-  margin-left: auto;
-  color: var(--text-3);
-  font: inherit;
-  line-height: inherit;
-  transition: color var(--hover) var(--ease);
-}
-
-.tc-total:hover {
-  color: var(--text);
-}
-
-.tc-total > .glyph {
-  rotate: -90deg;
-}
-
-.tc-total:not(:hover) > .cf-figures {
-  opacity: 0.75;
-}
-
 .tc-box {
   display: grid;
   grid-template-rows: 0fr;
@@ -823,10 +798,12 @@
   transition: visibility 0s var(--expand);
 }
 
-/* The files: lines of the footnote, in a short measure so that a file's
-   lines stand near its name. */
+/* The files: lines of the footnote, no wider than the longest of them, so
+   that the lines added and removed stand in one column close to the
+   names. */
 .tc-inner > .cf-files {
-  max-width: 34em;
+  width: fit-content;
+  max-width: 100%;
   margin: 2px 0 0 -8px;
   border-radius: 0;
   background: none;
@@ -839,10 +816,14 @@
 }
 
 .turn-changed .cf-row {
-  gap: 10px;
+  gap: 18px;
   min-height: 30px;
   padding: 0 8px;
   border-radius: 8px;
+}
+
+.turn-changed .cf-row > .cf-mark {
+  margin-right: -8px;
 }
 
 .turn-changed .cf-squares {
