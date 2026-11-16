@@ -34,7 +34,7 @@ export interface Gauge {
 export function gauge(seed: string, used: number, how: Gauge = {}): string {
   const level = how.idle ? " idle" : used >= 100 ? " spent" : used >= 90 || how.near ? " high" : "";
   const stop = how.stop === undefined ? "" : `<i class="lg-stop" style="left:${how.stop}%"></i>`;
-  return `<span class="lg-cell"${how.said ? ` title="${how.said}"` : ""}><span class="lg-meter${level}"><span class="lg-ink"${how.tall ? ` style="height:${how.tall}px"` : ""}>${meter(used / 100, seed, [], false, 150, how.tall ?? 14)}${stop}</span><b>${how.figure ?? `${used}%`}</b></span>${how.under === undefined ? "" : `<small>${how.under || "&nbsp;"}</small>`}</span>`;
+  return `<span class="lg-cell"${how.said ? ` title="${how.said}"` : ""}><span class="lg-meter${level}"><span class="lg-ink"${how.tall ? ` style="height:${how.tall}px"` : ""}>${meter(used / 100, seed, [], false)}${stop}</span><b>${how.figure ?? `${used}%`}</b></span>${how.under === undefined ? "" : `<small>${how.under || "&nbsp;"}</small>`}</span>`;
 }
 
 /** A switch as the app draws it: its word, then the track. */

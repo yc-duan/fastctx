@@ -34,7 +34,7 @@ import { effect, type Signal } from "../signals";
 import type { Store } from "../store";
 import { CallsList, type CallsContext } from "./calls";
 import type { CallsWords } from "./calls-words";
-import { bar, calendar, fitInks, meter, parts, punch, quota, weeks, type Amounts, type RingPart } from "./draw";
+import { bar, calendar, meter, parts, punch, quota, weeks, type Amounts, type RingPart } from "./draw";
 import { keepRecord, keptRecord, keptReport, readerNow, readReport, reportKey } from "./kept";
 import { allowanceTrack, between, byDay, byHourOfWeek, dayOf, DAY_MS, daysBefore, longestRun, pace, total, track, valueOf, windowOf, type Person, type Span, type Unit, type Usage, type Went } from "./model";
 import { assistingMe, assistsOf, namer } from "./people";
@@ -135,7 +135,6 @@ export class LoginUsagePage implements Page {
     this.resize = new ResizeObserver(() => {
       const figure = this.body.querySelector<HTMLElement>(".ledger-figure");
       if (figure && (Math.abs(figure.clientWidth - this.width) >= 1 || Math.abs(figure.clientHeight - this.height) >= 1)) this.draw();
-      fitInks(this.body);
     });
     this.resize.observe(this.body);
     this.stop = effect(() => {
@@ -296,7 +295,6 @@ export class LoginUsagePage implements Page {
     }
     this.body.scrollTop = top;
     this.body.querySelector(".ledger-sheet.resets .ledger-tablist .current")?.scrollIntoView({ block: "nearest", inline: "nearest" });
-    fitInks(this.body);
     // The figure's size is known once it is laid out: a first drawing at a
     // guess is drawn again, once, at the size it has.
     const figure = this.body.querySelector<HTMLElement>(".ledger-figure");
@@ -715,7 +713,7 @@ export class LoginUsagePage implements Page {
               .slice(0, 5)
               .map((one) => {
                 const share = valueOf(one.sum, unit) / sum;
-                return `<div class="ledger-model"><span class="ledger-model-name" title="${escape(one.model)}">${escape(modelName(one.model))}</span>${bar(share, `${this.key}:${one.model}`, 200, 12, ink)}<span class="ledger-model-share">${Math.round(share * 100)}%</span><span class="ledger-model-value">${escape(amounts.say(valueOf(one.sum, unit)))}</span></div>`;
+                return `<div class="ledger-model"><span class="ledger-model-name" title="${escape(one.model)}">${escape(modelName(one.model))}</span>${bar(share, `${this.key}:${one.model}`, ink)}<span class="ledger-model-share">${Math.round(share * 100)}%</span><span class="ledger-model-value">${escape(amounts.say(valueOf(one.sum, unit)))}</span></div>`;
               })
               .join("")
           : `<p class="ledger-none">${escape(words.noneThisWeek)}</p>`

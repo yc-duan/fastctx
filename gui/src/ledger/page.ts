@@ -16,7 +16,6 @@ import { link, type LoginTab, type Place as AppPlace } from "../app/places";
 import type { Page } from "../app/shell";
 import { effect } from "../app/signals";
 import type { Store } from "../app/store";
-import { fitInks } from "../app/usage/draw";
 import { glyph } from "../conversation/glyphs";
 import type { AccountChange, Login as AccountLogin } from "../world/accounts";
 import type { ChangePreview, FolderChange, LoginChange, MachineLogins, ModelChange, WorldLogins } from "../world/logins";
@@ -190,7 +189,6 @@ export class AgentsPage implements Page {
     // The sidebar's button, where the sidebar folds away (`shell.ts`).
     this.main.querySelector(".lg-head")?.insertAdjacentHTML("afterbegin", `<button class="icon-button menu-button" type="button" aria-label="${this.options.menuLabel}">${glyph("menu", 20)}</button>`);
     if (how === "quiet") this.main.querySelector<HTMLElement>(".lg-sheet")?.scrollTo({ top: kept });
-    fitInks(this.main);
     fillCharts(this.main, how !== "quiet");
   }
 

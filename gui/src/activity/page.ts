@@ -483,14 +483,13 @@ export class ActivityPage implements Page {
     const now = this.now();
     const from = dayOf(now) - (SPAN_DAYS[this.span] - 1) * DAY_MS;
     const inks = ["var(--pen-graphite)", "var(--pen-sky)", "var(--pen-sage)", "var(--pen-rose)", "var(--pen-trace)"];
-    const width = Math.min(this.width - 8, 760);
     const row = (label: string, shares: { key: string; runs: number; failed: number; busy: number }[], name: (key: string) => string, inkOf?: (key: string, index: number) => string) => {
       const total = shares.reduce((sum, one) => sum + one.runs, 0);
       if (!total) return "";
       const shown = shares.slice(0, 5);
       const drawn = shown.map((one, index) => ({ value: one.runs, ink: inkOf?.(one.key, index) ?? inks[index % inks.length]!, said: `${name(one.key)}\n${words.count(one.runs)}${one.failed ? `\n${words.failed(one.failed)}` : ""}\n${words.ran(words.duration(one.busy))}` }));
       const keys = shown.map((one, index) => `<span class="ay-key"><i style="background:${drawn[index]!.ink}"></i>${escape(name(one.key))}</span>`).join("");
-      return `<div class="ay-spread-row"><h3 class="ay-label">${escape(label)}</h3>${parts(drawn, `${label}:${this.span}`, width)}<div class="ay-keys">${keys}</div></div>`;
+      return `<div class="ay-spread-row"><h3 class="ay-label">${escape(label)}</h3>${parts(drawn, `${label}:${this.span}`)}<div class="ay-keys">${keys}</div></div>`;
     };
     const machines = spread(this.yearHours, from, (hour) => hour.machine);
     const agents = spread(this.yearHours, from, (hour) => hour.agent ?? (hour.session ? "other" : "page"));

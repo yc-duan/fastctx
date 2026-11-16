@@ -16,7 +16,6 @@ import "./ledger.css";
 
 import { installPointerHints } from "../app/pointer-hint";
 import { followSwitches, grabSwitches } from "../app/segment-slide";
-import { fitInks } from "../app/usage/draw";
 import { glyph } from "../conversation/glyphs";
 import { installPens } from "../pen/filters";
 import { installRules } from "../pen/rules";
@@ -66,7 +65,6 @@ drawnBy((how) => {
   main.dataset.coming = how;
   main.innerHTML = state.place.kind === "login" ? loginPage() : homePage();
   if (how === "quiet") main.querySelector<HTMLElement>(".lg-sheet")?.scrollTo({ top: kept });
-  fitInks(main);
   fillCharts(main, how !== "quiet");
 });
 

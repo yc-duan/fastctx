@@ -271,7 +271,7 @@
   cursor: pointer;
 }
 
-/* The spread: what went where, a felt bar of parts each. */
+/* The spread: what went where, a bar of parts each. */
 .ay-spread {
   display: flex;
   flex-direction: column;

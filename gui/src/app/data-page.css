@@ -37,14 +37,8 @@
 }
 
 .data-bar {
-  display: block;
   width: 100%;
-  height: 32px;
-  overflow: visible;
-}
-
-.data-ink {
-  mix-blend-mode: var(--pen-blend);
+  height: 16px;
 }
 
 .data-ink.data-conversations { fill: var(--data-conversations); }

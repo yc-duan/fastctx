@@ -19,7 +19,7 @@ import type { Page } from "./shell";
 import type { Store } from "./store";
 import { CAUGHT_UP, INKS, lagLines } from "./sync-draw";
 import type { SyncWords } from "./sync-words";
-import { fitInks, parts } from "./usage/draw";
+import { parts } from "./usage/draw";
 import { waiting } from "./waiting";
 
 export interface SyncPageOptions {
@@ -177,7 +177,6 @@ export class SyncPage implements Page {
     redrawKeepingFocus(this.body, () => {
       this.body.innerHTML = html;
     });
-    fitInks(this.body);
     // The line is drawn at the column's width: measured once drawn, and
     // drawn again where it was another.
     const column = this.body.querySelector<HTMLElement>(".sync-line");
@@ -280,7 +279,7 @@ export class SyncPage implements Page {
       ...(device.left ?? []).map(([part, bytes]) => ({ value: bytes, ink: PART_INKS[part], said: `${words.parts[part]} ${bytesSaid(bytes)}` })),
       ...(device.missing_bytes ? [{ value: device.missing_bytes, ink: PART_INKS.files, said: `${words.filesPart} ${bytesSaid(device.missing_bytes)}` }] : []),
     ].filter((share) => share.value > 0);
-    const bar = shares.length ? parts(shares, `sync:${device.machine}`, 320) : "";
+    const bar = shares.length ? parts(shares, `sync:${device.machine}`) : "";
     const keys = shares.length > 1 ? `<ul class="sync-parts">${shares.map((share) => `<li><span class="sync-swatch" style="--ink:${share.ink}" aria-hidden="true"></span>${escape(share.said)}</li>`).join("")}</ul>` : "";
     const facts = [
       device.unpulled ? words.unpulled(device.unpulled) : "",

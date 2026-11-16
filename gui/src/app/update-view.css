@@ -253,8 +253,8 @@
   flex: none;
   width: 64px;
   height: 4px;
-  border-radius: 2px;
-  background: var(--fill-strong);
+  border-radius: var(--radius-full);
+  background: var(--bar-track);
   overflow: hidden;
 }
 

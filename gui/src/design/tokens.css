@@ -262,6 +262,9 @@
   /* The turn's line: the pencil trace the pen writes over, and the light
      that passes over its word; each must show on this paper. */
   --pen-trace: rgba(154, 151, 141, 0.38);
+  /* The track of a bar (`pen/bar.ts`): a grey a step deeper than a filled
+     box, so it reads on the paper and on a card alike. */
+  --bar-track: rgba(245, 242, 232, 0.13);
   --glint: var(--pen-clay);
   --pen-sky: #7fa8cf;
   --pen-sage: #9cb07e;
@@ -319,6 +322,9 @@
   --pen-graphite: #8f9092;
   --pen-clay: #c2c4c7;
   --pen-trace: rgba(143, 144, 146, 0.42);
+  /* The track of a bar (`pen/bar.ts`): a grey a step deeper than a filled
+     box, so it reads on the paper and on a card alike. */
+  --bar-track: rgba(255, 255, 255, 0.14);
   --glint: var(--text-strong);
   --pen-sky: #8fa9c4;
   --pen-sage: #9fae8f;
@@ -375,6 +381,9 @@
   --pen-graphite: #87867f;
   --pen-clay: #c96442;
   --pen-trace: rgba(135, 134, 127, 0.55);
+  /* The track of a bar (`pen/bar.ts`): a grey a step deeper than a filled
+     box, so it reads on the paper and on a card alike. */
+  --bar-track: rgba(60, 55, 40, 0.12);
   --glint: var(--pen-clay);
   --pen-sky: #6a9bcc;
   --pen-sage: #788c5d;

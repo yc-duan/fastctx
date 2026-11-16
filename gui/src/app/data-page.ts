@@ -13,7 +13,7 @@ import { bytesSaid } from "../bytes";
 import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
 import { enProblems, known, zhProblems } from "./problem";
-import { outline, seeded, type Point } from "../pen/shapes";
+import { bar } from "../pen/bar";
 import { OUTPUT_DAYS, type ConversationSpace, type DataCall, type DataReply, type Group, type Space } from "../world/data";
 import type { Confirm } from "./confirm";
 import { link } from "./places";
@@ -264,7 +264,7 @@ export class DataPage implements Page {
     return "";
   }
 
-  /** The hand-drawn bar of everything here, a colour for each kind. */
+  /** The bar of everything here, a colour for each kind. */
   private bar(space: Space): string {
     const { words } = this.options;
     const sizes: Record<(typeof KIND_ORDER)[number], number> = {
@@ -275,26 +275,15 @@ export class DataPage implements Page {
       other: space.kinds.other,
     };
     const total = totalOf(space) || 1;
-    const width = 600;
-    let at = 4;
-    const random = seeded("data-bar");
-    const strokes = KIND_ORDER.filter((kind) => sizes[kind] > 0)
-      .map((kind) => {
-        const length = Math.max(6, ((width - 8) * sizes[kind]) / total);
-        const points: Point[] = [];
-        for (let x = at; x <= at + length; x += 8) points.push([x, 16 + Math.sin(x / 23) * 0.7]);
-        points.push([at + length, 16]);
-        at += length;
-        return `<path class="data-ink data-${kind}" d="${outline(points, 14, random, { pressure: 0.16, taperStart: 0.02, taperEnd: 0.02 })}"/>`;
-      })
-      .join("");
+    const shown = KIND_ORDER.filter((kind) => sizes[kind] > 0);
+    const drawn = bar({ parts: shown.map((kind) => ({ share: sizes[kind] / total, className: `data-ink data-${kind}` })), seed: "data-bar", thick: 12 }, "data-bar");
     const legend = KIND_ORDER.filter((kind) => sizes[kind] > 0)
       .map((kind) => `<li><span class="data-swatch data-${kind}" aria-hidden="true"></span><span>${escape(words.kinds[kind])}</span><span class="data-size">${escape(size(sizes[kind]))}</span></li>`)
       .join("");
     return `<section class="data-top">
       <p class="data-total" title="${escape(space.root)}">${escape(words.total(size(totalOf(space))))}</p>
       ${space.unread ? `<p class="feature-note" title="${escape(space.unread.first ?? "")}">${escape(words.unread(space.unread.entries))}</p>` : ""}
-      <svg class="data-bar" viewBox="0 0 ${width} 32" preserveAspectRatio="none" aria-hidden="true"><g filter="url(#pen-marker-lite)">${strokes}</g></svg>
+      ${drawn}
       <ul class="data-legend">${legend}</ul>
     </section>`;
   }

@@ -12,7 +12,6 @@ import { row } from "./rows";
 import { bar } from "./usage/draw";
 
 /** How long a code's bar is drawn. */
-const METER_WIDTH = 64;
 
 export interface CodeWords {
   /** A code with no name, by how it is given. */
@@ -124,7 +123,7 @@ export function codeRow(token: TokenSeen, login: Login, here: string, words: Cod
     token.made_by && token.made_by !== here ? words.madeOn(token.made_by) : "",
   ].filter(Boolean);
   // A code for one device or for any number has no bar to fill.
-  const full = token.uses > 1 ? `<span class="code-meter">${bar(token.used / token.uses, `code:${token.key}`, METER_WIDTH, 10)}</span>` : "";
+  const full = token.uses > 1 ? `<span class="code-meter">${bar(token.used / token.uses, `code:${token.key}`)}</span>` : "";
   return row(
     glyph(codeMark(token), 16),
     escape(codeName(token, words)),

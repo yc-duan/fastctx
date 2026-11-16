@@ -1,11 +1,11 @@
 // The activity page's drawings, in the usage page's pen (`../app/usage/draw.ts`):
-// a day as lanes of felt strokes, one lane a machine; a year of days as
+// a day as lanes of round-ended bars, one lane a machine; a year of days as
 // cells inked by how much ran; the hours of the week as dots; a file's
-// lines added and removed as two short strokes. Each is drawn at the width
+// lines added and removed as two short bars. Each is drawn at the width
 // it is shown at, and the hover over each mark says what it stands for.
 
 import { escape } from "../conversation/prose";
-import { felt } from "../pen/felt";
+import { barMarks, drawBar, pill } from "../pen/bar";
 import { blot, dashed, dot, outline, ruled, seeded, swatch } from "../pen/shapes";
 import { DAY_MS, HOUR_MS, began, dayOf, ended, failing, headline, lasted, weekdayOf, type Placed } from "./model";
 import type { ActivityWords } from "./words";
@@ -88,8 +88,8 @@ function tracks(deeds: Placed[], now: number, minimum: number): Map<Placed, numb
   return placed;
 }
 
-/** A day as lanes, one a machine, each deed a felt stroke from its start
- *  to its end, the hours ruled across the top. */
+/** A day as lanes, one a machine, each deed a round-ended bar from its
+ *  start to its end (`pen/bar.ts`), the hours ruled across the top. */
 export function timeline(input: TimelineInput): { svg: string; height: number } {
   const { width, lanes, day, now, words } = input;
   const narrow = width < 560;
@@ -100,14 +100,14 @@ export function timeline(input: TimelineInput): { svg: string; height: number } 
   const span = to - from;
   const x = (at: number) => left + ((Math.min(Math.max(at, from), to) - from) / span) * (width - left - right);
   const random = seeded(`timeline:${input.seed}`);
-  // A stroke is never shorter than a dab: this much of the day.
+  // A bar is never shorter than a dot: this much of the day.
   const minimum = (6 / (width - left - right)) * span;
   let y = top;
   let rules = "";
   let ink = "";
   let hits = "";
   let labels = "";
-  const stroke = 9;
+  const stroke = 8;
   const pitch = 13;
   for (const lane of lanes) {
     const placed = tracks(lane.deeds, now, minimum);
@@ -120,7 +120,7 @@ export function timeline(input: TimelineInput): { svg: string; height: number } 
       const start = x(began(deed));
       const end = Math.max(start + 6, x(ended(deed) ?? now));
       const cy = y + 9 + track * pitch + stroke / 2;
-      ink += `<path fill="${inkOf(deed)}" fill-opacity="${deed.outcome === "running" ? 0.55 : 0.88}" d="${felt(start, end, cy, stroke, random)}"/>`;
+      ink += `<path fill="${inkOf(deed)}" fill-opacity="${deed.outcome === "running" ? 0.55 : 0.88}" d="${pill(start, end, cy, stroke, random)}"/>`;
       if (deed.outcome === "running") ink += `<path fill="var(--pen-graphite)" d="${blot([end + 3, cy], 1.8, random)}"/>`;
       hits += `<rect class="ledger-hit" data-job="${escape(deed.job)}" data-machine="${escape(deed.machine)}" x="${f(start - 2)}" y="${f(cy - pitch / 2)}" width="${f(end - start + 4)}" height="${pitch}" rx="3"${hint(said(deed, now, words, input.when))}/>`;
     }
@@ -145,7 +145,7 @@ export function timeline(input: TimelineInput): { svg: string; height: number } 
   }
   const height = Math.max(y + 6, top + 40);
   return {
-    svg: `<svg class="ledger-chart ay-timeline" viewBox="0 0 ${f(width)} ${f(height)}" width="${f(width)}" height="${f(height)}">${rules}${axis}${labels}<g class="ledger-ink" filter="url(#pen-felt)">${ink}</g>${hits}</svg>`,
+    svg: `<svg class="ledger-chart ay-timeline" viewBox="0 0 ${f(width)} ${f(height)}" width="${f(width)}" height="${f(height)}">${rules}${axis}${labels}<g class="ledger-ink" filter="url(#pen-bar)">${ink}</g>${hits}</svg>`,
     height,
   };
 }
@@ -165,7 +165,7 @@ export interface YearInput {
 
 /** A year of days, a column a week from Monday down, each day inked by how
  *  much ran, by quarters of the days that ran anything; under each column
- *  that week's runs as a felt stroke, so the year's trend reads straight
+ *  that week's runs as a column, so the year's trend reads straight
  *  down from the days it sums. As many recent weeks as fit. */
 export function year(input: YearInput): { svg: string; height: number } {
   const { width, days, today, words } = input;
@@ -281,7 +281,7 @@ export function runs(times: { at: number; failed: boolean }[], from: number, to:
   return `<svg class="ay-runs" viewBox="0 0 ${width} 16" preserveAspectRatio="none" aria-hidden="true"><path class="ledger-trace" d="${ruled([2, 8], [width - 2, 8], 0.6, random)}"/><path fill="var(--pen-graphite)" fill-opacity="0.75" d="${ink}"/><path fill="var(--pen-clay)" d="${wrong}"/></svg>`;
 }
 
-/** A file's lines added and removed, as two short strokes against the
+/** A file's lines added and removed, as two short bars against the
  *  longest of its list. */
 export function lines(added: number | undefined, removed: number | undefined, most: number, seed: string): string {
   if (added === undefined && removed === undefined) return "";
@@ -291,16 +291,14 @@ export function lines(added: number | undefined, removed: number | undefined, mo
   const a = scale(added ?? 0);
   const r = scale(removed ?? 0);
   const ink =
-    (a ? `<path fill="var(--add-fg)" d="${felt(2, 2 + a, 7, 6, random)}"/>` : "") +
-    (r ? `<path fill="var(--del-fg)" d="${felt(width / 2 + 2, width / 2 + 2 + r, 7, 6, random)}"/>` : "");
-  return `<svg class="ay-lines" viewBox="0 0 ${width} 14" width="${width}" height="14" aria-hidden="true"><g filter="url(#pen-felt)">${ink}</g></svg>`;
+    (a ? `<path fill="var(--add-fg)" d="${pill(2, 2 + a, 7, 5, random)}"/>` : "") +
+    (r ? `<path fill="var(--del-fg)" d="${pill(width / 2 + 2, width / 2 + 2 + r, 7, 5, random)}"/>` : "");
+  return `<svg class="ay-lines" viewBox="0 0 ${width} 14" width="${width}" height="14" aria-hidden="true"><g filter="url(#pen-bar)">${ink}</g></svg>`;
 }
 
-/** How long a deed has run, as a felt stroke that grows slower the longer
- *  it goes: a minute is a short dab, an hour most of the way. */
+/** How long a deed has run, as a bar that fills slower the longer it
+ *  goes: a minute is a short stretch, an hour most of the way. */
 export function elapsed(ms: number, seed: string, width = 120): string {
-  const random = seeded(`elapsed:${seed}`);
   const share = Math.min(1, Math.log10(1 + ms / 10_000) / Math.log10(1 + 7_200_000 / 10_000));
-  const length = Math.max(6, share * (width - 6));
-  return `<svg class="ay-elapsed" viewBox="0 0 ${width} 12" width="${width}" height="12" aria-hidden="true"><path class="ledger-trace" d="${ruled([2, 6], [width - 2, 6], 0.6, random)}"/><g filter="url(#pen-felt)"><path fill="var(--pen-graphite)" fill-opacity="0.7" d="${felt(2, 2 + length, 6, 7, random)}"/></g></svg>`;
+  return `<svg class="ay-elapsed" viewBox="0 0 ${width} 12" width="${width}" height="12" aria-hidden="true">${barMarks(drawBar(width, 12, [{ share: Math.max(share, 6 / width) }], seeded(`elapsed:${seed}`), 6))}</svg>`;
 }

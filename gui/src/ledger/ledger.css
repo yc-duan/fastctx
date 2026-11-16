@@ -643,7 +643,7 @@
   background: var(--text-2);
 }
 /* The stroke is drawn in from its start as its page arrives. */
-.lg-main:not([data-coming="quiet"]) .ledger-meter-ink > g {
+.lg-main:not([data-coming="quiet"]) .ledger-meter-ink .bar-fill {
   clip-path: inset(-8px calc((1 - var(--shown)) * 100%) -8px -8px);
   animation: lg-ink var(--slow) var(--fold-easing) var(--enter) both;
 }

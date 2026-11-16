@@ -5,6 +5,7 @@
 // reading. Seeded, so the same value is always drawn the same way; text is
 // never drawn by the pen and stays sharp.
 
+import { bar } from "../pen/bar";
 import { blot, circle, dashed, outline, ruled, seeded, type Point } from "../pen/shapes";
 
 const f = (n: number) => (Math.round(n * 10) / 10).toString();
@@ -218,18 +219,10 @@ export class Spark {
   }
 }
 
-/** A share of a disk, as a bar drawn with a broad marker over a pencil
- *  line the length of the whole. */
+/** A share of a disk, as the interface's bar (`pen/bar.ts`). */
 export function diskBar(share: number, seed: string): string {
-  const width = 240;
-  const random = seeded(`disk:${seed}`);
-  const whole = ruled([3, 9], [width - 3, 9], 1, random);
-  const end = 3 + (width - 6) * Math.max(0, Math.min(1, share));
-  const points: Point[] = [];
-  for (let x = 3; x < end; x += 8) points.push([x, 9 + Math.sin(x / 19) * 0.5]);
-  points.push([end, 9]);
-  const used = share > 0.004 ? outline(points, 9, random, { pressure: 0.14, taperStart: 0.02, taperEnd: 0.03 }) : "";
-  return `<svg class="mp-disk-bar" viewBox="0 0 ${width} 18" preserveAspectRatio="none" aria-hidden="true" data-level="${levelOf(share)}"><path class="mp-disk-whole" d="${whole}"/><g filter="url(#pen-marker-lite)"><path class="mp-disk-used" d="${used}"/></g></svg>`;
+  const used = Math.max(0, Math.min(1, share));
+  return bar({ parts: used > 0.004 ? [{ share: used, className: "mp-disk-used" }] : [], seed: `disk:${seed}` }, "mp-disk-bar", ` data-level="${levelOf(share)}"`);
 }
 
 /** A stretch of a line's days. */
