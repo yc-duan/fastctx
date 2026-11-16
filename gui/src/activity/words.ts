@@ -1,210 +1,84 @@
-// What the activity page says (`world-gui.md`, 活动): the names of its
-// views and spans, short states, and the hovers that carry the numbers.
+// What the activity page says (`gui-activity-page`): the files changed, in
+// the words a list of changed files is read in everywhere.
 
-import type { Outcome, TouchHow } from "../world/book";
+import type { TouchHow } from "../world/book";
 
-export type View = "now" | "timeline" | "calendar" | "rhythm" | "spread" | "files" | "heed" | "sessions";
 export type Span = "day" | "week" | "month" | "quarter";
 
 export interface ActivityWords {
   title: string;
-  views: Record<View, string>;
   spans: Record<Span, string>;
-  outcome: Record<Outcome, string>;
-  how: Record<TouchHow, string>;
-  /** Nothing runs on any machine. */
-  idle: string;
-  /** What ended lately, under what runs now. */
-  lately: string;
-  /** Nothing happened in the span shown. */
+  spanLabel: string;
+  /** How many files changed in the span, over the list. */
+  changed(files: number): string;
+  /** A machine's files, beside its name. */
+  files(n: number): string;
+  /** Nothing was changed in the span shown. */
   quiet: string;
-  /** Machines that did not answer, in a hover. */
+  how: Record<TouchHow, string>;
+  /** A file seen changed in its repository, rather than written by
+   *  Fastctx's own commands: its lines are counted against the last commit. */
+  seen: string;
+  /** Whose session changed it, where it has no name of its own. */
+  own(agent: string): string;
+  /** A session of another machine, beside who changed it. */
+  from(machine: string): string;
+  /** The changes of an opened file not listed, earlier than those that are. */
+  earlier(n: number): string;
+  /** Machines that did not answer. */
   unanswered(machines: string): string;
   /** More went on in the span than a machine's answer holds. */
   truncated(limit: number): string;
-  /** A machine that did not answer, in its lane. */
-  away: string;
-  ran(duration: string): string;
-  running(duration: string): string;
-  duration(ms: number): string;
-  count(n: number): string;
-  files(n: number): string;
-  failed(n: number): string;
-  bytes(n: number): string;
-  went(machines: string): string;
-  /** The views' row labels. */
-  byMachine: string;
-  byAgent: string;
-  byProject: string;
-  byOutcome: string;
-  noProject: string;
-  agent: Record<"claude" | "codex" | "page" | "other", string>;
-  /** A session the user opened on their own, and one of Fastctx's. */
-  own: string;
-  held: string;
-  /** A file seen changed in its repository, in its hover. */
-  seen: string;
-  heed: { failed: string; stopped: string; lost: string; long: string; big: string; removed: string };
-  /** The calendar and rhythm hovers. */
-  day(date: string, runs: number, failed: number): string;
-  hourOfWeek(weekday: string, hour: number, runs: number): string;
-  weekday: string[];
-  /** A day as the timeline and the hovers name it; a month's short name. */
-  date(day: number): string;
   /** A moment in a list: the time today, yesterday's with its day, else
    *  the date. */
   stamp(at: number, now: number): string;
-  month(month: number): string;
-  /** The deed's card. */
-  script: string;
-  output: string;
-  where: string;
-  session: string;
-  bringIn: string;
-  broughtIn: string;
-  bringInWhy: string;
-  previousDay: string;
-  nextDay: string;
-  today: string;
 }
 
-const zhDuration = (ms: number) => {
-  const seconds = Math.round(ms / 1000);
-  if (seconds < 60) return `${seconds} 秒`;
-  const minutes = Math.round(seconds / 60);
-  if (minutes < 60) return `${minutes} 分钟`;
-  const hours = Math.floor(minutes / 60);
-  return minutes % 60 ? `${hours} 小时 ${minutes % 60} 分` : `${hours} 小时`;
-};
-
-const enDuration = (ms: number) => {
-  const seconds = Math.round(ms / 1000);
-  if (seconds < 60) return `${seconds}s`;
-  const minutes = Math.round(seconds / 60);
-  if (minutes < 60) return `${minutes} min`;
-  const hours = Math.floor(minutes / 60);
-  return minutes % 60 ? `${hours} h ${minutes % 60} min` : `${hours} h`;
-};
-
-const size = (n: number, units: string[]) => {
-  let value = n;
-  let unit = 0;
-  while (value >= 1024 && unit < units.length - 1) {
-    value /= 1024;
-    unit += 1;
-  }
-  return `${value < 10 && unit ? value.toFixed(1) : Math.round(value)} ${units[unit]}`;
-};
+const clock = (date: Date) => `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+const daysBefore = (at: number, now: number) => Math.round((new Date(now).setHours(0, 0, 0, 0) - new Date(at).setHours(0, 0, 0, 0)) / 86_400_000);
 
 export const zhActivity: ActivityWords = {
   title: "活动",
-  views: { now: "此刻", timeline: "时间线", calendar: "日历", rhythm: "节律", spread: "分布", files: "文件", heed: "留意", sessions: "会话" },
   spans: { day: "今天", week: "7 天", month: "30 天", quarter: "90 天" },
-  outcome: { running: "运行中", done: "完成", failed: "失败", stopped: "已停止", lost: "失去联系" },
+  spanLabel: "时间范围",
+  changed: (files) => `${files} 个文件有改动`,
+  files: (n) => `${n} 个文件`,
+  quiet: "此时段没有文件改动",
   how: { added: "新建", changed: "改动", removed: "删除", copied: "复制到这里" },
-  idle: "无运行中的命令",
-  lately: "刚才",
-  quiet: "此时段无活动",
-  unanswered: (machines) => `无应答：${machines}`,
-  truncated: (limit) => `活动较多，每台电脑仅列出最近 ${limit.toLocaleString("zh-CN")} 条`,
-  away: "不在线",
-  ran: (duration) => `运行 ${duration}`,
-  running: (duration) => `已运行 ${duration}`,
-  duration: zhDuration,
-  count: (n) => `${n.toLocaleString("zh-CN")} 次`,
-  files: (n) => `${n.toLocaleString("zh-CN")} 个文件`,
-  failed: (n) => `${n.toLocaleString("zh-CN")} 次失败`,
-  bytes: (n) => size(n, ["字节", "KB", "MB", "GB"]),
-  went: (machines) => `涉及 ${machines}`,
-  byMachine: "机器",
-  byAgent: "智能体",
-  byProject: "项目",
-  byOutcome: "结果",
-  noProject: "不属于项目",
-  agent: { claude: "Claude Code", codex: "Codex", page: "页面", other: "别处" },
-  own: "自行开启的会话",
-  held: "Fastctx 的对话",
   seen: "仓库中有变更，行数相对上次提交",
-  heed: { failed: "运行失败", stopped: "已停止", lost: "失去联系", long: "耗时长", big: "输出量大", removed: "删除文件" },
-  day: (date, runs, failed) => (runs ? `${date}\n${runs} 次${failed ? `，${failed} 次失败` : ""}` : `${date}\n没有活动`),
-  hourOfWeek: (weekday, hour, runs) => `${weekday} ${hour}:00–${hour + 1}:00\n近 90 天 ${runs ? `${runs} 次` : "没有活动"}`,
-  weekday: ["一", "二", "三", "四", "五", "六", "日"],
-  date: (day) => {
-    const at = new Date(day);
-    return `${at.getMonth() + 1}月${at.getDate()}日 周${"日一二三四五六"[at.getDay()]}`;
-  },
-  month: (month) => `${month + 1}月`,
+  own: (agent) => `${agent} 会话`,
+  from: (machine) => `来自 ${machine}`,
+  earlier: (n) => `更早的 ${n} 次未列出`,
+  unanswered: (machines) => `无应答：${machines}`,
+  truncated: (limit) => `活动较多，每台电脑仅统计最近 ${limit.toLocaleString("en-US")} 条`,
   stamp: (at, now) => {
     const date = new Date(at);
-    const clock = `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
-    const days = Math.round((new Date(now).setHours(0, 0, 0, 0) - new Date(at).setHours(0, 0, 0, 0)) / 86_400_000);
-    if (days <= 0) return clock;
-    if (days === 1) return `昨天 ${clock}`;
-    return new Date(now).getFullYear() === date.getFullYear() ? `${date.getMonth() + 1}月${date.getDate()}日` : `${date.getFullYear()}年${date.getMonth() + 1}月${date.getDate()}日`;
+    const days = daysBefore(at, now);
+    if (days <= 0) return clock(date);
+    if (days === 1) return `昨天 ${clock(date)}`;
+    return `${new Date(now).getFullYear() === date.getFullYear() ? "" : `${date.getFullYear()}年`}${date.getMonth() + 1}月${date.getDate()}日 ${clock(date)}`;
   },
-  script: "命令",
-  output: "输出",
-  where: "位置",
-  session: "会话",
-  bringIn: "接入",
-  broughtIn: "已接入",
-  bringInWhy: "转为 Fastctx 对话，在侧栏中继续",
-  previousDay: "前一天",
-  nextDay: "后一天",
-  today: "今天",
 };
 
 export const enActivity: ActivityWords = {
   title: "Activity",
-  views: { now: "Now", timeline: "Timeline", calendar: "Calendar", rhythm: "Rhythm", spread: "Spread", files: "Files", heed: "Heed", sessions: "Sessions" },
   spans: { day: "Today", week: "7 days", month: "30 days", quarter: "90 days" },
-  outcome: { running: "Running", done: "Done", failed: "Failed", stopped: "Stopped", lost: "Lost" },
+  spanLabel: "Span",
+  changed: (files) => `${files} changed ${files === 1 ? "file" : "files"}`,
+  files: (n) => `${n} ${n === 1 ? "file" : "files"}`,
+  quiet: "No file was changed in this span",
   how: { added: "Added", changed: "Changed", removed: "Removed", copied: "Copied here" },
-  idle: "Nothing running",
-  lately: "Lately",
-  quiet: "Nothing in this span",
-  unanswered: (machines) => `No answer: ${machines}`,
-  truncated: (limit) => `A lot went on in this span: only each computer's latest ${limit.toLocaleString("en")} are listed`,
-  away: "Offline",
-  ran: (duration) => `Ran ${duration}`,
-  running: (duration) => `Running ${duration}`,
-  duration: enDuration,
-  count: (n) => (n === 1 ? "1 run" : `${n.toLocaleString("en")} runs`),
-  files: (n) => (n === 1 ? "1 file" : `${n.toLocaleString("en")} files`),
-  failed: (n) => `${n.toLocaleString("en")} failed`,
-  bytes: (n) => size(n, ["B", "KB", "MB", "GB"]),
-  went: (machines) => `Went to ${machines}`,
-  byMachine: "Machines",
-  byAgent: "Agents",
-  byProject: "Projects",
-  byOutcome: "Outcomes",
-  noProject: "No project",
-  agent: { claude: "Claude Code", codex: "Codex", page: "Pages", other: "Elsewhere" },
-  own: "A session you opened",
-  held: "A Fastctx conversation",
-  seen: "Seen changed in its repository; lines against the last commit",
-  heed: { failed: "Failed", stopped: "Stopped", lost: "Lost", long: "Ran long", big: "Large output", removed: "Removed files" },
-  day: (date, runs, failed) => (runs ? `${date}\n${runs} runs${failed ? `, ${failed} failed` : ""}` : `${date}\nNo activity`),
-  hourOfWeek: (weekday, hour, runs) => `${weekday} ${hour}:00–${hour + 1}:00\nLast 90 days: ${runs ? `${runs} runs` : "none"}`,
-  weekday: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
-  date: (day) => new Date(day).toLocaleDateString("en", { weekday: "short", month: "short", day: "numeric" }),
-  month: (month) => ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][month]!,
+  seen: "Seen changed in its repository; lines are counted against the last commit",
+  own: (agent) => `A ${agent} session`,
+  from: (machine) => `from ${machine}`,
+  earlier: (n) => `${n} earlier ${n === 1 ? "change is" : "changes are"} not listed`,
+  unanswered: (machines) => `No answer from ${machines}`,
+  truncated: (limit) => `Much went on: only the last ${limit.toLocaleString("en-US")} runs of each computer are counted`,
   stamp: (at, now) => {
     const date = new Date(at);
-    const clock = `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
-    const days = Math.round((new Date(now).setHours(0, 0, 0, 0) - new Date(at).setHours(0, 0, 0, 0)) / 86_400_000);
-    if (days <= 0) return clock;
-    if (days === 1) return `Yesterday ${clock}`;
-    return date.toLocaleDateString("en", { month: "short", day: "numeric", ...(new Date(now).getFullYear() === date.getFullYear() ? {} : { year: "numeric" }) });
+    const days = daysBefore(at, now);
+    if (days <= 0) return clock(date);
+    if (days === 1) return `Yesterday ${clock(date)}`;
+    return `${date.toLocaleDateString("en", { month: "short", day: "numeric", ...(new Date(now).getFullYear() === date.getFullYear() ? {} : { year: "numeric" }) })} ${clock(date)}`;
   },
-  script: "Command",
-  output: "Output",
-  where: "Where",
-  session: "Session",
-  bringIn: "Bring in",
-  broughtIn: "Brought in",
-  bringInWhy: "Carries on as a Fastctx conversation, in the sidebar",
-  previousDay: "Previous day",
-  nextDay: "Next day",
-  today: "Today",
 };

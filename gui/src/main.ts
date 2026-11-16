@@ -112,7 +112,7 @@ import { workbenchShown } from "./app/workbench-shown";
 import { ActivityPage } from "./activity/page";
 import { enActivity, zhActivity } from "./activity/words";
 import { specimenBook, specimenBookMachines } from "./specimen/activity";
-import { bringIn, readBook } from "./world/book";
+import { readBook } from "./world/book";
 import { setLanguage } from "./world/features";
 import { type Asked, untilAnswered, whyOf } from "./world/again";
 import { enFeatures, zhFeatures } from "./app/features-words";
@@ -3142,8 +3142,13 @@ function show(next: Place): void {
         head,
         machines: () => (live ? bookMachines(store.world.peek()) : specimenBookMachines),
         read: (machine, query) => (live ? readBook(machine, query) : specimenBook(machine, query, specimen!.now.getTime())),
-        workbench: workbenchShown.on,
-        bringIn: (resident) => (live ? bringIn(resident).then(() => store.refresh()) : Promise.resolve()),
+        named: (session) => {
+          const at = session.lastIndexOf("@");
+          if (at <= 0) return null;
+          const address = { resident: session.slice(0, at), machine: session.slice(at + 1) };
+          const world = live ? store.world.peek() : specimen!.world;
+          return residentAt(world, address) || listedAt(world, address) ? { name: talkNamed(address).name, link: link({ kind: "talk", address }) } : null;
+        },
         ...(live ? {} : { now: () => specimen!.now.getTime() }),
       });
       break;
