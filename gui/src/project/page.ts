@@ -1,6 +1,6 @@
 // A project's overview, on one screen: what waits for the user, the work
 // in it drawn as each conversation's way with the machines it stands on
-// (`hub-view.ts`), the pages its residents wrote and where its things are,
+// (`hub-view.ts`), where its things are,
 // as its record has them, and its history beside its record
 // (`world-history.md`). Its "⋯" shares it and
 // hands it on, where the reader may (`../app/project-acts.ts`).
@@ -14,8 +14,6 @@ import { factRow } from "../design/fact-row";
 import { redrawKeepingFocus } from "../app/focus";
 import type { Address } from "../world/events";
 import type { MapView, ProjectRecord, ResidentNow, WorldWho, Writer } from "../world/world";
-import type { PageSummary, PageWriter } from "../world/pages";
-import type { PageWords } from "../pages/words";
 import type { HomeWords } from "../home/words";
 import type { ProjectWords } from "./words";
 import { agentName } from "../world/names";
@@ -40,8 +38,6 @@ export interface ProjectOptions {
   /** Opens the form for the next version of its record. */
   revise(town: string, record: ProjectRecord): void;
   link(address: Address): string;
-  pageWords: PageWords;
-  pageLink(town: string, page: string): string;
   /** The project's "⋯": whether it has anything for the reader, opening
    *  it, and whose the project is where it is another's. */
   more?: { label: string; shown(town: string): boolean; open(town: string, name: string, anchor: HTMLElement): void; sharedBy(town: string): string | null };
@@ -56,7 +52,7 @@ export interface ProjectOptions {
   phase(phase: SentinelPhase): string;
 }
 
-type Tab = "instructions" | "history" | "pages" | "places";
+type Tab = "instructions" | "history" | "places";
 /** The page's two views: the work now, drawn; and what the project keeps. */
 type View = "now" | "reference";
 
@@ -194,13 +190,12 @@ export class ProjectPage {
           : `<p class="quiet">${escape(words.noInstructions)}</p>`,
       ],
       ...this.historySection(map.town, now),
-      ["pages", this.options.pageWords.pages, this.pages(map.town, map.pages, now)],
       ["places", words.places, record.places.length ? this.places(map) : `<p class="quiet">${escape(words.noPlaces)}</p>`],
     ];
     const section = ([tab, title, body]: [Tab, string, string]) =>
       `<section class="home-section" data-tab="${tab}"><h2 class="section-title">${escape(title)}</h2>${body}</section>`;
     // What the project keeps: its history on one side; what it asks of
-    // everyone working in it, its pages and where its things are on the other.
+    // everyone working in it and where its things are on the other.
     const first: Tab[] = sections.some(([tab]) => tab === "history") ? ["history"] : ["instructions"];
     const reference = `<div class="ph-reference">${facts}<div class="board-column">${sections
       .filter(([tab]) => first.includes(tab))
@@ -241,32 +236,12 @@ export class ProjectPage {
     }
   }
 
-  private writer(writer: Writer | PageWriter): string {
+  private writer(writer: Writer): string {
     if (writer.kind === "user") return this.options.words.you;
     if (writer.kind === "resident") return `${writer.address.resident} ${writer.address.machine}`;
     if (writer.kind === "page") return writer.page.page;
     if (writer.kind === "elsewhere") return this.options.words.elsewhere(writer.page);
     return agentName(writer.agent);
-  }
-
-  /** The pages, the latest changed first; a page taken down stays, faint,
-   *  so it can be brought back. */
-  private pages(town: string, pages: PageSummary[], now: Date): string {
-    const { pageWords: words, home } = this.options;
-    if (!pages.length) return `<p class="quiet">${escape(words.noPages)}</p>`;
-    const sorted = [...pages].sort((a, b) => Date.parse(b.current.at) - Date.parse(a.current.at));
-    return `<ul class="page-links">${sorted
-      .map(({ page, current }) => {
-        const facts = [words.version(current.version), words.written(this.writer(current.by), home.ago(now.getTime() - Date.parse(current.at)))];
-        return `<li><a class="page-link${current.withdrawn ? " withdrawn" : ""}" href="${escape(this.options.pageLink(town, page))}" title="${escape(facts.join("　"))}">
-          <span class="page-link-glyph">${glyph("page", 18)}</span>
-          <span class="page-link-body">
-            <span class="page-link-title">${escape(current.title || page)}${current.withdrawn ? `<span class="tag">${escape(words.withdrawnMark)}</span>` : ""}</span>
-            ${current.description ? `<span class="page-link-about">${escape(current.description)}</span>` : ""}
-          </span>
-        </a></li>`;
-      })
-      .join("")}</ul>`;
   }
 
   /** Its documents, the latest changed first; one taken down stays at

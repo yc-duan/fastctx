@@ -21,7 +21,6 @@ pub(super) async fn execute(node: &Arc<Node>, asked: Asked, resolved: Resolved) 
                 crate::admission::local::admit(node, &peer, &call)?;
                 resolved.bind(&mut call)?;
                 let town = match call.as_ref() {
-                    Call::Page(call) => call.town(),
                     Call::Project(fastctx_types::ProjectCall::Edit { town, .. }) => town.as_ref(),
                     _ => None,
                 };
@@ -38,12 +37,6 @@ pub(super) async fn execute(node: &Arc<Node>, asked: Asked, resolved: Resolved) 
                 resolved.check(node, &caller)?;
                 super::local_check(node, &caller, &call, &resolved)?;
                 let reply = match *call {
-                    Call::Page(call) => {
-                        let Resolved::Page { identity, .. } = &resolved else {
-                            return Err(Failure::not_run("the page has no selected identity"));
-                        };
-                        crate::pages::selected(node, &caller, &node.machine(), call, identity.as_ref()).await?
-                    }
                     Call::Plan { operation, of, .. } => {
                         let Resolved::Plan(target) = &resolved else {
                             return Err(Failure::not_run("the plan has no selected coordinates"));
@@ -118,10 +111,6 @@ pub(super) async fn execute(node: &Arc<Node>, asked: Asked, resolved: Resolved) 
                 let asker = crate::admission::admit(node, &link, &caller, &call)?;
                 super::remote_check(node, &asker, &call)?;
                 let reply = match *call {
-                    RemoteCall::PageAction { source, action } => {
-                        let result = crate::pages::actions::answer(node, &asker, source, action).await?;
-                        RemoteReply::PageAction { result }
-                    }
                     RemoteCall::Relay { made } => crate::devices::relay(node, &asker, made).await?,
                     RemoteCall::Plan { resident, operation, of } => {
                         let caller = crate::town::caller::Caller::Resident(fastctx_types::Address {

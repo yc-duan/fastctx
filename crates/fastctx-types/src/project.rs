@@ -263,7 +263,6 @@ pub struct MapView {
     pub opened: Stamp,
     /// Most recently added to first.
     pub journals: Vec<JournalSummary>,
-    pub pages: Vec<crate::pages::PageSummary>,
     /// The canon's documents, or why they could not be read.
     pub canon: Option<Result<Vec<CanonHead>, String>>,
 }

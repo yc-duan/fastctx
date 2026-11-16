@@ -110,12 +110,6 @@ pub enum RemoteCall {
         resident: ResidentId,
         request: crate::composer::Request,
     },
-    /// A page action admitted by a machine's user-only page gate. Devices
-    /// use Relay(Page::Act), never this execution call.
-    PageAction {
-        source: crate::pages::PageSource,
-        action: crate::pages::PageInvocation,
-    },
     /// Run a script there for a resident of the calling machine that works
     /// there (`world-run.md`, 这里): a job of that machine's, answered as
     /// it would be answered there.
@@ -692,7 +686,6 @@ impl RemoteCall {
                     | crate::sentinel_control::HomeRequest::Record { .. },
             } => Purpose::Look,
             Self::SentinelHome { .. } => Purpose::Hands,
-            RemoteCall::PageAction { action: crate::pages::PageInvocation::Say { .. }, .. } => Purpose::Words,
             RemoteCall::ReadAttachment { attachment: crate::attachments::AttachmentSource::Upload(file), .. }
                 if file.owner != *file.conversation() =>
             {
@@ -727,7 +720,6 @@ impl RemoteCall {
             | RemoteCall::CopyReceive { .. }
             | RemoteCall::Place { .. }
             | RemoteCall::PipeOut { .. }
-            | RemoteCall::PageAction { .. }
             | RemoteCall::ClaudeConsent { .. }
             | RemoteCall::Homes { .. }
             | RemoteCall::ScanAgents { .. }
@@ -821,9 +813,6 @@ pub enum RemoteReply {
     },
     ComposerUploaded(Box<crate::composer::UploadResult>),
     Composer(Box<crate::composer::Updated>),
-    PageAction {
-        result: crate::pages::PageResult,
-    },
     FilesFound(crate::file_search::FileSearchReply),
     Folders(crate::focus::Folders),
     Outlined {
@@ -991,7 +980,6 @@ impl RemoteCall {
             | Self::OnReceipt { .. }
             | Self::Open { .. }
             | Self::Outline { .. }
-            | Self::PageAction { .. }
             | Self::PipeOut { .. }
             | Self::Place { .. }
             | Self::Plan { .. }
@@ -1083,7 +1071,6 @@ impl RemoteReply {
             | Self::OnReceipt { .. }
             | Self::Opened { .. }
             | Self::Outlined { .. }
-            | Self::PageAction { .. }
             | Self::Plan { .. }
             | Self::Relayed { .. }
             | Self::Run { .. }

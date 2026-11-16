@@ -42,9 +42,10 @@ mod management;
 pub mod mcp_relay;
 pub mod memory;
 mod originals;
-pub mod pages;
 pub mod plans;
 mod profile;
+#[cfg(feature = "replica")]
+pub mod records_copy;
 pub mod renewal;
 mod sentinels;
 pub mod shown;
@@ -54,8 +55,6 @@ mod thumbnail;
 mod timeline;
 #[cfg(feature = "replica")]
 pub mod timeline_copy;
-#[cfg(feature = "replica")]
-pub mod records_copy;
 mod topics;
 pub mod town;
 pub mod world;
@@ -344,7 +343,9 @@ impl Client {
             )));
         }
         if !self.topics && matches!(call, Call::Topics { .. }) {
-            return Err(CallError::Failed(Failure::not_run("this node does not tell when its state changes; update it")));
+            return Err(CallError::Failed(Failure::not_run(
+                "this node does not tell when its state changes; update it",
+            )));
         }
         if !self.timeline_reads && matches!(call, Call::Timeline { .. }) {
             return Err(CallError::Failed(Failure::not_run("this node does not answer timeline pages; update it")));
@@ -695,12 +696,6 @@ pub fn command_peer() -> std::io::Result<Peer> {
             _ => Err(invalid(name)),
         }
     };
-    if let Some(page) = set("FASTCTX_PAGE")? {
-        let page = serde_json::from_str(&page).map_err(|_| invalid("FASTCTX_PAGE"))?;
-        // The page's script runs as a job; the node checks it is that job.
-        let job = set("FASTCTX_JOB")?.map(|job| job.parse().map_err(|_| invalid("FASTCTX_JOB"))).transpose()?;
-        return Ok(Peer::Page { page, job });
-    }
     let resident =
         set("FASTCTX_RESIDENT")?.map(|value| value.parse().map_err(|_| invalid("FASTCTX_RESIDENT"))).transpose()?;
     let thread = set("CODEX_THREAD_ID")?;

@@ -1,6 +1,5 @@
 //! Account-scoped metadata and document reads, independent of online computers.
 
-
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -33,18 +32,8 @@ pub(super) fn authorize(
 }
 
 enum Plan {
-    Index {
-        seq: u64,
-        catalog: Catalog,
-        first: (String, super::EntryAt),
-        last: (String, super::EntryAt),
-        pages: Vec<(String, super::EntryAt)>,
-    },
-    Document {
-        path: super::EntryAt,
-        versions: Vec<Revision>,
-        evidence: Vec<Evidence>,
-    },
+    Index { seq: u64, catalog: Catalog, first: (String, super::EntryAt), last: (String, super::EntryAt) },
+    Document { path: super::EntryAt, versions: Vec<Revision>, evidence: Vec<Evidence> },
 }
 
 pub(crate) fn ask(hub: &Arc<Hub>, from: &crate::origin::Origin, out: &Outq, id: u64, question: Question) {
@@ -102,13 +91,6 @@ pub(crate) fn ask(hub: &Arc<Hub>, from: &crate::origin::Origin, out: &Outq, id: 
                         catalog: ledger.memory.catalog(),
                         first: (first.clone(), first_path.clone()),
                         last: (last.clone(), last_path.clone()),
-                        pages: ledger
-                            .sequences
-                            .range("pages/".to_owned()..)
-                            .take_while(|(path, _)| path.starts_with("pages/"))
-                            .filter(|(file, _)| file.ends_with("/page.json"))
-                            .map(|(file, seq)| (file.clone(), path(*seq)))
-                            .collect(),
                     }
                 };
                 Ok::<_, String>((plan, store.hub.id.clone()))
@@ -147,7 +129,7 @@ impl Plan {
             Ok::<_, String>((signed, opened))
         };
         match self {
-            Self::Index { seq, catalog, first, last, pages } => {
+            Self::Index { seq, catalog, first, last } => {
                 let record = |(file, path): &(String, super::EntryAt)| {
                     let (_, entry) = entry(path)?;
                     let bytes = &entry
@@ -161,13 +143,7 @@ impl Plan {
                 };
                 let first = record(&first)?;
                 let opened = Stamp { by: first.by, on: first.on, at: first.at };
-                let mut index = ProjectIndex {
-                    seq,
-                    record: record(&last)?,
-                    opened,
-                    catalog,
-                    pages: super::page_index::read(pages, hub, town)?,
-                };
+                let mut index = ProjectIndex { seq, record: record(&last)?, opened, catalog };
                 super::for_reader::index(&mut index, usable);
                 Ok(Told::ProjectIndex { index: Box::new(index) })
             }
@@ -180,8 +156,8 @@ impl Plan {
                 // Its envelope too: the machine that wrote it, and those it
                 // names, only where the reader may work.
                 let files_changed = super::for_reader::filter(&mut opened.files, usable, &|_| {});
-                let envelope_hides =
-                    !usable(&opened.author) || opened.machines.as_ref().is_some_and(|machines| machines.iter().any(|machine| !usable(machine)));
+                let envelope_hides = !usable(&opened.author)
+                    || opened.machines.as_ref().is_some_and(|machines| machines.iter().any(|machine| !usable(machine)));
                 let entry = if files_changed || envelope_hides {
                     opened.author = asking.clone();
                     opened.machines = None;

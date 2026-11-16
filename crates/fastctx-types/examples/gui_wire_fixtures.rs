@@ -32,8 +32,6 @@ mod focus;
 mod logins;
 #[path = "gui_wire_fixtures/machine_log.rs"]
 mod machine_log;
-#[path = "gui_wire_fixtures/pages.rs"]
-mod pages;
 #[path = "gui_wire_fixtures/profile.rs"]
 mod profile;
 #[path = "gui_wire_fixtures/renewal.rs"]
@@ -67,7 +65,6 @@ struct Fixtures {
     machine_log: Vec<fastctx_types::machine_log::Page>,
     run_facts: run_facts::Fixtures,
     accounts: accounts::Fixtures,
-    pages: pages::Fixtures,
     session: session::Fixtures,
     world: world::Fixtures,
     since: since::Fixtures,
@@ -97,7 +94,6 @@ fn main() {
         machine_log: machine_log::fixtures(),
         run_facts: run_facts::fixtures(),
         accounts: accounts::fixtures(),
-        pages: pages::fixtures(),
         session: session::fixtures(),
         world: world::fixtures(),
         since: since::fixtures(),

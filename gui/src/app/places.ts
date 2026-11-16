@@ -28,8 +28,6 @@ export type Place =
   | { kind: "history"; town: string; name: string; from?: Address }
   /** One document of the history of a conversation outside any project. */
   | { kind: "talk-history"; address: Address; name: string }
-  /** A page of a project: a version of it, or the current one. */
-  | { kind: "page"; town: string; page: string; version: number | null }
   /** The drawing of the machines, with one chosen when `focus` names it;
    *  or their update view, with that one ticked. */
   | { kind: "machines"; focus?: string; updates?: boolean; alerts?: boolean }
@@ -97,8 +95,6 @@ export function link(place: Place): string {
       return `#/history/${part(place.town)}/${part(place.name)}${place.from ? `/from/${part(`${place.from.resident}@${place.from.machine}`)}` : ""}`;
     case "talk-history":
       return `#/talk-history/${part(`${place.address.resident}@${place.address.machine}`)}/${part(place.name)}`;
-    case "page":
-      return `#/page/${part(place.town)}/${part(place.page)}${place.version === null ? "" : `/${place.version}`}`;
     case "projects":
       return "#/projects";
     case "machines":
@@ -170,12 +166,6 @@ export function placeOf(hash: string): Place {
       if (parts[1] && parts[2] && at > 0) return { kind: "talk-history", address: { resident: parts[1].slice(0, at), machine: parts[1].slice(at + 1) }, name: parts[2] };
       break;
     }
-    case "page":
-      if (parts[1] && parts[2]) {
-        const version = parts[3] ? Number(parts[3]) : null;
-        return { kind: "page", town: parts[1], page: parts[2], version: version !== null && Number.isInteger(version) && version > 0 ? version : null };
-      }
-      break;
     case "projects":
       return { kind: "projects" };
     case "machines":

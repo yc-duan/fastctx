@@ -37,8 +37,8 @@ mod repair_probe;
 mod sentinel_controls;
 mod sentinels;
 mod skills;
-mod sync_status;
 mod startup;
+mod sync_status;
 mod topics;
 mod transcript;
 mod updates;
@@ -98,7 +98,6 @@ mod logins;
 mod names;
 #[cfg(windows)]
 mod package_removal;
-mod pages;
 mod reading;
 mod save_as;
 mod uploading;
@@ -609,9 +608,8 @@ async fn stop(
     turn: Option<String>,
     words: Option<Vec<String>>,
 ) -> Result<bool, String> {
-    let words = words.map(|words| {
-        words.iter().filter_map(|id| id.parse::<fastctx_types::NoticeId>().ok()).collect::<Vec<_>>()
-    });
+    let words =
+        words.map(|words| words.iter().filter_map(|id| id.parse::<fastctx_types::NoticeId>().ok()).collect::<Vec<_>>());
     let (_, stopped) = shell
         .world()
         .stop(resident(resident_id)?, machine(machine_name)?, turn, words)
@@ -1144,7 +1142,7 @@ pub fn run() {
             return;
         }
     }
-    #[cfg(all(windows, not(feature = "page-sandbox-probe")))]
+    #[cfg(windows)]
     let (desktop, desktop_error) = match desktop_presence::enter() {
         Ok(Some(instance)) => (Some(instance), None),
         Ok(None) => return,
@@ -1163,7 +1161,6 @@ pub fn run() {
     updates::take_left(&context.config().identifier);
     let builder = tauri::Builder::default()
         .manage(startup::Startup::default())
-        .plugin(tauri_plugin_world_pages::init())
         // Its script also sends every link that opens a new window to the
         // system's browser, where the webview alone would drop it.
         .plugin(tauri_plugin_opener::init())
@@ -1379,12 +1376,6 @@ pub fn run() {
             machine_memory_room,
             accounts::rename_here,
             accounts::hub_proxy,
-            pages::page_read,
-            pages::page_history,
-            pages::page_consent,
-            pages::page_act,
-            pages::page_withdraw,
-            pages::page_restore,
             look,
             read_text,
             read_bytes,
@@ -1433,7 +1424,7 @@ pub fn run() {
     let builder = builder
         .plugin(tauri_plugin_window_state::Builder::default().with_state_flags(WINDOW_KEPT).build())
         .plugin(tauri_plugin_updater::Builder::new().build());
-    #[cfg(all(windows, not(feature = "page-sandbox-probe")))]
+    #[cfg(windows)]
     let builder = builder.plugin(desktop_presence::plugin(desktop, desktop_error));
     #[cfg(windows)]
     let builder = builder.plugin(titlebar::plugin());

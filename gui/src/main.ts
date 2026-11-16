@@ -4,7 +4,6 @@
 // `?s=home|claude|codex|project|journal|machines|settings|new`,
 // `?theme=…`, `?lang=en` and `?live` pick what to look at.
 
-import { onMotion } from "./motion";
 import { projectWho, mergeFormer } from "./project/who";
 import { followFormer } from "./project/former";
 import { localHome } from "./sentinel/local";
@@ -62,7 +61,6 @@ import "./conversation/context-sheet.css";
 import "./home/home.css";
 import "./home/front.css";
 import "./project/project.css";
-import "./pages/pages.css";
 
 import { ProjectActs, enProjectActs, zhProjectActs } from "./app/project-acts";
 import { enMe, zhMe } from "./app/me-words";
@@ -196,7 +194,7 @@ import {
 import { enRemoval, zhRemoval } from "./app/removal-words";
 import { enAccess, enLogin, enMachines, enToken, zhAccess, zhLogin, zhMachines, zhToken } from "./app/account-words";
 import { LASTING, loginsOf, type AccountChange, type Login, type TokenSeen, type TokenWay } from "./world/accounts";
-import { assistantOf, assistantsOf, coOwnersOf, fileHome, groupsOf, inNoNetwork, isLocked, loginKey, loginLabel, machinesOf, residentIn } from "./app/reach";
+import { assistantOf, assistantsOf, fileHome, groupsOf, inNoNetwork, loginKey, loginLabel, machinesOf, residentIn } from "./app/reach";
 import { folders as foldersOf, type Folders } from "./world/focus";
 import { ComposerSession } from "./conversation/composer";
 import { allowPrivacy, attachmentThumbnail, fetchAttachment, fetchFile, openLocal, reveal, saveAs, thumbnail, thumbnailUrl, type Saved, type Thumbnail } from "./world/files";
@@ -252,19 +250,14 @@ import type { RemoteSeams } from "./app/remote-world";
 import { specimenClaudeOffers, specimenComputer, specimenFiles, specimenOffers, specimenOutput, specimenPeek, specimenCopy, specimenPhone, specimenPicture, specimenRead, specimenUpload } from "./specimen/seams";
 import { RemoteLines } from "./world/remote-lines";
 import { specimenLines } from "./specimen/run-facts";
-import { applyTheme, chooseTheme, currentTheme, themes } from "./theme";
+import { applyTheme, chooseTheme, themes } from "./theme";
 import { Confirm } from "./app/confirm";
 import { showPathNotice } from "./app/path-notice";
-import { PageScreen } from "./pages/view";
 import { forgetConversation, manage as manageResident, type Forgetting, type Managed, type Management } from "./world/management";
 import { FileSearch } from "./world/file-search";
 import { configurePhone, guideBackground, onPhone, phoneSeam, routeActivations, tellPhoneViewing } from "./app/phone";
 import { copySeam } from "./app/phone-copy";
 import { renewalState, renewHere, type VersionMismatch } from "./world/renewal";
-import { toolsFor } from "./pages/tools";
-import { enPages, zhPages } from "./pages/words";
-import { act as pageAct, consent as pageConsent, pageHistory, readPage, restore as restorePage, withdraw as withdrawPage } from "./world/pages";
-import { specimenPageTools, specimenPageWorld } from "./specimen/pages";
 import type { Address, SessionEvent } from "./world/events";
 import type { MachineLogins, WorldLogins } from "./world/logins";
 import { ownerResident, type ResidentNow, type WorldWho } from "./world/world";
@@ -396,7 +389,8 @@ const agentHomeWords = english ? enHomes : zhHomes;
 const projectWords = english ? enProject : zhProject;
 const sideWords = english ? enSide : zhSide;
 const planWords = english ? enPlan : zhPlan;
-const pageWords = english ? enPages : zhPages;
+/** What closes a notice or a page's dialog. */
+const closeWord = english ? "Close" : "关闭";
 const presenceWords = english ? enPresence : zhPresence;
 const shellWords = english ? enShell : zhShell;
 document.documentElement.lang = english ? "en" : "zh-CN";
@@ -502,7 +496,7 @@ async function agentModels(agent: "claude" | "codex"): Promise<AgentModel[]> {
 let place: Place = { kind: "home" };
 
 /** The places that are the workbench's: in Connect they open the activity. */
-const WORKBENCH_PLACES: Place["kind"][] = ["home", "new", "project", "projects", "talk", "talks", "archived", "history", "talk-history", "page", "feature", "usage"];
+const WORKBENCH_PLACES: Place["kind"][] = ["home", "new", "project", "projects", "talk", "talks", "archived", "history", "talk-history", "feature", "usage"];
 
 /** The pages one comes into from another, which have a way back in their
  *  head (`world-gui.md`, 界面的结构); the sidebar's own pages have none. */
@@ -513,7 +507,7 @@ function inner(at: Place): boolean {
   // An agent's own page is a step in from the agents' overview, which the
   // sidebar names; the agents themselves it does not.
   if (at.kind === "agents" && (at.section === "claude" || at.section === "codex")) return true;
-  return ["feature", "data", "sync", "history", "talk-history", "page", "file", "login", "talks", "archived", "machine", "usage", "subagents", "prompt", "sentinel", "sentinels"].includes(at.kind);
+  return ["feature", "data", "sync", "history", "talk-history", "file", "login", "talks", "archived", "machine", "usage", "subagents", "prompt", "sentinel", "sentinels"].includes(at.kind);
 }
 
 /** Where a page's back goes when it was not come into from another page,
@@ -538,8 +532,6 @@ function parentOf(at: Place): Place {
       return { kind: "machines" };
     case "history":
       return at.from ? { kind: "talk", address: at.from } : { kind: "project", town: at.town };
-    case "page":
-      return { kind: "project", town: at.town };
     case "talk-history":
       return { kind: "talk", address: at.address };
     case "archived":
@@ -614,7 +606,7 @@ function replacePlace(to: string): void {
  *  of the program that can still read it. */
 const oldWorld = signal<VersionMismatch | null>(null);
 if (live && onComputer()) {
-  void renewalState().then(status => showPathNotice(status, english ? enSettings : zhSettings, pageWords.close));
+  void renewalState().then(status => showPathNotice(status, english ? enSettings : zhSettings, closeWord));
   effect(() => {
     if (!store.trouble.get()) {
       oldWorld.set(null);
@@ -1081,7 +1073,7 @@ const projectActs = new ProjectActs({
   deleted: (town) => {
     // A page of the project deleted is left for the front page.
     const at = placeOf(location.hash);
-    if ((at.kind === "project" || at.kind === "history" || at.kind === "page") && at.town === town) replacePlace(link({ kind: "home" }));
+    if ((at.kind === "project" || at.kind === "history") && at.town === town) replacePlace(link({ kind: "home" }));
   },
 });
 const talkToast = new TalkToast({ undo: talkMenuWords.undo }, () => shell.footBox());
@@ -1496,13 +1488,6 @@ function exported(conversation: Conversation, someone: Someone): () => Promise<s
       plan: words.plan,
       waiting: words.waitingForYou,
     });
-}
-
-/** "Claude laptop" for a resident the World knows, archived or away; its
- *  id where it does not. */
-function someoneAt(address: Address): string {
-  const known = listedAt(store.world.peek(), address);
-  return known ? someoneSaid(known) : `${address.resident} ${address.machine}`;
 }
 
 /** A specimen's folders: a few made up, the same on every machine. */
@@ -2591,8 +2576,6 @@ function projectPage(town: string): Page {
     begin: (town) => beginTalk(town),
     revise: (town, record) => projectForm.open({ town, record }),
     link: talkLink,
-    pageWords,
-    pageLink: (town, page) => link({ kind: "page", town, page, version: null }),
     history: {
       words: historyWords,
       link: (town, name) => link({ kind: "history", town, name }),
@@ -2789,76 +2772,6 @@ function historyWriter(author: HistoryAuthor): { name: string; href: string | nu
   return { name: agentName(by.agent), href: null };
 }
 
-/** The page open now, to hear the theme change. */
-let openPage: PageScreen | null = null;
-const pageConfirm = new Confirm({ close: pageWords.close, working: pageWords.working, failed: pageWords.failed });
-
-/** The one of this device's logins a project's page is seen and agreed to
- *  as: its owner where logged in here, else the first it is shared with. */
-function pageAccount(town: string): string | null {
-  for (const hub of store.world.peek()?.accounts.hubs ?? []) {
-    const project = hub.projects.find((one) => one.name === town);
-    if (!project) continue;
-    const able = hub.logins.filter((login) => login === project.owner || project.granted.includes(login));
-    // An account locked here is no use: its owner's or one granted it
-    // first, else a co-owner's, the one the project's acts use (§28.47),
-    // a locked one last.
-    const world = store.world.peek();
-    const unlocked = (account: string) => !world || !isLocked(world, { hub: hub.hub, hubName: hub.name, account });
-    const coOwners = world ? coOwnersOf(world, hub, project).map((login) => login.account) : [];
-    const ranked = [...able.filter((login) => login === project.owner), ...able.filter((login) => login !== project.owner), ...coOwners];
-    return ranked.find(unlocked) ?? ranked[0] ?? null;
-  }
-  return null;
-}
-
-function pageScreen(town: string, name: string, version: number | null): Page {
-  const project = store.world.peek()?.towns.find((t) => t.town === town)?.record.name ?? town;
-  const screen = new PageScreen({
-    words: pageWords,
-    page: name,
-    version,
-    project: { href: link({ kind: "project", town }), name: project },
-    head,
-    link: (version) => link({ kind: "page", town, page: name, version }),
-    ago: (at) => homeWords.ago((live ? Date.now() : specimen!.now.getTime()) - at.getTime()),
-    someone: someoneAt,
-    world: live
-      ? {
-          read: (version) => readPage(town, name, version, pageAccount(town)),
-          history: () => pageHistory(town, name),
-          consent: (version, base, acts) => pageConsent(town, name, version, base, acts, pageAccount(town)),
-          withdraw: (base) => withdrawPage(town, name, base),
-          restore: (base, version) => restorePage(town, name, base, version),
-        }
-      : specimenPageWorld(name),
-    tools: (view, reads) => {
-      const tools = toolsFor({
-        town,
-        store,
-        open: (address) => (location.hash = talkLink(address)),
-        act: (action) => pageAct(town, name, view.publication.version, action, pageAccount(town)),
-        reads,
-      });
-      return live ? tools : specimenPageTools(view, tools);
-    },
-    context: () => ({ theme: currentTheme(), locale: english ? "en" : "zh-CN", platform: asDevice ? "mobile" : "desktop" }),
-    version_: "1",
-    confirm: pageConfirm,
-    retitle: (title) => shell.retitle(title),
-    changed: () => {},
-  });
-  openPage = screen;
-  return {
-    element: screen.element,
-    title: name,
-    leave() {
-      screen.leave();
-      if (openPage === screen) openPage = null;
-    },
-  };
-}
-
 function when(at: Date, now: Date): string {
   const sameDay = at.toDateString() === now.toDateString();
   return sameDay ? homeWords.clock(at) : `${homeWords.day(at)} ${homeWords.clock(at)}`;
@@ -2938,9 +2851,6 @@ function show(next: Place): void {
       break;
     case "talk-history":
       page = historyPage({ kind: "conversation", resident: next.address.resident, machine: next.address.machine }, next.name);
-      break;
-    case "page":
-      page = pageScreen(next.town, next.page, next.version);
       break;
     case "machine": {
       const name = next.name;
@@ -3101,11 +3011,11 @@ function show(next: Place): void {
       const profile = english ? enProfile : zhProfile;
       const settings = english ? enTalkSettings : zhTalkSettings;
       if (section === "skills") {
-        page = new SkillsPage({ store, words: profile, head: settingsHead(head, settings, "skills"), calls: live ? skillCalls : specimenSkillCalls!, confirm: accountConfirm, close: pageWords.close });
+        page = new SkillsPage({ store, words: profile, head: settingsHead(head, settings, "skills"), calls: live ? skillCalls : specimenSkillCalls!, confirm: accountConfirm, close: closeWord });
         break;
       }
       if (!isHost(section)) {
-        page = new McpPage({ store, words: profile, head: settingsHead(head, settings, "mcp"), calls: profileCalls, confirm: accountConfirm, close: pageWords.close });
+        page = new McpPage({ store, words: profile, head: settingsHead(head, settings, "mcp"), calls: profileCalls, confirm: accountConfirm, close: closeWord });
         break;
       }
       // An agent's preferences are the conversations' settings, not its
@@ -3200,7 +3110,7 @@ function show(next: Place): void {
         call: subagentCalls,
         models: () => agentModels("claude"),
         confirm: accountConfirm,
-        close: pageWords.close,
+        close: closeWord,
       });
       break;
     case "usage": {
@@ -3492,8 +3402,6 @@ function specimenPlace(): Place | null {
     // `?s=journal`: a document of the project's history, its versions beside it.
     case "journal":
       return { kind: "history", town: "mark50", name: "q16-fixed-point" };
-    case "page":
-      return { kind: "page", town: "mark50", page: "tuning", version: null };
     case "machines":
       return { kind: "machines", focus: "laptop" };
     case "machine":
@@ -3692,10 +3600,7 @@ document.addEventListener("click", besidePress, true);
 document.addEventListener("auxclick", besidePress, true);
 applyTheme(() => {
   void redrawDiagrams(shell.element);
-  openPage?.contextChanged();
 });
-// A page open moves as much as the interface does.
-onMotion(() => openPage?.contextChanged());
 show(specimenPlace() ?? placeOf(location.hash));
 // A device in no network any more, however it left (it logged out, the
 // network was dissolved, its hub went away), has only the way in to show,

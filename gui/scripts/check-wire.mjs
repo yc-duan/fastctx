@@ -37,9 +37,6 @@ import type { Attachment } from "../src/world/attachments";
 import type { Forgetting, Managed } from "../src/world/management";
 import type { FileSearchReply, FileSearchRequest } from "../src/world/file-search";
 import type { Folders } from "../src/world/focus";
-import type { PageView, PageSummary, PageVersion, PageConsent, PageResult } from "../src/world/pages";
-import type { Speaker } from "../src/world/events";
-import type { Writer, JobOwner, MapView } from "../src/world/world";
 import type { Address } from "../src/world/wire";
 import type { RunFacts, DiffLine, JobFacts, ProjectedLines, LinePart, LineOpenError } from "../src/world/run-facts";
 import type { RenewalStatus, MaintenanceRequest, MaintenanceResponse, VersionRefusal } from "../src/world/renewal";
@@ -118,25 +115,6 @@ export const fixture = ${json.trimEnd()} satisfies {
   claude: { events: SessionEvent[]; answers: Control[]; unavailable: Offers; idle: Offers };
   // What the user's management of an agent answers, stage by stage.
   management: { calls: unknown; remote_calls: unknown; replies: ({ reply: "managed"; resident: Address; managed: Managed } | { reply: "forgetting"; resident: Address; how: Forgetting })[]; remote_replies: unknown };
-  // What a page's calls answer, and the page as a speaker, a writer and
-  // a job's owner.
-  pages: {
-    calls: unknown;
-    replies: (
-      | { reply: "page"; view: PageView }
-      | { reply: "pages"; town: string; pages: PageSummary[] }
-      | { reply: "page_history"; town: string; page: string; versions: PageVersion[] }
-      | { reply: "page_consent"; town: string; page: string; consent: PageConsent }
-      | { reply: "page_act"; result: PageResult }
-    )[];
-    remote_calls: unknown;
-    remote_replies: unknown;
-    speaker: Speaker;
-    writer: Writer;
-    job_owner: JobOwner;
-    peer: unknown;
-    map: MapView;
-  };
   renewal: { requests: MaintenanceRequest[]; responses: MaintenanceResponse[]; statuses: RenewalStatus[]; refused: VersionRefusal };
   // How a machine says it is doing, for its details page.
   stats: { stats: MachineStats[] };

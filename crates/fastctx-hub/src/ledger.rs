@@ -40,7 +40,6 @@ use crate::Hub;
 pub(crate) mod for_reader;
 mod history_ranges;
 pub(crate) mod history_requests;
-mod page_index;
 mod reading;
 pub(crate) mod requests;
 pub(crate) use reading::{ask, entry as read_entry, projection};
@@ -446,6 +445,11 @@ pub(crate) async fn write_as(
             return Err(format!("the entry is {size} bytes, more than the multipart limit ({})", wire::PARTS_AT_MOST));
         }
         let entry = fastctx_net::ledger::open(&signed, &hub_id, &project)?;
+        // Pages — HTML an agent published into a project — are no more
+        // (beta.18): an earlier node publishing one is refused.
+        if entry.files.iter().any(|file| file.path.starts_with("pages/")) {
+            return Err("pages were removed in Fastctx beta.18; nothing is published as a page any more".into());
+        }
         let mutation = fastctx_net::memory::decode(&entry.files)?;
         let history = fastctx_net::topic_history::decode(&entry.files)?;
         if let Some(stored) = &history {

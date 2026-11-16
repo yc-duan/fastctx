@@ -108,10 +108,8 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
             return Err(std::io::Error::other("an MCP frame requires its own relay connection"));
         };
         if frame.len() > call.max_request_bytes() {
-            let failure = Failure::not_run(format!(
-                "this request exceeds its {}-byte input budget",
-                call.max_request_bytes()
-            ));
+            let failure =
+                Failure::not_run(format!("this request exceeds its {}-byte input budget", call.max_request_bytes()));
             writer.send(&json(&NodeFrame::Reply { id, reply: Err(failure) })).await?;
             writer.drain().await?;
             continue;
@@ -1377,7 +1375,6 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
                 Caller::Resident(address) => address.tag(),
                 Caller::User => fastctx_types::residents::STOPPED_BY_USER.to_string(),
                 Caller::Session(agent) => format!("a {agent} session"),
-                Caller::Page(page) => format!("the page {}", page.page),
             };
             let machine = machine.map(|name| crate::reach::Written { name, hub });
             crate::stop::stop(node, &acting, here_too, by, job, machine).await
@@ -1534,7 +1531,8 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
         }
         Call::SyncStatus { hub, account, hours } => {
             users_voice(node, peer)?;
-            let assets = node.assets.as_ref().ok_or_else(|| Failure::new("the asset library is unavailable".to_string()))?;
+            let assets =
+                node.assets.as_ref().ok_or_else(|| Failure::new("the asset library is unavailable".to_string()))?;
             let link = node
                 .links()
                 .into_iter()
@@ -1764,11 +1762,6 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
             crate::town::project::call(node, &caller, call).await
         }
         Call::Journal(_) => Err(Failure::not_run(fastctx_types::memory::LEGACY)),
-        Call::Page(call) => {
-            let caller = caller::of(node, peer)?;
-            named_town(node, &caller, call.town()).await?;
-            crate::pages::call(node, &caller, &node.machine(), call).await
-        }
         // Logins and accounts are the user's alone: a resident that could
         // log this computer in, grant a machine or make a token could hand
         // the user's machines to anyone.
@@ -1828,7 +1821,8 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
             // sealed and opened are not a local tool's of an earlier release.
             let readable = move |mut page: fastctx_types::machine_log::Page| {
                 if !asset_seals {
-                    page.records.retain(|record| record.action.needs() != fastctx_types::machine_log::Needs::AssetSeals);
+                    page.records
+                        .retain(|record| record.action.needs() != fastctx_types::machine_log::Needs::AssetSeals);
                 }
                 page
             };
@@ -2184,7 +2178,6 @@ pub(crate) fn own_settings(hub: Option<&fastctx_types::HubName>) -> Result<(), F
 pub(crate) fn users_voice(node: &Node, peer: &Peer) -> Result<(), Failure> {
     match caller::of(node, peer)? {
         Caller::User => Ok(()),
-        Caller::Page(page) => Err(Failure::new(format!("{page} runs this; only the user speaks as the user"))),
         Caller::Resident(address) => Err(Failure::new(format!(
             "{} runs this; only the user speaks as the user. Residents speak to each other with message_colleague",
             address.resident
@@ -2650,7 +2643,6 @@ async fn blocking<T: Send + 'static>(
 /// Who asked for a call here, in kinds few enough to sum what calls cost by.
 fn asking(peer: &Peer) -> &'static str {
     match peer {
-        Peer::Page { .. } => "a page",
         Peer::Command { resident: Some(_), .. } => "an agent's command",
         Peer::Command { session: Some(_), .. } => "an agent's shell",
         Peer::Command { .. } => "this machine",
@@ -2661,7 +2653,6 @@ fn asking(peer: &Peer) -> &'static str {
 
 fn calling(peer: &Peer) -> String {
     match peer {
-        Peer::Page { .. } => "a page's job".to_string(),
         Peer::Command { resident: Some(address), .. } => format!("a command {} ran", address.resident),
         Peer::Command { .. } => "a command on this machine".to_string(),
         Peer::Supervisor { job } => format!("the supervisor of {job}"),

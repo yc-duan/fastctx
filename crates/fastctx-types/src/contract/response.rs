@@ -104,7 +104,6 @@ impl RemoteCall {
                 Some(_) => Response::Submit,
             },
             Self::Mcp { mcp } => machine_mcp(mcp),
-            Self::PageAction { action, .. } => page_action(action),
             Self::TurnInterrupted { dispatch, .. } => match dispatch {
                 None => Response::Answer,
                 Some(_) => Response::Submit,
@@ -314,17 +313,6 @@ impl Call {
                     ProjectCall::New { .. } | ProjectCall::Edit { .. } | ProjectCall::Enter { .. } => Response::Submit,
                 }
             }
-            Self::Page(request) => {
-                use crate::pages::PageCall;
-                match request {
-                    PageCall::Read { .. } | PageCall::List { .. } | PageCall::History { .. } => Response::Answer,
-                    PageCall::Publish { .. }
-                    | PageCall::Withdraw { .. }
-                    | PageCall::Restore { .. }
-                    | PageCall::Consent { .. } => Response::Submit,
-                    PageCall::Act { action, .. } => page_action(action),
-                }
-            }
         }
     }
 }
@@ -432,14 +420,6 @@ fn local_mcp(request: &crate::mcp::McpCall) -> Response {
         McpCall::Keep { .. } | McpCall::Remove { .. } | McpCall::Import { .. } | McpCall::Test { .. } => {
             Response::Submit
         }
-    }
-}
-
-fn page_action(request: &crate::pages::PageInvocation) -> Response {
-    use crate::pages::PageInvocation;
-    match request {
-        PageInvocation::Run { .. } | PageInvocation::Say { .. } => Response::Submit,
-        PageInvocation::Journal { .. } => Response::Answer,
     }
 }
 

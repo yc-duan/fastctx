@@ -1,5 +1,14 @@
-import type { RunState } from "./pages";
 import type { MachineName, Timestamp } from "./wire";
+import type { ExitStatus } from "./since";
+
+/** How a command run stands (`fastctx_types::run::RunState`). */
+export type RunState =
+  | { kind: "ended"; status: ExitStatus }
+  | { kind: "exited"; status: ExitStatus; remaining: number }
+  | { kind: "running" }
+  | { kind: "stopped" }
+  | { kind: "interrupted"; reason: string }
+  | { kind: "failed"; error: string };
 
 export interface OutputRef {
   policy?: string;

@@ -599,7 +599,7 @@ export const zh: Words = {
     commandsRun: (n) => `${n} 条命令`,
     moreCommands: (n) => `等 ${n} 条`,
     looks: { machines: "机器", working: "在做的事", projects: "项目", plan: "计划", goal: "目标", accounts: "账号", usage: (of) => `${of} 的用法` },
-    world: { wait: "等待", stop: "停止", publish: "发布", enter: "进入", plan: "更新", sense: "盯着", look: "查看" },
+    world: { wait: "等待", stop: "停止", enter: "进入", plan: "更新", sense: "盯着", look: "查看" },
     thePlan: "计划",
     goal: {
       complete: { verb: "完成", object: "目标", said: "目标完成了" },
@@ -985,7 +985,7 @@ export const en: Words = {
     commandsRun: (n) => `${n} command${n === 1 ? "" : "s"}`,
     moreCommands: (n) => `and ${n} more`,
     looks: { machines: "the machines", working: "what is working", projects: "the projects", plan: "the plan", goal: "the goal", accounts: "the accounts", usage: (of) => `how to use ${of}` },
-    world: { wait: "Waited for", stop: "Stopped", publish: "Published", enter: "Entered", plan: "Updated", sense: "Watching", look: "Looked at" },
+    world: { wait: "Waited for", stop: "Stopped", enter: "Entered", plan: "Updated", sense: "Watching", look: "Looked at" },
     thePlan: "the plan",
     goal: {
       complete: { verb: "Completed", object: "the goal", said: "The goal is complete" },

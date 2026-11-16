@@ -7,7 +7,7 @@
 
 import { counts } from "../diff";
 import { ownCommands, scriptCommands, wordsOf } from "../deeds/script";
-import type { ChecksDeed, CommitDeed, CopyDeed, Deed, FanDeed, FileDeed, JobDeed, LogDeed, OnSaid, PageDeed, PictureDeed, ProjectDeed, PushDeed, StatusDeed, StopDeed, TestsDeed, WorldDeed } from "../deeds/types";
+import type { ChecksDeed, CommitDeed, CopyDeed, Deed, FanDeed, FileDeed, JobDeed, LogDeed, OnSaid, PictureDeed, ProjectDeed, PushDeed, StatusDeed, StopDeed, TestsDeed, WorldDeed } from "../deeds/types";
 import { troubled } from "../deeds/fan";
 import type { Entry } from "../model";
 import { viewing } from "../tool";
@@ -61,7 +61,6 @@ export type Card =
         | { kind: "copy"; from: Place[]; to: Place; deed: CopyDeed | null }
         | { kind: "job"; deed: JobDeed; of: string | null }
         | { kind: "stop"; deed: StopDeed; of: string | null }
-        | { kind: "page"; deed: PageDeed }
         | { kind: "project"; deed: ProjectDeed }
         | { kind: "picture"; deeds: PictureDeed[] }
         | { kind: "world"; deed: WorldDeed }
@@ -302,9 +301,6 @@ function commandCards(entry: ToolEntry, does: Extract<Tool["does"], { as: "comma
         break;
       case "stop":
         cards.push({ ...next(source, deed.machine ?? ran(deed)), kind: "stop", deed, of: jobOf(deed.what), failed: !deed.stopped });
-        break;
-      case "page":
-        cards.push({ ...next(source, deed.machine), kind: "page", deed });
         break;
       case "project":
         cards.push({ ...next(source, ran(deed)), kind: "project", deed });

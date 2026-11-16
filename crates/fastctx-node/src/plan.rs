@@ -72,17 +72,22 @@ pub(crate) async fn here(
 }
 
 pub(crate) async fn here_selected(
-    node: &Arc<Node>, id: &ResidentId, scope: &selection::Scope,
+    node: &Arc<Node>,
+    id: &ResidentId,
+    scope: &selection::Scope,
     preparation: Option<&crate::placement::location::selection::Selected>,
-    operation: Operation, of: Option<plan::Of>,
+    operation: Operation,
+    of: Option<plan::Of>,
 ) -> Result<plan::Result, Failure> {
     work(node, id, (None, None, None), operation, of, Some((scope, preparation))).await
 }
 
 async fn work(
-    node: &Arc<Node>, id: &ResidentId,
+    node: &Arc<Node>,
+    id: &ResidentId,
     options: (Option<&HubName>, Option<&AccountName>, Option<&HubAccount>),
-    operation: Operation, of: Option<plan::Of>,
+    operation: Operation,
+    of: Option<plan::Of>,
     fixed: Option<(&selection::Scope, Option<&crate::placement::location::selection::Selected>)>,
 ) -> Result<plan::Result, Failure> {
     let (hub, account, requesting) = options;
@@ -94,8 +99,13 @@ async fn work(
     let whose = Address { machine: about.machine.clone(), resident: id.clone() };
     let previous = observed::load(node, id).await?;
     let selected = match fixed {
-        Some((selected, _)) => { selected.check(node, id)?; selected.clone() }
-        None => selection::here(node, id, &about, previous.as_ref().map(|seen| &seen.account), hub, account, requesting)?,
+        Some((selected, _)) => {
+            selected.check(node, id)?;
+            selected.clone()
+        }
+        None => {
+            selection::here(node, id, &about, previous.as_ref().map(|seen| &seen.account), hub, account, requesting)?
+        }
     };
     let scope = selected.account;
     let link = node.link_of(&scope.hub).ok_or_else(|| Failure::refused(words::ROUTE))?;
@@ -155,7 +165,8 @@ async fn work(
             let location = match fixed.and_then(|(_, preparation)| preparation) {
                 Some(preparation) => preparation.prepare(node, id, &about.origin, &about.acting).await?,
                 None => crate::placement::location::prepare(node, id, &about.origin, &about.acting).await?,
-            }.ok_or_else(|| Failure::not_run("there is no online working computer for the plan file"))?;
+            }
+            .ok_or_else(|| Failure::not_run("there is no online working computer for the plan file"))?;
             return Err(Failure::not_run(words::file(
                 std::path::Path::new(&crate::placement::plan_path(&location)),
                 &location.machine,
@@ -349,7 +360,7 @@ pub(crate) fn records_allowed(
     // runtime's own provider reaches the record below this gate, not through it).
     if [crate::goals::operations::KIND, crate::goals::past::KIND].contains(&request.kind())
         && matches!(request, Request::Write { .. } | Request::Delete { .. })
-        && matches!(caller, Caller::Resident(_) | Caller::Page(_))
+        && matches!(caller, Caller::Resident(_))
     {
         return Err(Failure::refused(fastctx_types::goals::words::DIRECT_RECORD));
     }
@@ -357,14 +368,14 @@ pub(crate) fn records_allowed(
     // the user's settings; their home is the account's word that a machine may act for it.
     if [fastctx_sentinel::lifecycle::KIND, fastctx_types::sentinel_settings::RECORD_KIND].contains(&request.kind())
         && matches!(request, Request::Write { .. } | Request::Delete { .. })
-        && matches!(caller, Caller::Resident(_) | Caller::Page(_))
+        && matches!(caller, Caller::Resident(_))
     {
         return Err(Failure::refused(fastctx_sentinel::words::DIRECT_RECORD));
     }
     // Skills are the user's to write: a session reads them, never changes them.
     if [fastctx_types::skills::KIND, fastctx_types::skills::INDEX_KIND].contains(&request.kind())
         && matches!(request, Request::Write { .. } | Request::Delete { .. })
-        && matches!(caller, Caller::Resident(_) | Caller::Page(_))
+        && matches!(caller, Caller::Resident(_))
     {
         return Err(Failure::refused(fastctx_types::skills::words::USER_ONLY));
     }

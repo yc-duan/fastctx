@@ -16,7 +16,7 @@ pub(crate) fn scope(
     hub: Option<&HubName>,
     account: Option<&AccountName>,
 ) -> Result<(Arc<Link>, AccountName), Failure> {
-    if matches!(caller, Caller::Page(_) | Caller::Session(_)) {
+    if matches!(caller, Caller::Session(_)) {
         return Err(Failure::refused(words::NEED_CONVERSATION));
     }
     let mut choices = scopes(node, caller, hub, account);
@@ -48,7 +48,7 @@ pub(crate) async fn list_all(
     caller: &Caller,
     owner: Option<fastctx_types::Address>,
 ) -> Result<Reply, Failure> {
-    if matches!(caller, Caller::Page(_) | Caller::Session(_)) {
+    if matches!(caller, Caller::Session(_)) {
         return Err(Failure::refused(words::NEED_CONVERSATION));
     }
     tokio::time::timeout(std::time::Duration::from_secs(75), async {
@@ -73,7 +73,7 @@ pub(crate) async fn list_all(
 /// Every sentinel of the accounts the caller acts for, ended or not, with
 /// their wakes (`world-senses.md`, 全部观测).
 pub(crate) async fn overview_all(node: &Arc<Node>, caller: &Caller) -> Result<Reply, Failure> {
-    if matches!(caller, Caller::Page(_) | Caller::Session(_)) {
+    if matches!(caller, Caller::Session(_)) {
         return Err(Failure::refused(words::NEED_CONVERSATION));
     }
     tokio::time::timeout(std::time::Duration::from_secs(120), async {
@@ -98,7 +98,7 @@ pub(crate) async fn overview_all(node: &Arc<Node>, caller: &Caller) -> Result<Re
 /// A sentinel's record, read for whichever of the caller's accounts it was
 /// left for: each keeps its own under its home.
 pub(crate) async fn record_any(node: &Arc<Node>, caller: &Caller, request: Request) -> Result<Reply, Failure> {
-    if matches!(caller, Caller::Page(_) | Caller::Session(_)) {
+    if matches!(caller, Caller::Session(_)) {
         return Err(Failure::refused(words::NEED_CONVERSATION));
     }
     let mut failed = None;

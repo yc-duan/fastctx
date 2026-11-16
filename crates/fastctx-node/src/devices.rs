@@ -20,7 +20,6 @@ use fastctx_types::access::Purpose;
 use fastctx_types::calls::Call;
 use fastctx_types::ipc::{Failure, Peer};
 use fastctx_types::management::Management;
-use fastctx_types::pages::{PageCall, PageInvocation};
 use fastctx_types::remote::{RemoteCall, RemoteReply, RemoteResult};
 use fastctx_types::{MachineName, ProjectCall, Reply, TownName};
 
@@ -146,15 +145,6 @@ pub async fn relay(node: &Arc<Node>, asker: &Asker, call: serde_json::Value) -> 
             return Err(refuse("a project is opened in an account from a computer logged in to it".into()));
         }
         Call::Journal(_) => return Err(Failure::not_run(fastctx_types::memory::LEGACY)),
-        Call::Page(
-            PageCall::Read { town, .. }
-            | PageCall::List { town }
-            | PageCall::History { town, .. }
-            | PageCall::Consent { town, .. }
-            | PageCall::Act { town, .. }
-            | PageCall::Withdraw { town, .. }
-            | PageCall::Restore { town, .. },
-        ) => Some(town.as_ref()),
         _ => {
             return Err(Failure::new(
                 "a device asks this of the machine it concerns itself, or not at all: only calls about a project are made for it",
@@ -169,16 +159,6 @@ pub async fn relay(node: &Arc<Node>, asker: &Asker, call: serde_json::Value) -> 
         }
         Some(None) => return Err(Failure::new(format!("{from} named no project; a device names the one it means"))),
         _ => {}
-    }
-    // What the call reaches on other machines, the account must reach too:
-    // this machine reaches them as itself.
-    if let Call::Page(PageCall::Act { action, .. }) = &call {
-        let (target, purpose) = match action {
-            PageInvocation::Run { machine, .. } => (machine, Purpose::Hands),
-            PageInvocation::Say { to, .. } => (&to.machine, Purpose::Words),
-            PageInvocation::Journal { .. } => return Err(Failure::not_run(fastctx_types::memory::LEGACY)),
-        };
-        view.admits(from, account, target, purpose).map_err(refuse)?;
     }
     let user = Peer::Command { resident: None, session: None };
     // What a device is shown of a project is what its account may know of
@@ -203,13 +183,6 @@ pub async fn relay(node: &Arc<Node>, asker: &Asker, call: serde_json::Value) -> 
             return Err(refuse(
                 "a device changes a project through its hub; this version of the app is too old to".into(),
             ));
-        }
-        Call::Page(mut call) => {
-            if call.account().is_some_and(|selected| selected != account) {
-                return Err(Failure::refused("the page account differs from the authenticated device account"));
-            }
-            call.for_account(account.clone());
-            crate::pages::call(node, &crate::town::caller::Caller::User, from, call).await?
         }
         call => match crate::server::handle(node, &user, call).await? {
             Reply::Towns { towns } => {

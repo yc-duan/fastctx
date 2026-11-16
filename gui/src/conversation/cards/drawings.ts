@@ -372,18 +372,6 @@ export function terminal(seed: string, state: "done" | "failed" | "stopped" | "g
   return pen.figure(62, 48, 1.2);
 }
 
-/** A page published: a window with its writing and a button on it. */
-export function published(seed: string): Figure {
-  const pen = new Pen(`page ${seed}`);
-  pen.wash(2, 4, 58, 44, "thing", 6);
-  pen.wash(2, 4, 58, 8, "part", 6);
-  pen.scribble([9, 20], 34);
-  pen.scribble([9, 27], 26);
-  pen.wash(9, 33, 18, 8, "clay", 3);
-  pen.scribble([31, 37], 18);
-  return pen.figure(62, 50, 1.2);
-}
-
 /** A project entered: a few houses of a town under a ruled ground. */
 export function town(seed: string): Figure {
   const pen = new Pen(`town ${seed}`);

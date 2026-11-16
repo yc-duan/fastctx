@@ -396,7 +396,6 @@ fn nodes(now: Timestamp) -> NodesReply {
         version: "1.0.0".into(),
         mcp: false,
         mcp_import: false,
-        page_accounts: false,
         attachment_places: false,
         attachment_runs: false,
         memory_folders: false,

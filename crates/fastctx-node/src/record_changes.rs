@@ -2,7 +2,6 @@
 
 mod copies;
 mod failure;
-mod pages;
 mod plans;
 mod projects;
 mod replies;
@@ -20,16 +19,13 @@ use fastctx_types::{
     ipc::{Failure, Peer},
     remote::{RemoteCall, RemoteReply},
 };
-use serde::{Deserialize, Serialize};
 use resolved::Resolved;
+use serde::{Deserialize, Serialize};
 use std::{sync::Arc, time::Duration};
 
 const fn family(name: &'static str) -> Family {
     Family { name, at_once: 8, within: Duration::from_secs(1800), stays: Duration::from_secs(240), again: false }
 }
-const PAGES: Family = family("call/pages");
-const PAGE_ACT: Family = family("call/page-act");
-const PAGE_EXECUTE: Family = family("call/page-execute");
 const PLANS: Family = family("call/plans");
 /// A plan written, done again after a stop that cut it short: it waits for
 /// the hub when written offline, and asked again under the same base it is
@@ -44,12 +40,7 @@ const COPIES: Family = family("call/copies");
 #[derive(Serialize, Deserialize)]
 enum Asked {
     Local { peer: Peer, call: Box<Call> },
-    Remote {
-        scope: HubAccount,
-        from: MachineName,
-        key: fastctx_net::sign::PublicKey,
-        call: Box<RemoteCall>,
-    },
+    Remote { scope: HubAccount, from: MachineName, key: fastctx_net::sign::PublicKey, call: Box<RemoteCall> },
 }
 #[derive(Serialize, Deserialize)]
 enum Answer {
@@ -58,7 +49,7 @@ enum Answer {
 }
 
 pub(crate) fn register(node: &Arc<Node>) {
-    for family in [PAGES, PAGE_ACT, PAGE_EXECUTE, PLANS, PLAN_WRITES, PROJECTS, COPIES] {
+    for family in [PLANS, PLAN_WRITES, PROJECTS, COPIES] {
         submitted::register_resolved(node, family, |node, asked, resolved| async move {
             work::execute(&node, asked, resolved).await
         });
@@ -67,10 +58,7 @@ pub(crate) fn register(node: &Arc<Node>) {
 
 pub(crate) fn handles(call: &Call) -> bool {
     match call {
-        Call::Page(call) => pages::changes(call),
-        Call::Plan { operation, of, .. } => {
-            of.is_none() || !matches!(operation, fastctx_types::plan::Operation::Read)
-        }
+        Call::Plan { operation, of, .. } => of.is_none() || !matches!(operation, fastctx_types::plan::Operation::Read),
         Call::PlanWrite { .. } | Call::PrepareCopies { .. } => true,
         Call::Project(
             fastctx_types::ProjectCall::New { .. }
@@ -83,11 +71,10 @@ pub(crate) fn handles(call: &Call) -> bool {
 
 pub(crate) fn handles_remote(call: &RemoteCall) -> bool {
     match call {
-        RemoteCall::PageAction { .. } | RemoteCall::EnterProject { .. } | RemoteCall::WorkingCopy { .. } => true,
+        RemoteCall::EnterProject { .. } | RemoteCall::WorkingCopy { .. } => true,
         RemoteCall::Plan { operation, of, .. } => {
             of.is_none() || !matches!(operation, fastctx_types::plan::Operation::Read)
         }
-        RemoteCall::Relay { .. } => call.response() == fastctx_types::contract::Response::Submit,
         _ => false,
     }
 }
@@ -96,7 +83,6 @@ pub(crate) async fn local(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<R
     let caller = crate::town::caller::of(node, peer)?;
     crate::admission::local::admit(node, peer, &call)?;
     match &call {
-        Call::Page(call) => pages::parameters(node, &caller, &node.machine(), call)?,
         Call::Plan { .. } | Call::PlanWrite { .. } => plans::parameters(node, &caller, &call)?,
         Call::Project(call) => projects::parameters(node, &caller, call)?,
         Call::PrepareCopies { .. } => node.authorize_here(&crate::around::acting_of(node, &caller))?,
@@ -142,7 +128,7 @@ pub(crate) async fn remote(
         let (_, unit) = remote_check(node, &asker, call)?;
         let resolved = match call.as_ref() {
             RemoteCall::Plan { resident, operation, .. } => Resolved::Plan(
-                crate::plan::selection::resolve_here(node, resident, None, None, Some(scope), operation).await?
+                crate::plan::selection::resolve_here(node, resident, None, None, Some(scope), operation).await?,
             ),
             _ => Resolved::Direct,
         };
@@ -154,9 +140,13 @@ pub(crate) async fn remote(
             let Asked::Remote { call, .. } = &asked else { unreachable!("remote recording") };
             let asker = crate::admission::admit(node, &link, caller, call)?;
             if let RemoteCall::Plan { resident, .. } = call.as_ref() {
-                resolved.check(node, &crate::town::caller::Caller::Resident(fastctx_types::Address {
-                    machine: node.machine(), resident: resident.clone(),
-                }))?;
+                resolved.check(
+                    node,
+                    &crate::town::caller::Caller::Resident(fastctx_types::Address {
+                        machine: node.machine(),
+                        resident: resident.clone(),
+                    }),
+                )?;
             }
             let mut reply = reply?;
             replies::remote(node, &asker, call, &mut reply)?;
@@ -168,8 +158,6 @@ pub(crate) async fn remote(
 
 fn local_family(call: &Call) -> Result<Family, Failure> {
     match call {
-        Call::Page(fastctx_types::pages::PageCall::Act { .. }) => Ok(PAGE_ACT),
-        Call::Page(call) if pages::changes(call) => Ok(PAGES),
         Call::Plan { .. } => Ok(PLANS),
         Call::PlanWrite { .. } => Ok(PLAN_WRITES),
         Call::Project(_) => Ok(PROJECTS),
@@ -180,10 +168,6 @@ fn local_family(call: &Call) -> Result<Family, Failure> {
 
 fn remote_family(call: &RemoteCall) -> Result<Family, Failure> {
     match call {
-        RemoteCall::PageAction { .. } => Ok(PAGE_EXECUTE),
-        RemoteCall::Relay { made } => {
-            Ok(if made.get("do").and_then(serde_json::Value::as_str) == Some("act") { PAGE_ACT } else { PAGES })
-        }
         RemoteCall::Plan { .. } => Ok(PLANS),
         RemoteCall::EnterProject { .. } => Ok(PROJECTS),
         RemoteCall::WorkingCopy { .. } => Ok(COPIES),
@@ -193,8 +177,9 @@ fn remote_family(call: &RemoteCall) -> Result<Family, Failure> {
 
 fn remote_parameters(node: &Arc<Node>, asker: &crate::admission::Asker, call: &RemoteCall) -> Result<(), Failure> {
     match call {
-        RemoteCall::PageAction { .. } | RemoteCall::Relay { .. } => pages::remote_parameters(node, asker, call),
-        RemoteCall::Plan { resident, .. } | RemoteCall::EnterProject { resident, .. } => node.residents.active(resident),
+        RemoteCall::Plan { resident, .. } | RemoteCall::EnterProject { resident, .. } => {
+            node.residents.active(resident)
+        }
         RemoteCall::WorkingCopy { placement, resource, .. } => copies::parameters(node, asker, *placement, resource),
         _ => Err(Failure::not_run("this remote call is not a submitted record change")),
     }
@@ -207,12 +192,9 @@ fn local_check(
     resolved: &Resolved,
 ) -> Result<(Family, String), Failure> {
     match call {
-        Call::Page(call) if pages::changes(call) => {
-            let family = if matches!(call, fastctx_types::pages::PageCall::Act { .. }) { PAGE_ACT } else { PAGES };
-            let Resolved::Page { town, .. } = resolved else { return Err(Failure::not_run("the page has no selected coordinates")); };
-            pages::check(node, caller, &node.machine(), call, Some(town)).map(|unit| (family, unit))
+        Call::Plan { .. } | Call::PlanWrite { .. } => {
+            plans::check(node, caller, call, resolved).map(|unit| (PLANS, unit))
         }
-        Call::Plan { .. } | Call::PlanWrite { .. } => plans::check(node, caller, call, resolved).map(|unit| (PLANS, unit)),
         Call::Project(call) => projects::check(node, caller, call, resolved).map(|unit| (PROJECTS, unit)),
         Call::PrepareCopies { paths } => copies::paths_check(node, caller, paths).map(|unit| (COPIES, unit)),
         _ => Err(Failure::not_run("this call is not a submitted record change")),
@@ -225,17 +207,6 @@ fn remote_check(
     call: &RemoteCall,
 ) -> Result<(Family, String), Failure> {
     match call {
-        RemoteCall::PageAction { .. } => {
-            pages::remote_check(node, asker, call).map(|unit| (PAGE_EXECUTE, unit))
-        }
-        RemoteCall::Relay { made } => {
-            let family = if made.get("do").and_then(serde_json::Value::as_str) == Some("act") {
-                PAGE_ACT
-            } else {
-                PAGES
-            };
-            pages::remote_check(node, asker, call).map(|unit| (family, unit))
-        }
         RemoteCall::Plan { resident, .. } => {
             node.residents.active(resident)?;
             unit(&("conversation", resident)).map(|unit| (PLANS, unit))
@@ -248,19 +219,6 @@ fn remote_check(
             copies::check(node, asker, owner, *placement, resource).map(|unit| (COPIES, unit))
         }
         _ => Err(Failure::not_run("this remote call is not a submitted record change")),
-    }
-}
-
-fn town(
-    node: &Node,
-    caller: &crate::town::caller::Caller,
-    given: Option<&fastctx_types::TownName>,
-) -> Result<fastctx_types::TownName, Failure> {
-    // An explicit project's authorization may need the worker's refresh. Only
-    // resolve the target here; the existing handler checks access before I/O.
-    match given.cloned().or_else(|| caller.town(node)) {
-        Some(town) => Ok(town),
-        None => caller.town_or(node, None),
     }
 }
 

@@ -470,9 +470,10 @@ fn apply(world: &WorldDir, town: &TownName, seq: u64, entry: &Entry, signed: &Si
     write_files(&directory.ledger(), &entry.files)
 }
 
-/// Writes an entry's files under `ledger`, each new or already the same.
+/// Writes an entry's files under `ledger`, each new or already the same:
+/// but an earlier release's pages, which are no more (beta.18).
 fn write_files(ledger: &Path, files: &[File]) -> io::Result<()> {
-    for file in files {
+    for file in files.iter().filter(|file| !removed(&file.path)) {
         let path = file.path.split('/').fold(ledger.to_path_buf(), |path, name| path.join(name));
         if let Some(parent) = path.parent() {
             ensure_private_dir(parent)?;
@@ -498,6 +499,13 @@ pub(crate) fn finish(node: &Node) -> io::Result<Vec<String>> {
             continue;
         }
         let directory = world.town(&town);
+        // What an earlier release kept of its pages, here and among the
+        // project's files, goes (beta.18).
+        for folder in [directory.path().join("pages"), directory.ledger().join("pages")] {
+            if let Err(error) = remove(&folder) {
+                problems.push(format!("letting go of {town}'s pages: {error}"));
+            }
+        }
         let kept = kept_files(&directory)?;
         let key = kept_key(world, &kept)?;
         for (seq, path, _) in kept {
@@ -511,24 +519,34 @@ pub(crate) fn finish(node: &Node) -> io::Result<Vec<String>> {
     Ok(problems)
 }
 
-/// An entry this machine keeps of a project: one its author signed, or the
-/// hub's projection of one for the account this machine reads the project
-/// as (design §28.58), which names its author only where that account may
-/// work.
+/// Whether a ledger's file at `path` is of what is no more: the pages an
+/// earlier release let agents publish as HTML (removed in beta.18).
+fn removed(path: &str) -> bool {
+    path.starts_with("pages/")
+}
+
+/// The files of an entry this machine keeps of a project: one its author
+/// signed, or the hub's projection of one for the account this machine
+/// reads the project as (design §28.58); but those of what is no more.
 pub struct Kept {
-    pub author: Option<MachineName>,
     pub files: Vec<File>,
+}
+
+impl Kept {
+    fn of(files: Vec<File>) -> Self {
+        Self { files: files.into_iter().filter(|file| !removed(&file.path)).collect() }
+    }
 }
 
 impl From<Entry> for Kept {
     fn from(entry: Entry) -> Self {
-        Self { author: Some(entry.author), files: entry.files }
+        Self::of(entry.files)
     }
 }
 
 impl From<ledger::Projection> for Kept {
     fn from(projection: ledger::Projection) -> Self {
-        Self { author: projection.author, files: projection.files }
+        Self::of(projection.files)
     }
 }
 
@@ -645,30 +663,6 @@ pub(crate) fn signed_after(world: &WorldDir, town: &TownName, after: u64) -> io:
         }
     }
     Ok(entries)
-}
-
-/// The entries of `town` after the one numbered `after`, in order, with the
-/// number of the last entry this machine has: what a reader that keeps
-/// what earlier entries said goes on from, and how it notices a ledger
-/// shorter than the one it read.
-pub fn entries_since(world: &WorldDir, town: &TownName, after: u64) -> io::Result<(u64, Vec<(u64, Kept)>)> {
-    if let Some(entries) = carry_source::entries(world, town)? {
-        let last = entries.last().map_or(0, |(seq, _)| *seq);
-        return Ok((
-            last,
-            entries.into_iter().filter(|(seq, _)| *seq > after).map(|(seq, entry)| (seq, entry.into())).collect(),
-        ));
-    }
-    let numbered = kept_files(&world.town(town))?;
-    let key = kept_key(world, &numbered)?;
-    let last = numbered.last().map_or(0, |(seq, _, _)| *seq);
-    let mut entries = Vec::new();
-    for (seq, path, _) in numbered {
-        if seq > after {
-            entries.push((seq, read_kept(world, &path, key.as_ref())?));
-        }
-    }
-    Ok((last, entries))
 }
 
 /// The last entry taken or refused.

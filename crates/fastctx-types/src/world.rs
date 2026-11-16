@@ -98,9 +98,6 @@ pub struct MachineFacts {
     /// Lists private import metadata and rereads selected URL definitions.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub mcp_import: bool,
-    /// Keeps page consent and execution scoped to one account.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub page_accounts: bool,
     /// Answers attachment destination queries before receiving any file bytes.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub attachment_places: bool,

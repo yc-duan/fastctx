@@ -163,7 +163,6 @@ export function worldWork(s: Script, user: Speaker): void {
     }),
     1,
   );
-  s.tool("t4", stepped(run("on laptop fastctx page publish tuning --file /srv/mark50/pages/tuning.html --title 调参面板 --run laptop 'cargo run --bin tune'", "=== run on laptop (exited 0) ===", "=== page tuning · 调参面板 on laptop, version 3 ===", { duration_ms: 600 }), { kind: "page", name: "tuning", town: "mark50", title: "调参面板", version: 3 }), 1);
   s.tool("t4", stepped(run("on laptop fastctx plan --file /srv/mark50/.plan.md", "=== run on laptop (exited 0) ===", "Plan version 6.", { duration_ms: 200 }), { kind: "plan", version: 6 }), 1);
   s.tool("t4", stepped(run("on laptop fastctx goal complete --file /srv/mark50/.done.md", "=== run on laptop (exited 0) ===", '{"state":"complete"}', { duration_ms: 200 }), { kind: "goal", mark: "complete" }), 1);
   s.say("t4", "message", "训完了：400 轮，验证误差 0.0048，模型拷到了 laptop 的 `/srv/mark50/models/`（`ckpt` 是个目录，没跟着过来，用不上）。阶跃响应在上面，超调从 18% 降到 3%。调参面板发成了第 3 版。lab 上那个挂了一夜的旧作业顺手停了。", 2);

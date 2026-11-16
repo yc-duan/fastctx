@@ -85,7 +85,6 @@ pub(crate) fn town_of(call: &RemoteCall) -> Option<&TownName> {
         | RemoteCall::Follow { origin, .. }
         | RemoteCall::StopOn { origin, .. }
         | RemoteCall::PipeOut { origin, .. } => origin.town.as_ref(),
-        RemoteCall::PageAction { source, .. } => Some(&source.town),
         RemoteCall::Place { attachment, .. } => attachment.town.as_ref(),
         RemoteCall::AttachmentPlaces { target, .. }
         | RemoteCall::Upload { target, .. }
@@ -107,7 +106,10 @@ pub fn admit(node: &Arc<Node>, link: &Arc<Link>, caller: &Caller, call: &RemoteC
 /// Admission before durable submission. Project membership is checked by the
 /// worker after the same refresh the synchronous entrance used to perform.
 pub(crate) fn admit_for_submission(
-    node: &Arc<Node>, link: &Arc<Link>, caller: &Caller, call: &RemoteCall,
+    node: &Arc<Node>,
+    link: &Arc<Link>,
+    caller: &Caller,
+    call: &RemoteCall,
 ) -> Result<Asker, Failure> {
     admit_inner(node, link, caller, call, false, true)
 }
@@ -116,12 +118,22 @@ pub(crate) fn admit_for_submission(
 /// its assets were sealed, and refuses any new one while they are, so a
 /// seal met on the way pauses nothing here into a refusal for good (design
 /// §28.41).
-pub(crate) fn admit_held(node: &Arc<Node>, link: &Arc<Link>, caller: &Caller, call: &RemoteCall) -> Result<Asker, Failure> {
+pub(crate) fn admit_held(
+    node: &Arc<Node>,
+    link: &Arc<Link>,
+    caller: &Caller,
+    call: &RemoteCall,
+) -> Result<Asker, Failure> {
     admit_inner(node, link, caller, call, true, false)
 }
 
 fn admit_inner(
-    node: &Arc<Node>, link: &Arc<Link>, caller: &Caller, call: &RemoteCall, project_ready: bool, sealing: bool,
+    node: &Arc<Node>,
+    link: &Arc<Link>,
+    caller: &Caller,
+    call: &RemoteCall,
+    project_ready: bool,
+    sealing: bool,
 ) -> Result<Asker, Failure> {
     let here = node.machine();
     // Nothing of a call turned away here ran.

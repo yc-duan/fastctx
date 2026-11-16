@@ -39,8 +39,6 @@ export function lineage(place: Place): string[] {
       return ["projects", `project:${place.town}`];
     case "history":
       return ["projects", `project:${place.town}`, `history:${place.name}`];
-    case "page":
-      return ["projects", `project:${place.town}`, `page:${place.page}`];
     case "talk":
       return [`talk:${place.address.resident}@${place.address.machine}`];
     case "talk-history":

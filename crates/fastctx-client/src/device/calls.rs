@@ -7,7 +7,6 @@ use std::sync::Arc;
 
 use fastctx_net::link::CallFailure;
 use fastctx_types::accounts::{AccountChange, AccountsReply};
-use fastctx_types::pages::PageCall;
 use fastctx_types::remote::{RemoteCall, RemoteReply};
 use fastctx_types::town::Looked;
 use fastctx_types::{Address, Call, JournalCall, MachineName, ProjectCall, Reply, ResidentId};
@@ -449,7 +448,9 @@ impl Device {
             Call::SetAgentResetInPlace { machine, agent, dir, on } => {
                 (machine, RemoteCall::SetAgentResetInPlace { agent, dir, on }, None)
             }
-            Call::SetAgentWeek { machine, agent, dir, week } => (machine, RemoteCall::SetAgentWeek { agent, dir, week }, None),
+            Call::SetAgentWeek { machine, agent, dir, week } => {
+                (machine, RemoteCall::SetAgentWeek { agent, dir, week }, None)
+            }
             Call::ChangeAgentModels { machine, agent, dir, change } => {
                 (machine, RemoteCall::ChangeAgentModels { agent, dir, change }, None)
             }
@@ -619,15 +620,6 @@ impl Device {
             // What only the projects' ledgers hold, one machine answers from
             // its own copy, for what this device's account may use.
             Call::Journal(_) => return Err(failed(fastctx_types::memory::LEGACY)),
-            call @ Call::Page(
-                PageCall::Read { .. }
-                | PageCall::List { .. }
-                | PageCall::History { .. }
-                | PageCall::Consent { .. }
-                | PageCall::Act { .. }
-                | PageCall::Withdraw { .. }
-                | PageCall::Restore { .. },
-            ) => return self.relay(call).await,
             _ => return Err(failed("this call belongs to a local node, not a device")),
         };
         let session = self.reaching(&machine)?;
@@ -893,37 +885,12 @@ impl Device {
             call,
             Call::Project(ProjectCall::List | ProjectCall::Show { .. } | ProjectCall::Map { .. })
                 | Call::Journal(JournalCall::List { .. } | JournalCall::Read { .. })
-                | Call::Page(PageCall::Read { .. } | PageCall::List { .. } | PageCall::History { .. })
         );
         let remote = RemoteCall::Relay { made: serde_json::to_value(&call).map_err(failed)? };
         let mut unanswered = Vec::new();
         let mut asked = false;
         for session in self.sessions() {
             for (machine, account) in actors(&session) {
-                if let Call::Page(page) = &call {
-                    if page.account().is_some_and(|selected| selected != &account) {
-                        continue;
-                    }
-                    match session
-                        .link
-                        .call(&machine, &account, fastctx_types::access::Purpose::Look, RemoteCall::Facts)
-                        .await
-                    {
-                        Ok(Ok(RemoteReply::Facts(facts))) if facts.page_accounts => {}
-                        Ok(Ok(_)) => {
-                            unanswered.push(format!("upgrade {machine} to keep page consent by account"));
-                            continue;
-                        }
-                        Ok(Err(error)) => {
-                            unanswered.push(error.to_string());
-                            continue;
-                        }
-                        Err(error) => {
-                            unanswered.push(error.to_string());
-                            continue;
-                        }
-                    }
-                }
                 asked = true;
                 // Heartbeats establish connection liveness, not a deadline
                 // for completing a query or transferring its answer. Only a

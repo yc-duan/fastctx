@@ -36,9 +36,6 @@ await_holding_lock = "deny"
 await_holding_refcell_ref = "deny"
 await_holding_invalid_type = "deny"
 
-[features]
-page-sandbox-probe = ["tauri-plugin-world-pages/probe"]
-
 [lib]
 name = "fastctx_gui_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
@@ -64,7 +61,6 @@ flate2 = { version = "1.1.10", default-features = false, features = ["rust_backe
 tauri = { version = "2", features = [] }
 # Links leave the app for the system's browser, on a computer and a phone.
 tauri-plugin-opener = "2.7"
-tauri-plugin-world-pages = { path = "page-sandbox" }
 tokio = { version = "1", features = ["sync", "fs", "io-util"] }
 tempfile = "3"
 rusqlite = { version = "0.41", features = ["bundled"] }

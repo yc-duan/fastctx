@@ -40,12 +40,18 @@ pub enum Call {
     /// How `account`'s machines stand in syncing with `hub` over the last
     /// `hours` (design §28.9): what this machine sees itself, and what the
     /// hub reckons when it is reached. Never relayed through another machine.
-    SyncStatus { hub: crate::access::HubId, account: crate::AccountName, hours: u32 },
+    SyncStatus {
+        hub: crate::access::HubId,
+        account: crate::AccountName,
+        hours: u32,
+    },
     /// The account that opened the conversation `resident`, logged in here,
     /// has it written on here from now on, the device it lived on lost
     /// (design §28.10): its streams that device ordered are taken over.
     /// Never relayed through another machine.
-    AdoptConversation { resident: ResidentId },
+    AdoptConversation {
+        resident: ResidentId,
+    },
     Plan {
         hub: Option<crate::HubName>,
         account: Option<crate::AccountName>,
@@ -906,7 +912,6 @@ pub enum Call {
     Project(ProjectCall),
     /// `fastctx journal`.
     Journal(JournalCall),
-    Page(crate::pages::PageCall),
     /// A supervisor says its job's record has changed: the shell started
     /// or exited, the output ended, or nothing of the job runs any more.
     JobChanged {
@@ -1130,26 +1135,6 @@ pub enum Reply {
     Features(crate::features::Features),
     ComposerUploaded(Box<crate::composer::UploadResult>),
     Composer(Box<crate::composer::Updated>),
-    Page {
-        view: Box<crate::pages::PageView>,
-    },
-    Pages {
-        town: TownName,
-        pages: Vec<crate::pages::PageSummary>,
-    },
-    PageHistory {
-        town: TownName,
-        page: crate::PageName,
-        versions: Vec<crate::pages::PageVersion>,
-    },
-    PageConsent {
-        town: TownName,
-        page: crate::PageName,
-        consent: crate::pages::PageConsent,
-    },
-    PageAct {
-        result: crate::pages::PageResult,
-    },
     FilesFound(crate::file_search::FileSearchReply),
     Folders(crate::focus::Folders),
     Stats(Box<crate::stats::MachineStats>),
@@ -1543,7 +1528,6 @@ impl Call {
             | Self::On { .. }
             | Self::Open { .. }
             | Self::OpenAccount { .. }
-            | Self::Page { .. }
             | Self::PeekToken { .. }
             | Self::Plan { .. }
             | Self::PlanRead { .. }
@@ -1685,11 +1669,6 @@ impl Reply {
             | Self::Notices { .. }
             | Self::Offers { .. }
             | Self::Opened { .. }
-            | Self::Page { .. }
-            | Self::PageAct { .. }
-            | Self::PageConsent { .. }
-            | Self::PageHistory { .. }
-            | Self::Pages { .. }
             | Self::Plan { .. }
             | Self::Profile { .. }
             | Self::ProfileSubagents { .. }

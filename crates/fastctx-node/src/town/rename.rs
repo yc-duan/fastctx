@@ -23,20 +23,6 @@ pub fn file(path: &str, bytes: &[u8], old: &MachineName, new: &MachineName) -> R
             writer(&mut stored.revision.author.stamp.by);
             pretty(&stored)
         }
-        ["pages", _, "versions", _, "page.json"] => {
-            let mut version: fastctx_types::pages::PageVersion = parse(path, bytes)?;
-            version.on.iter_mut().for_each(rename);
-            writer(&mut version.by);
-            version.acts.iter_mut().for_each(|act| rename_act(act, old, new));
-            pretty(&version)
-        }
-        ["pages", _, "consent", _] => {
-            let mut consent: fastctx_types::pages::PageConsent = parse(path, bytes)?;
-            consent.stamp.on.iter_mut().for_each(rename);
-            writer(&mut consent.stamp.by);
-            consent.acts.iter_mut().for_each(|act| rename_act(act, old, new));
-            pretty(&consent)
-        }
         ["project", _] => {
             let mut record: Record = parse(path, bytes)?;
             record.machines.iter_mut().for_each(rename);
@@ -123,14 +109,6 @@ fn rename_writer(writer: &mut Writer, old: &MachineName, new: &MachineName) {
             }
             rename_writer(&mut page.by, old, new);
         }
-        _ => {}
-    }
-}
-
-fn rename_act(act: &mut fastctx_types::pages::PageAct, old: &MachineName, new: &MachineName) {
-    match act {
-        fastctx_types::pages::PageAct::Run { machine, .. } if machine == old => *machine = new.clone(),
-        fastctx_types::pages::PageAct::Say { to } if to.machine == *old => to.machine = new.clone(),
         _ => {}
     }
 }

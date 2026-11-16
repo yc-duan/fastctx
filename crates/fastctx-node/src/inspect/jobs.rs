@@ -118,7 +118,8 @@ fn of(node: &Node, record: &JobRecord, scope: &HubAccount) -> bool {
             node.residents.about(&address.resident).map(|(about, _)| about.acting)
         }
         JobOwner::Resident(_) => None,
-        JobOwner::Page { page } => crate::pages::identity::acting(node, page).ok(),
+        // A page's, of a release before pages were removed (beta.18).
+        JobOwner::Page { .. } => None,
     };
     acting.is_some_and(|acting| node.serves(&acting, &scope.hub, &scope.account))
 }

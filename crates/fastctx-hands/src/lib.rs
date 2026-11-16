@@ -4,15 +4,14 @@
 
 pub mod answer;
 pub mod copy;
+mod directory_page;
 pub mod encoding;
 pub mod files;
 pub mod folders;
-mod directory_page;
 pub mod history;
 pub mod image;
 pub mod lines;
 pub mod outline;
-pub mod pages;
 pub mod run;
 mod spool;
 mod text;

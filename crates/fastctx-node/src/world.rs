@@ -707,7 +707,6 @@ pub fn facts(node: &Node) -> MachineFacts {
         stats: true,
         mcp: true,
         mcp_import: true,
-        page_accounts: true,
         attachment_places: true,
         attachment_runs: true,
         memory_folders: false,
@@ -917,7 +916,6 @@ impl fastctx_net::link::Node for Handler {
                         let stream = stream.ok_or_else(|| Failure::new("MCP requires a data connection"))?;
                         crate::mcp::serve(&node, &hub, &caller.account, &name, stream).await.map(|()| RemoteReply::Set)
                     }
-                    RemoteCall::PageAction { .. } => Err(submitted_before()),
                     RemoteCall::Relay { made } => crate::devices::relay(&node, &asker, made).await,
                     // A resident of the calling machine works here (`world-run.md`,
                     // 这里).
@@ -1025,11 +1023,18 @@ impl fastctx_net::link::Node for Handler {
                         .await?;
                         Ok(RemoteReply::Asked { colleague, waiting })
                     }
-                    RemoteCall::Talk { to, text, attachments, files_on, id } => {
-                        crate::talk::talk_here(&node, Some(&hub), &from, &to, text, attachments, files_on.as_ref(), id.as_deref())
-                            .await
-                            .map(|landed| RemoteReply::Said { landed })
-                    }
+                    RemoteCall::Talk { to, text, attachments, files_on, id } => crate::talk::talk_here(
+                        &node,
+                        Some(&hub),
+                        &from,
+                        &to,
+                        text,
+                        attachments,
+                        files_on.as_ref(),
+                        id.as_deref(),
+                    )
+                    .await
+                    .map(|landed| RemoteReply::Said { landed }),
                     RemoteCall::Watch {
                         resident,
                         watch,
@@ -1119,7 +1124,9 @@ impl fastctx_net::link::Node for Handler {
                     }
                     RemoteCall::Outline { folders, within_ms, cursors } => {
                         let within = std::time::Duration::from_millis(within_ms);
-                        Ok(RemoteReply::Outlined { outlines: crate::focus::outline_page(folders, within, cursors).await? })
+                        Ok(RemoteReply::Outlined {
+                            outlines: crate::focus::outline_page(folders, within, cursors).await?,
+                        })
                     }
                     RemoteCall::FindFiles { request } => {
                         if let fastctx_types::file_search::FileSearchRequest::Open { scope } = request {
@@ -1191,9 +1198,11 @@ impl fastctx_net::link::Node for Handler {
                         .await?;
                         Ok(RemoteReply::Opened { resident, landed })
                     }
-                    RemoteCall::Stop { resident, turn, words } => crate::talk::stop_seen(&node, &resident, turn.as_deref(), words.as_deref())
-                        .await
-                        .map(|stopped| RemoteReply::Stopped { stopped }),
+                    RemoteCall::Stop { resident, turn, words } => {
+                        crate::talk::stop_seen(&node, &resident, turn.as_deref(), words.as_deref())
+                            .await
+                            .map(|stopped| RemoteReply::Stopped { stopped })
+                    }
                     RemoteCall::Manage { resident, action } => {
                         crate::management::here(&node, &resident, action).await.map(RemoteReply::Managed)
                     }

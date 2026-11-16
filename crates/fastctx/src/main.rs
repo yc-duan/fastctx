@@ -30,7 +30,6 @@ mod mcp_child;
 mod mcp_relay;
 mod on;
 mod output;
-mod page;
 mod paths;
 mod plan;
 mod profile;
@@ -299,14 +298,10 @@ enum Command {
     /// A fastctx project is not a folder or a repository: it is a named
     /// piece of the user's work that can span several machines. Its record
     /// says what it is for, which machines it spans, and where its code and
-    /// data are on each; its pages show live facts to the user.
+    /// data are on each.
     #[command(subcommand)]
     Project(project::ProjectCommand),
 
-    /// A project's pages: HTML the user opens in the World app, showing
-    /// live facts of the machines and sessions. Publish, read or list them.
-    #[command(subcommand, after_long_help = page::PAGE_HELP)]
-    Page(page::PageCommand),
     /// Log this computer in to an account on a hub: with the hub's address
     /// and the account's password, asked for here, or with a token another
     /// device made. It stays logged in until it logs out or is removed.
@@ -576,7 +571,6 @@ fn main() -> ExitCode {
         Command::Attach(args) => attach::run(args),
         Command::Project(command) => project::run(command),
 
-        Command::Page(command) => page::run(command),
         Command::Login(args) => world::login(args),
         Command::Logout(args) => world::logout(args),
         Command::Token(command) => world::token(command),

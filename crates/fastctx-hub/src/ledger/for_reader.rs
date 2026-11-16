@@ -12,7 +12,6 @@ use fastctx_net::ledger::{Entry, File, Projection};
 use fastctx_net::sign::Bytes;
 use fastctx_types::history::HistoryRevision;
 use fastctx_types::memory::{Author, Evidence, Kind, ProjectIndex, Revision, markdown};
-use fastctx_types::pages::{PageConsent, PageVersion};
 use fastctx_types::project::Record;
 use fastctx_types::{AccountName, MachineName};
 use serde::{Serialize, de::DeserializeOwned};
@@ -41,7 +40,8 @@ pub(crate) fn entry(
     usable: &dyn Fn(&MachineName) -> bool,
     history: &dyn Fn(&mut HistoryRevision),
 ) -> Projection {
-    let mut files = entry.files.clone();
+    // An earlier release's pages are told to no reader any more (beta.18).
+    let mut files: Vec<File> = entry.files.iter().filter(|file| !file.path.starts_with("pages/")).cloned().collect();
     filter(&mut files, usable, history);
     Projection {
         seq,
@@ -71,12 +71,6 @@ pub(crate) fn filter(
         let rewritten = match parts.as_slice() {
             ["project", name] if name.ends_with(".json") => {
                 rewrite(bytes, |record: &mut Record| record.for_reader(usable))
-            }
-            ["pages", _, "versions", _, "page.json"] => {
-                rewrite(bytes, |version: &mut PageVersion| version.for_reader(usable))
-            }
-            ["pages", _, "consent", .., last] if last.ends_with(".json") => {
-                rewrite(bytes, |consent: &mut PageConsent| consent.stamp.for_reader(usable))
             }
             ["memory", _, name] if name.ends_with(".json") => rewrite(bytes, |revision: &mut Revision| {
                 let written = revision.author.clone();
@@ -127,14 +121,11 @@ fn rewrite<T: Serialize + DeserializeOwned + PartialEq + Clone>(
 }
 
 /// A project's index as the asking machine's account may know it: its
-/// record, opening, catalog and pages (`ProjectIndex`, M09).
+/// record, opening and catalog (`ProjectIndex`, M09).
 pub(crate) fn index(index: &mut ProjectIndex, usable: &dyn Fn(&MachineName) -> bool) {
     index.record.for_reader(usable);
     index.opened.for_reader(usable);
     index.catalog.for_reader(usable);
-    for page in &mut index.pages {
-        page.current.for_reader(usable);
-    }
 }
 
 /// A memory document's versions and evidence as the asking machine's

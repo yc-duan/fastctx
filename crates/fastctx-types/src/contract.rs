@@ -281,7 +281,6 @@ impl RemoteCall {
             | Self::EnterProject { .. }
             | Self::ReserveAttachment { .. }
             | Self::CommitAttachment { .. }
-            | Self::PageAction { .. }
             | Self::Relay { .. }
             | Self::Forget { .. }
             | Self::Write { .. }
@@ -576,7 +575,6 @@ impl Call {
             | Self::Taken { .. }
             | Self::Project { .. }
             | Self::Journal { .. }
-            | Self::Page { .. }
             | Self::JobChanged { .. }
             | Self::Login { .. }
             | Self::PeekToken { .. }
@@ -617,7 +615,10 @@ impl Call {
             Self::Sentinel { .. } => 4096,
             Self::SentinelSettings { change: None, .. } => 4096,
             // The local list and diagnostic calls.
-            Self::DoctorCalls { .. } | Self::DoctorReadings | Self::Nodes | Self::Data(crate::data::DataCall::List { .. }) => 1024,
+            Self::DoctorCalls { .. }
+            | Self::DoctorReadings
+            | Self::Nodes
+            | Self::Data(crate::data::DataCall::List { .. }) => 1024,
             Self::SyncStatus { .. } | Self::AdoptConversation { .. } => 4096,
             Self::Who { .. } | Self::Since { .. } | Self::Book { .. } => 4 * 1024,
             Self::Machines { .. } | Self::Stats { .. } => 32 * 1024,

@@ -1,4 +1,4 @@
-//! Project attributes and pages; history is delivered in its own context block.
+//! Project attributes; history is delivered in its own context block.
 
 use crate::Node;
 use fastctx_types::{TownName, access::Acting, ipc::Failure, project::MapView};
@@ -7,29 +7,14 @@ use std::sync::Arc;
 pub async fn view(node: &Arc<Node>, town: &TownName, acting: &Acting) -> Result<MapView, Failure> {
     super::access::ready(node, acting, town).await?;
     let (world, name) = (node.world.clone(), town.clone());
-    let (records, pages) = fastctx_platform::task::spawn_blocking(move || {
-        let kept = world.town(&name);
-        let pages =
-            if !fastctx_platform::disk::is_dir(kept.signed()) && !fastctx_platform::disk::is_dir(kept.projected()) {
-                crate::ledger::metadata::read(&world, &name)?.map(|index| index.pages).unwrap_or_default()
-            } else {
-                crate::pages::read::summaries(&world, &name)?
-            };
-        std::io::Result::Ok((super::read::current(&world, &name)?, pages))
-    })
-    .await
-    .map_err(|error| Failure::new(error.to_string()))?
-    .map_err(|error| Failure::new(error.to_string()))?;
+    let records = fastctx_platform::task::spawn_blocking(move || super::read::current(&world, &name))
+        .await
+        .map_err(|error| Failure::new(error.to_string()))?
+        .map_err(|error| Failure::new(error.to_string()))?;
     let Some((mut record, mut opened)) = records else { return Err(no_ledger(node, town)) };
-    let mut pages = pages;
     crate::ledger::query::seen(node, acting, town, &mut record).map_err(|error| Failure::new(error.to_string()))?;
     crate::ledger::query::seen_stamp(node, acting, town, &mut opened)
         .map_err(|error| Failure::new(error.to_string()))?;
-    if let Some(usable) =
-        crate::ledger::query::usable(node, acting, town).map_err(|error| Failure::new(error.to_string()))?
-    {
-        pages.iter_mut().for_each(|summary| summary.current.for_reader(&*usable));
-    }
     Ok(MapView {
         memory: None,
         town: town.clone(),
@@ -37,7 +22,6 @@ pub async fn view(node: &Arc<Node>, town: &TownName, acting: &Acting) -> Result<
         record,
         opened,
         journals: Vec::new(),
-        pages,
         canon: None,
     })
 }

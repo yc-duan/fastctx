@@ -18,7 +18,6 @@ pub(crate) async fn call(node: &Arc<Node>, caller: &Caller, town: TownName) -> R
         Caller::Resident(address) if node.is_me(&address.machine) => here(node, &address.resident, &town, None).await?,
         Caller::Resident(address) => remote(node, address, &town).await?,
         Caller::User => return Err(Failure::not_run("only an agent's resident conversation enters a project")),
-        Caller::Page(_) => return Err(Failure::not_run("a page does not enter a project")),
         Caller::Session(_) => return Err(Failure::refused("the agent session has no resident identity yet")),
     };
     Ok(Reply::Entered { town, map: Box::new(map) })

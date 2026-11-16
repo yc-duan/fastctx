@@ -15,7 +15,7 @@ pub(super) fn local(
     resolved: &super::Resolved,
 ) -> Result<(), Failure> {
     let fixed = match resolved {
-        super::Resolved::Page { town, .. } | super::Resolved::ProjectEdit { town } => Some(town),
+        super::Resolved::ProjectEdit { town } => Some(town),
         _ => None,
     };
     filter(node, &crate::around::acting_of(node, caller), call, reply, fixed)
@@ -36,9 +36,6 @@ pub(super) fn remote(node: &Node, asker: &Asker, call: &RemoteCall, reply: &mut 
             if let Some(usable) = crate::ledger::query::usable(node, &acting, town).map_err(failure)? {
                 map.record.for_reader(&*usable);
                 map.opened.for_reader(&*usable);
-                for page in &mut map.pages {
-                    page.current.for_reader(&*usable);
-                }
             }
         }
         _ => {}
@@ -54,7 +51,6 @@ fn filter(
     fixed: Option<&fastctx_types::TownName>,
 ) -> Result<(), Failure> {
     let town = fixed.or_else(|| match call {
-        Call::Page(call) => call.town(),
         Call::Project(fastctx_types::ProjectCall::New { town, .. } | fastctx_types::ProjectCall::Enter { town }) => {
             Some(town)
         }
@@ -65,8 +61,6 @@ fn filter(
     crate::town::access::check(node, acting, town)?;
     let Some(usable) = crate::ledger::query::usable(node, acting, town).map_err(failure)? else { return Ok(()) };
     match reply {
-        Reply::Page { view } => view.for_reader(&*usable),
-        Reply::PageConsent { consent, .. } => consent.stamp.for_reader(&*usable),
         Reply::Record { record, opened, .. } => {
             record.for_reader(&*usable);
             opened.for_reader(&*usable);
@@ -74,9 +68,6 @@ fn filter(
         Reply::Entered { map, .. } => {
             map.record.for_reader(&*usable);
             map.opened.for_reader(&*usable);
-            for page in &mut map.pages {
-                page.current.for_reader(&*usable);
-            }
         }
         _ => {}
     }

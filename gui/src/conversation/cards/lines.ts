@@ -126,8 +126,6 @@ function cardSaid(card: Card, words: Words): Said {
       return plainSaid("terminal", deeds.world.wait, card.of ? shortCommand(scriptSaid(card.of, card.deed.machine) ?? card.of) : card.deed.job, { outcome: card.deed.failed ? outcome(deeds.ended(card.deed.end)) : "" });
     case "stop":
       return plainSaid("stop", deeds.world.stop, card.of ? shortCommand(card.of) : card.deed.what, { outcome: card.deed.stopped ? "" : outcome(deeds.stopped(card.deed.how)) });
-    case "page":
-      return plainSaid("page", deeds.world.publish, card.deed.title, { outcome: `<span class="row-outcome">${escape(deeds.version(card.deed.version))}</span>` });
     case "project":
       return plainSaid("folder", deeds.world.enter, card.deed.town);
     case "picture": {

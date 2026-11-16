@@ -124,7 +124,6 @@ mod on_steps;
 mod on_stop;
 mod outbox;
 mod own_collab;
-mod pages;
 mod passes;
 mod placement;
 mod plan;
