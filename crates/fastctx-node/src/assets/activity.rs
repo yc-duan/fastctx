@@ -120,6 +120,13 @@ pub(crate) fn writable(
     Ok(Some((scope, holding)))
 }
 
+/// Whether `account` is gone from what the hub `hub` shows this machine, as
+/// the view it gave on the connection up now says: never so while the hub
+/// is not reached, nor on a view an earlier connection left.
+fn gone_account(node: &Node, hub: &HubId, account: &AccountName) -> bool {
+    node.link_of(hub).is_some_and(|link| link.view_current() && link.view().directory.account(account).is_none())
+}
+
 /// How far something may seem done before its account was opened, as the
 /// hub's clock and this machine's differ, in milliseconds.
 const CLOCKS: i64 = 2 * 60 * 1000;
@@ -1112,7 +1119,14 @@ fn usage(
         let mut waiting = unowned;
         for (account, lines) in lines {
             let Some((scope, holding)) = writable(node, library, hub, &account, stream)? else {
-                waiting = true;
+                // An account the hub, reached, no longer shows this machine
+                // (removed, or no longer sharing or assisted here) has nowhere
+                // its lines go: they stay in the ledger, and the others' after
+                // them are read on. Not reached, or its scope not held yet,
+                // the piece is read again.
+                if !gone_account(node, hub, &account) {
+                    waiting = true;
+                }
                 continue;
             };
             // Held anew since the look began: nothing is written on from
