@@ -1174,7 +1174,11 @@ fn held(inner: &Inner, seq: u64) -> std::io::Result<()> {
     if !further {
         return Ok(());
     }
-    inner.held_now.store(seq, std::sync::atomic::Ordering::Release);
+    // Never backward: the receipts of a session that ended may still be
+    // being written down as the next session's are, and the earlier one's
+    // furthest, stored after the later one's, would have the heartbeat say
+    // less than is held until another receipt came.
+    inner.held_now.fetch_max(seq, std::sync::atomic::Ordering::AcqRel);
     Outbox::new(&inner.dir).held_between(before, seq)?;
     inner.outbox_changed.notify_one();
     Ok(())
