@@ -969,7 +969,7 @@ export class ConversationView {
     if (known && known.stamp === block.stamp && known.width === chars) return known.height;
     let height: number;
     if (block.kind === "gap") height = this.room().gap;
-    else if (block.kind === "ended" && !this.context.words.turn(block.end.how, block.end.reason)) height = 0;
+    else if (block.kind === "ended" && !this.context.words.turn(block.end.how, block.end.reason) && !this.changedSign(block.turn)) height = 0;
     else {
       const conversation = this.conversation;
       const turn = block.kind === "heard" || block.kind === "prose" ? block.turn : null;
@@ -984,6 +984,7 @@ export class ConversationView {
       const previous = this.blocks[index - 1];
       const start = (block.kind === "heard" && (!block.from || block.from.kind === "user") && !block.notice) || previous?.kind === "ended";
       height = estimate(block, line, chars, acts) + (index === 0 ? 0 : start ? room.turn : room.block);
+      if (block.kind === "ended") height += this.changedRoom(block.turn);
     }
     this.guesses.set(block.key, { stamp: block.stamp, width: chars, height });
     return height;
@@ -1432,12 +1433,14 @@ export class ConversationView {
         return `${block.stamp}|${block.partialBefore ? 1 : 0}${block.partialAfter ? 1 : 0}|${block.members.length}|${this.openStretches.has(block.key) ? "o" : ""}${block.agents ? `|${conversation.agentStamp}` : ""}`;
       case "prose": {
         const last = block.prose === "message" && conversation.lastMessageOf(block.turn) === block.key;
-        return `${block.stamp}|${last ? `l${conversation.turnEnded(block.turn) ? "e" : ""}${conversation.latestEnded() === block.turn ? "n" : ""}` : ""}${conversation.spokeIn(block.turn) ? "|s" : ""}${last ? this.changedSign(block.turn) : ""}`;
+        return `${block.stamp}|${last ? `l${conversation.turnEnded(block.turn) ? "e" : ""}${conversation.latestEnded() === block.turn ? "n" : ""}` : ""}${conversation.spokeIn(block.turn) ? "|s" : ""}`;
       }
       case "say": {
         const last = conversation.lastSayOf(block.turn) === block.key;
-        return `${block.stamp}|${last ? `l${conversation.turnEnded(block.turn) ? "e" : ""}${conversation.latestEnded() === block.turn ? "n" : ""}` : ""}|${this.chatMomentSign(block.key)}${last ? this.changedSign(block.turn) : ""}`;
+        return `${block.stamp}|${last ? `l${conversation.turnEnded(block.turn) ? "e" : ""}${conversation.latestEnded() === block.turn ? "n" : ""}` : ""}|${this.chatMomentSign(block.key)}`;
       }
+      case "ended":
+        return `${block.stamp}${this.changedSign(block.turn)}`;
       case "heard":
         return `${block.stamp}|${block.turn && conversation.turnEnded(block.turn) ? "e" : ""}${block.turn && conversation.latestEnded() === block.turn ? "n" : ""}|${this.chatMomentSign(block.key)}`;
       case "uncertain":
@@ -1703,11 +1706,13 @@ export class ConversationView {
         return `<div class="note faint">${escape(entry.hostKind === "fastctx:timeline-preview-unavailable" ? (words.english ? "Content preview unavailable" : "内容预览暂不可用") : entry.hostKind === "fastctx:running-content-pending" ? (words.english ? "In progress; content will follow" : "进行中，内容稍后显示") : entry.hostKind)}</div>`;
       case "ended": {
         const said = words.turn(entry.end.how, entry.end.reason);
-        if (!said) return "";
+        // What the turn changed stands where it ended, however it ended.
+        const changed = this.turnChanged(entry.turn);
+        if (!said) return changed;
         // A turn the user cut short is said as quietly as a notice, not as
         // a warning; one cut short by a failure still says why, as one.
-        if (entry.end.how === "interrupted" && !entry.end.reason) return `<div class="turn-interrupted">${escape(said)}</div>`;
-        return `<div class="note ${entry.end.how === "failed" ? "wrong" : "caution"}">${escape(said)}</div>`;
+        if (entry.end.how === "interrupted" && !entry.end.reason) return `<div class="turn-interrupted">${escape(said)}</div>${changed}`;
+        return `<div class="note ${entry.end.how === "failed" ? "wrong" : "caution"}">${escape(said)}</div>${changed}`;
       }
       case "health":
         return `<div class="note caution" title="${escape(entry.health.text)}">${escape(healthSaid(entry.health, this.context.words))}</div>`;
@@ -1850,16 +1855,20 @@ export class ConversationView {
             .map(({ label, text, html }) => `<span class="turn-info-label">${escape(label)}</span><span>${html ?? escape(text)}</span>`)
             .join("")}${this.context.turnCalls ? `<button class="turn-info-calls" type="button" data-turn-calls="${escape(entry.turn)}">${escape(words.turnInfo.requests)}</button>` : ""}</span></span>`
         : ""
-    }</div>${this.turnChanged(turn)}`;
+    }</div>`;
   }
 
-  /** The files a turn changed, once it is over: a footnote to the turn,
-   *  after its last words and what can be done to them, under a short
-   *  ruled line. A line of words says how many files and by how many
-   *  lines, as a stretch's heading says what it did; under it a row to a
-   *  file, each opening in the side to what the turn did to it. The
-   *  footnote of the turn that changed something last stands open; an
-   *  earlier turn's is its line alone until pressed. */
+  /** The files a turn changed, once it is over: a card where the turn
+   *  ended (the user, 2026-11-17: "我们也做成下面一个卡片的形式，和详情里面
+   *  很像"). A turn is all the model did from when it began to work until
+   *  it stopped, whatever began it and whatever stopped it, a natural end,
+   *  the user's interruption or a failure alike: so the card belongs to the
+   *  turn's end, not to its last words, which a turn cut short may not
+   *  have. Its head says how many files and by how many lines; under it a
+   *  row to a file, as the side's own list of them, each opening in the
+   *  side to what the turn did to it. The card of the turn that changed
+   *  something last stands open; an earlier turn's is its head alone until
+   *  pressed. */
   private turnChanged(turn: string): string {
     const changed = this.context.changed;
     if (!changed || this.context.nested) return "";
@@ -1878,7 +1887,19 @@ export class ConversationView {
       .map((file) => fileRow(file, words, { attrs: `data-changed-file="${escape(file.path)}" data-machine="${escape(file.machine)}"`, where: file.machine !== this.context.residentMachine, under }))
       .join("");
     const rest = whole ? "" : `<li class="cf-rest"><button type="button" class="text-button" data-changed-more>${escape(words.moreFiles(files.length - listed.length))}</button></li>`;
-    return `<section class="turn-changed${open ? " open" : ""}" data-turn="${escape(turn)}"><header class="tc-head"><button type="button" class="tc-fold" data-changed-fold aria-expanded="${open}"><span>${escape(words.turn.changed(sum.files))}</span>${figures(sum.added, sum.removed)}${glyph("chevron", 16)}</button></header><div class="tc-box"><div class="tc-inner"><ul class="cf-files">${rows}${rest}</ul></div></div></section>`;
+    return `<section class="turn-changed${open ? " open" : ""}" data-turn="${escape(turn)}"><button type="button" class="tc-fold" data-changed-fold aria-expanded="${open}"><span class="tc-said">${escape(words.turn.changed(sum.files))}</span>${figures(sum.added, sum.removed)}${glyph("chevron", 16)}</button><div class="tc-box"><div class="tc-inner"><ul class="cf-files">${rows}${rest}</ul></div></div></section>`;
+  }
+
+  /** How tall a turn's card of changed files stands, about, before it is
+   *  measured. */
+  private changedRoom(turn: string): number {
+    const changed = this.context.changed;
+    if (!changed || this.context.nested) return 0;
+    const files = changed.turn(turn).length;
+    if (!files) return 0;
+    const open = this.changedFolds.get(turn) ?? changed.last() === turn;
+    const rows = this.changedWhole.has(turn) || files <= TURN_FILES + 1 ? files : TURN_FILES + 1;
+    return 56 + (open ? rows * 38 : 0);
   }
 
   /** What a turn's list of changed files is drawn from. */

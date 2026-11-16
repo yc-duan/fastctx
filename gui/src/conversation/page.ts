@@ -551,6 +551,8 @@ export class ConversationPage {
       });
     }
     const changes = this.changes;
+    // A turn that changed files shows them where it ended, in either view.
+    if (changes) options.conversation.endKept = (turn) => changes.turn(turn).length > 0;
     this.view = new ConversationView(main, options.conversation, {
       words,
       english: words.english,

@@ -703,6 +703,11 @@ export class Conversation {
    *  words once it has ended, whoever began it; a colleague's turn that
    *  spoke to the user through `message_user` shows what it said instead,
    *  and its last words too only when it worked on after saying it. */
+  /** Whether a turn's end has something to show in the conversation's own
+   *  view too, though the turn ended as it should: the files it changed
+   *  (`page.ts`). */
+  endKept: ((turn: string) => boolean) | null = null;
+
   chatBlocks(): Block[] {
     const blocks = this.blocks();
     const version = this.cache!.version;
@@ -722,7 +727,7 @@ export class Conversation {
         case "prose":
           return block.prose === "message" && (!this.spokeIn(block.turn) || this.answersAfterSaying(block.turn)) && this.turnEnded(block.turn) && this.lastMessageOf(block.turn) === block.key;
         case "ended":
-          return block.end.how === "failed";
+          return block.end.how === "failed" || !!this.endKept?.(block.turn);
         default:
           return false;
       }
