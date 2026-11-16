@@ -174,9 +174,6 @@ async function open(): Promise<void> {
     say: (text, said) => void remote.call("say", text, said ?? null),
     answer: (text) => remote.call<void>("answer", text),
     // One of the host's agents is read in the desk's window (`away`).
-    agentBox: () => {
-      throw new Error("the host's agents are read in the desk's window");
-    },
     jump: () => {},
     openFile: (machine, path, tab) => {
       if (!tabs.turn(machine, path, tab)) tabs.open(machine, path, tab);

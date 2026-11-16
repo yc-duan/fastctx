@@ -115,9 +115,6 @@ export interface Context {
   agent?: string | undefined;
   /** The region the conversation scrolls in. */
   scroller: HTMLElement;
-  /** Opens one of the host's agents in the panel beside the conversation,
-   *  rather than under the row that sent it; false where it cannot. */
-  openAgent?: ((id: string) => boolean) | undefined;
   /** Opens a file a row or a card names (`file-kind.ts`): one that reads as
    *  text in the panel beside the conversation, a picture in the viewer. */
   openFile?: ((machine: MachineName, path: string) => void) | undefined;
@@ -1191,9 +1188,12 @@ export class ConversationView {
   }
 
   /** Brings the row of the call that started one of the host's own agents
-   *  into view, as `openRow` does; for an agent another agent started, the
-   *  row of the first one's call, whose box holds it. False where the
-   *  conversation does not hold that row. */
+   *  into view, as `openRow` does, and opens it: what the agent did is read
+   *  there, under its row (the user, 2026-11-17: "他本身是一个工具可以
+   *  展开，展开之后，里面就是一个呈现子代理活动的东西，而不是一个额外
+   *  弹窗"). For an agent another agent started, the row of the first one's
+   *  call, whose box holds it. False where the conversation does not hold
+   *  that row. */
   openAgent(id: string): boolean {
     let run = this.conversation.agent(id);
     let entry = run?.call ? this.conversation.call(run.call) : null;
@@ -1203,16 +1203,17 @@ export class ConversationView {
       run = this.conversation.agent(run.parent);
       entry = run?.call ? this.conversation.call(run.call) : null;
     }
-    return !!entry && this.openRow(entry.key);
+    return !!entry && this.openRow(entry.key, true);
   }
 
   /** Brings a tool call's row, by its key, to the middle of the view and
-   *  washes it a moment: the stretch it is folded in opens, the row itself
-   *  stays as it was. False where the conversation does not hold that row. */
-  openRow(key: string): boolean {
+   *  washes it a moment: the stretch it is folded in opens; the row itself
+   *  stays as it was, or with `open` opens too. False where the
+   *  conversation does not hold that row. */
+  openRow(key: string, open = false): boolean {
     const group = this.blocks.find((block) => block.kind === "activity-group" && block.members.some((member) => member.key === key));
     if (!group) return false;
-    const slot = this.reveal(group.key, key, false);
+    const slot = this.reveal(group.key, key, open);
     const row = slot?.stretch?.drawn.get(key)?.element;
     if (!row) return false;
     this.context.reading();
@@ -3891,11 +3892,6 @@ export class ConversationView {
     }
     const key = target.dataset.open;
     if (!key) return;
-    const sent = this.conversation.get(key);
-    if (sent?.kind === "tool" && startsAgent(sent.tool) && this.context.openAgent) {
-      const run = this.conversation.agentOf(sent);
-      if (run && this.context.openAgent(run.id)) return;
-    }
     const row = target.closest<HTMLElement>("[data-row], .block-heard, .block-agent-told, .block-command");
     const box = (target.closest(".notice-line")?.nextElementSibling as HTMLElement | null) ?? row?.querySelector<HTMLElement>(":scope > .fold-box") ?? null;
     if (!row || !box) return;

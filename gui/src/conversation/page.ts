@@ -31,7 +31,6 @@ import type { DiffLine, WriteFact } from "../world/run-facts";
 import { TalkChanges } from "./changed";
 import { whyOf } from "../world/again";
 import { JobsPanel, type Job, type OutputLines } from "./jobs-panel";
-import { AgentBox } from "./agent-box";
 import { SideParts } from "../side/parts";
 import type { Address } from "../world/wire";
 import type { SideSeams } from "../side/seams";
@@ -583,7 +582,6 @@ export class ConversationPage {
       lines: options.lines,
       agentRecord: options.agentRecord,
       turnCalls: options.calls,
-      openAgent: options.side ? (id) => this.side?.openAgent(id) ?? false : undefined,
       openFile: (machine, path) => this.openFile(machine, path),
       changed:
         changes && fileWords
@@ -640,16 +638,6 @@ export class ConversationPage {
           const came = await this.options.send(text, { refs: [], shown: [] });
           if (came === "failed") throw new Error(words.notSent(""));
         },
-        agentBox: (run) =>
-          new AgentBox(run, {
-            words,
-            english: words.english,
-            here: options.here,
-            residentMachine: someone.machine,
-            ...(options.lines ? { lines: options.lines } : {}),
-            ...(options.agentRecord ? { record: options.agentRecord } : {}),
-            reading: () => {},
-          }),
         jump: (id) => {
           if (this.view.openAgent(id)) this.following = false;
         },

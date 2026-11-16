@@ -12,8 +12,6 @@
 
 import { Sheet } from "../app/confirm";
 import type { AgentRun } from "../conversation/agents";
-import { glyph } from "../conversation/glyphs";
-import { escape } from "../conversation/prose";
 import { PlanPage, type PlanShown } from "../plan/panel";
 import { planShape } from "../plan/shape";
 import type { Address } from "../world/wire";
@@ -44,9 +42,9 @@ export interface PartsContext {
   say(text: string, detail?: string): void;
   /** Sends the user's words into the conversation at once, as an answer. */
   answer(text: string): Promise<void>;
-  /** What one of the host's agents did, as a box the side can show. */
-  agentBox(run: AgentRun): { element: HTMLElement; update(run: AgentRun): void; destroy(): void };
-  /** Brings the row of the call that sent one of the host's agents into view. */
+  /** Brings the row of the call that sent one of the host's agents into
+   *  view and opens it: what the agent did is read there, in the
+   *  conversation, not in a window over it. */
   jump(id: string): void;
   /** What one of the host's agents does this moment, in a few words. */
   doing?(run: AgentRun): string | null;
@@ -163,8 +161,6 @@ export class SideParts implements PartSet {
   private shownTeam = "";
   /** The goal as last shown, whose version a change is made against. */
   private shownGoal: GoalShown | null = null;
-  /** The box of the host's agent read in a sheet, followed as it goes. */
-  private box: { id: string; update(run: AgentRun): void } | null = null;
   /** What was last shown of each thing a board follows, and the boards
    *  told of it as it changes. */
   private shownPlan: PlanShown | null = null;
@@ -294,19 +290,6 @@ export class SideParts implements PartSet {
   agents(runs: AgentRun[]): void {
     this.runs = runs;
     this.drawTeam();
-    if (this.box) {
-      const run = runs.find((at) => at.id === this.box!.id);
-      if (run) this.box.update(run);
-    }
-  }
-
-  /** One of the host's agents, opened in a sheet from the row that sent
-   *  it; false where the conversation does not know it. */
-  openAgent(id: string): boolean {
-    const run = this.runs.find((at) => at.id === id);
-    if (!run) return false;
-    this.openNode(nodeOf(run, this.context.host, new Map(), Date.now()));
-    return true;
   }
 
   /** The files the conversation changed, as they now stand. */
@@ -407,47 +390,15 @@ export class SideParts implements PartSet {
     this.follow();
   }
 
-  /** One of the host's agents, read in a sheet: in everyone's sheet where it
-   *  was pressed there, with the way back to them; its row in the
-   *  conversation a press away. */
-  private readAgent(run: AgentRun, node: CollabNode): void {
-    const words = this.context.seams.words;
-    const back = this.teamSheet;
-    const sheet = back ?? new Sheet("cs-sheet");
-    const box = this.context.agentBox(run);
-    let gone = false;
-    const done = () => {
-      if (gone) return;
-      gone = true;
-      if (this.box === held) this.box = null;
-      box.destroy();
-    };
-    const way = back ? `<button class="text-button page-back cs-back" type="button">${glyph("back", 18)}<span>${escape(words.pages.collab)}</span></button>` : "";
-    sheet.body.innerHTML = `<header class="sheet-head cs-head">${way}<h2 class="sheet-title">${escape(node.task || node.name)}</h2><button class="text-button cs-jump" type="button">${escape(words.collab.jump)}</button><button class="icon-button sheet-close" type="button" aria-label="${escape(words.close)}">${glyph("close", 18)}</button></header>`;
-    sheet.body.append(box.element);
-    sheet.body.querySelector(".cs-back")?.addEventListener("click", () => {
-      done();
-      this.openTeam();
-    });
-    sheet.body.querySelector(".cs-jump")!.addEventListener("click", () => {
-      sheet.close();
-      this.context.jump(node.id);
-    });
-    sheet.dialog.addEventListener("close", done, { once: true });
-    this.box = { id: node.id, update: (next) => box.update(next) };
-    const held = this.box;
-    sheet.anew();
-    sheet.show();
-  }
-
   leave(): void {
     for (const stop of this.stops) stop();
     for (const tab of this.tabs.splice(0)) tab.leave?.();
   }
 
-  /** One that works with the conversation, pressed in its whole or in the
-   *  conversation: a colleague opens beside it on the desk, one of the
-   *  host's agents is read in the side. */
+  /** One that works with the conversation, pressed on its card or among
+   *  everyone: a colleague opens beside it on the desk; one of the host's
+   *  agents is read in the conversation, under the row of the call that
+   *  sent it, which is brought into view and opened. */
   private openNode(node: CollabNode): void {
     if (this.context.away) return this.context.away.node(node);
     if (node.kind === "colleague" || node.kind === "side") {
@@ -461,7 +412,8 @@ export class SideParts implements PartSet {
       if (colleague) this.openNode(colleague);
       return;
     }
-    this.readAgent(this.runs.find((at) => at.id === node.id)!, node);
+    this.teamSheet?.close();
+    this.context.jump(node.id);
   }
 
   /** The plan: its page, and its card on the overview, how far it is and
