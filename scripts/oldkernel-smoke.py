@@ -41,10 +41,21 @@ def main():
                                str(args.program.resolve()), "--service", "--expect-seccomp"], env=env).returncode
         if code:
             diagnose(root)
+        else:
+            unread(root)
         return code
     finally:
         generator.unlink()
         subprocess.run(["systemctl", "daemon-reload"], check=True)
+
+
+def unread(root):
+    """Units the generator could not read, said even when the rest passed:
+    one such unit once left every other unwrapped."""
+    log = root / "generator.log"
+    lines = [line for line in (log.read_text().splitlines() if log.exists() else []) if "Error:" in line]
+    if lines:
+        print("--- old-kernel generator could not read\n" + "\n".join(sorted(set(lines))))
 
 
 def diagnose(root):
