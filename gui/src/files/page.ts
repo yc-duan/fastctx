@@ -38,6 +38,8 @@ export interface FilesPageOptions {
   machine: string;
   path: string | null;
   tab: ViewTab | null;
+  /** The folder its tree starts at, where no file is asked for. */
+  folder?: string | null | undefined;
   machines(): FilesMachine[];
   places(machine: string): Promise<Places>;
   /** A folder's listing; none where machines cannot list their files. */
@@ -66,6 +68,8 @@ export class FilesPage implements Page {
   private machine: string;
   private path: string | null;
   private root: string | null = null;
+  /** The folder the tree was asked to start at, where one was. */
+  private folder: string | null;
   private mode: TreeMode;
   private places: Places = { home: null, places: [] };
   private readonly book = new Changes();
@@ -83,6 +87,7 @@ export class FilesPage implements Page {
     this.title = words.title;
     this.machine = options.machine;
     this.path = options.path;
+    this.folder = options.folder ?? null;
     this.mode = options.list === null || options.tab === "changes" ? "changed" : "all";
     this.element.className = "page fb-page";
     this.element.innerHTML = `${options.head(escape(words.title))}<div class="fb-body">
@@ -127,16 +132,24 @@ export class FilesPage implements Page {
     this.view?.leave();
   }
 
-  /** Another file of this page asked for from outside it. */
-  go(machine: string, path: string | null, tab: ViewTab | null): void {
+  /** Another file of this page asked for from outside it; or, with no
+   *  file, a folder for its tree to start at. */
+  go(machine: string, path: string | null, tab: ViewTab | null, folder: string | null = null): void {
+    this.folder = folder;
     if (machine !== this.machine) {
       this.machine = machine;
       this.path = path;
       void this.enter(tab);
       return;
     }
-    if (path === null) this.close();
-    else this.open(path, tab, false);
+    if (path !== null) return this.open(path, tab, false);
+    this.close();
+    if (folder === null || this.root === null) return;
+    this.mode = this.options.list === null ? "changed" : "all";
+    this.root = folder;
+    this.drawModes();
+    this.drawCrumbs();
+    this.tree.show(this.mode === "changed" ? null : folder, this.mode);
   }
 
   shows(machine: string): boolean {
@@ -176,7 +189,7 @@ export class FilesPage implements Page {
    *  the file lies in it, else the disk holding it, else its own folder. */
   private rootFor(path: string | null): string | null {
     const { home, places } = this.places;
-    if (path === null) return home ?? places[0]?.path ?? null;
+    if (path === null) return this.folder ?? home ?? places[0]?.path ?? null;
     if (home && within(home, path)) return home;
     const holding = places.filter((place) => within(place.path, path)).sort((a, b) => b.path.length - a.path.length)[0];
     return holding?.path ?? (split(path).folder || home);

@@ -2100,16 +2100,36 @@ button.gh-goal:hover,
   margin-top: var(--space-4);
 }
 
-/* A machine's folder, folding away under its head as a card does. */
+/* A machine's folder, folding away under its head as a card does; at the
+   head's end, the mark that goes to the machine's own page of files. */
+.sf-root-top {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  margin: 0 0 2px;
+}
+
+.sf-root-go {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  color: var(--text-3);
+}
+
+.sf-root-go:hover {
+  color: var(--text);
+}
+
 .sf-root-head {
+  flex: 1 1 auto;
   display: flex;
   align-items: center;
   gap: 6px;
-  width: 100%;
   min-width: 0;
-  min-height: 28px;
-  margin: 0 0 2px;
-  padding: 0 6px 0 2px;
+  min-height: 30px;
+  padding: 0 6px 0 0;
   border-radius: var(--radius-s);
   font: inherit;
   text-align: left;
@@ -2124,7 +2144,8 @@ button.gh-goal:hover,
 
 .sf-root-head > .sh-turn {
   flex: none;
-  width: 14px;
+  width: 20px;
+  color: var(--text-2);
 }
 
 .sf-root.shut .sh-turn {

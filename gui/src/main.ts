@@ -2878,6 +2878,9 @@ function sideFiles(): NonNullable<SideSeams["files"]> {
     // Machines do not list their files yet: the trees show what was changed.
     list: live ? null : specimenList,
     home: async (machine) => (live ? (await foldersOf(machine, null)).home : (await specimenPlaces(machine)).home),
+    browse: (machine, folder) => {
+      location.hash = link({ kind: "files", machine, path: null, tab: null, folder });
+    },
   };
 }
 
@@ -2888,7 +2891,7 @@ let filesShown: { shell: Page | null; page: FilesPage | null } | null = null;
 function show(next: Place): void {
   if (next.kind === "files" && place.kind === "files" && filesShown && filesShown.shell === shownPage && filesShown.page) {
     place = next;
-    filesShown.page.go(next.machine, next.path, next.tab);
+    filesShown.page.go(next.machine, next.path, next.tab, next.folder ?? null);
     return;
   }
   // The front page belongs to the workbench: without it, the interface opens on
@@ -3258,6 +3261,7 @@ function show(next: Place): void {
           machine: at.machine,
           path: at.path,
           tab: at.tab,
+          folder: at.folder,
           machines: () => (live ? bookMachines(store.world.peek()) : specimenBookMachines).map(({ name, online }) => ({ name, online })),
           places: async (machine) => {
             if (!live) return specimenPlaces(machine);

@@ -237,6 +237,7 @@ export class SideParts implements PartSet {
         machine: seams.self.machine,
         list: seams.files.list,
         home: seams.files.home,
+        browse: seams.files.browse,
         open: (machine, path, tab) => context.openFile?.(machine, path, tab),
         detail: (error) => context.detail?.(error) ?? String(error),
       });
@@ -576,7 +577,7 @@ export class SideParts implements PartSet {
     };
     return {
       calls: {
-        hello: () => ({ host: context.host, list: !!seams.files?.list, reveal: !!seams.reveal, picture: !!reading?.picture, outside: !!reading?.outside }),
+        hello: () => ({ host: context.host, list: !!seams.files?.list, browse: !!seams.files?.browse, reveal: !!seams.reveal, picture: !!reading?.picture, outside: !!reading?.outside }),
         "plan.save": (_board, text: string, expected: number) => seams.plan.seams.save(text, expected),
         "plan.open": (_board, id: string) => {
           seams.plan.seams.open?.(id);
@@ -586,6 +587,10 @@ export class SideParts implements PartSet {
         say: (_board, text: string, detail: string | null) => context.say(text, detail ?? undefined),
         "files.list": (_board, machine: string, path: string) => seams.files?.list?.(machine, path) ?? none(),
         "files.home": (_board, machine: string) => seams.files?.home(machine) ?? null,
+        "files.browse": (_board, machine: string, folder: string | null) => {
+          seams.files?.browse?.(machine, folder);
+          window.focus();
+        },
         reveal: (_board, path: string) => seams.reveal?.(path),
         // One who works with the conversation is opened here, as from the
         // side: a colleague beside it, one of the host's agents in a sheet.

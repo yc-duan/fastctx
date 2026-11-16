@@ -273,7 +273,7 @@ export class FileTree {
     const file = at.file;
     const lead =
       at.kind === "folder"
-        ? `<span class="ft-twist">${glyph("chevron", 12)}</span><span class="ft-icon">${glyph(at.opened ? "folder-open" : "folder", 16)}</span>`
+        ? `<span class="ft-twist">${glyph("chevron", 16)}</span><span class="ft-icon">${glyph(at.opened ? "folder-open" : "folder", 16)}</span>`
         : `<span class="ft-twist"></span><span class="ft-icon">${file ? mark(file.how, words.how[file.how]) : glyph("file", 16)}</span>`;
     const tail = file ? (file.uncounted ? "" : figures(file.added, file.removed)) : at.dot ? `<span class="ft-dot" aria-hidden="true"></span>` : "";
     return `<div class="ft-row ft-${at.kind}${at.opened ? " open" : ""}${chosen ? " chosen" : ""}${file ? ` ft-${file.how}` : ""}${at.dim ? " ft-dim" : ""}${at.coming ?? ""}" role="treeitem" tabindex="-1" aria-level="${at.depth + 1}"${

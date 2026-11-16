@@ -28,6 +28,9 @@ export interface SideFilesSeams {
   home(machine: string): Promise<string | null>;
   /** Opens a file over the page. */
   open(machine: string, path: string, tab: ViewTab | null): void;
+  /** Goes to a machine's own page of files, at one of its folders; none
+   *  where there is no such page to go to. */
+  browse?: ((machine: string, folder: string | null) => void) | undefined;
   detail(error: unknown): string;
 }
 
@@ -87,6 +90,8 @@ export class SideFiles implements SidePage {
         this.draw();
         return;
       }
+      const go = target.closest<HTMLElement>(".sf-root-go");
+      if (go) return seams.browse?.(go.dataset.machine!, go.dataset.folder || null);
       const head = target.closest<HTMLElement>(".sf-root-head");
       if (head) return this.turn(head);
       const row = target.closest<HTMLElement>("[data-file]");
@@ -137,6 +142,7 @@ export class SideFiles implements SidePage {
     section.querySelector(":scope > .sh-fold")?.classList.toggle("open", !shut);
     head.setAttribute("aria-expanded", String(!shut));
   }
+
 
   private start(key: string): void {
     const start = this.starts.get(key);
@@ -193,7 +199,11 @@ export class SideFiles implements SidePage {
         const section = document.createElement("section");
         section.className = `sf-root${shut ? " shut" : ""}`;
         section.dataset.root = key;
-        section.innerHTML = `<button class="sf-root-head" type="button" aria-expanded="${!shut}"><span class="sh-turn">${glyph("chevron", 12)}</span>${glyph("machine", 14)}<b>${escape(machine.name)}</b><span><bdi></bdi></span></button><div class="sh-fold${shut ? "" : " open"}"><div class="sh-fold-inner"></div></div>`;
+        // Its head folds it; the mark at the head's end goes to the
+        // machine's own page of files, at this folder.
+        const browse = this.seams.browse ? `<button class="icon-button sf-root-go" type="button" data-machine="${escape(machine.name)}" aria-label="${escape(words.side.browse)}" title="${escape(words.side.browse)}">${glyph("expand", 16)}</button>` : "";
+        section.innerHTML = `<div class="sf-root-top"><button class="sf-root-head" type="button" aria-expanded="${!shut}"><span class="sh-turn">${glyph("chevron", 18)}</span>${glyph("machine", 16)}<b>${escape(machine.name)}</b><span><bdi></bdi></span></button>${browse}</div><div class="sh-fold${shut ? "" : " open"}"><div class="sh-fold-inner"></div></div>`;
+        const going = section.querySelector<HTMLElement>(".sf-root-go");
         const tree = new FileTree({ words, list: list ? (path) => list(machine.name, path) : null, chosen: (path) => this.seams.open(machine.name, path, null), detail: this.seams.detail });
         tree.changed(this.files.filter((file) => file.machine === machine.name));
         section.querySelector(".sh-fold-inner")!.append(tree.element);
@@ -202,6 +212,7 @@ export class SideFiles implements SidePage {
         const start = (folder: string | null) => {
           named.textContent = folder ?? "";
           named.parentElement!.title = folder ?? "";
+          if (going) going.dataset.folder = folder ?? "";
           tree.show(folder, list === null ? "changed" : "all");
         };
         this.trees.set(key, { machine: machine.name, tree });
@@ -210,6 +221,7 @@ export class SideFiles implements SidePage {
         const named0 = root ?? "";
         named.textContent = named0;
         named.parentElement!.title = named0;
+        if (going) going.dataset.folder = named0;
         this.starts.set(key, () => {
           if (root !== null || list === null) start(root);
           else void this.seams.home(machine.name).then((home) => this.trees.get(key)?.tree === tree && start(home), () => start(null));

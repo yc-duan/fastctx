@@ -60,6 +60,8 @@ export interface SideSeams {
     words: FilesWords;
     list: ((machine: string, path: string) => Promise<Listing>) | null;
     home(machine: string): Promise<string | null>;
+    /** Goes to a machine's own page of files, at one of its folders. */
+    browse?(machine: string, folder: string | null): void;
   };
   /** The history its model works with (`world-history.md`): its project's,
    *  or, in no project, its own. */

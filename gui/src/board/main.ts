@@ -48,6 +48,8 @@ interface Hello {
   /** Whether a machine's folders can be listed, a folder shown in the
    *  system's own window, a picture made small, a file opened outside. */
   list: boolean;
+  /** Whether a machine has a page of files of its own to go to. */
+  browse: boolean;
   reveal: boolean;
   picture: boolean;
   outside: boolean;
@@ -165,6 +167,8 @@ async function open(): Promise<void> {
         words: fileWords,
         list: hello.list ? (machine, path) => remote.call<Listing>("files.list", machine, path) : null,
         home: (machine) => remote.call<string | null>("files.home", machine),
+        // The machine's own page of files is the desk's window's to show.
+        ...(hello.browse ? { browse: (machine: string, folder: string | null) => void remote.call("files.browse", machine, folder) } : {}),
       },
     },
     say: (text, said) => void remote.call("say", text, said ?? null),

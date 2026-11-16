@@ -367,7 +367,7 @@
   flex: none;
   display: grid;
   place-items: center;
-  width: 12px;
+  width: 16px;
   color: var(--text-3);
   --turn: -90deg;
   rotate: var(--turn);
