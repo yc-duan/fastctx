@@ -12,6 +12,7 @@ mod build;
 pub(crate) mod copy;
 pub(crate) mod copied_changes;
 pub(crate) mod copied_records;
+pub(crate) mod records_known;
 #[cfg(feature = "timeline-drill")]
 mod drill;
 mod identity;

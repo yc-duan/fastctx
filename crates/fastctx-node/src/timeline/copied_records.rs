@@ -1,6 +1,8 @@
 //! A conversation's records the hub orders — its plan, notes, goals and
-//! sentinels — as the copy here holds them, read while the hub is not
-//! reached (plan 3-5, design §28.27). The hub orders each into the
+//! sentinels — as the copy here holds them: a plan and notes read from it
+//! first while it is as fresh as anything seen here of them (design §15
+//! `switch`, `records_known`), the rest while the hub is not reached (plan
+//! 3-5, design §28.27). The hub orders each into the
 //! conversation's scope as its account record (`hub assets::mirror`
 //! `placed`: the plan as `plan` of the `plan` stream, a note by its name in
 //! `history`, `goal` and `goal_past` in `goals`, a sentinel by its id in
@@ -31,6 +33,32 @@ pub(crate) fn plan(
     // (codex-847f57fd #3).
     let scope = copy_of(node, resident, machine, Some(hub), Some(account))?;
     let record = record_in(library, &scope.key, ConversationPlan::STREAM, "plan")?;
+    told(node, hub, account, resident, record)
+}
+
+/// `plan`, read first while the hub is reached: none when the copy is not
+/// pulled whole, holds no plan, or is behind what was seen here of it —
+/// the hub is asked then.
+pub(crate) fn fresh_plan(
+    node: &Node,
+    resident: &ResidentId,
+    machine: Option<&MachineName>,
+    hub: &str,
+    account: &fastctx_types::AccountName,
+) -> Option<Page> {
+    let scope = copy_of(node, resident, machine, Some(hub), Some(account))?;
+    let record = fresh_record(node, &scope, ConversationPlan::STREAM, "plan", fastctx_types::plan::KIND, resident.as_str())?;
+    told(node, hub, account, resident, Some(record))
+}
+
+/// A plan as the hub tells `account` of it.
+fn told(
+    node: &Node,
+    hub: &str,
+    account: &fastctx_types::AccountName,
+    resident: &ResidentId,
+    record: Option<Record>,
+) -> Option<Page> {
     // Read as the hub's own answer is read (`Link::plan_read`), told as it
     // tells it (`hub owned_records::projection`).
     let link = node.links().into_iter().find(|link| link.membership().id.as_str() == hub)?;
@@ -71,6 +99,69 @@ pub(crate) fn copy_of(
 /// The account record `item` of `stream` in the copy `scope`: none when it
 /// cannot be read, `Some(None)` when the copy holds no such record.
 pub(crate) use fastctx_client::records_copy::record_in;
+
+/// The record `item` of `stream` in the copy `scope`, the account record
+/// `kind`/`key`, once it is as fresh as what was seen here of it: waited for
+/// a moment while the copy is behind. None — the hub is asked — when the
+/// copy is not pulled whole in its holding, does not hold the record (one
+/// the hub keeps from before its scope was described may not be in it yet),
+/// or stays behind. Call on a thread that may block.
+pub(crate) fn fresh_record(
+    node: &Node,
+    scope: &HeldScope,
+    stream: &str,
+    item: &str,
+    kind: &str,
+    key: &str,
+) -> Option<Record> {
+    if scope.pulled != Some(scope.holding) {
+        return None;
+    }
+    let library = &node.assets.as_ref()?.library;
+    let wanted = super::records_known::at_least(kind, key);
+    let until = std::time::Instant::now() + super::records_known::CATCHING_UP;
+    loop {
+        let record = record_in(library, &scope.key, stream, item)??;
+        if record.metadata.version >= wanted {
+            return Some(record);
+        }
+        if std::time::Instant::now() >= until {
+            return None;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+}
+
+/// Every record of `stream` in the copy `scope`, once each record of `kind`
+/// seen here under `prefix` is there as fresh as it was seen: none, as
+/// `fresh_record`, otherwise. Call on a thread that may block.
+pub(crate) fn fresh_records(
+    node: &Node,
+    scope: &HeldScope,
+    stream: &str,
+    kind: &str,
+    prefix: &str,
+) -> Option<Vec<Record>> {
+    if scope.pulled != Some(scope.holding) {
+        return None;
+    }
+    let library = &node.assets.as_ref()?.library;
+    let wanted = super::records_known::under(kind, prefix);
+    let until = std::time::Instant::now() + super::records_known::CATCHING_UP;
+    loop {
+        let records = records_in(library, &scope.key, stream)?;
+        let fresh = wanted.iter().all(|(key, version)| {
+            records.iter().any(|record| record.metadata.key == *key && record.metadata.version >= *version)
+        });
+        if fresh {
+            return Some(records);
+        }
+        if std::time::Instant::now() >= until {
+            return None;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+}
 
 /// Every account record of `stream` in the copy `scope`, in the order it
 /// holds them; none when one cannot be read.

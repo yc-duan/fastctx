@@ -1710,6 +1710,7 @@ impl fastctx_net::link::Node for Handler {
     /// Someone may have logged in to an account this computer is logged in
     /// to: its user is told who, from the views before and after.
     fn account_record_changed(&self, change: &fastctx_types::account_records::Changed) {
+        crate::timeline::records_known::saw(&change.metadata.kind, &change.metadata.key, change.metadata.version);
         if let Some(node) = self.node.upgrade() {
             match change.metadata.kind.as_str() {
                 fastctx_types::owned_records::KIND => {

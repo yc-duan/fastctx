@@ -108,7 +108,23 @@ async fn work(
                 let page = link.plan_read_named(&account, of).await.map_err(Failure::new)?;
                 return Ok(plan::Result::Page { page });
             }
-            let page = match link.plan_read_of(&account, &whose).await {
+            // The copy here first, while it is as fresh as anything seen here
+            // of the plan (design §15 `switch`); otherwise the hub.
+            let fresh = {
+                let (asking, resident, machine) = (node.clone(), whose.resident.clone(), whose.machine.clone());
+                let (hub, reader) = (link.membership().id.to_string(), account.clone());
+                fastctx_platform::task::spawn_blocking(move || {
+                    crate::timeline::copied_records::fresh_plan(&asking, &resident, Some(&machine), &hub, &reader)
+                })
+                .await
+                .ok()
+                .flatten()
+            };
+            let page = match fresh {
+                Some(page) => Ok(page),
+                None => link.plan_read_of(&account, &whose).await,
+            };
+            let page = match page {
                 Ok(page) => page,
                 // The hub not reached: the plan as the copy here holds it (plan 3-5).
                 Err(error) if !matches!(link.status(), fastctx_net::link::Status::Online { .. }) => {

@@ -101,6 +101,7 @@ pub(crate) async fn submit(
                     let mut head = copy.head.clone();
                     head.version = page.version();
                     head.retired = page.deleted();
+                    seen(&head);
                     Ok(Some(Submitted { head, text: page.body.map_or(String::new(), |body| body.markdown) }))
                 }
             }
@@ -142,7 +143,24 @@ pub(crate) async fn submit(
             head.version = Some(revision.version);
             head.retired = revision.retired;
             head.history = Some(revision);
+            seen(&head);
             Ok(Some(Submitted { head, text }))
         }
+    }
+}
+
+/// A revision the hub accepted from here: a read answered from the copy
+/// here waits for it (`timeline::records_known`).
+fn seen(head: &Head) {
+    let Some(version) = head.version else { return };
+    match &head.document {
+        Document::Plan { owner } => {
+            crate::timeline::records_known::saw(fastctx_types::plan::KIND, owner.resident.as_str(), version);
+        }
+        Document::History { scope: Scope::Conversation { conversation }, name } => {
+            let key = format!("{}/{name}", conversation.address.resident);
+            crate::timeline::records_known::saw(fastctx_types::history::RECORD_KIND, &key, version);
+        }
+        Document::History { scope: Scope::Project { .. }, .. } => {}
     }
 }
