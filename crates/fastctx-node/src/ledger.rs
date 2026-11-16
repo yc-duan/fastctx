@@ -148,7 +148,10 @@ async fn write_for(
             }
             .map_err(Failure::new)?;
             if link.view().member_keeps_project(&link.view().me, &place.town) {
-                take_latest(node, &link, town, &place.town, accepted).await.map_err(Failure::new)
+                // The hub accepted the entry: its projection is on its way
+                // here, and is waited for.
+                let until = std::time::Instant::now() + projected::WAITS;
+                take_latest(node, &link, town, &place.town, accepted, until).await.map_err(Failure::new)
             } else {
                 metadata::refresh(node, &link, Some(&place.town)).await.map_err(Failure::new)
             }
@@ -211,6 +214,10 @@ pub async fn sync(node: &Arc<Node>, hub: &HubId, town: Option<TownId>) -> Result
         return Ok(());
     }
     let mut problems = Vec::new();
+    // The hub tells of an entry before its projection is written: a pass
+    // waits for what is on its way here, one while for all it takes, so a
+    // project whose projection does not come holds the others up no longer.
+    let until = std::time::Instant::now() + projected::WAITS;
     for (id, latest) in link.ledger_catalog().await? {
         if !link.view().member_keeps_project(&link.view().me, &id) {
             continue;
@@ -225,7 +232,7 @@ pub async fn sync(node: &Arc<Node>, hub: &HubId, town: Option<TownId>) -> Result
         };
         match name {
             Ok(Some(name)) => {
-                if let Err(error) = take_latest(node, &link, &name, &id, latest).await {
+                if let Err(error) = take_latest(node, &link, &name, &id, latest, until).await {
                     problems.push(error);
                 }
             }
@@ -278,47 +285,62 @@ fn sync_name(node: &Node, link: &Link, id: &TownId) -> Result<Option<TownName>, 
 
 /// Takes `town`'s entries through `latest`: from the hub's projection for
 /// the account this machine reads it as, where it writes one and the copy
-/// here holds it (design §28.58); otherwise replicated as before.
+/// here holds it (design §28.58); otherwise replicated as before. A
+/// projection not here yet, or not up to `latest`, is waited for until
+/// `until`: an entry the hub just accepted is written to it and pulled here
+/// a moment after the hub answered or told of it, and neither the write that
+/// made it nor a pass that heard of it fails for that moment.
 pub(crate) async fn take_latest(
     node: &Arc<Node>,
     link: &Arc<Link>,
     name: &TownName,
     town: &TownId,
     latest: u64,
+    until: std::time::Instant,
 ) -> Result<(), String> {
-    let source = {
-        let (looking, link, town) = (node.clone(), link.clone(), town.clone());
-        fastctx_platform::task::spawn_blocking(move || projected::source(&looking, &link, &town))
-            .await
-            .map_err(|error| error.to_string())?
-    };
-    let kept_projected = fastctx_platform::disk::is_dir(node.world.town(name).projected());
-    let source = match source {
-        projected::Seen::At(source) => source,
-        // A project of no entries waits for nothing.
-        projected::Seen::Waiting { .. } if latest == 0 => return Ok(()),
-        // The projection for the account and machines of now is not here:
-        // what was kept of one for others goes now, not once that one came,
-        // unless it was for the same account and machines all among those it
-        // may work on now (codex-357de52a #2, third round #6, fourth round
-        // #3). Never replicated meanwhile (third round #1).
-        projected::Seen::Waiting { scope, machines } => {
-            if kept_projected && !projected_readable(node, name, move |node, name| projected::still_readable(node, name, &scope, &machines)).await? {
-                let_go_projected(node, name).await?;
+    let kept_projected = || fastctx_platform::disk::is_dir(node.world.town(name).projected());
+    let source = loop {
+        let seen = {
+            let (looking, link, town) = (node.clone(), link.clone(), town.clone());
+            fastctx_platform::task::spawn_blocking(move || projected::source(&looking, &link, &town))
+                .await
+                .map_err(|error| error.to_string())?
+        };
+        match seen {
+            projected::Seen::At(source) => break source,
+            // A project of no entries waits for nothing.
+            projected::Seen::Waiting { .. } if latest == 0 => return Ok(()),
+            // The projection for the account and machines of now is not here:
+            // what was kept of one for others goes now, not once that one
+            // came, unless it was for the same account and machines all among
+            // those it may work on now (codex-357de52a #2, third round #6,
+            // fourth round #3). Never replicated meanwhile (third round #1).
+            projected::Seen::Waiting { scope, machines } => {
+                if kept_projected()
+                    && !projected_readable(node, name, move |node, name| {
+                        projected::still_readable(node, name, &scope, &machines)
+                    })
+                    .await?
+                {
+                    let_go_projected(node, name).await?;
+                }
+                if std::time::Instant::now() >= until {
+                    return Err(format!("the hub's projection of {name}'s ledger is not here yet"));
+                }
+                tokio::time::sleep(projected::LOOKS).await;
             }
-            return Err(format!("the hub's projection of {name}'s ledger is not here yet"));
+            // A project kept from its projection is never mixed with entries
+            // replicated beside it.
+            projected::Seen::Not if kept_projected() => {
+                return Err(format!("the hub's projection of {name}'s ledger is not here yet"));
+            }
+            projected::Seen::Not => return take(node, link, name, town, latest).await,
         }
-        // A project kept from its projection is never mixed with entries
-        // replicated beside it.
-        projected::Seen::Not if kept_projected => {
-            return Err(format!("the hub's projection of {name}'s ledger is not here yet"));
-        }
-        projected::Seen::Not => return take(node, link, name, town, latest).await,
     };
     // Kept for another account, or machines it may no longer all work on:
     // gone before anything is taken, so nothing of it is read while the
     // projection is made again (codex-357de52a, fourth round #3).
-    if kept_projected {
+    if kept_projected() {
         let looked = source.clone();
         if !projected_readable(node, name, move |node, name| projected::readable_for(node, name, &looked)).await? {
             let_go_projected(node, name).await?;
@@ -327,7 +349,7 @@ pub(crate) async fn take_latest(
     if !link.view().member_keeps_project(&link.view().me, town) {
         return Err("an assisting host keeps only the project index".into());
     }
-    let changed = projected::take(node, link, name, town, latest, source).await?;
+    let changed = projected::take(node, link, name, town, latest, source, until).await?;
     let _syncing = node.syncing.lock().await;
     check_place(node, link, name, town)?;
     if changed {

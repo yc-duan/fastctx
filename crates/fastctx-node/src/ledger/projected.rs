@@ -74,8 +74,12 @@ pub(crate) fn kept_from(directory: &TownDir) -> io::Result<Option<String>> {
     fastctx_net::link::state::read_or(&directory.path().join(FROM), None)
 }
 
-/// How long a take waits for the projection to come up to the latest entry.
-const WAITS: Duration = Duration::from_secs(10);
+/// How long a take waits for the projection to be here and to come up to
+/// the latest entry.
+pub(crate) const WAITS: Duration = Duration::from_secs(10);
+
+/// How often it is looked at meanwhile.
+pub(crate) const LOOKS: Duration = Duration::from_millis(200);
 
 /// Entries of a projection read at a time: each may be as large as an
 /// entry may be, so a few (codex-357de52a #4).
@@ -214,7 +218,7 @@ pub(crate) fn clear(node: &Node, name: &TownName) -> io::Result<()> {
 }
 
 /// Takes `town`'s entries through `latest` from its projection, kept as
-/// `name`, waiting a while for the projection to come up to it. Says
+/// `name`, waiting until `until` for the projection to come up to it. Says
 /// whether anything changed.
 pub(crate) async fn take(
     node: &Arc<Node>,
@@ -223,9 +227,9 @@ pub(crate) async fn take(
     town: &TownId,
     latest: u64,
     source: Source,
+    until: Instant,
 ) -> Result<bool, String> {
     let library = node.assets.as_ref().ok_or("the asset library is not open")?.library.clone();
-    let until = Instant::now() + WAITS;
     loop {
         let (reading, looked) = (library.clone(), source.clone());
         let here = fastctx_platform::task::spawn_blocking(move || last(&reading, &looked))
@@ -239,7 +243,7 @@ pub(crate) async fn take(
                 "the hub's projection of {name}'s ledger has come up to {here} of {latest} here so far"
             ));
         }
-        tokio::time::sleep(Duration::from_millis(200)).await;
+        tokio::time::sleep(LOOKS).await;
     }
     let _syncing = node.syncing.lock().await;
     let (keeping, link, name, town) = (node.clone(), link.clone(), name.clone(), town.clone());
