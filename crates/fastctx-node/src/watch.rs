@@ -261,13 +261,7 @@ impl Watchers {
             self.watching[shard(id)].write().expect("never poisoned").entry(id.clone()).or_default().clone()
         })
     }
-    pub(crate) fn watched(&self, id: &ResidentId) -> bool {
-        let watched = self.get(id).is_some_and(|session| {
-            session.lock().expect("never poisoned").senders.iter().any(|sender| !sender.is_closed())
-        });
-        retire(&self.watching, id);
-        watched
-    }
+
     pub(crate) fn running(&self, id: &ResidentId, turn: &str, item: &str) -> (Option<SessionEvent>, Option<Mark>) {
         let Some(session) = self.get(id) else { return (None, None) };
         let session = session.lock().expect("never poisoned");

@@ -363,9 +363,13 @@ pub(super) fn retry_untaken(
         .map_err(std::io::Error::other)
 }
 
-/// Whether the transcript at `path` holds, at or after `since`, words
-/// submitted to the session: a prompt, or one queued for it. Its lines are in
-/// the order they were written. One that cannot be read, as a row cut short
+/// Whether the transcript at `path` holds, at or after `since`, words the
+/// session took: a prompt as it opens a turn (`user`), or one put into the
+/// turn running (`attachment`). Both are written before the model is asked.
+/// Words only queued — an `enqueue`, even a `dequeue`, with neither after
+/// it — never reached the model: the host was stopped first, as Claude
+/// Code's daemon does with a session it retires (2026-11-16, 洛杉矶linux).
+/// Its lines are in the order they were written. One that cannot be read, as a row cut short
 /// when the host was killed, may hold an accepted prompt: it counts as
 /// submitted, which makes the delivery uncertain rather than repeated, unless
 /// a later line was written before `since`. A row damaged long ago therefore
@@ -406,7 +410,7 @@ fn submitted_since(path: &std::path::Path, since: jiff::Timestamp) -> std::io::R
         if at.is_some_and(|at| at.as_millisecond() < since) {
             unreadable = false;
         }
-        if matches!(entry["type"].as_str(), Some("user" | "queue-operation")) {
+        if matches!(entry["type"].as_str(), Some("user" | "attachment")) {
             match at {
                 Some(at) if at.as_millisecond() >= since => return Ok(true),
                 Some(_) => {}

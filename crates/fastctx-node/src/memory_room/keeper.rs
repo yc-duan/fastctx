@@ -1,5 +1,5 @@
-//! Proactive anonymous reclaim is optional; admission remains available on
-//! kernels or service layouts where reclaim cannot be performed correctly.
+//! The agents' processes ranked for the kernel's OOM killer, where the
+//! system has a way: the node itself last.
 
 use crate::Node;
 use std::sync::Arc;
@@ -20,56 +20,40 @@ pub(crate) fn start(node: &Arc<Node>) {
 #[cfg(target_os = "linux")]
 async fn keep(node: Arc<Node>) {
     use std::time::Duration;
-    // Asking the kernel to reclaim nothing, it may still wait on it.
     let opened = fastctx_platform::task::spawn_blocking(linux::Keeper::new).await.map_err(std::io::Error::other);
     let mut keeper = match opened.and_then(|opened| opened) {
         Ok(keeper) => keeper,
         Err(error) => {
-            node.log.line(format_args!("agent memory reclaim unavailable: {error}; turn admission remains active"));
+            node.log.line(format_args!("agent OOM ranking unavailable: {error}"));
             return;
         }
     };
-    node.log.line(format_args!("agent memory keeper: {}", keeper.description()));
+    node.log.line(format_args!("agent OOM ranking: {}", keeper.description()));
+    if !keeper.standing() {
+        return;
+    }
     let mut previous = String::new();
     loop {
-        let room = node.memory_room.bytes();
         let round = fastctx_platform::task::spawn_blocking(move || {
-            let result = keeper.tick(room);
+            let result = keeper.rank();
             (keeper, result)
         })
         .await;
         let (returned, result) = match round {
             Ok(round) => round,
             Err(error) => {
-                node.log.line(format_args!("agent memory keeper ended: {error}; turn admission remains active"));
+                node.log.line(format_args!("agent OOM ranking ended: {error}"));
                 return;
             }
         };
         keeper = returned;
-        match result {
-            Ok(observation) => {
-                if observation.state != previous {
-                    node.log.line(format_args!("agent memory reclaim: {}", observation.state));
-                    previous = observation.state.to_owned();
-                }
-                if observation.requested > 0 {
-                    node.log.line(format_args!(
-                        "agent memory reclaim requested {}: swap charge grew {}, available memory {}",
-                        super::size(observation.requested),
-                        super::size(observation.swapped),
-                        super::size(observation.available)
-                    ));
-                }
-            }
-            Err(error) => {
-                let reason = format!("{error}; reclaim will retry, turn admission remains active");
-                if reason != previous {
-                    node.log.line(format_args!("agent memory reclaim: {reason}"));
-                    previous = reason;
-                }
-                tokio::time::sleep(Duration::from_secs(60)).await;
+        if let Err(error) = result {
+            let reason = format!("{error}; ranking will retry");
+            if reason != previous {
+                node.log.line(format_args!("agent OOM ranking: {reason}"));
+                previous = reason;
             }
         }
-        tokio::time::sleep(Duration::from_secs(10)).await;
+        tokio::time::sleep(Duration::from_secs(60)).await;
     }
 }

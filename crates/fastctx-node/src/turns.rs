@@ -608,11 +608,12 @@ pub async fn unresolved(
     };
     let (changing, resident) = (node.clone(), id.clone());
     fastctx_platform::task::blocking(move || {
+        // Trouble handing words over is not the model acting: when it last
+        // did (`since`, what its host is kept for) stays (2026-11-16).
         changing.residents.change_now(&changing.world, &resident, |now| {
             now.trouble = Some(trouble);
             if now.turn.is_none() {
                 now.activity = fastctx_types::residents::Activity::Idle;
-                now.since = Timestamp::now();
             }
         })
     })

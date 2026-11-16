@@ -214,7 +214,8 @@ pub async fn watch(
             // Paged, a conversation is read through calls an earlier hub
             // cannot relay; it is watched whole then (`timeline_pages`).
             if !link.view().timeline_pages {
-                refused = Some(Failure::unsupported("this network's hub does not relay timeline pages; update the hub"));
+                refused =
+                    Some(Failure::unsupported("this network's hub does not relay timeline pages; update the hub"));
                 continue;
             }
             match link.call(&machine.name, &account, Purpose::Look, fastctx_types::remote::RemoteCall::Facts).await {
@@ -314,8 +315,11 @@ async fn opening(
     }
     if live_only {
         let (events, pending) = subscribe(node, resident)?;
-        let mut pieces: Vec<_> =
-            pending.into_iter().filter_map(|event| likeness::watched(event, None, None, true)).map(OpeningPiece::Made).collect();
+        let mut pieces: Vec<_> = pending
+            .into_iter()
+            .filter_map(|event| likeness::watched(event, None, None, true))
+            .map(OpeningPiece::Made)
+            .collect();
         pieces.push(OpeningPiece::Made(Watched::Resumed));
         return Ok((None, Opening { pieces, events, slim: None }));
     }
@@ -486,12 +490,15 @@ async fn read_kept_here(
     // read from its start, the turns a cut took back left out, as
     // `read_here` leaves them out.
     let reading = directory.clone();
-    let world = fastctx_platform::task::spawn_blocking(move || crate::timeline::world::World::read(world, &reading, 0, &[]))
-        .await
-        .map_err(|error| Failure::new(error.to_string()))?
-        .map_err(Failure::new)?;
+    let world =
+        fastctx_platform::task::spawn_blocking(move || crate::timeline::world::World::read(world, &reading, 0, &[]))
+            .await
+            .map_err(|error| Failure::new(error.to_string()))?
+            .map_err(Failure::new)?;
     let world = Arc::new(std::sync::Mutex::new(world));
-    let (hosted, early) = crate::claude::history::hosted_kept(node, resident, world.clone(), directory, spill, early).await.map_err(Failure::new)?;
+    let (hosted, early) = crate::claude::history::hosted_kept(node, resident, world.clone(), directory, spill, early)
+        .await
+        .map_err(Failure::new)?;
     Ok(Some(HistoryKept { hosted, world, early }))
 }
 
@@ -517,14 +524,19 @@ pub(crate) async fn recorded_kept(
         // As `read_here` decides: a session's host is read where the
         // workbench is open in its login.
         let agent = about.host.agent.as_str();
-        if crate::logins::workbench::reads_host(node, &about) && about.session.is_some() && (agent == "codex" || agent == "claude") {
+        if crate::logins::workbench::reads_host(node, &about)
+            && about.session.is_some()
+            && (agent == "codex" || agent == "claude")
+        {
             return Ok(None);
         }
         let directory = node.world.conversation(resident);
-        let world = fastctx_platform::task::spawn_blocking(move || crate::timeline::world::World::read_as_recorded(spill, &directory))
-            .await
-            .map_err(|error| Failure::new(error.to_string()))?
-            .map_err(Failure::new)?;
+        let world = fastctx_platform::task::spawn_blocking(move || {
+            crate::timeline::world::World::read_as_recorded(spill, &directory)
+        })
+        .await
+        .map_err(|error| Failure::new(error.to_string()))?
+        .map_err(Failure::new)?;
         // As `read_here` asks a Codex thread's host for what waits on an
         // answer once its history is read: its host failing fails it.
         if let Some(thread) = &about.session
@@ -639,10 +651,11 @@ async fn read_here(node: &Arc<Node>, resident: &ResidentId, hearing: Hearing) ->
         _ => (recorded(&directory).await?, None),
     };
     let (working, resident, agent) = (node.clone(), resident.clone(), about.host.agent.to_string());
-    let history =
-        fastctx_platform::task::spawn_blocking(move || assemble(&working, &resident, &directory, &agent, recorded, hosted))
-            .await
-            .map_err(|error| Failure::new(error.to_string()))??;
+    let history = fastctx_platform::task::spawn_blocking(move || {
+        assemble(&working, &resident, &directory, &agent, recorded, hosted)
+    })
+    .await
+    .map_err(|error| Failure::new(error.to_string()))??;
     let pending = match &about.session {
         Some(thread) if about.world_managed() && about.host.agent.as_str() == "codex" => {
             node.codex.of(node, &about)?.requests(thread)
@@ -665,7 +678,8 @@ pub(crate) fn assemble(
     mut hosted: Option<Vec<SessionEvent>>,
 ) -> Result<Vec<SessionEvent>, Failure> {
     if let Some(events) = &mut hosted {
-        let projection = crate::context::input::Projection::open(directory).map_err(crate::record_migration::failure)?;
+        let projection =
+            crate::context::input::Projection::open(directory).map_err(crate::record_migration::failure)?;
         for event in events {
             projection.restore(event).map_err(crate::record_migration::failure)?;
         }
@@ -699,7 +713,8 @@ pub(crate) fn changes_history(event: &SessionEvent) -> bool {
     matches!(
         &event.happened,
         fastctx_types::session::Happened::Changed {
-            change: fastctx_types::session::SessionChange::HistoryChanged | fastctx_types::session::SessionChange::HistoryCut { .. },
+            change: fastctx_types::session::SessionChange::HistoryChanged
+                | fastctx_types::session::SessionChange::HistoryCut { .. },
             ..
         }
     )
@@ -737,7 +752,8 @@ pub(crate) fn assemble_each(
             let recorded_keys: Vec<merging::Key> = recorded.iter().map(|event| merging::key(event, names)).collect();
             // Laid out sparsely (design §28.51 ⑤-6): nothing held for each of the
             // host's events but its time, its key and a few places.
-            let layout = merging::sparse::decide(hosted_keys, &merging::sparse::Held(&recorded_keys), codex).map_err(Failure::new)?;
+            let layout = merging::sparse::decide(hosted_keys, &merging::sparse::Held(&recorded_keys), codex)
+                .map_err(Failure::new)?;
             drop(recorded_keys);
             merging::apply_each(layout.slots(), hosted, recorded, &mut each)
         }
@@ -1069,12 +1085,10 @@ fn kept(node: &Node, resident: &ResidentId) -> Vec<fastctx_types::session::KeptW
         return Vec::new();
     }
     // The words that would start its next turn, while that waits for room
-    // in its machine's memory or in its login.
-    let mut queued = crate::memory_room::ahead(node, resident)
-        .map(|ahead| (ahead, true, false))
-        .or_else(|| crate::turn_slots::ahead(node, resident).map(|(ahead, callee)| (ahead, false, callee)));
-    // A new conversation's first words wait for memory, or for its login's
-    // turn, as they wake it.
+    // in its login; nothing waits for memory (`memory_room`).
+    let mut queued = crate::turn_slots::ahead(node, resident).map(|(ahead, callee)| (ahead, false, callee));
+    // A new conversation's first words wait for its login's turn, as they
+    // wake it.
     let waits = queued.is_some();
     pending
         .into_iter()
@@ -1086,20 +1100,23 @@ fn kept(node: &Node, resident: &ResidentId) -> Vec<fastctx_types::session::KeptW
             // Its host is being started: a wake keeps how far that came; a
             // new conversation's first session is launching until Claude
             // Code says which it is, then coming up.
-            let starting = progress.as_ref().map(crate::lifecycle::retry::Progress::starting).or_else(|| {
-                (pending.state == PendingState::Waking).then(|| fastctx_types::session::Starting {
-                    since: pending.since.unwrap_or(pending.delivery.at),
-                    phase: if named {
-                        fastctx_types::session::StartPhase::Connecting
-                    } else {
-                        fastctx_types::session::StartPhase::Launching
-                    },
-                    failures: 0,
-                    reason: None,
-                    next: None,
+            let starting = progress
+                .as_ref()
+                .map(crate::lifecycle::retry::Progress::starting)
+                .or_else(|| {
+                    (pending.state == PendingState::Waking).then(|| fastctx_types::session::Starting {
+                        since: pending.since.unwrap_or(pending.delivery.at),
+                        phase: if named {
+                            fastctx_types::session::StartPhase::Connecting
+                        } else {
+                            fastctx_types::session::StartPhase::Launching
+                        },
+                        failures: 0,
+                        reason: None,
+                        next: None,
+                    })
                 })
-            })
-            .or_else(|| codex_starting.take());
+                .or_else(|| codex_starting.take());
             // A view from before `starting` is told only of starts that
             // failed, a minute on: what the host said while it came up is no
             // failure.
@@ -1557,7 +1574,12 @@ async fn stop_coming(
     .await
     .map_err(|error| Failure::new(error.to_string()))?
     .map_err(|error| Failure::new(format!("reading what is on its way: {error}")))?;
-    if node.stops.coming(node, resident, coming.clone(), source).await.map_err(|error| Failure::new(error.to_string()))? {
+    if node
+        .stops
+        .coming(node, resident, coming.clone(), source)
+        .await
+        .map_err(|error| Failure::new(error.to_string()))?
+    {
         return Ok(Coming::Kept);
     }
     let Some(turn) = node.residents.now(resident).and_then(|now| now.turn) else { return Ok(Coming::Nothing) };
@@ -1590,10 +1612,12 @@ async fn stop_words(
                 // Gone from the inbox: taken meanwhile, its turn read again
                 // now, or taken back or refused, which no turn will take
                 // and keeps no stop.
-                None if crate::inbox::read(&directory, &id)?.is_none() => match crate::delivery::input_turn(&directory, &id)? {
-                    None => continue,
-                    Some(turn) => Some(turn),
-                },
+                None if crate::inbox::read(&directory, &id)?.is_none() => {
+                    match crate::delivery::input_turn(&directory, &id)? {
+                        None => continue,
+                        Some(turn) => Some(turn),
+                    }
+                }
                 taken => taken,
             };
             match taken {
@@ -1612,9 +1636,16 @@ async fn stop_words(
     .map_err(|error| Failure::new(error.to_string()))?
     .map_err(|error| Failure::new(format!("reading which turn took the words: {error}")))?;
     let running = current.filter(|turn| bound.iter().any(|(taken, _)| taken.as_deref() == Some(turn.as_str())));
-    let kept = bound.iter().filter(|(taken, _)| taken.is_none() || *taken != running).map(|(_, id)| id.clone()).collect::<Vec<_>>();
+    let kept = bound
+        .iter()
+        .filter(|(taken, _)| taken.is_none() || *taken != running)
+        .map(|(_, id)| id.clone())
+        .collect::<Vec<_>>();
     if !kept.is_empty() {
-        node.stops.keep_for(node, resident, kept.clone(), source).await.map_err(|error| Failure::new(error.to_string()))?;
+        node.stops
+            .keep_for(node, resident, kept.clone(), source)
+            .await
+            .map_err(|error| Failure::new(error.to_string()))?;
     }
     // A turn that took some and is not current yet: stopped once it is.
     let mut coming = std::collections::BTreeMap::<String, Vec<fastctx_types::NoticeId>>::new();

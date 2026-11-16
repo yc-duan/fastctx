@@ -18,11 +18,11 @@ mod admitted;
 mod adoption;
 mod afoot;
 mod again;
-mod assets;
 mod agent_activity;
 mod agents;
 mod around;
 mod asked;
+mod assets;
 mod assists;
 mod attach;
 mod attachment_files;
@@ -90,6 +90,7 @@ mod intake;
 mod job_accounts;
 mod job_assets;
 mod job_files;
+mod job_index;
 mod job_metadata;
 mod job_reader;
 mod job_receipts;
@@ -123,8 +124,8 @@ mod on_steps;
 mod on_stop;
 mod outbox;
 mod own_collab;
-mod passes;
 mod pages;
+mod passes;
 mod placement;
 mod plan;
 mod plan_file;
@@ -146,6 +147,7 @@ mod record_value;
 mod record_writes;
 mod records;
 mod recovery;
+mod remote_topics;
 mod removed;
 mod renewal;
 mod renewal_legacy;
@@ -180,8 +182,6 @@ mod submission_fallback;
 mod submitted;
 mod talk;
 pub mod thumbnail;
-mod job_index;
-mod remote_topics;
 mod thumbnail_cache;
 mod thumbnail_room;
 mod timeline;
@@ -322,9 +322,6 @@ pub(crate) struct Node {
     /// How many turns each agent login runs at once, and the turns waiting
     /// for room (`turn_slots`).
     turn_slots: turn_slots::Slots,
-    /// What the machine keeps free in memory for its agents, and the turns
-    /// waiting for it (`memory_room`).
-    memory_room: memory_room::Room,
     /// How far the machine is toward its system's limits over the last day.
     limits: limits::Readings,
     /// Whom each job running here works for (`job_accounts`).
@@ -780,7 +777,6 @@ pub async fn run_prepared(
                 Arc::new(move |line| codex_log.line(line)),
             );
             let claude = claude::Claude::new();
-            let memory_room = memory_room::Room::new(&world);
             let database = record_database::open(&world);
             if let Some(error) = database.fault() {
                 log.line(format_args!("node record storage unavailable: {error}"));
@@ -887,7 +883,6 @@ pub async fn run_prepared(
                 actions: Default::default(),
                 long_controls: Default::default(),
                 turn_slots: Default::default(),
-                memory_room,
                 limits: Default::default(),
                 job_accounts: Default::default(),
                 cpu_shares,
@@ -1220,7 +1215,11 @@ pub struct ExportedConversation {
 /// conversation are released to that machine beside it: there they are
 /// ordered from then on (design §28.10); without, they are held there as a
 /// replica.
-pub fn export_conversation(root: &std::path::Path, conversation: &str, to: Option<&str>) -> std::io::Result<ExportedConversation> {
+pub fn export_conversation(
+    root: &std::path::Path,
+    conversation: &str,
+    to: Option<&str>,
+) -> std::io::Result<ExportedConversation> {
     let world = WorldDir::under(root);
     world_format::check(&world)?;
     let (bundle, fingerprint) = conversation_store::transfer::exporting::export(root, conversation)?;
@@ -1228,7 +1227,10 @@ pub fn export_conversation(root: &std::path::Path, conversation: &str, to: Optio
     let release = match to {
         Some(to) => {
             let _owner = fastctx_platform::FileLock::try_acquire(&world.node_lock())?.ok_or_else(|| {
-                std::io::Error::new(std::io::ErrorKind::WouldBlock, "stop the source node before exporting a conversation")
+                std::io::Error::new(
+                    std::io::ErrorKind::WouldBlock,
+                    "stop the source node before exporting a conversation",
+                )
             })?;
             assets::release::export(&world, &directory, conversation, to)?
         }

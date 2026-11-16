@@ -7,6 +7,10 @@ use std::path::Path;
 pub struct IdleWorker {
     pub id: String,
     pub pid: u32,
+    /// When Claude Code last wrote the worker's job: as a turn, a task of
+    /// its own (a subagent, a monitor) or its queue moved. Claude Code's own
+    /// idle clock reads the same; it does not move while the worker rests.
+    pub updated: Option<jiff::Timestamp>,
 }
 
 #[derive(Deserialize)]
@@ -15,6 +19,8 @@ struct Job {
     in_flight: Option<InFlight>,
     tempo: Option<String>,
     needs: Option<String>,
+    #[serde(rename = "updatedAt", default)]
+    updated_at: Option<String>,
 }
 
 /// What Claude Code writes in a job's `needs` while it waits for its first
@@ -86,7 +92,8 @@ fn idle_job(home: &Path, session: &str, listed: &str) -> Result<Option<(IdleWork
         return Ok(None);
     };
     let job: Job = read(&state(home, id))?;
-    Ok(Some((IdleWorker { id: id.into(), pid }, job)))
+    let updated = job.updated_at.as_deref().and_then(|at| at.parse::<jiff::Timestamp>().ok());
+    Ok(Some((IdleWorker { id: id.into(), pid, updated }, job)))
 }
 
 fn state(home: &Path, id: &str) -> std::path::PathBuf {

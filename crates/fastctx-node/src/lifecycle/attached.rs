@@ -7,14 +7,10 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+/// The windows open now, by conversation. They keep nothing of its host:
+/// that is kept for the model's activity alone (`retention`).
 #[derive(Default)]
 pub(crate) struct Attached(Arc<Mutex<HashMap<ResidentId, usize>>>);
-
-impl Attached {
-    pub(crate) fn contains(&self, id: &ResidentId) -> bool {
-        self.0.lock().expect("never poisoned").contains_key(id)
-    }
-}
 
 pub(crate) struct Lease {
     held: Arc<Mutex<HashMap<ResidentId, usize>>>,

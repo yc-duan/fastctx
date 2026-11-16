@@ -249,8 +249,10 @@ pub(crate) async fn here(
         arch: std::env::consts::ARCH.to_string(),
         cpu: Cpu { model, threads: fastctx_platform::system::threads(), busy, load: fastctx_platform::system::load() },
         memory: Memory {
-            room: Some(node.memory_room.bytes()),
-            waiting: node.memory_room.waiting(),
+            // No more a setting, and nothing waits for memory
+            // (`memory_room`).
+            room: None,
+            waiting: 0,
             ..memory
                 .map(|memory| Memory {
                     total: memory.total,

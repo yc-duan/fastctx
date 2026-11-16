@@ -17,11 +17,11 @@
 //!
 //! Run with Claude Code 2.1.289.
 
+mod assisting_place;
 pub(crate) mod calls;
 mod catalog;
 pub(crate) mod channel;
 pub(crate) mod claim_cleanup;
-mod assisting_place;
 mod continuing;
 pub(crate) mod control;
 pub(crate) mod control_outcome;
@@ -2346,9 +2346,9 @@ pub(super) async fn begin_launch(node: &Arc<Node>, id: &ResidentId, prepared: Pr
     let plugin = claude::plugin_dir(node.world.path());
     node.claude.handing(id, &text);
     let world = node.world.path().to_path_buf();
-    // Its first turn starts with its session, and waits for memory first
+    // Its first turn starts with its session: memory is freed for it first
     // (`memory_room`), holding nothing anyone else waits on.
-    crate::memory_room::wait(node, id).await;
+    crate::memory_room::make_room(node, id).await;
     // Until the World knows which session this is, a Claude session's MCP
     // connection it cannot place waits, rather than becoming someone new.
     let _birth = node.claude.births.read().await;
@@ -2397,7 +2397,10 @@ pub(super) async fn begin_launch(node: &Arc<Node>, id: &ResidentId, prepared: Pr
             return failed_wake(node, id, &directory, &first.delivery.id, error).await;
         }
     };
-    node.log.line(format_args!("lifecycle {id}: Claude Code started its first session, {} ms after it was opened", since()));
+    node.log.line(format_args!(
+        "lifecycle {id}: Claude Code started its first session, {} ms after it was opened",
+        since()
+    ));
     // The session is known by the start of its id until its mod reports the
     // whole of it, which may have happened already.
     node.residents
