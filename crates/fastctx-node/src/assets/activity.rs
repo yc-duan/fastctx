@@ -264,6 +264,9 @@ struct LegacyHour {
 /// The order an hour of the book is kept under, beside the deeds.
 const HOURS: &str = "hour/";
 
+/// Hours by item, each with its order and body.
+type Hours = BTreeMap<Vec<u8>, (Vec<u8>, Vec<u8>)>;
+
 /// The hours the book keeps from an earlier version, whose deeds it never
 /// kept (`book_hour`, written by its migration alone, §28.58): written into
 /// the activity stream of their accounts as they stand, each under
@@ -302,7 +305,7 @@ fn hours(node: &Arc<Node>, hub: &HubId, home: Option<&AccountName>, stream: &str
         .map_err(|error| error.to_string())?;
     let error = |error: fastctx_content::Error| error.to_string();
     // Each account's hours, by item, with their bodies.
-    let mut by_account: BTreeMap<AccountName, BTreeMap<Vec<u8>, (Vec<u8>, Vec<u8>)>> = BTreeMap::new();
+    let mut by_account: BTreeMap<AccountName, Hours> = BTreeMap::new();
     for hour in &rows {
         let Some(account) = routed(&hour.account, hub, home) else { continue };
         let key = format!("{HOURS}{}/{}/{}/{}/{}", hour.at, hour.session, hour.agent, hour.held, hour.account);
@@ -342,7 +345,7 @@ fn hours(node: &Arc<Node>, hub: &HubId, home: Option<&AccountName>, stream: &str
     let mut at = standing(library, &name)?;
     // Each scope to write: those of the accounts with hours now, and those
     // written before whose hours all went since (codex-357de52a #6).
-    let mut targets: BTreeMap<String, (i64, BTreeMap<Vec<u8>, (Vec<u8>, Vec<u8>)>)> = BTreeMap::new();
+    let mut targets: BTreeMap<String, (i64, Hours)> = BTreeMap::new();
     for (account, wanted) in by_account {
         if let Some((scope, holding)) = writable(node, library, hub, &account, stream)? {
             targets.insert(scope, (holding, wanted));

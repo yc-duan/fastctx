@@ -223,16 +223,16 @@ mod tests {
         ];
         let mut at_once = BTreeMap::new();
         for (index, files) in entries.iter().enumerate() {
-            apply(&mut at_once, index as u64 + 1, &author(), files);
+            apply(&mut at_once, index as u64 + 1, Some(&author()), files);
         }
         // The same entries, some taken before a read and the rest after it.
         for split in 0..=entries.len() {
             let mut in_two = BTreeMap::new();
             for (index, files) in entries.iter().enumerate().take(split) {
-                apply(&mut in_two, index as u64 + 1, &author(), files);
+                apply(&mut in_two, index as u64 + 1, Some(&author()), files);
             }
             for (index, files) in entries.iter().enumerate().skip(split) {
-                apply(&mut in_two, index as u64 + 1, &author(), files);
+                apply(&mut in_two, index as u64 + 1, Some(&author()), files);
             }
             assert_eq!(in_two.keys().collect::<Vec<_>>(), at_once.keys().collect::<Vec<_>>());
         }

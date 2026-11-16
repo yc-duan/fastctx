@@ -374,7 +374,7 @@ fn write_job(node: &Arc<Node>, home: &Home, job: &JobRecord) -> Result<bool, Str
     if digest != standing.facts {
         let item = named.clone().into_bytes();
         let lease = script.map(|mut bytes| library.put(&mut bytes, "job-script", LEASE)).transpose().map_err(error)?;
-        let objects = lease.iter().map(|lease| lease.object.clone()).collect();
+        let objects = lease.iter().map(|lease| lease.object).collect();
         Writer::<JobFacts>::new(library, &scope, &facts_stream)
             .map_err(error)?
             .in_holding(holding)

@@ -87,7 +87,7 @@ pub(crate) fn source(node: &Node, link: &Link, town: &TownId) -> Option<Source> 
         .map(|(name, _)| name)
         .filter(|name| name.starts_with(&prefix))
         .collect();
-    let stream = match streams.iter().any(|name| *name == named) {
+    let stream = match streams.contains(&named) {
         true => named,
         false => match streams.as_slice() {
             [only] => only.clone(),
