@@ -28,6 +28,8 @@ export interface Machine {
   silent?: string;
   /** A scan running there now. */
   scanning?: boolean;
+  /** Why its last scan did not finish. */
+  scanFailed?: string;
   /** The folders searched there for logins, with how each search stands. */
   folders?: { dir: string; said: string; busy: boolean }[];
   /** The agents it has none of, said when it was scanned. */

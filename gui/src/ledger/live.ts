@@ -104,6 +104,7 @@ export function netOf(world: WorldNow | null, seen: Seen, now: Date): Net {
       scanned: !!record?.scan || !!record && [record.claude, record.codex].some((side) => side.listed.length + side.candidates.length > 0),
       ...(heard?.kind === "no_answer" ? { silent: heard.reason } : {}),
       ...(record?.scan?.usual.state === "running" ? { scanning: true } : {}),
+      ...(record?.scan?.usual.state === "failed" ? { scanFailed: record.scan.usual.reason } : {}),
       ...(record && machine.hold !== "assist" ? { folders: foldersOf(record), missing: missingOf(record) } : {}),
     });
     if (!record) continue;

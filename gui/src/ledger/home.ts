@@ -169,7 +169,7 @@ function attachBody(machine: Machine): string {
   const cards = families.map((family) => card(family, here.filter((login) => login.family === family && !login.under))).join("");
   const found = here.filter((login) => login.under);
   const folders = machine.folders
-    ? `<section class="ao-card lg-folders"><header class="ao-head"><span class="ao-mark">${glyph("folder", 22)}</span><h2 class="ao-name">搜索的文件夹</h2>${machine.here ? `<button type="button" class="text-button ll-go" data-act="add-folder">${glyph("plus", 14)}添加文件夹…</button>` : ""}</header>
+    ? `<section class="ao-card lg-folders"><header class="ao-head"><span class="ao-mark">${glyph("folder", 22)}</span><h2 class="ao-name">搜索的文件夹</h2>${machine.here || deeds ? `<button type="button" class="text-button ll-go" data-act="add-folder">${glyph("plus", 14)}添加文件夹…</button>` : ""}</header>
         <ul class="ao-logins">${machine.folders
           .map((folder) => `<li class="lg-folder"><span>${escape(folder.dir)}</span><small>${escape(folder.said)}</small>${machine.here || deeds ? `<button type="button" class="lg-word" data-act="folder" data-change="${folder.busy ? "stop" : "forget"}" data-dir="${escape(folder.dir)}">${folder.busy ? "停止" : "移除"}</button>` : ""}</li>${found.filter((login) => login.under === folder.dir).map(lineOf).join("")}`)
           .join("")}${machine.folders.length ? "" : `<li class="lg-folder lg-soft">尚未添加</li>`}</ul></section>`
@@ -181,6 +181,7 @@ function attachBody(machine: Machine): string {
     <div class="ao-reach" title="${machine.here ? "本机" : "该机器"}已接入的智能体，可经 Fastctx 到达这些机器">${reach}</div>
     <div class="ao-cards">${cards}${folders}</div>
     ${missing.length ? `<p class="lg-note">${machine.here ? "本机" : "该机器"}未找到 ${missing.map(escape).join("、")}</p>` : ""}
+    ${machine.scanFailed ? `<p class="lg-note">扫描未完成：${escape(machine.scanFailed)}</p>` : ""}
   </div>`;
 }
 
