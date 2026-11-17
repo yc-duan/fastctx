@@ -251,13 +251,6 @@ a.ay-name:hover {
   margin: 0;
 }
 
-.ay-notes {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px 24px;
-  margin: var(--space-6) 4px 0;
-  color: var(--text-3);
-}
 
 /* A phone: the two switches take a line of their own under the page's
    name, the page keeps its narrow margins, a group's time goes. */

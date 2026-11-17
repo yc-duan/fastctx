@@ -265,37 +265,25 @@ html.framed .sp-panel.sp-over .sp-line {
   line-height: var(--leading-prose);
 }
 
-/* The pages open in the side, each on its tab: the overview's first, then
-   what was opened from it, a part or a file. They stand on one line ruled
-   across the sheet, the one in view in the page's ink with a pen's stroke
-   under it in clay, as the views in a page's head do
-   (`design/head-switch.css`); with the overview alone there is no line of
-   tabs at all. More than the line holds, it moves along them. */
+/* The pages open in the side, each on its tab, as a browser's are: the
+   overview's first, then what was opened from it, a part or a file. They
+   stand on one hairline across the sheet; the one in view is a block with
+   its top corners round, standing on that line. With the overview alone
+   there is no line of tabs at all. More than the line holds, it moves
+   along them. */
 .sp-tabs {
   position: relative;
   display: flex;
   align-items: flex-end;
-  gap: var(--space-1);
+  gap: 2px;
   min-width: 0;
   margin-bottom: var(--space-2);
   padding: 0 var(--sp-end) 0 var(--sp-start);
+  box-shadow: inset 0 -1px 0 var(--hairline);
 }
 
 .sp-tabs[hidden] {
   display: none;
-}
-
-.sp-tabs::after {
-  content: "";
-  position: absolute;
-  left: calc(var(--sp-start) + var(--space-3));
-  right: calc(var(--sp-end) + var(--space-3));
-  bottom: 0;
-  height: 8px;
-  background: var(--pen-rule);
-  -webkit-mask: var(--pen-rule-1) 0 50% / 100% 100% no-repeat;
-  mask: var(--pen-rule-1) 0 50% / 100% 100% no-repeat;
-  pointer-events: none;
 }
 
 .sp-tabs-run {
@@ -317,10 +305,11 @@ html.framed .sp-panel.sp-over .sp-line {
   display: flex;
   align-items: center;
   max-width: 220px;
-  min-height: 36px;
-  padding: 0 2px 7px var(--space-3);
-  color: var(--text-2);
-  transition: color var(--hover) var(--ease);
+  min-height: 34px;
+  padding: 0 2px 0 var(--space-3);
+  border-radius: var(--radius-m) var(--radius-m) 0 0;
+  color: var(--text-3);
+  transition: color var(--hover) var(--ease), background-color var(--hover) var(--ease);
 }
 
 .sp-tab.fixed {
@@ -333,6 +322,7 @@ html.framed .sp-panel.sp-over .sp-line {
 }
 
 .sp-tab.chosen {
+  background: var(--fill);
   color: var(--text-strong);
 }
 
@@ -358,32 +348,6 @@ html.framed .sp-panel.sp-over .sp-line {
   font-size: var(--size-fine);
 }
 
-/* The stroke under the one in view; under a name the pointer rests on, the
-   faint line of one about to be drawn. */
-.sp-tab::after {
-  content: "";
-  position: absolute;
-  left: var(--space-3);
-  right: 10px;
-  bottom: 3px;
-  height: 2px;
-  -webkit-mask:
-    linear-gradient(#000, #000) 0 0 / calc(100% - 12px) 100% no-repeat,
-    var(--pen-seg-tip) 100% 0 / 12px 100% no-repeat;
-  mask:
-    linear-gradient(#000, #000) 0 0 / calc(100% - 12px) 100% no-repeat,
-    var(--pen-seg-tip) 100% 0 / 12px 100% no-repeat;
-  background: transparent;
-  transition: background-color var(--hover) var(--ease);
-}
-
-.sp-tab:hover:not(.chosen)::after {
-  background: var(--pen-rule);
-}
-
-.sp-tab.chosen::after {
-  background: var(--accent);
-}
 
 /* A tab's cross keeps its room, so no name moves as it comes: it is there
    on the tab in view, and on one the pointer rests on. */

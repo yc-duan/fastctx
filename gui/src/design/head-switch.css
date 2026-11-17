@@ -1,99 +1,11 @@
-/* The switch between a page's views, in the page's head (the user,
-   2026-11-16: the filled switch stays everywhere else; this one "只用在页头
-   的视图切换"): no capsule. The views' names stand on a faint ruled line,
-   the one shown in the page's ink with a ruling pen's stroke under it in
-   clay, lifting at its end; a name the pointer rests on is ruled faintly,
-   as a line about to be drawn.
-
-   The stroke is the chosen side's `::after`, not a fill of its own, so
-   `--seg-own` tells the slide (`segment-slide.ts`) to send a stroke of the
-   same making, `.seg-own`, from the side chosen before. */
+/* The switch between a page's views, in the page's head: the filled switch
+   every page has (`app/pages.css`), on the head's middle line; two side by
+   side stand a little apart. */
 
 :root :is(.page-head, .lg-head, .fx-title, .sf-head) :is(.segmented, .ml-views) {
-  position: relative;
-  gap: 2px;
-  padding: 0;
-  border-radius: 0;
-  background: none;
+  align-self: center;
 }
 
-/* Two switches side by side are two lines, a little apart. */
 :root :is(.page-head, .lg-head, .fx-title, .sf-head) .segmented + .segmented {
-  margin-left: var(--space-4);
-}
-
-/* The line the names stand on, which says they are one switch. */
-:root :is(.page-head, .lg-head, .fx-title, .sf-head) :is(.segmented, .ml-views)::before {
-  content: "";
-  position: absolute;
-  left: 6px;
-  right: 6px;
-  bottom: 3px;
-  height: 1px;
-  background: var(--pen-rule);
-  opacity: 0.7;
-}
-
-:root :is(.page-head, .lg-head, .fx-title, .sf-head) :is(.segmented > .segment, .ml-views > .ml-view) {
-  position: relative;
-  min-height: 32px;
-  padding: 3px 10px 7px;
-  border-radius: 8px;
-  background: none;
-  color: var(--text-2);
-}
-
-:root :is(.page-head, .lg-head, .fx-title, .sf-head) :is(.segmented > .segment, .ml-views > .ml-view):hover {
-  color: var(--text);
-}
-
-:root :is(.page-head, .lg-head, .fx-title, .sf-head) :is(.segmented > .segment, .ml-views > .ml-view).chosen {
-  --seg-own: 1;
-  background: none;
-  color: var(--text-strong);
-}
-
-:root :is(.page-head, .lg-head, .fx-title, .sf-head) :is(.segmented > .segment, .ml-views > .ml-view)::after,
-:root :is(.page-head, .lg-head, .fx-title, .sf-head) :is(.segmented, .ml-views) > .seg-thumb.seg-own::after {
-  content: "";
-  position: absolute;
-  left: 10px;
-  right: 8px;
-  bottom: 3px;
-  height: 2px;
-  /* The line whole, then where the pen lifts: a tip of its own width. */
-  -webkit-mask:
-    linear-gradient(#000, #000) 0 0 / calc(100% - 12px) 100% no-repeat,
-    var(--pen-seg-tip) 100% 0 / 12px 100% no-repeat;
-  mask:
-    linear-gradient(#000, #000) 0 0 / calc(100% - 12px) 100% no-repeat,
-    var(--pen-seg-tip) 100% 0 / 12px 100% no-repeat;
-  background: transparent;
-  transition: background-color var(--hover) var(--ease);
-}
-
-:root :is(.page-head, .lg-head, .fx-title, .sf-head) :is(.segmented > .segment, .ml-views > .ml-view):hover:not(.chosen)::after {
-  background: var(--pen-rule);
-}
-
-:root :is(.page-head, .lg-head, .fx-title, .sf-head) :is(.segmented > .segment, .ml-views > .ml-view).chosen::after,
-:root :is(.page-head, .lg-head, .fx-title, .sf-head) :is(.segmented, .ml-views) > .seg-thumb.seg-own::after {
-  background: var(--accent);
-}
-
-/* While the stroke travels, the side it left and the side it goes to keep
-   theirs back. */
-:root :is(.page-head, .lg-head, .fx-title, .sf-head) .seg-sliding > :not(.seg-thumb)::after {
-  visibility: hidden;
-}
-
-/* A file's head and the side's files page rule their own line across the
-   page; the switch stands on that one and draws none of its own. */
-:root :is(.fx-title, .sf-head) > .segmented::before {
-  content: none;
-}
-
-/* Its foot on the head's foot, so the stroke lies on the ruled line. */
-:root :is(.fx-title, .sf-head) > .segmented {
-  align-self: flex-end;
+  margin-left: var(--space-3);
 }

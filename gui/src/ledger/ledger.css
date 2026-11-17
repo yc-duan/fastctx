@@ -228,13 +228,13 @@
   display: inline-flex;
   gap: 2px;
   padding: 3px;
-  border-radius: var(--radius-full);
+  border-radius: var(--radius-m);
   background: var(--fill);
 }
 .lg .segment {
-  min-height: 32px;
-  padding: 4px 18px;
-  border-radius: var(--radius-full);
+  min-height: 30px;
+  padding: 3px 14px;
+  border-radius: 8px;
   color: var(--text-2);
   white-space: nowrap;
   transition: color var(--hover) var(--ease), background-color var(--hover) var(--ease);
@@ -244,7 +244,7 @@
 }
 .lg .segment.chosen {
   color: var(--text-strong);
-  background: var(--accent-wash);
+  background: var(--fill-strong);
 }
 :is(.lg, .lg-app) .ledger-switch {
   display: inline-flex;

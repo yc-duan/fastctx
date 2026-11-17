@@ -1070,21 +1070,22 @@ a.details-job {
   margin: 0 0 var(--space-1);
 }
 
-/* One of two, as a single switch: a solid track, the side chosen washed in
-   clay, so it reads as either this or that. */
+/* One of a few, as a single switch: a solid track with corners a little
+   square, the side chosen a quiet block on it, so it reads as either this
+   or that. Every switch of the app is this one. */
 .segmented {
   display: inline-flex;
   align-self: flex-start;
   gap: 2px;
   padding: 3px;
-  border-radius: var(--radius-full);
+  border-radius: var(--radius-m);
   background: var(--fill);
 }
 
 .segment {
   min-height: 30px;
-  padding: 4px 16px;
-  border-radius: var(--radius-full);
+  padding: 3px 14px;
+  border-radius: 8px;
   color: var(--text-2);
   font-size: var(--size-text);
   line-height: var(--leading-ui);
@@ -1097,7 +1098,7 @@ a.details-job {
 
 .segment.chosen {
   color: var(--text-strong);
-  background: var(--accent-wash);
+  background: var(--fill-strong);
 }
 
 /* The wash on its way from the side chosen before to the side pressed
