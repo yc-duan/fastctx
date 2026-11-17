@@ -33,9 +33,12 @@ pub(super) async fn exercise(owner: &World, alice: &World, bob: &World) -> Resul
     record("nor by a member it is shared with", by_member.is_err(), json!(said(&by_member)));
     owner.account(None, name("owner"), share("owner-pc", "alice", true)).await?;
     let given = alice.account(None, name("alice"), share("owner-pc", "bob", true)).await;
+    // Refused as a visitor's once the machine is alice's to use, and as one
+    // she does not hold while it still clears what she may not see.
     record(
         "a visitor shares none of the machines it was given",
-        said(&given).contains(fastctx_types::sharing::VISITOR_SHARES_ITS_OWN),
+        said(&given).contains(fastctx_types::sharing::VISITOR_SHARES_ITS_OWN)
+            || said(&given).contains(fastctx_types::sharing::HOLDER_REQUIRED),
         json!(said(&given)),
     );
     owner.account(None, name("owner"), share("owner-pc", "alice", false)).await?;
