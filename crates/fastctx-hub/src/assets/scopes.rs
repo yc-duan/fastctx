@@ -471,8 +471,12 @@ pub(crate) fn scope(assets: &Assets, key: &str) -> Result<Option<Scope>, String>
 /// The owner library of `scope`, with the scope installed in it: a scope
 /// described just before a stop is installed at its first use.
 pub(crate) fn library(assets: &Assets, scope: &Scope) -> Result<Library, String> {
-    let library = assets.library(&scope.owner).map_err(|error| error.to_string())?;
     let key = &scope.descriptor.scope;
+    // One deleted since it was read is installed in no library again.
+    if assets.was_deleted(key) {
+        return Err(format!("the scope {key} was deleted with its conversation"));
+    }
+    let library = assets.library(&scope.owner).map_err(|error| error.to_string())?;
     if library.holding(key).map_err(|error| error.to_string())?.is_none() {
         library.install(key, scope.fact.fact.0.clone(), scope.descriptor.seq as i64).map_err(|error| error.to_string())?;
     }

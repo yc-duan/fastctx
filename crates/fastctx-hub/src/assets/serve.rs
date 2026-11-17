@@ -598,6 +598,19 @@ pub(crate) fn ask_in(
         }
         return Ok(assets.sealed_reply(why));
     }
+    // A scope deleted with its conversation is read by none: whatever is
+    // asked of it, its device lets go of what it holds (`deleted`).
+    if let Some(key) = scope_of(&request)
+        && assets.was_deleted(key)
+    {
+        assets.gone(key, machine);
+        return Ok(Reply::Revoked { scope: key.to_string() });
+    }
+    if let Request::Describe { scope, .. } = &request
+        && assets.was_deleted(scope)
+    {
+        return Ok(Reply::Revoked { scope: scope.clone() });
+    }
     // A scope this machine reads no more is answered so, whatever was asked
     // of it: its device stops using what it holds (§4.5, §6.3).
     if let Some(key) = scope_of(&request)

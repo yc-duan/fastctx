@@ -423,6 +423,10 @@ pub(super) fn line_scope(hub: &Hub, origin: &crate::origin::Origin, key: &str) -
     let store = hub.store();
     origin.check(&store.book.directory)?;
     let directory = store.indexed();
+    if assets.was_deleted(key) {
+        assets.gone(key, &origin.name);
+        return Ok(Err(Reply::Revoked { scope: key.to_string() }));
+    }
     if let Some(scope) = scopes::scope(assets, key)?
         && !scopes::readable(&directory, &origin.name, &scope)
     {

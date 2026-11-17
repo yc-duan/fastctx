@@ -12,8 +12,12 @@
 //! conversation that lives here, all of it, once it is sure the conversation
 //! works for the account the deletion is for; of one that lives elsewhere,
 //! the guest rooms it had here, its commands there stopped first. Either
-//! way, the copy kept here from showing it goes too.
+//! way, the copy kept here from showing it goes too. What the asset library
+//! holds of it goes when the hub, having deleted its scopes, says they are
+//! read no more (`assets::session`); what an earlier deletion left there is
+//! asked of the hub again (`leftover`).
 
+mod leftover;
 mod submission;
 
 use std::path::PathBuf;
@@ -269,6 +273,7 @@ pub(crate) fn start(node: &Arc<Node>) {
     use crate::passes::Left;
     submission::register(node);
     crate::passes::register(node, ASKING, |node: Arc<Node>| async move {
+        leftover::look(&node).await;
         if send_kept(&node).await { Left::Nothing } else { Left::Work }
     });
     crate::passes::follow(node, ASKING.name, node.views.subscribe(), VIEWS_SETTLE);
