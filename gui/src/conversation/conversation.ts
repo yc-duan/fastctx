@@ -133,6 +133,18 @@ type ToolEntry = Extract<Entry, { kind: "tool" }>;
 /** The most bytes of events opened whole a page keeps. */
 const EXPANDED_BYTES = 8 * 1024 * 1024;
 
+/** A message the timeline just gained is shown as it would be written, a
+ *  little at a time: how long that takes at most and at least, how often a
+ *  little more is shown, how lately the message must have been written,
+ *  how short it may be, and how many records may wait behind it before it
+ *  is shown whole at once. */
+const TYPED_MOST_MS = 2400;
+const TYPED_LEAST_MS = 400;
+const TYPED_EVERY_MS = 32;
+const TYPED_WITHIN_MS = 120_000;
+const TYPED_LEAST_CHARS = 24;
+const TYPED_WAITING_MOST = 64;
+
 /** How long after one bubble the next has its moment said above it. */
 const CHAT_GAP_MS = 5 * 60_000;
 export class Conversation {
@@ -164,6 +176,10 @@ export class Conversation {
   private measured = new Measured();
   /** Events opened whole, by the object each is kept as. */
   private expanded = new Map<string, SessionEvent>();
+  /** The message being shown as it would be written, and the records that
+   *  came after it and wait for it. */
+  private typing: { shown: import("./replica").Shown; timer: ReturnType<typeof setTimeout> } | null = null;
+  private behind: ReplicaRecord[] = [];
   private source: PartSource | null = null;
   /** Moves when parts come and go. */
   private structure = 0;
@@ -309,6 +325,7 @@ export class Conversation {
   /** The latest part of its timeline, in place of all the page held:
    *  opened, or its timeline made anew. */
   openReplica(part: ReplicaPart, source: PartSource | null): void {
+    this.typed(false);
     this.searchVersion += 1;
     if (source !== this.source) this.searchSource += 1;
     this.generation = part.generation;
@@ -385,6 +402,84 @@ export class Conversation {
    *  gone is gone. What lies in a gap is read when the reader comes to it. */
   records(generation: number, records: readonly ReplicaRecord[]): void {
     if (!this.replica || generation !== this.generation) return;
+    // Behind a message being written out, they wait their turn; too many
+    // of them, and it is shown whole at once.
+    if (this.typing) {
+      this.behind.push(...records);
+      if (this.behind.length > TYPED_WAITING_MOST) this.typed(true);
+      return;
+    }
+    // A message just written, come by itself or with little else, is shown
+    // as it would be written: what came before it is taken first, what came
+    // after it waits.
+    const at = records.length <= 8 ? records.findIndex((record) => this.writes(record)) : -1;
+    if (at < 0) {
+      this.take(records);
+      return;
+    }
+    this.take(records.slice(0, at));
+    this.behind.push(...records.slice(at + 1));
+    this.write((records[at] as Extract<ReplicaRecord, { record: "is" }>).shown);
+  }
+
+  /** Whether `record` is a message the timeline just gained at its end,
+   *  written lately: one to show as it would be written. */
+  private writes(record: ReplicaRecord): boolean {
+    if (record.record !== "is" || typeof document === "undefined" || document.visibilityState !== "visible") return false;
+    const event = record.shown.event;
+    if (event.event !== "finished" || event.item.kind !== "message" || event.item.text.length < TYPED_LEAST_CHARS) return false;
+    if (Math.abs(Date.now() - Date.parse(event.at)) > TYPED_WITHIN_MS) return false;
+    const span = this.spans.get(this.tail);
+    if (!span || this.parts.some((part) => this.spans.get(part)?.keys.includes(record.shown.key))) return false;
+    const last = span.places[span.places.length - 1];
+    return !last || before(last, record.shown.place);
+  }
+
+  /** Shows the message `shown` as it would be written: begun empty, a
+   *  little more of its words every moment, then as the timeline holds it. */
+  private write(shown: import("./replica").Shown): void {
+    const event = shown.event;
+    if (event.event !== "finished" || event.item.kind !== "message") return;
+    const text = event.item.text;
+    const fold = this.tail.fold;
+    fold.event({ ...event, event: "began", item: { ...event.item, text: "" } }, shown.key);
+    const total = Math.min(TYPED_MOST_MS, Math.max(TYPED_LEAST_MS, text.length * 5));
+    const each = Math.max(2, Math.ceil(text.length / (total / TYPED_EVERY_MS)));
+    let at = 0;
+    const more = () => {
+      if (this.typing?.shown !== shown) return;
+      let end = Math.min(text.length, at + each);
+      // Never between the two halves of one character.
+      const code = text.charCodeAt(end - 1);
+      if (end < text.length && code >= 0xd800 && code <= 0xdbff) end += 1;
+      this.tail.fold.event({ at: event.at, event: "grew", turn: event.turn, item: event.item.id, part: "text", text: text.slice(at, end) }, shown.key);
+      at = end;
+      if (at >= text.length) this.typed(true);
+      else {
+        this.typing.timer = setTimeout(more, TYPED_EVERY_MS);
+        this.changed();
+      }
+    };
+    this.typing = { shown, timer: setTimeout(more, TYPED_EVERY_MS) };
+  }
+
+  /** The message being written out stands whole, as the timeline holds it,
+   *  and what waited behind it is taken; `drawn` when the page is to draw
+   *  again for it. */
+  private typed(drawn: boolean): void {
+    const typing = this.typing;
+    if (!typing) return;
+    clearTimeout(typing.timer);
+    this.typing = null;
+    const behind = this.behind;
+    this.behind = [];
+    this.take([{ record: "is", shown: typing.shown }, ...behind]);
+    if (drawn) this.changed();
+  }
+
+  /** Takes `records` in as they stand. */
+  private take(records: readonly ReplicaRecord[]): void {
+    if (records.length === 0) return;
     this.searchVersion += 1;
     const touched = new Map<Held, { events: SessionEvent[]; keys: string[] }>();
     const touch = (part: Held, span: Span) => {
@@ -434,6 +529,7 @@ export class Conversation {
   /** The requests that wait for the user now, all of them, as its machine
    *  tells them when the page begins to hear it. */
   waits(events: readonly SessionEvent[]): void {
+    this.typed(false);
     this.asks = [...events];
     const span = this.spans.get(this.tail);
     if (!this.replica || !span) return;
@@ -783,6 +879,7 @@ export class Conversation {
   /** Lets go of what the latest part holds before its latest `events`
    *  events, where it can be cut there. */
   async trim(events: number): Promise<void> {
+    this.typed(false);
     const tail = this.tail;
     const span = this.spans.get(tail);
     if (span) {

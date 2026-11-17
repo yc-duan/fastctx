@@ -17,7 +17,9 @@ export class LocalTimeline implements PartSource {
   /** How many of its events the timeline holds so far. */
   private held: number;
 
-  constructor(private readonly events: Shown[], private readonly delay = 0, hold = 0) {
+  /** `fresh`: an event held back comes as one that happened as it came,
+   *  not when the file says. */
+  constructor(private readonly events: Shown[], private readonly delay = 0, hold = 0, private readonly fresh = false) {
     this.held = Math.max(0, events.length - hold);
   }
 
@@ -29,8 +31,12 @@ export class LocalTimeline implements PartSource {
   /** The next event held back, as a record the timeline gained; none once
    *  all came. */
   next(): ReplicaRecord | null {
-    const shown = this.events[this.held];
+    let shown = this.events[this.held];
     if (!shown) return null;
+    if (this.fresh) {
+      shown = { ...shown, event: { ...shown.event, at: new Date().toISOString() } };
+      this.events[this.held] = shown;
+    }
     this.held += 1;
     return { record: "is", shown };
   }

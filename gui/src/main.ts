@@ -2040,11 +2040,11 @@ function specimenTalk(address: Address): DeskTalk {
     // `?timeline=<address>`: a conversation's timeline, one event a line,
     // read as a shell reads one from the copy its computer holds; `hold`
     // keeps so many of its last events back, to come every `rate` ms as
-    // the records a timeline gains.
+    // the records a timeline gains, and with `fresh` as happening then.
     void fetch(params.get("timeline")!)
       .then((answer) => answer.text())
       .then((text) => {
-        const read = new LocalTimeline(timelineLines(text), Number(params.get("partDelay") ?? 2), Number(params.get("hold") ?? 0));
+        const read = new LocalTimeline(timelineLines(text), Number(params.get("partDelay") ?? 2), Number(params.get("hold") ?? 0), params.has("fresh"));
         if (left) return;
         conversation.openReplica(read.latest(), read);
         page.update({ read: true });
