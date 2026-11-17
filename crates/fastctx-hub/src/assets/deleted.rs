@@ -18,7 +18,7 @@ use fastctx_types::{Address, MachineName};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeSet, HashSet};
 use std::io;
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 
 /// What the chain calls a scope's deletion.
 const KIND: &str = "scope-deleted";
@@ -36,15 +36,19 @@ const TURN: std::time::Duration = std::time::Duration::from_secs(2);
 #[derive(Default)]
 pub(crate) struct Deleted {
     /// What the chain keeps of each, read from it once.
-    keys: OnceLock<Mutex<HashSet<[u8; 32]>>>,
+    keys: OnceLock<Arc<Mutex<HashSet<[u8; 32]>>>>,
     purging: Mutex<BTreeSet<Owner>>,
     /// Those whose owner library could not be reached as they were deleted:
     /// tried again at each turn (`let_go`).
     unreached: Mutex<Vec<(Owner, String)>>,
 }
 
+/// The scopes deleted, as a write to the control database looks them up
+/// (`Assets::deleted_scopes`).
+pub(super) type Stamps = Arc<Mutex<HashSet<[u8; 32]>>>;
+
 /// What the chain keeps of the deletion of the scope `key`.
-fn stamp(key: &str) -> [u8; 32] {
+pub(super) fn stamp(key: &str) -> [u8; 32] {
     let mut hasher = Sha256::new();
     hasher.update(b"fastctx-hub-scope-deleted/1");
     hasher.update(key.as_bytes());
@@ -56,7 +60,15 @@ fn other(error: impl std::fmt::Display) -> io::Error {
 }
 
 impl Assets {
-    fn deleted_keys(&self) -> io::Result<&Mutex<HashSet<[u8; 32]>>> {
+    /// The scopes deleted, for a write to the control database to look a
+    /// key up in as it runs: a deletion marks its scope here before its own
+    /// write is asked for, and the database writes one at a time, so a write
+    /// that runs after a deletion's finds its scope marked.
+    pub(super) fn deleted_scopes(&self) -> io::Result<Stamps> {
+        self.deleted_keys().cloned()
+    }
+
+    fn deleted_keys(&self) -> io::Result<&Stamps> {
         if let Some(keys) = self.deleted.keys.get() {
             return Ok(keys);
         }
@@ -69,7 +81,7 @@ impl Assets {
             })
             .map_err(io::Error::other)?;
         let kept = kept.into_iter().filter_map(|digest| <[u8; 32]>::try_from(digest).ok()).collect();
-        Ok(self.deleted.keys.get_or_init(|| Mutex::new(kept)))
+        Ok(self.deleted.keys.get_or_init(|| Arc::new(Mutex::new(kept))))
     }
 
     /// Whether the scope `key` was deleted with its conversation.
@@ -134,15 +146,27 @@ impl Assets {
             }
             Ok(Some(chain::append(c, KIND, &stamp)?))
         });
-        let (seq, head) = match written {
-            Ok(Some(appended)) => appended,
+        let witnessed = match written {
+            Ok(Some((seq, head))) => self.witness.advanced(seq, &head),
             Ok(None) => return Ok(false),
             Err(error) => {
-                keys.lock().expect("deleted scopes").remove(&stamp);
-                return Err(io::Error::other(error));
+                // A write that failed may have been kept all the same: the
+                // scope stays marked unless its row is seen to be there
+                // still, and one whose row is gone is deleted.
+                let name = key.to_string();
+                let kept = self.control.read_now(move |c| {
+                    Ok(c.prepare_cached("SELECT 1 FROM asset_scopes WHERE key = ?1")?.exists([&name])?)
+                });
+                match kept {
+                    Ok(true) => {
+                        keys.lock().expect("deleted scopes").remove(&stamp);
+                        return Err(io::Error::other(error));
+                    }
+                    Ok(false) => self.catch_up(),
+                    Err(_) => return Err(io::Error::other(error)),
+                }
             }
         };
-        let witnessed = self.witness.advanced(seq, &head);
         if let Some(scopes) = self.changed.lock().expect("changed scopes").get_mut(&scope.owner) {
             scopes.remove(key);
         }
@@ -198,6 +222,11 @@ impl Assets {
             // A library being deleted goes whole.
             if matches!(done, Ok(true)) || self.deleting(&owner).unwrap_or(false) {
                 self.deleted.purging.lock().expect("libraries letting go").remove(&owner);
+                // A scope deleted from it meanwhile put it here again, which
+                // the line above undid: looked at once more.
+                if self.library(&owner).is_ok_and(|library| library.purging().unwrap_or(false)) {
+                    self.lets_go(&owner);
+                }
             }
         }
     }
@@ -210,7 +239,7 @@ impl Assets {
 /// same id is none of these.
 pub(super) fn of_conversation(
     assets: &Assets,
-    directory: &fastctx_net::directory::Directory,
+    directory: &fastctx_net::directory_index::Indexed<'_>,
     conversation: &Address,
 ) -> Result<Vec<String>, String> {
     let ending = format!("/{}", conversation.resident);
@@ -228,15 +257,26 @@ pub(super) fn of_conversation(
             continue;
         }
         let Some(scope) = scopes::scope(assets, &key)? else { continue };
-        let lived: Option<MachineName> = match &scope.descriptor.readers {
-            Readers::Conversation { born_on: Some(machine), .. } => Some(machine.clone()),
+        let same = |machine: &MachineName| directory.same(machine, &conversation.machine);
+        let lived = match &scope.descriptor.readers {
+            Readers::Conversation { born_on: Some(machine), .. } => same(machine),
+            // Made by the machine that described it, kept as its key and its
+            // owner as opened: the same machine by its key, whoever owns it
+            // now.
             Readers::Conversation { born_on: None, .. } => {
-                scope.source.clone().and_then(|machine| MachineName::try_from(machine).ok())
+                let by_key = |identity: &str| identity.split(':').next().map(str::to_string);
+                let now = scopes::machine_now(directory, &conversation.machine);
+                match (scope.source.as_deref().and_then(by_key), now.as_deref().and_then(by_key)) {
+                    (Some(made), Some(machine)) => made == machine,
+                    _ => false,
+                }
             }
-            Readers::Body { body, .. } => assets.bodies.machine(body).map_err(|error| error.to_string())?,
-            _ => None,
+            Readers::Body { body, .. } => {
+                assets.bodies.machine(body).map_err(|error| error.to_string())?.is_some_and(|machine| same(&machine))
+            }
+            _ => false,
         };
-        if lived.is_some_and(|machine| directory.same(&machine, &conversation.machine)) {
+        if lived {
             found.push(key);
         }
     }
@@ -252,7 +292,7 @@ pub(crate) fn conversation_gone(hub: &crate::Hub, conversation: &Address) {
     fastctx_platform::task::spawn_blocking(move || {
         let keys = {
             let store = hub.store();
-            of_conversation(&hub.assets, &store.book.directory, &conversation)
+            of_conversation(&hub.assets, &store.indexed(), &conversation)
         };
         let keys = match keys {
             Ok(keys) => keys,

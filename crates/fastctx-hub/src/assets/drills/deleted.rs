@@ -110,7 +110,7 @@ fn a_scope_goes_with_its_conversation() {
 
     // The conversation on m1 is deleted: its scope alone is found, and goes.
     let conversation: fastctx_types::Address = serde_json::from_value(serde_json::json!({ "machine": "m1", "resident": "claude-1a2b" })).unwrap();
-    let found = deleted::of_conversation(&assets, &store.book.directory, &conversation).unwrap();
+    let found = deleted::of_conversation(&assets, &store.indexed(), &conversation).unwrap();
     assert_eq!(found, vec![conv1.clone()], "never the other machine's of the same id");
     let owner = scopes::scope(&assets, &conv1).unwrap().unwrap().owner;
     assert!(assets.delete_scope(&conv1).unwrap());
