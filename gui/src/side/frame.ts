@@ -12,12 +12,14 @@
 // the side's "⋯" and its switch. It stays there as the side opens and folds
 // away, and is all that is left of the side while it is folded.
 
+import { layerOpened, type Layer } from "../app/back";
 import { makeGrip } from "../app/grip";
 import { glyph } from "../conversation/glyphs";
 import type { Address } from "../world/wire";
 import { ALONE, PULLS, firstFiles, onBack, pullOut, putBack, standAs } from "./board";
 import { SidePane, type Dock, type Tab } from "./pane";
 import type { PartsFrame, SideParts } from "./parts";
+import { followSide } from "./pull";
 import { cardNames } from "./shown";
 import type { SideWords } from "./words";
 
@@ -84,6 +86,13 @@ export class SideFrame implements PartsFrame {
   /** Where the side stands for the room the desk has now. */
   private placed: Dock | "over" = this.dock;
   private readonly fitting: ResizeObserver;
+  /** The side lying open over the page, as the system back shuts it. */
+  private readonly layer: Layer = {
+    isOpen: () => this.pane.open && this.placed === "over" && this.host.isConnected,
+    close: () => this.pane.close(),
+  };
+  /** Stops a phone's swipes from pulling the side. */
+  private readonly unpulled: () => void;
 
   constructor(
     /** The desk, whose size the side's own follows. */
@@ -176,6 +185,18 @@ export class SideFrame implements PartsFrame {
     this.fitting.observe(this.split);
     OVER.addEventListener("change", this.replace);
     this.drawSwitch();
+    // Lying over the page it follows the finger; in a window of its own it
+    // is always open.
+    this.unpulled = ALONE
+      ? () => {}
+      : followSide({
+          host,
+          panel: this.pane.element,
+          ready: () => this.placed === "over" && !!this.parts && host.isConnected && host.clientWidth > 0,
+          isOpen: () => this.pane.open,
+          open: () => this.open(),
+          close: () => this.pane.close(),
+        });
   }
 
   /** Turns the side to the parts of the conversation now in focus. */
@@ -271,6 +292,7 @@ export class SideFrame implements PartsFrame {
   leave(): void {
     OVER.removeEventListener("change", this.replace);
     this.fitting.disconnect();
+    this.unpulled();
   }
 
   private readonly replace = () => this.place();
@@ -378,6 +400,7 @@ export class SideFrame implements PartsFrame {
     const open = this.pane.open;
     const was = this.host.classList.contains("sp-shown");
     if (open && !was) void this.host.offsetWidth;
+    if (open && !was && this.placed === "over" && !ALONE) layerOpened(this.layer);
     this.host.classList.toggle("sp-shown", open);
     this.host.classList.toggle("sp-visible", !this.pane.element.hidden);
     if (open && this.parts) this.parts.fresh = false;

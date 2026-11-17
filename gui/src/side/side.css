@@ -1233,8 +1233,9 @@ html.sh-carrying * {
   }
 }
 
-/* On a phone the side lies over the whole page, coming up as it opens and
-   going down as it shuts. */
+/* On a phone the side lies over the whole page, coming from the screen's
+   right side as it opens and going back there as it shuts; a finger pulls
+   it the same way (`pull.ts`). */
 .sp-panel.sp-over {
   position: absolute;
   top: 0;
@@ -1243,14 +1244,13 @@ html.sh-carrying * {
   left: 0;
   z-index: 40;
   padding-bottom: var(--safe-bottom);
-  opacity: 0;
-  transform: translateY(24px);
-  transition: opacity var(--glide) var(--glide-easing), transform var(--glide) var(--glide-easing);
+  transform: translateX(100%);
+  transition: transform var(--fold) var(--fold-easing), box-shadow var(--fold) var(--fold-easing);
 }
 
 .sp-host.sp-shown > .sp-split > .sp-panel.sp-over {
-  opacity: 1;
-  transform: translateY(0);
+  transform: translateX(0);
+  box-shadow: var(--shadow-pop);
 }
 
 .sp-panel.sp-over > .sp-sheet {

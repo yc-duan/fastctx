@@ -239,6 +239,7 @@ html.gripping-y * {
 .sidebar-places {
   flex: 1;
   min-height: 0;
+  overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-width: thin;
