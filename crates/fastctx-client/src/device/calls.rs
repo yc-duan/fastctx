@@ -538,6 +538,10 @@ impl Device {
                 let machine = self.find(&resident, machine).await?;
                 (machine, RemoteCall::ItemDetail { resident: resident.clone(), turn, item }, Some(resident))
             }
+            Call::AgentActivity { resident, machine, agent } => {
+                let machine = self.find(&resident, machine).await?;
+                (machine, RemoteCall::AgentActivity { resident: resident.clone(), agent }, Some(resident))
+            }
             // What asks of the whole World, the device asks of each machine
             // itself (`around`).
             Call::Who { all, town, since } => return Ok((Reply::Who(self.who(all, town, since).await?), here())),
@@ -822,6 +826,9 @@ impl Device {
             }
             (RemoteCall::ItemDetail { .. }, RemoteReply::ItemDetail { detail }) => {
                 Reply::ItemDetail { resident: address.expect("item detail resident"), detail }
+            }
+            (RemoteCall::AgentActivity { .. }, RemoteReply::AgentActivity { activity }) => {
+                Reply::AgentActivity { resident: address.expect("agent activity resident"), activity }
             }
             _ => {
                 return Err(failed(format!(
