@@ -43,7 +43,7 @@ import { isManaged } from "./machine-list";
 import { link, talkLink, type Place } from "./places";
 import { detailOf } from "./problem";
 import { ActsMenu } from "./acts-menu";
-import { runsHub, holds, assistantsOn, groupsOf, inNoNetwork, isSuper, isVisitor, machineActsFor, machinesOf, ownerOf, owns, residentIn, sameLogin, type Machine } from "./reach";
+import { runsHub, assistantsOn, groupsOf, inNoNetwork, isSuper, machineActsFor, machinesOf, ownerOf, owns, residentIn, sameLogin, type Machine, gives, isVisitor } from "./reach";
 import { RenameField, renamerOf, type Renamer } from "./rename";
 import type { Page } from "./shell";
 import { effect, type Signal } from "./signals";
@@ -591,7 +591,7 @@ export class MachinePage implements Page {
     const button = (act: string, icon: Parameters<typeof glyph>[0], label: string) =>
       `<button class="text-button quiet-button mp-act" type="button" data-act="${act}" title="${escape(label)}">${glyph(icon, 15)}<span>${escape(label)}</span></button>`;
     // No one's agents live on a managed machine (`world-network.md`, 受管
-    // 机器); a visitor shares nothing it holds, nor anyone the hub's machine.
+    // 机器); a visitor shares its own machines only, and no one the hub's.
     const managed = isManaged(world, machine.name);
     this.put(
       "acts",
@@ -1320,11 +1320,10 @@ export class MachinePage implements Page {
     return holderLoginOf(machine, world);
   }
 
-  /** The login that shares it on: one holding it that is no visitor, where
-   *  it does not run the hub. */
+  /** The login that shares it on: its owner, or one holding it that is no
+   *  visitor, where it does not run the hub. */
   private giver(machine: Machine, world: WorldNow): Login | undefined {
-    const logins = loginsOf(world.accounts).filter((login) => holds(machine, login, world));
-    return logins.find((login) => !isVisitor(world, login) && !runsHub(machine, login, world));
+    return loginsOf(world.accounts).find((login) => gives(machine, login, world) && !runsHub(machine, login, world));
   }
 
   private renamer(machine: Machine, world: WorldNow): Renamer | null {
@@ -1446,7 +1445,7 @@ export class MachinePage implements Page {
   private share(login: Login, machine: Machine): void {
     const { access, store } = this.options;
     this.giving.open(
-      { title: access.shareTitle(machine.written), what: access.shareWhat, sees: access.shareSees, given: access.sharedTo, go: access.shareGo },
+      { title: access.shareTitle(machine.written), what: access.shareWhat, sees: access.shareSees, given: access.sharedTo, go: access.shareGo, ...(isVisitor(store.world.peek(), login) ? { after: access.shareByName } : {}) },
       sharedWith(store.world.peek(), login, machine.name),
       async (to, shared) => {
         await this.options.change(login, { change: "share", machine: machine.name, to, shared });

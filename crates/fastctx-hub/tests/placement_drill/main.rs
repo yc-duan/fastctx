@@ -40,6 +40,7 @@ mod shared_controls;
 mod sharing;
 mod skills;
 mod submissions;
+mod visitors;
 use anyhow::{Context, Result};
 use fastctx_client::World;
 use fastctx_net::{
@@ -832,6 +833,7 @@ async fn main() -> Result<()> {
     history::exercise(&wa, &host, &alice_two, &sa.to.resident, &writer.to).await?;
     submissions::exercise(&base, &wo, &host, &home).await?;
     sharing::exercise(&base, &host, &owner_pc, &wo, &wb, &so.to.resident, &sb.to, &home).await?;
+    visitors::exercise(&wo, &wa, &wb).await?;
     submissions::exercise_management(&base, &wo).await?;
     host_node.kill()?;
     host_node.wait()?;

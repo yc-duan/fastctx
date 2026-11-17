@@ -181,6 +181,8 @@ pub fn authorize<L: Lookup + ?Sized>(lookup: &L, account: &AccountName, action: 
         }
         Action::Hold(machine) => {
             let member = registered(lookup, machine)?;
+            // A visitor's machine is held by its owner alone: one it shares
+            // may be used, never passed on.
             if member.home.as_ref().is_some_and(|owner| {
                 owner == account || (!is_visitor(lookup, owner) && lookup.is_shared(account, &member.name))
             }) {
@@ -249,9 +251,11 @@ pub fn rights<L: Lookup + ?Sized>(lookup: &L, account: &AccountName, machine: &M
 pub(crate) fn machine_rights<L: Lookup + ?Sized>(lookup: &L, account: &AccountName, machine: &MachineName) -> Rights {
     let Some(member) = lookup.find_member(machine) else { return Rights::NONE };
     let Some(owner) = member.home.as_ref() else { return Rights::NONE };
+    // A visitor's machine is its owner's and theirs it shares it with: the
+    // super administrator's reach stops there, and its agents assist no one.
     let visitors = is_visitor(lookup, owner);
     let whole =
-        owner == account || (!visitors && (is_super(lookup, account) || lookup.is_shared(account, &member.name)));
+        owner == account || lookup.is_shared(account, &member.name) || (!visitors && is_super(lookup, account));
     if member.managed {
         return Rights { hands: whole, agents: false };
     }

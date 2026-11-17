@@ -218,11 +218,21 @@ export function owns(machine: Machine, login: Login): boolean {
 
 /** Whether `machine` is in `login`'s hands: its own, or shared whole with
  *  its account, whose holders all manage it alike (`world-network.md`,
- *  共享机器与智能体协助). */
+ *  共享机器与智能体协助). A visitor's machine is in its owner's hands alone:
+ *  whom it is shared with uses it, and manages nothing of it. */
 export function holds(machine: Machine, login: Login, world: WorldNow): boolean {
   if (owns(machine, login)) return true;
-  if (!machine.on.some((on) => on.hub === login.hub)) return false;
-  return !!indexOf(world).hubs.get(login.hub)?.shares.has(pair(machine.name, login.account));
+  const on = machine.on.find((on) => on.hub === login.hub);
+  if (!on) return false;
+  const hub = indexOf(world).hubs.get(login.hub);
+  if (on.owner && hub?.accounts.get(on.owner)?.level === "visitor") return false;
+  return !!hub?.shares.has(pair(machine.name, login.account));
+}
+
+/** Whether `login` may share `machine` on: its owner, a visitor too; or a
+ *  holder that is no visitor, which shares none of what it was given. */
+export function gives(machine: Machine, login: Login, world: WorldNow): boolean {
+  return owns(machine, login) || (holds(machine, login, world) && !isVisitor(world, login));
 }
 
 /** Whether `machine` runs the network's hub `login` is on, which is shared
@@ -441,8 +451,8 @@ export function isSuper(world: WorldNow | null, login: Login): boolean {
 }
 
 /** Whether `login` is a visitor on its hub (`world-network.md`, 一个中枢，
- *  几个账号): its machines are its alone, and it shares none of them and
- *  lets none of its agents assist anyone. */
+ *  几个账号): its machines are its own to share, none it was given is, and
+ *  none of its agents assists anyone. */
 export function isVisitor(world: WorldNow | null, login: Login): boolean {
   return (world ? indexOf(world).hubs.get(login.hub)?.accounts.get(login.account)?.level : undefined) === "visitor";
 }
