@@ -75,8 +75,8 @@ pub(super) async fn call(
     }
     let host = super::worker::engine(node)?;
     let request = match request {
-        HomeRequest::Record { id, generation, .. } => {
-            HomeRequest::Record { id: id.clone(), generation: *generation, held: None }
+        HomeRequest::Record { id, generation, before, .. } => {
+            HomeRequest::Record { id: id.clone(), generation: *generation, held: None, before: *before }
         }
         request => request.clone(),
     };

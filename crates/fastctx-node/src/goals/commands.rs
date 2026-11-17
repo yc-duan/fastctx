@@ -85,6 +85,37 @@ pub(crate) async fn route(
 /// Invoked after caller/job validation locally, or account and computer admission remotely.
 pub(crate) async fn here(
     node: &Arc<Node>,
+    actor: Address,
+    account: HubAccount,
+    turn: Option<String>,
+    request: AgentRequest,
+) -> Result<Updated, Failure> {
+    if matches!(request, AgentRequest::Read) {
+        return work(node, actor, account, turn, request).await;
+    }
+    if !matches!(request, AgentRequest::ControlColleague { .. }) && !node.is_me(&actor.machine) {
+        return Err(Failure::refused(words::CONVERSATION_CHANGED));
+    }
+    if node.is_me(&actor.machine) {
+        let (about, _) =
+            node.residents.about(&actor.resident).ok_or_else(|| crate::forget::gone(node, &actor.resident))?;
+        if !node.serves(&about.acting, &account.hub, &account.account) {
+            return Err(Failure::refused(words::ACCOUNT_MISSING));
+        }
+    }
+    super::colleagues::ready(node)?;
+    let operation = match &request {
+        AgentRequest::Mark { operation, .. } | AgentRequest::ControlColleague { operation, .. } => operation,
+        AgentRequest::Read => unreachable!(),
+    };
+    if operation.is_empty() {
+        return Err(Failure::not_run(fastctx_types::goals::words::NO_OPERATION));
+    }
+    super::submission::command(node, actor, account, turn, request).await
+}
+
+pub(super) async fn work(
+    node: &Arc<Node>,
     mut actor: Address,
     account: HubAccount,
     turn: Option<String>,

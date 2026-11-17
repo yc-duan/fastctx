@@ -8,6 +8,7 @@
 import type { HubAccounts } from "../world/accounts";
 import type { WorldNow } from "../world/bridge";
 import type { MachineWho, ResidentNow } from "../world/world";
+import { indexOf } from "./world-index";
 
 const KEPT = "network";
 
@@ -60,9 +61,6 @@ export function shownNetwork(world: WorldNow | null): string | null {
   return hubs.find((hub) => hub.hub === chosen)?.hub ?? hubs[0]?.hub ?? null;
 }
 
-/** What each machine read last showed in one network, by the machine read
- *  and what decided it: one unchanged keeps its object. */
-const shownAs = new WeakMap<MachineWho, { by: string; shown: MachineWho | null }>();
 
 /** The World as one network shows it. With one network or none it is the
  *  World as it was read. */
@@ -73,7 +71,14 @@ export function viewOf(world: WorldNow, hub: string | null): WorldNow {
   if (!shown) return world;
   const others = hubs.filter((one) => one.hub !== hub);
   const nodes = world.nodes.hubs.find((one) => one.hub === hub);
-  const machines = new Set([world.here, ...(nodes?.machines.map((machine) => machine.name) ?? [])]);
+  const presence = indexOf(world).presence;
+  // Only an explicit Look decision can place a machine exclusively in another network.
+  const keepsMachine = (name: string) => {
+    if (name === world.here) return true;
+    const known = presence.get(name);
+    const on = known?.hubs.find((one) => one.hub === hub);
+    return !on || on.access !== "not_granted" || !on.current || !known!.hubs.some((one) => one.hub !== hub && one.access === "granted");
+  };
   // A project belongs to the network whose server keeps its ledger; one no
   // server knows is this computer's own and shows in every network.
   const elsewhere = new Set(others.flatMap((one) => one.projects.map((project) => project.name)));
@@ -81,18 +86,11 @@ export function viewOf(world: WorldNow, hub: string | null): WorldNow {
   const keepsTown = (town: string | null) => !town || own.has(town) || !elsewhere.has(town);
   const keepsResident = (resident: ResidentNow) =>
     keepsTown(resident.town) && (resident.about.acting.kind === "here" || resident.about.acting.accounts.some((account) => account.hub === hub));
-  const by = [hub, [...machines].sort().join(" "), [...own].sort().join(" "), [...elsewhere].sort().join(" ")].join("|");
   const who = (machine: MachineWho): MachineWho | null => {
-    const kept = shownAs.get(machine);
-    if (kept?.by === by) return kept.shown;
     const name = machine.kind === "answered" ? machine.reply.machine : machine.machine;
-    let shown: MachineWho | null = null;
-    if (machines.has(name)) {
-      const residents = machine.kind === "answered" ? machine.reply.residents.filter(keepsResident) : null;
-      shown = machine.kind !== "answered" || residents!.length === machine.reply.residents.length ? machine : { ...machine, reply: { ...machine.reply, residents: residents! } };
-    }
-    shownAs.set(machine, { by, shown });
-    return shown;
+    if (!keepsMachine(name)) return null;
+    const residents = machine.kind === "answered" ? machine.reply.residents.filter(keepsResident) : null;
+    return machine.kind !== "answered" || residents!.length === machine.reply.residents.length ? machine : { ...machine, reply: { ...machine.reply, residents: residents! } };
   };
   return {
     ...world,

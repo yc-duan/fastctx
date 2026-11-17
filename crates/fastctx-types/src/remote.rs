@@ -110,12 +110,6 @@ pub enum RemoteCall {
         resident: ResidentId,
         request: crate::composer::Request,
     },
-    /// A page action admitted by a machine's user-only page gate. Devices
-    /// use Relay(Page::Act), never this execution call.
-    PageAction {
-        source: crate::pages::PageSource,
-        action: crate::pages::PageInvocation,
-    },
     /// Run a script there for a resident of the calling machine that works
     /// there (`world-run.md`, 这里): a job of that machine's, answered as
     /// it would be answered there.
@@ -270,12 +264,16 @@ pub enum RemoteCall {
     /// The folders in a folder there, for the user to choose one.
     Folders {
         path: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cursor: Option<String>,
     },
     /// What each of these folders there holds, one level deep, read within
     /// `within_ms`, for a conversation pointed at them.
     Outline {
         folders: Vec<String>,
         within_ms: u64,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        cursors: Vec<Option<String>>,
     },
     /// The user's word on Claude Code's bypass-permissions consent there.
     ClaudeConsent {
@@ -322,6 +320,14 @@ pub enum RemoteCall {
         agent: AgentName,
         dir: std::path::PathBuf,
         on: bool,
+    },
+    /// Set a login's week there, in quota dollars; only for those who hold
+    /// the machine.
+    SetAgentWeek {
+        agent: AgentName,
+        dir: std::path::PathBuf,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        week: Option<crate::usage::Usd>,
     },
     /// Change the models offered in a Claude Code login there; only for
     /// those who hold the machine.
@@ -458,6 +464,11 @@ pub enum RemoteCall {
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         resumes: bool,
     },
+    /// Reads a page of a resident's timeline, waits for its revision, or
+    /// reads a range of an object that timeline names.
+    Timeline {
+        request: crate::timeline_pages::TimelineAsk,
+    },
     /// Watch a resident there: what it hands over goes over the call's data
     /// connection until the caller closes it, each piece signed by the
     /// machine that holds the session, naming `watch` and numbered from 0.
@@ -484,6 +495,10 @@ pub enum RemoteCall {
         /// it reads past this and sends none.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         now: bool,
+        /// Only events from the subscription onward, acknowledged by Resumed.
+        /// Requires watch_live; no history is prepared or transmitted.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        live_only: bool,
         /// Follows the conversation's collaboration instead of its history
         /// (`session::Watched::Collaboration`); said only to a machine whose
         /// facts say `collaboration_watch`.
@@ -514,6 +529,12 @@ pub enum RemoteCall {
     /// Stop the turn a resident there is running, for the user.
     Stop {
         resident: ResidentId,
+        /// The turn the user saw running (`Call::Stop`).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        turn: Option<String>,
+        /// The words on their way the stop is for (`Call::Stop`).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        words: Option<Vec<crate::NoticeId>>,
     },
     /// Do something to a resident's conversation there, for the user.
     Control {
@@ -567,6 +588,12 @@ pub enum RemoteCall {
     /// that may work on it (`crate::stats`). With `after`, its lines bring
     /// only the round trips and changes since then: a page that asks every
     /// few seconds keeps what it was told.
+    /// Waits until a piece of that machine's state a page reads from has
+    /// changed (`crate::topics`), as `Call::Topics` does here. Only for an
+    /// account that may look at it; the answer names only revisions.
+    Topics {
+        request: crate::topics::TopicsAsk,
+    },
     Stats {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         after: Option<jiff::Timestamp>,
@@ -659,7 +686,6 @@ impl RemoteCall {
                     | crate::sentinel_control::HomeRequest::Record { .. },
             } => Purpose::Look,
             Self::SentinelHome { .. } => Purpose::Hands,
-            RemoteCall::PageAction { action: crate::pages::PageInvocation::Say { .. }, .. } => Purpose::Words,
             RemoteCall::ReadAttachment { attachment: crate::attachments::AttachmentSource::Upload(file), .. }
                 if file.owner != *file.conversation() =>
             {
@@ -694,7 +720,6 @@ impl RemoteCall {
             | RemoteCall::CopyReceive { .. }
             | RemoteCall::Place { .. }
             | RemoteCall::PipeOut { .. }
-            | RemoteCall::PageAction { .. }
             | RemoteCall::ClaudeConsent { .. }
             | RemoteCall::Homes { .. }
             | RemoteCall::ScanAgents { .. }
@@ -702,6 +727,7 @@ impl RemoteCall {
             | RemoteCall::AgentFolder { .. }
             | RemoteCall::SetAgentTitle { .. }
             | RemoteCall::SetAgentResetInPlace { .. }
+            | RemoteCall::SetAgentWeek { .. }
             | RemoteCall::ChangeAgentModels { .. }
             | RemoteCall::PreviewAgentChange { .. }
             | RemoteCall::ChangeAgentLogin { .. }
@@ -721,6 +747,7 @@ impl RemoteCall {
             | RemoteCall::Ask { .. }
             | RemoteCall::Talk { .. }
             | RemoteCall::Watch { .. }
+            | RemoteCall::Timeline { .. }
             | RemoteCall::Open { .. }
             | RemoteCall::Stop { .. }
             | RemoteCall::Manage { .. }
@@ -743,6 +770,7 @@ impl RemoteCall {
             | RemoteCall::Facts
             | RemoteCall::AttachmentReferences { .. }
             | RemoteCall::Interfaces
+            | RemoteCall::Topics { .. }
             | RemoteCall::Relay { .. } => Purpose::Look,
         }
     }
@@ -785,9 +813,6 @@ pub enum RemoteReply {
     },
     ComposerUploaded(Box<crate::composer::UploadResult>),
     Composer(Box<crate::composer::Updated>),
-    PageAction {
-        result: crate::pages::PageResult,
-    },
     FilesFound(crate::file_search::FileSearchReply),
     Folders(crate::focus::Folders),
     Outlined {
@@ -867,6 +892,7 @@ pub enum RemoteReply {
     },
     /// A watch ended: the caller left, or the session's machine stopped it.
     Watched,
+    Timeline(crate::timeline_pages::TimelineTold),
     /// A conversation's setting there changed as asked.
     Set,
     Facts(MachineFacts),
@@ -874,6 +900,7 @@ pub enum RemoteReply {
         used: Vec<bool>,
     },
     Stats(Box<crate::stats::MachineStats>),
+    Topics(crate::topics::TopicsTold),
     Inspected(crate::inspect::Inspected),
     MemoryRoom {
         bytes: u64,
@@ -896,6 +923,179 @@ pub enum RemoteReply {
 
 /// The answer to a call, as the called machine gave it.
 pub type RemoteResult = Result<RemoteReply, Failure>;
+
+/// A call's transport class, separate from its authorization purpose.
+impl RemoteCall {
+    pub fn transfer_purpose(&self) -> Option<crate::sync::transfer::Purpose> {
+        use crate::sync::transfer::Purpose;
+        match self {
+            Self::Timeline { .. } | Self::Topics { .. } => Some(Purpose::Observation),
+            Self::SetAgentWeek { .. } => Some(Purpose::ExecutionControl),
+            Self::AddAgentLogin { .. }
+            | Self::AgentActivity { .. }
+            | Self::AgentCalls { .. }
+            | Self::AgentFolder { .. }
+            | Self::AgentLogins { .. }
+            | Self::AgentUsage { .. }
+            | Self::Agents { .. }
+            | Self::Ask { .. }
+            | Self::AttachmentPlaces { .. }
+            | Self::AttachmentReferences { .. }
+            | Self::AttachmentThumbnail { .. }
+            | Self::Book { .. }
+            | Self::Canon { .. }
+            | Self::ChangeAgentLogin { .. }
+            | Self::ChangeAgentModels { .. }
+            | Self::ClaudeConsent { .. }
+            | Self::Collaboration { .. }
+            | Self::CommitAttachment { .. }
+            | Self::Composer { .. }
+            | Self::Control { .. }
+            | Self::ConversationDebt { .. }
+            | Self::CopyFetch { .. }
+            | Self::CopyReceive { .. }
+            | Self::CopySend { .. }
+            | Self::EnterProject { .. }
+            | Self::Facts { .. }
+            | Self::Find { .. }
+            | Self::FindFiles { .. }
+            | Self::Folders { .. }
+            | Self::Follow { .. }
+            | Self::Forget { .. }
+            | Self::Goal { .. }
+            | Self::GoalCommand { .. }
+            | Self::Homes { .. }
+            | Self::Inspect { .. }
+            | Self::Interfaces { .. }
+            | Self::ItemDetail { .. }
+            | Self::Lines { .. }
+            | Self::Look { .. }
+            | Self::Manage { .. }
+            | Self::Mcp { .. }
+            | Self::McpServe { .. }
+            | Self::MemoryFolders { .. }
+            | Self::MemoryRoom { .. }
+            | Self::Offers { .. }
+            | Self::On { .. }
+            | Self::OnReceipt { .. }
+            | Self::Open { .. }
+            | Self::Outline { .. }
+            | Self::PipeOut { .. }
+            | Self::Place { .. }
+            | Self::Plan { .. }
+            | Self::PreviewAgentChange { .. }
+            | Self::ReadAgentLimits { .. }
+            | Self::ReadAttachment { .. }
+            | Self::ReadFile { .. }
+            | Self::ReadLineNotes { .. }
+            | Self::ReadLines { .. }
+            | Self::Relay { .. }
+            | Self::ReserveAttachment { .. }
+            | Self::Run { .. }
+            | Self::ScanAgents { .. }
+            | Self::Scratch { .. }
+            | Self::SentinelControl { .. }
+            | Self::SentinelHome { .. }
+            | Self::SentinelKey { .. }
+            | Self::SentinelKeys { .. }
+            | Self::SentinelSettings { .. }
+            | Self::SentinelTry { .. }
+            | Self::SetAgentResetInPlace { .. }
+            | Self::SetAgentTitle { .. }
+            | Self::Since { .. }
+            | Self::Stats { .. }
+            | Self::Stop { .. }
+            | Self::StopJob { .. }
+            | Self::StopOn { .. }
+            | Self::Talk { .. }
+            | Self::Thumbnail { .. }
+            | Self::TurnInterrupted { .. }
+            | Self::UpdateWorld { .. }
+            | Self::Updates { .. }
+            | Self::Upload { .. }
+            | Self::WaitingJobs { .. }
+            | Self::Watch { .. }
+            | Self::Who { .. }
+            | Self::WordsCame { .. }
+            | Self::WorkingCopy { .. }
+            | Self::Write { .. } => None,
+        }
+    }
+}
+
+/// An answer's transport class, kept exhaustive as the calls' are.
+impl RemoteReply {
+    pub fn answer_purpose(&self) -> Option<crate::sync::transfer::Purpose> {
+        use crate::sync::transfer::Purpose;
+        match self {
+            Self::Timeline { .. } | Self::Topics { .. } => Some(Purpose::Observation),
+            Self::AgentActivity { .. }
+            | Self::AgentCalls { .. }
+            | Self::AgentChangePreview { .. }
+            | Self::AgentLoginChanged { .. }
+            | Self::AgentLogins { .. }
+            | Self::AgentUsage { .. }
+            | Self::Agents { .. }
+            | Self::Asked { .. }
+            | Self::AttachmentPlaces { .. }
+            | Self::AttachmentReferences { .. }
+            | Self::Book { .. }
+            | Self::Canon { .. }
+            | Self::ClaudeConsent { .. }
+            | Self::Collaboration { .. }
+            | Self::Composer { .. }
+            | Self::ComposerUploaded { .. }
+            | Self::ControlResult { .. }
+            | Self::Controlled { .. }
+            | Self::ConversationDebt { .. }
+            | Self::Copied { .. }
+            | Self::Entered { .. }
+            | Self::Facts { .. }
+            | Self::FileRead { .. }
+            | Self::FilesFound { .. }
+            | Self::Folders { .. }
+            | Self::Found { .. }
+            | Self::Goal { .. }
+            | Self::Inspected { .. }
+            | Self::Interfaces { .. }
+            | Self::ItemDetail { .. }
+            | Self::JobStopped { .. }
+            | Self::Lines { .. }
+            | Self::Looked { .. }
+            | Self::Managed { .. }
+            | Self::Mcp { .. }
+            | Self::MemoryFolders { .. }
+            | Self::MemoryRoom { .. }
+            | Self::Offers { .. }
+            | Self::OnDone { .. }
+            | Self::OnReceipt { .. }
+            | Self::Opened { .. }
+            | Self::Outlined { .. }
+            | Self::Plan { .. }
+            | Self::Relayed { .. }
+            | Self::Run { .. }
+            | Self::Said { .. }
+            | Self::Scratch { .. }
+            | Self::SentinelControl { .. }
+            | Self::SentinelHome { .. }
+            | Self::SentinelKeys { .. }
+            | Self::SentinelSettings { .. }
+            | Self::SentinelTried { .. }
+            | Self::Set { .. }
+            | Self::Since { .. }
+            | Self::Stats { .. }
+            | Self::Stopped { .. }
+            | Self::Thumbnail { .. }
+            | Self::Update { .. }
+            | Self::Uploaded { .. }
+            | Self::WaitingJobs { .. }
+            | Self::Watched { .. }
+            | Self::Who { .. }
+            | Self::WorkingCopy { .. }
+            | Self::Written { .. } => None,
+        }
+    }
+}
 
 /// A letter: something for a resident of another machine, delivered when
 /// that machine is reachable, however long that takes.

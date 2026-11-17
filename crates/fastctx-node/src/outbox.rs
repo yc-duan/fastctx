@@ -1,32 +1,46 @@
-//! One retry task per conversation's outgoing answers. Network failures do
-//! not depend on another turn or hourly maintenance to make progress.
+//! Paying a conversation's outgoing answers: telling each reader the
+//! answers kept for it. A payment that leaves answers owed asks for another
+//! as a job (`fastctx_jobs`), one for the conversation however often it is
+//! asked, so network failures do not depend on another turn or hourly
+//! maintenance to make progress. The answers and what became of each stay in
+//! the conversation's own records; the job only says there is paying to do.
 
 use crate::{
     Node,
     speech::{self, Owed},
 };
+use fastctx_jobs::{Job, Kind, Outcome, Taken};
 use fastctx_types::residents::{MessageKind, MessageLine, Notice, Origin};
 use fastctx_types::{ResidentId, layout::ConversationDir};
 use jiff::Timestamp;
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
+
+/// The kind of job that pays a conversation's answers again.
+const KIND: &str = "answers/pay";
+/// Conversations paid at once: each telling waits on another machine.
+const AT_ONCE: usize = 8;
+/// The longest one payment may take, however many answers it tells.
+const WITHIN: Duration = Duration::from_secs(30 * 60);
+/// Payments in a row that may be dropped for taking too long before the job
+/// is set aside until the conversation asks again.
+const TRIES: u32 = 5;
 
 #[derive(Default)]
 pub(crate) struct Outbox {
-    retries: Mutex<HashMap<ResidentId, Arc<Retry>>>,
-}
-#[derive(Default)]
-struct Retry {
-    asked: AtomicBool,
-    wake: tokio::sync::Notify,
+    /// The payments in a row that left answers owed, by conversation: what
+    /// paces the next (`fastctx_net::again`).
+    owing: Mutex<HashMap<ResidentId, u32>>,
 }
 
 pub(crate) fn pay<'a>(
     node: &'a Arc<Node>,
     id: &'a ResidentId,
     directory: &'a ConversationDir,
-) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'a>> {
+) -> Pin<Box<dyn Future<Output = ()> + Send + 'a>> {
     Box::pin(async move {
         if pay_once(node, id, directory).await {
             retry(node, id, directory);
@@ -34,36 +48,55 @@ pub(crate) fn pay<'a>(
     })
 }
 
+/// Asks for the conversation's answers to be paid again. Asked while a
+/// payment waits, that one is due now; asked while one runs, another follows.
 fn retry(node: &Arc<Node>, id: &ResidentId, directory: &ConversationDir) {
-    let mut retries = node.outbox.retries.lock().expect("never poisoned");
-    if let Some(retry) = retries.get(id) {
-        retry.asked.store(true, Ordering::SeqCst);
-        retry.wake.notify_one();
-        return;
-    }
-    let state = Arc::new(Retry::default());
-    retries.insert(id.clone(), state.clone());
-    let (node, id, directory) = (node.clone(), id.clone(), directory.clone());
+    let job = Job {
+        kind: KIND,
+        key: id.to_string(),
+        unit: id.to_string(),
+        payload: directory.path().to_string_lossy().into_owned().into_bytes(),
+    };
+    let (database, jobs) = (node.database.clone(), node.durable_jobs.clone());
     fastctx_platform::task::spawn(async move {
-        let mut again = crate::again::Again::default();
-        let mut ways = node.ways.subscribe();
-        loop {
-            let wake = state.wake.notified();
-            tokio::pin!(wake);
-            wake.as_mut().enable();
-            state.asked.store(false, Ordering::SeqCst);
-            ways.borrow_and_update();
+        let bytes = job.key.len() * 2 + job.payload.len() + 64;
+        if database.write_relaxed(bytes, move |db| fastctx_jobs::submit(db, &job)).await.is_ok() {
+            jobs.stir(KIND);
+        }
+    });
+}
+
+/// Names what pays answers again, before the node's jobs start, and has a
+/// way to another machine opening hurry every payment that waits.
+pub(crate) fn register(node: &Arc<Node>) {
+    let jobs = node.durable_jobs.clone();
+    let paying = Arc::downgrade(node);
+    let run = move |taken: Taken| -> Pin<Box<dyn Future<Output = Outcome> + Send>> {
+        let node = paying.upgrade();
+        Box::pin(async move {
+            let Some(node) = node else { return Outcome::Failed("the node is stopping".into()) };
+            let Ok(id) = taken.unit.parse::<ResidentId>() else { return Outcome::Done };
+            let directory =
+                ConversationDir::at(std::path::Path::new(&String::from_utf8_lossy(&taken.payload).into_owned()));
             if !pay_once(&node, &id, &directory).await {
-                let mut retries = node.outbox.retries.lock().expect("never poisoned");
-                if !state.asked.load(Ordering::SeqCst) {
-                    retries.remove(&id);
-                    return;
-                }
+                node.outbox.owing.lock().expect("never poisoned").remove(&id);
+                return Outcome::Done;
             }
-            tokio::select! {
-                () = tokio::time::sleep(again.next()) => {}
-                () = &mut wake => {}
-                _ = ways.changed() => {}
+            let failures = {
+                let mut owing = node.outbox.owing.lock().expect("never poisoned");
+                let failures = owing.entry(id).or_insert(0);
+                *failures = failures.saturating_add(1);
+                *failures
+            };
+            Outcome::Again { after: fastctx_net::again::backoff(failures) }
+        })
+    };
+    jobs.register(Kind { name: KIND, at_once: AT_ONCE, within: WITHIN, tries: TRIES }, Arc::new(run));
+    let (database, jobs, mut ways) = (node.database.clone(), node.durable_jobs.clone(), node.ways.subscribe());
+    fastctx_platform::task::spawn(async move {
+        while ways.changed().await.is_ok() {
+            if database.write_relaxed(256, |db| fastctx_jobs::rouse(db, KIND)).await.is_ok_and(|roused| roused > 0) {
+                jobs.stir(KIND);
             }
         }
     });

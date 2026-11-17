@@ -35,7 +35,16 @@ impl World {
         })
         .await?;
         if let Some(found) = found {
-            return Ok(Some(found));
+            let fitting = match &attachment {
+                AttachmentSource::Upload(receipt) => {
+                    let receipt = receipt.file.clone();
+                    blocking(move || as_sent(found, &receipt)).await?
+                }
+                _ => Some(found),
+            };
+            if let Some(found) = fitting {
+                return Ok(Some(found));
+            }
         }
         let mut reading = self.read_attachment(attachment.clone());
         told(reading.progress());
@@ -122,6 +131,71 @@ impl World {
         .await
         .map(Some)
     }
+}
+
+/// The longest kept original whose bytes are read again to prove them each
+/// time it is given: past this, its length alone is checked.
+const PROVED_UP_TO: u64 = 64 << 20;
+
+/// A kept original as the receipt asking for it names it: given only when
+/// the file given is the bytes that were sent. One changed on this device
+/// (a program saved into it, in place or by putting another file in its
+/// place) is let go of and read again. The same bytes sent under another
+/// name are given under that name, beside the first, so a program chosen by
+/// the name opens it. What a host's record holds of a picture whose
+/// original is gone is not the original's bytes, and is given as kept.
+fn as_sent(
+    (path, file): (PathBuf, AttachmentFile),
+    sent: &fastctx_types::attachments::UploadFile,
+) -> std::io::Result<Option<(PathBuf, AttachmentFile)>> {
+    if file.source != fastctx_types::attachments::AttachmentFileSource::Original {
+        return Ok(Some((path, file)));
+    }
+    let folder = path.parent().expect("a kept original has a folder").to_path_buf();
+    // The name asked for, kept beside the first, is given when it is the
+    // bytes sent, whatever became of the first since.
+    let alias = if file.name == sent.name { None } else { pictures::place(&folder, &sent.name) };
+    if let Some(alias) = alias
+        && alias.try_exists()?
+        && is_sent(&alias, sent)?
+    {
+        let file = AttachmentFile { name: sent.name.clone(), media_type: sent.media_type.clone(), source: file.source };
+        return Ok(Some((alias, file)));
+    }
+    if !is_sent(&path, sent)? {
+        std::fs::remove_dir_all(&folder)?;
+        return Ok(None);
+    }
+    let named = if file.name == sent.name { path } else {
+        let Some(named) = pictures::place(&folder, &sent.name) else {
+            return Ok(Some((path, AttachmentFile { media_type: sent.media_type.clone(), ..file })));
+        };
+        if named.try_exists()? && !is_sent(&named, sent)? {
+            std::fs::remove_file(&named)?;
+        }
+        if !named.try_exists()? && std::fs::hard_link(&path, &named).is_err() {
+            std::fs::copy(&path, &named)?;
+        }
+        named
+    };
+    let file = AttachmentFile { name: sent.name.clone(), media_type: sent.media_type.clone(), source: file.source };
+    Ok(Some((named, file)))
+}
+
+/// Whether the file at `path` is the bytes `sent` describes: its length,
+/// and its digest up to `PROVED_UP_TO`.
+fn is_sent(path: &std::path::Path, sent: &fastctx_types::attachments::UploadFile) -> std::io::Result<bool> {
+    let length = std::fs::metadata(path)?.len();
+    if length != sent.size {
+        return Ok(false);
+    }
+    if length > PROVED_UP_TO {
+        return Ok(true);
+    }
+    let mut digest = Sha256::new();
+    let mut file = std::fs::File::open(path)?;
+    std::io::copy(&mut file, &mut digest)?;
+    Ok(format!("{:x}", digest.finalize()).eq_ignore_ascii_case(&sent.sha256))
 }
 
 struct Pending(PathBuf);

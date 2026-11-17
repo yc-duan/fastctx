@@ -237,6 +237,8 @@ fn drive_checked(node: &Arc<Node>) -> Result<bool, String> {
                         held.program = app.program;
                         held.carried = app.carried;
                         held.app_executable = app.executable;
+                        drop(held);
+                        node.topics.changed(fastctx_types::topics::UPDATE);
                     }
                     super::application::took(node, &version);
                 }
@@ -373,6 +375,7 @@ fn launch(node: &Arc<Node>, pending: Pending) {
             held.fetching = None;
             held.activity = None;
         }
+        node.topics.changed(fastctx_types::topics::UPDATE);
         node.updates.repair_launching.store(false, Ordering::Release);
         super::report(&node);
     });
@@ -439,6 +442,7 @@ async fn prepare(node: &Arc<Node>, pending: &Pending) -> Result<(), String> {
             });
             held.activity = Some(Stage::Repairing { version: pending.version.clone(), layer: "package".into() });
         }
+        node.topics.changed(fastctx_types::topics::UPDATE);
         if super::cache(node).get(&pending.version, &target).is_none() {
             fastctx_install::repair::note(
                 &node.root,

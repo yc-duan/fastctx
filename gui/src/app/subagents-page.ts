@@ -25,6 +25,7 @@ import type { Page } from "./shell";
 import { effect } from "./signals";
 import type { Store } from "./store";
 import { SubagentSheet } from "./subagent-sheet";
+import { waiting } from "./waiting";
 
 export interface SubagentsPageOptions {
   store: Store;
@@ -140,7 +141,7 @@ export class SubagentsPage implements Page {
         html = "";
         break;
       case "reading":
-        html = `<p class="prof-quiet prof-board hp-first">${escape(words.reading)}</p>`;
+        html = waiting({ label: words.reading, shape: "rows", rows: 3 });
         break;
       case "failed":
         html = `<p class="prof-quiet prof-board hp-first" title="${escape(state.detail)}">${escape(words.readFailed)}</p>`;

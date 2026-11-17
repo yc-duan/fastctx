@@ -37,7 +37,10 @@ use fastctx_net::sign::{Bytes, PublicKey};
 use fastctx_platform::{Permissions, ensure_private_dir, publish, publish_new};
 use fastctx_types::{AccountName, HubName, MachineName};
 use jiff::Timestamp;
+mod assist_ends;
+mod book_edit;
 mod book_rows;
+pub(crate) use book_edit::BookEdit;
 mod conflicts;
 mod counts;
 mod format;
@@ -67,6 +70,10 @@ pub struct HubFile {
     /// Whether anyone who reaches the hub may open an account.
     #[serde(default)]
     pub self_registration: bool,
+    /// Whether every asset is sealed each time the hub starts, until the
+    /// super administrator opens them (design §17 (b); off by default).
+    #[serde(default)]
+    pub asset_seal_at_start: bool,
     /// The network was dissolved: the hub lets nobody in again, and tells
     /// every machine that was on it, as it comes, that it is gone.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -325,6 +332,11 @@ pub struct Letters {
     /// on an answer through those letters stops waiting.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub settled: Option<Timestamp>,
+    /// The last of the hub's letters to the member settled then as not
+    /// delivered: none through it is ever sent, and they go as they can,
+    /// however a deletion of them was cut short (R2).
+    #[serde(default)]
+    pub expired_through: u64,
     /// The member's last session said it reads names of any language
     /// (`fastctx_net::wire::Intent::Session`).
     #[serde(default)]
@@ -364,6 +376,10 @@ pub struct Letters {
     pub machine_updates: bool,
     #[serde(default)]
     pub history_switch: bool,
+    /// The member's last session said it reads the records of the hub's
+    /// assets sealed and opened.
+    #[serde(default)]
+    pub asset_seals: bool,
     /// Why the hub refused letters of the member's that it may send again,
     /// by number: kept in its count's file (`Taken`), not here.
     #[serde(skip)]
@@ -387,6 +403,7 @@ impl Letters {
             last_seen: None,
             connected_at: None,
             settled: None,
+            expired_through: 0,
             any_names: false,
             renames: false,
             forgets: false,
@@ -398,6 +415,7 @@ impl Letters {
             profiles: false,
             machine_updates: false,
             history_switch: false,
+            asset_seals: false,
             refused,
         })
     }
@@ -418,14 +436,25 @@ pub struct Snapshot {
     pub(crate) view_reads: Arc<std::sync::atomic::AtomicU64>,
     pub(crate) index: Arc<fastctx_net::directory_index::Index>,
     pub(crate) audience: Arc<crate::presence::Audience>,
+    pub(crate) assist_ends: Arc<assist_ends::AssistEnds>,
+    /// Acting rows name existing accounts and members; expired grants may remain.
+    pub(crate) acting_clean: bool,
     pub(crate) tokens: Arc<std::collections::HashMap<AccountName, Vec<usize>>>,
     pub(crate) letters: crate::post::Read,
     pub(crate) worked: Arc<crate::worked::Worked>,
+    /// What decides what any machine may hold, worked out once for this
+    /// directory at need (`shares::basis`).
+    pub(crate) basis: Arc<std::sync::OnceLock<String>>,
 }
 
 impl Snapshot {
     pub fn dir(&self) -> &Path {
         &self.dir
+    }
+
+    /// What decides what any machine may hold, in this directory.
+    pub(crate) fn basis(&self) -> &str {
+        self.basis.get_or_init(|| crate::shares::basis(&self.book.directory))
     }
     pub(crate) fn indexed(&self) -> fastctx_net::directory_index::Indexed<'_> {
         fastctx_net::directory_index::Indexed::new(&self.book.directory, &self.index)
@@ -434,9 +463,16 @@ impl Snapshot {
 
 pub struct Store {
     metadata: Snapshot,
+    /// Where a control fact's chain head goes, outside the hub's directory,
+    /// before anyone is answered (design §17, item 2); none until the
+    /// asset side is open.
+    pub(crate) witness: Option<Arc<crate::assets::Witness>>,
+    /// The bodies' members, kept as the directory has them at each save.
+    pub(crate) bodies: Option<Arc<crate::assets::bodies::Bodies>>,
     pub(crate) published: Option<Arc<arc_swap::ArcSwap<Snapshot>>>,
     pub(crate) post: Option<Arc<crate::post::Post>>,
     previous: Option<Arc<Snapshot>>,
+    pub(crate) book_edit: BookEdit,
     pub letters: LetterRows,
     book_rows: book_rows::BookRows,
     hub_rows: hub_rows::HubRows,
@@ -495,6 +531,7 @@ impl Store {
     }
 
     pub(crate) fn reset_committed(&mut self) {
+        self.book_edit = BookEdit::Full;
         if let Some(published) = &self.published {
             self.metadata = (**published.load()).clone();
         }
@@ -513,8 +550,29 @@ impl Store {
         Ok(post)
     }
 
+    fn refresh_edit(&mut self, edit: &BookEdit) {
+        match edit {
+            BookEdit::Full | BookEdit::Relations(_) => self.refresh(),
+            BookEdit::Tokens => self.metadata.tokens = Self::token_index(&self.book),
+            BookEdit::Audit | BookEdit::Account(_) | BookEdit::Groups(_) => {}
+        }
+    }
+
+    fn check_acting(&mut self) {
+        let index = self.indexed();
+        self.acting_clean = self
+            .book
+            .directory
+            .acting
+            .iter()
+            .all(|acting| index.member(&acting.machine).is_some() && index.account(&acting.account).is_some());
+    }
+
     pub(crate) fn refresh(&mut self) {
         self.metadata.index = Arc::new(fastctx_net::directory_index::Index::new(&self.book.directory));
+        self.metadata.basis = Arc::default();
+        self.metadata.assist_ends = Arc::new(assist_ends::AssistEnds::new(&self.book.directory));
+        self.check_acting();
         self.metadata.tokens = Self::token_index(&self.book);
         if let Some(post) = &self.post {
             self.metadata.letters = post.view(&self.book.directory);
@@ -523,8 +581,12 @@ impl Store {
     }
 
     fn publish(&mut self, book: bool, hub: bool, moves: bool) {
+        self.publish_edit(book, hub, moves, &BookEdit::Full);
+    }
+
+    fn publish_edit(&mut self, book: bool, hub: bool, moves: bool, edit: &BookEdit) {
         if book {
-            self.refresh();
+            self.refresh_edit(edit);
         }
         if let Some(published) = &self.published {
             let previous = published.load_full();
@@ -534,8 +596,11 @@ impl Store {
             if book {
                 next.book = self.book.clone();
                 next.index = self.index.clone();
+                next.basis = Arc::default();
                 next.tokens = self.tokens.clone();
                 next.audience = self.audience.clone();
+                next.assist_ends = self.assist_ends.clone();
+                next.acting_clean = self.acting_clean;
                 next.letters = self.metadata.letters.clone();
                 next.book_saves = self.book_saves;
             }
@@ -603,7 +668,11 @@ impl Store {
     }
 
     pub fn open(dir: &Path) -> io::Result<Self> {
-        let shelf = shelf::Shelf::open(dir)?;
+        Self::open_logged(dir, None)
+    }
+
+    pub(crate) fn open_logged(dir: &Path, log: Option<Arc<crate::log::Log>>) -> io::Result<Self> {
+        let shelf = shelf::Shelf::open(dir, log)?;
         let (hub, hub_rows) = hub_rows::HubRows::load(&shelf, read(&Self::hub_file(dir))?)?;
         let (book, book_rows) = book_rows::BookRows::load(&shelf)?;
         let mut upgraded: Vec<String> = shelf.meta("upgraded")?.unwrap_or_default();
@@ -655,7 +724,10 @@ impl Store {
                 sequence: 0,
                 hub: hub.into(),
                 index: Arc::new(fastctx_net::directory_index::Index::new(&book.directory)),
+                basis: Arc::default(),
                 audience: Arc::default(),
+                assist_ends: Arc::new(assist_ends::AssistEnds::new(&book.directory)),
+                acting_clean: false,
                 tokens: Self::token_index(&book),
                 book: book.into(),
                 shelf,
@@ -667,9 +739,12 @@ impl Store {
                 letters: crate::post::Read::default(),
                 worked: Arc::new(Default::default()),
             },
+            witness: None,
+            bodies: None,
             published: None,
             post: None,
             previous: None,
+            book_edit: BookEdit::Full,
             letters,
             book_rows,
             hub_rows,
@@ -681,6 +756,7 @@ impl Store {
             records: std::sync::Arc::new(crate::records::Records::new()),
             counts: std::collections::HashMap::new(),
         };
+        store.check_acting();
         if changed {
             store.save_letters_now()?;
         }
@@ -977,24 +1053,66 @@ impl Store {
     }
 
     pub fn save_book(&mut self) -> io::Result<()> {
-        self.book_rows.save(&self.metadata.shelf, &mut self.metadata.book)?;
+        self.renew_shares()?;
+        let edit = std::mem::take(&mut self.book_edit);
+        let changes = rows::Changes { bodies: self.body_changes(&edit)?, ..rows::Changes::default() };
+        let edit = self.book_rows.save_with(&self.metadata.shelf, &mut self.metadata.book, changes, &edit)?;
         self.metadata.book_saves += 1;
-        self.publish(true, false, false);
+        self.witness_control()?;
+        self.publish_edit(true, false, false, &edit);
         Ok(())
+    }
+
+    /// The chain head a control fact just committed reaches the witness and
+    /// the disk before the fact is published or anyone answered.
+    fn witness_control(&self) -> io::Result<()> {
+        let Some(witness) = &self.witness else { return Ok(()) };
+        let latest = self.metadata.shelf.0.read_now(crate::assets::chain::latest).map_err(io::Error::other)?;
+        match latest {
+            Some((seq, head)) => witness.advanced(seq, &head),
+            None => Ok(()),
+        }
     }
 
     /// Commits settings and their audit records together, including a batch
     /// of arrangements. Neither durable baseline advances on failure.
-    pub(crate) fn save_hub_and_book(&mut self) -> io::Result<()> {
-        let mut changes = rows::Changes::default();
-        let next = self.hub_rows.stage(&self.metadata.hub, &mut changes)?;
-        if let Err(error) = self.book_rows.save_with(&self.metadata.shelf, &mut self.metadata.book, changes) {
-            self.hub_rows.lost();
-            return Err(error);
+    /// Bodies' members as the directory about to be saved has them, where an
+    /// edit may have changed them (design §6.2): a whole save, or one of the
+    /// shares or the machines; an account's own edit keeps who it is.
+    fn body_changes(&self, edit: &BookEdit) -> io::Result<Vec<crate::assets::bodies::BodyChange>> {
+        match &self.bodies {
+            Some(bodies) if edit.may_change_bodies() => bodies.changes(&self.book.directory),
+            _ => Ok(Vec::new()),
         }
+    }
+
+    /// New shares waiting, and those whose basis this directory no longer
+    /// has, wait at a revision of this save (design §6.3).
+    fn renew_shares(&mut self) -> io::Result<()> {
+        // This save takes the chain's next number.
+        let seq = self.metadata.shelf.0.read_now(crate::assets::chain::latest).map_err(io::Error::other)?.map_or(0, |(seq, _)| seq) + 1;
+        if crate::shares::renew(&mut self.book.directory, seq) {
+            self.book_edit = BookEdit::Full;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn save_hub_and_book(&mut self) -> io::Result<()> {
+        self.renew_shares()?;
+        let mut changes = rows::Changes { bodies: self.body_changes(&self.book_edit)?, ..rows::Changes::default() };
+        let next = self.hub_rows.stage(&self.metadata.hub, &mut changes)?;
+        let edit = std::mem::take(&mut self.book_edit);
+        let edit = match self.book_rows.save_with(&self.metadata.shelf, &mut self.metadata.book, changes, &edit) {
+            Ok(edit) => edit,
+            Err(error) => {
+                self.hub_rows.lost();
+                return Err(error);
+            }
+        };
         self.hub_rows.committed(next);
         self.metadata.book_saves += 1;
-        self.publish(true, true, false);
+        self.witness_control()?;
+        self.publish_edit(true, true, false, &edit);
         Ok(())
     }
 
@@ -1172,8 +1290,8 @@ pub(crate) fn write_letter(path: &Path, message: &Envelope) -> io::Result<u64> {
     Ok(bytes.len() as u64)
 }
 
-/// The numbers of the letter files in `directory`, and their sizes.
-pub(crate) fn letter_numbers(directory: &Path) -> io::Result<Vec<(u64, u64)>> {
+/// The numbers of the letter files in `directory`, from their names alone.
+pub(crate) fn letter_numbers(directory: &Path) -> io::Result<Vec<u64>> {
     let entries = match fastctx_platform::disk::read_dir(directory) {
         Ok(entries) => entries,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
@@ -1184,10 +1302,38 @@ pub(crate) fn letter_numbers(directory: &Path) -> io::Result<Vec<(u64, u64)>> {
         let entry = entry?;
         // Temporary files of an interrupted write start with a dot.
         if let Some(seq) = entry.file_name().to_str().and_then(|name| name.parse::<u64>().ok()) {
-            found.push((seq, entry.metadata()?.len()));
+            found.push(seq);
         }
     }
     Ok(found)
+}
+
+/// The lowest number among the letter files in `directory` and how many
+/// there are, from their names alone.
+pub(crate) fn letter_span(directory: &Path) -> io::Result<(Option<u64>, usize)> {
+    let entries = match fastctx_platform::disk::read_dir(directory) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok((None, 0)),
+        Err(error) => return Err(error),
+    };
+    let (mut lowest, mut count) = (None::<u64>, 0);
+    for entry in entries {
+        if let Some(seq) = entry?.file_name().to_str().and_then(|name| name.parse::<u64>().ok()) {
+            lowest = Some(lowest.map_or(seq, |lowest| lowest.min(seq)));
+            count += 1;
+        }
+    }
+    Ok((lowest, count))
+}
+
+/// The size of the letter numbered `seq` in `directory`; none when it is
+/// not there.
+pub(crate) fn letter_size(directory: &Path, seq: u64) -> io::Result<Option<u64>> {
+    match fastctx_platform::disk::metadata(directory.join(format!("{seq:020}"))) {
+        Ok(metadata) => Ok(Some(metadata.len())),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error),
+    }
 }
 
 /// The letter numbered `seq` in `directory`; none when it is not there.

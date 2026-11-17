@@ -5,7 +5,6 @@
 
 use fastctx_types::Reply;
 use fastctx_types::memory::{Author, MemoryReply};
-use fastctx_types::pages::PageVersion;
 use fastctx_types::project::{JournalSummary, MapView, Record, Stamp, TownSummary, Writer};
 use fastctx_types::since::SinceKind;
 use fastctx_types::town::WhoScope;
@@ -20,10 +19,6 @@ fn stamp(stamp: &Stamp) -> bool {
 
 fn record(record: &Record) -> bool {
     record.on.is_none() || writer(&record.by)
-}
-
-fn version(version: &PageVersion) -> bool {
-    version.on.is_none() || writer(&version.by)
 }
 
 fn author(author: &Author) -> bool {
@@ -47,10 +42,7 @@ fn journal(journal: &JournalSummary) -> bool {
 }
 
 fn map(map: &MapView) -> bool {
-    record(&map.record)
-        || stamp(&map.opened)
-        || map.pages.iter().any(|page| version(&page.current))
-        || map.journals.iter().any(journal)
+    record(&map.record) || stamp(&map.opened) || map.journals.iter().any(journal)
 }
 
 /// What an interface keeps open, without the projects it could not read:
@@ -75,11 +67,6 @@ pub(super) fn present(reply: &Reply) -> bool {
         Reply::Towns { towns: told } => towns(told),
         Reply::Record { record: told, opened, .. } => record(told) || stamp(opened),
         Reply::Map { map: view } | Reply::Entered { map: view, .. } => map(view),
-        Reply::Page { view } => {
-            version(&view.publication) || view.consent.as_ref().is_some_and(|consent| stamp(&consent.stamp))
-        }
-        Reply::Pages { pages, .. } => pages.iter().any(|page| version(&page.current)),
-        Reply::PageHistory { versions, .. } => versions.iter().any(version),
         Reply::Memory(MemoryReply::Catalog { catalog }) => {
             catalog.journals.iter().chain(&catalog.specs).any(|revision| author(&revision.author))
         }

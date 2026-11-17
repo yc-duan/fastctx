@@ -18,7 +18,7 @@ use serde_json::Value;
 /// needs no OpenAI login, or the sign-in is kept where no file shows it.
 pub fn identity(home: &Path) -> Fact<Identity> {
     let path = home.join("auth.json");
-    let bytes = match std::fs::read(&path) {
+    let bytes = match fastctx_platform::disk::read(&path) {
         Ok(bytes) => bytes,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             let config = Config::read(home);
@@ -88,7 +88,7 @@ struct Config {
 
 impl Config {
     fn read(home: &Path) -> Self {
-        let table: toml::Table = std::fs::read_to_string(home.join("config.toml"))
+        let table: toml::Table = fastctx_platform::disk::read_to_string(home.join("config.toml"))
             .ok()
             .and_then(|text| toml::from_str(&text).ok())
             .unwrap_or_default();

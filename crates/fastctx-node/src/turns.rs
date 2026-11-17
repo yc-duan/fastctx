@@ -190,6 +190,7 @@ async fn apply_inner(node: &Arc<Node>, id: &ResidentId, mut event: SessionEvent)
     // Its name, for those who list the World rather than watch it.
     if let Happened::Titled { title } = &event.happened {
         node.residents.change_now(&node.world, id, |now| now.title = Some(title.clone()))?;
+        crate::timeline::described(node, id);
     }
     if let Happened::Changed { change: SessionChange::ModelResponse { usage: Some(usage), .. }, .. } = &event.happened
         && let Some(session) = &about.session
@@ -597,6 +598,7 @@ pub async fn unresolved(
         crate::composer::uncertain(node, id, &pending.delivery.id, why).await.map_err(std::io::Error::other)?;
         let kept = pending.clone();
         crate::delivery::local(directory, move |directory| crate::inbox::retain_uncertain(directory, &kept)).await?;
+        crate::timeline::described(node, id);
     }
     // The handover retains the exact payload and the uncertainty even when
     // no resident is owed an answer, as with a delivery to a user's session.
@@ -606,11 +608,12 @@ pub async fn unresolved(
     };
     let (changing, resident) = (node.clone(), id.clone());
     fastctx_platform::task::blocking(move || {
+        // Trouble handing words over is not the model acting: when it last
+        // did (`since`, what its host is kept for) stays (2026-11-16).
         changing.residents.change_now(&changing.world, &resident, |now| {
             now.trouble = Some(trouble);
             if now.turn.is_none() {
                 now.activity = fastctx_types::residents::Activity::Idle;
-                now.since = Timestamp::now();
             }
         })
     })

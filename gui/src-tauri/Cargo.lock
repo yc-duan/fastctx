@@ -1868,9 +1868,10 @@ checksum = "c6e8948ce679d00a02a94739ea185595dca7118ed04feb991127e443bd3d761f"
 
 [[package]]
 name = "fastctx-client"
-version = "1.0.1-beta.17"
+version = "1.0.1-beta.18"
 dependencies = [
  "base64 0.22.1",
+ "fastctx-content",
  "fastctx-net",
  "fastctx-platform",
  "fastctx-types",
@@ -1885,8 +1886,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "fastctx-content"
+version = "1.0.1-beta.18"
+dependencies = [
+ "fastctx-platform",
+ "fastctx-storage",
+ "serde_json",
+ "sha2 0.10.9",
+ "tokio",
+ "zstd",
+]
+
+[[package]]
 name = "fastctx-gui"
-version = "1.0.1-beta.17"
+version = "1.0.1-beta.18"
 dependencies = [
  "ashpd",
  "base64 0.22.1",
@@ -1905,6 +1918,7 @@ dependencies = [
  "objc2",
  "objc2-app-kit",
  "objc2-foundation",
+ "rusqlite",
  "russh",
  "serde",
  "serde_json",
@@ -1914,7 +1928,6 @@ dependencies = [
  "tauri-plugin-opener",
  "tauri-plugin-updater",
  "tauri-plugin-window-state",
- "tauri-plugin-world-pages",
  "tempfile",
  "tokio",
  "uuid",
@@ -1925,7 +1938,7 @@ dependencies = [
 
 [[package]]
 name = "fastctx-gui-command"
-version = "1.0.1-beta.17"
+version = "1.0.1-beta.18"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1934,7 +1947,7 @@ dependencies = [
 
 [[package]]
 name = "fastctx-hands"
-version = "1.0.1-beta.17"
+version = "1.0.1-beta.18"
 dependencies = [
  "aho-corasick",
  "base64 0.22.1",
@@ -1963,7 +1976,7 @@ dependencies = [
 
 [[package]]
 name = "fastctx-hosts"
-version = "1.0.1-beta.17"
+version = "1.0.1-beta.18"
 dependencies = [
  "base64 0.22.1",
  "fastctx-platform",
@@ -1982,19 +1995,23 @@ dependencies = [
  "tokio-tungstenite",
  "toml 0.9.12+spec-1.1.0",
  "unicode-normalization",
+ "xxhash-rust",
 ]
 
 [[package]]
 name = "fastctx-hub"
-version = "1.0.1-beta.17"
+version = "1.0.1-beta.18"
 dependencies = [
  "anyhow",
  "arc-swap",
  "bytes",
+ "fastctx-content",
+ "fastctx-jobs",
  "fastctx-net",
  "fastctx-platform",
  "fastctx-ripgrep",
  "fastctx-storage",
+ "fastctx-sync",
  "fastctx-types",
  "fastctx-update",
  "flate2",
@@ -2018,7 +2035,7 @@ dependencies = [
 
 [[package]]
 name = "fastctx-install"
-version = "1.0.1-beta.17"
+version = "1.0.1-beta.18"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -2055,8 +2072,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "fastctx-jobs"
+version = "1.0.1-beta.18"
+dependencies = [
+ "fastctx-platform",
+ "fastctx-storage",
+ "fastctx-types",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tokio",
+]
+
+[[package]]
 name = "fastctx-net"
-version = "1.0.1-beta.17"
+version = "1.0.1-beta.18"
 dependencies = [
  "argon2 0.5.3",
  "base64 0.22.1",
@@ -2064,6 +2094,7 @@ dependencies = [
  "ed25519-dalek",
  "fastctx-platform",
  "fastctx-storage",
+ "fastctx-sync",
  "fastctx-types",
  "futures-util",
  "getrandom 0.3.4",
@@ -2072,7 +2103,6 @@ dependencies = [
  "http-body-util",
  "hyper",
  "hyper-util",
- "imara-diff",
  "jiff",
  "libc",
  "opaque-ke",
@@ -2096,7 +2126,7 @@ dependencies = [
 
 [[package]]
 name = "fastctx-office"
-version = "1.0.1-beta.17"
+version = "1.0.1-beta.18"
 dependencies = [
  "anyhow",
  "num-bigint 0.4.8",
@@ -2108,7 +2138,7 @@ dependencies = [
 
 [[package]]
 name = "fastctx-pdf"
-version = "1.0.1-beta.17"
+version = "1.0.1-beta.18"
 dependencies = [
  "fontdb",
  "hayro",
@@ -2124,7 +2154,7 @@ dependencies = [
 
 [[package]]
 name = "fastctx-platform"
-version = "1.0.1-beta.17"
+version = "1.0.1-beta.18"
 dependencies = [
  "async-io",
  "fastctx-types",
@@ -2138,7 +2168,7 @@ dependencies = [
 
 [[package]]
 name = "fastctx-ripgrep"
-version = "1.0.1-beta.17"
+version = "1.0.1-beta.18"
 dependencies = [
  "fastctx-platform",
  "flate2",
@@ -2148,7 +2178,7 @@ dependencies = [
 
 [[package]]
 name = "fastctx-storage"
-version = "1.0.1-beta.17"
+version = "1.0.1-beta.18"
 dependencies = [
  "fastctx-platform",
  "rusqlite",
@@ -2156,13 +2186,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "fastctx-sync"
+version = "1.0.1-beta.18"
+dependencies = [
+ "fastctx-platform",
+ "fastctx-storage",
+ "fastctx-types",
+ "serde_json",
+ "sha2 0.10.9",
+]
+
+[[package]]
 name = "fastctx-types"
-version = "1.0.1-beta.17"
+version = "1.0.1-beta.18"
 dependencies = [
  "base64 0.22.1",
  "icu_casemap",
  "icu_normalizer",
  "icu_properties",
+ "imara-diff",
  "jiff",
  "semver",
  "serde",
@@ -2170,11 +2212,12 @@ dependencies = [
  "serde_yaml_ng",
  "sha2 0.10.9",
  "thiserror 2.0.21",
+ "url",
 ]
 
 [[package]]
 name = "fastctx-update"
-version = "1.0.1-beta.17"
+version = "1.0.1-beta.18"
 dependencies = [
  "base64 0.22.1",
  "fastctx-net",
@@ -6934,19 +6977,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tauri-plugin-world-pages"
-version = "1.0.1-beta.17"
-dependencies = [
- "serde",
- "serde_json",
- "tauri",
- "tauri-plugin",
- "tokio",
- "webview2-com",
- "windows",
-]
-
-[[package]]
 name = "tauri-runtime"
 version = "2.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8507,6 +8537,12 @@ dependencies = [
  "libc",
  "rustix",
 ]
+
+[[package]]
+name = "xxhash-rust"
+version = "0.8.19"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "550a2b930b62486a393c52d5c3b84bff264b28aa437ed64694d31e93b1757af7"
 
 [[package]]
 name = "yasna"

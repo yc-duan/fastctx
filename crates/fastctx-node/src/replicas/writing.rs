@@ -29,6 +29,44 @@ async fn locate(node: &Arc<Node>, path: &Path) -> Result<Option<Slot>, Failure> 
     locate_inner(node, path, true).await
 }
 
+/// Whether the resident's own record of what it viewed holds the document
+/// as it is now, under one of `paths`: the path it writes to, and the
+/// copy's own. A view that came before this copy was known here, as just
+/// after a conversation moved or its node started, is among no copy's
+/// observations, and a conversation that moved here is read in its own
+/// directory while the copy may still be kept where another machine's
+/// conversation was; the resident's record has the view all the same, as
+/// it has what it viewed of a copy kept only on this machine
+/// (`history::local_copy`).
+async fn viewed(
+    node: &Arc<Node>,
+    owner: &fastctx_types::Address,
+    paths: &[&Path],
+    text: &str,
+) -> Result<bool, Failure> {
+    use fastctx_types::files::SeenVersion;
+    let directory = node.world.owner(&node.names(), owner);
+    let paths: Vec<std::path::PathBuf> = paths.iter().map(|path| path.to_path_buf()).collect();
+    let shown = fastctx_hands::files::content_hash(text.as_bytes());
+    let (log, told) = (node.log.clone(), owner.to_string());
+    fastctx_platform::task::blocking(move || -> std::io::Result<bool> {
+        let seen = crate::write::load_seen_for(&directory, &paths)?;
+        let viewed =
+            seen.values().any(|seen| matches!(&seen.version, SeenVersion::Full { sha256 } if *sha256 == shown));
+        if !viewed {
+            // Told, since the resident is refused for it: which of the two
+            // it is says whether it viewed nothing or an earlier text.
+            let held: Vec<_> = seen.values().map(|seen| &seen.version).collect();
+            log.line(format_args!(
+                "{told} has not viewed {paths:?} as it is ({shown}): its record of views holds {held:?}"
+            ));
+        }
+        Ok(viewed)
+    })
+    .await
+    .map_err(failure)
+}
+
 async fn locate_inner(node: &Arc<Node>, path: &Path, refresh: bool) -> Result<Option<Slot>, Failure> {
     node.replicas.state.load(&node.world).map_err(failure)?;
     let native = fastctx_platform::local_path(path).map_err(failure)?;
@@ -198,7 +236,10 @@ pub(crate) async fn intercept(
         match copy.observed.get(&owner.key()) {
             // A history document is shared: replacing one unseen would drop
             // what others wrote in it since.
-            None if matches!(copy.head.document, Document::History { .. }) && !previous.is_empty() => {
+            None if matches!(copy.head.document, Document::History { .. })
+                && !previous.is_empty()
+                && !viewed(node, owner, &[path.as_path(), copy.path.as_path()], &previous).await? =>
+            {
                 return Ok(Some(Err("write replaces this whole history document; view it with fastctx view \
                      before replacing it, or change part of it with edit"
                     .to_string()

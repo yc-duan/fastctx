@@ -9,7 +9,9 @@
 pub mod agents;
 pub mod claude;
 pub mod codex;
+pub mod history_identity;
 pub mod image_digest;
 pub mod image_record;
 pub mod inventory;
+pub mod bounded;
 pub mod world_tools;

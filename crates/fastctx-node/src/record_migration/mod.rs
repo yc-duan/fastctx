@@ -107,20 +107,63 @@ pub(crate) fn storage_failure(doing: &str, error: fastctx_storage::Error) -> fas
 mod catalog;
 mod jobs;
 mod maintenance;
-/// The first actual poll of the listener opens background migration. A bound
-/// socket alone does not prove that the node is servicing requests yet.
+/// The first listener poll starts one continuation; backup completion opens
+/// migration later. Neither waiting nor bulk import blocks accepting requests.
 pub(crate) async fn after_open<F: std::future::Future>(node: &std::sync::Arc<crate::Node>, accept: F) -> F::Output {
     let mut accept = std::pin::pin!(accept);
     std::future::poll_fn(|context| {
         let result = std::future::Future::poll(accept.as_mut(), context);
-        match node.record_migration.start() {
-            Ok(true) => start(node),
-            Ok(false) => {}
-            Err(error) => node.log.line(format_args!("starting record migration: {error}")),
+        if node.record_migration.listener_opened() {
+            let fault = node.database.fault().cloned();
+            let gate = node.database.format_upgrade_gate();
+            let node = std::sync::Arc::downgrade(node);
+            fastctx_platform::task::spawn(async move {
+                if let Some(error) = fault {
+                    if let Some(node) = node.upgrade() {
+                        node.log.line(format_args!("migration remains closed: {error}"));
+                    }
+                    return;
+                }
+                let outcome = match gate {
+                    Some(gate) => backup_settled(&node, gate).await,
+                    None => Ok(()),
+                };
+                let Some(node) = node.upgrade() else {
+                    return;
+                };
+                if let Err(error) = outcome {
+                    node.log.line(format_args!(
+                        "upgrade backup ended without a durable result: {error}; continuing migration"
+                    ));
+                }
+                match node.record_migration.start() {
+                    Ok(true) => start(&node),
+                    Ok(false) => {}
+                    Err(error) => node.log.line(format_args!("starting record migration: {error}")),
+                }
+            });
         }
         result
     })
     .await
+}
+/// Waits for the format backup by its deadline. Past the deadline the worker may
+/// still own IO, so release is tracked asynchronously, holding neither a thread
+/// nor a database, and bulk migration stays paused until it happens.
+async fn backup_settled(
+    node: &std::sync::Weak<crate::Node>,
+    gate: fastctx_storage::format_upgrade::MigrationGate,
+) -> fastctx_storage::Result<()> {
+    let outcome = gate.wait().await;
+    if outcome.is_ok() || gate.finished() {
+        return outcome.map(|_| ());
+    }
+    if let Some(node) = node.upgrade() {
+        node.log.line(format_args!(
+            "backup deadline passed while IO is still active; bulk migration remains paused until handles are released"
+        ));
+    }
+    gate.released().await.map(|_| ())
 }
 fn start(node: &std::sync::Arc<crate::Node>) {
     if node.database.fault().is_some() {

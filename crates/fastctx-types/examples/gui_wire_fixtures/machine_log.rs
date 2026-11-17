@@ -99,6 +99,8 @@ pub fn fixtures() -> Vec<Page> {
         Action::Transfer { to: to() },
         Action::DeleteAccount { name: to() },
         Action::Settings { self_registration: true },
+        Action::AssetSeal { at_start: true },
+        Action::OpenAssets,
         Action::OpenProject { town: town(), name: "research".parse().unwrap() },
         Action::ShareProject { town: town(), name: Some("research".parse().unwrap()), with: to(), shared: true },
         Action::MoveProject { town: town(), name: None, to: to() },

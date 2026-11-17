@@ -75,11 +75,10 @@ impl Device {
                 let town = town.ok_or_else(|| failed("name the project"))?;
                 let (link, account, id) = self.project_scope(&town)?;
                 let index = link.project_index(&account, &id).await.map_err(failed)?;
-                let (mut record, mut opened, mut pages) = (index.record, index.opened, index.pages);
+                let (mut record, mut opened) = (index.record, index.opened);
                 let usable = usable(&link, &account);
                 record.for_reader(&usable);
                 opened.for_reader(&usable);
-                pages.iter_mut().for_each(|summary| summary.current.for_reader(&usable));
                 if map {
                     Ok(Reply::Map {
                         map: Box::new(MapView {
@@ -89,7 +88,7 @@ impl Device {
                             record,
                             opened,
                             journals: Vec::new(),
-                            pages,
+                            pages: Default::default(),
                             canon: None,
                         }),
                     })

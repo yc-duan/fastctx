@@ -39,7 +39,7 @@ export interface ProjectFormOptions {
   /** The machines' own words, shared with the machines and folders panel. */
   focusWords: FocusWords;
   /** A machine's folders, read by its node. */
-  folders(machine: string, path: string | null): Promise<Folders>;
+  folders(machine: string, path: string | null, cursor?: string | null): Promise<Folders>;
   /** Opens a project in `login`'s account, or in the one account. */
   create(town: string, fields: RecordFields, login: Login | null): Promise<TownRecord>;
   edit(town: string, fields: RecordFields): Promise<TownRecord>;
@@ -215,7 +215,7 @@ export class ProjectForm {
     const named = this.places.filter((place) => place.machine === machine);
     this.picker.open({
       machine,
-      folders: (path) => this.options.folders(machine, path),
+      folders: (path, cursor) => this.options.folders(machine, path, cursor),
       marks: named.map((place) => ({ name: place.what || folderName(place.path), path: place.path })),
       start: named.at(-1)?.path ?? null,
       chosen: (path) => {

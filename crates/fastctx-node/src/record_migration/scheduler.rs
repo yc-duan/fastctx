@@ -67,6 +67,7 @@ struct Engine {
     queue: Mutex<Queue>,
     changed: Condvar,
     started: AtomicBool,
+    listener_open: AtomicBool,
     opened: tokio::sync::Notify,
     progress: tokio::sync::Notify,
     closed: AtomicBool,
@@ -91,6 +92,7 @@ impl Service {
             opened: tokio::sync::Notify::new(),
             progress: tokio::sync::Notify::new(),
             started: AtomicBool::new(false),
+            listener_open: AtomicBool::new(false),
             closed: AtomicBool::new(false),
             log: std::sync::OnceLock::new(),
         });
@@ -105,8 +107,21 @@ impl Service {
         let _ = self.engine.log.set(log);
     }
 
+    /// Claims the single continuation waiting for the upgrade backup after listen.
+    pub(crate) fn listener_opened(&self) -> bool {
+        !self.engine.listener_open.swap(true, Ordering::AcqRel)
+    }
+
     /// Called only after the listener has been polled, never during startup IO.
     pub(crate) fn start(&self) -> io::Result<bool> {
+        let database =
+            self.engine.database.upgrade().ok_or_else(|| io::Error::other("migration database is closed"))?;
+        if let Some(error) = database.fault() {
+            return Err(io::Error::other(error.clone()));
+        }
+        if database.format_upgrade_gate().is_some_and(|gate| !gate.finished()) {
+            return Ok(false);
+        }
         if self.engine.started.swap(true, Ordering::AcqRel) {
             return Ok(false);
         }
@@ -132,13 +147,18 @@ impl Service {
         self.engine.progress.notified().await;
     }
 
-    pub(crate) async fn wait_started(&self) {
+    pub(crate) async fn wait_started(&self) -> io::Result<()> {
         loop {
             let opened = self.engine.opened.notified();
             tokio::pin!(opened);
             opened.as_mut().enable();
+            let database =
+                self.engine.database.upgrade().ok_or_else(|| io::Error::other("migration database is closed"))?;
+            if let Some(error) = database.fault() {
+                return Err(io::Error::other(error.clone()));
+            }
             if self.engine.started.load(Ordering::Acquire) {
-                return;
+                return Ok(());
             }
             opened.await;
         }
@@ -238,14 +258,6 @@ pub(crate) fn known(world: &Path, conversation: &str, family: &str) -> bool {
 pub(crate) fn ready(world: &Path, conversation: &str, family: &str) {
     if let Some(engine) = ENGINES.lock().expect("migration registry").get(world).and_then(Weak::upgrade) {
         engine.remember((conversation.to_string(), family.to_string()));
-    }
-}
-
-/// Lets go of a conversation's families under `prefix`, retired with what
-/// they held.
-pub(crate) fn forget(world: &Path, conversation: &str, prefix: &str) {
-    if let Some(engine) = ENGINES.lock().expect("migration registry").get(world).and_then(Weak::upgrade) {
-        engine.queue.lock().expect("migration queue").ready.forget(conversation, prefix);
     }
 }
 

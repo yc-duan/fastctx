@@ -41,6 +41,17 @@ pub(crate) fn current_view(link: &Link) -> Result<Arc<View>, Failure> {
     Ok(view)
 }
 
+/// The hub's current view on `link`, waited for while it may soon come
+/// (`reach::settled_each`: a minute on a new connection, a few seconds while
+/// connecting again, not at all on a stopped link): for work accepted
+/// earlier that begins as the node starts, before its hubs gave their
+/// views, so that it is not judged by a view that was only late. What is
+/// asked and answered at once does not wait; its caller asks again.
+pub(crate) async fn awaited_view(link: &Arc<Link>) -> Result<Arc<View>, Failure> {
+    crate::reach::settled_each(std::slice::from_ref(link)).await;
+    current_view(link)
+}
+
 /// Whether `failure` only says a hub's view of this connection has not come
 /// yet: no judgement, which one made once it comes may reverse.
 pub(crate) fn view_pending(failure: &Failure) -> bool {

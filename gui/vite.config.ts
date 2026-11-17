@@ -1,5 +1,4 @@
 import { defineConfig } from "vite";
-import { pageRuntime } from "./scripts/page-runtime.mjs";
 import { pdfAssets } from "./scripts/pdf-assets.mjs";
 import { frontendLicenses } from "./scripts/licenses.mjs";
 import { longviewDemo } from "./scripts/longview-demo.mjs";
@@ -10,7 +9,7 @@ export default defineConfig({
     port: 5317,
     strictPort: true,
   },
-  plugins: [pageRuntime(), pdfAssets(), frontendLicenses(), longviewDemo()],
+  plugins: [pdfAssets(), frontendLicenses(), longviewDemo()],
   css: {
     postcss: { plugins: [hoverOnly()] },
   },

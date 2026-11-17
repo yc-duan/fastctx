@@ -58,8 +58,9 @@ export interface PastGoal {
 export type NodeState = "working" | "waiting" | "done" | "failed" | "stopped" | "idle" | "unknown";
 
 /** One that works with a conversation: a colleague it asked, a side
- *  conversation branched off it, or one of the host's own agents, under
- *  whoever sent it. */
+ *  conversation branched off it, or one of the host's own agents. They are
+ *  one level: what a colleague sent of its own is read in that colleague's
+ *  conversation, not under it here (the user, 2026-11-17: "他只有一个层级"). */
 export interface CollabNode {
   id: string;
   kind: "colleague" | "subagent" | "side";
@@ -85,9 +86,6 @@ export interface CollabNode {
   machine?: string;
   /** Why how it stands is not known, as the World said it. */
   why?: string | null;
-  /** More of its history is being read; the known children remain shown. */
-  reading?: boolean;
-  children: CollabNode[];
 }
 
 /** Where a conversation works, as the corner of the desk shows it: the

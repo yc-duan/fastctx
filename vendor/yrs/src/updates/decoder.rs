@@ -75,11 +75,15 @@ pub trait Decoder: Read {
 /// Version 1 of lib0 decoder.
 pub struct DecoderV1<'a> {
     cursor: Cursor<'a>,
+    value_depth: u16,
 }
 
 impl<'a> DecoderV1<'a> {
     pub fn new(cursor: Cursor<'a>) -> Self {
-        DecoderV1 { cursor }
+        DecoderV1 {
+            cursor,
+            value_depth: 0,
+        }
     }
 
     fn read_id(&mut self) -> Result<ID, Error> {
@@ -105,6 +109,25 @@ impl<'a> From<&'a [u8]> for DecoderV1<'a> {
 }
 
 impl<'a> Read for DecoderV1<'a> {
+    fn enter_value(&mut self) -> Result<(), Error> {
+        if self.value_depth >= 128 {
+            return Err(Error::Custom(
+                "the encoded value is nested too deeply".into(),
+            ));
+        }
+        self.value_depth += 1;
+        Ok(())
+    }
+    fn leave_value(&mut self) {
+        self.value_depth -= 1;
+    }
+    fn check_count(&self, count: usize) -> Result<(), Error> {
+        if count > self.cursor.buf.len().saturating_sub(self.cursor.next) {
+            return Err(Error::UnexpectedValue);
+        }
+        Ok(())
+    }
+
     #[inline]
     fn read_u8(&mut self) -> Result<u8, Error> {
         self.cursor.read_u8()

@@ -24,16 +24,6 @@ pub(crate) async fn rejected(
         entry.submitted = None;
         entry.error = Some(why.into());
     }
-    if let Some(operation) = &flight.operation
-        && let Some(receipt) = receipts::receipt(node, id, &next, operation).await?
-    {
-        next.receipts.insert(operation.clone(), receipt);
-    }
-    for receipt in next.receipts.values_mut() {
-        if receipt.delivery.as_ref() == Some(delivery) {
-            receipt.failure = Some(why.into());
-            receipt.landed = None;
-        }
-    }
+    settlement::record(node, id, &mut next, &flight, &Err(Failure::new(why))).await?;
     publish(node, id, &mut cell, next).await
 }

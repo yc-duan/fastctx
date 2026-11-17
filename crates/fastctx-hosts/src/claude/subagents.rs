@@ -40,6 +40,11 @@ impl Beside {
         self.by_call.values().map(|meta| meta.id.as_str())
     }
 
+    /// Each agent told of, with the Agent call its meta file names.
+    pub fn calls(&self) -> impl Iterator<Item = (&str, &str)> {
+        self.by_call.iter().map(|(call, meta)| (meta.id.as_str(), call.as_str()))
+    }
+
     /// The meta files' sizes and times, which change as agents start.
     pub fn len(&self) -> usize {
         self.by_call.len()

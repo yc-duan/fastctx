@@ -13,6 +13,11 @@
 //! notice that takes several frames goes a frame at a turn, so a pong never
 //! waits behind all of it.
 //!
+//! Within the first lane, what fits one frame (a pong, a call to take, a
+//! status, a short answer) goes before the parts of an answer too large for
+//! one: a stop or a word for a conversation never waits behind megabytes of
+//! someone's history. The parts of one answer keep their order.
+//!
 //! Each lane is bounded where things are queued. The first by count and
 //! bytes, and notices by count. Status notices own bounded cursors into
 //! shared immutable snapshots, plus at most one frame and one pending item
@@ -47,6 +52,61 @@ const NOTICES: usize = 16384;
 /// How many frames of the first lane go in a row while letters or notices
 /// wait.
 const BURST: usize = 32;
+
+/// What the first lanes of every member together may hold: an eighth of the
+/// machine's memory, from 128 MiB to 2 GiB. Each member's lane is bound on
+/// its own (`URGENT_BYTES`); ten thousand members each near that bound would
+/// hold hundreds of gigabytes (`specs/world-foundation.md`, 宪法第三条). A
+/// member whose answer finds no room is let go, as one that took too little
+/// of its own lane is, and connects again.
+struct Pool {
+    used: std::sync::atomic::AtomicUsize,
+    bytes: usize,
+    /// How much of it was used, told in the hub's health.
+    noted: &'static fastctx_platform::health::Bound,
+}
+
+fn pool() -> &'static Pool {
+    static POOL: std::sync::OnceLock<Pool> = std::sync::OnceLock::new();
+    POOL.get_or_init(|| {
+        let physical = fastctx_platform::memory::physical().unwrap_or(1 << 30);
+        Pool {
+            used: std::sync::atomic::AtomicUsize::new(0),
+            bytes: usize::try_from((physical / 8).clamp(128 << 20, 2 << 30)).unwrap_or(usize::MAX),
+            noted: fastctx_platform::health::bound("hub.output"),
+        }
+    })
+}
+
+impl Pool {
+    /// Takes `bytes` of it; whether there was room.
+    fn take(&self, bytes: usize) -> bool {
+        use std::sync::atomic::Ordering;
+        let taken = self
+            .used
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |used| {
+                used.checked_add(bytes).filter(|after| *after <= self.bytes)
+            })
+            .is_ok();
+        self.noted.note(self.used.load(Ordering::Relaxed), self.bytes);
+        taken
+    }
+
+    fn give(&self, bytes: usize) {
+        self.used.fetch_sub(bytes, std::sync::atomic::Ordering::AcqRel);
+    }
+}
+
+/// The part of the pool a member's first lane holds, given back when the
+/// lane lets its frames go, however it does.
+#[derive(Default)]
+struct Charge(usize);
+
+impl Drop for Charge {
+    fn drop(&mut self) {
+        pool().give(self.0);
+    }
+}
 
 /// What a member's writer is to do next.
 pub(crate) enum Next {
@@ -88,8 +148,13 @@ struct State {
     /// Nothing more is taken: the session's writer is done.
     shut: bool,
     welcome: Option<Down>,
+    /// The first lane's frames that are whole on their own.
+    prompt: VecDeque<(Out, usize)>,
+    /// The first lane's parts of large answers, and its end.
     urgent: VecDeque<(Out, usize)>,
     urgent_bytes: usize,
+    /// `urgent_bytes`, as taken of every member's pool.
+    charged: Charge,
     letters: VecDeque<Down>,
     notices: VecDeque<(Notice, Pending)>,
     /// The afoot notice taken last, drained a frame at a time before the next.
@@ -101,6 +166,9 @@ struct State {
     overflowed: Option<String>,
     /// How many frames of the first lane went in a row.
     in_a_row: usize,
+    /// How many whole frames went in a row while parts of a large answer
+    /// waited: past `PROMPT_RUN`, a part goes, so it is never starved.
+    prompt_run: usize,
     /// Whether letters go before notices next.
     letters_next: bool,
 }
@@ -120,6 +188,8 @@ enum Notice {
     Forget(u64),
     Fetch(u64),
     PackageProgress(u64),
+    /// A stream moved, or a checkpoint covers a scope: the latest stands.
+    Assets(String),
 }
 
 enum Pending {
@@ -156,6 +226,7 @@ impl Outq {
             }
             out => vec![out],
         };
+        let whole = frames.len() == 1;
         let frames: Vec<_> = frames
             .into_iter()
             .map(|out| {
@@ -178,9 +249,9 @@ impl Outq {
                 }
                 Out::Frame(frame) => match notice(&frame) {
                     Some(notice) => state.notify(notice, frame),
-                    None => state.urge(Out::Frame(frame), bytes),
+                    None => state.urge(Out::Frame(frame), bytes, whole),
                 },
-                end @ Out::End(_) => state.urge(end, bytes),
+                end @ Out::End(_) => state.urge(end, bytes, false),
             });
             (queued, state.overflowed.clone())
         };
@@ -296,7 +367,7 @@ impl Outq {
     pub(crate) fn sizes(&self) -> Sizes {
         let state = self.0.state.lock().expect("never poisoned");
         Sizes {
-            urgent: state.urgent.len(),
+            urgent: state.prompt.len() + state.urgent.len(),
             urgent_bytes: state.urgent_bytes,
             letters: state.letters.len(),
             notices: state.notices.len() + usize::from(state.spilled.is_some()),
@@ -328,23 +399,52 @@ impl Outq {
     }
 }
 
+/// How many whole frames of the first lane go in a row before a waiting part
+/// of a large answer.
+const PROMPT_RUN: usize = 16;
+
 impl State {
+    /// The first lane's next frame: whole ones first, a part after every
+    /// `PROMPT_RUN` of them.
+    fn first_lane(&mut self) -> Option<(Out, usize)> {
+        if self.prompt_run >= PROMPT_RUN
+            && let Some(part) = self.urgent.pop_front()
+        {
+            self.prompt_run = 0;
+            return Some(part);
+        }
+        if let Some(whole) = self.prompt.pop_front() {
+            self.prompt_run += 1;
+            return Some(whole);
+        }
+        self.prompt_run = 0;
+        self.urgent.pop_front()
+    }
+
     fn overflow(&mut self, why: String) -> Result<(), ()> {
         self.overflowed = Some(why);
         Err(())
     }
 
-    fn urge(&mut self, out: Out, bytes: usize) -> Result<(), ()> {
-        if self.urgent.len() >= URGENT || self.urgent_bytes + bytes > URGENT_BYTES {
+    fn urge(&mut self, out: Out, bytes: usize, whole: bool) -> Result<(), ()> {
+        let waiting = self.prompt.len() + self.urgent.len();
+        if waiting >= URGENT || self.urgent_bytes + bytes > URGENT_BYTES {
             let why = format!(
-                "{} frames of {} bytes wait for it untaken, as many as {URGENT} or {URGENT_BYTES} bytes; letting it go",
-                self.urgent.len(),
+                "{waiting} frames of {} bytes wait for it untaken, as many as {URGENT} or {URGENT_BYTES} bytes; letting it go",
                 self.urgent_bytes
             );
             return self.overflow(why);
         }
+        if !pool().take(bytes) {
+            let why = format!(
+                "what waits for every member takes as much as the hub keeps for them, {} bytes; letting it go",
+                pool().bytes
+            );
+            return self.overflow(why);
+        }
+        self.charged.0 += bytes;
         self.urgent_bytes += bytes;
-        self.urgent.push_back((out, bytes));
+        if whole { self.prompt.push_back((out, bytes)) } else { self.urgent.push_back((out, bytes)) }
         Ok(())
     }
 
@@ -381,9 +481,11 @@ impl State {
         }
         let others = !self.letters.is_empty() || !self.notices.is_empty() || self.spilled.is_some();
         if (self.in_a_row < BURST || !others)
-            && let Some((out, bytes)) = self.urgent.pop_front()
+            && let Some((out, bytes)) = self.first_lane()
         {
             self.urgent_bytes -= bytes;
+            self.charged.0 -= bytes;
+            pool().give(bytes);
             self.in_a_row += 1;
             return Some(match out {
                 Out::Frame(frame) => Next::Frames(vec![frame]),
@@ -460,6 +562,14 @@ fn notice(frame: &Down) -> Option<Notice> {
         Down::Fetch { fetch } => Notice::Fetch(fetch.id),
         Down::FetchCancelled { id } => Notice::Fetch(*id),
         Down::PackageProgress { id, .. } => Notice::PackageProgress(*id),
+        Down::Assets { push } => match push {
+            fastctx_types::assets::Push::Moved { scope, stream, .. } => Notice::Assets(format!("moved\0{scope}\0{stream}")),
+            fastctx_types::assets::Push::Checkpointed { checkpoint } => {
+                Notice::Assets(format!("checkpointed\0{}", checkpoint.scope))
+            }
+            fastctx_types::assets::Push::Revoked { scope } => Notice::Assets(format!("revoked\0{scope}")),
+            fastctx_types::assets::Push::Fact { .. } => return None,
+        },
         _ => return None,
     })
 }

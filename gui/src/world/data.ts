@@ -5,13 +5,16 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { AgentName, MachineName, Timestamp } from "./wire";
 
-export type DataCall = { do: "list" } | { do: "delete"; names: string[] } | { do: "output_days"; days: number | null } | { do: "clear_cache" };
+/** `kept`: what was last measured, at once (`unmeasured` while nothing was);
+ *  an earlier node measures. */
+export type DataCall = { do: "list"; kept?: boolean } | { do: "delete"; names: string[] } | { do: "output_days"; days: number | null } | { do: "clear_cache" };
 
 export type DataReply =
   | { data: "cache_cleared"; bytes: number }
   | ({ data: "listed" } & Space)
+  | { data: "unmeasured" }
   | { data: "deleted"; deletions: Deletion[] }
-  | { data: "output_days"; days: number }
+  | { data: "output_days"; days: number; output_retention?: string }
   | { data: "cache_cleared"; bytes: number };
 
 /** The days full command output may be kept for, to choose from. */
@@ -25,7 +28,11 @@ export interface Space {
   kinds: Kinds;
   conversations: ConversationSpace[];
   output_days: number;
+  output_retention?: string;
   claude_logins?: ClaudeKeeping[];
+  /** Entries that could not be read and are not counted, and the first of
+   *  them with why. */
+  unread?: { entries: number; first?: string };
 }
 
 export interface Kinds {

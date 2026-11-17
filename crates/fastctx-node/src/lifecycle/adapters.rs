@@ -56,16 +56,6 @@ impl Adapter {
         }
     }
 
-    pub(crate) fn needs_subscription(&self, node: &Node, about: &About) -> Result<bool, Failure> {
-        match self {
-            Self::Claude => Ok(false),
-            Self::Codex => {
-                let Some(thread) = about.session.as_deref() else { return Ok(false) };
-                Ok(!node.codex.of(node, about)?.subscribed(thread))
-            }
-        }
-    }
-
     pub(crate) fn delayed(&self) -> bool {
         matches!(self, Self::Claude)
     }

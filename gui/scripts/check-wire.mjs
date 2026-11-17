@@ -25,6 +25,7 @@ const json = readFileSync(fixturePath, "utf8");
 const fixture = JSON.parse(json);
 const virtualFile = path.join(gui, "fixtures/contract.ts");
 const source = `
+import type { DataReply } from "../src/world/data";
 import type { SessionEvent, Watched, SessionChange, Health } from "../src/world/events";
 import type { WorldWho, NodesReply, TownSummary, JournalSummary } from "../src/world/world";
 import type { WorldSince } from "../src/world/since";
@@ -36,15 +37,13 @@ import type { Attachment } from "../src/world/attachments";
 import type { Forgetting, Managed } from "../src/world/management";
 import type { FileSearchReply, FileSearchRequest } from "../src/world/file-search";
 import type { Folders } from "../src/world/focus";
-import type { PageView, PageSummary, PageVersion, PageConsent, PageResult } from "../src/world/pages";
-import type { Speaker } from "../src/world/events";
-import type { Writer, JobOwner, MapView } from "../src/world/world";
 import type { Address } from "../src/world/wire";
 import type { RunFacts, DiffLine, JobFacts, ProjectedLines, LinePart, LineOpenError } from "../src/world/run-facts";
 import type { RenewalStatus, MaintenanceRequest, MaintenanceResponse, VersionRefusal } from "../src/world/renewal";
 import type { AccountChange, AccountsReply, TokenPeek } from "../src/world/accounts";
 import type { ConnectionState } from "../src/world/device";
 import type { Choices } from "../src/world/bridge";
+import type { MachinePresence } from "../src/world/presence";
 import type { ComposerSnapshot, ComposerMutation, ComposerUpdated } from "../src/world/composer";
 import type { Tree } from "../src/world/collab-tree";
 import type { DocumentSubscription, DocumentInput, DocumentFrame, DocumentSend } from "../src/world/composer-sync";
@@ -55,6 +54,7 @@ import type { UsageReport } from "../src/world/usage";
 import type { McpReply, ProfileView } from "../src/world/profile";
 import type { UpdateState, UpdateCall, CheckFailure, FailureReason, UpdatesViewCall, UpdatesViewReply } from "../src/world/updates";
 export const fixture = ${json.trimEnd()} satisfies {
+  data: DataReply[];
   updates: { device_calls: UpdateCall[]; states: UpdateState[]; checks: CheckFailure[]; reasons: FailureReason[]; calls: UpdatesViewCall[]; replies: UpdatesViewReply[] };
   // An account's own configuration as its pages read and change it.
   profile: { calls: unknown; replies: (({ reply: "profile" } & ProfileView) | { reply: "profile_written"; version: number } | { reply: "mcp"; result: McpReply })[] };
@@ -71,7 +71,7 @@ export const fixture = ${json.trimEnd()} satisfies {
     watched: Watched[];
     health_cases: { change: SessionChange; health: Health | null }[];
   };
-  world: { who: WorldWho[]; nodes: NodesReply[]; towns: TownSummary[]; journals: JournalSummary[] };
+  world: { who: WorldWho[]; nodes: NodesReply[]; towns: TownSummary[]; journals: JournalSummary[]; machine_presence: MachinePresence[] };
   // Only the replies reach the interface; calls and the machines' own
   // telephone go through the shell and the node.
   since: { replies: ({ reply: "since" } & WorldSince)[]; calls: unknown; remote_calls: unknown; remote_replies: unknown };
@@ -115,25 +115,6 @@ export const fixture = ${json.trimEnd()} satisfies {
   claude: { events: SessionEvent[]; answers: Control[]; unavailable: Offers; idle: Offers };
   // What the user's management of an agent answers, stage by stage.
   management: { calls: unknown; remote_calls: unknown; replies: ({ reply: "managed"; resident: Address; managed: Managed } | { reply: "forgetting"; resident: Address; how: Forgetting })[]; remote_replies: unknown };
-  // What a page's calls answer, and the page as a speaker, a writer and
-  // a job's owner.
-  pages: {
-    calls: unknown;
-    replies: (
-      | { reply: "page"; view: PageView }
-      | { reply: "pages"; town: string; pages: PageSummary[] }
-      | { reply: "page_history"; town: string; page: string; versions: PageVersion[] }
-      | { reply: "page_consent"; town: string; page: string; consent: PageConsent }
-      | { reply: "page_act"; result: PageResult }
-    )[];
-    remote_calls: unknown;
-    remote_replies: unknown;
-    speaker: Speaker;
-    writer: Writer;
-    job_owner: JobOwner;
-    peer: unknown;
-    map: MapView;
-  };
   renewal: { requests: MaintenanceRequest[]; responses: MaintenanceResponse[]; statuses: RenewalStatus[]; refused: VersionRefusal };
   // How a machine says it is doing, for its details page.
   stats: { stats: MachineStats[] };

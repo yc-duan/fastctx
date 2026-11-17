@@ -141,6 +141,8 @@ async fn follow(
                     titles.row(row)?;
                     thoughts.extend(Thought::read(row));
                 }
+                // This tail stops at such a line rather than going over it.
+                Found::Unread { .. } => {}
             }
             Ok(())
         });

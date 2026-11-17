@@ -31,9 +31,9 @@ pub(super) async fn catalog(
             .owners
             .lock()
             .expect("never poisoned")
-            .candidates(directory, account)
+            .readable_at(directory, account)
             .into_iter()
-            .filter(|conversation| {
+            .filter(|(conversation, _)| {
                 fastctx_net::record_ownership::keeps(
                     directory,
                     member,
@@ -41,9 +41,10 @@ pub(super) async fn catalog(
                     conversation.shared_on.as_ref(),
                 )
             })
-            .filter_map(|conversation| {
-                directory.account(&conversation.account).map(|owner| (conversation, owner.opened))
-            })
+            // The first version's replicas follow the opener as it is: a
+            // body's conversation whose opener went, or was made again, is
+            // read through the body's scope alone (§29, 2.6).
+            .filter(|(conversation, opened)| directory.account(&conversation.account).is_some_and(|owner| owner.opened == *opened))
             .collect::<Vec<_>>();
         let projects = directory
             .projects

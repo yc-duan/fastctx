@@ -57,6 +57,14 @@ impl Error {
     pub fn is_refused(&self) -> bool {
         matches!(self, Error::Call(CallError::Failed(failure)) if failure.is_refused())
     }
+
+    /// Whether it is an answer that holds wherever it is asked — refused,
+    /// denied, or of a conversation deleted — not a hub or machine out of
+    /// reach: a copy is not read in its place (§28.39).
+    pub fn is_refusal(&self) -> bool {
+        matches!(self, Error::Call(CallError::Failed(failure))
+            if failure.is_refused() || failure.denial.is_some() || failure.is_deleted())
+    }
 }
 
 /// A World reached through a local node or an application's device identity.
@@ -355,6 +363,17 @@ impl World {
         machine_logins(self.ask(Call::SetAgentResetInPlace { machine, agent, dir, on }).await?)
     }
 
+    /// Sets a login's week in quota dollars, or the World's default again.
+    pub async fn set_agent_week(
+        &self,
+        machine: Written,
+        agent: fastctx_types::AgentName,
+        dir: std::path::PathBuf,
+        week: Option<fastctx_types::usage::Usd>,
+    ) -> Result<fastctx_types::logins::MachineLogins, Error> {
+        machine_logins(self.ask(Call::SetAgentWeek { machine, agent, dir, week }).await?)
+    }
+
     /// Changes the models the World offers in a Claude Code login, for
     /// everyone who uses it.
     pub async fn change_agent_models(
@@ -596,10 +615,18 @@ impl World {
         }
     }
 
-    /// Stops the turn a resident on any machine is running; returns where it
-    /// lives and whether a turn was running.
-    pub async fn stop(&self, resident: ResidentId, machine: Option<Written>) -> Result<(Address, bool), Error> {
-        match self.ask(Call::Stop { resident, machine }).await? {
+    /// Stops the turn a resident on any machine is running (only `turn`,
+    /// when given: the one the user saw; seeing none, only the turn of
+    /// `words`, when given); returns where it lives and whether a turn was
+    /// running.
+    pub async fn stop(
+        &self,
+        resident: ResidentId,
+        machine: Option<Written>,
+        turn: Option<String>,
+        words: Option<Vec<fastctx_types::NoticeId>>,
+    ) -> Result<(Address, bool), Error> {
+        match self.ask(Call::Stop { resident, machine, turn, words }).await? {
             Reply::Stopped { resident, stopped } => Ok((resident, stopped)),
             other => Err(unexpected(other)),
         }
@@ -699,7 +726,7 @@ impl World {
         machine: Option<Written>,
         held: fastctx_types::session::held::Held,
     ) -> Result<Watching, Error> {
-        self.watch_as(resident, machine, None, Some(held), false).await
+        self.watch_as(resident, machine, None, Some(held), false, false).await
     }
 
     /// Watches a resident for an interface: as [`World::watch_held`], or from
@@ -711,7 +738,7 @@ impl World {
         machine: Option<Written>,
         held: Option<fastctx_types::session::held::Held>,
     ) -> Result<Watching, Error> {
-        self.watch_as(resident, machine, None, held, true).await
+        self.watch_as(resident, machine, None, held, true, false).await
     }
 
     pub(crate) async fn watch_with_composer(
@@ -720,7 +747,13 @@ impl World {
         machine: Option<Written>,
         composer: Option<String>,
     ) -> Result<Watching, Error> {
-        self.watch_as(resident, machine, composer, None, false).await
+        self.watch_as(resident, machine, composer, None, false, false).await
+    }
+
+    /// Subscribes without preparing history. Wait for `Watched::Resumed`
+    /// before reading the first timeline page. Requires `watch_live`.
+    pub async fn watch_live(&self, resident: ResidentId, machine: Option<Written>) -> Result<Watching, Error> {
+        self.watch_as(resident, machine, None, None, true, true).await
     }
 
     async fn watch_as(
@@ -730,9 +763,10 @@ impl World {
         composer: Option<String>,
         held: Option<fastctx_types::session::held::Held>,
         now: bool,
+        live_only: bool,
     ) -> Result<Watching, Error> {
         if let Some(device) = &self.device {
-            return Ok(Watching::device(device.watch(resident, machine, composer, held, now, None).await?));
+            return Ok(Watching::device(device.watch(resident, machine, composer, held, now, live_only, None).await?));
         }
         self.local_watches
             .watch(
@@ -741,8 +775,10 @@ impl World {
                     resident,
                     machine,
                     composer,
+                    documents: None,
                     held,
                     now,
+                    live_only,
                     goal: None,
                     collaboration: false,
                 },
@@ -826,7 +862,11 @@ impl World {
         machine: Option<Written>,
         path: Option<String>,
     ) -> Result<fastctx_types::focus::Folders, Error> {
-        match self.ask(Call::Folders { machine, path }).await? {
+        self.folders_page(machine, path, None).await
+    }
+
+    pub async fn folders_page(&self, machine: Option<Written>, path: Option<String>, cursor: Option<String>) -> Result<fastctx_types::focus::Folders, Error> {
+        match self.ask(Call::Folders { machine, path, cursor }).await? {
             Reply::Folders(folders) => Ok(folders),
             other => Err(unexpected(other)),
         }
@@ -900,7 +940,7 @@ impl World {
         account: fastctx_types::AccountName,
         before: Option<u64>,
     ) -> Result<fastctx_types::machine_log::Page, Error> {
-        match self.ask(Call::MachineLog { hub, account, before }).await? {
+        match self.ask(Call::MachineLog { hub, account, before, asset_seals: true }).await? {
             Reply::MachineLog(page) => Ok(page),
             other => Err(unexpected(other)),
         }

@@ -154,7 +154,7 @@ impl Conversation {
                 }
                 Some(Watched::History { events }) => events,
                 Some(Watched::Live { event, .. }) => vec![event],
-                Some(Watched::Now { busy, turn, kept }) => {
+                Some(Watched::Now { busy, turn, kept, .. }) => {
                     now = Some(Now { busy, turn, kept });
                     continue;
                 }
@@ -230,10 +230,10 @@ impl Conversation {
         let mut conversation = Self::reading_after(watching, source);
         let history = loop {
             match conversation.piece().await {
-                Some(Ok(Some(Watched::Live { event, mark }))) => {
+                Some(Ok(Some(Watched::Live { event, mark, .. }))) => {
                     conversation.take_live(event, mark);
                 }
-                Some(Ok(Some(Watched::Now { busy, turn, kept }))) => {
+                Some(Ok(Some(Watched::Now { busy, turn, kept, .. }))) => {
                     conversation.now_due = Some(Now { busy, turn, kept })
                 }
                 Some(Ok(Some(watched))) => {
@@ -368,13 +368,13 @@ impl Conversation {
                 return Ok(Update::Now { busy, turn, kept });
             }
             let watched = match self.piece().await {
-                Some(Ok(Some(Watched::Live { event, mark }))) => {
+                Some(Ok(Some(Watched::Live { event, mark, .. }))) => {
                     self.current_due |= self.again.came();
                     self.take_live(event, mark);
                     continue;
                 }
                 // Told after what came before it: handed over once that is.
-                Some(Ok(Some(Watched::Now { busy, turn, kept }))) => {
+                Some(Ok(Some(Watched::Now { busy, turn, kept, .. }))) => {
                     self.now_due = Some(Now { busy, turn, kept });
                     continue;
                 }
@@ -594,7 +594,7 @@ impl Conversation {
                 return Ok(Next::Moment(moment));
             }
             match self.piece().await {
-                Some(Ok(Some(Watched::Live { event, mark }))) => {
+                Some(Ok(Some(Watched::Live { event, mark, .. }))) => {
                     self.current_due |= self.again.came();
                     self.take_live(event, mark);
                 }

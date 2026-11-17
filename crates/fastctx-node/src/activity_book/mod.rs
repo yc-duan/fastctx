@@ -1,17 +1,18 @@
 //! This machine's activity book (`world-layers.md`, 活动账本): one deed for
 //! each script `run` ran here, written as its job changes, with the files
-//! it touched. Deeds are kept 90 days, then folded into counts by the hour,
-//! kept a year. Its independent database keeps maintenance off the state writer.
+//! it touched. Full deeds and existing hourly counts survive until explicit
+//! deletion. Its independent database keeps maintenance off the state writer.
 
+mod copied;
 mod incremental;
+mod changes;
 mod legacy;
-mod maintenance;
 mod migrate;
 #[cfg(feature = "storage-drill")]
 pub(crate) mod migration_drill;
 mod query;
-pub(crate) use incremental::{Cursor, consumed, observe, segment};
-pub(crate) use maintenance::fold;
+mod query_details;
+pub(crate) use incremental::{Cursor, consumed, observe};
 mod sealing;
 pub(crate) use sealing::{ACCOUNTS as SEALED_ACCOUNTS, SCHEMA as SEALS, seal, seal_account, seal_elsewhere};
 mod seen;
@@ -27,8 +28,7 @@ use fastctx_types::write::ChangeKind;
 
 use crate::Node;
 
-/// Detail lasts 90 days; hourly counts last a year. Journal identities and
-/// cursors live until their deed is folded, so replay never counts twice.
+/// Detail, historical summaries and replay identities survive until deletion.
 /// What was taken from the book's files before it was a database is marked
 /// once, a row for each deed it held.
 pub(crate) const SCHEMA: &str = "
@@ -84,12 +84,20 @@ CREATE TABLE IF NOT EXISTS book_retired(deed TEXT PRIMARY KEY,at INTEGER NOT NUL
 CREATE TABLE IF NOT EXISTS book_folding(deed TEXT PRIMARY KEY,applied INTEGER NOT NULL DEFAULT 0) WITHOUT ROWID;
 ";
 
-/// How long deeds are kept whole, and how long their hourly counts.
-const DEEDS_KEPT: jiff::SignedDuration = jiff::SignedDuration::from_hours(90 * 24);
-const HOURS_KEPT: jiff::SignedDuration = jiff::SignedDuration::from_hours(366 * 24);
-
 /// The longest script kept; the rest is the job's own record while it lasts.
 const SCRIPT: usize = 2000;
+
+/// What this machine was shared as when a deed was first kept (7965 P08):
+/// by hub id, the body it was on there while shared whole, or none; read by
+/// the copy of the book (`assets::activity`), so a deed goes where it went
+/// as it was done however late it is read. A deed kept before has none and
+/// goes as the sharing stands when it is read.
+const SHARING: &str = "ALTER TABLE book_deeds ADD COLUMN sharing TEXT;";
+
+/// The deeds of conversations deleted here, as their rows go
+/// (`sealing::purge`), by number: what the copy of the book lets go of in
+/// the records scopes it wrote them into (`assets::activity`).
+const FORGOTTEN: &str = "CREATE TABLE IF NOT EXISTS book_forgotten (id INTEGER PRIMARY KEY AUTOINCREMENT, deed TEXT NOT NULL);";
 
 /// One deed as a job's record stands now.
 struct Row {
@@ -111,6 +119,8 @@ struct Row {
     looked: i64,
     copied: i64,
     touched: Vec<Touch>,
+    /// As `SHARING` keeps it, on the deed's first keeping alone.
+    sharing: Option<String>,
 }
 
 struct Touch {
@@ -228,7 +238,22 @@ fn row(node: &Node, record: &JobRecord, writes: &[WriteFact], steps: &[fastctx_t
         looked,
         copied,
         touched,
+        sharing: serde_json::to_string(&sharing(node, &record.owner)).ok(),
     }
+}
+
+/// What this machine was shared whole as on each network as a deed was
+/// done: none for one done for a conversation an account was assisted in,
+/// whose deeds are that account's alone and never the body's
+/// (`placement-one-rule` 2026-11-10, §29 2.5).
+fn sharing(node: &Node, owner: &JobOwner) -> std::collections::BTreeMap<String, Option<String>> {
+    let assisted = match owner {
+        JobOwner::Resident(address) if node.is_me(&address.machine) => {
+            matches!(crate::assists::host::kept(node, &address.resident), Ok(Some(true)))
+        }
+        _ => false,
+    };
+    if assisted { Default::default() } else { crate::timeline::born_shared::now(node) }
 }
 
 /// Which deed a job is. A job's short name is its conversation's only, and
@@ -270,8 +295,8 @@ fn keep(connection: &rusqlite::Connection, row: &Row) -> fastctx_storage::Result
     }
     connection.execute(
         "INSERT INTO book_deeds (deed, job, began, ended, from_machine, session, agent, held, project, account,
-             script, outcome, code, output, went, looked, copied)
-         VALUES (?17, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
+             script, outcome, code, output, went, looked, copied, sharing)
+         VALUES (?17, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?18)
          ON CONFLICT(deed) DO UPDATE SET
              ended = COALESCE(excluded.ended, book_deeds.ended),
              outcome = CASE WHEN excluded.outcome = 'running' THEN book_deeds.outcome ELSE excluded.outcome END,
@@ -298,6 +323,7 @@ fn keep(connection: &rusqlite::Connection, row: &Row) -> fastctx_storage::Result
             row.looked,
             row.copied,
             row.deed,
+            row.sharing,
         ],
     )?;
     for touch in &row.touched {
@@ -335,6 +361,11 @@ fn kept(db: &rusqlite::Connection, deed: &str) -> fastctx_storage::Result<bool> 
 /// deleted while it could not be told (`sealing::reconcile`).
 /// Opens the book, or a handle that says why it did not open
 /// (`fastctx_storage::Database::open_or_unavailable`).
+/// Whether everything earlier releases kept of the book is in it now.
+pub(crate) fn imported(node: &Node) -> bool {
+    migrate::ready(&node.book_database).unwrap_or(false)
+}
+
 pub(crate) fn open(world: &fastctx_types::layout::WorldDir) -> fastctx_storage::Database {
     fastctx_storage::Database::open_or_unavailable(&world.path().join("book.sqlite3"), "", |db| {
         fastctx_storage::versions::apply(
@@ -344,6 +375,8 @@ pub(crate) fn open(world: &fastctx_types::layout::WorldDir) -> fastctx_storage::
                 fastctx_storage::versions::Migration { version: 1, sql: SCHEMA },
                 fastctx_storage::versions::Migration { version: 2, sql: SEALS },
                 fastctx_storage::versions::Migration { version: 3, sql: SEALED_ACCOUNTS },
+                fastctx_storage::versions::Migration { version: 4, sql: SHARING },
+                fastctx_storage::versions::Migration { version: 5, sql: FORGOTTEN },
             ],
         )
     })
@@ -368,5 +401,5 @@ pub(crate) fn purge(node: &Node) -> std::io::Result<()> {
     if node.book_database.fault().is_some() || !migrate::ready(&node.book_database)? {
         return Ok(());
     }
-    sealing::purge(&node.book_database)
+    sealing::purge(&node.book_database, &node.topics)
 }

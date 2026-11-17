@@ -266,6 +266,22 @@ async fn receive_here_locked(
         }
     }
     let pending = Pending { delivery, readers, state: PendingState::Waiting, working, session: None, since: None };
+    // The user's words are kept in the asset library first, with their
+    // operation (design §28.14); the inbox delivers them.
+    let words = crate::timeline::words::is_words(&pending.delivery);
+    if words {
+        match crate::timeline::words::said(node, to, &pending.delivery).await? {
+            crate::timeline::words::Said::Go => {}
+            // Crossed into the host already — here, or where the
+            // conversation lived before — the same words said again go in
+            // no more (MM01).
+            crate::timeline::words::Said::Crossed => {
+                return Ok(Landed::Waiting { why: None, answered: answered(node, to, &about) });
+            }
+            // Not known to have reached it: said so, as it is (NN01, NN04).
+            crate::timeline::words::Said::Uncertain(why) => return Ok(Landed::Uncertain { why }),
+        }
+    }
     let kept = {
         let (directory, pending) = (directory.clone(), pending.clone());
         fastctx_platform::task::spawn_blocking(move || crate::inbox::keep(&directory, &pending))
@@ -276,6 +292,9 @@ async fn receive_here_locked(
     if kept {
         node.idle_probes.touched(to);
         crate::goals::engine::input_changed(node, to);
+        if words {
+            crate::timeline::described(node, to);
+        }
     }
     if removed {
         let why = if deleting {
@@ -647,9 +666,23 @@ pub async fn send_composer(
             session: None,
             since: None,
         };
+        // The user's words are kept in the asset library first here too
+        // (§3, M04).
+        if crate::timeline::words::is_words(&pending.delivery) {
+            match crate::timeline::words::said(node, id, &pending.delivery).await? {
+                crate::timeline::words::Said::Go => {}
+                crate::timeline::words::Said::Crossed => {
+                    return Ok(Some(Landed::Waiting { why: None, answered: answered(node, id, &about) }));
+                }
+                crate::timeline::words::Said::Uncertain(why) => return Ok(Some(Landed::Uncertain { why })),
+            }
+        }
         if keep(&directory, &pending).await? {
             node.idle_probes.touched(id);
             crate::goals::engine::input_changed(node, id);
+            if crate::timeline::words::is_words(&pending.delivery) {
+                crate::timeline::described(node, id);
+            }
         }
         return submit_thread(node, id, thread, &directory, pending, true, idle_only).await;
     }
@@ -739,9 +772,24 @@ async fn submit_thread(
     if single && keep(directory, &pending).await? {
         crate::goals::engine::input_changed(node, id);
     }
+    // What rides with the next turn does not go into a turn the user stopped
+    // that has not ended yet, alone or before other words; read holding the
+    // resident's speech, as the stop's own check is.
+    let stopped = match node.residents.now(id).and_then(|now| now.turn) {
+        Some(turn) => {
+            let (reading, whose) = (node.clone(), id.clone());
+            fastctx_platform::task::blocking(move || crate::stops::requested_turn(&reading, &whose, &turn))
+                .await
+                .map_err(|error| Failure::new(format!("reading whether the turn was stopped: {error}")))?
+        }
+        None => false,
+    };
+    if stopped && pending.delivery.notice.along().is_some() {
+        return Ok(Some(Landed::Waiting { why: None, answered: true }));
+    }
     let Batch { mut batch, after, waits } = {
         let (reading, whose, own) = (node.clone(), id.clone(), pending.delivery.id.clone());
-        crate::delivery::local(directory, move |directory| next_batch(&reading, &whose, directory, &own))
+        crate::delivery::local(directory, move |directory| next_batch(&reading, &whose, directory, &own, stopped))
             .await
             .map_err(|error| Failure::new(format!("reading what waits: {error}")))?
     };
@@ -803,7 +851,7 @@ async fn submit_thread(
     let (mut input, client) = match batch.as_slice() {
         // A fact of its own work reads best as the output of the tool that
         // started it.
-        [only] if matches!(only.delivery.notice, Notice::JobEnded { .. }) => (
+        [only] if as_tool_output(&[&only.delivery.notice], along_only) => (
             Input::ToolOutput {
                 name: "run".to_string(),
                 namespace: None,
@@ -926,6 +974,14 @@ fn hand_over_later(node: Arc<Node>, id: ResidentId, about: About, directory: Con
     });
 }
 
+/// Whether what one handover holds goes in as the output of the tool that
+/// started the work: the one fact that a job of its own ended, which wakes
+/// it. A job the user stopped wakes no one and rides along with the running
+/// turn, as text like all that rides along.
+fn as_tool_output(notices: &[&Notice], along_only: bool) -> bool {
+    !along_only && matches!(notices, [Notice::JobEnded { .. }])
+}
+
 /// A notice as it goes into a thread: the user's words as they typed them,
 /// everything else as the World tells it.
 fn said(notice: &Notice, here: &fastctx_types::MachineName) -> String {
@@ -1013,6 +1069,9 @@ pub async fn bind(
             let _held = held;
             heard(&working, &resident, &delivery, &turn)?;
             crate::inbox::settle(&working, directory, &delivery.id)?;
+            if let Ok(Some(progress)) = crate::lifecycle::retry::progress_now(&working, &resident, &delivery.id) {
+                crate::lifecycle::retry::started(&working, &resident, &progress);
+            }
             crate::lifecycle::retry::clear_now(&working, &resident, &delivery.id)
         })
         .await
@@ -1245,11 +1304,22 @@ struct Batch {
 /// precede its first actual input. One handover takes as much as it holds,
 /// a longer wait goes over several turns, and only as much of the wait is
 /// read as goes in, with the one after.
-fn next_batch(node: &Node, id: &ResidentId, directory: &ConversationDir, own: &NoticeId) -> std::io::Result<Batch> {
+/// What goes in one handover with `own`, oldest first. With the running
+/// turn one the user stopped (`stopped`), what rides with the next turn
+/// stays behind for it.
+fn next_batch(
+    node: &Node,
+    id: &ResidentId,
+    directory: &ConversationDir,
+    own: &NoticeId,
+    stopped: bool,
+) -> std::io::Result<Batch> {
     use crate::delivery::handovers::{BYTES, INPUTS, accepted_inputs};
     let (mut batch, mut after, mut bytes, mut closed, mut waits) = (Vec::new(), None, 0, false, false);
     let eligible = |kept: &Pending, accepted: &std::collections::HashSet<NoticeId>| {
+        let behind = stopped && kept.delivery.notice.along().is_some();
         kept.state == PendingState::Waiting
+            && !behind
             && !accepted.contains(&kept.delivery.id)
             && !node.taking.lock().expect("never poisoned").contains(&(id.clone(), kept.delivery.id.clone()))
     };
@@ -1526,6 +1596,38 @@ pub fn new_id(prefix: &str) -> NoticeId {
 
 /// A notice id that is the same whenever it is made from the same parts:
 /// the same thing told again is known for what it is.
+/// The words a device sent under its own id `id`, typed on `typed_on`, as
+/// they are named for good: by the machine's key, which a new name keeps, so
+/// words sent again after a rename are the same words (K04); by its name
+/// where no network here knows the machine.
+///
+/// Words typed here are named by this machine's own key; words from another
+/// machine by its key in the directory of the network they came through,
+/// `via` — never another network's machine of the same name (OO02), nor
+/// this machine though it was once called so (PP02).
+pub(crate) fn talk_id(
+    node: &Node,
+    via: Option<&fastctx_types::access::HubId>,
+    typed_on: &fastctx_types::MachineName,
+    id: &str,
+) -> NoticeId {
+    let key = match via {
+        Some(hub) => node.link_of(hub).and_then(|link| {
+            let view = link.view();
+            let directory = &view.directory;
+            directory.member(directory.canonical(typed_on)).map(|member| member.key.to_string())
+        }),
+        None if node.is_me(typed_on) => node.assets.as_ref().map(|assets| PublicKey::from_bytes(assets.device()).to_string()),
+        None => None,
+    };
+    match key {
+        Some(key) => fixed_id("talk", &[&key, id]),
+        None => fixed_id("talk", &[typed_on.as_str(), id]),
+    }
+}
+
+use fastctx_net::sign::PublicKey;
+
 pub fn fixed_id(prefix: &str, parts: &[&str]) -> NoticeId {
     use sha2::{Digest as _, Sha256};
     let mut hash = Sha256::new();
@@ -1535,4 +1637,45 @@ pub fn fixed_id(prefix: &str, parts: &[&str]) -> NoticeId {
     }
     let digest: String = hash.finalize().iter().take(10).map(|byte| format!("{byte:02x}")).collect();
     NoticeId::try_from(format!("{prefix}-{digest}")).expect("a word and hex")
+}
+
+#[cfg(test)]
+mod riding_along {
+    use super::*;
+    use fastctx_types::residents::STOPPED_BY_USER;
+    use fastctx_types::run::{EndedHow, StopRequest};
+
+    fn ended(how: EndedHow, by: Option<&str>) -> Notice {
+        Notice::JobEnded {
+            taken: false,
+            job: "j-abc123".to_string().try_into().expect("a job id"),
+            machine: "desktop".parse().expect("a machine name"),
+            request: None,
+            follower: None,
+            consumed: Vec::new(),
+            follower_unconfirmed: false,
+            how,
+            status: None,
+            at: Timestamp::UNIX_EPOCH,
+            output: "out.log".into(),
+            stderr: None,
+            last: None,
+            stop: by.map(|by| Box::new(StopRequest { by: by.into(), reason: String::new() })),
+            scratch: Vec::new(),
+        }
+    }
+
+    /// A job the user stopped rides along with the running turn, and what
+    /// rides along goes in as text: sent as a tool's output, the handover
+    /// to a running turn had no text to send and the node panicked.
+    #[test]
+    fn a_job_the_user_stopped_goes_in_as_text() {
+        let stopped = ended(EndedHow::Stopped, Some(STOPPED_BY_USER));
+        assert!(stopped.along().is_some());
+        assert!(!as_tool_output(&[&stopped], true));
+        let finished = ended(EndedHow::Finished, None);
+        assert!(finished.along().is_none());
+        assert!(as_tool_output(&[&finished], false));
+        assert!(!as_tool_output(&[&finished, &finished], false));
+    }
 }

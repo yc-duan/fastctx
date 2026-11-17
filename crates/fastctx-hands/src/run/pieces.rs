@@ -134,6 +134,7 @@ mod tests {
                 log: "C:/source/output.log".into(),
                 bytes: 1,
                 lines: 10_000,
+                sampled: None,
                 pieces,
                 legacy: Vec::new(),
                 escaped_lines: 0,

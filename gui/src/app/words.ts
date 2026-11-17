@@ -1,6 +1,7 @@
 // What the frame around every page says: the sidebar, the new conversation,
 // the settings. In the user's words (`world-gui.md`, 用词).
 
+import { enText, zhText } from "../conversation/text-words";
 import type { FolderPickerWords } from "./folder-picker";
 import { dollars, underCent } from "../world/money";
 import { agentName } from "../world/names";
@@ -83,6 +84,8 @@ export interface ShellWords {
   account: string;
   /** Who came into the accounts lately, not yet shown, for a screen reader. */
   arrivals(n: number): string;
+  /** The small ring beside 「我」 while some devices are not caught up. */
+  syncing(synced: number, devices: number): string;
   /** A login's part of the sidebar, folded or not. */
   groupOf(login: string): string;
   more(n: number): string;
@@ -133,11 +136,12 @@ export const zhFolderPicker: FolderPickerWords = {
   home: "主目录",
   up: "上一级",
   reading: "读取中…",
-  noFolders: "没有子文件夹",
+  noFolders: "无子文件夹",
+  more: "更多文件夹…",
   path: "路径",
-  unreadable: "打不开这个文件夹",
-  privacy: "macOS 没让 Fastctx 进这个文件夹：在「系统设置 › 隐私与安全性 › 完全磁盘访问权限」里打开 Fastctx，授权一次，换版也有效",
-  privacyGo: "去授权",
+  unreadable: "无法打开此文件夹",
+  privacy: "macOS 未允许 Fastctx 访问此文件夹：在「系统设置 › 隐私与安全性 › 完全磁盘访问权限」中开启 Fastctx；授权一次，更新后仍有效",
+  privacyGo: "授权",
   cancel: "取消",
   choose: "选择文件夹",
 };
@@ -149,6 +153,7 @@ export const enFolderPicker: FolderPickerWords = {
   up: "Up",
   reading: "Reading…",
   noFolders: "No folders here",
+  more: "More folders…",
   path: "Path",
   unreadable: "This folder could not be opened",
   privacy: "macOS keeps this folder from Fastctx: turn Fastctx on in System Settings › Privacy & Security › Full Disk Access; once is enough, across versions",
@@ -284,7 +289,7 @@ export const zhNewTalk: NewTalkWords = {
   limitReset: "已重置",
   token: "长期令牌",
   account: "账号",
-  assistantWorks: (owner) => `来自 ${owner}，在你的机器上工作`,
+  assistantWorks: (owner) => `来自 ${owner}，在我的机器上工作`,
   assistFrom: (owner) => `来自 ${owner}`,
   assistAgents: (owner) => `${owner} 的智能体`,
   assistUntil: (at, now) => `到 ${zhMoment.short(at, now)}`,
@@ -353,23 +358,23 @@ export const enNewTalk: NewTalkWords = {
   sendingFiles: "Uploading files…",
   dropHere: "Drop files here",
   filesNotSent: "Some files failed to upload",
-  notOpened: () => "Couldn't start",
+  notOpened: () => "Could not start",
 };
 
 export const zhPresence: PresenceWords = {
   troubles: zhTroubles,
   asked: (who, what) =>
-    `${who} ${{ answer: "问你", command: "想运行命令", change: "想改文件", tool: "想用工具", plan: "想按计划动手", form: "等你填写", other: "等你允许", waiting: "等你回复" }[what]}`,
+    `${who} ${{ answer: "提问", command: "请求运行命令", change: "请求修改文件", tool: "请求使用工具", plan: "计划待批准", form: "待填写表单", other: "等待许可", waiting: "等待回复" }[what]}`,
   finished: (who) => `${who} 回复了`,
-  urgent: (who) => `${who} 有要紧的事`,
+  urgent: (who) => `${who} 有待处理事项`,
   compacted: "对话已压缩",
   open: "打开",
   stop: "停止",
   arrived: (name, device, login) => `新${device ? "设备" : "机器"} ${name} 加入 ${login}`,
   arrivedManaged: (login) => `有受管机器用入网码加入 ${login}`,
-  arrivedBody: "如果不是你添加的，请在账号页移除",
+  arrivedBody: "如非本人添加，请在账号页移除",
   dissolved: (hubs) => `${hubs.join("、")} 已解散`,
-  dissolvedBody: "这台电脑已离开，Fastctx 和数据都还在",
+  dissolvedBody: "本机已退出网络，Fastctx 与数据保留",
   machineNotice: ({ machine, by, account, action: a }) => {
     const who = by ?? "中枢";
     switch (a.kind) {
@@ -380,10 +385,10 @@ export const zhPresence: PresenceWords = {
       case "remove":
         return `${who} 把 ${machine} 移出了网络${a.then === "uninstall" ? "并卸载了 Fastctx" : a.then === "everything" ? "并彻底移除了 Fastctx" : ""}`;
       case "share":
-        if (!a.shared && a.to === account) return by ? `${by} 收回了 ${machine} 给你的共享` : `${machine} 跑着中枢，不再共享给你`;
+        if (!a.shared && a.to === account) return by ? `${by} 已收回 ${machine} 的共享` : `${machine} 运行中枢，已不再共享`;
         return a.shared ? `${who} 把 ${machine} 共享给了 ${a.to}` : `${who} 收回了 ${machine} 给 ${a.to} 的共享`;
       case "assist":
-        return a.assisting ? `${who} 让 ${machine} 上的 ${agentName(a.agent)} 协助 ${a.to}` : `${who} 结束了 ${machine} 上的 ${agentName(a.agent)} 对 ${a.to} 的协助`;
+        return a.assisting ? `${who} 安排 ${machine} 上的 ${agentName(a.agent)} 协助 ${a.to}` : `${who} 结束了 ${machine} 上的 ${agentName(a.agent)} 对 ${a.to} 的协助`;
     }
   },
 };
@@ -399,9 +404,9 @@ export const enPresence: PresenceWords = {
   stop: "Stop",
   arrived: (name, device, login) => `New ${device ? "device" : "machine"} ${name} joined ${login}`,
   arrivedManaged: (login) => `Managed machines joined ${login} by a code`,
-  arrivedBody: "If you didn't add it, remove it on the Account page",
+  arrivedBody: "Not added by you? Remove it on the Account page",
   dissolved: (hubs) => `${hubs.join(", ")} ${hubs.length > 1 ? "were" : "was"} dissolved`,
-  dissolvedBody: "This computer has left; Fastctx and your data are untouched",
+  dissolvedBody: "This computer has left the network; Fastctx and data are kept",
   machineNotice: ({ machine, by, account, action: a }) => {
     const who = by ?? "The hub";
     switch (a.kind) {
@@ -457,7 +462,6 @@ export interface SettingsWords {
   themes: Record<"warm-black" | "ink-black" | "warm-white", string>;
   language: string;
   textSize: string;
-  sizeDefault: string;
   /** How much the interface moves: as the system asks, always, or not at
    *  all (`motion.ts`). */
   motion: string;
@@ -514,8 +518,29 @@ export interface SettingsWords {
   phonePowerSave: string;
   phoneMaker(maker: string): string;
   /** What to set by hand on a maker's phones, which no app can read. */
-  phoneVendor: Record<"honor" | "xiaomi" | "other", string[]>;
+  phoneVendor: Record<"honor" | "huawei" | "xiaomi" | "other", string[]>;
   phoneOpenApp: string;
+  /** The background connection: whether it runs, and what ended it. */
+  phoneKeep: string;
+  phoneKeepOn: string;
+  phoneKeepOff: string;
+  phoneKilled: string;
+  /** Straight to the maker's own pages, and the user's word they are set. */
+  phoneAutostart: string;
+  phoneVendorBattery: string;
+  phoneVendorDone: string;
+  phoneVendorSet: string;
+  /** How much of the World the phone keeps on itself. */
+  phoneCopy: string;
+  phoneCopyLight: string;
+  phoneCopyWhole: string;
+  phoneCopyLightSaid: string;
+  phoneCopyWholeSaid: string;
+  /** The sheet that walks through it once the phone is in a World. */
+  phoneGuideTitle: string;
+  phoneGuideWhy: string;
+  phoneGuideDone: string;
+  phoneGuideLater: string;
   serviceOn: string;
   /** What a startup service does, when its state is pointed at. */
   serviceWhat: string;
@@ -557,23 +582,22 @@ export const zhSettings: SettingsWords = {
   dataOpen: "查看与管理",
   proxy: "连中枢的代理",
   proxyShort: "代理",
-  proxyWhat: "这台电脑要经 HTTP 代理才连得上中枢服务器时填，比如 http://127.0.0.1:7890；清空就跟随系统",
+  proxyWhat: "本机须经 HTTP 代理连接中枢服务器时填写，例如 http://127.0.0.1:7890；留空则跟随系统",
   proxySystem: "跟随系统",
   proxyChange: "修改",
   proxySave: "保存",
   proxyCancel: "取消",
   proxyWrong: "写成 http://主机:端口",
-  proxyFailed: "没改成",
+  proxyFailed: "更改失败",
   days: (n) => `${n} 天`,
   theme: "主题",
   system: "跟随系统",
   themes: { "warm-black": "暖黑", "ink-black": "墨黑", "warm-white": "暖白" },
   language: "语言",
   textSize: "字号",
-  sizeDefault: "默认",
   motion: "动效",
   motions: { system: "跟随系统", always: "总是播放", off: "关闭" },
-  sizes: { "14": "小", "15": "标准", "16": "大", "17": "特大" },
+  sizes: { "15": "小", "16": "标准", "17": "大", "18": "特大" },
   device: "本机",
   machine: "机器名",
   phoneName: "手机名称",
@@ -595,7 +619,7 @@ export const zhSettings: SettingsWords = {
   pathLookup: { windows: "命令提示符", bash: "Git Bash", unix: "终端", codex: "Codex" },
   pathDifferent: (where, version) => `${where} 使用的是另一份 fastctx（${version}）`,
   pathUnknown: (where) => `无法确认 ${where} 使用的 fastctx`,
-  pathLegacy: "请勿运行旧版的 fastctx unapply：它会删除整个 .fastctx，包括世界的数据",
+  pathLegacy: "请勿运行旧版 fastctx unapply：它会删除整个 .fastctx，包括世界数据",
   pathTitle: "终端中的 fastctx",
   pathOk: "知道了",
   versionOld: (node, _nodeProtocol, client) => `本机服务 ${node} 与界面 ${client} 不兼容`,
@@ -613,7 +637,7 @@ export const zhSettings: SettingsWords = {
     failed: "更新失败",
   },
   renewFailed: failure(zhProblems, "更新失败"),
-  notDone: failure(zhProblems, "没有做成"),
+  notDone: failure(zhProblems, "操作失败"),
   phoneNotices: "通知",
   phoneNoticesOn: "已允许",
   phoneNoticesOff: "未允许",
@@ -622,7 +646,7 @@ export const zhSettings: SettingsWords = {
   phoneBattery: "电池优化",
   phoneBatteryOn: "不受限制",
   phoneBatteryOff: "受限制，通知可能延迟",
-  phoneOpenBattery: "电池设置",
+  phoneOpenBattery: "允许后台运行",
   phonePowerSave: "省电模式已开启",
   phoneMaker: (maker) => `${maker} 后台设置`,
   phoneVendor: {
@@ -632,10 +656,32 @@ export const zhSettings: SettingsWords = {
       "电池 › 更多电池设置：休眠时始终保持网络连接",
       "最近任务中下拉 Fastctx 卡片锁定",
     ],
-    xiaomi: ["应用详情 › 省电策略：无限制", "应用详情 › 自启动：开启", "最近任务中长按 Fastctx 卡片锁定"],
+    huawei: [
+      "设置 › 应用启动管理 › Fastctx：关闭自动管理，允许自启动、关联启动、后台活动",
+      "设置 › 电池优化 › 所有应用 › Fastctx：不允许",
+      "最近任务中下拉 Fastctx 卡片锁定",
+    ],
+    xiaomi: ["自启动：开启", "省电策略：无限制", "最近任务中长按 Fastctx 卡片锁定"],
     other: [],
   },
   phoneOpenApp: "应用详情",
+  phoneKeep: "后台保持在线",
+  phoneKeepOn: "正在运行",
+  phoneKeepOff: "没有在运行",
+  phoneKilled: "系统曾在后台结束 Fastctx，因此显示离线。完成以下设置后，切到后台也保持连接。",
+  phoneAutostart: "开启自启动",
+  phoneVendorBattery: "设置省电策略",
+  phoneVendorDone: "已设置",
+  phoneVendorSet: "已设置",
+  phoneCopy: "本机保存",
+  phoneCopyLight: "近期内容",
+  phoneCopyWhole: "全部内容",
+  phoneCopyLightSaid: "保存每段对话的近期内容及计划、笔记，离线可读；更早的内容与较大的文件在打开时获取。",
+  phoneCopyWholeSaid: "保存可读取的全部对话与文件，占用更多空间与流量；切回「近期内容」后，已保存的部分随对话清理释放。",
+  phoneGuideTitle: "后台保持在线",
+  phoneGuideWhy: "切到后台或锁屏后，仍可收到提醒，其他机器也显示本机在线。逐项点击即可；部分手机还需在系统设置中开启一个开关。",
+  phoneGuideDone: "完成",
+  phoneGuideLater: "稍后",
   serviceOn: "已开启",
   serviceWhat: "断网后自动重连",
   serviceOff: "未开启",
@@ -683,7 +729,7 @@ export const enSettings: SettingsWords = {
   dataOpen: "View and manage",
   proxy: "Proxy to the hub",
   proxyShort: "Proxy",
-  proxyWhat: "Where this computer reaches the hub only through an HTTP proxy, as http://127.0.0.1:7890; emptied, the system's settings again",
+  proxyWhat: "HTTP proxy for reaching the hub, e.g. http://127.0.0.1:7890; leave empty to follow the system",
   proxySystem: "The system's",
   proxyChange: "Change",
   proxySave: "Save",
@@ -698,8 +744,7 @@ export const enSettings: SettingsWords = {
   textSize: "Text size",
   motion: "Motion",
   motions: { system: "System", always: "Always", off: "Off" },
-  sizeDefault: "Default",
-  sizes: { "14": "Small", "15": "Standard", "16": "Large", "17": "Extra large" },
+  sizes: { "15": "Small", "16": "Standard", "17": "Large", "18": "Extra large" },
   device: "This device",
   machine: "Name",
   phoneName: "Phone name",
@@ -716,15 +761,15 @@ export const enSettings: SettingsWords = {
   service: "Start at boot",
   worldVersion: "Local service",
   versionHere: (version) => version,
-  versionDifferent: (relation) => (relation === "newer" ? "Local service is newer than the app" : relation === "older" ? "Local service is outdated" : "Local service doesn't match the app"),
-  versionInstalled: "The installed program doesn't match the app",
+  versionDifferent: (relation) => (relation === "newer" ? "Local service is newer than the app" : relation === "older" ? "Local service is outdated" : "Local service does not match the app"),
+  versionInstalled: "The installed program does not match the app",
   pathLookup: { windows: "Command Prompt", bash: "Git Bash", unix: "Terminal", codex: "Codex" },
   pathDifferent: (where, version) => `${where} uses another fastctx (${version})`,
-  pathUnknown: (where) => `Can't tell which fastctx ${where} uses`,
+  pathUnknown: (where) => `Cannot tell which fastctx ${where} uses`,
   pathLegacy: "Don't run the old fastctx unapply: it deletes the whole .fastctx, Fastctx data included",
   pathTitle: "fastctx in your terminal",
   pathOk: "Got it",
-  versionOld: (node, _nodeProtocol, client) => `Local service ${node} isn't compatible with this app (${client})`,
+  versionOld: (node, _nodeProtocol, client) => `Local service ${node} is not compatible with this app (${client})`,
   versionNone: "Local service not running",
   renew: "Update",
   renewPhase: {
@@ -739,7 +784,7 @@ export const enSettings: SettingsWords = {
     failed: "Update failed",
   },
   renewFailed: failure(enProblems, "Update failed"),
-  notDone: failure(enProblems, "Couldn't do that"),
+  notDone: failure(enProblems, "Could not complete"),
   phoneNotices: "Notifications",
   phoneNoticesOn: "Allowed",
   phoneNoticesOff: "Not allowed",
@@ -748,7 +793,7 @@ export const enSettings: SettingsWords = {
   phoneBattery: "Battery optimization",
   phoneBatteryOn: "Unrestricted",
   phoneBatteryOff: "Restricted; notifications may be delayed",
-  phoneOpenBattery: "Battery settings",
+  phoneOpenBattery: "Allow in background",
   phonePowerSave: "Power saving is on",
   phoneMaker: (maker) => `${maker} background settings`,
   phoneVendor: {
@@ -758,10 +803,32 @@ export const enSettings: SettingsWords = {
       "Battery › More battery settings: stay connected while asleep",
       "Pull Fastctx's card down in Recents to lock it",
     ],
-    xiaomi: ["App details › Battery saver: No restrictions", "App details › Autostart: on", "Long-press Fastctx's card in Recents to lock it"],
+    huawei: [
+      "Settings › App launch › Fastctx: turn off auto-manage; allow auto-launch, secondary launch and background activity",
+      "Settings › Battery optimization › All apps › Fastctx: Don't allow",
+      "Pull Fastctx's card down in Recents to lock it",
+    ],
+    xiaomi: ["Autostart: on", "Battery saver: No restrictions", "Long-press Fastctx's card in Recents to lock it"],
     other: [],
   },
   phoneOpenApp: "App details",
+  phoneKeep: "Stay online in the background",
+  phoneKeepOn: "Running",
+  phoneKeepOff: "Not running",
+  phoneKilled: "The system stopped Fastctx in the background, so it showed offline. With the settings below it stays connected.",
+  phoneAutostart: "Turn on autostart",
+  phoneVendorBattery: "Battery saver",
+  phoneVendorDone: "Done",
+  phoneVendorSet: "Set",
+  phoneCopy: "Kept on this phone",
+  phoneCopyLight: "Recent",
+  phoneCopyWhole: "Everything",
+  phoneCopyLightSaid: "Each conversation's recent part, plan and notes are kept and readable offline; older parts and large files load when opened.",
+  phoneCopyWholeSaid: "Every conversation and file you can read is kept, which takes more space and data; back on Recent, what is kept goes as conversations are cleared.",
+  phoneGuideTitle: "Keep Fastctx online in the background",
+  phoneGuideWhy: "In the background or with the screen locked, notifications still arrive and other machines show this phone online. Tap each item below; some phones also need a switch in system settings.",
+  phoneGuideDone: "Done",
+  phoneGuideLater: "Later",
   serviceOn: "On",
   serviceWhat: "Reconnects by itself after the network drops",
   serviceOff: "Off",
@@ -779,7 +846,7 @@ export const enSettings: SettingsWords = {
   legacy: "Old fastctx",
   legacyCleaned: (tidied, archived, place, waiting) =>
     `Cleaned ${tidied}, archived ${archived} to ${place}${waiting > 0 ? `, ${waiting} in use` : ""}`,
-  legacyUnreadable: () => "Couldn't read the cleanup record",
+  legacyUnreadable: () => "Could not read the cleanup record",
   legacyDone: "Tidied",
   legacyBusy: (waiting) => `${waiting} in use`,
 };
@@ -825,8 +892,8 @@ export const readerWords: ReaderWordsSet = {
     zoomIn: "Zoom in",
     zoomOut: "Zoom out",
     pdfLocked: "This PDF is password-protected",
-    pdfFailed: failure(enProblems, "Couldn't display PDF"),
-    failed: failure(enProblems, "Couldn't read file"),
+    pdfFailed: failure(enProblems, "Could not display PDF"),
+    failed: failure(enProblems, "Could not read file"),
     bytes: (count) => sizeOf(count, units.en),
     modified: (ago) => `modified ${ago}`,
   },
@@ -872,12 +939,12 @@ export const zhProjectForm: ProjectFormWords = {
   name: "名称",
   namePlaceholder: "例如 mark50 研发",
   what: "须知",
-  whatPlaceholder: "这个项目里的智能体每次都会读到：它是做什么的、怎么做、要注意什么",
-  whatTip: "写给在这个项目里干活的智能体：要照做的规矩，要知道的事。从 Fastctx 开的对话一开始就带着它，压缩之后也还在；改了以后，正在干活的对话下一次调用世界的工具时，会收到新的全文。",
+  whatPlaceholder: "项目的用途、做法与注意事项；智能体每次都会读取",
+  whatTip: "给本项目智能体的规矩与须知。从 Fastctx 开始的对话自始带有，压缩后仍保留；修改后，进行中的对话在下次调用 Fastctx 工具时收到新的全文。",
   machines: "机器",
   places: "位置",
   machinesPlaces: "机器与位置",
-  noMachines: "还没有选机器",
+  noMachines: "未选择机器",
   needName: "写一个名称",
   needWhat: "写几句须知",
   needMachine: "至少选一台机器",
@@ -890,7 +957,7 @@ export const zhProjectForm: ProjectFormWords = {
   open: "创建",
   save: "保存",
   saving: "保存中…",
-  cancel: "关闭",
+  cancel: "取消",
   failed: failure(zhProblems, "保存失败"),
 };
 
@@ -902,7 +969,7 @@ export const enProjectForm: ProjectFormWords = {
   namePlaceholder: "e.g. Mark 50 research",
   what: "Instructions",
   whatPlaceholder: "What every agent here reads each time: what this project is for, how to work in it, what to watch out for",
-  whatTip: "For every agent working in this project: what to follow and what to know. Conversations opened from Fastctx start with them and keep them after compacting; once they change, a conversation at work gets the new text with its next call of a World tool.",
+  whatTip: "Rules and background for every agent in this project. Conversations opened from Fastctx start with them and keep them after compacting; after a change, running conversations get the new text on their next Fastctx tool call.",
   machines: "Machines",
   places: "Locations",
   machinesPlaces: "Machines and locations",
@@ -920,7 +987,7 @@ export const enProjectForm: ProjectFormWords = {
   save: "Save",
   saving: "Saving…",
   cancel: "Close",
-  failed: failure(enProblems, "Couldn't save"),
+  failed: failure(enProblems, "Could not save"),
 };
 
 /** The user's consent to Claude working without asking, on one machine,
@@ -943,7 +1010,7 @@ export const zhConsent: ConsentWords = {
     "Claude 将直接运行命令、修改文件、访问网络，不再逐项确认，等同于 Claude Code 的「Bypass permissions」。可随时在智能体页撤销。",
   allow: "允许",
   withdrawTitle: (machine, account) => `撤销 Claude${account ? `（${account}）` : ""}在 ${machine} 上的授权？`,
-  withdrawWhat: "撤销后，Fastctx 将无法在这台机器上启动 Claude，直到再次授权。",
+  withdrawWhat: "撤销后，Fastctx 无法在该机器上启动 Claude，直至重新授权。",
   withdrawGo: "撤销",
   working: "处理中…",
   failed: failure(zhProblems, "操作失败"),
@@ -956,10 +1023,10 @@ export const enConsent: ConsentWords = {
     "Claude will run commands, edit files and use the network without asking each time, the same as Claude Code's “Bypass permissions”. Revoke anytime on the Agents page.",
   allow: "Allow",
   withdrawTitle: (machine, account) => `Revoke Claude's permission${account ? ` for ${account}` : ""} on ${machine}?`,
-  withdrawWhat: "Fastctx won't be able to start Claude on this machine until you allow it again.",
+  withdrawWhat: "Fastctx cannot start Claude on this machine until it is allowed again.",
   withdrawGo: "Revoke",
   working: "Working…",
-  failed: failure(enProblems, "Couldn't complete"),
+  failed: failure(enProblems, "Could not complete"),
   close: "Close",
 };
 
@@ -1114,9 +1181,10 @@ export const zhComposer: ComposerWords = {
     searching: "搜索中…",
     none: "未找到匹配的文件",
     outside: "加入项目后可用 @ 引用文件",
-    nowhere: "项目未设置这台机器上的文件位置",
+    nowhere: "项目未设置该机器上的文件位置",
   },
   attach: {
+    text: zhText,
     attach: "添加文件",
     photo: "拍照",
     drop: () => "拖放文件到这里",
@@ -1127,8 +1195,8 @@ export const zhComposer: ComposerWords = {
     failed: failure(zhProblems, "上传失败"),
     retry: "重试",
     size: (bytes) => sizeOf(bytes, ["B", "KB", "MB", "GB"]),
-    wait: "文件上传完成后再发送",
-    imagesOnly: "没有你的电脑在线，存不了这个文件",
+    wait: "上传完成后发送",
+    imagesOnly: "无在线的电脑可保存此文件",
   },
   asks: {
     waiting: "等待确认",
@@ -1204,14 +1272,14 @@ export const zhComposer: ComposerWords = {
     fork: "分叉对话",
     stop: "停止",
     goal: "设为目标",
-    goalArgs: "<要它做成什么>",
+    goalArgs: "<目标>",
     noCommands: "无匹配命令",
     effort: "推理强度",
     current: "当前",
     renameArgs: "<名称>",
     needsArgs: (usage) => `需要参数：${usage}`,
     skill: "技能",
-    skillWords: "要它做什么，也可以不写",
+    skillWords: "要做什么（可选）",
     unpick: "去掉",
     host: {
       compact: "压缩对话",
@@ -1249,16 +1317,16 @@ export const zhComposer: ComposerWords = {
   forkGo: "分叉",
   never: "取消",
   unknown: (name) => `未知命令 /${name}`,
-  afterTurn: (name) => `这一轮结束后才能 /${name}`,
+  afterTurn: (name) => `本轮结束后才能执行 /${name}`,
   nowRunning: "正在做",
   withdraw: "撤回",
-  unknownOutcome: (name) => `/${name} 不确定做成了没有`,
-  noCommands: "没读到这段对话能用的命令，命令没送出",
+  unknownOutcome: (name) => `/${name} 结果未知`,
+  noCommands: "无法读取本对话可用的命令，未发送",
   running: (name) => `正在执行 /${name}…`,
   done: (name) => `/${name} 已完成`,
   reported: (name) => `/${name} 已执行`,
   refusedOn: (said, model) => `${said}（当前模型 ${model}）`,
-  forkIncomplete: "已分叉，部分内容没带过去",
+  forkIncomplete: "已分叉，部分内容未带入",
   failed: failure(zhProblems, "执行失败"),
   context: (percent, used, window) => `上下文 ${percent}%（${used.toLocaleString()} / ${window.toLocaleString()}）`,
   usage: {
@@ -1282,17 +1350,17 @@ export const zhComposer: ComposerWords = {
     reset: "已重置",
     usedBefore: (percent) => `重置前已用 ${percent}%`,
     cost: (usd) => (underCent(usd) ? "本次对话 不到 $0.01" : `本次对话 约 ${dollars(usd)}`),
-    costWhy: "由 Claude Code 自己计算：它按内置的 Anthropic API 官方价目表，把每个请求的 token 折成美元，累加成会话总额；Fastctx 经官方 mod 接口的 session.measure 事件读取这个总额，按增量记账。订阅登录不实际扣这笔钱。",
+    costWhy: "由 Claude Code 计算：按内置的 Anthropic API 官方价目表将每个请求的 token 折算为美元，累计为会话总额；Fastctx 经官方 mod 接口的 session.measure 事件读取总额，按增量记账。订阅登录不实际扣费。",
     none: "暂无用量数据",
     hit: "缓存命中",
-    warm: "缓存还热",
+    warm: "缓存有效",
     cold: "已冷",
     left: (ms) => (ms < 60_000 ? `${Math.max(1, Math.ceil(ms / 1000))} 秒` : ms < 3_600_000 ? `${Math.ceil(ms / 60_000)} 分` : `${Math.round(ms / 3_600_000)} 小时`),
     ttl: (ms) => (ms >= 3_600_000 ? `${Math.round(ms / 3_600_000)} 小时缓存` : `${Math.round(ms / 60_000)} 分钟缓存`),
     contextTitle: (used, window) => (window ? `上下文 ${used.toLocaleString()} / ${window.toLocaleString()}，${Math.round((used / window) * 100)}%` : `上下文 ${used.toLocaleString()}`),
     hitTitle: (hit) => `最近一次请求，缓存命中 ${hit}`,
-    warmTitle: (left, ttl) => `从最后一次回答算起，缓存还能留 ${left}（${ttl}）；过了这段时间，下一次请求要把整个上下文重新写进缓存`,
-    coldTitle: "缓存已经过期，下一次请求要把整个上下文重新写进缓存",
+    warmTitle: (left, ttl) => `距上次回答，缓存还剩 ${left}（${ttl}）；过期后，下一次请求将重新写入整个上下文`,
+    coldTitle: "缓存已过期，下一次请求将重新写入整个上下文",
     requests: (n, span) => `${n} 次请求，${span}`,
     span: (ms) => {
       const minutes = Math.round(ms / 60_000);
@@ -1305,7 +1373,7 @@ export const zhComposer: ComposerWords = {
     highest: "最高",
     lowest: "最低",
     readout: (hit, time) => `${hit}　${time}`,
-    stretch: "选一段",
+    stretch: "选择区间",
     steps: "每一步的上下文",
     close: "关闭",
     stepsNow: "现在",
@@ -1317,10 +1385,10 @@ export const zhComposer: ComposerWords = {
     stepSaid: (step, context, grew) => [`第 ${step} 步`, `上下文 ${context}`, grew].filter(Boolean).join("　"),
     step: (step) => `第 ${step} 步`,
     heaviest: "最占地方的工具调用",
-    heaviestWhy: "一步里几次调用各占多少，按各自返回了多少来分",
+    heaviestWhy: "一步内各调用的占比，按各自返回量分摊",
     backToHeaviest: "最占地方的",
     rest: (count) => `其余 ${count} 项`,
-    noCalls: "这一步没有工具调用",
+    noCalls: "本步无工具调用",
   },
 };
 
@@ -1333,6 +1401,7 @@ export const enComposer: ComposerWords = {
     nowhere: "This project has no file locations on that machine",
   },
   attach: {
+    text: enText,
     attach: "Add files",
     photo: "Take a photo",
     drop: () => "Drop files here",
@@ -1344,7 +1413,7 @@ export const enComposer: ComposerWords = {
     retry: "Retry",
     size: (bytes) => sizeOf(bytes, ["B", "KB", "MB", "GB"]),
     wait: "Wait for uploads to finish",
-    imagesOnly: "None of your computers is online to keep this file",
+    imagesOnly: "No computer is online to keep this file",
   },
   asks: {
     waiting: "Needs your approval",
@@ -1370,9 +1439,9 @@ export const enComposer: ComposerWords = {
     dismiss: "Ignore",
     required: "Required",
     requiredOf: (name) => `Required: ${name}`,
-    formUnreadable: "This form can't be displayed",
+    formUnreadable: "This form cannot be displayed",
     sending: "Submitting…",
-    failed: failure(enProblems, "Couldn't submit"),
+    failed: failure(enProblems, "Could not submit"),
     cannot: (request) => `Unsupported request: ${request}`,
     permissions: "Requests more permissions (not supported)",
     verification: "Requests verification (not supported)",
@@ -1420,14 +1489,14 @@ export const enComposer: ComposerWords = {
     fork: "Fork conversation",
     stop: "Stop",
     goal: "Set a goal",
-    goalArgs: "<what it should get done>",
+    goalArgs: "<goal>",
     noCommands: "No matching commands",
     effort: "Reasoning",
     current: "current",
     renameArgs: "<name>",
     needsArgs: (usage) => `Needs arguments: ${usage}`,
     skill: "Skill",
-    skillWords: "What to do with it, if anything",
+    skillWords: "What to do (optional)",
     unpick: "Remove",
     host: {
       compact: "Compact conversation",
@@ -1453,7 +1522,7 @@ export const enComposer: ComposerWords = {
     noServers: "No MCP servers connected",
     server: (state) => ({ running: "running", ready: "ready", enabled: "enabled", connected: "connected", connecting: "connecting", starting: "starting", disabled: "disabled", failed: "failed" })[state] ?? state,
     tools: (count) => `${count} ${count === 1 ? "tool" : "tools"}`,
-    toolsFailed: () => "Couldn't load tools",
+    toolsFailed: () => "Could not load tools",
   },
   modelChip: "Model",
   noModels: "No models available",
@@ -1469,7 +1538,7 @@ export const enComposer: ComposerWords = {
   nowRunning: "Running",
   withdraw: "Withdraw",
   unknownOutcome: (name) => `Not sure whether /${name} went through`,
-  noCommands: "Couldn't read this conversation's commands; the command wasn't sent",
+  noCommands: "Could not read this conversation's commands; the command was not sent",
   running: (name) => `Running /${name}…`,
   done: (name) => `/${name} done`,
   reported: (name) => `/${name} ran`,
@@ -1521,7 +1590,7 @@ export const enComposer: ComposerWords = {
     highest: "highest",
     lowest: "lowest",
     readout: (hit, time) => `${hit}  ${time}`,
-    stretch: "Choose a stretch",
+    stretch: "Choose a range",
     steps: "Context, step by step",
     close: "Close",
     stepsNow: "now",
@@ -1625,6 +1694,7 @@ export const zhShell: ShellWords = {
   machinesCount: (n) => `${n} 台机器`,
   account: "我",
   arrivals: (n) => `${n} 台新设备`,
+  syncing: (synced, devices) => `同步：${devices} 台中 ${synced} 台已完成`,
   groupOf: (login) => login,
   more: (n) => `另外 ${n} 个`,
   span: zhSpan,
@@ -1684,6 +1754,7 @@ export const enShell: ShellWords = {
   machinesCount: (n) => (n === 1 ? "1 machine" : `${n} machines`),
   account: "Me",
   arrivals: (n) => `${n} new device${n === 1 ? "" : "s"}`,
+  syncing: (synced, devices) => `Sync: ${synced} of ${devices} devices caught up`,
   groupOf: (login) => login,
   more: (n) => `${n} more`,
   span: enSpan,

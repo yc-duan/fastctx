@@ -21,10 +21,27 @@ LATER_FACTS = ["delivery_failed", "woke"]
 # A live piece as a node now tells it, with where it stands in its telling.
 MARKED_LIVE = {"kind": "watched", "id": 37, "watched": {
     "kind": "live", "event": {"at": AT, "event": "turn_started", "turn": "turn-1"},
-    "mark": {"epoch": 7, "sequence": 3}}}
+    "mark": {"epoch": 7, "sequence": 3}, "likeness": list(range(32))}}
 # The protocol each kind of host control's result came with; the rest came with 13.
 CONTROLLED_SINCE = {"done": 5, "forked": 5, "reported": 10, "refused": 10, "model_menu": 10}
 
+
+
+# Pages are no more (beta.18), but what an earlier release wrote as a page
+# stays readable: a page as speaker, writer and job owner in old records.
+RETIRED_PAGE = {"town": "mark50", "page": "training", "version": 1,
+                "by": {"kind": "resident", "address": {"machine": "desktop", "resident": "codex-abcd"}},
+                "on": "desktop", "opened_on": "phone"}
+PAGE_SPEAKER = {"kind": "page", "page": RETIRED_PAGE}
+PAGE_WRITER = {"kind": "page", "page": RETIRED_PAGE}
+PAGE_JOB_OWNER = {"page": RETIRED_PAGE}
+# A project's map as today's node writes it: its pages, which readers before
+# beta.18 require, always empty.
+MAP = {"town": "mark50", "ledger": "C:/world/towns/mark50/ledger",
+       "record": {"version": 1, "name": "Mark 50", "what": "Training experiments", "machines": ["desktop"],
+                  "places": [], "canon": None, "by": {"kind": "user"}, "on": "desktop", "at": "2026-10-04T12:00:00Z"},
+       "opened": {"by": {"kind": "user"}, "on": "desktop", "at": "2026-10-04T12:00:00Z"},
+       "journals": [], "pages": [], "canon": None}
 
 def frame(reply):
     return {"kind": "reply", "id": 37, "reply": {"Ok": reply}}
@@ -37,7 +54,8 @@ def worlds(fixtures):
     for index in range(max(len(world["who"]), len(world["nodes"]), len(accounts))):
         yield {"here": "desktop", "who": world["who"][index % len(world["who"])],
                "nodes": world["nodes"][index % len(world["nodes"])], "towns": world["towns"],
-               "accounts": accounts[index % len(accounts)]}
+               "accounts": accounts[index % len(accounts)],
+               "machine_presence": world.get("machine_presence", [])}
 
 
 def replies(fixtures):
@@ -123,7 +141,7 @@ def replies(fixtures):
     for kind in ["reconnecting", "safety", "rerouted", "tools_missing", "tool_server", "warning", "error"]:
         notices.append({"kind": "health", "colleague": ADDRESS, "label": "task", "health": {"kind": kind, "text": kind}})
     for speaker in [{"kind": "user", "machine": "desktop"}, {"kind": "resident", "address": ADDRESS},
-                    {"kind": "world"}, fixtures["pages"]["speaker"]]:
+                    {"kind": "world"}, PAGE_SPEAKER]:
         notices.append({"kind": "words", "from": speaker, "text": "verbatim words"})
     # What a colleague tells the agent that asked it, with message_user.
     notices.append({"kind": "words", "from": {"kind": "resident", "address": ADDRESS}, "text": "verbatim words",
@@ -142,9 +160,9 @@ def replies(fixtures):
         yield {"reply": "nodes", **nodes}
     yield {"reply": "towns", "towns": fixtures["world"]["towns"]}
     yield {"reply": "journals", "town": "project", "journals": fixtures["world"]["journals"]}
-    page_map = fixtures["pages"]["map"]
+    page_map = MAP
     for writer in [{"kind": "user"}, {"kind": "resident", "address": ADDRESS},
-                   {"kind": "session", "agent": "claude"}, fixtures["pages"]["writer"],
+                   {"kind": "session", "agent": "claude"}, PAGE_WRITER,
                    {"kind": "elsewhere", "page": False}, {"kind": "elsewhere", "page": True}]:
         record = {**page_map["record"], "by": writer}
         stamp = {"by": writer, "on": "desktop", "at": AT}
@@ -167,9 +185,6 @@ def replies(fixtures):
         yield {"reply": "journal", "view": {"town": "project", "journal": "notes", "directory": "C:/notes",
                "description": {"version": 1, "text": "notes", "by": writer, "on": "desktop", "at": AT}, "first": 1,
                "entries": [{"stamp": entry, "text": "entry", "mentioned_by": []}], "total": 1, "writers": 1}}
-    for reply in fixtures["pages"]["replies"]:
-        if reply["reply"] in ["page", "pages"]:
-            yield reply
     record = {"id": "j-abc123", "machine": "desktop", "owner": ADDRESS, "town": "project", "script": "echo hello",
               "cwd": "C:/data", "output": "C:/job.log", "started_at": AT, "supervisor": None, "pid": 17,
               "exit": {"status": {"code": 0}, "at": AT}, "output_ended_at": AT, "remaining": 0,
@@ -178,12 +193,12 @@ def replies(fixtures):
     resident = fixtures["world"]["who"][0]["machines"][0]["reply"]["residents"][0]
     yield {"reply": "waited", "records": [{**record, "owner": ADDRESS}]}
     jobs = fixtures["world"]["who"][0]["machines"][0]["reply"]["jobs"]
-    for owner in [ADDRESS, fixtures["pages"]["job_owner"]]:
+    for owner in [ADDRESS, PAGE_JOB_OWNER]:
         yield {"reply": "looked", "looked": [{"id": "j-abc123", "found": [{"kind": "job", "record": {**record, "owner": owner}}], "unasked": ["offline"]}]}
         who = deepcopy(fixtures["world"]["who"][0])
         who["machines"][0]["reply"]["jobs"][0]["owner"] = owner
         yield {"reply": "who", **who}
-    for speaker in [{"kind": "world"}, fixtures["pages"]["speaker"]]:
+    for speaker in [{"kind": "world"}, PAGE_SPEAKER]:
         detail = {"resident": resident, "records": "C:/resident", "actions": [resident["last_action"]],
                   "actions_total": 1, "asked": "task", "answers": [{"at": AT, "kind": "heard", "from": speaker, "turn": "turn-1", "text": "words"}], "jobs": jobs}
         yield {"reply": "looked", "looked": [{"id": ADDRESS["resident"], "found": [{"kind": "resident", **detail}], "unasked": []}]}
@@ -224,10 +239,9 @@ def calls(fixtures):
         yield {"call": "nodes"}, peer, False
     yield {"call": "nodes"}, {"kind": "command", "resident": None, "session": None}, False
     yield {"call": "watch", "resident": ADDRESS["resident"], "machine": None}, PEER, False
+    yield {"call": "watch", "resident": ADDRESS["resident"], "machine": None, "live_only": True, "now": True}, PEER, False
     yield {"call": "since", "since": AT, "town": None}, PEER, False
     yield {"call": "agents", "machine": None}, PEER, False
-    for call in fixtures["pages"]["calls"]:
-        yield call, PEER, call["do"] in ["publish", "read", "list"]
 
 
 def page_identity(value):
@@ -260,6 +274,14 @@ def samples(root, shipped):
             {"call": "thumbnail", "machine": "laptop", "request": {"path": "C:/a.png", "max": 96}},
             {"call": "lines", "machine": "laptop", "request": {"kind": "open", "path": "C:/a.txt", "decoding": {"kind": "file", "encoding": None}}},
             {"call": "read_lines", "machine": "laptop", "request": {"source": "line-source", "start": 0, "count": 5}},
+            {"call": "timeline", "machine": "laptop", "request": {"do": "page", "resident": ADDRESS["resident"],
+             "from": {"from": "latest"}, "max_events": 400, "max_bytes": 1048576}},
+            {"call": "timeline", "machine": None, "request": {"do": "moved", "resident": ADDRESS["resident"], "after": 3}},
+            {"call": "timeline", "machine": "laptop", "request": {"do": "object", "resident": ADDRESS["resident"],
+             "object": "ab" * 32, "offset": 1, "length": 262144}},
+            {"call": "timeline", "machine": "laptop", "request": {"do": "changes", "resident": ADDRESS["resident"],
+             "after": 7, "max_events": 400, "max_bytes": 1048576}},
+            {"call": "topics", "request": {"run": "18f0a-1c2", "known": [{"topic": "logins", "revision": 3}]}},
         ]:
             yield {"mode": "current_request", "protocol": protocol, "peer": PEER, "admitted": False,
                    "value": {"kind": "call", "id": 37, "call": call}}
@@ -271,6 +293,9 @@ def samples(root, shipped):
         # A node that follows collaborations says so; a client before it reads past that.
         yield {"mode": "welcome", "protocol": protocol,
                "value": {"kind": "accepted", "machine": "desktop", "version": "1.0.0", "collaboration_watch": True}}
+        yield {"mode": "welcome", "protocol": protocol,
+               "value": {"kind": "accepted", "machine": "desktop", "version": "1.0.0", "timeline_reads": True, "watch_live": True,
+                         "topics": True, "timer_pages": True, "composer_documents": True}}
         yield {"mode": "watched", "protocol": protocol, "value": MARKED_LIVE}
         for reply in replies(fixtures):
             if protocol == 5 and reply["reply"] == "server_invitation":
@@ -308,12 +333,52 @@ def samples(root, shipped):
                 continue
             yield {"mode": "request", "protocol": protocol, "peer": peer, "admitted": admitted,
                    "value": {"kind": "call", "id": 37, "call": call}}
+    # Native stream variants have their own negotiated subprotocol. They are
+    # decoded by the current peer and never offered to a historical reader.
+    mutation = {"operation": "native-contract", "do": "edit", "target": {"kind": "draft"},
+                "epoch": 0, "after": None, "delete": [], "insert": "x"}
+    native_input = {"kind": "mutate", "number": 3, "mutation": mutation}
+    operation = {"operation": "native-contract", "delivery": "delivery-a", "accepted": True,
+                 "landed": None, "failure": None}
+    document = {"id": "document-a", "revision": 1, "epoch": 0,
+                "attachments": [], "uploads": [], "files_on": None}
+    state = {"revision": 1, "draft": document, "queue": [], "commands": [], "unobserved": [],
+             "held": None, "awaiting_turn": None, "operations": [operation]}
+    native_frames = [
+        {"kind": "result", "number": 3, "revision": 1, "operation": operation},
+        {"kind": "state", "version": 1, "state": state, "documents": [], "mutations": True},
+        {"kind": "update", "revision": 2, "document": {"document": "document-a", "revision": 2, "update": "AAA="}},
+        {"kind": "saved", "number": 3, "document": "document-a", "revision": 2, "document_revision": 2},
+        {"kind": "refused", "number": 3, "failure": {"message": "refused"}},
+        # What came of a send: it waits in the queue, it went, or it failed.
+        {"kind": "result", "number": 4, "revision": 2, "operation": {
+            "operation": "native-queued", "delivery": None, "accepted": False, "landed": None, "failure": None}},
+        {"kind": "result", "number": 5, "revision": 2, "operation": {
+            "operation": "native-sent", "delivery": "delivery-b", "accepted": False,
+            "landed": {"kind": "new_turn", "turn": "turn-1"}, "failure": None}},
+        {"kind": "result", "number": 6, "revision": 2, "operation": {
+            "operation": "native-withdraw", "delivery": None, "accepted": False, "landed": None,
+            "failure": "these words were already sent"}},
+    ]
+    # A send taken back by its name.
+    native_withdraw = {"kind": "mutate", "number": 6,
+                       "mutation": {"operation": "native-withdraw", "do": "withdraw", "send": "native-sent"}}
+    for shape, value in [("input", native_input), ("input", native_withdraw),
+                         ("command", {"kind": "composer", "id": 37, "input": native_input})]:
+        yield {"mode": "native_composer", "shape": shape, "protocol": 13, "value": value}
+    for native_frame in native_frames:
+        yield {"mode": "native_composer", "shape": "frame", "protocol": 13, "value": native_frame}
+        yield {"mode": "native_composer", "shape": "watched", "protocol": 13,
+               "value": {"kind": "watched", "id": 37, "watched": {"kind": "documents", "frame": native_frame}}}
     # The releases of protocol 13 read today's replies with the types they
     # shipped: a tool process outlives its node's change of program, so a
     # tool of any shipped release reads a later node's answers as it is. It
     # says no later notices, so a sentinel's finding and the later World facts
     # are words to it.
     for reader, shapes in shipped.items():
+        for call in ["world_now", "watch_world"]:
+            yield {"mode": "additive_request", "protocol": 13, "reader": reader,
+                   "value": {"kind": "call", "id": 37, "call": {"call": call, "known": ["laptop"]}}}
         # Its interface follows the World: the node sends it the whole, shaped
         # for what it says it reads.
         for now in worlds(fixtures):
@@ -325,6 +390,9 @@ def samples(root, shipped):
             yield {"mode": "welcome", "protocol": 13, "reader": reader, "value": welcome}
         yield {"mode": "welcome", "protocol": 13, "reader": reader,
                "value": {"kind": "accepted", "machine": "desktop", "version": "1.0.0", "collaboration_watch": True}}
+        yield {"mode": "welcome", "protocol": 13, "reader": reader,
+               "value": {"kind": "accepted", "machine": "desktop", "version": "1.0.0", "timeline_reads": True, "watch_live": True,
+                         "topics": True, "timer_pages": True, "composer_documents": True}}
         yield {"mode": "watched", "protocol": 13, "reader": reader, "value": MARKED_LIVE}
         for reply in replies(fixtures):
             notice = reply["notices"][0]["notice"] if reply["reply"] == "notices" else {}
@@ -334,3 +402,8 @@ def samples(root, shipped):
                    "text_result": elsewhere(reply)}
         yield {"mode": "reply", "protocol": 13, "reader": reader,
                "value": {"kind": "reply", "id": 37, "reply": {"Err": {"message": "not executed"}}}}
+
+        if reader == "v13_beta17":
+            yield {"mode": "reply", "protocol": 13, "reader": reader,
+                   "value": frame({"reply": "timers", "timers": [], "next": '{"conversation":"codex-ab12","position":128}',
+                                   "oversized": [{"handle": "timer-legacy", "identity_preview": "legacy", "identity_bytes": 5000, "body_bytes": 17000000}]})}

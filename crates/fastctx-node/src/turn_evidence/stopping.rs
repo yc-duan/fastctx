@@ -44,7 +44,9 @@ pub(crate) async fn remember(
     let turn = turn.to_string();
     fastctx_platform::task::spawn_blocking(move || {
         let entry = crate::records::metadata::prepare(&path)?;
-        crate::records::write_at(&entry.directory, fastctx_storage::Priority::Control, turn.len() + 256, move |rows| {
+        // On the way to a stop: kept at once, on the disk with the turn's
+        // durable end (`records::write_relaxed_at`).
+        crate::records::write_relaxed_at(&entry.directory, fastctx_storage::Priority::Control, turn.len() + 256, move |rows| {
             if let Some(previous) = rows.get::<Requested>(&entry.family, "value")? {
                 if previous.turn != turn {
                     return Err(fastctx_storage::Error::with_kind(

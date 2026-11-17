@@ -4,6 +4,7 @@ import { displayedText, textMatches } from "./find-text";
  * to the index. Unchanged blocks keep their ranges through a stream. */
 export class FindHighlights {
   private query = "";
+  private membersOnly = false;
   private ranges = new Map<HTMLElement, Range[]>();
   private dirty = new Set<HTMLElement>();
   private all: Set<Range> | null = null;
@@ -30,7 +31,7 @@ export class FindHighlights {
     });
   }
 
-  paint(query: string, identity: string | null, current: () => Range | null): void {
+  paint(query: string, identity: string | null, current: () => Range | null, membersOnly = false): void {
     const registry = (CSS as unknown as { highlights?: Map<string, unknown> }).highlights;
     const Highlight = (window as unknown as { Highlight?: new () => Set<Range> }).Highlight;
     if (!registry || !Highlight) return;
@@ -42,7 +43,8 @@ export class FindHighlights {
       registry.set("find", this.all);
       registry.set("find-current", this.chosen);
     }
-    if (query !== this.query) {
+    if (query !== this.query || membersOnly !== this.membersOnly) {
+      this.membersOnly = membersOnly;
       // Closed or empty search does not follow the stream. Starting again
       // scans the mounted blocks, including changes made while unobserved.
       if (query && !this.query) {
@@ -66,7 +68,7 @@ export class FindHighlights {
       const ranges: Range[] = [];
       for (const match of textMatches(text.text, query)) {
         const range = text.range(match);
-        if (!range) continue;
+        if (!range || (membersOnly && (range.startContainer.parentElement?.closest(".group-head") || range.endContainer.parentElement?.closest(".group-head")))) continue;
         ranges.push(range);
         this.all.add(range);
       }

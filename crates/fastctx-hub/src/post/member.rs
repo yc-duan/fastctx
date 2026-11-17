@@ -24,6 +24,16 @@ pub(crate) struct Backlog {
     pub counted: AtomicBool,
 }
 
+/// What the mailbox holds, without listing it: no letter numbered below
+/// `first` is there, and `count` letters are. Each letter's size is looked
+/// up as it goes, so a long backlog takes no memory here and no look at
+/// every file when the hub starts.
+#[derive(Clone, Copy, Default)]
+struct Held {
+    first: u64,
+    count: usize,
+}
+
 struct Sending {
     generation: u64,
     out: crate::outq::Outq,
@@ -42,13 +52,24 @@ pub(super) struct State {
     generation: Arc<AtomicU64>,
     retired: Arc<std::sync::atomic::AtomicBool>,
     backlog: Arc<Backlog>,
-    files: BTreeMap<u64, u64>,
+    held: Held,
     loaded: bool,
     persisted_next: u64,
     dirty_metadata: bool,
     dirty_count: bool,
     to: Option<Sending>,
+    /// The last pump stopped at `LOOKED_AT_ONCE` with room still to send:
+    /// it goes on between this mailbox's commands.
+    unfinished: bool,
+    /// Letters still to delete through this number, a deletion cut short at
+    /// `LOOKED_AT_ONCE`: it goes on between this mailbox's commands.
+    erase_to: Option<u64>,
 }
+
+/// Letter numbers one pump looks at most, letters or not: a long run of
+/// numbers whose letters went before they were sent is passed a part at a
+/// time, with what the mailbox is asked in between.
+const LOOKED_AT_ONCE: u64 = 4096;
 
 impl State {
     #[allow(clippy::too_many_arguments)]
@@ -76,12 +97,14 @@ impl State {
             generation,
             retired,
             backlog,
-            files: BTreeMap::new(),
+            held: Held::default(),
             loaded: false,
             persisted_next,
             dirty_metadata: false,
             dirty_count: false,
             to: None,
+            unfinished: false,
+            erase_to: None,
         }
     }
 
@@ -152,91 +175,131 @@ impl State {
     async fn load(&mut self) -> Result<()> {
         if !self.loaded {
             let directory = self.directory();
-            self.files = blocking(move || Ok(crate::store::letter_numbers(&directory)?.into_iter().collect())).await?;
+            let (lowest, count) = blocking(move || crate::store::letter_span(&directory)).await?;
+            self.held = Held { first: lowest.unwrap_or(self.record().next), count };
             self.loaded = true;
-            self.backlog.held.store(self.files.len(), Ordering::Relaxed);
+            // Letters settled as never delivered still here go on going.
+            let expired = self.record().expired_through;
+            if expired >= self.held.first && self.held.count > 0 {
+                self.erase_to = Some(self.erase_to.unwrap_or(0).max(expired));
+            }
+            self.backlog.held.store(count, Ordering::Relaxed);
             self.backlog.counted.store(true, Ordering::Relaxed);
         }
         Ok(())
     }
 
+    /// Deletes the letters `numbers`; a number with no letter is passed
+    /// over. When a deletion fails, the mailbox is counted again before it
+    /// is used next.
     async fn erase(&mut self, numbers: Vec<u64>) -> Result<()> {
         let directory = self.directory();
-        let mut files = std::mem::take(&mut self.files);
-        self.loaded = false;
-        self.files = blocking(move || {
-            for seq in numbers {
-                match fastctx_platform::disk::remove_file(directory.join(format!("{seq:020}"))) {
-                    Err(error) if error.kind() != std::io::ErrorKind::NotFound => return Err(error),
-                    _ => {}
-                }
-                files.remove(&seq);
-            }
-            Ok(files)
-        })
-        .await?;
-        self.loaded = true;
-        self.backlog.held.store(self.files.len(), Ordering::Relaxed);
+        self.settle(blocking(move || remove_letters(&directory, numbers)).await)
+    }
+
+    /// Deletes every letter numbered through `through`, at most
+    /// `LOOKED_AT_ONCE` numbers at once: what is left goes on between this
+    /// mailbox's commands.
+    async fn erase_through(&mut self, through: u64) -> Result<()> {
+        // A deletion still under way goes on to where it was to go: a lower
+        // number, as an older `taken` a reconnection brings, never calls it
+        // off; nor does a deletion that failed part way, the target kept
+        // until it is reached (R2).
+        let through = through.max(self.erase_to.unwrap_or(0)).max(self.record().expired_through);
+        let last = through.min(self.record().next.saturating_sub(1));
+        let first = self.held.first;
+        if self.held.count == 0 || first > last {
+            self.erase_to = None;
+            return Ok(());
+        }
+        self.erase_to = Some(last);
+        let cut = last.min(first.saturating_add(LOOKED_AT_ONCE - 1));
+        let directory = self.directory();
+        self.settle(blocking(move || remove_letters(&directory, first..=cut)).await)?;
+        self.held.first = self.held.first.max(cut + 1);
+        if cut >= last || self.held.count == 0 {
+            self.erase_to = None;
+        }
         Ok(())
     }
 
-    async fn erase_through(&mut self, through: u64) -> Result<()> {
-        let files = std::mem::take(&mut self.files);
-        let (files, numbers) = blocking(move || {
-            let numbers = files.range(..=through).map(|(&seq, _)| seq).collect();
-            Ok((files, numbers))
-        })
-        .await?;
-        self.files = files;
-        self.erase(numbers).await
+    fn settle(&mut self, removed: Result<usize>) -> Result<()> {
+        match removed {
+            Ok(removed) => {
+                self.held.count = self.held.count.saturating_sub(removed);
+                if self.held.count == 0 {
+                    self.held.first = self.record().next;
+                }
+                self.backlog.held.store(self.held.count, Ordering::Relaxed);
+                Ok(())
+            }
+            Err(error) => {
+                self.loaded = false;
+                Err(error)
+            }
+        }
     }
 
     async fn pump(&mut self) -> Result<()> {
+        self.unfinished = false;
         let Some(to) = &self.to else { return Ok(()) };
         if !to.viewed || !to.window.room() {
             return Ok(());
         }
         self.load().await?;
         let to = self.to.as_ref().expect("session");
-        // The letters that fit, as they would go: chosen first, then read
-        // off the lines' way.
-        let mut fitting = to.window.clone();
-        let mut numbers = Vec::new();
-        for (&seq, &bytes) in self.files.range(to.window.sent() + 1..self.persisted_next.max(to.window.sent() + 1)) {
-            if !fitting.room() {
-                break;
-            }
-            fitting.went(seq, Some(bytes));
-            numbers.push((seq, bytes));
-        }
-        if numbers.is_empty() {
+        // Nothing a deletion under way is to take is sent: it was settled
+        // as never delivered (R2).
+        let erasing = self.erase_to.unwrap_or(0).max(self.record().expired_through) + 1;
+        let (from, next) = ((to.window.sent() + 1).max(self.held.first).max(erasing), self.persisted_next);
+        if from >= next {
             return Ok(());
         }
+        let end = next.min(from.saturating_add(LOOKED_AT_ONCE));
+        // The letters that fit, as they go, each sized and read off the
+        // lines' way; a number with no letter goes as not there.
+        let mut fitting = to.window.clone();
         let directory = self.directory();
         let out = to.out.clone();
         let loaded = blocking(move || {
-            numbers
-                .into_iter()
-                .map(|(seq, size)| {
-                    let letter = crate::store::read_letter(&directory, seq)?;
-                    let present = letter.is_some();
-                    if let Some(message) = letter {
-                        out.send(crate::Out::Frame(fastctx_net::wire::Down::Deliver { seq, message }))
-                            .map_err(|()| std::io::Error::other("member writer stopped"))?;
-                    }
-                    Ok((seq, size, present))
-                })
-                .collect::<std::io::Result<Vec<_>>>()
+            let mut loaded = Vec::new();
+            for seq in from..end {
+                if !fitting.room() {
+                    break;
+                }
+                let Some(size) = crate::store::letter_size(&directory, seq)? else {
+                    fitting.went(seq, None);
+                    loaded.push((seq, None, false));
+                    continue;
+                };
+                let letter = crate::store::read_letter(&directory, seq)?;
+                let present = letter.is_some();
+                if let Some(message) = letter {
+                    out.send(crate::Out::Frame(fastctx_net::wire::Down::Deliver { seq, message }))
+                        .map_err(|()| std::io::Error::other("member writer stopped"))?;
+                }
+                fitting.went(seq, present.then_some(size));
+                loaded.push((seq, Some(size), present));
+            }
+            Ok(loaded)
         })
         .await?;
         let to = self.to.as_mut().expect("session");
         for (seq, size, present) in loaded {
-            to.window.went(seq, present.then_some(size));
-            if !present {
-                self.files.remove(&seq);
+            // A number with no letter at the front of what is held is passed
+            // for good: no deletion looks at it again.
+            if size.is_none() && seq == self.held.first {
+                self.held.first = seq + 1;
+            }
+            to.window.went(seq, size.filter(|_| present));
+            // Sized, then gone before it was read: it was counted.
+            if size.is_some() && !present {
+                self.held.count = self.held.count.saturating_sub(1);
             }
         }
+        self.backlog.held.store(self.held.count, Ordering::Relaxed);
         self.backlog.on_way.store(to.window.on_way(), Ordering::Relaxed);
+        self.unfinished = end < next && to.window.room();
         Ok(())
     }
 
@@ -281,12 +344,7 @@ impl State {
         })
         .await?;
         self.published.store(None);
-        let files = std::mem::take(&mut self.files);
-        blocking(move || {
-            drop(files);
-            Ok(())
-        })
-        .await?;
+        self.held = Held::default();
         self.backlog.held.store(0, Ordering::Relaxed);
         self.backlog.on_way.store(0, Ordering::Relaxed);
         self.backlog.counted.store(true, Ordering::Relaxed);
@@ -345,6 +403,7 @@ impl State {
                 record.profiles = caps.profiles;
                 record.machine_updates = caps.machine_updates;
                 record.history_switch = caps.history_switch;
+                record.asset_seals = caps.asset_seals;
                 record.connected_at = Some(jiff::Timestamp::now());
                 let taken = fastctx_net::window::standing(letters.taken, record.out_epoch);
                 let result = async {
@@ -418,10 +477,14 @@ impl State {
                     let seq = self.record().next;
                     let path = self.directory().join(format!("{seq:020}"));
                     let size = blocking(move || crate::store::write_letter(&path, &message)).await?;
+                    let _ = size;
                     self.record_mut().next = seq.checked_add(1).ok_or("letter sequence exhausted")?;
-                    self.files.insert(seq, size);
+                    if self.held.count == 0 {
+                        self.held.first = seq;
+                    }
+                    self.held.count += 1;
                     self.persist().await?;
-                    self.backlog.held.store(self.files.len(), Ordering::Relaxed);
+                    self.backlog.held.store(self.held.count, Ordering::Relaxed);
                     Ok(())
                 }
                 .await;
@@ -433,7 +496,7 @@ impl State {
                     let directory = self.directory();
                     let gone = blocking(move || {
                         let mut gone = Vec::new();
-                        for (seq, _) in crate::store::letter_numbers(&directory)? {
+                        for seq in crate::store::letter_numbers(&directory)? {
                             let Some(letter) = crate::store::read_letter(&directory, seq)? else { continue };
                             let Ok(body) = letter.body::<fastctx_net::message::LetterBody>() else { continue };
                             use fastctx_types::remote::Letter;
@@ -451,14 +514,13 @@ impl State {
                         return Ok(0);
                     }
                     self.load().await?;
-                    let gone = self.files.keys().copied().collect::<Vec<_>>();
-                    if gone.is_empty() {
+                    if self.held.count == 0 {
                         return Ok(0);
                     }
                     let directory = self.directory();
                     let senders = blocking(move || {
                         let mut senders = BTreeMap::<String, usize>::new();
-                        for (seq, _) in crate::store::letter_numbers(&directory)? {
+                        for seq in crate::store::letter_numbers(&directory)? {
                             if let Some(letter) = crate::store::read_letter(&directory, seq)? {
                                 *senders.entry(letter.from.to_string()).or_default() += 1;
                             }
@@ -466,10 +528,14 @@ impl State {
                         Ok(senders)
                     })
                     .await?;
+                    // What is settled is kept with when: through which
+                    // letter none is sent, whatever comes between (R2).
+                    let through = self.record().next.saturating_sub(1);
                     self.record_mut().settled = Some(jiff::Timestamp::now());
+                    self.record_mut().expired_through = through;
                     self.persist().await?;
-                    let count = gone.len();
-                    self.erase(gone).await?;
+                    let count = self.held.count;
+                    self.erase_through(u64::MAX).await?;
                     if let Some(hub) = self.hub.get().and_then(Weak::upgrade) {
                         hub.log.line(format_args!(
                             "letters for {} settled as not delivered, by sender: {}",
@@ -502,7 +568,16 @@ impl State {
 pub(super) async fn run(mut state: State, mut commands: mpsc::Receiver<super::Queued>) {
     while let Some(super::Queued { command, _active, _pending }) = commands.recv().await {
         let retiring = matches!(&command, Command::Retire { .. });
-        if let Err(error) = state.perform(command).await {
+        let mut done = state.perform(command).await;
+        // A pump or a deletion cut short at its look goes on while nothing
+        // else is asked.
+        while done.is_ok() && !retiring && (state.unfinished || state.erase_to.is_some()) && commands.is_empty() {
+            done = match state.erase_to {
+                Some(through) => state.erase_through(through).await,
+                None => state.pump().await,
+            };
+        }
+        if let Err(error) = done {
             if let Some(hub) = state.hub.get().and_then(Weak::upgrade) {
                 hub.log.line(format_args!("mail for {}: {error}", state.name));
             }
@@ -514,6 +589,20 @@ pub(super) async fn run(mut state: State, mut commands: mpsc::Receiver<super::Qu
             break;
         }
     }
+}
+
+/// Deletes the letters numbered `numbers` in `directory`: how many were
+/// there.
+fn remove_letters(directory: &std::path::Path, numbers: impl IntoIterator<Item = u64>) -> std::io::Result<usize> {
+    let mut removed = 0;
+    for seq in numbers {
+        match fastctx_platform::disk::remove_file(directory.join(format!("{seq:020}"))) {
+            Ok(()) => removed += 1,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(removed)
 }
 
 async fn blocking<T: Send + 'static>(work: impl FnOnce() -> std::io::Result<T> + Send + 'static) -> Result<T> {

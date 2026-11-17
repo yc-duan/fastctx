@@ -43,6 +43,10 @@ const PAIRED_WITHIN: std::time::Duration = std::time::Duration::from_secs(90);
 /// given up: a quiet stream may wait for ever, bytes due may not.
 pub const DUE_WITHIN: std::time::Duration = std::time::Duration::from_secs(120);
 
+/// How long a source closes a connection once its receipt came: nothing
+/// more is owed either way, so a close that does not end is let go.
+const CLOSED_WITHIN: std::time::Duration = std::time::Duration::from_secs(60);
+
 /// The most bytes one message carries. The other end counts only whole
 /// messages as hearing from this one, so each must arrive well within
 /// `SILENCE`: a transfer's messages grow to this only on a line that takes
@@ -371,7 +375,15 @@ impl Stream {
         };
         match receipt {
             Some(Message::Word(text)) if text == DONE => {
-                self.line.close().await;
+                // Named apart from the receipt's wait, so a stuck end says
+                // which it is; let go past its bound, the line's tasks end
+                // as it drops.
+                let _ = fastctx_platform::doing::outside(
+                    "closing a data connection whose receipt came",
+                    CLOSED_WITHIN,
+                    self.line.close(),
+                )
+                .await;
                 Ok(())
             }
             Some(Message::Word(text)) => Err(format!("the other end did not take it: {text}")),

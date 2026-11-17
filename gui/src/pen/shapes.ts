@@ -91,9 +91,31 @@ export function ruledPoints(from: Point, to: Point, random: () => number): Point
   return points;
 }
 
-/** A line drawn against a straight edge. */
+/** A line drawn against a straight edge. Across or down, it is straight
+ *  and as wide all along as the pen, and it is set on the screen's own
+ *  grid, where it is sharp: a line that wavers by less than the screen can
+ *  show only looks smudged (the user, 2026-11-16). The hand is at its ends:
+ *  the pen comes down square and lifts thinning over its last stretch. One
+ *  that runs neither across nor down is drawn freehand, as before. */
 export function ruled(from: Point, to: Point, width: number, random: () => number): string {
-  return outline(ruledPoints(from, to, random), width, random, { pressure: 0.18, taper: 0.02 });
+  const across = Math.abs(from[1] - to[1]) < 0.01;
+  const down = Math.abs(from[0] - to[0]) < 0.01;
+  if (across === down) return outline(ruledPoints(from, to, random), width, random, { pressure: 0.18, taper: 0.02 });
+  // The rows of the screen it takes, and where their middle falls: a thin
+  // line keeps to one row, lighter the thinner it is.
+  const rows = width < 1.5 ? 1 : Math.round(width);
+  const half = (width < 1 ? width : rows) / 2;
+  const along = across ? 0 : 1;
+  const at = across ? from[1] : from[0];
+  const middle = rows % 2 ? Math.floor(at) + 0.5 : Math.round(at);
+  const [start, end] = [from[along], to[along]];
+  const length = Math.abs(end - start);
+  const toward = end >= start ? 1 : -1;
+  const lift = Math.min(length * 0.3, 8 + random() * 10);
+  const turn = end - toward * lift;
+  const thin = half * 0.35;
+  const point = (along_: number, off: number) => (across ? `${f(along_)} ${f(middle + off)}` : `${f(middle + off)} ${f(along_)}`);
+  return `M${point(start, -half)}L${point(turn, -half)}L${point(end, -thin)}L${point(end, thin)}L${point(turn, half)}L${point(start, half)}Z`;
 }
 
 /** The centre line of a circle as a hand draws one: begun anywhere, a

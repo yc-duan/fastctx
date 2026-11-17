@@ -102,6 +102,13 @@ pub(crate) fn view_for_in(
             account.profile = account.profile.as_ref().map(|profile| profile.located(|machine| x.same(machine, me)));
         }
     }
+    // Its assets sealed, the hub carries nothing between machines (design
+    // §28.41), and no view says where one may be reached directly: a link
+    // between two lets go with the view, a release of before the seal's
+    // own check among them, and none is dialed anew. How a machine reaches
+    // the hub through another (`relay`, `through`, the forwarders) stays:
+    // the machines are to come to the hub sealed.
+    let sealed = hub.assets.sealed().is_some();
     for member in &mut directory.members {
         let others = member.name != *me
             && member.home.as_ref().is_some_and(|owner| x.is_visitor(owner) && !mine.contains(owner));
@@ -117,6 +124,9 @@ pub(crate) fn view_for_in(
             member.through = None;
             member.paths = None;
             member.group = None;
+        }
+        if sealed && member.name != *me {
+            member.direct.clear();
         }
     }
     // A release that cannot read a visitor would lose its whole view to one.
@@ -180,12 +190,14 @@ pub(crate) fn view_for_in(
     Ok(View {
         shared_records: true,
         ledger_parts: true,
+        named_asks: true,
         project_memory: true,
         collaboration_tree: true,
         history_switch: true,
         call_details: true,
         machine_log: true,
         layers: true,
+        asset_sync: fastctx_types::assets::VERSION,
         hub: store.hub.id.clone(),
         hub_name: store.hub.name.clone(),
         hub_machine: crate::hub_machine::current(hub, store)
@@ -194,6 +206,9 @@ pub(crate) fn view_for_in(
         troubles: hub.troubles.for_member(x, me),
         me: me.clone(),
         self_registration: store.hub.self_registration,
+        asset_seal_at_start: store.hub.asset_seal_at_start,
+        assets_sealed: hub.assets.sealed(),
+        synced: hub.assets.standing.summaries_for(x, me),
         direct_links: true,
         // Its machines tell how their own work goes with each heartbeat
         // (`crate::strain`).
@@ -221,6 +236,8 @@ pub(crate) fn view_for_in(
         skill_files: true,
         record_keys: true,
         goal_control: true,
+        timeline_pages: true,
+        file_changes: true,
         scratch_locations: true,
         goal_commands: true,
         subagents: true,
@@ -352,7 +369,9 @@ fn cut_in(x: &Indexed<'_>, me: &MachineName, mine: &BTreeSet<AccountName>, users
         for account in users {
             at.extend(x.logged(account));
             for &acting in x.acting_by_account(account) {
-                at.extend(x.naming(&all.acting[acting].machine));
+                if x.may_act_for(account, &all.acting[acting].machine) {
+                    at.extend(x.naming(&all.acting[acting].machine));
+                }
             }
         }
         ordered(at)
@@ -425,7 +444,9 @@ fn cut_in(x: &Indexed<'_>, me: &MachineName, mine: &BTreeSet<AccountName>, users
         acting: ordered(accounts.iter().flat_map(|account| x.acting_by_account(account)).copied())
             .into_iter()
             .map(|at| &all.acting[at])
-            .filter(|acting| seen.contains(&acting.machine))
+            // A use kept from an ended assistance acts for no one, and no
+            // member is told of it until the assistance is given again.
+            .filter(|acting| seen.contains(&acting.machine) && x.may_act_for(&acting.account, &acting.machine))
             .cloned()
             .collect(),
         projects: Vec::new(),

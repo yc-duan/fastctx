@@ -43,8 +43,23 @@ pub(super) async fn asked(
     env: Vec<(OsString, OsString)>,
 ) -> Asked {
     let (finding, path) = (node.clone(), dir.to_path_buf());
-    let read =
-        fastctx_platform::task::blocking(move || on_disk(&finding, agent, &path, default, &programs, &env)).await;
+    let read = fastctx_platform::task::blocking(move || {
+        fastctx_platform::read_budget::within(super::read_limits::IDENTITY, || {
+            on_disk(&finding, agent, &path, default, &programs, &env)
+        })
+    })
+    .await;
+    let read = match read {
+        Ok(read) => read,
+        Err(error) => {
+            return Asked {
+                identified: Identified { at: Timestamp::now(), who: Fact::failed(error.to_string()) },
+                launcher: None,
+                models: None,
+                limits: None,
+            };
+        }
+    };
     if agent != "codex" || !super::workbench::is_open(node, &Acting::Here, agent, Some(dir)) {
         return read;
     }

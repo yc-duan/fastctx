@@ -1,8 +1,8 @@
 // Finding files by name for an `@` in the user's words
 // (`fastctx_types::file_search`). The search lives on the machine that has
 // the files, in the agent's project places there; it reads no contents.
-// A conversation starts one when its composer opens, asks it on each edit,
-// and closes it when it is left.
+// A conversation starts one when its first `@` asks, asks it on each edit,
+// and closes it when it is left: one opened and never asked reads nothing.
 
 import { invoke } from "@tauri-apps/api/core";
 import type { MachineName, ResidentId } from "./wire";
@@ -36,27 +36,37 @@ export function findFiles(machine: MachineName, request: FileSearchRequest): Pro
 /** How many names a menu shows. */
 const SHOWN = 20;
 
-/** One conversation's search: started at once, asked on each edit, closed
- *  when the conversation is left. While the machine is still reading the
- *  names, the newest edit is asked again until it is ready; an older edit
- *  stops being asked as soon as a newer one comes. */
+/** One conversation's search: started when it is first asked (reading a
+ *  project's names, and watching them, costs its machine while nobody types
+ *  an `@`), asked on each edit, closed when the conversation is left. While
+ *  the machine is still reading the names, the newest edit is asked again
+ *  until it is ready; an older edit stops being asked as soon as a newer
+ *  one comes. */
 export class FileSearch {
-  private readonly started: Promise<string>;
+  private started: Promise<string> | null = null;
   private asking = 0;
   private closed = false;
 
-  constructor(private readonly machine: MachineName, resident: ResidentId) {
-    this.started = findFiles(machine, { do: "start", scope: { scope: "resident", resident, roots: [] } }).then((reply) => {
-      if (reply.state !== "started") throw new Error(`${machine} answered the search's start with ${reply.state}`);
-      return reply.search;
-    });
-    // A start the machine refused is said when the menu asks.
-    this.started.catch(() => {});
+  constructor(private readonly machine: MachineName, private readonly resident: ResidentId) {}
+
+  private start(): Promise<string> {
+    if (!this.started) {
+      const machine = this.machine;
+      this.started = findFiles(machine, { do: "start", scope: { scope: "resident", resident: this.resident, roots: [] } }).then((reply) => {
+        if (reply.state !== "started") throw new Error(`${machine} answered the search's start with ${reply.state}`);
+        return reply.search;
+      });
+      // A start the machine refused is said when the menu asks.
+      this.started.catch(() => {});
+    }
+    return this.started;
   }
 
   async find(query: string): Promise<FileMatch[]> {
+    // Left, it starts nothing that no one would close.
+    if (this.closed) return [];
     const asked = ++this.asking;
-    const search = await this.started;
+    const search = await this.start();
     for (;;) {
       const reply = await findFiles(this.machine, { do: "query", search, query, limit: SHOWN });
       if (reply.state !== "matches") throw new Error(`${this.machine} answered a query with ${reply.state}`);
@@ -72,7 +82,7 @@ export class FileSearch {
     if (this.closed) return;
     this.closed = true;
     void this.started
-      .then((search) => findFiles(this.machine, { do: "close", search }))
+      ?.then((search) => findFiles(this.machine, { do: "close", search }))
       .catch((error: unknown) => console.error("closing a file search", error));
   }
 }

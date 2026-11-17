@@ -147,6 +147,7 @@ pub fn migrate(from: &Path, to: &Path, new: Migrated) -> anyhow::Result<Report> 
         public: third.public,
         listen: third.listen,
         self_registration: false,
+        asset_seal_at_start: false,
         dissolved: None,
         updates: Default::default(),
         due: Vec::new(),

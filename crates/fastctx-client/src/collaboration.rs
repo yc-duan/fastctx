@@ -34,8 +34,10 @@ impl World {
                     resident: resident.clone(),
                     machine: machine.clone(),
                     composer: None,
+                    documents: None,
                     held: None,
                     now: false,
+                    live_only: false,
                     goal: None,
                     collaboration: true,
                 };

@@ -20,6 +20,8 @@
 //! how many pairs may be relayed at once is bounded, so one
 //! machine gone wrong cannot fill the hub with transfers.
 
+#[cfg(feature = "change-drill")]
+pub(crate) mod change_probe;
 mod lifetime;
 
 pub(crate) use lifetime::expire;
@@ -98,9 +100,31 @@ pub(crate) fn counts(hub: &Hub) -> (usize, usize, usize) {
     (pairing.waiting.len(), pairing.live.len(), pairing.registered.len())
 }
 
+/// The most different standings one data connection is registered under.
+/// A call and its answer name one or two; each is checked whenever the
+/// directory changes, so a connection named by calls without end is refused
+/// rather than checked without end.
+const STANDINGS: usize = 16;
+
 /// Notes the data connection `ticket` names, allowed under `standing`, as
-/// the session `generation` of `by` asked.
-pub(crate) fn register(hub: &Hub, ticket: &Ticket, standing: &Standing, by: &MachineName, generation: u64) {
+/// the session `generation` of `by` asked. Refused when it is registered
+/// under `STANDINGS` others already: the call naming it is refused too, as
+/// a standing not kept could not cut it.
+pub(crate) fn register(
+    hub: &Hub,
+    ticket: &Ticket,
+    standing: &Standing,
+    by: &MachineName,
+    generation: u64,
+) -> Result<(), String> {
+    // Sealed meanwhile, no stream but an answer to work's is paired: one a
+    // call answered after the seal's cutting looked would go on unseen
+    // (design §28.41).
+    if standing.purpose != fastctx_types::access::Purpose::Echo
+        && let Some(why) = crate::control::sealed(hub)
+    {
+        return Err(why);
+    }
     // Its ends are known by their names now: the members that come to pair
     // it are.
     let (source, sink) = {
@@ -122,9 +146,12 @@ pub(crate) fn register(hub: &Hub, ticket: &Ticket, standing: &Standing, by: &Mac
         hub.log.line(format_args!(
             "two calls named one data connection between different machines; the second was not registered"
         ));
-        return;
+        return Ok(());
     }
     if !registration.standings.contains(standing) {
+        if registration.standings.len() >= STANDINGS {
+            return Err(format!("its data connection is named by {STANDINGS} calls already"));
+        }
         registration.standings.push(standing.clone());
     }
     let owner = (by.clone(), generation);
@@ -132,6 +159,7 @@ pub(crate) fn register(hub: &Hub, ticket: &Ticket, standing: &Standing, by: &Mac
         registration.by.push(owner.clone());
         pairing.by_session.entry(owner).or_default().insert(ticket.stream);
     }
+    Ok(())
 }
 
 /// The call the data connection `stream` goes with is over before its ends
@@ -227,6 +255,13 @@ pub(crate) fn cut_streams(hub: &Hub) {
                                 )
                                 .err()
                                 .map(|error| error.message)
+                        })
+                        // Sealed meanwhile, a stream of anything but an
+                        // answer to work ends too (design §28.41).
+                        .or_else(|| {
+                            (standing.purpose != fastctx_types::access::Purpose::Echo)
+                                .then(|| crate::control::sealed(hub))
+                                .flatten()
                         })
                     })
                     .map(|why| (stream, why))

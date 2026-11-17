@@ -56,7 +56,7 @@ fn entry(server: &Server<'_>) -> Value {
 /// kept elsewhere: without an account it is not known from here.
 fn identity(home: &Path) -> Option<fastctx_types::logins::Identity> {
     use fastctx_types::logins::Identity;
-    let text = std::fs::read_to_string(home.join(".credentials.yaml")).ok()?;
+    let text = fastctx_platform::disk::read_to_string(home.join(".credentials.yaml")).ok()?;
     let credentials: Value = serde_yaml_ng::from_str(&text).ok()?;
     let record = credentials.get("records")?.get("deepseek-account-platform/default")?;
     let signed = record.get("kind").and_then(Value::as_str) == Some("grant")

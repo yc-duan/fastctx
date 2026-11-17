@@ -6,6 +6,7 @@
 // `start` (`starting` or `failed`; `think` for thinking, `agents` for the
 // host's own agents, `&host=codex` for Codex's).
 
+import type { Attachment } from "../world/attachments";
 import type { Content, Item, SessionEvent, Speaker, Tool } from "../world/events";
 import type { Specimen } from "./sessions";
 import { agentsSpecimen } from "./agents";
@@ -255,7 +256,7 @@ export function playLater(events: SessionEvent[], rate: number, take: (event: Se
 /** A specimen agent answering words sent to it, at a model's pace: it takes
  *  them into a turn, thinks, runs a command and answers, then the turn
  *  ends. */
-export function answering(text: string, turn: string): SessionEvent[] {
+export function answering(text: string, turn: string, attachments: Attachment[] = []): SessionEvent[] {
   const clock = new Clock(Date.now() + 900);
   const thought = `${turn}-think`;
   const ran = `${turn}-run`;
@@ -268,7 +269,16 @@ export function answering(text: string, turn: string): SessionEvent[] {
     ? `the weekly allowance of $20.00 this login gives me is used up until ${until} UTC; what is for it waits until then`
     : "看过了：`joints/limits.rs` 里的限幅只做比较、不累加，Q16 的舍入不会积起来，不用改。";
   const events: SessionEvent[] = [
-    { at: clock.next(0), event: "heard", delivery: null, turn, from: user, text },
+    {
+      at: clock.next(0),
+      event: "heard",
+      delivery: null,
+      turn,
+      from: user,
+      text,
+      // What the user attached comes back kept, as the World tells it.
+      ...(attachments.length ? { message: { attachments, id: `${turn}-heard`, client_id: null, content: [], hook_fragments: [], presentation: null, detail: null } } : {}),
+    },
     { at: clock.next(200), event: "turn_started", turn },
     ...(held
       ? []

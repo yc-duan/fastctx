@@ -252,7 +252,7 @@ fn check_policy(path: &Path, writer: &Writer) -> Result<(), String> {
     // A town's ledger, and the signed entries it is made of, change only by
     // taking entries. Check the lexical path even before a town has them,
     // and the resolved ones when a town or its ledger is a directory link.
-    let shared = ["ledger", "signed", "journals", "specs"].map(std::ffi::OsStr::new);
+    let shared = ["ledger", "signed", "projected", "journals", "specs"].map(std::ffi::OsStr::new);
     if let Some(parts) = relative_parts(path, &towns)
         && parts.len() >= 2
         && shared.iter().any(|name| component_eq(parts[1], name))

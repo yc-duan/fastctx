@@ -313,11 +313,25 @@ pub fn run(world: World, sender: Sender, page: u64, job: Job) {
 
 async fn work(world: &World, job: Job) -> Result<Done, fastctx_client::Error> {
     Ok(match job {
-        Job::Talk { to, machine, text } => Done::Said(world.talk(to, Some(machine.into()), text).await?),
-        Job::Stop { resident, machine } => Done::Stopped(world.stop(resident, Some(machine.into())).await?.1),
+        // Words longer than an input box holds go as a text attachment, as the
+        // input box sends them (design §28.49).
+        // Named here, the words come back told by their delivery: the line
+        // shown sending is matched to them by it (`Transcript::resaid`).
+        Job::Talk { to, machine, text, .. } => match world.talk_long(to, Some(machine.into()), text, Some(fastctx_client::attachments::words_id())).await {
+            Ok((said, sent)) => Done::Said(said, sent),
+            // Refused before anything could run (`not_run`): words that may
+            // have gone — any other failure, a connection that broke, an
+            // answer that did not come — are not offered to be sent again.
+            Err(fastctx_client::Error::Call(fastctx_client::CallError::Failed(failure))) if failure.not_run => {
+                Done::Refused(failure.message)
+            }
+            Err(error) => return Err(error),
+        },
+        Job::Stop { resident, machine } => Done::Stopped(world.stop(resident, Some(machine.into()), None, None).await?.1),
         Job::Attach { resident } => Done::Attachable(world.attach(resident).await?),
         Job::Open { agent, town, node, text, choices } => {
-            Done::Opened(world.open_with(agent, town, node.map(Into::into), text, Default::default(), choices).await?)
+            let (said, first) = world.open_long(agent, town, node.map(Into::into), text, Default::default(), choices).await?;
+            Done::Opened(said, first)
         }
         Job::OpenTown { town, fields } => Done::Record(Box::new(world.open_town(town, fields, None, None).await?)),
         Job::EditTown { town, fields } => Done::Record(Box::new(world.edit_town(Some(town), fields).await?)),

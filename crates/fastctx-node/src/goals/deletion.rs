@@ -37,7 +37,9 @@ pub(crate) async fn prepare(node: &Arc<Node>, id: &ResidentId) -> Result<(), Fai
     })
     .await
     .map_err(failure)?
-    .map_err(failure)
+    .map_err(failure)?;
+    crate::content_upkeep::forgetting(node);
+    Ok(())
 }
 
 pub(crate) async fn apply(node: &Arc<Node>, id: &ResidentId) -> Result<(), Failure> {

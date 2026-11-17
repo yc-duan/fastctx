@@ -1,0 +1,34 @@
+[package]
+name = "fastctx-content"
+description = "Scope logs, the index of their items, and how their readers are told of change"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[[test]]
+name = "content_drill"
+harness = false
+
+[[test]]
+name = "v2_drills"
+path = "tests/v2_drills/main.rs"
+harness = false
+required-features = ["drill"]
+
+[features]
+# The library's raw commit, for the drills alone.
+drill = []
+
+[dependencies]
+fastctx-platform = { path = "../fastctx-platform" }
+fastctx-storage = { path = "../fastctx-storage" }
+serde_json = { workspace = true }
+sha2 = "0.10"
+tokio = { workspace = true, features = ["sync", "time"] }
+zstd = { version = "0.14", default-features = false }
+
+[lints]
+workspace = true

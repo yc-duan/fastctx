@@ -7,7 +7,6 @@ use std::sync::Arc;
 
 use fastctx_net::link::CallFailure;
 use fastctx_types::accounts::{AccountChange, AccountsReply};
-use fastctx_types::pages::PageCall;
 use fastctx_types::remote::{RemoteCall, RemoteReply};
 use fastctx_types::town::Looked;
 use fastctx_types::{Address, Call, JournalCall, MachineName, ProjectCall, Reply, ResidentId};
@@ -30,6 +29,7 @@ impl Device {
                 update,
                 fastctx_types::update::UpdateCall::App { .. }
                     | fastctx_types::update::UpdateCall::Fetch { .. }
+                    | fastctx_types::update::UpdateCall::Bring { .. }
                     | fastctx_types::update::UpdateCall::Progress { .. }
             )
         {
@@ -130,6 +130,14 @@ impl Device {
                 let account = profile_account(&session, account)?;
                 let view = session.link.profile_subagents(&account, operation).await.map_err(failed)?;
                 return Ok((Reply::ProfileSubagents(Box::new(view)), here()));
+            }
+            Call::SyncStatus { hub, account, hours, machine } => {
+                let session = self
+                    .sessions()
+                    .into_iter()
+                    .find(|session| session.link.membership().id == hub)
+                    .ok_or_else(|| failed(format!("this device is not on {hub}")))?;
+                return Ok((super::sync_status::of(&session.link, account, hours, machine).await, here()));
             }
             Call::PlanRead { hub, account, owner, machine } => {
                 let session = self.on_hub(hub.as_ref())?;
@@ -330,7 +338,7 @@ impl Device {
                 let reply = session.link.network_updates(&account, request).await.map_err(failed)?;
                 return Ok((Reply::NetworkUpdates(reply), here()));
             }
-            Call::MachineLog { hub, account, before } => {
+            Call::MachineLog { hub, account, before, .. } => {
                 let session = self.on_hub(Some(&hub))?;
                 let page = session.link.machine_log(&account, before).await.map_err(failed)?;
                 return Ok((Reply::MachineLog(page), here()));
@@ -346,7 +354,9 @@ impl Device {
                 let address = Address { machine: machine.name.clone(), resident };
                 return Ok((Reply::Forgetting { resident: address, how }, machine.name));
             }
-            Call::WorldNow => return Ok((Reply::WorldNow(Box::new(self.world_now().await?)), here())),
+            Call::WorldNow { known } => {
+                return Ok((Reply::WorldNow(Box::new(self.world_now_known(&known).await?)), here()));
+            }
             Call::Features => return Ok((Reply::Features(self.features()?), here())),
             Call::SetFeature { feature, on } => return Ok((Reply::Features(self.set_feature(feature, on)?), here())),
             Call::SetLanguage { language } => return Ok((Reply::Features(self.set_language(&language)?), here())),
@@ -387,6 +397,11 @@ impl Device {
                 let machine = self.find(&resident, machine).await?;
                 (machine, RemoteCall::Goal { resident: resident.clone(), request }, Some(resident))
             }
+            Call::Timeline { machine, request } => {
+                let resident = request.resident().clone();
+                let machine = self.find(&resident, machine).await?;
+                (machine, RemoteCall::Timeline { request }, Some(resident))
+            }
             Call::Composer { resident, machine, request } => {
                 let machine = self.find(&resident, machine).await?;
                 (machine, RemoteCall::Composer { resident: resident.clone(), request }, Some(resident))
@@ -396,9 +411,9 @@ impl Device {
                     machine.ok_or_else(|| failed("choose a machine for file search; a device has no local files"))?;
                 (machine, RemoteCall::FindFiles { request }, None)
             }
-            Call::Folders { machine, path } => {
+            Call::Folders { machine, path, cursor } => {
                 let machine = machine.ok_or_else(|| failed("choose a machine for its folders; a device has none"))?;
-                (machine, RemoteCall::Folders { path }, None)
+                (machine, RemoteCall::Folders { path, cursor }, None)
             }
             Call::Stats { machine, after, seen } => {
                 let machine =
@@ -432,6 +447,9 @@ impl Device {
             }
             Call::SetAgentResetInPlace { machine, agent, dir, on } => {
                 (machine, RemoteCall::SetAgentResetInPlace { agent, dir, on }, None)
+            }
+            Call::SetAgentWeek { machine, agent, dir, week } => {
+                (machine, RemoteCall::SetAgentWeek { agent, dir, week }, None)
             }
             Call::ChangeAgentModels { machine, agent, dir, change } => {
                 (machine, RemoteCall::ChangeAgentModels { agent, dir, change }, None)
@@ -486,9 +504,9 @@ impl Device {
                 let machine = self.find(&resident, machine).await?;
                 (machine, RemoteCall::Collaboration { resident: resident.clone(), colleagues: true }, Some(resident))
             }
-            Call::Stop { resident, machine } => {
+            Call::Stop { resident, machine, turn, words } => {
                 let machine = self.find(&resident, machine).await?;
-                (machine, RemoteCall::Stop { resident: resident.clone() }, Some(resident))
+                (machine, RemoteCall::Stop { resident: resident.clone(), turn, words }, Some(resident))
             }
             // A command stops as the user asks, on the machine it runs on.
             Call::StopJob { job, machine, hub } => {
@@ -602,15 +620,6 @@ impl Device {
             // What only the projects' ledgers hold, one machine answers from
             // its own copy, for what this device's account may use.
             Call::Journal(_) => return Err(failed(fastctx_types::memory::LEGACY)),
-            call @ Call::Page(
-                PageCall::Read { .. }
-                | PageCall::List { .. }
-                | PageCall::History { .. }
-                | PageCall::Consent { .. }
-                | PageCall::Act { .. }
-                | PageCall::Withdraw { .. }
-                | PageCall::Restore { .. },
-            ) => return self.relay(call).await,
             _ => return Err(failed("this call belongs to a local node, not a device")),
         };
         let session = self.reaching(&machine)?;
@@ -627,6 +636,38 @@ impl Device {
             }
             None => session.account_for(&machine, purpose)?,
         };
+        if matches!(&remote, RemoteCall::Timeline { .. }) {
+            if !session.link.view().timeline_pages {
+                return Err(crate::CallError::Failed(fastctx_types::ipc::Failure::unsupported(
+                    "this network's hub does not relay timeline pages; update the hub",
+                ))
+                .into());
+            }
+            let facts = session
+                .link
+                .call(&machine, &account, fastctx_types::access::Purpose::Look, RemoteCall::Facts)
+                .await
+                .map_err(failed)?
+                .map_err(failed)?;
+            // Of an earlier release: what reads it opens it the older way.
+            if !matches!(&facts, RemoteReply::Facts(facts) if facts.timeline_reads) {
+                return Err(crate::CallError::Failed(fastctx_types::ipc::Failure::unsupported(
+                    "this machine does not answer timeline pages; update it",
+                ))
+                .into());
+            }
+            // The files a conversation changed: never asked of a hub or a
+            // machine that does not know the question.
+            if matches!(&remote, RemoteCall::Timeline { request: fastctx_types::timeline_pages::TimelineAsk::Files { .. } })
+                && !(session.link.view().file_changes
+                    && matches!(&facts, RemoteReply::Facts(facts) if facts.file_changes))
+            {
+                return Err(crate::CallError::Failed(fastctx_types::ipc::Failure::not_run(
+                    "this machine or its hub does not keep the files conversations changed; update it",
+                ))
+                .into());
+            }
+        }
         if matches!(&remote, RemoteCall::Goal { .. }) {
             if !session.link.view().goal_control {
                 return Err(failed(fastctx_types::goals::words::OLDER_HUB));
@@ -693,11 +734,26 @@ impl Device {
         }
         let answer = if matches!(
             &remote,
-            RemoteCall::Thumbnail { .. } | RemoteCall::AttachmentThumbnail { .. } | RemoteCall::Lines { .. }
+            RemoteCall::Thumbnail { .. }
+                | RemoteCall::AttachmentThumbnail { .. }
+                | RemoteCall::Lines { .. }
+                | RemoteCall::Timeline { .. }
         ) {
             fastctx_net::cancellable::call(&session.link, &machine, &account, remote.clone()).await
         } else {
-            session.link.call(&machine, &account, purpose, remote.clone()).await
+            // Named as a client's call of its own node is, and asked again
+            // under the name while its work is accepted and not done.
+            let named = crate::submission::fresh().map_err(|error| {
+                Error::from(crate::CallError::Failed(fastctx_types::ipc::Failure::not_run(error.to_string())))
+            })?;
+            let began = std::time::Instant::now();
+            loop {
+                let asking = session.link.call(&machine, &account, purpose, remote.clone());
+                match fastctx_net::submission::scope(Some(named.clone()), asking).await {
+                    Ok(Err(failure)) if crate::submission::asks_again(&failure, began) => {}
+                    answered => break answered,
+                }
+            }
         }
         .map_err(|error| {
             crate::Error::from(crate::CallError::Failed(fastctx_types::ipc::Failure::unanswered(error.to_string())))
@@ -705,6 +761,7 @@ impl Device {
         .map_err(|failure| Error::from(crate::CallError::Failed(failure)))?;
         let address = resident.map(|resident| Address { machine: machine.clone(), resident });
         let reply = match (remote, answer) {
+            (RemoteCall::Timeline { .. }, RemoteReply::Timeline(told)) => Reply::Timeline(told),
             (RemoteCall::Goal { .. }, RemoteReply::Goal { updated }) => Reply::Goal { updated },
             (RemoteCall::Collaboration { .. }, RemoteReply::Collaboration(tree)) => Reply::Collaboration(tree),
             (RemoteCall::Composer { .. }, RemoteReply::Composer(updated)) => Reply::Composer(updated),
@@ -725,6 +782,7 @@ impl Device {
                 | RemoteCall::AgentFolder { .. }
                 | RemoteCall::SetAgentTitle { .. }
                 | RemoteCall::SetAgentResetInPlace { .. }
+                | RemoteCall::SetAgentWeek { .. }
                 | RemoteCall::ChangeAgentModels { .. }
                 | RemoteCall::ReadAgentLimits { .. },
                 RemoteReply::AgentLogins(logins),
@@ -842,37 +900,12 @@ impl Device {
             call,
             Call::Project(ProjectCall::List | ProjectCall::Show { .. } | ProjectCall::Map { .. })
                 | Call::Journal(JournalCall::List { .. } | JournalCall::Read { .. })
-                | Call::Page(PageCall::Read { .. } | PageCall::List { .. } | PageCall::History { .. })
         );
         let remote = RemoteCall::Relay { made: serde_json::to_value(&call).map_err(failed)? };
         let mut unanswered = Vec::new();
         let mut asked = false;
         for session in self.sessions() {
             for (machine, account) in actors(&session) {
-                if let Call::Page(page) = &call {
-                    if page.account().is_some_and(|selected| selected != &account) {
-                        continue;
-                    }
-                    match session
-                        .link
-                        .call(&machine, &account, fastctx_types::access::Purpose::Look, RemoteCall::Facts)
-                        .await
-                    {
-                        Ok(Ok(RemoteReply::Facts(facts))) if facts.page_accounts => {}
-                        Ok(Ok(_)) => {
-                            unanswered.push(format!("upgrade {machine} to keep page consent by account"));
-                            continue;
-                        }
-                        Ok(Err(error)) => {
-                            unanswered.push(error.to_string());
-                            continue;
-                        }
-                        Err(error) => {
-                            unanswered.push(error.to_string());
-                            continue;
-                        }
-                    }
-                }
                 asked = true;
                 // Heartbeats establish connection liveness, not a deadline
                 // for completing a query or transferring its answer. Only a

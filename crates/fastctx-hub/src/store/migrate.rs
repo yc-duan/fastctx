@@ -37,8 +37,8 @@ enum Route {
 pub(super) fn import(c: &Connection, dir: &Path) -> fastctx_storage::Result<()> {
     match shelf::meta::<u64>(c, "format")? {
         Some(super::format::CURRENT) => return Ok(()),
-        // Format 1 holds the same rows; only beta.13 must not open it again.
-        Some(1) => return shelf::put_meta(c, "format", super::format::CURRENT.to_string().as_bytes()),
+        // The older formats retain their rows; the new foundation is additive.
+        Some(1 | 2) => return shelf::put_meta(c, "format", super::format::CURRENT.to_string().as_bytes()),
         Some(other) => return Err(Error::new(format!("hub database format {other} is not supported"))),
         None => {}
     }

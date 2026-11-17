@@ -24,6 +24,10 @@ object WorldRuntime {
         private set
     private var started = false
     @Volatile var focused = false
+    /** Between the activity's resume and its pause: in front, as Android
+     *  counts it for starting a foreground service (window focus comes later
+     *  and goes earlier, and a state published in between must still start it). */
+    @Volatile var resumed = false
     @Volatile var currentActivity = WeakReference<Activity>(null)
     @Volatile var serviceRunning = false
     @Volatile private var joining = false
@@ -93,7 +97,7 @@ object WorldRuntime {
         if (preferences.getBoolean("keepConnected", false) != running && !preferences.edit().putBoolean("keepConnected", running).commit())
             throw IllegalStateException("Could not save World background connection preference")
         main.post {
-            if (running && !serviceRunning && focused && serviceError == null) startService()
+            if (running && !serviceRunning && (focused || resumed)) startService()
             if (!running && serviceRunning) context.stopService(Intent(context, WorldService::class.java))
             if (serviceRunning) notices.connection(state)
         }
@@ -110,10 +114,23 @@ object WorldRuntime {
         }
     }
 
+    /** Whether the phone is in a World it keeps a connection to: joined, or joining. */
+    private fun keeping() = joining || (!connection.isNull("name") && linkKind(connection) != "stopped")
+
     fun resume(activity: Activity) {
         currentActivity = WeakReference(activity)
         focused = activity.hasWindowFocus()
-        if (!serviceRunning && !connection.isNull("name") && linkKind(connection) != "stopped") startService()
+        resumed = true
+        if (!serviceRunning && keeping()) startService()
+    }
+
+    /** The activity goes from the front: the background connection is started now, while
+     *  Android still lets the app start one, if nothing started it yet; from the background
+     *  it could not be, and the app would be frozen with its connection. */
+    fun pause() {
+        resumed = false
+        focused = false
+        if (!serviceRunning && keeping()) startService()
     }
 
     fun status(): JSONObject {

@@ -92,20 +92,12 @@ pub(crate) enum Line {
     Login,
     /// Its callee's, which lets this many at work at once.
     Callee(u32),
-    /// The machine's memory: what it keeps free for agents and has
-    /// available (`memory_room`).
-    Memory(u64, u64),
 }
 
 impl Queued {
     pub(crate) fn landed(&self) -> Landed {
         let ahead = self.ahead;
         let why = match self.line {
-            Line::Memory(room, available) => format!(
-                "this machine keeps {} free for its agents and has {} available; {ahead} wait ahead of it",
-                crate::memory_room::size(room),
-                crate::memory_room::size(available),
-            ),
             Line::Callee(most) => format!("its callee works on at most {most} at once; {ahead} wait ahead of it"),
             Line::Login => format!("its agent login runs as many turns at once as it may; {ahead} wait ahead of it"),
         };
@@ -189,7 +181,6 @@ pub(crate) fn admit(node: &Arc<Node>, id: &ResidentId, about: &About) -> Result<
     }
     let Some(limit) = login.limit(hard) else {
         login.leave(id);
-        machine(node, id)?;
         went(&mut slots, callee.as_ref().map(|(_, line)| line), id, now);
         drop(slots);
         wake(node, others);
@@ -208,9 +199,8 @@ pub(crate) fn admit(node: &Arc<Node>, id: &ResidentId, about: &About) -> Result<
     if place >= free {
         return Err(Queued { ahead: place as u32, line: Line::Login });
     }
-    // Its login has room for it; the machine's memory may still hold it.
-    machine(node, id)?;
-    // Those ahead of it within the room go too, once they ask again.
+    // Its login has room for it: those ahead of it within the room go too,
+    // once they ask again.
     others.extend(order.into_iter().take(free).filter(|waiting| waiting != id));
     login.go(id, now);
     went(&mut slots, callee.as_ref().map(|(_, line)| line), id, now);
@@ -284,7 +274,6 @@ pub(crate) fn ahead(node: &Node, id: &ResidentId) -> Option<(u32, bool)> {
 /// limit, a turn that ended well widens it, and the turns that now have room
 /// are woken.
 pub(crate) fn ended(node: &Arc<Node>, id: &ResidentId, about: &About, end: &TurnEnd) {
-    crate::memory_room::ended(node, id);
     let defaults = Defaults::of(node);
     let Some((key, dir)) = defaults.login(about) else { return };
     let refused = refused_for_rate(node, about, &dir, end);
@@ -448,14 +437,6 @@ fn running_where(node: &Node, except: Option<&ResidentId>, of: impl Fn(&About) -
         .filter(|record| of(&record.about))
         .map(|record| record.id)
         .collect()
-}
-
-/// Whether the machine has memory for `id`'s turn while the others run
-/// (`memory_room`): read under the logins' lock, as `running` is.
-fn machine(node: &Node, id: &ResidentId) -> Result<(), Queued> {
-    let running = crate::memory_room::running(node, id);
-    crate::memory_room::admit(node, id, &running)
-        .map_err(|waits| Queued { ahead: waits.ahead, line: Line::Memory(waits.room, waits.available) })
 }
 
 /// The account a conversation works for when its login only assists it.

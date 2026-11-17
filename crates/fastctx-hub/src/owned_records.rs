@@ -5,9 +5,11 @@ pub(crate) mod hints;
 pub(crate) mod index;
 mod plans;
 mod projection;
+pub(crate) mod record_deletions;
 mod registration;
 mod replicas;
 mod sentinels;
+pub(crate) mod submission;
 
 use crate::{
     Hub,
@@ -86,25 +88,25 @@ pub(crate) fn check(
     access: &Access,
 ) -> Result<(), String> {
     let directory = &store.book.directory;
-    let current = hub
-        .account_records
-        .owners
-        .lock()
-        .expect("never poisoned")
-        .of_record(owner, opened, fastctx_types::owned_records::KIND, access.conversation.address.resident.as_str())
-        .cloned();
-    if current.is_none() {
+    let resident = access.conversation.address.resident.as_str();
+    let identity = (owner.clone(), opened, resident.to_string());
+    let (current, live, reads) = {
+        let owners = hub.account_records.owners.lock().expect("never poisoned");
+        let current = owners.of_record(owner, opened, fastctx_types::owned_records::KIND, resident).is_some();
+        (current, owners.live(directory, &identity), owners.reads(directory, &access.actor, &identity, &access.conversation))
+    };
+    if !current {
         return Err("this conversation was deleted".into());
     }
     directory.authorize(&access.actor, Action::ActFor(from)).map_err(|error| error.to_string())?;
     if directory.member(from).is_none_or(|member| member.key != *key) {
         return Err("the record reader's device was replaced".into());
     }
-    if owner != &access.conversation.account || directory.account(owner).is_none_or(|account| account.opened != opened)
-    {
+    // A body's conversation outlives its opener's account (§29, 2.6).
+    if owner != &access.conversation.account || !live {
         return Err("the record's owning account was replaced".into());
     }
-    if !allows(directory, &access.actor, &access.conversation) {
+    if !reads {
         return Err("this account no longer owns that conversation's records".into());
     }
     Ok(())
@@ -140,12 +142,44 @@ fn registered(hub: &Hub, machine: &fastctx_types::MachineName) -> bool {
 fn resolve(hub: &Hub, actor: &AccountName, address: &Address) -> Result<(Access, Timestamp), String> {
     let store = hub.store();
     let directory = &store.book.directory;
-    let conversation = hub.account_records.owners.lock().expect("never poisoned").resolve(directory, actor, address)?;
-    if !allows(directory, actor, &conversation) {
-        return Err("this account does not own that conversation's records".into());
-    }
-    let opened = directory.account(&conversation.account).ok_or("the record's account is unavailable")?.opened;
+    // Read as the index has it: the opener as it opened the conversation,
+    // gone or not for a body's (§29, 2.6).
+    let (conversation, opened) =
+        hub.account_records.owners.lock().expect("never poisoned").resolve(directory, actor, address)?;
     Ok((Access { actor: actor.clone(), conversation }, opened))
+}
+
+/// Whether the member that asks is still the device it was, acting for the
+/// account it names.
+fn acts_for(hub: &Hub, from: &MachineName, key: &PublicKey, account: &AccountName) -> Result<(), String> {
+    let store = hub.store();
+    store.book.directory.authorize(account, Action::ActFor(from)).map_err(|error| error.to_string())?;
+    if store.book.directory.member(from).is_none_or(|member| member.key != *key) {
+        return Err("the record reader's device was replaced".into());
+    }
+    Ok(())
+}
+
+/// Answers a question about conversation records as it comes from a member:
+/// what asks for work is submitted, under `named` when the question came
+/// with a name; the rest is answered where it stands.
+pub(crate) async fn asked(
+    hub: &Arc<Hub>,
+    from: MachineName,
+    key: PublicKey,
+    account: AccountName,
+    request: Request,
+    named: Option<fastctx_types::submission::Submission>,
+) -> Result<Told, String> {
+    match request {
+        Request::Delete { resident } => submission::delete(hub, from, key, account, resident, named.as_ref()).await,
+        Request::Record { conversation, request: request @ RecordRequest::Delete { .. } }
+            if record_deletions::versioned(request.kind()) =>
+        {
+            record_deletions::owned(hub, from, key, account, conversation, request, named.as_ref()).await
+        }
+        request => ask(hub, from, key, account, request).await,
+    }
 }
 
 pub(crate) async fn ask(
@@ -155,17 +189,13 @@ pub(crate) async fn ask(
     account: AccountName,
     request: Request,
 ) -> Result<Told, String> {
-    {
-        let store = hub.store();
-        store.book.directory.authorize(&account, Action::ActFor(&from)).map_err(|error| error.to_string())?;
-        if store.book.directory.member(&from).is_none_or(|member| member.key != key) {
-            return Err("the record reader's device was replaced".into());
-        }
-    }
+    acts_for(hub, &from, &key, &account)?;
     let mut response = match request {
-        Request::Register { resident, shared, previous } => Response::Conversation {
-            conversation: registration::register(hub, &from, &key, &account, resident, shared, previous).await?,
-        },
+        Request::Register { resident, shared, previous, born_at } => {
+            let conversation =
+                registration::register(hub, &from, &key, &account, resident, shared, previous, born_at).await?;
+            Response::Conversation { conversation }
+        }
         Request::PrepareDeletion { conversation } => {
             let (from, account) = (from.clone(), account.clone());
             hub.blocking(move |hub| crate::forget::prepare(&hub, &from, account, conversation)).await?;
@@ -199,8 +229,16 @@ pub(crate) async fn ask(
             Response::Submitted { record }
         }
         Request::Authorize { conversation, reader } => {
-            let (access, _) = resolve(hub, &account, &conversation)?;
-            Response::Authorization { allowed: allows(&hub.store().book.directory, &reader, &access.conversation) }
+            let (access, opened) = resolve(hub, &account, &conversation)?;
+            let store = hub.store();
+            let identity = (access.conversation.account.clone(), opened, access.conversation.address.resident.to_string());
+            let allowed = hub.account_records.owners.lock().expect("never poisoned").reads(
+                &store.book.directory,
+                &reader,
+                &identity,
+                &access.conversation,
+            );
+            Response::Authorization { allowed }
         }
         Request::PlanHead { resident, conversation } => {
             plans::head(hub, &from, &key, &account, &resident, conversation.as_ref()).await?
@@ -215,10 +253,7 @@ pub(crate) async fn ask(
                 .owners
                 .lock()
                 .expect("never poisoned")
-                .candidates(directory, &account)
-                .into_iter()
-                .filter(|conversation| allows(directory, &account, conversation))
-                .collect();
+                .readable(directory, &account);
             Response::Conversations { conversations }
         }
         Request::Resolve { conversation } => match resolve(hub, &account, &conversation) {
@@ -374,9 +409,7 @@ pub(crate) fn legacy_plan(
     if owners.of_record(account, opened, fastctx_types::plan::KIND, resident).is_some() {
         return Ok(());
     }
-    if owners.candidates(directory, account).iter().any(|conversation| {
-        conversation.address.resident.as_str() == resident && allows(directory, account, conversation)
-    }) {
+    if owners.readable(directory, account).iter().any(|conversation| conversation.address.resident.as_str() == resident) {
         return Err("update this client to access a shared conversation's plan".into());
     }
     Ok(())

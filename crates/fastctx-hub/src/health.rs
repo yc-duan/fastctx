@@ -75,6 +75,9 @@ pub(crate) async fn keep(hub: Weak<Hub>) {
     loop {
         tokio::time::sleep(every).await;
         let Some(hub) = hub.upgrade() else { return };
+        if let Err(error) = hub.durable_jobs.measure().await {
+            hub.log.line(format_args!("measuring the hub's durable jobs: {error}"));
+        }
         let log_due = logged.is_none_or(|at| at.elapsed() >= LOG_EVERY);
         if log_due {
             logged = Some(Instant::now());
@@ -126,6 +129,7 @@ fn now(hub: &Hub) -> serde_json::Value {
     fullest.sort_by_key(|(_, sizes)| std::cmp::Reverse(sizes.urgent_bytes + sizes.letters + sizes.notices));
     let mut backlog = letters.clone();
     backlog.sort_by_key(|waiting| std::cmp::Reverse(waiting.held));
+    let readings = fastctx_platform::readings::snapshot();
     json!({
         "at": jiff::Timestamp::now(),
         "view": hub.health.view.snapshot(), "presence": hub.health.presence.snapshot(), "presence_queue": hub.health.presence_queue.snapshot(),
@@ -136,7 +140,13 @@ fn now(hub: &Hub) -> serde_json::Value {
         "violations": fastctx_platform::conduct::total(),
         "violated": fastctx_platform::conduct::snapshot(),
         // How long tasks waited for a thread on each runtime (`fastctx_platform::task::watch`).
-        "runtime": fastctx_platform::readings::snapshot().timings.into_iter().filter(|timing| timing.name.starts_with("runtime.hub")).collect::<Vec<_>>(),
+        "runtime": readings.timings.iter().filter(|timing| timing.name.starts_with("runtime.hub")).collect::<Vec<_>>(),
+        "jobs": {
+            "counts": readings.counts.iter().filter(|count| count.name.starts_with("job.")).collect::<Vec<_>>(),
+            "levels": readings.levels.iter().filter(|level| level.name.starts_with("job.")).collect::<Vec<_>>(),
+            "timings": readings.timings.iter().filter(|timing| timing.name.starts_with("job.")).collect::<Vec<_>>(),
+            "bounds_us": readings.bounds_us,
+        },
         "opened_in_5_minutes": opened,
         "queues": {
             "urgent_frames": queues.iter().map(|(_, sizes)| sizes.urgent).sum::<usize>(),

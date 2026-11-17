@@ -4,6 +4,15 @@ use fastctx_storage::{Result, rusqlite::Connection};
 pub(super) const MACHINE_TABLES: &[&str] = &[
     "storage_versions",
     "storage_salvaged",
+    // The journal of this database's format upgrades.
+    "sync_format_upgrades",
+    // Jobs use unit ownership and are discarded locally, never exported as records.
+    "jobs",
+    "claude_copies",
+    // A Claude wake in flight is this node's own: it neither moves with its
+    // conversation nor goes into its bundle, and a node of another version
+    // takes the conversation without it.
+    "claude_wakes",
     "receipts",
     "receipt_references",
     "receipt_watermarks",
@@ -66,6 +75,12 @@ pub(crate) fn tables(db: &Connection) -> Result<Vec<Table>> {
 }
 
 pub(crate) fn initialize(db: &Connection) -> Result<()> {
+    fastctx_storage::versions::apply(
+        db,
+        "node.jobs",
+        &[fastctx_storage::versions::Migration { version: 1, sql: fastctx_jobs::SCHEMA }],
+    )?;
+    db.execute_batch(crate::claude::wake_store::SCHEMA)?;
     db.execute_batch(crate::record_migration::SCHEMA)?;
     db.execute_batch(crate::records::MIGRATION_PROOF_SCHEMA)?;
     db.execute_batch(crate::context::records::SCHEMA)?;

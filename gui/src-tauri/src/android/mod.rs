@@ -2,10 +2,12 @@
 //! The web page supplies notification rules; the service executes them.
 
 mod bridge;
+mod copy;
 pub(crate) use bridge::{joining, joining_ended};
 mod monitor;
 mod observer;
 pub(crate) mod readiness;
+pub(crate) mod timeline;
 pub(crate) mod uploading;
 pub(crate) mod watching;
 
@@ -46,6 +48,7 @@ fn start(directory: PathBuf, bridge: Arc<bridge::Bridge>) -> Result<(), String> 
     WORLD.set(world.clone()).map_err(|_| "Fastctx's Android runtime was already started")?;
     tauri::async_runtime::set(runtime.handle().clone());
     runtime.spawn(monitor::run(world.clone(), bridge.clone()));
+    runtime.spawn(copy::start(world.clone()));
     runtime.spawn(observer::run(world, directory, bridge));
     RUNTIME.set(runtime).map_err(|_| "Fastctx's Android runtime was already started")?;
     Ok(())
@@ -205,7 +208,9 @@ pub fn plugin() -> TauriPlugin<tauri::Wry> {
             notify,
             dismiss,
             settings,
-            viewing
+            viewing,
+            copy::copy_tier,
+            copy::copy_tier_set
         ])
         .setup(|app, api| {
             let plugin = api.register_android_plugin("dev.fastctx.world", "WorldPlugin")?;

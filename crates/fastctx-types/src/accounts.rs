@@ -167,6 +167,12 @@ pub enum AccountChange {
         /// too; the same on every assistance of the login.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         turns: Option<u16>,
+        /// The part of the login's week `to` may use, in percent of the week
+        /// its owner set for it (用户 2026-11-15: 每人上限用占全号的比例来定);
+        /// Fable is half of it. A node that knows no shares holds to `weekly`,
+        /// which the share is given beside, in dollars.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        share: Option<u8>,
     },
     /// The plan shown for one login of an agent on `machine`, set by the
     /// hub's super administrator on a login that names none (a Claude Code
@@ -177,6 +183,10 @@ pub enum AccountChange {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         home: Option<PathBuf>,
         plan: Option<PlanLabel>,
+        /// Max as Anthropic now names its largest plan, Ultra (what was Max
+        /// 20x). A hub or node that knows no Ultra keeps and shows it as Max.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        ultra: bool,
     },
     /// `machine`, another's, no longer acts for the account.
     StopActing {
@@ -305,6 +315,15 @@ pub enum AccountChange {
     Dissolve {
         name: HubName,
     },
+    /// Whether the hub seals every asset each time it starts, until the
+    /// super administrator opens them (design §17 (b); off by default).
+    AssetSeal {
+        at_start: bool,
+    },
+    /// The super administrator opens the assets the hub sealed as it
+    /// started (`AssetSeal`). A seal for any other reason is ended only by
+    /// `fastctx hub reopen`, the hub stopped.
+    OpenAssets,
     ShareProject {
         town: TownName,
         with: AccountName,
@@ -436,6 +455,22 @@ pub struct HubAccounts {
     pub home: Option<AccountName>,
     /// Whether anyone who reaches the hub may open an account.
     pub self_registration: bool,
+    /// Whether the hub seals its assets and opens them again as its super
+    /// administrator asks: one that syncs assets. An earlier one (beta.17)
+    /// does neither, and refuses being asked.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub asset_seals: bool,
+    /// Whether the hub seals every asset each time it starts, until the
+    /// super administrator opens them.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub asset_seal_at_start: bool,
+    /// Why every asset is sealed now, if it is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub assets_sealed: Option<String>,
+    /// How the machines of the accounts logged in here stand in syncing
+    /// with the hub, as it last sampled them (design §28.9).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub synced: Vec<crate::sync_status::AccountSync>,
     pub accounts: Vec<AccountSeen>,
     pub members: Vec<MemberSeen>,
     pub shares: Vec<ShareSeen>,
@@ -665,6 +700,10 @@ pub struct ShareSeen {
     /// The most jobs the account runs on it at once; none is no limit.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub jobs: Option<u16>,
+    /// Given but not yet in force: the machine clears what the account may
+    /// not see first, at this holding revision.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending: Option<u64>,
 }
 
 /// One login of an agent on a machine, assisting an account.
@@ -692,6 +731,9 @@ pub struct AssistSeen {
     /// The most turns the login runs at once; none is no limit.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub turns: Option<u16>,
+    /// The part of the login's week the account may use, in percent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub share: Option<u8>,
 }
 
 /// A plan a login names none of, as the hub's super administrator set it
@@ -714,6 +756,9 @@ pub struct PlanSeen {
     /// agent's default login there.
     pub home: Option<PathBuf>,
     pub plan: PlanLabel,
+    /// Max shown as Ultra, Anthropic's newer name for what was Max 20x.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub ultra: bool,
 }
 
 /// A machine of another that acts for an account, since it first used an
@@ -730,4 +775,12 @@ pub struct ProjectSeen {
     pub name: TownName,
     pub owner: AccountName,
     pub granted: Vec<AccountName>,
+    /// The machine shared whole it was opened on: whoever holds that
+    /// machine disposes of it as its owner does (§6.2).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shared_on: Option<MachineName>,
+    /// Those who held that machine as it left the network: its co-owners
+    /// still, disposing of it as its owner does.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub frozen: Vec<AccountName>,
 }

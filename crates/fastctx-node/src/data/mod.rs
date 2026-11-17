@@ -8,21 +8,79 @@ mod host;
 pub(crate) mod places;
 mod space;
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
-use fastctx_types::data::{DataCall, DataReply, OUTPUT_DAYS};
+use fastctx_types::data::{DataCall, DataReply, Space};
 use fastctx_types::ipc::Failure;
 
 use crate::Node;
 
+/// What was last measured here, for a page to show at once while it asks
+/// again (`DataCall::List` with `kept`); and the one measure under way,
+/// which those asking meanwhile wait for rather than walking everything
+/// again beside it. Kept while the node runs, and in its cache for the
+/// next run (`kept_file`): the page says when it was measured.
+#[derive(Default)]
+pub(crate) struct Measured {
+    /// The last measure, with when it began.
+    last: Mutex<Option<(jiff::Timestamp, Space)>>,
+    measuring: tokio::sync::Mutex<()>,
+}
+
+impl Measured {
+    fn last(&self) -> Option<(jiff::Timestamp, Space)> {
+        self.last.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone()
+    }
+}
+
+/// Where the last measure stays between the node's runs: in its cache,
+/// which clearing it empties as it does whatever else is made again.
+fn kept_file(node: &Node) -> std::path::PathBuf {
+    node.root.join("cache").join("data-space.json")
+}
+
 pub(crate) async fn answer(node: &Arc<Node>, call: DataCall) -> Result<DataReply, Failure> {
     match call {
-        DataCall::List => {
-            let node = node.clone();
-            let space = fastctx_platform::task::spawn_blocking(move || space::measure(&node))
+        DataCall::List { kept: true } => {
+            if let Some((_, space)) = node.data_space.last() {
+                return Ok(DataReply::Listed(Box::new(space)));
+            }
+            // Not measured yet in this run of the node: as the last left it.
+            let file = kept_file(node);
+            let kept = fastctx_platform::task::spawn_blocking(move || {
+                fastctx_platform::disk::read(&file).ok().and_then(|bytes| serde_json::from_slice::<Space>(&bytes).ok())
+            })
+            .await
+            .ok()
+            .flatten();
+            Ok(kept.map_or(DataReply::Unmeasured, |space| DataReply::Listed(Box::new(space))))
+        }
+        DataCall::List { kept: false } => {
+            let asked = jiff::Timestamp::now();
+            let _turn = node.data_space.measuring.lock().await;
+            // Begun after this asked, while it waited for its turn: what it
+            // asked for. One begun before, deletions since may have missed.
+            if let Some((_, space)) = node.data_space.last().filter(|(began, _)| *began >= asked) {
+                return Ok(DataReply::Listed(Box::new(space)));
+            }
+            let began = jiff::Timestamp::now();
+            let measuring = node.clone();
+            let space = fastctx_platform::task::spawn_blocking(move || space::measure(&measuring))
                 .await
                 .map_err(|error| Failure::new(error.to_string()))?
                 .map_err(|error| Failure::new(format!("measuring what is kept here: {error}")))?;
+            *node.data_space.last.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some((began, space.clone()));
+            let (file, keeping, log) = (kept_file(node), space.clone(), node.log.clone());
+            // Written behind the answer: the page waits for nothing of it.
+            drop(fastctx_platform::task::spawn_blocking(move || {
+                let kept = serde_json::to_vec(&keeping).map_err(std::io::Error::other).and_then(|bytes| {
+                    fastctx_platform::disk::create_dir_all(file.parent().expect("in the cache"))?;
+                    fastctx_platform::publish(&file, &bytes, fastctx_platform::Permissions::Private)
+                });
+                if let Err(error) = kept {
+                    log.line(format_args!("keeping what was measured here for the next run: {error}"));
+                }
+            }));
             Ok(DataReply::Listed(Box::new(space)))
         }
         DataCall::Delete { names } => Ok(DataReply::Deleted { deletions: delete::delete(node, names).await }),
@@ -46,19 +104,10 @@ pub(crate) async fn answer(node: &Arc<Node>, call: DataCall) -> Result<DataReply
             Ok(DataReply::CacheCleared { bytes })
         }
         DataCall::OutputDays { days } => {
-            if let Some(days) = days {
-                if !OUTPUT_DAYS.contains(&days) {
-                    return Err(Failure::not_run(format!(
-                        "command output can be kept {} days",
-                        OUTPUT_DAYS.map(|days| days.to_string()).join(", ")
-                    )));
-                }
-                crate::retention::set_days(&node.world, days)
-                    .map_err(|error| Failure::new(format!("keeping the setting: {error}")))?;
+            if days.is_some() {
+                return Err(Failure::not_run("Job output is an asset and has no retention deadline."));
             }
-            let days = crate::retention::days(&node.world)
-                .map_err(|error| Failure::new(format!("reading the setting: {error}")))?;
-            Ok(DataReply::OutputDays { days })
+            Ok(DataReply::OutputDays { days: 30, output_retention: Some("unlimited".into()) })
         }
     }
 }

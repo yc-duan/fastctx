@@ -131,6 +131,15 @@ fn hub() -> HubAccounts {
         logins: vec!["ada".parse().unwrap()],
         home: Some("ada".parse().unwrap()),
         self_registration: true,
+        asset_seals: true,
+        asset_seal_at_start: true,
+        assets_sealed: Some("the hub seals them each time it starts, until the super administrator opens them".into()),
+        synced: vec![fastctx_types::sync_status::AccountSync {
+            account: "ada".parse().unwrap(),
+            devices: 3,
+            synced: 2,
+            behind: 420_000,
+        }],
         accounts: vec![
             AccountSeen {
                 name: "ada".parse().unwrap(),
@@ -253,7 +262,7 @@ fn hub() -> HubAccounts {
                 group: Some("lab A".into()),
             },
         ],
-        shares: vec![ShareSeen { machine: "desktop".parse().unwrap(), account: "bo".parse().unwrap(), jobs: Some(8) }],
+        shares: vec![ShareSeen { machine: "desktop".parse().unwrap(), account: "bo".parse().unwrap(), jobs: Some(8), pending: None }],
         assists: vec![
             AssistSeen {
                 machine: "desktop".parse().unwrap(),
@@ -265,6 +274,7 @@ fn hub() -> HubAccounts {
                 daily: None,
                 five_hour: Some(80),
                 turns: Some(4),
+                share: None,
             },
             AssistSeen {
                 machine: "gpu".parse().unwrap(),
@@ -276,6 +286,7 @@ fn hub() -> HubAccounts {
                 daily: Some(fastctx_types::usage::Usd(8_000_000)),
                 five_hour: None,
                 turns: None,
+                share: None,
             },
         ],
         plans: vec![PlanSeen {
@@ -283,12 +294,15 @@ fn hub() -> HubAccounts {
             agent: "claude".parse().unwrap(),
             home: Some("/home/bo/.claude-team".into()),
             plan: PlanLabel::Max,
+            ultra: false,
         }],
         acting: vec![ActingSeen { machine: "gpu".parse().unwrap(), account: "ada".parse().unwrap(), since: at() }],
         projects: vec![ProjectSeen {
             name: "mark50".parse().unwrap(),
             owner: "ada".parse().unwrap(),
             granted: vec!["bo".parse().unwrap()],
+            shared_on: None,
+            frozen: Vec::new(),
         }],
         arrivals: vec![Arrival {
             hub: "w-0123456789abcdef".parse().unwrap(),
@@ -373,6 +387,7 @@ pub fn fixtures() -> Fixtures {
                 daily: None,
                 five_hour: Some(90),
                 turns: Some(3),
+                share: None,
             },
             AccountChange::Assist {
                 machine: machine(),
@@ -385,18 +400,21 @@ pub fn fixtures() -> Fixtures {
                 daily: Some(fastctx_types::usage::Usd(10_000_000)),
                 five_hour: None,
                 turns: None,
+                share: None,
             },
             AccountChange::Plan {
                 machine: "gpu".parse().unwrap(),
                 agent: "claude".parse().unwrap(),
                 home: None,
                 plan: Some(PlanLabel::Pro),
+                ultra: false,
             },
             AccountChange::Plan {
                 machine: "gpu".parse().unwrap(),
                 agent: "claude".parse().unwrap(),
                 home: Some("/home/bo/.claude-team".into()),
                 plan: None,
+                ultra: false,
             },
             AccountChange::StopActing { machine: "gpu".parse().unwrap() },
             AccountChange::Direct {
@@ -454,6 +472,8 @@ pub fn fixtures() -> Fixtures {
             AccountChange::Transfer { to: "bo".parse().unwrap() },
             AccountChange::DeleteAccount { name: "bo".parse().unwrap() },
             AccountChange::Settings { self_registration: false },
+            AccountChange::AssetSeal { at_start: true },
+            AccountChange::OpenAssets,
             AccountChange::ShareProject { town: "mark50".parse().unwrap(), with: "bo".parse().unwrap(), shared: true },
             AccountChange::MoveProject { town: "mark50".parse().unwrap(), to: "bo".parse().unwrap() },
             AccountChange::Seen { name: "pixel".parse().unwrap() },

@@ -27,6 +27,9 @@ struct Known {
     settled: HashSet<String>,
     /// Those whose handover was cleared in this run.
     cleared: HashSet<String>,
+    /// Those settled and since seen not waiting: nothing is left of them to
+    /// look up.
+    done: HashSet<String>,
 }
 
 impl Receipts {
@@ -53,7 +56,20 @@ impl Receipts {
         known.turns.retain(|name, _| present.contains(name));
         known.settled.retain(|name| present.contains(name));
         known.cleared.retain(|name| present.contains(name));
+        known.done.retain(|name| present.contains(name));
         Ok(names.iter().filter_map(|name| known.turns.get(name).map(|turn| (name.clone(), turn.clone()))).collect())
+    }
+
+    /// The receipts of `listed` that may still need settling.
+    pub(super) fn open(&self, directory: &Path, listed: Vec<(String, String)>) -> Vec<(String, String)> {
+        let known = self.0.lock().expect("never poisoned");
+        let Some(known) = known.get(directory) else { return listed };
+        listed.into_iter().filter(|(name, _)| !known.done.contains(name)).collect()
+    }
+
+    pub(super) fn done(&self, directory: &Path, name: &str) {
+        let mut known = self.0.lock().expect("never poisoned");
+        known.entry(directory.to_path_buf()).or_default().done.insert(name.to_string());
     }
 
     pub(super) fn settled(&self, directory: &Path, name: &str) -> bool {

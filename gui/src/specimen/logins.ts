@@ -91,7 +91,7 @@ if (import.meta.env.DEV && new URLSearchParams(location.search).has("modelsEdite
   modelEdits.set("C:\\Users\\me\\.claude", { removed: ["claude-opus-5"], added: ["deepseek-flash", "claude-opus-5-6"] });
 }
 /** The logins the workbench is open in, as opening and closing it set. */
-const benches = new Set<string>(["C:\\Users\\me\\.codex"]);
+const benches = new Set<string>(["C:\\Users\\me\\.codex", "C:\\Users\\me\\.codex-work", "C:\\Users\\me\\.claude"]);
 /** When the laptop was scanned, finding nothing; never, at first. */
 let laptopScanned: number | null = null;
 
@@ -296,12 +296,22 @@ function others(): WorldLogins["machines"] {
   delete render.scan;
   render.by_login = true;
   render.claude.listed = render.claude.listed.map((login) => ({ ...login, workbench: true, limits: { kind: "unavailable", reason: "the windows of the login's account are its owner's to see" } }));
+  // cy's mac, which the user may not work on: the two logins of it that
+  // assist them, told the same way.
+  const lentBy = (login: Login): Login => ({ ...login, workbench: true, limits: { kind: "unavailable", reason: "the windows of the login's account are its owner's to see" } });
+  const cy = scanned("cy-mac", "claude", "/Users/cy/.claude", "cy@example.com", "max", false);
+  cy.codex = scanned("cy-mac", "codex", "/Users/cy/.codex", "cy@example.com", "pro", false).codex;
+  delete cy.scan;
+  cy.by_login = true;
+  cy.claude.listed = cy.claude.listed.map(lentBy);
+  cy.codex.listed = cy.codex.listed.map(lentBy);
   return [
     { kind: "answered", logins: { ...lab, codex: { ...lab.codex, listed: lab.codex.listed.map((login) => ({ ...login, limits: { kind: "unavailable", reason: "not read yet" } })) } } },
     { kind: "answered", logins: { ...server, codex: { programs: [], listed: [], candidates: [], elsewhere: [] } } },
     { kind: "answered", logins: scanned("gpu", "claude", "/home/bo/.claude", "bo@example.com", "max", true) },
     { kind: "answered", logins: scanned("build", "codex", "/home/ops/.codex", "ops@acme.example", "team", true) },
     { kind: "answered", logins: render },
+    { kind: "answered", logins: cy },
   ];
 }
 

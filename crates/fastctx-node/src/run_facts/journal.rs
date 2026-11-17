@@ -1,15 +1,10 @@
-//! Segmented executor detail: 8 MiB per segment, at most 32 retained segments.
-//! Only segments behind the durable emission cursor may expire after seven days
-//! or be evicted for the size bound. Unsent detail applies backpressure instead.
+//! Executor detail uses bounded segments and retains every segment until deletion.
 
 use super::*;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
-use std::time::{Duration, SystemTime};
 
 const SEGMENT: u64 = 8 * 1024 * 1024;
-const SEGMENTS: u64 = 32;
-const KEEP: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 
 #[derive(Default, Serialize, Deserialize)]
 struct Index {
@@ -37,7 +32,7 @@ fn save(record: &Path, index: &Index) -> io::Result<()> {
     publish(&record.with_extension("steps-index"), &serde_json::to_vec(index)?, Permissions::Private)
 }
 
-pub(super) fn append(record: &Path, row: &[u8], sent: u64) -> io::Result<()> {
+pub(super) fn append(record: &Path, row: &[u8]) -> io::Result<()> {
     if row.len() as u64 > SEGMENT {
         return Err(io::Error::new(io::ErrorKind::InvalidData, "one step exceeds the journal's 8 MiB segment budget"));
     }
@@ -49,13 +44,6 @@ pub(super) fn append(record: &Path, row: &[u8], sent: u64) -> io::Result<()> {
     };
     if length > 0 && length.saturating_add(row.len() as u64) > SEGMENT {
         let next = index.current.checked_add(1).ok_or_else(|| io::Error::other("step journal segment exhausted"))?;
-        prune(record, &mut index, Some(next), sent)?;
-        if next - index.first >= SEGMENTS {
-            return Err(io::Error::new(
-                io::ErrorKind::StorageFull,
-                "the unsent step journal reached its 256 MiB budget",
-            ));
-        }
         fastctx_platform::ensure_private_dir(&record.with_extension("steps"))?;
         let next_path = path(record, next);
         match publish_new(&next_path, &[], Permissions::Private) {
@@ -67,51 +55,6 @@ pub(super) fn append(record: &Path, row: &[u8], sent: u64) -> io::Result<()> {
         save(record, &index)?;
     }
     log::append(&path(record, index.current), row)
-}
-
-fn prune(record: &Path, index: &mut Index, next: Option<u64>, sent: u64) -> io::Result<()> {
-    let old = index.first;
-    while index.first < index.current && index.first < sent {
-        let crowded = next.is_some_and(|next| next - index.first >= SEGMENTS);
-        let expired = match fastctx_platform::disk::metadata(path(record, index.first)) {
-            Ok(metadata) => SystemTime::now().duration_since(metadata.modified()?).is_ok_and(|age| age >= KEEP),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => true,
-            Err(error) => return Err(error),
-        };
-        if !crowded && !expired {
-            break;
-        }
-        index.first += 1;
-    }
-    if index.first != old {
-        save(record, index)?;
-        for segment in old..index.first {
-            match fastctx_platform::disk::remove_file(path(record, segment)) {
-                Ok(()) => {}
-                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-                Err(error) => return Err(error),
-            }
-        }
-    }
-    if index.first > 0 {
-        match fastctx_platform::disk::remove_file(path(record, 0)) {
-            Ok(()) => {}
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-            Err(error) => return Err(error),
-        }
-    }
-    let directory = record.with_extension("steps");
-    if fastctx_platform::disk::exists(&directory)? {
-        for entry in fastctx_platform::disk::read_dir(directory)? {
-            let file = entry?.path();
-            let number =
-                file.file_stem().and_then(|name| name.to_str()).and_then(|name| u64::from_str_radix(name, 16).ok());
-            if number.is_some_and(|number| number < index.first) {
-                fastctx_platform::disk::remove_file(file)?;
-            }
-        }
-    }
-    Ok(())
 }
 
 pub(super) fn read_since(

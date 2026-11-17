@@ -24,6 +24,7 @@ import { detailOf } from "./problem";
 import type { Page } from "./shell";
 import { effect } from "./signals";
 import type { Store } from "./store";
+import { waiting } from "./waiting";
 
 export interface McpPageOptions {
   store: Store;
@@ -127,7 +128,7 @@ export class McpPage implements Page {
         html = "";
         break;
       case "reading":
-        html = `<p class="prof-quiet prof-board">${escape(words.reading)}</p>`;
+        html = waiting({ label: words.reading, shape: "rows", rows: 3 });
         break;
       case "failed":
         html = `<p class="prof-quiet prof-board" title="${escape(state.detail)}">${escape(words.readFailed)}</p>`;

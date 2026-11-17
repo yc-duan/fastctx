@@ -1,6 +1,8 @@
 //! Composer metadata, text journals, and operation receipts commit together.
 //! Rows live with the conversation; its records expire as `keeping` says.
 
+pub(super) mod journal;
+mod loading;
 mod text;
 use text::TextWrite;
 pub(super) use text::prepare as prepare_text;
@@ -55,41 +57,7 @@ pub(super) async fn read(node: &Node, id: &ResidentId) -> Result<Stored, Failure
     let owner = id.to_string();
     let directory = node.world.conversation(id);
     node.database
-        .read(move |connection| {
-            let transaction = connection.unchecked_transaction()?;
-            let row = transaction
-                .query_row("SELECT revision,content FROM composers WHERE owner=?1", [&owner], |row| {
-                    Ok((row.get::<_, i64>(0)?, row.get::<_, Vec<u8>>(1)?))
-                })
-                .optional()?;
-            let mut state: Stored = if let Some((revision, bytes)) = row {
-                let mut state: Stored = serde_json::from_slice(&bytes).map_err(error)?;
-                let revision = u64::try_from(revision).map_err(error)?;
-                if state.revision > revision {
-                    return Err(error("composer metadata is newer than its durable revision"));
-                }
-                state.revision = revision;
-                state.persisted = true;
-                state
-            } else {
-                // Only the old node wrote this file; the conversation's cell
-                // serializes its migration with edits and deletion now.
-                match fastctx_platform::disk::read(directory.composer()) {
-                    Ok(bytes) => serde_json::from_slice(&bytes).map_err(error)?,
-                    Err(reason) if reason.kind() == std::io::ErrorKind::NotFound => Stored::default(),
-                    Err(reason) => return Err(error(reason)),
-                }
-            };
-            for document in state.documents_mut() {
-                let loaded = documents::load_in(&transaction, &key(&owner, &document.id))?;
-                document.hydrate(loaded).map_err(error)?;
-            }
-            state.document_names = state.documents().map(|document| document.id.clone()).collect();
-            state.reindex();
-            state.observed_documents = state.visible_document_ids();
-            transaction.commit()?;
-            Ok(state)
-        })
+        .read(move |connection| loading::read(connection, &owner, &directory.composer()))
         .await
         .map_err(failure)
 }
@@ -122,8 +90,12 @@ pub(super) fn prepare(id: &ResidentId, state: &mut Stored) -> Result<Prepared, F
     state.revision = state.revision.checked_add(1).ok_or_else(|| failure("revision overflow"))?;
     i64::try_from(state.revision).map_err(failure)?;
     let mut texts = Vec::new();
+    let mut records = Vec::new();
     for document in state.documents_mut() {
-        if !document.pending.is_empty() || document.revision == 0 {
+        if let Some(content) = document.alias_checkpoint()? {
+            records.push(Record { kind: journal::ALIASES, name: document.id.clone(), content, expires: None });
+        }
+        if !document.pending.is_empty() || document.revision == 0 || document.checkpoint_migration.is_some() {
             texts.push(TextWrite::prepare(&owner, document)?);
         }
     }
@@ -131,13 +103,20 @@ pub(super) fn prepare(id: &ResidentId, state: &mut Stored) -> Result<Prepared, F
     let names: HashSet<_> = state.documents().map(|document| document.id.clone()).collect();
     let deleted: Vec<_> = state.document_names.difference(&names).map(|name| key(&owner, name)).collect();
     state.document_names = names;
-    let mut records = Vec::new();
     for (name, receipt) in std::mem::take(&mut state.receipts) {
         records.push(Record {
             kind: "receipts",
             name: receipts::name(&name),
             content: serde_json::to_vec(&receipt).map_err(failure)?,
             expires: expires("receipts"),
+        });
+    }
+    for (name, outcome) in std::mem::take(&mut state.outcomes) {
+        records.push(Record {
+            kind: "outcomes",
+            name: receipts::name(&name),
+            content: serde_json::to_vec(&outcome).map_err(failure)?,
+            expires: expires("outcomes"),
         });
     }
     for (name, operations) in std::mem::take(&mut state.taken) {
@@ -167,8 +146,12 @@ pub(super) fn prepare(id: &ResidentId, state: &mut Stored) -> Result<Prepared, F
             expires: expires("uploads"),
         });
     }
+    for document in state.documents_mut() {
+        document.aliases_changed = false;
+    }
     state.persisted = true;
     let content = serde_json::to_vec(&state).map_err(failure)?;
+    state.metadata_bytes = content.len();
     let bytes = owner.len()
         + content.len()
         + texts.iter().map(TextWrite::bytes).sum::<usize>()
@@ -178,6 +161,9 @@ pub(super) fn prepare(id: &ResidentId, state: &mut Stored) -> Result<Prepared, F
 }
 
 impl Prepared {
+    pub fn compact_due(&self) -> bool {
+        self.texts.iter().any(TextWrite::compact_due)
+    }
     pub fn updates(&self) -> Result<Vec<fastctx_types::composer::sync::Update>, Failure> {
         self.texts.iter().map(TextWrite::update).collect()
     }
@@ -190,7 +176,10 @@ impl Prepared {
                 params![self.owner, revision, self.content, i64::try_from(previous).map_err(error)?],
             )?;
             if changed != 1 {
-                return Err(error("the composer changed before its update could commit; read it again"));
+                return Err(Error::with_kind(
+                    fastctx_storage::ErrorKind::Changed,
+                    "the composer changed before its update could commit; read it again",
+                ));
             }
         } else {
             transaction.execute(
@@ -202,7 +191,7 @@ impl Prepared {
             text.commit(transaction)?;
         }
         for key in self.deleted {
-            documents::delete(transaction, &key)?;
+            journal::delete(transaction, &key)?;
         }
         for record in self.records {
             transaction.execute(

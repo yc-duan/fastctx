@@ -95,15 +95,27 @@ class WorldPlugin(activity: Activity) : Plugin(activity) {
     @Command fun settings(invoke: Invoke) = answer(invoke) {
         val context = current()
         val destination = invoke.getArgs().getString("destination")
-        val intent = when (destination) {
-            "application" -> Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${context.packageName}"))
-            "battery" -> Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
-            "notifications" -> if (Build.VERSION.SDK_INT >= 26)
+        val details = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${context.packageName}"))
+        // Each tried in turn, the first the phone has opened; the app's own details last.
+        val intents: List<Intent> = when (destination) {
+            "application" -> listOf(details)
+            // The system's own dialog: "let World always run in the background?"
+            "battery" -> listOf(
+                Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:${context.packageName}")),
+                Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+            "notifications" -> listOf(if (Build.VERSION.SDK_INT >= 26)
                 Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
-                else Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${context.packageName}"))
+                else details)
+            // The maker's own switches, which no app can read nor turn on: straight to the page
+            // that holds them.
+            "autostart" -> WorldBackground.autostart(context) + details
+            "vendorBattery" -> WorldBackground.vendorBattery(context) + details
             else -> throw IllegalArgumentException("Unknown settings destination: $destination")
         }
-        context.startActivity(intent)
+        val opened = intents.firstOrNull { intent ->
+            try { context.startActivity(intent); true } catch (_: Exception) { false }
+        }
+        check(opened != null) { "The phone has no page for $destination" }
         invoke.resolve()
     }
 

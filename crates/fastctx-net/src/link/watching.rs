@@ -75,7 +75,7 @@ pub struct Input {
 }
 impl Input {
     /// Enqueues one batch on this authenticated stream. The receiver's Saved
-    /// packet, rather than this enqueue, acknowledges its durable effect.
+    /// packet, rather than this enqueue, acknowledges its accepted effect; it is not a disk-sync barrier.
     pub fn send(&self, input: fastctx_types::composer::sync::Input) -> Result<(), Failure> {
         {
             let state = self.pool.state.lock().expect("never poisoned");

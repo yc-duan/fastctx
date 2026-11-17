@@ -1,11 +1,11 @@
 //! Stable scalar identities for the old composer protocol. Modern writers use
 //! native Yjs updates; this adapter never turns a concurrent edit into a replace.
 
-use super::{Document, Result, error};
-use std::collections::HashSet;
-use yrs::{Assoc, GetString, IndexedSequence, StickyIndex, Text, Transact};
+mod positions;
+use super::{Document, Result};
+use yrs::{Assoc, IndexedSequence, Text, Transact};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Id {
     pub client: u64,
     pub clock: u32,
@@ -19,86 +19,58 @@ pub struct Edited {
     pub update: Vec<u8>,
     pub inserted: Vec<Character>,
 }
-fn native(id: Id) -> Result<yrs::ID> {
-    if id.client >= 1 << 53 {
-        return Err(error("the draft character has an invalid client id"));
-    }
-    Ok(yrs::ID::new(yrs::block::ClientID::new(id.client), id.clock))
-}
 
 impl Document {
     pub fn characters(&self) -> Vec<Character> {
-        let mut transaction = self.doc.transact_mut();
-        let text = self.text.get_string(&transaction);
-        characters(&self.text, &mut transaction, 0, &text)
+        let mut characters = Vec::with_capacity(self.scalar_len);
+        self.visit_characters(|id, character| characters.push(Character { id, text: character.to_string() }));
+        characters
+    }
+
+    /// Visits visible Unicode scalars and their native identities without
+    /// allocating a second per-character representation.
+    pub fn visit_characters(&self, mut visit: impl FnMut(Id, char)) {
+        let transaction = self.doc.transact();
+        self.text.visit_chunks(&transaction, |chunk| {
+            if !chunk.deleted
+                && let Some(value) = chunk.text
+            {
+                let mut clock = chunk.id.clock;
+                for character in value.chars() {
+                    visit(Id { client: chunk.id.client.get(), clock }, character);
+                    clock += character.len_utf16() as u32;
+                }
+            }
+        });
+    }
+
+    /// Validates the anchor and deletions, returning the remaining scalar count
+    /// without modifying text or materializing every character identity.
+    pub fn remaining_after(&self, after: Option<Id>, delete: &[Id]) -> Result<usize> {
+        Ok(self.scalar_len - positions::resolve(self, after, delete)?.removed)
     }
 
     /// A deleted anchor still marks its place. Deleting an already deleted
     /// identity is harmless; an identity outside this document is rejected.
     pub fn edit(&mut self, after: Option<Id>, delete: &[Id], insert: &str) -> Result<Edited> {
-        let visible = self.characters();
-        let mut at = 0;
-        let mut anchor = after.is_none().then_some(0);
-        let gone: HashSet<_> = delete.iter().copied().collect();
-        let mut ranges = Vec::new();
-        for character in &visible {
-            let length = character.text.encode_utf16().count() as u32;
-            if Some(character.id) == after {
-                anchor = Some(at + length);
-            }
-            if gone.contains(&character.id) {
-                ranges.push((at, length));
-            }
-            at += length;
-        }
+        let resolved = positions::resolve(self, after, delete)?;
         let mut transaction = self.doc.transact_mut();
-        let mut at = match anchor {
-            Some(at) => at,
-            None => {
-                StickyIndex::from_id(native(after.expect("anchor"))?, Assoc::Before)
-                    .get_offset(&transaction)
-                    .ok_or_else(|| error("the insertion anchor is not in this draft"))?
-                    .index
-            }
-        };
-        let value = self.text.get_string(&transaction);
-        for id in after.iter().chain(delete.iter()) {
-            let offset = StickyIndex::from_id(native(*id)?, Assoc::After)
-                .get_offset(&transaction)
-                .ok_or_else(|| error("a character is not in this draft"))?;
-            if !super::boundary(&value, offset.index) {
-                return Err(error("a character identity splits a UTF-16 character"));
-            }
-        }
-        if !super::boundary(&value, at) {
-            return Err(error("the insertion anchor splits a UTF-16 character"));
-        }
-        let removed_before = ranges.iter().map(|&(start, length)| at.saturating_sub(start).min(length)).sum::<u32>();
-        for &(start, length) in ranges.iter().rev() {
+        for &(start, length) in resolved.ranges.iter().rev() {
             self.text.remove_range(&mut transaction, start, length);
         }
-        at -= removed_before;
+        let mut inserted = Vec::with_capacity(insert.chars().count());
         if !insert.is_empty() {
-            self.text.insert(&mut transaction, at, insert);
+            self.text.insert(&mut transaction, resolved.anchor, insert);
+            let position =
+                self.text.sticky_index(&transaction, resolved.anchor, Assoc::After).expect("inserted character");
+            let id = position.id().expect("inserted character identity");
+            let mut clock = id.clock;
+            for character in insert.chars() {
+                inserted.push(Character { id: Id { client: id.client.get(), clock }, text: character.to_string() });
+                clock += character.len_utf16() as u32;
+            }
         }
-        let inserted = characters(&self.text, &mut transaction, at, insert);
+        self.scalar_len = self.scalar_len - resolved.removed + inserted.len();
         Ok(Edited { update: transaction.encode_update_v1(), inserted })
     }
-}
-
-fn characters(
-    text: &yrs::TextRef,
-    transaction: &mut yrs::TransactionMut<'_>,
-    mut at: u32,
-    value: &str,
-) -> Vec<Character> {
-    value
-        .chars()
-        .map(|character| {
-            let position = text.sticky_index(transaction, at, Assoc::After).expect("visible character");
-            let id = position.id().expect("visible character identity");
-            at += character.len_utf16() as u32;
-            Character { id: Id { client: id.client.get(), clock: id.clock }, text: character.to_string() }
-        })
-        .collect()
 }

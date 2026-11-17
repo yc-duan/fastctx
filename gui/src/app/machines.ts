@@ -1152,6 +1152,33 @@ export class MachinesPage implements Page {
     holdUntilNamed(confirm.body, hub.name);
   }
 
+  /** Turns sealing every asset at each start of the hub on or off, once
+   *  asked: on, nobody reads assets after a start until this page opens
+   *  them (design §17 (b)). */
+  private assetSeal(login: Login, hub: HubAccounts): void {
+    const { words } = this.options;
+    const sealing = !hub.asset_seal_at_start;
+    this.options.confirm.ask({
+      title: words.assetSealTitle(sealing),
+      what: words.assetSealWhat(sealing),
+      go: words.assetSealGo(sealing),
+      act: () => this.options.change(login, { change: "asset_seal", at_start: sealing }),
+      done: () => void this.options.store.refresh(),
+    });
+  }
+
+  /** Opens the assets the hub sealed as it started, once asked. */
+  private openAssets(login: Login, hub: HubAccounts): void {
+    const { words } = this.options;
+    this.options.confirm.ask({
+      title: words.openAssetsTitle,
+      what: words.openAssetsWhat(hub.assets_sealed ?? ""),
+      go: words.openAssetsGo,
+      act: () => this.options.change(login, { change: "open_assets" }),
+      done: () => void this.options.store.refresh(),
+    });
+  }
+
   /** Signs a phone out of the account, once asked. */
   private removePhone(login: Login, name: string): void {
     const { access, words } = this.options;
@@ -1537,6 +1564,8 @@ export class MachinesPage implements Page {
         ...(logins.length ? [{ act: "invite", label: words.inviteDevice, icon: "plus" as const }] : []),
         ...(top ? [{ act: "move", label: words.moveHub, icon: "move" as const }] : []),
         ...(top ? [{ act: "signup", label: this.options.people.signUpState(open), icon: "signup" as const, on: open }] : []),
+        ...(top && spot.hub.assets_sealed ? [{ act: "open-assets", label: words.openAssets, icon: "unlock" as const }] : []),
+        ...(top && spot.hub.asset_seals ? [{ act: "asset-seal", label: words.assetSeal, icon: "lock" as const, on: !!spot.hub.asset_seal_at_start }] : []),
         ...(top && spot.hub.versions && this.options.updates ? [{ act: "updates", label: this.options.updates.words.policy, icon: "update" as const }] : []),
         details,
         ...(top && spot.hub.dissolves ? [{ act: "dissolve", label: words.dissolve, icon: "close" as const, danger: true }] : []),
@@ -1689,6 +1718,11 @@ export class MachinesPage implements Page {
       const login = this.hubLogin(spot.hub.hub);
       if (act === "invite" && login) this.invite(login);
       else if (act === "signup") this.people.signUp(spot.hub.hub, on);
+      else if (act === "asset-seal" || act === "open-assets") {
+        const top = this.superLogin(spot.hub, world);
+        if (top && act === "asset-seal") this.assetSeal(top, spot.hub);
+        else if (top) this.openAssets(top, spot.hub);
+      }
       else if (act === "updates") this.show("updates");
       else if (act === "dissolve") {
         const top = this.superLogin(spot.hub, world);

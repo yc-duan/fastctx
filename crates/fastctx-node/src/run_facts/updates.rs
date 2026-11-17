@@ -170,7 +170,3 @@ fn deliver(node: &Node, record: &JobRecord, update: &JobFacts) -> io::Result<()>
         fastctx_types::remote::Letter::JobFacts { to: owner.resident.clone(), update: Box::new(update.clone()) },
     )
 }
-
-pub(super) fn segment(record: &Path) -> io::Result<u64> {
-    Ok(crate::job_metadata::Job::open(record)?.get::<Emitted>("facts-state")?.unwrap_or_default().steps_segment)
-}

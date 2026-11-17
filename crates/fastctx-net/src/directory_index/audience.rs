@@ -48,6 +48,7 @@ impl Indexed<'_> {
     pub fn project_readers(&self, town: &TownId) -> Vec<usize> {
         let Some(project) = self.find_project(town) else { return Vec::new() };
         let mut accounts = project.granted.clone();
+        accounts.extend(project.frozen.iter().cloned());
         accounts.insert(project.owner.clone());
         if let Some(machine) = &project.shared_on {
             accounts.extend(self.holders(machine));

@@ -28,21 +28,21 @@ pub(super) struct Searches(Mutex<HashMap<String, Arc<Searching>>>);
 
 /// One folder's search under way.
 #[derive(Default)]
-struct Searching {
-    stop: AtomicBool,
-    counters: walk::Counters,
+pub(super) struct Searching {
+    pub(super) stop: AtomicBool,
+    pub(super) counters: walk::Counters,
     /// What it found so far, in the order met.
-    found: Mutex<Vec<FoundIn>>,
+    pub(super) found: Mutex<Vec<FoundIn>>,
 }
 
 impl Searches {
-    fn get(&self, key: &str) -> Option<Arc<Searching>> {
+    pub(super) fn get(&self, key: &str) -> Option<Arc<Searching>> {
         self.0.lock().expect("never poisoned").get(key).cloned()
     }
 
     /// Whether `searching` is the search of `key` under way: one stopped
     /// and replaced by a newer search of the same folder no longer is.
-    fn current(&self, key: &str, searching: &Arc<Searching>) -> bool {
+    pub(super) fn current(&self, key: &str, searching: &Arc<Searching>) -> bool {
         self.get(key).is_some_and(|current| Arc::ptr_eq(&current, searching))
     }
 }
@@ -54,7 +54,9 @@ pub(super) async fn change(node: &Arc<Node>, dir: PathBuf, change: FolderChange)
         FolderChange::Stop => {
             if let Some(searching) = node.logins.searches.get(&walk::key(&dir)) {
                 searching.stop.store(true, Ordering::Relaxed);
+                node.topics.changed(fastctx_types::topics::LOGINS);
             }
+            super::submitted::withdraw_folder(node, &dir, "the folder's search was stopped before it began").await?;
             super::here(node).await
         }
         FolderChange::Forget => forget(node, dir).await,
@@ -102,6 +104,8 @@ async fn forget(node: &Arc<Node>, dir: PathBuf) -> Result<MachineLogins, Failure
     if let Some(searching) = node.logins.searches.0.lock().expect("never poisoned").remove(&walk::key(&dir)) {
         searching.stop.store(true, Ordering::Relaxed);
     }
+    node.topics.changed(fastctx_types::topics::LOGINS);
+    super::submitted::withdraw_folder(node, &dir, "the folder was forgotten before its search began").await?;
     {
         let (node, dir) = (node.clone(), dir.clone());
         fastctx_platform::task::spawn_blocking(move || {
@@ -112,7 +116,7 @@ async fn forget(node: &Arc<Node>, dir: PathBuf) -> Result<MachineLogins, Failure
         .map_err(|error| Failure::new(error.to_string()))?
         .map_err(|error| Failure::new(format!("forgetting the folder: {error}")))?;
     }
-    super::here(node).await
+    super::changed_here(node).await
 }
 
 /// Searches every chosen folder again; a search under way goes on.
@@ -129,6 +133,7 @@ pub(super) fn stop_all(node: &Node) {
     for searching in node.logins.searches.0.lock().expect("never poisoned").values() {
         searching.stop.store(true, Ordering::Relaxed);
     }
+    node.topics.changed(fastctx_types::topics::LOGINS);
 }
 
 /// The agents `dir` is a login of: named and kept like the agent's own, or
@@ -161,6 +166,7 @@ fn search(node: &Arc<Node>, dir: PathBuf) {
         searches.insert(key.clone(), searching.clone());
         searching
     };
+    super::search_progress::follow(node, &key, &searching);
     let spawned = std::thread::Builder::new().name("agents' logins search".into()).spawn({
         let (node, key, searching) = (node.clone(), key.clone(), searching.clone());
         move || {
@@ -171,10 +177,14 @@ fn search(node: &Arc<Node>, dir: PathBuf) {
             if searches.get(&key).is_some_and(|current| Arc::ptr_eq(current, &searching)) {
                 searches.remove(&key);
             }
+            drop(searches);
+            super::snapshot::ask(&node);
+            node.topics.changed(fastctx_types::topics::LOGINS);
         }
     });
     if let Err(error) = spawned {
         node.logins.searches.0.lock().expect("never poisoned").remove(&key);
+        node.topics.changed(fastctx_types::topics::LOGINS);
         node.log.line(format_args!("starting a search for agents' logins: {error}"));
     }
 }
@@ -212,6 +222,7 @@ fn run(node: &Arc<Node>, dir: &Path, key: &str, searching: &Arc<Searching>) -> R
         let mounted = fastctx_platform::disks::mount_points()
             .map_err(|error| format!("listing where filesystems are mounted: {error}"))?;
         skip.extend(mounted.iter().filter(|point| !crate::homes::same_dir(point, dir)).map(|point| walk::key(point)));
+        // Readers are told of its progress as it goes (`search_progress::follow`).
         walk::walk(dir, &skip, &searching.stop, &searching.counters, &mut |one| {
             if let Ok(path) = one.dir.strip_prefix(dir)
                 && !path.as_os_str().is_empty()

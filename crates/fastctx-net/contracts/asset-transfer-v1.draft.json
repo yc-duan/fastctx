@@ -1,0 +1,51 @@
+{
+  "advertisement": {
+    "encodings": [
+      "raw",
+      "zstd"
+    ],
+    "envelopes": [
+      "plain/v1"
+    ],
+    "exposure_cleanup": [],
+    "hub_signing": null,
+    "kinds": [],
+    "max_page_bytes": 262144,
+    "protocols": [
+      "fastctx-sync/v1"
+    ],
+    "receive_window": "4096",
+    "transports": [
+      "asset-transfer/v1",
+      "future-transport"
+    ]
+  },
+  "direct_device_intent": {
+    "key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    "kind": "asset_sync_data",
+    "proof": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    "session": "ss-29292929292929292929292929292929"
+  },
+  "hub_intent": {
+    "key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    "kind": "asset_sync_data",
+    "proof": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    "session": "ss-29292929292929292929292929292929"
+  },
+  "limits": {
+    "max_active_parts": 2,
+    "max_active_transfers": 4,
+    "max_control_bytes": 16384,
+    "max_frame_bytes": 65536,
+    "max_metadata_bytes": 262144
+  },
+  "no_or_unknown_transport_advertisement": "refused_before_new_intent",
+  "proof_status": "invalid_placeholder_not_a_signature",
+  "selection": {
+    "encoding": "raw",
+    "envelope": "plain/v1",
+    "protocol": "fastctx-sync/v1",
+    "transport": "asset-transfer/v1"
+  },
+  "service_activation": false
+}

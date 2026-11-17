@@ -9,9 +9,14 @@ import { glyph } from "./glyphs";
 import { escape } from "./prose";
 import { FindIndex, type FarHits, type FarMatch, type FindChanges, type FindMatch } from "./find-index";
 import { FindHighlights } from "./find-highlights";
+import type { TimelineFind } from "./timeline-find";
 import { composing } from "../typing";
 
+/** How long the words typed into find settle before they are searched. */
+const TYPING_MS = 150;
+
 interface FindView {
+  global?: TimelineFind | undefined;
   findChanges(): FindChanges;
   revealFind(match: FindMatch): Promise<void>;
   findRange(match: FindMatch): Range | null;
@@ -28,10 +33,11 @@ interface FindView {
     /** Reads in the turns around event `at`, and draws them. */
     reach(at: number): Promise<void>;
     close(): void;
-  };
+  } | undefined;
 }
 
 export interface FindWords {
+  english?: boolean;
   find: string;
   placeholder: string;
   count(current: number, total: number): string;
@@ -44,6 +50,7 @@ export interface FindWords {
 export class Finder {
   readonly element: HTMLElement;
   private readonly input: HTMLInputElement;
+  private readonly scope: HTMLElement;
   private readonly count: HTMLElement;
   private readonly index = new FindIndex();
   private selected: FindMatch | FarMatch | null = null;
@@ -51,13 +58,24 @@ export class Finder {
    *  how much was indexed. */
   private farAsked = "";
   private current = -1;
+  private globalRevealPending = false;
+  private globalPreviousTotal = 0;
+  private globalRanked = -1;
   private fresh = false;
+  /** A search waiting for the words being typed to settle. */
+  private typing = 0;
   private pending = false;
   private running = false;
   private disposed = false;
   private revision = 0;
   private readonly highlights: FindHighlights;
   private task: Promise<void> = Promise.resolve();
+
+  setScope(text: string | null): void {
+    this.scope.hidden = text === null;
+    this.element.classList.toggle("has-scope", text !== null);
+    if (this.scope.textContent !== text) this.scope.textContent = text;
+  }
 
   /** Resolves once queued changes and the requested reveal have settled. */
   get ready(): Promise<void> {
@@ -85,12 +103,34 @@ export class Finder {
     // It floats over the page's caption, which drags the window on Windows.
     this.element.dataset.worldTitlebar = "client";
     this.element.innerHTML = `<span class="find-glyph">${glyph("search", 16)}</span><input class="find-input" type="search" enterkeyhint="search" placeholder="${escape(words.placeholder)}" aria-label="${escape(words.find)}"><span class="find-count" aria-live="polite"></span><button class="icon-button find-step" type="button" data-step="-1" aria-label="${escape(words.previous)}" title="${escape(words.previous)}">${glyph("chevron", 16)}</button><button class="icon-button find-step find-next" type="button" data-step="1" aria-label="${escape(words.next)}" title="${escape(words.next)}">${glyph("chevron", 16)}</button><button class="icon-button find-close" type="button" aria-label="${escape(words.close)}" title="${escape(words.close)}">${glyph("close", 16)}</button>`;
+    this.scope = document.createElement("span");
+    this.scope.className = "find-scope";
+    this.scope.hidden = true;
+    this.element.querySelector(".find-count")!.before(this.scope);
     this.input = this.element.querySelector<HTMLInputElement>(".find-input")!;
     this.count = this.element.querySelector<HTMLElement>(".find-count")!;
-    this.input.addEventListener("input", () => this.search(true));
+    // Each letter typed is not a search of its own through the whole
+    // history: the words settle a moment first; emptied, it clears at once.
+    this.input.addEventListener("input", () => {
+      clearTimeout(this.typing);
+      this.typing = 0;
+      if (!this.input.value) {
+        this.search(true);
+        return;
+      }
+      this.typing = window.setTimeout(() => {
+        this.typing = 0;
+        this.search(true);
+      }, TYPING_MS);
+    });
     this.input.addEventListener("keydown", (event) => {
       if (event.key === "Enter" && !composing(event)) {
         event.preventDefault();
+        if (this.typing) {
+          clearTimeout(this.typing);
+          this.typing = 0;
+          this.search(true);
+        }
         void this.step(event.shiftKey ? -1 : 1);
       }
     });
@@ -136,6 +176,7 @@ export class Finder {
     const inside = this.element.contains(document.activeElement);
     this.element.hidden = true;
     this.view.far?.close();
+    this.view.global?.close();
     this.farAsked = "";
     if (inside && this.before?.isConnected) this.before.focus({ preventScroll: true });
     this.before = null;
@@ -153,8 +194,9 @@ export class Finder {
 
   private search(fresh: boolean): void {
     this.fresh ||= fresh;
-    if (fresh) this.revision += 1;
+    if (fresh) { this.revision += 1; this.globalRevealPending = true; }
     if (!this.input.value) {
+      this.view.global?.close();
       this.index.search("");
       this.selected = null;
       this.current = -1;
@@ -170,6 +212,21 @@ export class Finder {
     try {
       while (this.pending && this.open && this.input.value) {
         this.pending = false;
+        const global = this.view.global;
+        if (global) {
+          await global.search(this.input.value);
+          if (this.fresh || this.current < 0) this.current = global.total - 1;
+          else if (!global.complete && global.total > this.globalPreviousTotal) this.current += global.total - this.globalPreviousTotal;
+          this.current = Math.min(this.current, global.total - 1);
+          if (global.complete && this.selected && global.grown !== this.globalRanked) {
+            this.globalRanked = global.grown;
+            const known = await global.position();
+            if (known === null) { this.selected = null; this.current = -1; }
+            else this.current = known;
+          }
+          this.globalPreviousTotal = global.total;
+          continue;
+        }
         await this.index.update(this.view.findChanges());
         this.index.search(this.input.value.toLowerCase());
         const far = this.view.far;
@@ -186,7 +243,8 @@ export class Finder {
       const reveal = this.fresh;
       this.fresh = false;
       this.paint();
-      if (reveal && this.open) await this.reveal();
+      if (this.view.global && this.globalRevealPending && this.view.global.total > 0) { this.globalRevealPending = false; if (this.open) await this.reveal(); }
+      else if (reveal && this.open && !this.view.global) await this.reveal();
     } catch (error) {
       if (!this.disposed || !(error instanceof DOMException) || error.name !== "AbortError") throw error;
     } finally {
@@ -197,10 +255,21 @@ export class Finder {
 
   private async step(by: number): Promise<void> {
     await this.ready;
-    if (!this.open || !this.index.total) return;
+    const total = this.view.global?.total ?? this.index.total;
+    if (!this.open || !total) return;
     this.revision += 1;
-    this.current = (this.current + by + this.index.total) % this.index.total;
-    this.selected = this.index.at(this.current);
+    if (this.view.global) {
+      const revision = this.revision;
+      try {
+        const result = await this.view.global.step(by, this.current);
+        if (revision !== this.revision || !this.open) return;
+        this.current = result.ordinal; this.selected = result.match;
+        this.paint(); await this.reveal(true);
+      } catch (error) { this.setScope(String(error)); }
+      return;
+    }
+    this.current = (this.current + by + total) % total;
+    this.selected = this.view.global ? null : this.index.at(this.current);
     this.paint();
     await this.reveal();
   }
@@ -220,20 +289,32 @@ export class Finder {
   private paint(): void {
     const selected = this.open ? this.selected : null;
     const identity = !selected ? null : "far" in selected ? `far|${selected.far.part}|${selected.far.ordinal}` : `${selected.document.key}|${selected.document.stamp}|${selected.start}|${selected.end}`;
-    this.highlights.paint(this.open ? this.input.value.toLowerCase() : "", identity, () => (selected && !("far" in selected) ? this.view.findRange(selected) : null));
+    this.highlights.paint(this.open ? this.input.value.toLowerCase() : "", identity, () => (selected && !("far" in selected) ? this.view.findRange(selected) : null), !!this.view.global);
     const query = this.input.value;
-    const more = this.view.far?.more ? "+" : "";
-    const said = !query ? "" : this.index.total ? `${this.words.count(this.current + 1, this.index.total)}${more}` : more ? "…" : this.words.none;
+    const global = this.view.global;
+    const total = global?.total ?? this.index.total;
+    const more = (global ? !global.complete : this.view.far?.more) ? "+" : "";
+    if (global) this.setScope(!query ? null : global.error ?? `${this.words.english ? "All history" : "全部历史"}　${global.complete ? "" : this.words.english ? "Searching… " : "搜索中…"}${global.examined}${this.words.english ? " events" : " 条"}${global.previews ? (this.words.english ? `　${global.previews} previews only` : `　${global.previews} 条仅预览`) : ""}`);
+    const said = !query ? "" : total ? `${this.words.count(this.current + 1, total)}${more}` : more ? "…" : this.words.none;
     if (this.count.textContent !== said) this.count.textContent = said;
-    this.count.classList.toggle("none", !!query && !this.index.total);
+    this.count.classList.toggle("none", !!query && !total && !more);
   }
 
   /** Brings the current match into view, opening what folds it away; one
    *  where the page holds nothing is read in first. */
-  private async reveal(): Promise<void> {
+  private async reveal(located = false): Promise<void> {
+    const revision = this.revision;
+    if (this.view.global && !located) {
+      this.moved();
+      try {
+        const found = await this.view.global.match(this.current);
+        if (revision !== this.revision || !this.open) return;
+        if (!found) { this.setScope(this.words.english ? "This match changed. Search again." : "这处匹配已变化，请重新搜索。"); return; }
+        this.selected = found;
+      } catch (error) { this.setScope(String(error)); return; }
+    }
     let match = this.selected;
     if (!match) return;
-    const revision = this.revision;
     this.moved();
     if ("far" in match) {
       const found = await this.resolve(match);

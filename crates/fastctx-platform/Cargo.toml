@@ -49,3 +49,8 @@ windows-sys = { version = "0.61", features = [
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+# Its tests on Windows wait on two things at once (`host_process`): built
+# alone, nothing else in the build gives tokio its macros.
+tokio = { workspace = true, features = ["macros"] }

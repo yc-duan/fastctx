@@ -73,7 +73,7 @@ impl Lookup for Directory {
     }
 
     fn is_shared(&self, account: &AccountName, machine: &MachineName) -> bool {
-        self.shares.iter().any(|share| share.account == *account && share.machine == *machine)
+        self.shares.iter().any(|share| share.account == *account && share.machine == *machine && share.active())
     }
 
     fn assists(
@@ -132,6 +132,7 @@ pub fn authorize<L: Lookup + ?Sized>(lookup: &L, account: &AccountName, action: 
                 .ok_or_else(|| Denial::new(Why::ProjectMissing, format!("there is no project {town}")))?;
             if project.owner == *account
                 || project.granted.contains(account)
+                || project.frozen.contains(account)
                 || project
                     .shared_on
                     .as_ref()

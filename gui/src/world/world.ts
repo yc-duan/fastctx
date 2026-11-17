@@ -4,7 +4,6 @@
 
 import type { AccountName, Acting, HubId, HubName, Rights } from "./accounts";
 import type { Speaker, TurnEnd } from "./events";
-import type { PageSource, PageSummary } from "./pages";
 import type { Focus } from "./focus";
 import type { Address, AgentName, EntryId, JobId, JournalName, MachineName, ResidentId, Result, Timestamp, TownName } from "./wire";
 
@@ -211,6 +210,8 @@ export interface WhoFor {
 }
 
 export interface MachineFacts {
+  /** Answers bounded timeline queries. */
+  timeline_reads?: boolean;
   control_letters?: boolean;
   run_stops?: boolean;
   node_lifetime?: {
@@ -230,8 +231,6 @@ export interface MachineFacts {
   /** It lists what can be imported by name and kind alone, and reads a
    *  chosen server again to import it. */
   mcp_import?: boolean;
-  /** It keeps what a page is agreed to do, and does it, for one account. */
-  page_accounts?: boolean;
   /** It says where an attached file may be kept before any of it comes. */
   attachment_places?: boolean;
   /** It takes the attachments a script is sent with into its scratch. */
@@ -336,11 +335,23 @@ export interface Node {
   rights: [AccountName, Rights][];
 }
 
+/** Which page did something, as a record of a release before pages were
+ *  removed (beta.18) names it (`fastctx_types::pages::PageSource`). */
+export interface PageSource {
+  town: TownName;
+  page: string;
+  version: number;
+  by: Writer;
+  on: MachineName;
+  opened_on: MachineName;
+}
+
 export type Writer =
   | { kind: "user" }
   | { kind: "resident"; address: Address }
   | { kind: "session"; agent: AgentName }
-  /** An open page, doing what the user agreed to (`pages.ts`). */
+  /** A page of a release before pages were removed (beta.18), as an old
+   *  record names it. */
   | { kind: "page"; page: PageSource }
   /** A conversation, or a page, on a machine this device's account may not
    *  work on: no more is told (`world-network.md`, 共享机器与智能体协助). */
@@ -456,8 +467,8 @@ export interface MapView {
   opened: Stamp;
   /** Most recently added to first. */
   journals: JournalSummary[];
-  /** The town's pages, each at its current version. */
-  pages: PageSummary[];
+  /** Always empty: what interfaces before beta.18 read as the project's pages. */
+  pages: [];
   /** The canon's documents, or why they could not be read. */
   canon: Result<CanonHead[], string> | null;
 }

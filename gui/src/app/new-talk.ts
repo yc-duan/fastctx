@@ -78,6 +78,9 @@ import { Steady } from "./steady";
 import type { Store } from "./store";
 import type { FocusWords, NewTalkWords } from "./words";
 import { composing } from "../typing";
+import { limitComposerInput } from "../conversation/composer/limit";
+import { attachText, showTextNotice } from "../conversation/text-attachment";
+import { enText, zhText } from "../conversation/text-words";
 
 /** How many of the table of agents' rows are drawn at first, and how many
  *  more each time the end of those comes near. */
@@ -127,7 +130,7 @@ export interface NewTalkOptions {
    *  with null every machine reached. */
   agents(machine: string | null): Promise<WorldAgents>;
   /** The folders in a folder of a machine, for pointing it at some. */
-  folders(machine: string, path: string | null): Promise<Folders>;
+  folders(machine: string, path: string | null, cursor?: string | null): Promise<Folders>;
   begin(begun: Begun): Promise<Address>;
   /** The conversation began: its page opens, with the first words as they
    *  were shown here. */
@@ -242,6 +245,7 @@ export class NewTalk {
   private readonly form: HTMLFormElement;
   private readonly input: HTMLTextAreaElement;
   private readonly note: HTMLElement;
+  private readonly textNote: HTMLElement;
   private readonly start: HTMLButtonElement;
   private readonly context: HTMLElement;
   private readonly pop: HTMLElement;
@@ -310,6 +314,7 @@ export class NewTalk {
           <div class="talk-context"></div>
           <div class="composer-tray"></div>
           <textarea rows="1" enterkeyhint="send"></textarea>
+          <p class="composer-text-note" role="status" hidden></p>
           <div class="composer-row">
             <div class="composer-tools"><button class="icon-button composer-attach" type="button" hidden></button><input class="composer-pick" type="file" multiple hidden><input class="composer-shot" type="file" accept="image/*" capture="environment" hidden><button class="composer-chip" type="button" hidden></button></div>
             <span class="composer-note" aria-live="polite"></span>
@@ -324,6 +329,7 @@ export class NewTalk {
     this.form = this.element.querySelector("form")!;
     this.input = this.element.querySelector("textarea")!;
     this.note = this.element.querySelector<HTMLElement>(".composer-note")!;
+    this.textNote = this.element.querySelector<HTMLElement>(".composer-text-note")!;
     this.start = this.element.querySelector<HTMLButtonElement>(".composer-action")!;
     this.context = this.element.querySelector<HTMLElement>(".talk-context")!;
     this.pop = this.element.querySelector<HTMLElement>(".talk-pop")!;
@@ -391,6 +397,14 @@ export class NewTalk {
     this.form.addEventListener("submit", (event) => {
       event.preventDefault();
       void this.submit();
+    });
+    limitComposerInput(this.input, (text, typing) => {
+      const words = this.options.words.english ? enText : zhText;
+      if (typing) showTextNotice(this.textNote, words.limit);
+      else void attachText(text, words, async (file) => {
+        if (!this.tray) throw new Error("the conversation cannot receive attachments");
+        await this.tray.addText(file);
+      }, this.textNote).catch(() => {});
     });
     this.input.addEventListener("input", () => {
       remember(this.kept, this.input.value || null);
@@ -1291,22 +1305,27 @@ ${words.assistantWorks(option.assistant.owner ?? "")}` : said,
     }
     keepChoice(option.agent, this.model, this.effort);
     const { words } = this.options;
-    // The words go into the conversation at once; what happens on the way
-    // stays out of sight unless it fails.
+    // What goes with these words is what is attached now; anything attached
+    // while they are on their way stays for the next words.
+    const going = [...(this.tray?.held ?? [])];
+    // The words go into the conversation at once, with what they carry,
+    // which leaves the input then; what happens on the way stays out of
+    // sight unless it fails.
     if (this.starting) {
       this.starting.begin({
         text,
-        attached: (this.tray?.held ?? []).map(({ name, size, image, preview }) => ({ name, size, image, preview })),
+        attached: going.map(({ name, size, image, preview }) => ({ name, size, image, preview })),
       });
+      this.tray?.setAside(going);
       this.element.classList.add("begun");
       this.input.value = "";
       this.fit();
     }
     try {
-      if (this.tray?.count) {
+      if (going.length && this.tray) {
         if (!this.starting) this.note.textContent = words.sendingFiles;
         try {
-          await this.tray.sendAll();
+          await this.tray.sendAll(going);
         } catch (error) {
           throw new NotSent(String(error));
         }
@@ -1319,18 +1338,19 @@ ${words.assistantWorks(option.assistant.owner ?? "")}` : said,
         text,
         model: this.model,
         effort: this.effort,
-        attachments: (this.tray?.arrived ?? []) as Attachment[],
+        attachments: going.filter((item) => item.state === "ready").map((item) => item.ref) as Attachment[],
         account: login ? { hub: login.hub, account: login.account } : null,
         focus: this.focus,
         home: option.home,
-        filesOn: option.assistant && (this.tray?.files ?? 0) > 0 ? this.filesOn : null,
+        filesOn: option.assistant && going.some((item) => !item.image) ? this.filesOn : null,
         mcpOff: this.mcpOff,
       });
-      // Begun: the page is empty again for the next conversation here.
-      this.input.value = "";
-      remember(this.kept, null);
+      // Begun: the page is empty again for the next conversation here; but
+      // words typed while these were on their way stay, for the next.
+      if (!this.starting && this.input.value.trim() === text) this.input.value = "";
+      if (!this.input.value.trim()) remember(this.kept, null);
       this.fit();
-      this.tray?.take();
+      this.tray?.went(going);
       this.draft = null;
       this.town = this.options.town;
       this.focusTouched = false;
@@ -1343,6 +1363,7 @@ ${words.assistantWorks(option.assistant.owner ?? "")}` : said,
       this.options.opened(address, this.starting?.seed() ?? null);
     } catch (error) {
       this.busy = false;
+      this.tray?.putBack(going);
       const why = error instanceof Error ? error.message : String(error);
       if (this.starting) {
         // Said under the words that went; the words come back to the input

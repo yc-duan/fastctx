@@ -152,7 +152,7 @@ Fastctx 1.0 is currently in beta and available under pre-releases on [GitHub Rel
 | macOS (Intel) | `Fastctx_<version>_x64.dmg` | `fastctx-x86_64-apple-darwin.tar.gz` |
 | Linux x86_64 | `.AppImage`, `.deb` | `fastctx-x86_64-unknown-linux-gnu.tar.gz` |
 | Linux ARM64 | — | `fastctx-aarch64-unknown-linux-gnu.tar.gz` |
-| Android | `Fastctx_<version>_universal.apk` | — |
+| Android | `Fastctx_<version>_arm64-v8a.apk` (most phones); `_armeabi-v7a`, `_x86`, `_x86_64`, or `_universal` for all | — |
 
 - **Verification**: Every release includes a `SHA256SUMS` file.
 - **Windows**: Requires Git for Windows (`run` uses its bash).

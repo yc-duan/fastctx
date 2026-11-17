@@ -15,11 +15,17 @@ pub fn run(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
         return Err("the drill needs an absolute, absent root".into());
     }
     fastctx_platform::disk::create_dir_all(root)?;
-    let database = Database::open_guarded(
+    // The writer's own work is held to its budget here: the log folded inside
+    // its commits, not beside it (`Shape::fold_inside`).
+    let database = Database::open_guarded_shaped(
         &root.join("node.sqlite3"),
         &format!("{}{}{}", sql::SCHEMA, crate::record_payloads::SCHEMA, crate::records::SCHEMA),
-        crate::conversation_store::fences::guard,
-        crate::conversation_store::schema::initialize,
+        fastctx_storage::Shape { fold_inside: true, ..Default::default() },
+        crate::asset_preservation::guard,
+        |db| {
+            fastctx_sync::migration::initialize(db)?;
+            crate::conversation_store::schema::initialize(db)
+        },
     )?;
     let machine: MachineName = "executor".parse()?;
     let job: JobId = "j-123456".parse()?;
@@ -88,6 +94,17 @@ pub fn run(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
     println!(
         "1000 commits of 100 steps: SQL operations {}, over 2 ms {}",
         folded.operations, folded.writes_over_budget
+    );
+    // How the time was spread, for a machine where the count is over: a
+    // shift of them all says its processor or disk, a tail says a stall.
+    let spread = |micros: &[u64; 32]| {
+        let filled = micros.iter().enumerate().filter(|(_, count)| **count > 0);
+        filled.map(|(bucket, count)| format!("{bucket}:{count}")).collect::<Vec<_>>().join(" ")
+    };
+    println!(
+        "  by bits of microseconds (n: under 2^n): writes {}; commits {}",
+        spread(&folded.write_micros),
+        spread(&folded.commit_micros)
     );
     let mut reads = Vec::new();
     for _ in 0..200 {

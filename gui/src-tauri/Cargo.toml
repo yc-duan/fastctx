@@ -1,7 +1,7 @@
 [package]
 name = "fastctx-gui"
 description = "The World's graphical interface: a Tauri shell around the web front end, reaching the World through the core's client"
-version = "1.0.1-beta.17"
+version = "1.0.1-beta.18"
 edition = "2024"
 rust-version = "1.92"
 license = "Apache-2.0"
@@ -11,6 +11,22 @@ publish = false
 # and tests, and the core is reached by path.
 [workspace]
 
+# Optimized for size as the core is (`../../Cargo.toml`), the leaves whose
+# speed matters kept fast; and without the symbol table, which nothing
+# reads (16 MB of the Mac's interface, codex-8c21a7a9).
+[profile.release]
+opt-level = "s"
+strip = "symbols"
+
+[profile.release.package.libsqlite3-sys]
+opt-level = 3
+
+[profile.release.package.sha2]
+opt-level = 3
+
+[profile.release.package.ring]
+opt-level = 3
+
 [patch.crates-io]
 pdf_oxide = { path = "../../vendor/pdf_oxide" }
 
@@ -19,9 +35,6 @@ pdf_oxide = { path = "../../vendor/pdf_oxide" }
 await_holding_lock = "deny"
 await_holding_refcell_ref = "deny"
 await_holding_invalid_type = "deny"
-
-[features]
-page-sandbox-probe = ["tauri-plugin-world-pages/probe"]
 
 [lib]
 name = "fastctx_gui_lib"
@@ -48,11 +61,13 @@ flate2 = { version = "1.1.10", default-features = false, features = ["rust_backe
 tauri = { version = "2", features = [] }
 # Links leave the app for the system's browser, on a computer and a phone.
 tauri-plugin-opener = "2.7"
-tauri-plugin-world-pages = { path = "page-sandbox" }
 tokio = { version = "1", features = ["sync", "fs", "io-util"] }
 tempfile = "3"
+rusqlite = { version = "0.41", features = ["bundled"] }
 
 [target.'cfg(target_os = "android")'.dependencies]
+# The copy this phone keeps of each hub's assets (`android/copy.rs`).
+fastctx-client = { path = "../../crates/fastctx-client", features = ["replica"] }
 jni = "0.21"
 tokio = { version = "1", features = ["rt-multi-thread", "time"] }
 

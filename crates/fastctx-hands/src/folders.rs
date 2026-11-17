@@ -13,6 +13,50 @@ use crate::run::present::display_path;
 /// The folders in `path`, or with none the places a choice starts from: the
 /// user's home, and each local disk (`/` on Unix).
 pub fn list(machine: MachineName, path: Option<&str>) -> Result<Folders, Failure> {
+    list_page(machine, path, None)
+}
+
+/// Folders one listing from the first gives at most, and pages of a
+/// folder's entries it looks through for them.
+const FOLDERS_MOST: usize = 4096;
+const PAGES_MOST: usize = 256;
+
+/// The folders in `path` from `cursor` on (from the first when none), page
+/// after page of its entries until at least `FOLDERS_MOST` folders or
+/// `PAGES_MOST` pages were looked through: a folder whose first pages are
+/// all files still shows the folders after them. Every folder of a page
+/// looked through is given, so the cursor given back goes on from just
+/// after them.
+pub fn list_page(machine: MachineName, path: Option<&str>, cursor: Option<&str>) -> Result<Folders, Failure> {
+    let mut whole = one_page(machine.clone(), path, cursor)?;
+    let mut pages = 1;
+    while let Some(next) = whole.next_cursor.clone()
+        && whole.folders.len() < FOLDERS_MOST
+        && pages < PAGES_MOST
+    {
+        // A folder changed as it is read keeps what was read so far, said so.
+        let Ok(page) = one_page(machine.clone(), path, Some(&next)) else { break };
+        whole.folders.extend(page.folders);
+        whole.next_cursor = page.next_cursor;
+        whole.truncated = page.truncated;
+        pages += 1;
+    }
+    whole.folders.sort_by(by_name);
+    Ok(whole)
+}
+
+fn by_name(a: &Folder, b: &Folder) -> std::cmp::Ordering {
+    a.name.to_lowercase().cmp(&b.name.to_lowercase()).then_with(|| a.name.cmp(&b.name))
+}
+
+fn one_page(machine: MachineName, path: Option<&str>, cursor: Option<&str>) -> Result<Folders, Failure> {
+    if let Some(path) = path {
+        fastctx_types::file_limits::text(path, fastctx_types::file_limits::PATH_BYTES, "path")
+            .map_err(Failure::not_run)?;
+    }
+    if let Some(cursor) = cursor {
+        fastctx_types::file_limits::text(cursor, 128, "directory cursor").map_err(Failure::not_run)?;
+    }
     let home =
         fastctx_platform::user_home().map_err(|error| Failure::not_run(format!("finding the home folder: {error}")))?;
     let home = written(&home);
@@ -23,7 +67,10 @@ pub fn list(machine: MachineName, path: Option<&str>) -> Result<Folders, Failure
                 folders.push(Folder { name: root.clone(), path: root, hidden: false });
             }
         }
-        return Ok(Folders { machine, path: None, parent: None, home, folders });
+        if cursor.is_some() {
+            return Err(Failure::not_run("the root places have no continuation"));
+        }
+        return Ok(Folders { machine, path: None, parent: None, home, folders, next_cursor: None, truncated: false });
     };
     let folder = Path::new(path);
     if !folder.is_absolute() {
@@ -37,10 +84,9 @@ pub fn list(machine: MachineName, path: Option<&str>) -> Result<Folders, Failure
             Failure::not_run(format!("{path}: {error}"))
         }
     };
-    let entries = std::fs::read_dir(folder).map_err(unread)?;
+    let page = crate::directory_page::read(folder, cursor).map_err(unread)?;
     let mut folders = Vec::new();
-    for entry in entries {
-        let entry = entry.map_err(unread)?;
+    for entry in page.entries {
         // A link to a folder is followed, as a file manager does.
         if !entry.path().is_dir() {
             continue;
@@ -49,9 +95,18 @@ pub fn list(machine: MachineName, path: Option<&str>) -> Result<Folders, Failure
         let hidden = name.starts_with('.') || hidden(&entry);
         folders.push(Folder { path: written(&entry.path()), name, hidden });
     }
-    folders.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()).then_with(|| a.name.cmp(&b.name)));
+    folders.sort_by(by_name);
+    crate::directory_page::unchanged(folder, &page.identity).map_err(unread)?;
     let parent = folder.parent().map(written);
-    Ok(Folders { machine, path: Some(written(folder)), parent, home, folders })
+    Ok(Folders {
+        machine,
+        path: Some(written(folder)),
+        parent,
+        home,
+        folders,
+        truncated: page.next.is_some(),
+        next_cursor: page.next,
+    })
 }
 
 /// A path as this machine's folders are written to the model and the user:

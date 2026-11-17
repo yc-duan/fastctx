@@ -153,7 +153,10 @@ mod tests {
                 baseline = Some(handles());
             }
         }
-        assert_eq!(handles(), baseline.unwrap());
+        // The other tests of this process open and close handles meanwhile:
+        // a leak is one a wait, 1024 of them, far past what they hold.
+        let (now, baseline) = (handles(), baseline.unwrap());
+        assert!(now < baseline + 256, "{} handles more after 1024 cancelled waits", now.saturating_sub(baseline));
         assert!(crate::is_alive(&identity).unwrap());
     }
 }

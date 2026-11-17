@@ -8,33 +8,51 @@ use fastctx_types::session::{Happened, SessionChange, SessionEvent, Watched};
 use serde::Serialize;
 use std::sync::{Arc, LazyLock};
 
-pub use event_queue::{Lagged, Receiver, Sender, TryRecvError};
+pub use event_queue::{Lagged, Receiver, Sender, TryRecvError, TrySendError};
 pub type Events = Receiver<Arc<SessionEvent>>;
 static MEMORY: LazyLock<Budget> = LazyLock::new(|| Budget::new(128 << 20));
 
+/// A queue of at most 4 MiB of pieces (one piece alone up to 64 MiB), counted
+/// by bytes rather than by pieces: a conversation running many agents at once
+/// streams thousands of small pieces, and a watch is not cut for that.
 pub fn channel<T>(measure: fn(&T) -> (usize, Option<String>)) -> (Sender<T>, Receiver<T>) {
-    event_queue::channel(256, 4 << 20, 64 << 20, MEMORY.clone(), measure)
+    event_queue::channel(4096, 4 << 20, 64 << 20, MEMORY.clone(), measure)
 }
 
 pub fn events() -> (Sender<Arc<SessionEvent>>, Events) {
     channel(|event| event_size(event))
 }
 
-pub fn event_size(event: &SessionEvent) -> (usize, Option<String>) {
-    let key = match &event.happened {
-        Happened::Changed { change: SessionChange::Composer { .. }, .. } => Some("composer".into()),
-        Happened::Changed { change: SessionChange::Goal { goal }, .. } if goal["world"] == true => Some("goal".into()),
+fn event_key(event: &SessionEvent) -> Option<&'static str> {
+    match &event.happened {
+        Happened::Changed { change: SessionChange::Composer { .. }, .. } => Some("composer"),
+        Happened::Changed { change: SessionChange::Goal { goal }, .. } if goal["world"] == true => Some("goal"),
         _ => None,
-    };
-    (size(event), key)
+    }
+}
+fn watched_key(watched: &Watched) -> Option<&'static str> {
+    match watched {
+        Watched::Now { .. } => Some("now"),
+        Watched::Collaboration { .. } => Some("collaboration"),
+        Watched::Live { event, .. } => event_key(event),
+        _ => None,
+    }
+}
+
+/// Whether this piece is a complete state that may replace an earlier version.
+/// Classification does not serialize the potentially large state again.
+pub fn replaceable(watched: &Watched) -> bool {
+    watched_key(watched).is_some()
+}
+
+pub fn event_size(event: &SessionEvent) -> (usize, Option<String>) {
+    (size(event), event_key(event).map(str::to_owned))
 }
 
 pub fn watched_size(watched: &Watched) -> (usize, Option<String>) {
     match watched {
-        Watched::Now { .. } => (size(watched), Some("now".into())),
-        Watched::Collaboration { .. } => (size(watched), Some("collaboration".into())),
         Watched::Live { event, .. } => event_size(event),
-        _ => (size(watched), None),
+        _ => (size(watched), watched_key(watched).map(str::to_owned)),
     }
 }
 
@@ -59,4 +77,11 @@ pub fn size(value: &impl Serialize) -> usize {
 
 pub fn queued_bytes() -> usize {
     MEMORY.used()
+}
+
+/// Takes `bytes` of the budget every observation queue shares, for pieces a
+/// watcher's forwarder keeps while its queue is full; none when the budget
+/// would pass its limit.
+pub fn reserve(bytes: usize) -> Option<event_queue::Reservation> {
+    MEMORY.reserve(bytes)
 }

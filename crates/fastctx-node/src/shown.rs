@@ -37,6 +37,9 @@ const READY_WITHIN: Duration = Duration::from_secs(3);
 /// them all and only while one watches; none until it is worked out anew.
 pub(crate) struct Shown {
     told: tokio::sync::watch::Sender<Option<Arc<WorldNow>>>,
+    /// Whether what was told is the World as it is: nothing changed since it
+    /// was worked out. A caller asking for it once is answered with it then.
+    fresh: AtomicBool,
     started: AtomicBool,
     /// Rung when an interface starts watching.
     watched: tokio::sync::Notify,
@@ -46,6 +49,7 @@ impl Default for Shown {
     fn default() -> Self {
         Self {
             told: tokio::sync::watch::channel(None).0,
+            fresh: AtomicBool::new(false),
             started: AtomicBool::new(false),
             watched: tokio::sync::Notify::new(),
         }
@@ -68,6 +72,8 @@ async fn publish(node: Arc<Node>) {
     let mut residents = node.residents.changes();
     let mut shown = node.shown.subscribe();
     let mut jobs = node.jobs.subscribe();
+    // The copies here filling in: a machine away is listed from them.
+    let mut copies = node.assets.as_ref().map(|assets| assets.metadata_moved.subscribe());
     let told = &node.world_shown.told;
     // What could not be read is read again in a moment: the interfaces go
     // on showing what they were told, and the log says why, once a reason.
@@ -89,10 +95,12 @@ async fn publish(node: Arc<Node>) {
                         return;
                     }
                 }
+                () = copies_moved(&mut copies) => {}
             }
             if told.receiver_count() == 0 {
                 told.send_replace(None);
             }
+            node.world_shown.fresh.store(false, Ordering::Release);
             stale = true;
             continue;
         }
@@ -102,8 +110,12 @@ async fn publish(node: Arc<Node>) {
             }
             residents.borrow_and_update();
             shown.borrow_and_update();
+            if let Some(copies) = copies.as_mut() {
+                copies.borrow_and_update();
+            }
             while jobs.try_recv().is_ok() {}
-            let held = if ready(&node) {
+            // Once shown, link and permission changes must not wait for a new afoot snapshot.
+            let held = if told.borrow().is_some() || ready(&node) {
                 unready = None;
                 false
             } else {
@@ -120,6 +132,7 @@ async fn publish(node: Arc<Node>) {
                             *current = Some(Arc::new(world));
                             true
                         });
+                        node.world_shown.fresh.store(true, Ordering::Release);
                     }
                     Err(failure) => {
                         if failing.as_deref() != Some(failure.message.as_str()) {
@@ -149,11 +162,52 @@ async fn publish(node: Arc<Node>) {
                 }
                 stale = true;
             }
+            () = copies_moved(&mut copies) => stale = true,
+        }
+        // Something changed since it was told: it is worked out anew first.
+        if stale {
+            node.world_shown.fresh.store(false, Ordering::Release);
         }
     }
 }
 
+/// Waits until a conversation's metadata came into the copies here; never,
+/// where this machine keeps no assets or the library is gone.
+async fn copies_moved(copies: &mut Option<tokio::sync::watch::Receiver<u64>>) {
+    let Some(receiver) = copies.as_mut() else { return std::future::pending().await };
+    if receiver.changed().await.is_err() {
+        *copies = None;
+        std::future::pending::<()>().await;
+    }
+}
+
 pub(crate) async fn now(node: &Arc<Node>) -> Result<WorldNow, Failure> {
+    now_known(node, &[]).await
+}
+
+/// The World as the interfaces watching it were last told, while nothing
+/// has changed since: one asking for it once takes that, worked out once
+/// for all, rather than reading every resident again.
+pub(crate) fn current(node: &Node) -> Option<Arc<WorldNow>> {
+    let shown = &node.world_shown;
+    if shown.told.receiver_count() == 0 || !shown.fresh.load(Ordering::Acquire) {
+        return None;
+    }
+    shown.told.borrow().clone()
+}
+
+/// As `current`, with the presence of the machines a caller already knows
+/// worked out for them: everything else of it is the same whatever they
+/// know, so the residents are not read again for it.
+pub(crate) fn current_known(node: &Node, known: &[String]) -> Option<WorldNow> {
+    let mut world = (*current(node)?).clone();
+    if !known.is_empty() {
+        world.machine_presence = fastctx_net::machine_presence::of(&node.links(), &world.who, known);
+    }
+    Some(world)
+}
+
+pub(crate) async fn now_known(node: &Arc<Node>, known: &[String]) -> Result<WorldNow, Failure> {
     let here = node.machine();
     let towns = crate::ledger::query::held(node).await?;
     let mut machines = vec![MachineWho::Answered { observation: None, reply: this(node).await? }];
@@ -167,7 +221,8 @@ pub(crate) async fn now(node: &Arc<Node>) -> Result<WorldNow, Failure> {
         others: Vec::new(),
         involved: Vec::new(),
     };
-    Ok(WorldNow { here, who, nodes: nodes(node), towns, accounts: crate::world::accounts(node) })
+    let machine_presence = fastctx_net::machine_presence::of(&node.links(), &who, known);
+    Ok(WorldNow { here, who, nodes: nodes(node), towns, accounts: crate::world::accounts(node), machine_presence })
 }
 
 /// Whether what the hubs told of the other machines is as each session on
@@ -253,9 +308,17 @@ fn elsewhere(node: &Node) -> Vec<MachineWho> {
         machines.push(match (member.online, afoot) {
             (false, afoot) => MachineWho::Offline {
                 observation: None,
-                machine: name,
                 since: member.since,
-                last: afoot.map(|afoot| Box::new(reply(afoot))),
+                // Nothing told of it, the hub started again since it left:
+                // what the copies here have of it (§28.32).
+                last: match afoot {
+                    Some(afoot) => Some(Box::new(reply(afoot))),
+                    None => fastctx_platform::roles::in_place("listing a machine's conversations from the copies here", || {
+                        crate::timeline::listed::of(node, &name)
+                    })
+                    .map(Box::new),
+                },
+                machine: name,
             },
             (true, Some(afoot)) => MachineWho::Answered { observation: None, reply: reply(afoot) },
             (true, None) if !current => MachineWho::NoAnswer {

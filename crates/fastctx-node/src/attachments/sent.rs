@@ -181,7 +181,7 @@ fn reserve_now(
     if fastctx_platform::disk::is_there(&path) {
         let kept: Reservation = read_json(&path)?;
         if kept != reservation {
-            return Err(failure("the upload operation was reused for different content"));
+            return Err(failure(REUSED));
         }
     } else {
         write_new(&path, &reservation)?;
@@ -274,12 +274,17 @@ fn validate_preview(preview: &Thumbnail, attachment: &Attachment) -> Result<(), 
     Ok(())
 }
 
+/// Why an upload is refused whose operation another upload of other bytes
+/// holds: that one's card is not this one's to mark failed.
+const REUSED: &str = "the upload operation was reused for different content";
+
 struct Prepared {
     acting: Acting,
     home: Written,
     attachment: Attachment,
     arriving: Option<Arriving>,
-    _lock: FileLock,
+    /// Shared, so a failure is said while it is still held.
+    _lock: Arc<FileLock>,
     _place: Arc<crate::data::places::Using>,
 }
 
@@ -339,13 +344,38 @@ async fn prepare_sent(
             arriving.keep = true;
             (arriving.attachment.clone(), Some(arriving))
         };
-        Ok(Prepared { acting, home, attachment, arriving, _lock: lock, _place: place })
+        Ok(Prepared { acting, home, attachment, arriving, _lock: Arc::new(lock), _place: place })
     })
     .await
     .map_err(failure)?
 }
 
-async fn complete_sent(node: &Arc<Node>, from: &MachineName, prepared: Prepared) -> Result<Uploaded, Failure> {
+/// Finishes an upload whose bytes all arrived (`finish_sent`); one that
+/// fails then — its digest, room, flush, rename or commit — is said failed
+/// while this try still holds the upload's lock, as one cut short is.
+async fn complete_sent(
+    node: &Arc<Node>,
+    from: &MachineName,
+    prepared: Prepared,
+    scope: Option<&UploadScope>,
+) -> Result<Uploaded, Failure> {
+    let held = prepared._lock.clone();
+    let (home, attachment) = (prepared.home.clone(), prepared.attachment.clone());
+    let finished = finish_sent(node, from, prepared).await;
+    // Kept, but the shared draft not told it: its card is failed too.
+    let error = match &finished {
+        Err(error) => Some(error.clone()),
+        Ok(Uploaded { composer: Some(Err(error)), .. }) => Some(error.clone()),
+        Ok(_) => None,
+    };
+    if let Some(error) = error {
+        failed_here(node, &home, &attachment, scope, &error).await;
+    }
+    drop(held);
+    finished
+}
+
+async fn finish_sent(node: &Arc<Node>, from: &MachineName, prepared: Prepared) -> Result<Uploaded, Failure> {
     let (attachment, prepared) = fastctx_platform::task::spawn_blocking(move || {
         let mut prepared = prepared;
         let attachment = match prepared.arriving.take() {
@@ -397,32 +427,98 @@ pub(super) async fn upload(
     if node.is_here(&machine) {
         check_project(node, acting, &target).await?;
     }
-    let mut prepared = prepare_sent(node, &from, acting, &machine, target, file.clone(), operation, composer).await?;
+    let (scope, resident) = (composer.clone(), resident_of(&target));
+    let mut prepared = match prepare_sent(node, &from, acting, &machine, target, file.clone(), operation, composer).await {
+        Ok(prepared) => prepared,
+        Err(error) => return Err(prepare_failed(node, &machine, resident.as_ref(), scope.as_ref(), error).await),
+    };
     if prepared.arriving.is_none() {
-        return complete_sent(node, &from, prepared).await;
+        return complete_sent(node, &from, prepared, scope.as_ref()).await;
     }
-    let arriving = prepared.arriving.as_mut().expect("unfinished");
-    let mut skipped = Skipping(arriving.received);
-    let mut sent = 0u64;
-    loop {
-        let piece = source
-            .recv_up_to(UPLOAD_CHUNK)
-            .await
-            .map_err(broke)?
-            .ok_or_else(|| broke("the uploader disconnected before ending the file"))?;
-        if piece.is_empty() {
-            break;
+    let transferred = async {
+        let arriving = prepared.arriving.as_mut().expect("unfinished");
+        let mut skipped = Skipping(arriving.received);
+        let mut sent = 0u64;
+        loop {
+            let piece = source
+                .recv_up_to(UPLOAD_CHUNK)
+                .await
+                .map_err(broke)?
+                .ok_or_else(|| broke("the uploader disconnected before ending the file"))?;
+            if piece.is_empty() {
+                break;
+            }
+            sent = sent.checked_add(piece.len() as u64).ok_or_else(|| failure("upload length overflow"))?;
+            if sent > file.size {
+                return Err(failure("the source exceeded its declared length"));
+            }
+            arriving.write(skipped.past(&piece))?;
         }
-        sent = sent.checked_add(piece.len() as u64).ok_or_else(|| failure("upload length overflow"))?;
-        if sent > file.size {
-            return Err(failure("the source exceeded its declared length"));
+        if sent != file.size {
+            return Err(broke("the source ended before its declared length"));
         }
-        arriving.write(skipped.past(&piece))?;
+        Ok(())
     }
-    if sent != file.size {
-        return Err(broke("the source ended before its declared length"));
+    .await;
+    if let Err(error) = transferred {
+        // Said while this try still holds the upload's lock: a later try
+        // takes the lock only after, and finds it failed, never its own
+        // arrival marked failed by this one.
+        failed_here(node, &prepared.home, &prepared.attachment, scope.as_ref(), &error).await;
+        return Err(error);
     }
-    complete_sent(node, &from, prepared).await
+    complete_sent(node, &from, prepared, scope.as_ref()).await
+}
+
+/// What a failure to make ready the arrival of an upload into a draft kept
+/// here leaves of its card there: failed, unless another try of it is
+/// arriving now (that try says how it ends).
+async fn prepare_failed(
+    node: &Arc<Node>,
+    machine: &Written,
+    resident: Option<&ResidentId>,
+    scope: Option<&UploadScope>,
+    error: Failure,
+) -> Failure {
+    if let (Some(scope), Some(resident)) = (scope, resident)
+        && node.is_here(machine)
+        && !error.is_unanswered()
+        && error.message != REUSED
+        && let Err(failure) = crate::composer::uploads::failed(node, resident, scope, &error.message).await
+    {
+        node.log.line(format_args!("recording a sent attachment's failure: {failure}"));
+    }
+    error
+}
+
+/// The conversation an upload goes to, where it is one already.
+fn resident_of(target: &UploadTarget) -> Option<ResidentId> {
+    match target {
+        UploadTarget::Resident { resident } => Some(resident.clone()),
+        _ => None,
+    }
+}
+
+/// An upload into a draft kept on this machine that did not complete
+/// leaves its card failed, not arriving, on every device showing the draft:
+/// the device that sent it may be gone and never try again. Asked again
+/// under the same operation, it arrives from what is already here. A draft
+/// kept on another machine hears of it only when its upload is tried again.
+pub(super) async fn failed_here(
+    node: &Arc<Node>,
+    home: &Written,
+    attachment: &Attachment,
+    scope: Option<&UploadScope>,
+    error: &Failure,
+) {
+    let Some(scope) = scope else { return };
+    if !node.is_here(home) {
+        return;
+    }
+    let resident = attachment.conversation().resident.clone();
+    if let Err(failure) = crate::composer::uploads::failed(node, &resident, scope, &error.message).await {
+        node.log.line(format_args!("recording a sent attachment's failure: {failure}"));
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -441,30 +537,45 @@ pub(super) async fn receive(
     if !node.is_here(&machine) {
         return Err(failure("a device uploads to the conversation's machine"));
     }
-    let mut prepared = prepare_sent(node, from, acting, &machine, target, file.clone(), operation, composer).await?;
+    let (scope, resident) = (composer.clone(), resident_of(&target));
+    let mut prepared = match prepare_sent(node, from, acting, &machine, target, file.clone(), operation, composer).await {
+        Ok(prepared) => prepared,
+        Err(error) => return Err(prepare_failed(node, &machine, resident.as_ref(), scope.as_ref(), error).await),
+    };
     if prepared.arriving.is_none() {
-        return complete_sent(node, from, prepared).await;
+        return complete_sent(node, from, prepared, scope.as_ref()).await;
     }
-    let mut arriving = prepared.arriving.take().expect("unfinished");
-    if resumes {
-        stream.say(&UploadStart { from: arriving.received }).await.map_err(broke)?;
+    let transferred = async {
+        let mut arriving = prepared.arriving.take().expect("unfinished");
+        if resumes {
+            stream.say(&UploadStart { from: arriving.received }).await.map_err(broke)?;
+        }
+        let skip = Skipping(if resumes { 0 } else { arriving.received });
+        let wanted = if resumes { file.size - arriving.received } else { file.size };
+        let ((back, _), taken) = stream
+            .take_writing(wanted, (arriving, skip), |(arriving, skip), bytes| {
+                arriving.write(skip.past(bytes)).map_err(|e| e.message)
+            })
+            .await
+            .map_err(broke)?;
+        arriving = back;
+        taken.map_err(broke)?;
+        let end: String = stream.hear_step("uploaded").await.map_err(broke)?;
+        if end != "uploaded" {
+            return Err(failure("the uploader did not end the file"));
+        }
+        Ok(arriving)
     }
-    let skip = Skipping(if resumes { 0 } else { arriving.received });
-    let wanted = if resumes { file.size - arriving.received } else { file.size };
-    let ((back, _), taken) = stream
-        .take_writing(wanted, (arriving, skip), |(arriving, skip), bytes| {
-            arriving.write(skip.past(bytes)).map_err(|e| e.message)
-        })
-        .await
-        .map_err(broke)?;
-    arriving = back;
-    taken.map_err(broke)?;
-    let end: String = stream.hear_step("uploaded").await.map_err(broke)?;
-    if end != "uploaded" {
-        return Err(failure("the uploader did not end the file"));
+    .await;
+    match transferred {
+        Ok(arriving) => prepared.arriving = Some(arriving),
+        Err(error) => {
+            // Said while this try still holds the upload's lock (`upload`).
+            failed_here(node, &prepared.home, &prepared.attachment, scope.as_ref(), &error).await;
+            return Err(error);
+        }
     }
-    prepared.arriving = Some(arriving);
-    let uploaded = complete_sent(node, from, prepared).await?;
+    let uploaded = complete_sent(node, from, prepared, scope.as_ref()).await?;
     stream.done().await.map_err(broke)?;
     Ok(uploaded)
 }

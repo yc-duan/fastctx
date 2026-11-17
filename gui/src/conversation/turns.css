@@ -248,7 +248,7 @@
   position: relative;
   height: 4px;
   border-radius: var(--radius-full);
-  background: var(--fill-strong);
+  background: var(--bar-track);
   overflow: hidden;
 }
 
@@ -356,6 +356,16 @@
   font-style: italic;
   font-size: var(--size-text);
   color: var(--text-3);
+}
+
+/* A turn cut short, said in the notices' quiet voice. */
+.turn-interrupted {
+  font-family: var(--font-reading);
+  font-style: italic;
+  font-size: var(--size-text);
+  color: var(--text-3);
+  /* Room for the italic's last stroke, which leans past its box. */
+  padding-right: 0.15em;
 }
 
 .notice-line {
@@ -692,3 +702,188 @@
   pointer-events: none;
 }
 
+/* The files a turn changed (`view.ts`, `turnChanged`): a card where the
+   turn ended, as the side's own list of changed files is one. Its head
+   says how many files and by how many lines, and folds the rows away;
+   under it a row to a file. It is as wide as the words of the page are
+   set, always (the user, 2026-11-17: "他应该固定是横跨整个正文的长度，
+   不是一个小东西在那"), as a block of code in the answer is. What the
+   whole conversation changed is not said here: the side's overview says
+   it. */
+.turn-changed {
+  width: 100%;
+  box-sizing: border-box;
+  margin-top: var(--space-3);
+  border-radius: var(--radius-l);
+  background: var(--fill);
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+}
+
+/* After what says how the turn ended, a little apart from it. */
+.block-ended > :is(.note, .turn-interrupted) + .turn-changed {
+  margin-top: var(--space-3);
+}
+
+.tc-fold {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  min-height: 42px;
+  padding: 0 12px 0 16px;
+  color: var(--text-2);
+  font: inherit;
+  text-align: left;
+  white-space: nowrap;
+  transition: color var(--hover) var(--ease);
+}
+
+.tc-fold:hover {
+  color: var(--text);
+}
+
+.tc-fold > .tc-said {
+  flex: 1 1 auto;
+}
+
+.tc-fold > .glyph {
+  flex: none;
+  color: var(--text-3);
+  --turn: -90deg;
+  rotate: var(--turn);
+  transition: --turn var(--expand) var(--expand-easing), color var(--hover) var(--ease);
+}
+
+.turn-changed.open .tc-fold > .glyph {
+  --turn: 0deg;
+}
+
+.tc-box {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows var(--expand) var(--expand-easing);
+}
+
+.turn-changed.open > .tc-box {
+  grid-template-rows: 1fr;
+}
+
+.tc-inner {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.turn-changed:not(.open) > .tc-box > .tc-inner {
+  visibility: hidden;
+  transition: visibility 0s var(--expand);
+}
+
+/* The rows are the card's own: ruled off from its head, on its ground. */
+.tc-inner > .cf-files {
+  border-top: 1px solid var(--divider);
+  border-radius: 0;
+  background: none;
+}
+
+.turn-changed .cf-row {
+  gap: 18px;
+  min-height: 38px;
+}
+
+.turn-changed .cf-row > .cf-path {
+  flex: 1 1 auto;
+}
+
+.turn-changed .cf-squares {
+  display: none;
+}
+
+/* The button at a row's end that shows the file in the side: quiet until
+   the row or it is pointed at. */
+.turn-changed .cf-act {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  margin: 0 -6px 0 -6px;
+  color: var(--text-3);
+  opacity: 0.6;
+  transition: opacity var(--hover) var(--ease), color var(--hover) var(--ease);
+}
+
+.turn-changed .cf-row:hover > .cf-act,
+.turn-changed .cf-act:focus-visible {
+  opacity: 1;
+}
+
+.turn-changed .cf-act:hover {
+  color: var(--text);
+}
+
+/* What the turn did to a file, under its row. */
+.turn-changed .cf-fold-inner {
+  padding: 0 12px;
+}
+
+.turn-changed .cf-file.open > .cf-fold > .cf-fold-inner {
+  padding-bottom: 12px;
+}
+
+.turn-changed .cf-fold-inner > .cf-diff + .cf-diff,
+.turn-changed .cf-fold-inner > * + .cf-note,
+.turn-changed .cf-fold-inner > .cf-note + * {
+  margin-top: var(--space-2);
+}
+
+.turn-changed .cf-fold-inner > .cf-note {
+  padding: 0 4px;
+}
+
+/* A long change does not run on down the page (the user, 2026-11-17: "到
+   一定长度给滚动条，不要无限往下延长"): past some twenty lines its lines
+   scroll in their own frame. */
+.turn-changed .cf-diff-lines {
+  max-height: 22lh;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+
+/* With all of many files shown, the list scrolls in a frame of its own:
+   a dozen rows of it at a time. */
+.turn-changed.whole .tc-inner > .cf-files {
+  max-height: calc(38px * 12);
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+
+/* At the card's foot, under the first few files: the rest of them, and
+   back to the few. */
+.tc-rest {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  min-height: 36px;
+  border-top: 1px solid var(--divider);
+  color: var(--text-3);
+  font: inherit;
+  transition: color var(--hover) var(--ease), background-color var(--hover) var(--ease);
+}
+
+.tc-rest:hover {
+  background: var(--fill);
+  color: var(--text);
+}
+
+.tc-rest > .glyph {
+  flex: none;
+  transition: rotate var(--expand) var(--expand-easing);
+}
+
+.tc-rest.whole > .glyph {
+  rotate: 180deg;
+}

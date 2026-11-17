@@ -66,6 +66,7 @@ export class RenewalRow {
 
   private ask(): void {
     clearTimeout(this.timer);
+    if (document.hidden) { this.timer = window.setTimeout(() => this.ask(), SETTLED_MS); return; }
     this.renewing.state().then(
       (status) => {
         if (this.left) return;

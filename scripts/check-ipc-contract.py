@@ -38,6 +38,7 @@ SHIPPED = {
     "v13_beta14": "2fafa042ff329b1f9c5c3581b481356e3e8f264c",
     "v13_beta15": "82cbb8be5694c314d42b9b6d74a47c0e6fbb5cf3",
     "v13_beta16": "b07538f7ddf1c8d469949ff2dd4ee7610840d85f",
+    "v13_beta17": "e51805890c3deb6d0228cb6bd072a06f042cbfb6",
 }
 
 
@@ -154,8 +155,13 @@ def verify(reader):
     answers = [json.loads(line) for line in process.stdout.splitlines()]
     assert len(answers) == len(corpus), (len(answers), len(corpus))
     for case, answer in zip(corpus, answers):
-        if case["mode"] in ("request", "current_request"):
+        if case["mode"] == "native_composer":
+            assert answer["unnegotiated"] is False, (case, answer)
+            assert answer["read"] == case["value"], (case, answer)
+        elif case["mode"] in ("request", "current_request"):
             assert answer["admitted"] == case["admitted"], (case, answer)
+        elif case["mode"] == "additive_request":
+            assert answer["read"]["call"]["call"] == case["value"]["call"]["call"], (case, answer)
         elif case["mode"] == "watched":
             # A viewer of that release reads the event a live piece carries,
             # whatever else the piece says of it.

@@ -38,14 +38,35 @@ pub(super) fn reported(node: &Node, resident: &ResidentId, thread: &str, event: 
     Ok(())
 }
 
+/// The homes whose app-server is being started for what it offers.
+static WARMING: std::sync::LazyLock<std::sync::Mutex<std::collections::HashSet<std::path::PathBuf>>> =
+    std::sync::LazyLock::new(Default::default);
+
 pub async fn offers(node: &Arc<Node>, resident: &ResidentId) -> Result<Offers, Failure> {
     let (codex, thread) = thread(node, resident).await?;
     let (about, _) = node.residents.about(resident).ok_or_else(|| Failure::new("unknown conversation"))?;
     crate::logins::workbench::works(node, &about)?;
-    let mut offers = codex
-        .offers(&thread, crate::account_features::conversation(node, resident).await.goals)
-        .await
-        .map_err(Failure::new)?;
+    let goals = crate::account_features::conversation(node, resident).await.goals;
+    // Looking at a conversation never waits for Codex to start: after the
+    // node restarted, or once the app-server stopped for want of work, that
+    // took from seconds to two minutes, with the conversation's menus empty
+    // and a place on this machine held all the while. The app-server is
+    // started off this answer, once for its home however many ask, and the
+    // answer says it is not all there is.
+    if !codex.serving() {
+        let home = codex.config_home().to_path_buf();
+        if WARMING.lock().expect("never poisoned").insert(home.clone()) {
+            let (node, resident) = (node.clone(), resident.clone());
+            fastctx_platform::task::spawn(async move {
+                if let Err(error) = codex.offers(&thread, goals).await {
+                    node.log.line(format_args!("starting Codex for what {resident} offers: {error}"));
+                }
+                WARMING.lock().expect("never poisoned").remove(&home);
+            });
+        }
+        return Ok(Offers { gathering: true, model: about.model, ..Offers::default() });
+    }
+    let mut offers = codex.offers(&thread, goals).await.map_err(Failure::new)?;
     if crate::assists::assisting(node, &about.acting) {
         if crate::assists::host::kept(node, resident)? != Some(true) {
             offers.controls.clear();
@@ -90,6 +111,23 @@ fn limits(kept: &AgentLimits) -> Vec<Limit> {
             resets_at: window.resets_at,
         })
         .collect()
+}
+
+/// Argument refusals that need neither a host lookup nor a conversation gate.
+pub(crate) fn validate(control: &Control) -> Result<(), Failure> {
+    match control {
+        Control::Rename { name } if name.trim().is_empty() => Err(Failure::new("a conversation name cannot be empty")),
+        Control::Command { name, args, path: None } => match name.as_str() {
+            "model" => Err(Failure::not_run(crate::control::MODEL_COMMAND)),
+            "compact" | "fork" | "status" | "usage" | "skills" | "debug-config" => no_args(args),
+            "rename" if args.trim().is_empty() => Err(Failure::new("a conversation name cannot be empty")),
+            "mcp" if !matches!(args.trim(), "" | "verbose") => {
+                Err(Failure::new("/mcp takes only the optional argument verbose"))
+            }
+            _ => Ok(()),
+        },
+        _ => Ok(()),
+    }
 }
 
 pub async fn control(node: &Arc<Node>, resident: &ResidentId, mut control: Control) -> Result<Controlled, Failure> {
@@ -180,7 +218,11 @@ pub async fn control(node: &Arc<Node>, resident: &ResidentId, mut control: Contr
             done("Compaction started; its completion appears in the conversation.")
         }
         Control::Model { model, effort } => {
-            codex.select_model(&thread, model, effort).await.map_err(Failure::new)?;
+            codex.select_model(&thread, model.clone(), effort.clone()).await.map_err(Failure::new)?;
+            // What the conversation starts again with, as a Claude one's,
+            // which its metadata says: what is given replaces, what is not
+            // stays (LL12, MM13).
+            crate::session_options::set_choice(node, resident, model, effort).await?;
             done("Selection saved for the next turn started through the World. The running turn keeps its settings.")
         }
         Control::Rename { name } => {
@@ -264,6 +306,7 @@ pub async fn control(node: &Arc<Node>, resident: &ResidentId, mut control: Contr
         }
         Control::Answer { .. } => unreachable!("answers do not acquire the speech lock"),
         Control::CancelControl { .. } => unreachable!("queued controls are cancelled by the node"),
+        Control::Goal { .. } => unreachable!("the node sets a goal itself (`goals::slash`)"),
         Control::Agents | Control::AgentMessages { .. } => {
             Err(Failure::new("this host does not offer native agent controls"))
         }
@@ -320,6 +363,7 @@ async fn fork(
         focus: source.focus,
         home: source.home,
         callee: None,
+        born_shared: crate::timeline::born_shared::now(node),
     };
     let now = Now {
         activity: Activity::Idle,

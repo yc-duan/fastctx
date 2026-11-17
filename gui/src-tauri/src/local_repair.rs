@@ -39,7 +39,7 @@ pub fn launch(directory: Option<PathBuf>, reopen: bool) -> Result<Accepted, Stri
         Some(directory) => directory,
         None => {
             use tauri::utils::config::AppDirectoriesOverride;
-            let context: tauri::Context<tauri::Wry> = tauri::generate_context!();
+            let context = crate::context();
             let configured = match &context.config().app.app_directories_override {
                 Some(AppDirectoriesOverride::Root(path)) => Some(path.clone()),
                 Some(AppDirectoriesOverride::Directories(paths)) => paths.data.clone(),

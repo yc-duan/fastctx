@@ -16,7 +16,7 @@ pub(crate) fn scope(
     hub: Option<&HubName>,
     account: Option<&AccountName>,
 ) -> Result<(Arc<Link>, AccountName), Failure> {
-    if matches!(caller, Caller::Page(_) | Caller::Session(_)) {
+    if matches!(caller, Caller::Session(_)) {
         return Err(Failure::refused(words::NEED_CONVERSATION));
     }
     let mut choices = scopes(node, caller, hub, account);
@@ -48,7 +48,7 @@ pub(crate) async fn list_all(
     caller: &Caller,
     owner: Option<fastctx_types::Address>,
 ) -> Result<Reply, Failure> {
-    if matches!(caller, Caller::Page(_) | Caller::Session(_)) {
+    if matches!(caller, Caller::Session(_)) {
         return Err(Failure::refused(words::NEED_CONVERSATION));
     }
     tokio::time::timeout(std::time::Duration::from_secs(75), async {
@@ -73,7 +73,7 @@ pub(crate) async fn list_all(
 /// Every sentinel of the accounts the caller acts for, ended or not, with
 /// their wakes (`world-senses.md`, 全部观测).
 pub(crate) async fn overview_all(node: &Arc<Node>, caller: &Caller) -> Result<Reply, Failure> {
-    if matches!(caller, Caller::Page(_) | Caller::Session(_)) {
+    if matches!(caller, Caller::Session(_)) {
         return Err(Failure::refused(words::NEED_CONVERSATION));
     }
     tokio::time::timeout(std::time::Duration::from_secs(120), async {
@@ -98,7 +98,7 @@ pub(crate) async fn overview_all(node: &Arc<Node>, caller: &Caller) -> Result<Re
 /// A sentinel's record, read for whichever of the caller's accounts it was
 /// left for: each keeps its own under its home.
 pub(crate) async fn record_any(node: &Arc<Node>, caller: &Caller, request: Request) -> Result<Reply, Failure> {
-    if matches!(caller, Caller::Page(_) | Caller::Session(_)) {
+    if matches!(caller, Caller::Session(_)) {
         return Err(Failure::refused(words::NEED_CONVERSATION));
     }
     let mut failed = None;
@@ -112,6 +112,36 @@ pub(crate) async fn record_any(node: &Arc<Node>, caller: &Caller, request: Reque
 }
 
 pub(crate) async fn control(
+    node: &Arc<Node>,
+    caller: &Caller,
+    link: &Arc<Link>,
+    account: &AccountName,
+    request: Request,
+) -> Result<Reply, Failure> {
+    request.validate_bounds().map_err(Failure::not_run)?;
+    let changes = matches!(request, Request::Create { .. } | Request::Stop { .. })
+        || matches!(&request, Request::Conversation { request, .. } if matches!(request.as_ref(), Request::Stop { .. }));
+    if !changes {
+        return work(node, caller, link, account, request).await;
+    }
+    node.sentinels.records()?;
+    if let Request::Create { request } = &request {
+        let Caller::Resident(owner) = caller else {
+            return Err(Failure::refused(words::NEED_CONVERSATION));
+        };
+        if !node.is_me(&owner.machine) {
+            return Err(Failure::refused(words::ON_ITS_MACHINE));
+        }
+        if node.residents.about(&owner.resident).is_none_or(|(about, _)| !about.world_managed()) {
+            return Err(Failure::refused(crate::speech::OWN_SESSION));
+        }
+        request.validate(jiff::Timestamp::now().as_millisecond()).map_err(Failure::not_run)?;
+    }
+    let scope = HubAccount { hub: link.membership().id.clone(), account: account.clone() };
+    super::submission::control(node, caller, scope, request).await
+}
+
+pub(super) async fn work(
     node: &Arc<Node>,
     caller: &Caller,
     link: &Arc<Link>,
@@ -154,9 +184,9 @@ pub(crate) async fn control(
             };
             Ok(Reply::Help { text })
         }
-        Request::Record { id, home, generation, held } => {
+        Request::Record { id, home, generation, held, before } => {
             match homes
-                .send_to(&scope, &home, HomeRequest::Record { id, generation, held })
+                .send_to(&scope, &home, HomeRequest::Record { id, generation, held, before })
                 .await
                 .map_err(Failure::new)?
             {

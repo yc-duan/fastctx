@@ -13,7 +13,6 @@ pub(crate) enum Source {
     Answer,
     Control,
     Management,
-    View,
     HostInterface,
 }
 
@@ -95,6 +94,9 @@ pub(crate) async fn wake(
     let adapter = super::adapters::Adapter::for_conversation(&about)
         .ok_or_else(|| Failure::new("this host has no supported lifecycle entrance"))?;
     node.log.line(format_args!("lifecycle {id}: host requested by {source:?}"));
+    // Memory freed for it first, others' idle hosts let go: the daemon that
+    // starts it finds enough, and retires nobody's as it does (`memory_room`).
+    crate::memory_room::make_room(node, id).await;
     let carries_words = prompt.is_some();
     let missing = adapter.wake(node, &about, prompt).await?;
     if !carries_words {

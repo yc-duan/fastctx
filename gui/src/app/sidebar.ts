@@ -16,6 +16,8 @@
 // account by account, each only what that account may use. The account and
 // the settings are at its foot.
 
+import { syncedOf } from "../world/sync";
+import { syncRing } from "./sync-draw";
 import { glyph } from "../conversation/glyphs";
 import { keptSettings, settingsTabOf } from "./talk-settings";
 import { dropZones, followDrags } from "./sidebar-drag";
@@ -37,7 +39,7 @@ import type { Store } from "./store";
 import type { TalkActs } from "./talk-acts";
 import type { TalkMenu } from "./talk-menu";
 import type { TalkMenuWords } from "./talk-menu-words";
-import { assistedBy, departedFor, isUnreached } from "./store";
+import { assistedBy, unreachedFor, isUnreached } from "./store";
 import { TalkList } from "./talk-list";
 import { factsByMachine, keepWriting, talkRow, talksOf } from "./talk-row";
 import type { ShellWords } from "./words";
@@ -189,7 +191,7 @@ export class Sidebar {
       acts: options.acts,
       menu: options.menu,
       menuWords: options.menuWords,
-      reachable: (r) => !isUnreached(r),
+      reachable: (r) => !isUnreached(this.options.store.world.peek(), r),
       redraw: () => {
         this.drawn = "";
         this.draw();
@@ -323,7 +325,7 @@ export class Sidebar {
         .map((group) => {
           const key = `${group.login.hub}/${group.login.account}`;
           const shut = folded.has(`group:${key}`);
-          const mine = talks.filter((r) => residentIn(world, group, r) || departedFor(r, group.login));
+          const mine = talks.filter((r) => residentIn(world, group, r) || unreachedFor(world, r, group.login));
           const asking = mine.some((r) => r.now?.waiting_for_user);
           return `<section class="sidebar-account${shut ? " shut" : ""}">
             <h2 class="side-account-title"><button class="side-account-fold${shut && asking ? " asking" : ""}" type="button" data-fold="group:${escape(key)}" aria-expanded="${!shut}" aria-label="${escape(words.groupOf(loginLabel(group.login)))}">${glyph("chevron", 14)}<span class="side-account-name">${escape(group.login.hubName)}<span class="side-account-sep"></span>${escape(group.login.account)}</span></button></h2>
@@ -404,8 +406,15 @@ export class Sidebar {
     // Managed machines that came in by one code are one thing to see.
     const arrivals = (world?.accounts.hubs ?? []).reduce((n, hub) => n + new Set(hub.arrivals.map((arrival) => arrival.code ?? `${arrival.account}\n${arrival.name}`)).size, 0);
     const [me] = loginsOf(world?.accounts);
+    // While some of the user's devices are not caught up, a small ring
+    // beside 「我」 draws how many are, and opens how they stand.
+    const { devices, synced } = syncedOf(world?.accounts.hubs);
+    const ring =
+      devices > 0 && synced < devices
+        ? `<a class="place sync-place${place.kind === "sync" ? " current" : ""}" href="${link({ kind: "sync" })}" title="${escape(words.syncing(synced, devices))}" aria-label="${escape(words.syncing(synced, devices))}">${syncRing(synced, devices, 16)}</a>`
+        : "";
     const account = me
-      ? `<a class="place account-place${place.kind === "account" ? " current" : ""}" href="${link({ kind: "account" })}" title="${escape(words.account)}">${glyph("person", 18)}<span class="place-name">${escape(me.account)}</span>${arrivals ? `<span class="count waiting"><span class="spoken">${escape(words.arrivals(arrivals))}</span>${arrivals}</span>` : ""}</a>`
+      ? `<div class="account-row"><a class="place account-place${place.kind === "account" ? " current" : ""}" href="${link({ kind: "account" })}" title="${escape(words.account)}">${glyph("person", 18)}<span class="place-name">${escape(me.account)}</span>${arrivals ? `<span class="count waiting"><span class="spoken">${escape(words.arrivals(arrivals))}</span>${arrivals}</span>` : ""}</a>${ring}</div>`
       : "";
     const html = `${account}<a class="place settings${place.kind === "settings" || place.kind === "data" ? " current" : ""}" href="${link({ kind: "settings" })}">${glyph("settings", 18)}<span class="place-name">${escape(words.settings)}</span></a>`;
     if (html !== this.foot.innerHTML) this.foot.innerHTML = html;
@@ -427,7 +436,7 @@ export class Sidebar {
         const inside = talks.filter((r) => r.town === town);
         const shut = folded.has(town);
         const asking = inside.some((r) => r.now?.waiting_for_user);
-        const current = (place.kind === "project" || place.kind === "history" || place.kind === "page") && place.town === town;
+        const current = (place.kind === "project" || place.kind === "history") && place.town === town;
         // Its folder and its name alike open and close it on its
         // conversations where it is; its overview is in its "⋯" (user
         // 2026-10-29). Shut, it says how many are in it, in clay while one
@@ -512,7 +521,7 @@ export class Sidebar {
     const shown = talks.filter((r, i) => i < SHOWN || r.now?.waiting_for_user || (place.kind === "talk" && place.address.resident === r.about.id && place.address.machine === r.about.machine));
     const rest = talks.length - shown.length;
     const all = place.kind === "talks" && place.town === town;
-    return `<ul class="${kind}">${shown.map((r) => talkRow(r, place, now, facts, words, this.talkList.rowActs(r), assistedBy(this.options.store.world.peek(), r))).join("")}${
+    return `<ul class="${kind}">${shown.map((r) => talkRow(this.options.store.world.peek(), r, place, now, facts, words, this.talkList.rowActs(r), assistedBy(this.options.store.world.peek(), r))).join("")}${
       rest > 0
         ? `<li><a class="talk-all${all ? " current" : ""}" href="${link({ kind: "talks", town })}"><span class="talk-host"></span><span class="talk-name">${escape(words.all)}</span><span class="count">${talks.length}</span></a></li>`
         : ""

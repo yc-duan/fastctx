@@ -15,6 +15,7 @@
 
 pub(crate) mod accounts;
 mod ownership;
+pub(crate) mod submission;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 

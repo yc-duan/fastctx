@@ -1,0 +1,21 @@
+/* The interface's bar (`bar.ts`): a grey track and what fills it, in the
+   pencil's ink where no part says its own. Its element is as wide as it is
+   given and as tall as its styles say; the bar is drawn in its middle. */
+
+hand-bar {
+  display: block;
+  height: 14px;
+}
+
+hand-bar > svg {
+  display: block;
+  overflow: visible;
+}
+
+.bar-track {
+  fill: var(--bar-track);
+}
+
+.bar-ink {
+  fill: var(--pen-graphite);
+}

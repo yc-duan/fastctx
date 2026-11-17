@@ -17,14 +17,3 @@ pub(crate) fn towns(world: &WorldDir) -> io::Result<Vec<TownName>> {
     }
     Ok(towns.into_iter().collect())
 }
-
-pub(crate) fn archive_targets(world: &Path) -> io::Result<Vec<PathBuf>> {
-    let mut targets = Vec::new();
-    for path in crate::record_migration::archive::import_journals(&world.join("towns"), "ledger-import.json")? {
-        let Some(journal) = fastctx_net::link::state::read_or::<Option<Journal>>(&path, None)? else { continue };
-        if !journal.finished {
-            targets.extend(journal.originals.into_iter().flatten().map(|original| original.target().to_path_buf()));
-        }
-    }
-    Ok(targets)
-}

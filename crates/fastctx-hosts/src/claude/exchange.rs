@@ -13,16 +13,19 @@
 use std::io;
 use std::path::{Path, PathBuf};
 
-use fastctx_platform::{Permissions, ensure_private_dir, publish, publish_new};
+use fastctx_platform::{Permissions, ensure_private_dir, publish, publish_new, publish_new_unsynced, publish_unsynced};
 use fastctx_types::session::{
     Content, Happened, Health, HealthKind, Item, SessionEvent, ToolStatus, TurnEnd, TurnFacts, TurnHow, What,
 };
+
 use fastctx_types::usage::Usd;
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+mod applied;
 mod damaged;
+pub use applied::{Vouched, compact as compact_applied};
 pub use damaged::recover_readable;
 
 /// Where the sessions' directories are.
@@ -94,7 +97,7 @@ pub fn transcript(directory: &Path) -> io::Result<Option<PathBuf>> {
     struct Place {
         path: PathBuf,
     }
-    match std::fs::read(directory.join("transcript.json")) {
+    match fastctx_platform::disk::read(directory.join("transcript.json")) {
         Ok(bytes) if bytes.is_empty() => Ok(None),
         Ok(bytes) => serde_json::from_slice::<Place>(&bytes)
             .map(|place| Some(place.path))
@@ -303,6 +306,13 @@ enum ModEvent {
         turn: Option<String>,
         text: Option<String>,
     },
+    /// Words waited in a running turn past the end of `calls` of its tool
+    /// calls and went in only when a turn of their own took them.
+    Late {
+        at: Option<Timestamp>,
+        deliveries: Vec<String>,
+        calls: u32,
+    },
     Handed {
         deliveries: Vec<String>,
         turn: Option<String>,
@@ -344,14 +354,42 @@ struct Refusal {
 pub struct Report {
     pub name: String,
     pub events: Vec<Reported>,
+    /// The earliest report its mod had named and not yet written whole when
+    /// it made this one: every report named before it is on disk or applied.
+    pub floor: Option<String>,
 }
 
-pub fn acknowledge(directory: &Path, name: &str) -> io::Result<()> {
+/// Whether the report `name` of the session in `directory` was applied.
+pub fn was_applied(directory: &Path, name: &str) -> io::Result<bool> {
+    applied::has(directory, name)
+}
+
+/// Lets go of an applied report. The caller has taken what applying it
+/// changed to the disk first; the marker itself does not wait for the disk,
+/// as a marker a lost power takes only has the report applied again, which
+/// its records know (`applied`).
+///
+/// `filed`: whether the mod may have written this report to its files too
+/// (it came from them, or the session wrote files lately); otherwise there
+/// is nothing of it there to take away, and nothing is looked for.
+pub fn acknowledge(directory: &Path, name: &str, filed: bool) -> io::Result<()> {
     let applied = directory.join("applied");
-    ensure_private_dir(&applied)?;
-    match publish_new(&applied.join(name), b"", Permissions::Private) {
+    let marker = applied.join(name);
+    // The directory is made the first time it is missing, not asked after
+    // for every report.
+    let marked = match fastctx_platform::mark_new(&marker) {
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            ensure_private_dir(&applied)?;
+            fastctx_platform::mark_new(&marker)
+        }
+        marked => marked,
+    };
+    match marked {
         Err(error) if error.kind() != io::ErrorKind::AlreadyExists => return Err(error),
         _ => {}
+    }
+    if !filed {
+        return Ok(());
     }
     super::accounting::clean(directory, name.as_ref())?;
     let path = directory.join("events").join(name);
@@ -361,6 +399,26 @@ pub fn acknowledge(directory: &Path, name: &str) -> io::Result<()> {
         Err(error) if error.kind() != io::ErrorKind::NotFound => Err(error),
         _ => Ok(()),
     }
+}
+
+/// Whether the mod left anything in the session's files to take: a report in
+/// `events/` or an accounting receipt in `accounting/`. A session whose mod
+/// hands its reports over on the channel usually has neither, and is not
+/// read through for nothing (`harvest`).
+pub fn written(directory: &Path) -> io::Result<bool> {
+    for place in ["events", "accounting"] {
+        match std::fs::read_dir(directory.join(place)) {
+            Ok(mut entries) => {
+                // The mod's own markers (`.created`) start with a dot.
+                if entries.any(|entry| entry.is_ok_and(|entry| !entry.file_name().to_string_lossy().starts_with('.'))) {
+                    return Ok(true);
+                }
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(false)
 }
 
 /// Takes every whole event the mod wrote, oldest first. An event that
@@ -382,8 +440,8 @@ pub fn harvest(directory: &Path) -> io::Result<(Vec<Report>, Vec<String>)> {
     names.sort();
     let mut reported = Vec::new();
     for name in &names {
-        if directory.join("applied").join(name).exists() {
-            acknowledge(directory, name)?;
+        if applied::has(directory, name)? {
+            acknowledge(directory, name, true)?;
             continue;
         }
         let path = events.join(name);
@@ -391,12 +449,12 @@ pub fn harvest(directory: &Path) -> io::Result<(Vec<Report>, Vec<String>)> {
         if !done.exists() {
             break;
         }
-        match read_report(&path).map(|bytes| serde_json::from_slice::<ModEvent>(&bytes)) {
-            Ok(Ok(event)) => {
+        match read_report(&path).map(|(bytes, floor)| (serde_json::from_slice::<ModEvent>(&bytes), floor)) {
+            Ok((Ok(event), floor)) => {
                 let at = Timestamp::try_from(path.metadata()?.modified()?).map_err(io::Error::other)?;
-                reported.push(Report { name: name.clone(), events: translate(event, at) });
+                reported.push(Report { name: name.clone(), events: translate(event, at), floor });
             }
-            Ok(Err(error)) => {
+            Ok((Err(error), _)) => {
                 let damaged = directory.join("damaged");
                 ensure_private_dir(&damaged)?;
                 fastctx_platform::owned_directory::move_to(&path, &damaged.join(name))?;
@@ -420,6 +478,26 @@ pub fn harvest(directory: &Path) -> io::Result<(Vec<Report>, Vec<String>)> {
     Ok((reported, problems))
 }
 
+/// A report its mod handed over on the loopback channel (the node's
+/// `claude::channel`) rather than as a file, read as `harvest` reads a file
+/// of it: under the same name, once every report it names as written before
+/// it has been applied; `WouldBlock` until then.
+/// `earlier` says which names came before it in the same handing over.
+pub fn received(
+    directory: &Path,
+    name: &str,
+    value: Value,
+    at: Timestamp,
+    earlier: &dyn Fn(&str) -> bool,
+) -> io::Result<Report> {
+    if !applied::ordered(name) {
+        return Err(io::Error::other(format!("{name} is not a report's name")));
+    }
+    let floor = dependencies(directory, &value, earlier)?;
+    let event = serde_json::from_value::<ModEvent>(value).map_err(io::Error::other)?;
+    Ok(Report { name: name.to_string(), events: translate(event, at), floor })
+}
+
 /// The writer is known dead: a complete JSON report no longer needs its
 /// final marker to distinguish it from an in-progress write.
 pub fn recover_reports(directory: &Path) -> io::Result<Vec<String>> {
@@ -434,7 +512,8 @@ pub fn recover_reports(directory: &Path) -> io::Result<Vec<String>> {
         if path.extension().is_none_or(|extension| extension != "json") || path.with_extension("done").exists() {
             continue;
         }
-        match read_report(&path).and_then(|bytes| serde_json::from_slice::<ModEvent>(&bytes).map_err(io::Error::other))
+        match read_report(&path)
+            .and_then(|(bytes, _)| serde_json::from_slice::<ModEvent>(&bytes).map_err(io::Error::other))
         {
             Ok(_) => publish(&path.with_extension("done"), b"", Permissions::Private)?,
             Err(error) if error.kind() == io::ErrorKind::WouldBlock => {}
@@ -445,12 +524,14 @@ pub fn recover_reports(directory: &Path) -> io::Result<Vec<String>> {
 }
 
 pub(super) fn checked_report(path: &Path) -> io::Result<Vec<u8>> {
-    let bytes = read_report(path)?;
+    let (bytes, _) = read_report(path)?;
     serde_json::from_slice::<ModEvent>(&bytes).map_err(io::Error::other)?;
     Ok(bytes)
 }
 
-fn read_report(path: &Path) -> io::Result<Vec<u8>> {
+/// A report's bytes and the floor it declares, once every report it names as
+/// written before it has been applied.
+fn read_report(path: &Path) -> io::Result<(Vec<u8>, Option<String>)> {
     let mut bytes = std::fs::read(path)?;
     let mut value: Value = serde_json::from_slice(&bytes).map_err(io::Error::other)?;
     if let Some(parts) = value.get("parts").and_then(Value::as_u64) {
@@ -460,19 +541,27 @@ fn read_report(path: &Path) -> io::Result<Vec<u8>> {
         }
         value = serde_json::from_slice(&bytes).map_err(io::Error::other)?;
     }
+    let session = path.parent().and_then(Path::parent).expect("an event is inside a session");
+    let floor = dependencies(session, &value, &|_| false)?;
+    Ok((bytes, floor))
+}
+
+/// The floor a report declares, once every report it names as written
+/// before it has been applied in the session `directory`, or is `earlier`
+/// in the same handing over; `WouldBlock` until then.
+fn dependencies(directory: &Path, value: &Value, earlier: &dyn Fn(&str) -> bool) -> io::Result<Option<String>> {
     if let Some(pending) = value.get("pending").and_then(Value::as_array) {
-        let applied = path.parent().and_then(Path::parent).expect("an event is inside a session").join("applied");
         for name in pending {
             let name = name.as_str().ok_or_else(|| io::Error::other("invalid report dependency"))?;
             if Path::new(name).file_name().is_none_or(|file| file != name) {
                 return Err(io::Error::other("invalid report dependency path"));
             }
-            if !applied.join(name).exists() {
+            if !earlier(name) && !applied::has(directory, name)? {
                 return Err(io::ErrorKind::WouldBlock.into());
             }
         }
     }
-    Ok(bytes)
+    Ok(value.get("floor").and_then(Value::as_str).filter(|name| applied::ordered(name)).map(str::to_string))
 }
 
 fn translate(event: ModEvent, recorded_at: Timestamp) -> Vec<Reported> {
@@ -634,6 +723,15 @@ fn translate(event: ModEvent, recorded_at: Timestamp) -> Vec<Reported> {
             let text = format!("the World's plugin could not stop the turn: {}", text.unwrap_or_default());
             vec![happened(at, Happened::Health { turn, health: Health { kind: HealthKind::Error, text } })]
         }
+        ModEvent::Late { at, deliveries, calls } => {
+            let text = format!(
+                "{} sent to this session waited past {calls} finished tool call{} of a running turn and went in only \
+                 at its end: the handover into a running turn did not happen",
+                if deliveries.len() == 1 { "a message".to_string() } else { format!("{} messages", deliveries.len()) },
+                if calls == 1 { "" } else { "s" },
+            );
+            vec![happened(at, Happened::Health { turn: None, health: Health { kind: HealthKind::Warning, text } })]
+        }
         ModEvent::Handed { deliveries, turn } => vec![Reported::Handed { ids: deliveries, turn: turn_of(turn) }],
         ModEvent::Replaced { deliveries } => vec![Reported::Replaced { ids: deliveries }],
     }
@@ -652,6 +750,10 @@ struct Inbox<'a> {
     /// only the latest goes in (`Notice::along`).
     #[serde(skip_serializing_if = "Option::is_none")]
     along: Option<&'a str>,
+    /// A job the user stopped, told after: the mod gives it to no turn
+    /// running when it came, which may be the one stopped with it.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    after_stop: bool,
     /// What it replaces, handed over before and not yet in.
     #[serde(skip_serializing_if = "<[String]>::is_empty")]
     replaces: &'a [String],
@@ -664,16 +766,21 @@ pub struct Delivering<'a> {
     pub at: Option<Timestamp>,
     pub as_user: bool,
     pub along: Option<&'a str>,
+    /// A job the user stopped, told after (`Inbox::after_stop`).
+    pub after_stop: bool,
     pub replaces: &'a [String],
 }
 
 /// Puts something in the session's inbox for its mod to hand over. The same
-/// id twice is the same thing and is written once.
+/// id twice is the same thing and is written once. Its files do not wait for
+/// the disk: the node keeps on the disk that it handed this over before it
+/// writes them, and hands over again at its start what a lost power took.
 pub fn deliver(directory: &Path, id: &str, text: &str, how: Delivering<'_>) -> io::Result<()> {
-    let Delivering { at, as_user, along, replaces } = how;
+    let Delivering { at, as_user, along, after_stop, replaces } = how;
     let inbox = directory.join("inbox");
     ensure_private_dir(&inbox)?;
-    let mut bytes = serde_json::to_vec(&Inbox { id, at, text, as_user, along, replaces }).expect("strings serialize");
+    let mut bytes =
+        serde_json::to_vec(&Inbox { id, at, text, as_user, along, after_stop, replaces }).expect("strings serialize");
     // Claude Code 2.1.287's fs API accepts at most 4 MiB per operation.
     const FILE_BYTES: usize = 4 * 1024 * 1024;
     if bytes.len() > FILE_BYTES {
@@ -688,7 +795,7 @@ pub fn deliver(directory: &Path, id: &str, text: &str, how: Delivering<'_>) -> i
             }
             let part = &rest[..end];
             let path = parts.join(count.to_string());
-            match publish_new(&path, part.as_bytes(), Permissions::Private) {
+            match publish_new_unsynced(&path, part.as_bytes(), Permissions::Private) {
                 Ok(()) => {}
                 Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
                     if std::fs::read(&path)? != part.as_bytes() {
@@ -707,12 +814,15 @@ pub fn deliver(directory: &Path, id: &str, text: &str, how: Delivering<'_>) -> i
         if let Some(along) = along {
             value["along"] = along.into();
         }
+        if after_stop {
+            value["after_stop"] = true.into();
+        }
         if !replaces.is_empty() {
             value["replaces"] = replaces.into();
         }
         bytes = serde_json::to_vec(&value).map_err(io::Error::other)?;
     }
-    match publish_new(&inbox.join(format!("{id}.json")), &bytes, Permissions::Private) {
+    match publish_new_unsynced(&inbox.join(format!("{id}.json")), &bytes, Permissions::Private) {
         Err(error) if error.kind() != io::ErrorKind::AlreadyExists => Err(error),
         _ => Ok(()),
     }
@@ -722,7 +832,9 @@ pub fn deliver(directory: &Path, id: &str, text: &str, how: Delivering<'_>) -> i
 /// looks.
 pub fn stop(directory: &Path, turn: &str) -> io::Result<()> {
     let bytes = serde_json::to_vec(&serde_json::json!({ "turn": turn })).expect("strings serialize");
-    publish(&directory.join("stop.json"), &bytes, Permissions::Private)
+    // A stop is for the session running now: one a lost power takes went
+    // with that session.
+    publish_unsynced(&directory.join("stop.json"), &bytes, Permissions::Private)
 }
 
 pub fn acknowledge_handover(directory: &Path, ids: &[String], turn: &str) -> io::Result<()> {

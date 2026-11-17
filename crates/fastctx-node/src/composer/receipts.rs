@@ -65,6 +65,17 @@ pub(super) async fn receipt(
         None => get(node, id, "receipts", operation).await,
     }
 }
+pub(super) async fn outcome(
+    node: &Node,
+    id: &ResidentId,
+    state: &Stored,
+    operation: &str,
+) -> Result<Option<fastctx_types::composer::sync::Operation>, Failure> {
+    match state.outcomes.get(operation) {
+        Some(outcome) => Ok(Some(outcome.clone())),
+        None => get(node, id, "outcomes", operation).await,
+    }
+}
 pub(super) async fn upload(
     node: &Node,
     id: &ResidentId,

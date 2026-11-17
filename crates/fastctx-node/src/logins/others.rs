@@ -31,9 +31,10 @@ fn present(agent: &Agent, home: &Path) -> bool {
     if agent.marks.is_empty() {
         return fastctx_platform::disk::is_dir(home);
     }
-    agent.marks.iter().any(|mark| {
-        fastctx_platform::disk::exists(fastctx_install::agents::located(home, mark)).unwrap_or(false)
-    })
+    agent
+        .marks
+        .iter()
+        .any(|mark| fastctx_platform::disk::exists(fastctx_install::agents::located(home, mark)).unwrap_or(false))
 }
 
 /// Where `agent` keeps who is logged in: its data directory where it keeps
@@ -94,6 +95,8 @@ fn asked(context: &Context, dir: PathBuf, found: Found, agent: &Agent) -> KeptLo
         asked_file: None,
         models: Vec::new(),
         signed: None,
+        credential: None,
+        account_signed: None,
     }
 }
 
@@ -126,6 +129,7 @@ pub(super) fn side(
             unattended: None,
             auto_title: false,
             reset_in_place: false,
+            week: None,
             launcher: None,
             models: Vec::new(),
             model_edits: None,

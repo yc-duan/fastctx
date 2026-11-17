@@ -12,6 +12,7 @@
 // same card, saying what is put back and what the user changed since that
 // stays.
 
+import { followState, LOGINS } from "../world/topics";
 import { Sketch } from "../pen/sketch";
 import { counts, parse } from "../conversation/diff";
 import { diffPaint, memoryDiff } from "../conversation/diff-lines";
@@ -29,6 +30,7 @@ import { Sheet } from "./confirm";
 import { detailOf, enProblems, known, zhProblems } from "./problem";
 import { stepMark as mark } from "../pen/step-mark";
 import { workbenchShown } from "./workbench-shown";
+import { waiting } from "./waiting";
 
 export interface AgentChangeWords {
   applyTitle(who: string, machine: string): string;
@@ -81,19 +83,19 @@ export interface AgentChangeWords {
 export const zhAgentChange: AgentChangeWords = {
   applyTitle: (who, machine) => `接入 ${machine} 上的 ${who}`,
   removeTitle: (who, machine) => `移除 ${machine} 上的 ${who}`,
-  putIn: "换上",
+  putIn: "启用",
   putInWhat: "Fastctx 的 run：执行命令、查看文件与图片、修改文件、访问其他机器",
   putInTags: ["run"],
-  turnOff: "关掉",
+  turnOff: "停用",
   turnOffWhat: (agent) => (agent === "claude" ? "它自带的 Bash（Windows 上连同 PowerShell）" : "它自带的 shell"),
   turnOffTags: (agent) => (agent === "claude" ? ["Bash", "PowerShell"] : ["shell"]),
-  leave: "不动",
+  leave: "不变",
   leaveWhat: "其余一切：读写文件、查看图片、待办、子代理、插件、联网搜索",
   leaveTags: ["写文件", "待办", "子代理", "联网搜索"],
   restore: "还原",
   restoreWhat: "按记录还原接入时的改动",
   kept: "保留",
-  keepsWhat: "你此后的改动",
+  keepsWhat: "此后的手动改动",
   openSessions: (agent, into) =>
     into
       ? agent === "claude"
@@ -103,16 +105,16 @@ export const zhAgentChange: AgentChangeWords = {
   permission: "Fastctx 发起的 Claude 对话此后不再逐项请求批准命令与文件改动；你自行开启的会话仍逐项请求",
   programs: "程序",
   programsWhat: "使用此登录的程序一并获得 run",
-  details: "细节",
-  hideDetails: "收起细节",
+  details: "详情",
+  hideDetails: "收起详情",
   reading: "正在计算改动",
   created: "新建",
   changed: "修改",
   removed: "删除",
-  withheld: "可能为你自己的值，不予显示",
+  withheld: "可能含个人设置，不予显示",
   lines: { more: (n) => `+ ${n.toLocaleString("zh-CN")} 行`, less: "− 收起", full: "整屏查看", english: false, unchanged: (n) => `${n} 行未改动` },
-  raise: (limit) => `把输出上限从 ${limit.current.toLocaleString("zh-CN")} 调到 ${limit.requested.toLocaleString("zh-CN")}（${limit.location}，所有工具共用）`,
-  takeBack: "你改动过的 Fastctx 配置恢复为当前版本的写法，文件其余部分不变",
+  raise: (limit) => `将输出上限从 ${limit.current.toLocaleString("zh-CN")} 调至 ${limit.requested.toLocaleString("zh-CN")}（${limit.location}，所有工具共用）`,
+  takeBack: "改动过的 Fastctx 配置恢复为当前版本的写法，文件其余部分不变",
   steps: { program: "安置程序", command: (command) => `运行 ${command}`, files: "修改配置与说明", check: (scope) => `核对 ${scope}` },
   cancel: "取消",
   apply: "接入",
@@ -153,7 +155,7 @@ export const enAgentChange: AgentChangeWords = {
   programsWhat: "Programs using this login get run too",
   details: "Details",
   hideDetails: "Hide details",
-  reading: "Working out what changes",
+  reading: "Computing the changes",
   created: "New",
   changed: "Changed",
   removed: "Removed",
@@ -168,8 +170,8 @@ export const enAgentChange: AgentChangeWords = {
   close: "Close",
   done: "Connected",
   removedDone: "Removed",
-  failed: (reason) => known(reason, enProblems) ?? "Not done",
-  previewFailed: "Couldn't work out the change",
+  failed: (reason) => known(reason, enProblems) ?? "Failed",
+  previewFailed: "Could not compute the changes",
   elsewhere: (machine) => `${machine} makes the change itself`,
   disclose: enDisclose,
 };
@@ -206,6 +208,9 @@ export interface AgentChangeSeams {
   ended(): void;
   /** The workbench was opened or closed in the login. */
   benched?(open: boolean): void;
+  /** How the login's machine is reached, as `progress` reads it: written
+   *  in full where several networks have a machine of that name. */
+  written?(target: AgentChangeTarget): string;
 }
 
 interface Asking {
@@ -320,18 +325,13 @@ export class AgentChangeSheet {
     this.sheet.busy = true;
     this.draw();
     let following = true;
-    const follow = async () => {
-      while (following) {
-        const change = await this.seams.progress(target).catch(() => null);
-        if (!following) return;
-        if (change && this.state.at === "running") {
-          this.state.steps = change.steps;
-          this.drawSteps();
-        }
-        await new Promise((resolve) => setTimeout(resolve, FOLLOW_MS));
+    const stopFollowing = followState(LOGINS, async () => {
+      const change = await this.seams.progress(target);
+      if (following && change && this.state.at === "running") {
+        this.state.steps = change.steps;
+        this.drawSteps();
       }
-    };
-    void follow();
+    }, FOLLOW_MS, target.here ? null : (this.seams.written?.(target) ?? target.machine));
     try {
       const change = await this.seams.change(target, raise, told?.fingerprint);
       this.state = { at: "ended", planned, change, problem: change.end?.end === "failed" ? change.end.reason : null, told };
@@ -342,6 +342,7 @@ export class AgentChangeSheet {
       this.state = { at: "ended", planned, change: null, problem: detailOf(error), told };
     } finally {
       following = false;
+      stopFollowing();
       this.sheet.busy = false;
       this.seams.ended();
     }
@@ -462,7 +463,7 @@ export class AgentChangeSheet {
       ? told.list
       : problem
         ? `<p class="removal-said removal-wrong" title="${escape(problem)}">${escape(words.previewFailed)}</p>`
-        : `<p class="removal-said">${escape(words.reading)}</p>`;
+        : waiting({ label: words.reading, shape: "lines", rows: 3 });
     return `<div class="dc">
       <p class="dc-where">${escape(said.where(target.machine, target.who))}</p>
       <div class="dc-scroll">
@@ -569,7 +570,7 @@ export class AgentChangeSheet {
   private details(preview: ChangePreview | null, problem: string | null): string {
     const { words } = this;
     if (problem) return `<p class="removal-said removal-wrong" title="${escape(problem)}">${escape(words.previewFailed)}</p>`;
-    if (!preview) return `<p class="removal-said">${escape(words.reading)}</p>`;
+    if (!preview) return waiting({ label: words.reading, shape: "lines", rows: 3 });
     const open = this.state.at === "asking" ? this.state.files : new Set<number>();
     const files = preview.files
       .map((file, index) => {

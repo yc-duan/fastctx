@@ -8,12 +8,10 @@
 mod ssh;
 
 use std::collections::HashMap;
-use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use serde::Serialize;
-use tauri::Manager as _;
 use tauri::ipc::Channel;
 
 pub(crate) use ssh::{Probed, Request, Server};
@@ -69,12 +67,12 @@ pub(crate) async fn remote_look(server: Server) -> Result<Looked, String> {
 /// nothing behind.
 #[fastctx_gui_command::command]
 pub(crate) async fn remote_withdraw(
-    app: tauri::AppHandle,
+    shell: tauri::State<'_, crate::Shell>,
     server: Server,
     steps: Channel<&'static str>,
 ) -> Result<(), String> {
     let step = |name| steps.send(name).map_err(|error| error.to_string());
-    let remote = ssh::open(&server, &carried(&app)?, &step).await?;
+    let remote = ssh::open(&server, &shell, &step).await?;
     step("withdraw")?;
     let withdrawn = remote.withdraw().await;
     let closed = remote.close().await;
@@ -85,13 +83,13 @@ pub(crate) async fn remote_withdraw(
 /// session stays open for the server to join.
 #[fastctx_gui_command::command]
 pub(crate) async fn remote_hub(
-    app: tauri::AppHandle,
+    shell: tauri::State<'_, crate::Shell>,
     sessions: tauri::State<'_, Sessions>,
     request: Request,
     steps: Channel<&'static str>,
 ) -> Result<Made, String> {
     let (remote, made) =
-        ssh::make_hub(&request, &carried(&app)?, |name| steps.send(name).map_err(|error| error.to_string())).await?;
+        ssh::make_hub(&request, &shell, |name| steps.send(name).map_err(|error| error.to_string())).await?;
     let machine = fastctx_types::MachineName::from_host(&made.hostname).to_string();
     Ok(Made { session: keep(&sessions, remote), address: made.address, machine })
 }
@@ -100,13 +98,13 @@ pub(crate) async fn remote_hub(
 /// program; the session stays open for it to join with a code made next.
 #[fastctx_gui_command::command]
 pub(crate) async fn remote_open(
-    app: tauri::AppHandle,
+    shell: tauri::State<'_, crate::Shell>,
     sessions: tauri::State<'_, Sessions>,
     server: Server,
     steps: Channel<&'static str>,
 ) -> Result<Opened, String> {
     let remote =
-        ssh::open(&server, &carried(&app)?, &|name| steps.send(name).map_err(|error| error.to_string())).await?;
+        ssh::open(&server, &shell, &|name| steps.send(name).map_err(|error| error.to_string())).await?;
     let machine = fastctx_types::MachineName::from_host(remote.hostname()).to_string();
     Ok(Opened { session: keep(&sessions, remote), machine })
 }
@@ -182,8 +180,3 @@ async fn close(sessions: &Sessions, session: u64) -> Result<(), String> {
     remote.close().await
 }
 
-/// Where the Linux programs the installer carries are, one for each
-/// architecture.
-fn carried(app: &tauri::AppHandle) -> Result<PathBuf, String> {
-    Ok(app.path().resource_dir().map_err(|error| error.to_string())?.join("linux"))
-}

@@ -127,7 +127,9 @@ fn import(world: &Path, database: &Database, conversation: &str) -> Result<()> {
         scheduler::checkpoint().map_err(Error::from)?;
         bundle::verify(&source, conversation, proof).map_err(source_error)?;
     }
-    let mut order = database.read_background_now(|db| schema::children_first(db, tables))?;
+    let offered =
+        tables.into_iter().filter(|table| manifest.tables.iter().any(|proof| proof.name == table.name)).collect();
+    let mut order = database.read_background_now(|db| schema::children_first(db, offered))?;
     order.reverse();
     for table in order {
         let mut after = database.read_background_now(|db| {

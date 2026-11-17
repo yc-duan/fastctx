@@ -16,6 +16,8 @@
 
 mod lock;
 mod registry;
+mod snapshot_lock;
+pub use snapshot_lock::snapshot_lock;
 mod sync;
 
 use std::cell::RefCell;
@@ -291,3 +293,5 @@ pub async fn outside<F: Future>(what: impl Into<String>, within: Duration, work:
 pub fn waiting_outside(what: impl Into<String>, within: Duration) -> OutsideWait {
     OutsideWait::begin(what.into(), within)
 }
+
+pub use registry::{TaskWaits, task_waits_bounded};

@@ -12,6 +12,11 @@ use std::path::{Path, PathBuf};
 pub(super) type Reading = (Timestamp, Vec<LimitWindow>);
 pub(super) type Identity = (String, Option<String>);
 
+/// How far back the totals and receipts that tell a usage counted once go.
+pub(super) const MONTH: SignedDuration = SignedDuration::from_hours(31 * 24);
+/// How far back the spending that assistance limits weigh goes.
+pub(super) const RECENT: SignedDuration = SignedDuration::from_hours(8 * 24);
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(super) struct Use {
     pub model: String,
@@ -116,6 +121,15 @@ pub(super) enum Entry {
         at: Timestamp,
         keys: Vec<String>,
     },
+    /// What this machine is shared as while the lines after it are written
+    /// (7965 P08): by hub id, the body it is on there while shared whole, or
+    /// none. Written before the first line of a day's file, and again before
+    /// a line written while it is shared otherwise, so the copy of the ledger
+    /// (`assets::activity`) sends each line where it went as it was written.
+    Shared {
+        at: Timestamp,
+        hubs: std::collections::BTreeMap<String, Option<String>>,
+    },
     /// Recovery metadata survives hourly folding until the 31-day replay horizon.
     Checkpoint {
         at: Timestamp,
@@ -137,6 +151,7 @@ impl Entry {
             | Self::Account { at, .. }
             | Self::Summary { at, .. }
             | Self::Checkpoint { at, .. }
+            | Self::Shared { at, .. }
             | Self::Receipts { at, .. } => *at,
         }
     }
@@ -201,11 +216,17 @@ impl Entry {
 #[derive(Default)]
 pub(super) struct Book {
     valid: bool,
+    /// Where each call of the days a page may show lies (`super::calls`).
+    pub calls: super::calls::Index,
     pub totals: HashMap<Identity, (Timestamp, Usd)>,
     pub meters: HashMap<Identity, super::meter::Meter>,
-    pub seen: HashSet<(Identity, Timestamp)>,
+    /// The reports counted, each with when the row that counted it was
+    /// written, which is how long it is kept.
+    pub seen: HashMap<(Identity, Timestamp), Timestamp>,
     pub modern: HashSet<String>,
-    pub keys: HashSet<String>,
+    /// The keys of usage booked already, each with when the row that booked
+    /// it was written; none for one kept for as long as the ledger is.
+    pub keys: HashMap<String, Option<Timestamp>>,
     pub reading: Option<Reading>,
     pub readings: HashMap<Option<String>, Reading>,
     /// Pending detection and source observations, separate for each account.
@@ -216,32 +237,86 @@ pub(super) struct Book {
     pub accounts: Vec<(Timestamp, String)>,
     pub recent: Vec<Charge>,
     pub history: super::history::History,
+    /// The last day file the ledger's checkpoint holds (`super::checkpoint`).
+    sealed: Option<PathBuf>,
+    /// What this machine is shared as now, given before each write
+    /// (`super::with_book`); none where no write marks it.
+    pub sharing: Option<std::collections::BTreeMap<String, Option<String>>>,
+    /// The last mark of each day's file written to, as read or written.
+    marked: HashMap<PathBuf, Option<std::collections::BTreeMap<String, Option<String>>>>,
 }
 impl Book {
     pub fn load(&mut self, path: &Path) -> io::Result<()> {
         if self.valid {
             return Ok(());
         }
+        self.load_at(path, Timestamp::now())
+    }
+
+    /// Reads the ledger as it stands at `now`: what its checkpoint holds of
+    /// the days that no longer change, and the days after them row by row,
+    /// keeping a checkpoint through the last day that no longer changes
+    /// where the one read holds less. The days' own index is made when a
+    /// report reads them (`super::history`).
+    pub(super) fn load_at(&mut self, path: &Path, now: Timestamp) -> io::Result<()> {
         *self = Self { follow: super::follows_clearings(path), ..Self::default() };
-        for file in days(path, Timestamp::MIN)? {
-            let rows = read(&file)?;
-            for row in &rows {
-                self.apply(row);
+        let files = days(path, Timestamp::MIN)?;
+        let open = super::checkpoint::first_open(path, now);
+        let mut from = 0;
+        if let Some((state, through)) = super::checkpoint::restore(path, &files) {
+            super::checkpoint::adopt(self, state, now);
+            from = files.partition_point(|file| *file <= through);
+            self.sealed = Some(through);
+        }
+        for (index, file) in files.iter().enumerate().skip(from) {
+            for row in &read(file)? {
+                self.apply_at(row, now);
             }
-            self.history.insert(file, &rows);
+            if *file < open && files.get(index + 1).is_none_or(|next| *next >= open) {
+                // A checkpoint is a cache of the day files: one that cannot
+                // be kept leaves the next load reading them all, as it did.
+                if super::checkpoint::save(path, self, &files[..=index]).is_ok() {
+                    self.sealed = Some(file.clone());
+                }
+            }
         }
         self.valid = true;
         Ok(())
     }
+
+    /// Keeps the report `at` of `identity` as counted by a row written `row`.
+    fn saw(&mut self, identity: &Identity, at: Timestamp, row: Timestamp) {
+        let kept = self.seen.entry((identity.clone(), at)).or_insert(row);
+        *kept = (*kept).max(row);
+    }
+
+    /// Keeps `key` as booked by a row written `at`, or for good.
+    fn booked(&mut self, key: &str, at: Option<Timestamp>) {
+        match self.keys.get_mut(key) {
+            Some(kept) => {
+                *kept = match (*kept, at) {
+                    (Some(kept), Some(at)) => Some(kept.max(at)),
+                    _ => None,
+                };
+            }
+            None => {
+                self.keys.insert(key.to_string(), at);
+            }
+        }
+    }
+
     fn apply(&mut self, row: &Entry) {
-        let now = Timestamp::now();
-        let recent = now - SignedDuration::from_hours(8 * 24);
-        let month = now - SignedDuration::from_hours(31 * 24);
+        self.apply_at(row, Timestamp::now());
+    }
+
+    pub(super) fn apply_at(&mut self, row: &Entry, now: Timestamp) {
+        let recent = now - RECENT;
+        let month = now - MONTH;
         match row {
             Entry::Meter { meter } => {
                 let identity = (meter.session.clone(), Some(meter.process.clone()));
                 if let Some(key) = &meter.key {
-                    self.keys.insert(key.clone());
+                    self.booked(key, None);
                 }
                 self.modern.insert(meter.session.clone());
                 if self.meters.get(&identity).is_none_or(|old| old.at <= meter.at) {
@@ -260,16 +335,20 @@ impl Book {
                 if process.is_some() {
                     self.modern.insert(session.clone());
                 }
-                self.seen.insert((identity.clone(), *at));
+                self.saw(&identity, *at, *at);
                 if let Entry::Checkpoint { reports, .. } = row {
-                    self.seen.extend(reports.iter().map(|at| (identity.clone(), *at)));
+                    for report in reports {
+                        self.saw(&identity, *report, *at);
+                    }
                 }
             }
             Entry::Tokens { at, key: Some(key), .. } if *at >= month || key.starts_with("terminal:") => {
-                self.keys.insert(key.clone());
+                self.booked(key, (!key.starts_with("terminal:")).then_some(*at));
             }
             Entry::Receipts { at, keys } => {
-                self.keys.extend(keys.iter().filter(|key| *at >= month || key.starts_with("terminal:")).cloned());
+                for key in keys.iter().filter(|key| *at >= month || key.starts_with("terminal:")) {
+                    self.booked(key, (!key.starts_with("terminal:")).then_some(*at));
+                }
             }
             Entry::Account { at, account } => {
                 if self.accounts.is_empty() {
@@ -338,21 +417,56 @@ impl Book {
     }
     pub fn commit(&mut self, path: &Path, row: Entry) -> io::Result<()> {
         if let Entry::Tokens { key: Some(key), .. } = &row
-            && self.keys.contains(key)
+            && self.keys.contains_key(key)
         {
             return Ok(());
         }
+        // A row for a day the checkpoint holds makes it what the day was.
+        if self.sealed.as_ref().is_some_and(|sealed| day_file(path, row.usage_at()) <= *sealed) {
+            super::checkpoint::discard(path)?;
+            self.sealed = None;
+        }
         // Reload ambiguous writes from disk, not a half-updated index.
         self.valid = false;
+        // Marked first where the day's file was last marked otherwise, or
+        // not at all (7965 P08).
+        if let Some(sharing) = self.sharing.clone() {
+            let file = day_file(path, row.usage_at());
+            let marked = match self.marked.get(&file) {
+                Some(marked) => marked.clone(),
+                None => last_mark(&file)?,
+            };
+            if marked.as_ref() != Some(&sharing) {
+                append(path, &Entry::Shared { at: row.usage_at(), hubs: sharing.clone() })?;
+            }
+            self.marked.insert(file, Some(sharing));
+        }
         append(path, &row)?;
         self.apply(&row);
         self.history.invalidate(&day_file(path, row.usage_at()));
         self.valid = true;
         Ok(())
     }
-    pub fn invalidate(&mut self) {
-        self.valid = false;
-    }
+}
+
+/// The last mark in the day's file `file`; none when it holds none, or is
+/// not there.
+fn last_mark(file: &Path) -> io::Result<Option<std::collections::BTreeMap<String, Option<String>>>> {
+    let bytes = match fastctx_platform::disk::read(file) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    // Whole lines alone: a last line its newline did not reach was never
+    // written, as the ledger reads it (codex-847f57fd #18).
+    Ok(bytes
+        .split_inclusive(|byte| *byte == b'\n')
+        .filter(|line| line.ends_with(b"\n") && line.windows(8).any(|window| window == b"\"shared\""))
+        .filter_map(|line| match serde_json::from_slice::<Entry>(line) {
+            Ok(Entry::Shared { hubs, .. }) => Some(hubs),
+            _ => None,
+        })
+        .next_back())
 }
 
 pub(super) fn day_file(path: &Path, at: Timestamp) -> PathBuf {
@@ -415,13 +529,4 @@ pub(super) fn days(path: &Path, since: Timestamp) -> io::Result<Vec<PathBuf>> {
 
 pub(super) fn read(path: &Path) -> io::Result<Vec<Entry>> {
     super::quarantine::read(path)
-}
-
-pub(super) fn entries(path: &Path, since: Timestamp) -> io::Result<Vec<Entry>> {
-    let mut rows = Vec::new();
-    for path in days(path, since)? {
-        rows.extend(read(&path)?.into_iter().filter(|row| row.at() >= since));
-    }
-    rows.sort_by_key(Entry::at);
-    Ok(rows)
 }

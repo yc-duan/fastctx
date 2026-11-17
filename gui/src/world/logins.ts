@@ -76,6 +76,9 @@ export interface Login {
   /** Whether a week the vendor cleared before its reset counts anew from
    *  then, as its owner chose; off unless turned on. */
   reset_in_place?: boolean;
+  /** The login's week in quota dollars as its owner set it, in millionths;
+   *  absent is the World's default. A node of before keeps none. */
+  week?: number;
   /** The program the World starts for it. */
   launcher?: Launcher;
   /** The models a conversation in it can start on, as last read. */

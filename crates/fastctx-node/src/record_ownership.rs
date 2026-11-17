@@ -83,6 +83,7 @@ pub(crate) async fn register_at(
         None => matches!(acting, Acting::Here),
     };
     let previous = node.residents.birth_machine(resident);
+    let born_at = node.residents.about(resident).map(|(about, _)| about.born_at);
     let key = (scope.hub.clone(), resident.clone());
     let told = match link.status() {
         fastctx_net::link::Status::Online { since, .. } => {
@@ -95,7 +96,7 @@ pub(crate) async fn register_at(
     }
     link.owned_records(
         &scope.account,
-        fastctx_types::owned_records::Request::Register { resident: resident.clone(), shared, previous },
+        fastctx_types::owned_records::Request::Register { resident: resident.clone(), shared, previous, born_at },
     )
     .await
     .map_err(fastctx_types::ipc::Failure::new)?;

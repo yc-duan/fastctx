@@ -1,51 +1,59 @@
-// The activity page (`world-layers.md`, 活动账本; `world-gui.md`, 活动): what
-// agents did with `run` on the user's machines, in eight views, one screen
-// each. Every machine keeps its own book; the page asks each it can reach
-// and puts their answers together, saying which did not answer. Now and
-// the day's lanes are read again every few seconds while the page is open;
-// the year's hours each minute. A deed pressed rises as a small card with
-// its command whole, where it ran, how it ended and what it changed.
+// The activity page (`gui-activity-page`): the files agents changed on the
+// user's machines, and no more than that (the user, 2026-11-16). It is read
+// as a list of changed files is read everywhere: a file's path, the lines
+// added to it in green and removed from it in red, five squares for how
+// they divide; a mark before the path says whether the file is new,
+// changed, gone or a copy.
+//
+// Who changed them is the page's other half: the files stand under the
+// conversation that changed them, its agent's mark before its name and the
+// machines it changed them on after, the conversation that changed
+// something last first; or, by the switch in the head, under the machine
+// holding them, each row then saying whose it is. A file pressed opens
+// under itself to its changes, each under who made it and when, its lines
+// a row to a line; from there the file opens among its machine's folders.
+//
+// Every machine keeps its own book of what `run` did there; the page asks
+// each it can reach and puts their answers together, saying which did not
+// answer. This computer's is read again whenever it changes, the others'
+// now and then.
 
-import { glyph } from "../conversation/glyphs";
+import { BOOK, followState } from "../world/topics";
+import { agentGlyph, glyph } from "../conversation/glyphs";
+import type { DiffRow } from "../conversation/diff";
 import { escape } from "../conversation/prose";
-import { parts } from "../app/usage/draw";
 import type { Page } from "../app/shell";
-import { effect, type Signal } from "../app/signals";
-import type { BookAnswer, BookQuery, Deed } from "../world/book";
-import { elapsed, lines, rhythm, runs, said, timeline, year, YEAR_FULL_WIDTH, type Lane } from "./draw";
-import {
-  DAY_MS,
-  began,
-  byDay,
-  byHourOfWeek,
-  dayOf,
-  empty,
-  ended,
-  failing,
-  files,
-  headline,
-  heeds,
-  lasted,
-  sessions,
-  spread,
-  type Counted,
-  type Gathered,
-  type HeedKind,
-  type Placed,
-} from "./model";
-import type { ActivityWords, Span, View } from "./words";
+import { waiting } from "../app/waiting";
+import type { BookAnswer, BookQuery } from "../world/book";
+import { bookChanges, type RowsOf } from "../files/book";
+import { changeLine, diffLines, figures, fileRow, sessionName, type Named } from "../files/changed";
+import { byMachine, byTalk, filesOf, tally, type ChangedFile, type FileChange, type MachineGroup, type TalkGroup } from "../files/model";
+import type { ViewTab } from "../files/view";
+import type { FilesWords } from "../files/words";
+import type { ActivityWords, Grouping, Span } from "./words";
+import "../files/files.css";
 import "./activity.css";
 
-const VIEWS: readonly View[] = ["now", "timeline", "calendar", "rhythm", "spread", "files", "heed", "sessions"];
 const SPANS: readonly Span[] = ["day", "week", "month", "quarter"];
 const SPAN_DAYS: Record<Span, number> = { day: 1, week: 7, month: 30, quarter: 90 };
-const HEEDS: readonly HeedKind[] = ["failed", "lost", "stopped", "removed", "long", "big"];
-const KEPT_VIEW = "activity.view";
+const GROUPINGS: readonly Grouping[] = ["talk", "machine"];
 const KEPT_SPAN = "activity.span";
-/** How often what runs is read again while the page is open, and the year. */
-const NOW_MS = 4000;
-const YEAR_MS = 60_000;
+const KEPT_GROUPING = "activity.grouping";
+const DAY_MS = 24 * 3_600_000;
+/** How often this computer's book is read again at most, as it changes; and
+ *  how often the other machines are asked. */
+const HERE_MS = 4000;
+const THERE_MS = 30_000;
+/** How long the answer from an offline machine's copy stands. */
+const COPY_AGAIN_MS = 60_000;
 const LIMIT = 2000;
+/** The files a group lists, and the groups the page lists, before the rest
+ *  are asked for. */
+const FEW = 12;
+const GROUPS = 40;
+/** The changes an opened file shows, the latest, and the lines of each. */
+const LISTED = 5;
+const LINES = 120;
 
 export interface BookMachine {
   /** None for this computer. */
@@ -56,561 +64,367 @@ export interface BookMachine {
 
 export interface ActivityOptions {
   words: ActivityWords;
+  files: FilesWords;
   head(title: string, actions?: string): string;
   machines(): BookMachine[];
   read(machine: string | null, query: BookQuery): Promise<BookAnswer>;
-  /** Whether Fastctx's own conversations are shown: projects, and
-   *  bringing a session in. */
-  workbench: Signal<boolean>;
-  bringIn(resident: string): Promise<void>;
+  /** What a session (`resident@machine`) is called here and where it is
+   *  opened, where this device knows it as a conversation. */
+  named?: Named;
+  /** The lines of one change, where its machine kept them. */
+  rows?: RowsOf;
+  /** Where a file is opened among its machine's folders. */
+  link(machine: string, path: string | null, tab: ViewTab | null): string;
   /** The page's own clock, for the specimen. */
   now?(): number;
+  /** Makes a Codex session the user opened on their own on this computer a
+   *  conversation of Fastctx's; none where the workbench is not open. */
+  bringIn?: ((resident: string) => Promise<void>) | undefined;
+}
+
+/** Local midnight of the day holding `at`. */
+function dayOf(at: number): number {
+  const date = new Date(at);
+  date.setHours(0, 0, 0, 0);
+  return date.getTime();
 }
 
 export class ActivityPage implements Page {
   readonly element = document.createElement("section");
+  /** The Codex sessions of this computer's own, as the book names them,
+   *  that the World holds not; and those being brought in now. */
+  private readonly unheld = new Set<string>();
+  private readonly bringing = new Set<string>();
   readonly title: string;
-  private view: View = kept(KEPT_VIEW, VIEWS, "now");
   private span: Span = kept(KEPT_SPAN, SPANS, "week");
-  /** The day the timeline shows, as its local midnight. */
-  private day: number;
-  private gathered: Gathered = empty();
-  private yearHours: Counted[] = [];
-  /** Which reading of the year `yearHours` is. */
-  private yearRead = 0;
-  /** The year's figures as last drawn, and what they were drawn from: the
-   *  hand-drawn calendar and rhythm are drawn again only when that changes,
-   *  not each time the page is (every few seconds, and on every change in
-   *  the World). */
-  private figures = new Map<string, { from: string; svg: string }>();
+  private grouping: Grouping = kept(KEPT_GROUPING, GROUPINGS, "talk");
+  private changes: FileChange[] = [];
+  /** Machines asked that did not answer, and whether some machine left
+   *  runs out past the limit. */
+  private away: string[] = [];
+  private more = false;
+  /** The files opened, each its group and its own key; the groups whose
+   *  files are all listed; whether every group is. */
+  private readonly opened = new Set<string>();
+  private readonly whole = new Set<string>();
+  private allGroups = false;
+  /** The lines of the changes read, by the changes' ids. */
+  private readonly lines = new Map<string, DiffRow[] | null | "reading">();
+  /** The changes of opened files folded away or opened by hand (the user,
+   *  2026-11-17: "这内部的一次次修改，都要支持前端上的展开和收起"); one
+   *  not touched stands open where it is a file's latest, else shut. */
+  private readonly changeFolds = new Map<string, boolean>();
+  /** The files as last drawn, by what their rows are opened by. */
+  private drawnFiles = new Map<string, ChangedFile>();
+  /** A file the address asks to be opened, in a development build: for
+   *  looking at an opened file without a hand to press it. */
+  private wanted = import.meta.env.DEV ? new URLSearchParams(location.search).get("open") : null;
   /** What the page shows, as last written. */
   private written = "";
-  /** Deeds of days older than the span read, read for the timeline. */
-  private daysRead = new Map<number, Gathered>();
-  private picked: { job: string; machine: string } | null = null;
   private readonly body: HTMLElement;
-  private readonly card: HTMLElement;
-  private readonly switcher: HTMLElement;
-  private timers: number[] = [];
-  private readonly resize: ResizeObserver;
-  private width = 0;
-  private height = 0;
-  private stopWatch: () => void;
-  private reading = 0;
-  /** The span a reading is under way for. */
-  private spanRead: Span | null = null;
-  /** Another reading was wanted while one was under way. */
-  private again = false;
-  /** The year is read one reading at a time: a slow machine is not asked
-   *  over again while it answers. */
-  private yearReading = false;
-  private nextRead = 0;
+  private readonly subscriptions: (() => void)[] = [];
+  private readonly answers = new Map<string, Map<string, BookAnswer | null>>();
+  private localFailed = false;
+  /** Local and remote books advance independently; each group has one read. */
+  private readonly reading = new Set<string>();
+  private readonly again = new Set<string>();
+  /** When each offline machine's copy was last asked, by window. */
+  private readonly copiedAt = new Map<string, number>();
   private left = false;
-  private bringing = new Set<string>();
 
   constructor(private readonly options: ActivityOptions) {
     const { words } = options;
     this.title = words.title;
-    this.day = dayOf(this.now());
     this.element.className = "page ay-page";
-    this.element.innerHTML = `${options.head(escape(words.title))}
-      <nav class="ay-views" aria-label="${escape(words.title)}"></nav>
-      <div class="ay-body"></div>
-      <aside class="ay-card" hidden></aside>`;
-    this.switcher = this.element.querySelector<HTMLElement>(".ay-views")!;
+    this.element.innerHTML = `${options.head(
+      escape(words.title),
+      `<div class="segmented ay-groupings" role="radiogroup" aria-label="${escape(words.groupingLabel)}"></div><div class="segmented ay-spans" role="radiogroup" aria-label="${escape(words.spanLabel)}"></div>`,
+    )}<div class="ay-body scroller"></div>`;
     this.body = this.element.querySelector<HTMLElement>(".ay-body")!;
-    this.card = this.element.querySelector<HTMLElement>(".ay-card")!;
-    this.drawSwitcher();
+    this.drawSwitches();
     this.element.addEventListener("click", (event) => this.pressed(event));
-    this.resize = new ResizeObserver(([entry]) => {
-      const width = Math.floor(entry?.contentRect.width ?? 0);
-      const height = Math.floor(entry?.contentRect.height ?? 0);
-      if (width && (width !== this.width || height !== this.height)) {
-        const first = !this.width;
-        const fitted = this.fitCalendar(width, height);
-        const changed = this.view === "spread" ? Math.min(width - 8, 760) !== Math.min(this.width - 8, 760)
-          : this.view === "timeline" ? width !== this.width
-          : this.view === "calendar" || this.view === "rhythm";
-        this.width = width;
-        this.height = height;
-        // Lists reflow in CSS; charts only redraw when their own size changes.
-        if (first || (changed && !fitted)) this.draw();
+    this.element.addEventListener("keydown", (event) => {
+      const target = event.target as HTMLElement;
+      if ((event.key === "Enter" || event.key === " ") && target.matches("[role='button']")) {
+        event.preventDefault();
+        target.click();
       }
     });
-    this.resize.observe(this.body);
-    this.stopWatch = effect(() => {
-      options.workbench.get();
-      this.draw();
-    });
-    void this.readYear();
-    void this.readSpan();
-    this.timers.push(window.setInterval(() => void this.readYear(), YEAR_MS));
+    this.subscriptions.push(
+      followState(BOOK, async () => { await this.read("local"); if (this.localFailed) throw new Error("the local book did not answer"); }, HERE_MS),
+      followState(null, () => this.read("remote"), THERE_MS),
+    );
   }
 
   leave(): void {
     this.left = true;
-    window.clearTimeout(this.nextRead);
-    for (const timer of this.timers) window.clearInterval(timer);
-    this.timers = [];
-    this.resize.disconnect();
-    this.stopWatch();
-  }
-
-  /** Full-size calendar cells no longer grow with the surrounding canvas. */
-  private fitCalendar(width: number, height: number): boolean {
-    if (this.view !== "calendar" || height !== this.height || width < YEAR_FULL_WIDTH || this.width < YEAR_FULL_WIDTH) return false;
-    const svg = this.body.querySelector<SVGSVGElement>(".ay-year");
-    if (!svg) return false;
-    const fitted = String(Math.min(width, 1100));
-    if (svg.getAttribute("width") !== fitted) {
-      svg.setAttribute("width", fitted);
-      svg.setAttribute("viewBox", `0 0 ${fitted} ${svg.getAttribute("height")}`);
-    }
-    return true;
+    for (const stop of this.subscriptions) stop();
   }
 
   private now(): number {
     return this.options.now?.() ?? Date.now();
   }
 
+  /** From when the span shown runs: the midnight its first day began at. */
+  private from(): number {
+    return dayOf(this.now()) - (SPAN_DAYS[this.span] - 1) * DAY_MS;
+  }
+
   /** Every machine's answer to `query`, the ones that did not answer named. */
-  private async askAll(query: BookQuery): Promise<{ answers: BookAnswer[]; away: string[] }> {
-    const machines = this.options.machines();
+  private async askAll(query: BookQuery, only: "local" | "remote"): Promise<{ answers: BookAnswer[]; away: string[] }> {
+    const all = this.options.machines();
+    const machines = all.filter((machine) => (machine.written === null) === (only === "local"));
+    // Keep the other machines' answers when only the local book changed.
+    const key = query.from;
+    let kept = this.answers.get(key);
+    if (!kept) {
+      kept = new Map();
+      this.answers.set(key, kept);
+      if (this.answers.size > 8) this.answers.delete(this.answers.keys().next().value!);
+    }
+    const known = kept;
+    // A machine offline is asked too: this computer's node answers from the
+    // copy of its activity it keeps, where it has one. That copy grows only
+    // as what the machine sent before it went comes through, so it is asked
+    // again for a window no oftener than `COPY_AGAIN_MS`.
+    const now = Date.now();
     const asked = await Promise.allSettled(
-      machines.map((machine) => (machine.online || machine.written === null ? this.options.read(machine.written, query) : Promise.reject(new Error("offline")))),
+      machines.map((machine) => {
+        const away = machine.written !== null && !machine.online;
+        const copied = away && now - (this.copiedAt.get(`${key}\n${machine.name}`) ?? 0) < COPY_AGAIN_MS ? known.get(machine.name) : undefined;
+        if (copied) return Promise.resolve(copied);
+        const reading = this.options.read(machine.written, query);
+        if (away) void reading.then(() => this.copiedAt.set(`${key}\n${machine.name}`, now), () => undefined);
+        return reading;
+      }),
     );
-    const answers: BookAnswer[] = [];
-    const away: string[] = [];
-    asked.forEach((result, index) => {
-      if (result.status === "fulfilled") answers.push(result.value);
-      else away.push(machines[index]!.name);
-    });
+    if (only === "local") this.localFailed = asked.some((result) => result.status === "rejected");
+    for (const name of kept.keys()) if (!all.some((machine) => machine.name === name)) kept.delete(name);
+    asked.forEach((result, index) => known.set(machines[index]!.name, result.status === "fulfilled" ? result.value : null));
+    const answers = [...kept.values()].filter((answer): answer is BookAnswer => answer !== null);
+    const away = [...kept.entries()].filter(([, answer]) => answer === null).map(([name]) => name);
     return { answers, away };
   }
 
-  /** Reads what ran over the span, then again a few seconds after it is
-   *  drawn. One reading at a time: a machine slower than that still has its
-   *  answer drawn. One wanted meanwhile follows when it ends; only a reading
-   *  of a span no longer chosen is let go. */
-  private async readSpan(): Promise<void> {
-    if (this.spanRead === this.span) {
-      this.again = true;
+  /** Reads what ran over the span. One reading at a time for this computer
+   *  and one for the others: a machine slower than the next reading still
+   *  has its answer drawn. One wanted meanwhile follows when it ends; only
+   *  a reading of a span no longer chosen is let go. */
+  private async read(group: "local" | "remote"): Promise<void> {
+    if (this.reading.has(group)) {
+      this.again.add(group);
       return;
     }
-    window.clearTimeout(this.nextRead);
-    const reading = ++this.reading;
-    const span = (this.spanRead = this.span);
-    const now = this.now();
-    const days = Math.max(SPAN_DAYS[span], 2);
-    const from = dayOf(now) - (days - 1) * DAY_MS;
-    const { answers, away } = await this.askAll({ ask: "deeds", from: iso(from), to: iso(now + 60_000), limit: LIMIT });
-    if (reading !== this.reading || this.left) return;
-    this.spanRead = null;
-    const deeds: Placed[] = [];
-    let more = false;
-    for (const answer of answers) {
-      if (answer.kind !== "deeds") continue;
-      more ||= answer.more;
-      for (const deed of answer.deeds) deeds.push({ ...deed, machine: answer.machine });
-    }
-    this.gathered = { ...this.gathered, deeds, away, more };
-    this.draw();
-    if (this.again) {
-      this.again = false;
-      void this.readSpan();
-      return;
-    }
-    this.nextRead = window.setTimeout(() => void this.readSpan(), NOW_MS);
-  }
-
-  private async readYear(): Promise<void> {
-    if (this.yearReading) return;
-    this.yearReading = true;
-    const now = this.now();
-    const { answers } = await this.askAll({ ask: "hours", from: iso(now - 366 * DAY_MS), to: iso(now + 60_000) }).finally(() => {
-      this.yearReading = false;
-    });
-    const hours: Counted[] = [];
-    for (const answer of answers) if (answer.kind === "hours") for (const hour of answer.hours) hours.push({ ...hour, machine: answer.machine });
-    this.yearHours = hours;
-    this.yearRead += 1;
-    if (this.view === "calendar" || this.view === "rhythm" || this.view === "spread") this.draw();
-  }
-
-  /** The deeds of the timeline's day: from what is read, or read for it. */
-  private deedsOfDay(day: number): Gathered | null {
-    const now = this.now();
-    const span = Math.max(SPAN_DAYS[this.span], 2);
-    if (day >= dayOf(now) - (span - 1) * DAY_MS) {
-      return { ...this.gathered, deeds: this.gathered.deeds.filter((deed) => dayOf(began(deed)) === day) };
-    }
-    const read = this.daysRead.get(day);
-    if (read) return read;
-    void this.askAll({ ask: "deeds", from: iso(day), to: iso(day + DAY_MS), limit: LIMIT }).then(({ answers, away }) => {
-      const deeds: Placed[] = [];
+    this.reading.add(group);
+    const span = this.span;
+    try {
+      const { answers, away } = await this.askAll({ ask: "deeds", from: new Date(this.from()).toISOString(), to: new Date(this.now() + 60_000).toISOString(), limit: LIMIT }, group);
+      if (this.left) return;
+      if (span !== this.span) {
+        this.again.add(group);
+        return;
+      }
+      const changes: FileChange[] = [];
+      const from = this.from();
       let more = false;
       for (const answer of answers) {
         if (answer.kind !== "deeds") continue;
         more ||= answer.more;
-        for (const deed of answer.deeds) deeds.push({ ...deed, machine: answer.machine });
+        changes.push(...bookChanges(answer, from, this.options.rows));
+        // The Codex sessions of this computer's own the World holds not:
+        // each a press from being brought in.
+        const here = this.options.machines().find((machine) => machine.written === null)?.name;
+        if (answer.machine === here)
+          for (const deed of answer.deeds) if (!deed.held && deed.agent === "codex" && deed.session?.endsWith(`@${here}`)) this.unheld.add(deed.session);
       }
-      this.daysRead.set(day, { deeds, hours: [], away, more });
-      if (this.view === "timeline" && this.day === day) this.draw();
-    });
-    return null;
-  }
-
-  private drawSwitcher(): void {
-    const { words } = this.options;
-    this.switcher.innerHTML = VIEWS.map(
-      (view) => `<button class="choice${view === this.view ? " chosen" : ""}" type="button" data-view="${view}"${view === this.view ? ' aria-current="page"' : ""}>${escape(words.views[view])}</button>`,
-    ).join("");
-  }
-
-  private spans(): string {
-    const { words } = this.options;
-    return `<div class="ay-spans">${SPANS.map((span) => `<button class="choice${span === this.span ? " chosen" : ""}" type="button" data-span="${span}">${escape(words.spans[span])}</button>`).join("")}</div>`;
-  }
-
-  /** Deeds within the span chosen, newest first. */
-  private inSpan(): Placed[] {
-    const from = dayOf(this.now()) - (SPAN_DAYS[this.span] - 1) * DAY_MS;
-    return this.gathered.deeds.filter((deed) => began(deed) >= from).sort((a, b) => began(b) - began(a));
-  }
-
-  private draw(): void {
-    if (!this.width) return;
-    const scroll = this.body.querySelector<HTMLElement>(".ay-scroll")?.scrollTop ?? 0;
-    this.body.dataset.view = this.view;
-    let html: string;
-    switch (this.view) {
-      case "now":
-        html = this.drawNow();
-        break;
-      case "timeline":
-        html = this.drawTimeline();
-        break;
-      case "calendar":
-        html = this.drawCalendar();
-        break;
-      case "rhythm":
-        html = this.drawRhythm();
-        break;
-      case "spread":
-        html = this.drawSpread();
-        break;
-      case "files":
-        html = this.drawFiles();
-        break;
-      case "heed":
-        html = this.drawHeed();
-        break;
-      case "sessions":
-        html = this.drawSessions();
-        break;
+      this.changes = changes;
+      this.away = away;
+      this.more = more;
+      this.draw();
+    } finally {
+      this.reading.delete(group);
+      if (this.again.delete(group) && !this.left) void this.read(group);
     }
-    const away = this.gathered.away.length ? `<p class="ay-away" title="${escape(this.options.words.unanswered(this.gathered.away.join(", ")))}">${glyph("info", 14)}<span>${escape(this.options.words.unanswered(this.gathered.away.join(", ")))}</span></p>` : "";
-    // The same page again is left as it stands, its figures unlaid.
-    if (html + away === this.written && this.body.firstChild) {
-      this.drawCard();
-      return;
+  }
+
+  private drawSwitches(): void {
+    const { words } = this.options;
+    const segment = (name: string, value: string, chosen: boolean, said: string) => `<button type="button" class="segment${chosen ? " chosen" : ""}" role="radio" aria-checked="${chosen}" data-${name}="${value}">${escape(said)}</button>`;
+    this.element.querySelector<HTMLElement>(".ay-spans")!.innerHTML = SPANS.map((span) => segment("span", span, span === this.span, words.spans[span])).join("");
+    this.element.querySelector<HTMLElement>(".ay-groupings")!.innerHTML = GROUPINGS.map((grouping) => segment("grouping", grouping, grouping === this.grouping, words.groupings[grouping])).join("");
+  }
+
+  /** Draws the files changed. Drawn again only where it differs from what
+   *  is shown, so a reading that changed nothing moves nothing; `anew` says
+   *  the reader asked for another look, and what comes fades in. */
+  private draw(anew = false): void {
+    const { words, files } = this.options;
+    const groups: (TalkGroup | MachineGroup)[] = this.grouping === "talk" ? byTalk(this.changes) : byMachine(this.changes);
+    this.drawnFiles = new Map(groups.flatMap((group) => group.files.map((file): [string, ChangedFile] => [`${group.key}\n${file.key}`, file])));
+    if (this.wanted) {
+      const asked = [...this.drawnFiles].find(([, file]) => file.name === this.wanted);
+      if (asked) {
+        this.opened.add(asked[0]);
+        this.wanted = null;
+      }
     }
-    this.written = html + away;
-    this.body.innerHTML = this.written;
-    const scroller = this.body.querySelector<HTMLElement>(".ay-scroll");
-    if (scroller) scroller.scrollTop = scroll;
-    this.drawCard();
+    const sum = tally(filesOf(this.changes));
+    const notes = [this.more ? words.truncated(LIMIT) : "", this.away.length ? words.unanswered(this.away.join("、")) : ""].filter(Boolean);
+    const foot = notes.length ? `<p class="ay-notes">${notes.map((note) => `<span>${escape(note)}</span>`).join("")}</p>` : "";
+    const shown = this.allGroups ? groups : groups.slice(0, GROUPS);
+    const rest = groups.length > shown.length ? `<button type="button" class="text-button ay-rest" data-groups>${escape(words.moreGroups(groups.length - shown.length))}</button>` : "";
+    const html = sum.files
+      ? `<div class="ay-sheet"><p class="ay-summary"><b>${escape(files.changed(sum.files))}</b>${figures(sum.added, sum.removed)}</p>${shown.map((group) => this.group(group)).join("")}${rest}${foot}</div>`
+      : `<div class="ay-sheet ay-quiet"><p>${escape(words.quiet)}</p>${foot}</div>`;
+    if (html === this.written && !anew) return;
+    this.written = html;
+    const kept = this.body.scrollTop;
+    this.body.innerHTML = html;
+    this.body.scrollTop = anew ? 0 : kept;
+    // An opened file's changes not yet read are read now.
+    for (const key of this.opened) if (this.drawnFiles.has(key)) this.readLines(key);
+    if (anew) {
+      this.body.classList.remove("ay-in");
+      void this.body.offsetWidth;
+      this.body.classList.add("ay-in");
+    }
   }
 
-  private drawNow(): string {
-    const { words } = this.options;
-    const now = this.now();
-    const running = this.gathered.deeds.filter((deed) => deed.outcome === "running");
-    const machines = new Map<string, Placed[]>();
-    for (const deed of running) machines.set(deed.machine, [...(machines.get(deed.machine) ?? []), deed]);
-    const desks = [...machines.entries()]
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([machine, deeds]) => {
-        const rows = deeds
-          .sort((a, b) => began(a) - began(b))
-          .map((deed) => `<li><button class="ay-deed" type="button" data-job="${escape(deed.job)}" data-machine="${escape(deed.machine)}" title="${escape(said(deed, now, words, (at) => words.stamp(at, now)))}">${mark(deed)}<span class="ay-deed-line">${escape(headline(deed.script))}</span>${elapsed(lasted(deed, now), deed.job, 96)}</button></li>`)
-          .join("");
-        return `<article class="ay-desk"><h3 class="ay-desk-name">${glyph("machine", 16)}<span>${escape(machine)}</span></h3><ul class="ay-desk-deeds">${rows}</ul></article>`;
-      })
-      .join("");
-    const lately = this.gathered.deeds
-      .filter((deed) => deed.outcome !== "running")
-      .sort((a, b) => (ended(b) ?? began(b)) - (ended(a) ?? began(a)))
-      .slice(0, 12);
-    const quiet = !running.length ? `<div class="ay-idle"><p>${escape(words.idle)}</p></div>` : `<div class="ay-desks">${desks}</div>`;
-    return `<div class="ay-now">
-      ${quiet}
-      ${lately.length ? `<section class="ay-lately"><h3 class="ay-label">${escape(words.lately)}</h3><ul class="ay-scroll ay-rows">${lately.map((deed) => this.row(deed, now)).join("")}</ul></section>` : ""}
-    </div>`;
-  }
-
-  /** One deed as a line: how it went, its command, how many times where
-   *  it stands for several, where, when. */
-  private row(deed: Placed, now: number, times = 1): string {
-    const { words } = this.options;
-    const at = ended(deed) ?? began(deed);
-    return `<li><button class="ay-deed ay-row" type="button" data-job="${escape(deed.job)}" data-machine="${escape(deed.machine)}" title="${escape(said(deed, now, words, (moment) => words.stamp(moment, now)))}">${mark(deed)}<span class="ay-deed-line">${escape(headline(deed.script))}${times > 1 ? `<span class="ay-times">×${times}</span>` : ""}</span><span class="ay-where">${escape(deed.machine)}</span><span class="ay-when">${escape(words.stamp(at, now))}</span></button></li>`;
-  }
-
-  private drawTimeline(): string {
-    const { words } = this.options;
-    const now = this.now();
-    const today = dayOf(now);
-    const gathered = this.deedsOfDay(this.day);
-    const lanes: Lane[] = [];
-    const deeds = gathered?.deeds ?? [];
-    const byMachine = new Map<string, Placed[]>();
-    for (const deed of deeds) byMachine.set(deed.machine, [...(byMachine.get(deed.machine) ?? []), deed]);
-    for (const [machine, mine] of [...byMachine.entries()].sort(([a], [b]) => a.localeCompare(b))) lanes.push({ machine, deeds: mine, away: false });
-    for (const machine of gathered?.away ?? []) lanes.push({ machine, deeds: [], away: true });
-    const nav = `<div class="ay-day">
-        <button class="icon-button" type="button" data-day-step="-1" aria-label="${escape(words.previousDay)}">${glyph("back", 18)}</button>
-        <span class="ay-day-name">${escape(words.date(this.day))}</span>
-        <button class="icon-button" type="button" data-day-step="1" aria-label="${escape(words.nextDay)}"${this.day >= today ? " disabled" : ""}><span class="ay-flip">${glyph("back", 18)}</span></button>
-        ${this.day !== today ? `<button class="text-button" type="button" data-day-today>${escape(words.today)}</button>` : ""}
-      </div>`;
-    if (!gathered) return `${nav}<div class="ay-figure"></div>`;
-    if (!lanes.length) return `${nav}<div class="ay-quiet"><p>${escape(words.quiet)}</p></div>`;
-    const drawn = timeline({ width: this.width, lanes, day: this.day, now, words, when: (at) => words.stamp(at, now), seed: `${this.day}` });
-    return `${nav}<div class="ay-figure ay-scroll">${drawn.svg}</div>`;
-  }
-
-  private drawCalendar(): string {
-    const { words } = this.options;
-    const today = dayOf(this.now());
-    const width = Math.min(this.width, 1100);
-    const svg = this.figure("calendar", `${width}|${this.height}|${today}|${this.yearRead}`, () => {
-      const days = byDay(this.yearHours);
-      return year({ width, height: this.height - 24, days, today, words, date: words.date, month: words.month, seed: "year" }).svg;
-    });
-    return `<div class="ay-figure ay-calendar">${svg}</div>`;
-  }
-
-  private drawRhythm(): string {
-    const width = Math.min(this.width, 1100);
-    const height = Math.max(200, Math.min(this.height - 24, Math.round(width * 0.42)));
-    const svg = this.figure("rhythm", `${width}|${height}|${dayOf(this.now())}|${this.yearRead}`, () => rhythm(width, height, byHourOfWeek(this.yearHours, this.now()), this.options.words, "week"));
-    return `<div class="ay-figure ay-rhythm-box">${svg}</div>`;
-  }
-
-  /** A year's figure, drawn again only where what it is drawn `from` has
-   *  changed since it was last. */
-  private figure(name: string, from: string, draw: () => string): string {
-    const kept = this.figures.get(name);
-    if (kept?.from === from) return kept.svg;
-    const svg = draw();
-    this.figures.set(name, { from, svg });
-    return svg;
-  }
-
-  private drawSpread(): string {
-    const { words } = this.options;
-    const now = this.now();
-    const from = dayOf(now) - (SPAN_DAYS[this.span] - 1) * DAY_MS;
-    const inks = ["var(--pen-graphite)", "var(--pen-sky)", "var(--pen-sage)", "var(--pen-rose)", "var(--pen-trace)"];
-    const width = Math.min(this.width - 8, 760);
-    const row = (label: string, shares: { key: string; runs: number; failed: number; busy: number }[], name: (key: string) => string, inkOf?: (key: string, index: number) => string) => {
-      const total = shares.reduce((sum, one) => sum + one.runs, 0);
-      if (!total) return "";
-      const shown = shares.slice(0, 5);
-      const drawn = shown.map((one, index) => ({ value: one.runs, ink: inkOf?.(one.key, index) ?? inks[index % inks.length]!, said: `${name(one.key)}\n${words.count(one.runs)}${one.failed ? `\n${words.failed(one.failed)}` : ""}\n${words.ran(words.duration(one.busy))}` }));
-      const keys = shown.map((one, index) => `<span class="ay-key"><i style="background:${drawn[index]!.ink}"></i>${escape(name(one.key))}</span>`).join("");
-      return `<div class="ay-spread-row"><h3 class="ay-label">${escape(label)}</h3>${parts(drawn, `${label}:${this.span}`, width)}<div class="ay-keys">${keys}</div></div>`;
-    };
-    const machines = spread(this.yearHours, from, (hour) => hour.machine);
-    const agents = spread(this.yearHours, from, (hour) => hour.agent ?? (hour.session ? "other" : "page"));
-    const outcomes = (() => {
-      const all = spread(this.yearHours, from, () => "all")[0];
-      if (!all) return [];
-      return [
-        { key: "done", runs: all.runs - all.failed, failed: 0, busy: 0 },
-        { key: "failed", runs: all.failed, failed: all.failed, busy: 0 },
-      ].filter((one) => one.runs > 0);
-    })();
-    const projects = this.options.workbench.peek()
-      ? (() => {
-          const counts = new Map<string, number>();
-          for (const deed of this.inSpan()) counts.set(deed.project ?? "", (counts.get(deed.project ?? "") ?? 0) + 1);
-          return [...counts.entries()].map(([key, runs]) => ({ key, runs, failed: 0, busy: 0 })).sort((a, b) => b.runs - a.runs);
-        })()
-      : [];
-    const rows = [
-      row(words.byMachine, machines, (key) => key),
-      row(words.byAgent, agents, (key) => words.agent[key as keyof ActivityWords["agent"]] ?? key),
-      row(words.byOutcome, outcomes, (key) => words.outcome[key as "done" | "failed"], (key) => (key === "failed" ? "var(--pen-clay)" : "var(--pen-graphite)")),
-      projects.length ? row(words.byProject, projects, (key) => key || words.noProject) : "",
-    ].join("");
-    return `${this.spans()}${rows ? `<div class="ay-spread">${rows}</div>` : `<div class="ay-quiet"><p>${escape(words.quiet)}</p></div>`}`;
-  }
-
-  private drawFiles(): string {
-    const { words } = this.options;
-    const now = this.now();
-    const grouped = files(this.inSpan());
-    if (!grouped.size) return `${this.spans()}<div class="ay-quiet"><p>${escape(words.quiet)}</p></div>`;
-    const most = Math.max(1, ...[...grouped.values()].flatMap((folders) => [...folders.values()].flat().map((file) => Math.max(file.added ?? 0, file.removed ?? 0))));
-    const sections = [...grouped.entries()]
-      .map(([machine, folders]) => {
-        const items = [...folders.entries()]
-          .map(([folder, list]) => {
-            const rows = list
-              .map((file) => {
-                const name = file.path.slice(file.path.replace(/\\/g, "/").lastIndexOf("/") + 1);
-                const hover = [file.path, words.how[file.how], file.seen ? words.seen : "", words.stamp(file.at, now)].filter(Boolean).join("\n");
-                return `<li><button class="ay-file${file.seen ? " seen" : ""}" type="button" data-job="${escape(file.job)}" data-machine="${escape(file.machine)}" title="${escape(hover)}"><span class="ay-how ay-how-${file.how}" aria-label="${escape(words.how[file.how])}"></span><span class="ay-file-name">${escape(name)}</span>${lines(file.added, file.removed, most, file.path)}</button></li>`;
-              })
-              .join("");
-            return `<li class="ay-folder"><p class="ay-folder-name" title="${escape(folder)}"><span>${escape(folder)}</span></p><ul>${rows}</ul></li>`;
-          })
-          .join("");
-        return `<section class="ay-files-machine"><h3 class="ay-label">${glyph("machine", 14)}${escape(machine)}</h3><ul class="ay-folders">${items}</ul></section>`;
-      })
-      .join("");
-    return `${this.spans()}<div class="ay-scroll ay-files">${sections}</div>`;
-  }
-
-  private drawHeed(): string {
-    const { words } = this.options;
-    const now = this.now();
-    const found = heeds(this.inSpan(), now);
-    const sections = HEEDS.filter((kind) => found.get(kind)?.length)
-      .map((kind) => {
-        const deeds = found.get(kind)!;
-        // The same command on the same machine once, with how many times.
-        const folded = new Map<string, Placed[]>();
-        for (const deed of deeds) {
-          const key = `${deed.machine}\n${headline(deed.script)}`;
-          folded.set(key, [...(folded.get(key) ?? []), deed]);
-        }
-        const rows = [...folded.values()]
-          .sort((a, b) => b.length - a.length || began(b[0]!) - began(a[0]!))
-          .slice(0, 24)
-          .map((same) => this.row(same[0]!, now, same.length))
-          .join("");
-        return `<section class="ay-heed"><h3 class="ay-label">${escape(words.heed[kind])}<span class="ay-count">${deeds.length}</span></h3><ul class="ay-rows">${rows}</ul></section>`;
-      })
-      .join("");
-    return `${this.spans()}${sections ? `<div class="ay-scroll ay-heeds">${sections}</div>` : `<div class="ay-quiet"><p>${escape(words.quiet)}</p></div>`}`;
-  }
-
-  private drawSessions(): string {
-    const { words } = this.options;
-    const now = this.now();
-    const seen = sessions(this.inSpan());
-    if (!seen.length) return `${this.spans()}<div class="ay-quiet"><p>${escape(words.quiet)}</p></div>`;
-    const workbench = this.options.workbench.peek();
-    const from = dayOf(now) - (SPAN_DAYS[this.span] - 1) * DAY_MS;
-    const rows = seen
-      .map((one) => {
-        const resident = one.session.slice(0, one.session.lastIndexOf("@"));
-        const short = resident.length > 14 ? `${resident.slice(0, 13)}…` : resident;
-        const hover = [
-          one.session,
-          one.held ? words.held : words.own,
-          `${words.stamp(one.first, now)} – ${words.stamp(one.last, now)}`,
-          words.count(one.runs),
-          one.failed ? words.failed(one.failed) : "",
-          one.files ? words.files(one.files) : "",
-        ]
-          .filter(Boolean)
-          .join("\n");
-        const canBring = workbench && !one.held && one.agent === "codex" && one.home === this.homeName();
-        const bring = canBring
-          ? `<button class="text-button ay-bring" type="button" data-bring="${escape(resident)}" title="${escape(words.bringInWhy)}"${this.bringing.has(resident) ? " disabled" : ""}>${escape(words.bringIn)}</button>`
+  /** A group's files under its name: a conversation's, or a machine's. */
+  private group(group: TalkGroup | MachineGroup): string {
+    const { words, files, named } = this.options;
+    const talk = "machines" in group;
+    let name: string;
+    if (talk) {
+      const said = sessionName(group, files, named);
+      const resident = group.session?.slice(0, group.session.lastIndexOf("@")) ?? "";
+      const bring =
+        this.options.bringIn && group.session && this.unheld.has(group.session)
+          ? `<button type="button" class="text-button ay-bring" data-bring="${escape(resident)}" title="${escape(words.bringInWhy)}"${this.bringing.has(resident) ? " disabled" : ""}>${escape(words.bringIn)}</button>`
           : "";
-        return `<li class="ay-session${one.held ? " held" : ""}${one.running ? " running" : ""}" title="${escape(hover)}">
-            <span class="ay-agent">${one.agent ? glyph(one.agent, 16) : glyph("machine", 16)}</span>
-            <span class="ay-session-name">${escape(short)}</span>
-            <span class="ay-where">${escape(one.home)}</span>
-            <span class="ay-span">${runs(one.times, from, now, one.session)}</span>
-            ${bring}
-          </li>`;
+      name = `${group.agent ? agentGlyph(group.agent, 18) : glyph("agents", 18)}${said.link ? `<a class="ay-name" href="${escape(said.link)}">${escape(said.name)}</a>` : `<b class="ay-name">${escape(said.name)}</b>`}<span class="ay-on">${glyph("machine", 14)}${escape(group.machines.join("、"))}</span>${bring}`;
+    } else {
+      name = `${glyph("desktop", 18)}<a class="ay-name" href="${escape(this.options.link(group.machine, null, null))}" title="${escape(words.folders)}">${escape(group.machine)}</a>`;
+    }
+    const all = this.whole.has(group.key) || group.files.length <= FEW + 1;
+    const listed = all ? group.files : group.files.slice(0, FEW);
+    const rows = listed.map((file) => this.file(group, file, talk)).join("");
+    const rest = all ? "" : `<li class="cf-rest"><button type="button" class="text-button" data-whole="${escape(group.key)}">${escape(files.moreFiles(group.files.length - listed.length))}</button></li>`;
+    return `<section class="ay-group">
+      <header class="ay-group-head">${name}<small>${escape(files.files(group.files.length))}</small>${figures(group.added, group.removed)}<time>${escape(files.stamp(group.last, this.now()))}</time></header>
+      <ul class="cf-files">${rows}${rest}</ul>
+    </section>`;
+  }
+
+  private file(group: TalkGroup | MachineGroup, file: ChangedFile, talk: boolean): string {
+    const { files, named } = this.options;
+    const key = `${group.key}\n${file.key}`;
+    const open = this.opened.has(key);
+    return fileRow(file, files, {
+      attrs: `data-file="${escape(key)}"`,
+      named,
+      who: !talk,
+      where: talk && (group as TalkGroup).machines.length > 1,
+      open,
+      fold: open ? this.fold(file, talk) : "",
+    });
+  }
+
+  /** What an opened file shows: its latest changes, each under who made
+   *  it and when, and the way to the file among its folders. */
+  private fold(file: ChangedFile, talk: boolean): string {
+    const { words, files, named } = this.options;
+    const now = this.now();
+    const listed = file.changes.slice(0, LISTED);
+    const changes = listed
+      .map((change, index) => {
+        const line = changeLine(talk ? { ...change, session: null, agent: null, from: null } : change, files, named, now);
+        // A change with no lines kept is its own line alone; any other
+        // folds its lines away under that line, and opens them again.
+        if (!change.rows) return `<section class="ay-change bare" data-change="${escape(change.id)}"><div class="ay-change-head">${line}</div></section>`;
+        const open = this.changeOpen(change.id, index);
+        return `<section class="ay-change${open ? " open" : ""}" data-change="${escape(change.id)}"><div class="ay-change-head" role="button" tabindex="0" aria-expanded="${open}">${line}${glyph("chevron", 16)}</div><div class="ay-change-fold"><div class="ay-change-body">${open ? this.linesOf(change, file.path) : ""}</div></div></section>`;
       })
       .join("");
-    return `${this.spans()}<ul class="ay-scroll ay-sessions">${rows}</ul>`;
+    const earlier = file.changes.length > LISTED ? `<span>${escape(files.view.earlier(file.changes.length - LISTED))}</span>` : "";
+    return `${changes}<p class="ay-fold-foot">${earlier}<a href="${escape(this.options.link(file.machine, file.path, file.how === "removed" ? "changes" : "content"))}">${escape(words.openFile)}</a><a href="${escape(this.options.link(file.machine, file.path, "changes"))}">${escape(words.allChanges)}</a></p>`;
   }
 
-  private homeName(): string {
-    return this.options.machines().find((machine) => machine.written === null)?.name ?? "";
+  /** Whether a change of an opened file shows its lines: as the user left
+   *  it, else only the file's latest. */
+  private changeOpen(id: string, index: number): boolean {
+    return this.changeFolds.get(id) ?? index === 0;
   }
 
-  private find(job: string, machine: string): Placed | null {
-    const all = [this.gathered.deeds, ...[...this.daysRead.values()].map((day) => day.deeds)].flat();
-    return all.find((deed) => deed.job === job && deed.machine === machine) ?? null;
+  /** A change's lines as they are held: drawn, being read, or not kept. */
+  private linesOf(change: FileChange, path: string): string {
+    const { files } = this.options;
+    const held = this.lines.get(change.id);
+    // What has no lines kept is its own line alone, as a list of changes.
+    if (!change.rows) return "";
+    if (held === undefined || held === "reading") return waiting({ label: files.view.reading, shape: "lines", rows: Math.min(6, Math.max(2, change.added + change.removed)) });
+    if (held === null || !held.length) return `<p class="cf-note">${escape(change.uncounted ? files.view.uncounted : files.view.notKept)}</p>`;
+    return diffLines(held, path, files, LINES);
   }
 
-  private drawCard(): void {
-    const deed = this.picked ? this.find(this.picked.job, this.picked.machine) : null;
-    if (!deed) {
-      this.card.hidden = true;
-      return;
+  /** Reads the lines of an opened file's changes that were not read yet,
+   *  each drawn where it stands as it comes. */
+  private readLines(key: string): void {
+    const file = this.drawnFiles.get(key);
+    if (!file) return;
+    for (const [index, change] of file.changes.slice(0, LISTED).entries()) {
+      // Lines folded away are not read until they are opened.
+      if (!change.rows || this.lines.has(change.id) || !this.changeOpen(change.id, index)) continue;
+      this.lines.set(change.id, "reading");
+      void change.rows().then((rows) => rows, () => null).then((rows) => {
+        if (this.left) return;
+        this.lines.set(change.id, rows);
+        if (this.lines.size > 400) this.lines.delete(this.lines.keys().next().value!);
+        for (const body of this.body.querySelectorAll<HTMLElement>(".ay-change")) {
+          if (body.dataset.change === change.id) body.querySelector<HTMLElement>(".ay-change-body")!.innerHTML = this.linesOf(change, file.path);
+        }
+        // What is shown is no longer what was written.
+        this.written = "";
+      });
     }
-    const { words } = this.options;
-    const now = this.now();
-    const time = deed.outcome === "running" ? words.running(words.duration(lasted(deed, now))) : words.ran(words.duration(lasted(deed, now)));
-    const where = [deed.machine, deed.from ? `← ${deed.from}` : "", deed.went?.length ? words.went(deed.went.join(", ")) : ""].filter(Boolean).join(" · ");
-    const touched = (deed.touched ?? [])
-      .slice(0, 12)
-      .map((file) => `<li title="${escape([file.path, words.how[file.how], file.seen ? words.seen : ""].filter(Boolean).join("\n"))}"><span class="ay-how ay-how-${file.how}"></span><span class="ay-file-name">${escape(file.path)}</span></li>`)
-      .join("");
-    this.card.hidden = false;
-    this.card.innerHTML = `<header class="ay-card-head">${mark(deed)}<span class="ay-card-state">${escape(words.outcome[deed.outcome])}${deed.code !== undefined && deed.code !== 0 ? ` · ${deed.code}` : ""}</span><span class="ay-when" title="${escape(new Date(began(deed)).toLocaleString())}">${escape(words.stamp(began(deed), now))} · ${escape(time)}</span><button class="icon-button ay-card-close" type="button" data-card-close aria-label="${escape(words.title)}">${glyph("close", 16)}</button></header>
-      <pre class="ay-script">${escape(deed.script)}</pre>
-      <p class="ay-card-line" title="${escape(deed.session ?? "")}">${deed.agent ? glyph(deed.agent, 14) : ""}<span>${escape(where)}</span>${deed.output ? `<span class="ay-card-size">${escape(words.output)} ${escape(words.bytes(deed.output))}</span>` : ""}</p>
-      ${touched ? `<ul class="ay-card-files">${touched}</ul>` : ""}`;
   }
 
   private pressed(event: MouseEvent): void {
-    const target = event.target as Element | null;
-    if (!target) return;
-    const view = target.closest<HTMLElement>("[data-view]")?.dataset.view as View | undefined;
-    if (view && view !== this.view) {
-      this.view = view;
-      keep(KEPT_VIEW, view);
-      this.drawSwitcher();
-      this.draw();
-      return;
-    }
+    const target = event.target as HTMLElement;
     const span = target.closest<HTMLElement>("[data-span]")?.dataset.span as Span | undefined;
-    if (span && span !== this.span) {
+    if (span) {
+      if (span === this.span) return;
       this.span = span;
       keep(KEPT_SPAN, span);
-      this.draw();
-      void this.readSpan();
+      this.drawSwitches();
+      // What is read of the span chosen before is not this one's.
+      this.changes = [];
+      this.written = "";
+      void Promise.all([this.read("local"), this.read("remote")]).then(() => this.draw(true));
       return;
     }
-    const step = target.closest<HTMLElement>("[data-day-step]")?.dataset.dayStep;
-    if (step) {
-      const today = dayOf(this.now());
-      this.day = Math.min(today, dayOf(this.day + Number(step) * DAY_MS + DAY_MS / 2));
-      this.draw();
-      return;
-    }
-    if (target.closest("[data-day-today]")) {
-      this.day = dayOf(this.now());
-      this.draw();
-      return;
-    }
-    const day = target.closest<SVGElement>("[data-day]")?.dataset.day;
-    if (day) {
-      this.day = Number(day);
-      this.view = "timeline";
-      keep(KEPT_VIEW, "timeline");
-      this.drawSwitcher();
-      this.draw();
+    const grouping = target.closest<HTMLElement>("[data-grouping]")?.dataset.grouping as Grouping | undefined;
+    if (grouping) {
+      if (grouping === this.grouping) return;
+      this.grouping = grouping;
+      keep(KEPT_GROUPING, grouping);
+      this.drawSwitches();
+      this.opened.clear();
+      this.whole.clear();
+      this.allGroups = false;
+      this.draw(true);
       return;
     }
     const bring = target.closest<HTMLElement>("[data-bring]")?.dataset.bring;
-    if (bring) {
+    if (bring && this.options.bringIn) {
       this.bringing.add(bring);
       this.draw();
       void this.options.bringIn(bring).then(
-        () => void this.readSpan(),
+        () => {
+          this.unheld.delete(`${bring}@${this.options.machines().find((machine) => machine.written === null)?.name ?? ""}`);
+          this.bringing.delete(bring);
+          this.draw();
+        },
         (error: unknown) => {
           this.bringing.delete(bring);
           console.error("bringing a session in", error);
@@ -619,38 +433,71 @@ export class ActivityPage implements Page {
       );
       return;
     }
-    if (target.closest("[data-card-close]")) {
-      this.picked = null;
-      this.drawCard();
+    const whole = target.closest<HTMLElement>("[data-whole]")?.dataset.whole;
+    if (whole !== undefined) {
+      this.whole.add(whole);
+      this.draw();
       return;
     }
-    const deed = target.closest<HTMLElement | SVGElement>("[data-job]");
-    if (deed?.dataset.job && deed.dataset.machine) {
-      const picked = { job: deed.dataset.job, machine: deed.dataset.machine };
-      this.picked = this.picked?.job === picked.job && this.picked.machine === picked.machine ? null : picked;
-      this.drawCard();
+    if (target.closest("[data-groups]")) {
+      this.allGroups = true;
+      this.draw();
+      return;
     }
+    // A link goes where it says; the row is not pressed.
+    if (target.closest("a")) return;
+    // A change's own line folds its lines away, or opens them, where it
+    // stands; opened, its lines are read if they were not yet.
+    const head = target.closest<HTMLElement>(".ay-change-head[role='button']");
+    if (head) {
+      const section = head.parentElement!;
+      const id = section.dataset.change!;
+      const key = section.closest(".cf-file")?.querySelector<HTMLElement>("[data-file]")?.dataset.file ?? "";
+      const file = this.drawnFiles.get(key);
+      const open = !section.classList.contains("open");
+      this.changeFolds.set(id, open);
+      head.setAttribute("aria-expanded", String(open));
+      const change = file?.changes.find((one) => one.id === id);
+      if (open && file && change) {
+        section.querySelector<HTMLElement>(".ay-change-body")!.innerHTML = this.linesOf(change, file.path);
+        this.readLines(key);
+      }
+      // Measured shut before it opens, so it is seen to open.
+      void section.offsetHeight;
+      section.classList.toggle("open", open);
+      this.written = "";
+      return;
+    }
+    const row = target.closest<HTMLElement>("[data-file]");
+    if (!row) return;
+    const key = row.dataset.file!;
+    const file = this.drawnFiles.get(key);
+    if (!file) return;
+    const open = !this.opened.has(key);
+    if (open) this.opened.add(key);
+    else this.opened.delete(key);
+    row.setAttribute("aria-expanded", String(open));
+    const item = row.parentElement!;
+    const inner = item.querySelector<HTMLElement>(".cf-fold-inner")!;
+    if (open && !inner.innerHTML.trim()) {
+      inner.innerHTML = this.fold(file, this.grouping === "talk");
+      this.readLines(key);
+    }
+    // Measured shut before it opens, so it is seen to open.
+    void item.offsetHeight;
+    item.classList.toggle("open", open);
+    // What is shown is no longer what was written: the next reading that
+    // differs draws it with the file as it stands now.
+    this.written = "";
   }
 }
 
-/** How a deed went, as a small drawn mark: a ring while it runs, a tick
- *  when done, a cross when it failed, a bar when stopped. */
-function mark(deed: Deed): string {
-  const kind = deed.outcome === "running" ? "running" : failing(deed.outcome) ? "failed" : deed.outcome === "stopped" ? "stopped" : "done";
-  const drawn = kind === "done" ? glyph("check", 14) : kind === "failed" ? glyph("cross", 14) : kind === "stopped" ? glyph("stop", 14) : "";
-  return `<span class="ay-mark ay-mark-${kind}" aria-hidden="true">${drawn}</span>`;
-}
-
-function iso(at: number): string {
-  return new Date(at).toISOString();
-}
-
-function kept<T extends string>(key: string, allowed: readonly T[], fallback: T): T {
+function kept<T extends string>(key: string, among: readonly T[], otherwise: T): T {
   try {
     const value = localStorage.getItem(key) as T | null;
-    return value && allowed.includes(value) ? value : fallback;
+    return value && among.includes(value) ? value : otherwise;
   } catch {
-    return fallback;
+    return otherwise;
   }
 }
 
@@ -658,6 +505,6 @@ function keep(key: string, value: string): void {
   try {
     localStorage.setItem(key, value);
   } catch {
-    // Not kept in this window.
+    // Kept for this visit only.
   }
 }

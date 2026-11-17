@@ -1,8 +1,8 @@
 //! Deleting a conversation from every machine and device keeping something
 //! of it (`world-colleagues.md`, 用户在任何地方和居民说话).
 //!
-//! The user asks from any computer or phone. A conversation that lives here
-//! is deleted here at once, and each hub it works for an account of is then
+//! The user asks from any computer or phone. The request is recorded before
+//! a local conversation is stopped and erased, and each hub it works for is then
 //! asked to have its other members delete what they keep. One that lives
 //! elsewhere is asked of its hub, which has its machine delete it first. A
 //! hub this computer is not connected to now is asked once it is: what is
@@ -13,6 +13,8 @@
 //! works for the account the deletion is for; of one that lives elsewhere,
 //! the guest rooms it had here, its commands there stopped first. Either
 //! way, the copy kept here from showing it goes too.
+
+mod submission;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -28,13 +30,19 @@ use serde::{Deserialize, Serialize};
 use crate::Node;
 use crate::data::delete::Stop;
 
-/// What is still to be asked of hubs, and what wakes the asking.
+/// What is still to be asked of hubs.
 #[derive(Default)]
 pub(crate) struct Asks {
     /// Held while the kept asks are read and written.
     file: crate::ranked::Forgetting,
-    wake: Arc<tokio::sync::Notify>,
 }
+
+/// Sending the kept asks to their hubs is a pass (`crate::passes`), made
+/// when an ask is kept and when a hub's view changes.
+const ASKING: crate::passes::Pass =
+    crate::passes::Pass { name: "forget/asks", within: std::time::Duration::from_secs(10 * 60), rests: None };
+/// How long a hub's view is quiet before the asks are sent again.
+const VIEWS_SETTLE: std::time::Duration = std::time::Duration::from_millis(500);
 
 /// A deletion still to be asked of a hub.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -44,6 +52,12 @@ struct Ask {
     conversation: Address,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     after: Option<ResidentId>,
+}
+
+impl Ask {
+    fn ready(&self, residents: &crate::residents::Residents) -> bool {
+        self.after.as_ref().is_none_or(|id| residents.ever_deleted(id))
+    }
 }
 
 /// What whoever asks about `resident`, which is not here, is told: that it
@@ -66,52 +80,70 @@ pub(crate) async fn ask(
     resident: ResidentId,
     machine: fastctx_types::access::Written,
 ) -> Result<How, Failure> {
-    let _call = handing(node)?;
-    if node.is_here(&machine) {
-        if node.residents.about(&resident).is_some()
-            && !crate::admission::seen::resident(node, crate::admission::seen::Looker::Here(&Acting::Here), &resident)
-        {
-            return Err(Failure::refused("this account does not own that conversation"));
-        }
-        let address = Address { machine: node.machine(), resident: resident.clone() };
-        for link in node.links().into_iter().filter(|link| link.view().shared_records) {
-            if node.residents.about(&resident).is_none() {
-                continue;
-            }
-            if let Ok((actor, current)) = link.record_actor(&address).await {
-                link.prepare_forget(&actor, &current).await.map_err(Failure::new)?;
-            }
-        }
-        // Whom it works for is read before its records go.
-        let asks: Vec<Ask> = match node.residents.about(&resident) {
-            Some((about, _)) => pairs(node, &about.acting)
-                .into_iter()
-                .map(|(hub, account)| Ask {
-                    hub,
-                    account,
-                    conversation: Address { machine: node.machine(), resident: resident.clone() },
-                    after: None,
-                })
-                .collect(),
-            None => Vec::new(),
-        };
-        home(node, &resident).await.map_err(Failure::new)?;
-        node.log.line(format_args!("deleted {resident}, which lived here, as the user asked"));
-        if asks.is_empty() {
-            return Ok(How::Deleted);
-        }
-        keep(node, asks).await.map_err(|error| Failure::new(format!("keeping what to ask the hubs: {error}")))?;
-        return Ok(if send_kept(node).await { How::Asked } else { How::Queued });
+    submission::ask(node, resident, machine).await
+}
+
+fn allowed_here(node: &Node, resident: &ResidentId) -> Result<(), Failure> {
+    if node.residents.about(resident).is_some()
+        && !crate::admission::seen::resident(node, crate::admission::seen::Looker::Here(&Acting::Here), resident)
+    {
+        return Err(Failure::refused("this account does not own that conversation"));
     }
-    let link = node
-        .locate(&machine)?
-        .into_iter()
-        .next()
-        .ok_or_else(|| Failure::new(format!("no hub this computer is on has a machine named {machine}")))?;
-    let (account, conversation) = link
-        .record_actor(&Address { machine: machine.name.clone(), resident: resident.clone() })
-        .await
-        .map_err(Failure::new)?;
+    Ok(())
+}
+
+async fn ask_here(node: &Arc<Node>, resident: ResidentId) -> Result<How, Failure> {
+    let _call = handing(node)?;
+    allowed_here(node, &resident)?;
+    let address = Address { machine: node.machine(), resident: resident.clone() };
+    for link in node.links().into_iter().filter(|link| link.view().shared_records) {
+        if node.residents.about(&resident).is_none() {
+            continue;
+        }
+        if let Ok((actor, current)) = link.record_actor(&address).await {
+            link.prepare_forget(&actor, &current).await.map_err(Failure::new)?;
+        }
+    }
+    // Whom it works for is read before its records go.
+    let asks: Vec<Ask> = match node.residents.about(&resident) {
+        Some((about, _)) => pairs(node, &about.acting)
+            .into_iter()
+            .map(|(hub, account)| Ask {
+                hub,
+                account,
+                conversation: Address { machine: node.machine(), resident: resident.clone() },
+                after: Some(resident.clone()),
+            })
+            .collect(),
+        None => Vec::new(),
+    };
+    if !asks.is_empty() {
+        // The sender's after barrier prevents a saved request from overtaking home.
+        keep(node, asks.clone())
+            .await
+            .map_err(|error| Failure::not_run(format!("keeping what to ask the hubs: {error}")))?;
+    }
+    // Asked again of a conversation deleted already, this finishes what a
+    // deletion that failed or was interrupted part way left here: deleting
+    // what is gone deletes nothing, and the rest is done as the first time.
+    home(node, &resident).await.map_err(Failure::new)?;
+    node.log.line(format_args!("deleted {resident}, which lived here, as the user asked"));
+    if asks.is_empty() {
+        // The asking before this one may have kept what to ask the hubs and
+        // not come as far as asking it.
+        wake(node);
+        return Ok(How::Deleted);
+    }
+    Ok(if send_kept(node).await { How::Asked } else { How::Queued })
+}
+
+async fn ask_elsewhere(
+    node: &Arc<Node>,
+    link: &Arc<fastctx_net::link::Link>,
+    account: AccountName,
+    conversation: Address,
+) -> Result<How, Failure> {
+    let _call = handing(node)?;
     match link.forget(&account, &conversation).await {
         Ok(true) => Ok(How::Asked),
         Ok(false) => {
@@ -119,15 +151,16 @@ pub(crate) async fn ask(
             keep(node, vec![ask])
                 .await
                 .map_err(|error| Failure::new(format!("keeping what to ask the hub: {error}")))?;
-            node.forget_asks.wake.notify_one();
+            wake(node);
             Ok(How::Queued)
         }
         Err(reason) => Err(Failure::new(reason)),
     }
 }
 
+/// Asks for the kept asks to be sent.
 pub(crate) fn wake(node: &Node) {
-    node.forget_asks.wake.notify_one();
+    crate::passes::ask(node, ASKING.name);
 }
 
 /// Recheck deleted originals after this conversation releases its inherited references.
@@ -177,7 +210,7 @@ pub(crate) async fn project(
     .await
     .map_err(|error| error.to_string())?;
     home(node, id).await?;
-    node.forget_asks.wake.notify_one();
+    wake(node);
     Ok(())
 }
 
@@ -222,39 +255,23 @@ pub(crate) async fn told(node: &Arc<Node>, hub: &HubId, forgetting: Forgetting) 
         .collect();
     if !others.is_empty() {
         match keep(node, others).await {
-            Ok(()) => node.forget_asks.wake.notify_one(),
+            Ok(()) => wake(node),
             Err(error) => node.log.line(format_args!("keeping what to ask the other hubs of {id}: {error}")),
         }
     }
     Forgot::Done
 }
 
-/// Asks the hubs what is still to be asked, whenever a hub's view changes,
-/// as when a link connects, or a new ask is kept.
+/// Names what sends the kept asks, before the node's jobs start: now, and
+/// whenever a hub's view changes, as when a link connects. A new ask kept
+/// asks for a sending itself (`wake`).
 pub(crate) fn start(node: &Arc<Node>) {
-    let weak = Arc::downgrade(node);
-    let mut views = node.views.subscribe();
-    let wake = node.forget_asks.wake.clone();
-    fastctx_platform::task::spawn(async move {
-        let mut again = crate::again::Again::default();
-        loop {
-            let woken = wake.notified();
-            tokio::pin!(woken);
-            woken.as_mut().enable();
-            let done = {
-                let Some(node) = weak.upgrade() else { return };
-                send_kept(&node).await
-            };
-            if done {
-                again.reset();
-            }
-            tokio::select! {
-                () = tokio::time::sleep(again.next()), if !done => {},
-                changed = views.changed() => if changed.is_err() { return },
-                () = woken => {},
-            }
-        }
+    use crate::passes::Left;
+    submission::register(node);
+    crate::passes::register(node, ASKING, |node: Arc<Node>| async move {
+        if send_kept(&node).await { Left::Nothing } else { Left::Work }
     });
+    crate::passes::follow(node, ASKING.name, node.views.subscribe(), VIEWS_SETTLE);
 }
 
 fn handing(node: &Arc<Node>) -> Result<crate::handoff::Busy, Failure> {
@@ -463,7 +480,7 @@ async fn send_kept(node: &Arc<Node>) -> bool {
     }
     let mut left = Vec::new();
     for ask in &kept {
-        if ask.after.as_ref().is_some_and(|id| node.residents.deleted(id).is_none()) {
+        if !ask.ready(&node.residents) {
             left.push(ask.clone());
             continue;
         }

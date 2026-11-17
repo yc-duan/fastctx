@@ -105,7 +105,7 @@ pub(super) fn receive_in(
     sql::save(db, conversation, &stored)?;
     let changed = db.total_changes() != before;
     if changed {
-        sql::changed(db, conversation)?;
+        sql::changed(db, conversation, &update.call_id)?;
     }
     Ok(changed)
 }

@@ -11,7 +11,7 @@ const COMMAND: usize = 300;
 
 /// The machine's memory, disks and NVIDIA GPUs.
 pub(super) async fn resources() -> Inspected {
-    let gpus = crate::stats::gpus().await;
+    let gpus = crate::stats::gpus_read().await;
     let (memory, disks) = fastctx_platform::task::blocking(|| {
         (fastctx_platform::system::memory().ok(), fastctx_platform::system::disks().unwrap_or_default())
     })

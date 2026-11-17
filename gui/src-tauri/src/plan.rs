@@ -69,7 +69,7 @@ pub(crate) async fn plan_watch(
     hub: Option<String>,
     account: Option<String>,
     owner: String,
-    pieces: Channel<crate::watch_delivery::Wake>,
+    pieces: Channel<crate::watch_delivery::Push>,
 ) -> Result<u64, String> {
     let (hub, account, owner) = named(hub, account, owner)?;
     let page = shell.page.load(Ordering::Relaxed);

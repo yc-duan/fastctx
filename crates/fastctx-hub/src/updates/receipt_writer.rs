@@ -10,7 +10,7 @@ use futures_util::{SinkExt as _, stream::SplitSink};
 use std::sync::Arc;
 use tokio::sync::oneshot;
 
-pub(super) struct Writer {
+pub(crate) struct Writer {
     done: Option<oneshot::Sender<String>>,
     task: Option<tokio::task::JoinHandle<Result<(), String>>>,
 }

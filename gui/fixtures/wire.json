@@ -1,4 +1,54 @@
 {
+  "data": [
+    {
+      "data": "listed",
+      "machine": "local",
+      "at": "2026-01-01T00:00:00Z",
+      "root": "/world",
+      "root_bytes": 0,
+      "kinds": {
+        "conversations": 0,
+        "host_records": 0,
+        "command_output": 0,
+        "cache": 0,
+        "program": 0,
+        "other": 0
+      },
+      "conversations": [],
+      "output_days": 30
+    },
+    {
+      "data": "listed",
+      "machine": "local",
+      "at": "2026-01-01T00:00:00Z",
+      "root": "/world",
+      "root_bytes": 0,
+      "kinds": {
+        "conversations": 0,
+        "host_records": 0,
+        "command_output": 0,
+        "cache": 0,
+        "program": 0,
+        "other": 0
+      },
+      "conversations": [],
+      "output_days": 30,
+      "output_retention": "unlimited",
+      "unread": {
+        "entries": 3,
+        "first": "/world/world/node.sqlite3-wal: being used by another process"
+      }
+    },
+    {
+      "data": "output_days",
+      "days": 30
+    },
+    {
+      "data": "output_days",
+      "days": 30,
+      "output_retention": "unlimited"
+    }
+  ],
   "updates": {
     "states": [
       {
@@ -1393,7 +1443,7 @@
     {
       "records": [
         {
-          "id": 44,
+          "id": 46,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -1410,7 +1460,7 @@
           }
         },
         {
-          "id": 43,
+          "id": 45,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -1430,7 +1480,7 @@
           }
         },
         {
-          "id": 42,
+          "id": 44,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -1452,7 +1502,7 @@
           }
         },
         {
-          "id": 41,
+          "id": 43,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -1478,7 +1528,7 @@
           }
         },
         {
-          "id": 40,
+          "id": 42,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -1498,7 +1548,7 @@
           }
         },
         {
-          "id": 39,
+          "id": 41,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -1518,7 +1568,7 @@
           }
         },
         {
-          "id": 38,
+          "id": 40,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -1535,7 +1585,7 @@
           }
         },
         {
-          "id": 37,
+          "id": 39,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -1560,7 +1610,7 @@
           }
         },
         {
-          "id": 36,
+          "id": 38,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -1578,7 +1628,7 @@
           }
         },
         {
-          "id": 35,
+          "id": 37,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -1598,7 +1648,7 @@
           }
         },
         {
-          "id": 34,
+          "id": 36,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -1616,7 +1666,7 @@
           }
         },
         {
-          "id": 33,
+          "id": 35,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": null,
@@ -1634,7 +1684,7 @@
           }
         },
         {
-          "id": 32,
+          "id": 34,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -1653,7 +1703,7 @@
           }
         },
         {
-          "id": 31,
+          "id": 33,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -1673,7 +1723,7 @@
           }
         },
         {
-          "id": 30,
+          "id": 32,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -1691,7 +1741,7 @@
           }
         },
         {
-          "id": 29,
+          "id": 31,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -1708,7 +1758,7 @@
           }
         },
         {
-          "id": 28,
+          "id": 30,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -1728,7 +1778,7 @@
           }
         },
         {
-          "id": 27,
+          "id": 29,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -1746,7 +1796,7 @@
           }
         },
         {
-          "id": 26,
+          "id": 28,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -1764,7 +1814,7 @@
           }
         },
         {
-          "id": 25,
+          "id": 27,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -1782,7 +1832,7 @@
           }
         },
         {
-          "id": 24,
+          "id": 26,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -1798,7 +1848,7 @@
           }
         },
         {
-          "id": 23,
+          "id": 25,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -1818,7 +1868,7 @@
           }
         },
         {
-          "id": 22,
+          "id": 24,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -1842,7 +1892,7 @@
           }
         },
         {
-          "id": 21,
+          "id": 23,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -1861,7 +1911,7 @@
           }
         },
         {
-          "id": 20,
+          "id": 22,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -1877,7 +1927,7 @@
           }
         },
         {
-          "id": 19,
+          "id": 21,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -1895,7 +1945,7 @@
           }
         },
         {
-          "id": 18,
+          "id": 20,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -1912,7 +1962,7 @@
           }
         },
         {
-          "id": 17,
+          "id": 19,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -1929,7 +1979,7 @@
           }
         },
         {
-          "id": 16,
+          "id": 18,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -1946,7 +1996,7 @@
           }
         },
         {
-          "id": 15,
+          "id": 17,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -1963,7 +2013,7 @@
           }
         },
         {
-          "id": 14,
+          "id": 16,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -1981,7 +2031,7 @@
           }
         },
         {
-          "id": 13,
+          "id": 15,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -1998,7 +2048,7 @@
           }
         },
         {
-          "id": 12,
+          "id": 14,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -2015,7 +2065,7 @@
           }
         },
         {
-          "id": 11,
+          "id": 13,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -2026,6 +2076,39 @@
           "action": {
             "change": "settings",
             "self_registration": true
+          },
+          "outcome": {
+            "kind": "done"
+          }
+        },
+        {
+          "id": 12,
+          "at": "2026-10-10T12:00:00Z",
+          "actor": {
+            "account": "ada",
+            "authenticated": true,
+            "member": "laptop",
+            "peer": null
+          },
+          "action": {
+            "change": "asset_seal",
+            "at_start": true
+          },
+          "outcome": {
+            "kind": "done"
+          }
+        },
+        {
+          "id": 11,
+          "at": "2026-10-10T12:00:00Z",
+          "actor": {
+            "account": "ada",
+            "authenticated": true,
+            "member": "laptop",
+            "peer": null
+          },
+          "action": {
+            "change": "open_assets"
           },
           "outcome": {
             "kind": "done"
@@ -4593,6 +4676,17 @@
             ],
             "home": "ada",
             "self_registration": true,
+            "asset_seals": true,
+            "asset_seal_at_start": true,
+            "assets_sealed": "the hub seals them each time it starts, until the super administrator opens them",
+            "synced": [
+              {
+                "account": "ada",
+                "devices": 3,
+                "synced": 2,
+                "behind": 420000
+              }
+            ],
             "accounts": [
               {
                 "name": "ada",
@@ -4989,6 +5083,13 @@
         "self_registration": false
       },
       {
+        "change": "asset_seal",
+        "at_start": true
+      },
+      {
+        "change": "open_assets"
+      },
+      {
         "change": "share_project",
         "town": "mark50",
         "with": "bo",
@@ -5107,765 +5208,6 @@
       },
       null
     ]
-  },
-  "pages": {
-    "calls": [
-      {
-        "call": "page",
-        "do": "publish",
-        "town": "mark50",
-        "page": "training",
-        "base": null,
-        "draft": {
-          "title": "Training",
-          "description": "Loss by step.",
-          "acts": [
-            {
-              "kind": "run",
-              "machine": "desktop",
-              "script": "printf 'hello\\n'"
-            },
-            {
-              "kind": "say",
-              "to": {
-                "machine": "desktop",
-                "resident": "codex-abcd"
-              }
-            },
-            {
-              "kind": "journal",
-              "journal": "experiments"
-            }
-          ],
-          "html": "<!doctype html><title>Training</title><p>Loss</p>"
-        }
-      },
-      {
-        "call": "page",
-        "do": "publish",
-        "town": "mark50",
-        "page": "training",
-        "base": 1,
-        "draft": {
-          "title": "Training",
-          "description": "Loss by step.",
-          "acts": [
-            {
-              "kind": "run",
-              "machine": "desktop",
-              "script": "printf 'hello\\n'"
-            },
-            {
-              "kind": "say",
-              "to": {
-                "machine": "desktop",
-                "resident": "codex-abcd"
-              }
-            },
-            {
-              "kind": "journal",
-              "journal": "experiments"
-            }
-          ],
-          "html": "<!doctype html><title>Training</title><p>Loss</p>"
-        }
-      },
-      {
-        "call": "page",
-        "do": "read",
-        "town": "mark50",
-        "page": "training",
-        "version": null
-      },
-      {
-        "call": "page",
-        "do": "read",
-        "town": "mark50",
-        "page": "training",
-        "version": 1
-      },
-      {
-        "call": "page",
-        "do": "list",
-        "town": "mark50"
-      },
-      {
-        "call": "page",
-        "do": "history",
-        "town": "mark50",
-        "page": "training"
-      },
-      {
-        "call": "page",
-        "do": "withdraw",
-        "town": "mark50",
-        "page": "training",
-        "base": 1
-      },
-      {
-        "call": "page",
-        "do": "restore",
-        "town": "mark50",
-        "page": "training",
-        "base": 2,
-        "version": 1
-      },
-      {
-        "call": "page",
-        "do": "consent",
-        "town": "mark50",
-        "page": "training",
-        "version": 1,
-        "base": null,
-        "acts": [
-          {
-            "kind": "run",
-            "machine": "desktop",
-            "script": "printf 'hello\\n'"
-          },
-          {
-            "kind": "say",
-            "to": {
-              "machine": "desktop",
-              "resident": "codex-abcd"
-            }
-          },
-          {
-            "kind": "journal",
-            "journal": "experiments"
-          }
-        ]
-      },
-      {
-        "call": "page",
-        "do": "consent",
-        "town": "mark50",
-        "page": "training",
-        "version": 3,
-        "base": 1,
-        "acts": []
-      },
-      {
-        "call": "page",
-        "do": "act",
-        "town": "mark50",
-        "page": "training",
-        "version": 1,
-        "action": {
-          "kind": "run",
-          "machine": "desktop",
-          "script": "printf 'hello\\n'"
-        }
-      },
-      {
-        "call": "page",
-        "do": "act",
-        "town": "mark50",
-        "page": "training",
-        "version": 1,
-        "action": {
-          "kind": "say",
-          "to": {
-            "machine": "desktop",
-            "resident": "codex-abcd"
-          },
-          "text": "Show the latest loss."
-        }
-      },
-      {
-        "call": "page",
-        "do": "act",
-        "town": "mark50",
-        "page": "training",
-        "version": 1,
-        "action": {
-          "kind": "journal",
-          "journal": "experiments",
-          "text": "The user opened the training page."
-        }
-      }
-    ],
-    "replies": [
-      {
-        "reply": "page",
-        "view": {
-          "town": "mark50",
-          "page": "training",
-          "publication": {
-            "version": 1,
-            "base": null,
-            "title": "Training",
-            "description": "Loss by step.",
-            "acts": [
-              {
-                "kind": "run",
-                "machine": "desktop",
-                "script": "printf 'hello\\n'"
-              },
-              {
-                "kind": "say",
-                "to": {
-                  "machine": "desktop",
-                  "resident": "codex-abcd"
-                }
-              },
-              {
-                "kind": "journal",
-                "journal": "experiments"
-              }
-            ],
-            "withdrawn": false,
-            "restored_from": null,
-            "by": {
-              "kind": "resident",
-              "address": {
-                "machine": "desktop",
-                "resident": "codex-abcd"
-              }
-            },
-            "on": "desktop",
-            "at": "2026-10-04T12:00:00Z"
-          },
-          "html": "<!doctype html><title>Training</title><p>Loss</p>",
-          "consent": {
-            "version": 1,
-            "base": null,
-            "page_version": 1,
-            "acts": [
-              {
-                "kind": "run",
-                "machine": "desktop",
-                "script": "printf 'hello\\n'"
-              },
-              {
-                "kind": "say",
-                "to": {
-                  "machine": "desktop",
-                  "resident": "codex-abcd"
-                }
-              },
-              {
-                "kind": "journal",
-                "journal": "experiments"
-              }
-            ],
-            "stamp": {
-              "by": {
-                "kind": "user"
-              },
-              "on": "phone",
-              "at": "2026-10-04T12:00:00Z"
-            }
-          }
-        }
-      },
-      {
-        "reply": "page",
-        "view": {
-          "town": "mark50",
-          "page": "training",
-          "publication": {
-            "version": 2,
-            "base": 1,
-            "title": "Training",
-            "description": "Loss by step.",
-            "acts": [],
-            "withdrawn": true,
-            "restored_from": null,
-            "by": {
-              "kind": "resident",
-              "address": {
-                "machine": "desktop",
-                "resident": "codex-abcd"
-              }
-            },
-            "on": "desktop",
-            "at": "2026-10-04T12:00:00Z"
-          },
-          "html": null,
-          "consent": {
-            "version": 1,
-            "base": null,
-            "page_version": 1,
-            "acts": [
-              {
-                "kind": "run",
-                "machine": "desktop",
-                "script": "printf 'hello\\n'"
-              },
-              {
-                "kind": "say",
-                "to": {
-                  "machine": "desktop",
-                  "resident": "codex-abcd"
-                }
-              },
-              {
-                "kind": "journal",
-                "journal": "experiments"
-              }
-            ],
-            "stamp": {
-              "by": {
-                "kind": "user"
-              },
-              "on": "phone",
-              "at": "2026-10-04T12:00:00Z"
-            }
-          }
-        }
-      },
-      {
-        "reply": "pages",
-        "town": "mark50",
-        "pages": [
-          {
-            "page": "training",
-            "current": {
-              "version": 3,
-              "base": 2,
-              "title": "Training",
-              "description": "Loss by step.",
-              "acts": [
-                {
-                  "kind": "run",
-                  "machine": "desktop",
-                  "script": "printf 'hello\\n'"
-                },
-                {
-                  "kind": "say",
-                  "to": {
-                    "machine": "desktop",
-                    "resident": "codex-abcd"
-                  }
-                },
-                {
-                  "kind": "journal",
-                  "journal": "experiments"
-                }
-              ],
-              "withdrawn": false,
-              "restored_from": 1,
-              "by": {
-                "kind": "resident",
-                "address": {
-                  "machine": "desktop",
-                  "resident": "codex-abcd"
-                }
-              },
-              "on": "desktop",
-              "at": "2026-10-04T12:00:00Z"
-            }
-          }
-        ]
-      },
-      {
-        "reply": "page_history",
-        "town": "mark50",
-        "page": "training",
-        "versions": [
-          {
-            "version": 1,
-            "base": null,
-            "title": "Training",
-            "description": "Loss by step.",
-            "acts": [
-              {
-                "kind": "run",
-                "machine": "desktop",
-                "script": "printf 'hello\\n'"
-              },
-              {
-                "kind": "say",
-                "to": {
-                  "machine": "desktop",
-                  "resident": "codex-abcd"
-                }
-              },
-              {
-                "kind": "journal",
-                "journal": "experiments"
-              }
-            ],
-            "withdrawn": false,
-            "restored_from": null,
-            "by": {
-              "kind": "resident",
-              "address": {
-                "machine": "desktop",
-                "resident": "codex-abcd"
-              }
-            },
-            "on": "desktop",
-            "at": "2026-10-04T12:00:00Z"
-          },
-          {
-            "version": 2,
-            "base": 1,
-            "title": "Training",
-            "description": "Loss by step.",
-            "acts": [],
-            "withdrawn": true,
-            "restored_from": null,
-            "by": {
-              "kind": "resident",
-              "address": {
-                "machine": "desktop",
-                "resident": "codex-abcd"
-              }
-            },
-            "on": "desktop",
-            "at": "2026-10-04T12:00:00Z"
-          },
-          {
-            "version": 3,
-            "base": 2,
-            "title": "Training",
-            "description": "Loss by step.",
-            "acts": [
-              {
-                "kind": "run",
-                "machine": "desktop",
-                "script": "printf 'hello\\n'"
-              },
-              {
-                "kind": "say",
-                "to": {
-                  "machine": "desktop",
-                  "resident": "codex-abcd"
-                }
-              },
-              {
-                "kind": "journal",
-                "journal": "experiments"
-              }
-            ],
-            "withdrawn": false,
-            "restored_from": 1,
-            "by": {
-              "kind": "resident",
-              "address": {
-                "machine": "desktop",
-                "resident": "codex-abcd"
-              }
-            },
-            "on": "desktop",
-            "at": "2026-10-04T12:00:00Z"
-          }
-        ]
-      },
-      {
-        "reply": "page_consent",
-        "town": "mark50",
-        "page": "training",
-        "consent": {
-          "version": 1,
-          "base": null,
-          "page_version": 1,
-          "acts": [
-            {
-              "kind": "run",
-              "machine": "desktop",
-              "script": "printf 'hello\\n'"
-            },
-            {
-              "kind": "say",
-              "to": {
-                "machine": "desktop",
-                "resident": "codex-abcd"
-              }
-            },
-            {
-              "kind": "journal",
-              "journal": "experiments"
-            }
-          ],
-          "stamp": {
-            "by": {
-              "kind": "user"
-            },
-            "on": "phone",
-            "at": "2026-10-04T12:00:00Z"
-          }
-        }
-      },
-      {
-        "reply": "page_act",
-        "result": {
-          "kind": "run",
-          "machine": "desktop",
-          "job": "j-abc123",
-          "state": {
-            "kind": "ended",
-            "status": {
-              "code": 0
-            }
-          },
-          "output": {
-            "log": "C:/world/towns/mark50/pages/training/out/j-abc123.log",
-            "bytes": 6,
-            "lines": 1,
-            "pieces": [
-              {
-                "kind": "text",
-                "first_line": 1,
-                "text": "hello\n"
-              }
-            ],
-            "legacy": [],
-            "escaped_lines": 0
-          }
-        }
-      },
-      {
-        "reply": "page_act",
-        "result": {
-          "kind": "said",
-          "to": {
-            "machine": "desktop",
-            "resident": "codex-abcd"
-          },
-          "landed": {
-            "kind": "sent"
-          }
-        }
-      },
-      {
-        "reply": "page_act",
-        "result": {
-          "kind": "entry_added",
-          "journal": "experiments",
-          "id": "20261004T120000Z-desktop"
-        }
-      }
-    ],
-    "remote_calls": [
-      {
-        "call": "page_action",
-        "source": {
-          "town": "mark50",
-          "page": "training",
-          "version": 1,
-          "by": {
-            "kind": "resident",
-            "address": {
-              "machine": "desktop",
-              "resident": "codex-abcd"
-            }
-          },
-          "on": "desktop",
-          "opened_on": "phone"
-        },
-        "action": {
-          "kind": "run",
-          "machine": "desktop",
-          "script": "printf 'hello\\n'"
-        }
-      },
-      {
-        "call": "page_action",
-        "source": {
-          "town": "mark50",
-          "page": "training",
-          "version": 1,
-          "by": {
-            "kind": "resident",
-            "address": {
-              "machine": "desktop",
-              "resident": "codex-abcd"
-            }
-          },
-          "on": "desktop",
-          "opened_on": "phone"
-        },
-        "action": {
-          "kind": "say",
-          "to": {
-            "machine": "desktop",
-            "resident": "codex-abcd"
-          },
-          "text": "Show the latest loss."
-        }
-      }
-    ],
-    "remote_replies": [
-      {
-        "reply": "page_action",
-        "result": {
-          "kind": "run",
-          "machine": "desktop",
-          "job": "j-abc123",
-          "state": {
-            "kind": "ended",
-            "status": {
-              "code": 0
-            }
-          },
-          "output": {
-            "log": "C:/world/towns/mark50/pages/training/out/j-abc123.log",
-            "bytes": 6,
-            "lines": 1,
-            "pieces": [
-              {
-                "kind": "text",
-                "first_line": 1,
-                "text": "hello\n"
-              }
-            ],
-            "legacy": [],
-            "escaped_lines": 0
-          }
-        }
-      },
-      {
-        "reply": "page_action",
-        "result": {
-          "kind": "said",
-          "to": {
-            "machine": "desktop",
-            "resident": "codex-abcd"
-          },
-          "landed": {
-            "kind": "sent"
-          }
-        }
-      }
-    ],
-    "speaker": {
-      "kind": "page",
-      "page": {
-        "town": "mark50",
-        "page": "training",
-        "version": 1,
-        "by": {
-          "kind": "resident",
-          "address": {
-            "machine": "desktop",
-            "resident": "codex-abcd"
-          }
-        },
-        "on": "desktop",
-        "opened_on": "phone"
-      }
-    },
-    "writer": {
-      "kind": "page",
-      "page": {
-        "town": "mark50",
-        "page": "training",
-        "version": 1,
-        "by": {
-          "kind": "resident",
-          "address": {
-            "machine": "desktop",
-            "resident": "codex-abcd"
-          }
-        },
-        "on": "desktop",
-        "opened_on": "phone"
-      }
-    },
-    "job_owner": {
-      "page": {
-        "town": "mark50",
-        "page": "training",
-        "version": 1,
-        "by": {
-          "kind": "resident",
-          "address": {
-            "machine": "desktop",
-            "resident": "codex-abcd"
-          }
-        },
-        "on": "desktop",
-        "opened_on": "phone"
-      }
-    },
-    "peer": {
-      "kind": "page",
-      "page": {
-        "town": "mark50",
-        "page": "training",
-        "version": 1,
-        "by": {
-          "kind": "resident",
-          "address": {
-            "machine": "desktop",
-            "resident": "codex-abcd"
-          }
-        },
-        "on": "desktop",
-        "opened_on": "phone"
-      }
-    },
-    "map": {
-      "town": "mark50",
-      "ledger": "C:/world/towns/mark50/ledger",
-      "record": {
-        "version": 1,
-        "name": "Mark 50",
-        "what": "Training experiments",
-        "machines": [
-          "desktop"
-        ],
-        "places": [],
-        "canon": null,
-        "by": {
-          "kind": "user"
-        },
-        "on": "desktop",
-        "at": "2026-10-04T12:00:00Z"
-      },
-      "opened": {
-        "by": {
-          "kind": "user"
-        },
-        "on": "desktop",
-        "at": "2026-10-04T12:00:00Z"
-      },
-      "journals": [],
-      "pages": [
-        {
-          "page": "training",
-          "current": {
-            "version": 3,
-            "base": 2,
-            "title": "Training",
-            "description": "Loss by step.",
-            "acts": [
-              {
-                "kind": "run",
-                "machine": "desktop",
-                "script": "printf 'hello\\n'"
-              },
-              {
-                "kind": "say",
-                "to": {
-                  "machine": "desktop",
-                  "resident": "codex-abcd"
-                }
-              },
-              {
-                "kind": "journal",
-                "journal": "experiments"
-              }
-            ],
-            "withdrawn": false,
-            "restored_from": 1,
-            "by": {
-              "kind": "resident",
-              "address": {
-                "machine": "desktop",
-                "resident": "codex-abcd"
-              }
-            },
-            "on": "desktop",
-            "at": "2026-10-04T12:00:00Z"
-          }
-        }
-      ],
-      "canon": null
-    }
   },
   "session": {
     "events": [
@@ -15498,7 +14840,6 @@
           "stats": true,
           "mcp": true,
           "mcp_import": true,
-          "page_accounts": true,
           "attachment_places": true,
           "attachment_runs": true,
           "shell": "",
@@ -15568,7 +14909,6 @@
                     "version": "fixture-version",
                     "mcp": true,
                     "mcp_import": true,
-                    "page_accounts": true,
                     "attachment_places": true,
                     "attachment_runs": true,
                     "shell": ""
@@ -15628,7 +14968,6 @@
                     "version": "fixture-version",
                     "mcp": true,
                     "mcp_import": true,
-                    "page_accounts": true,
                     "attachment_places": true,
                     "attachment_runs": true,
                     "shell": ""
@@ -15672,7 +15011,6 @@
           "stats": true,
           "mcp": true,
           "mcp_import": true,
-          "page_accounts": true,
           "attachment_places": true,
           "attachment_runs": true,
           "shell": "",
@@ -15744,7 +15082,6 @@
                     "version": "fixture-version",
                     "mcp": true,
                     "mcp_import": true,
-                    "page_accounts": true,
                     "attachment_places": true,
                     "attachment_runs": true,
                     "shell": ""
@@ -15804,7 +15141,6 @@
                     "version": "fixture-version",
                     "mcp": true,
                     "mcp_import": true,
-                    "page_accounts": true,
                     "attachment_places": true,
                     "attachment_runs": true,
                     "shell": ""
@@ -15848,7 +15184,6 @@
           "stats": true,
           "mcp": true,
           "mcp_import": true,
-          "page_accounts": true,
           "attachment_places": true,
           "attachment_runs": true,
           "shell": "",
@@ -15920,7 +15255,6 @@
                     "version": "fixture-version",
                     "mcp": true,
                     "mcp_import": true,
-                    "page_accounts": true,
                     "attachment_places": true,
                     "attachment_runs": true,
                     "shell": ""
@@ -15980,7 +15314,6 @@
                     "version": "fixture-version",
                     "mcp": true,
                     "mcp_import": true,
-                    "page_accounts": true,
                     "attachment_places": true,
                     "attachment_runs": true,
                     "shell": ""
@@ -16024,7 +15357,6 @@
           "stats": true,
           "mcp": true,
           "mcp_import": true,
-          "page_accounts": true,
           "attachment_places": true,
           "attachment_runs": true,
           "shell": "",
@@ -16095,7 +15427,6 @@
                     "version": "fixture-version",
                     "mcp": true,
                     "mcp_import": true,
-                    "page_accounts": true,
                     "attachment_places": true,
                     "attachment_runs": true,
                     "shell": ""
@@ -16155,7 +15486,6 @@
                     "version": "fixture-version",
                     "mcp": true,
                     "mcp_import": true,
-                    "page_accounts": true,
                     "attachment_places": true,
                     "attachment_runs": true,
                     "shell": ""
@@ -16199,7 +15529,6 @@
           "stats": true,
           "mcp": true,
           "mcp_import": true,
-          "page_accounts": true,
           "attachment_places": true,
           "attachment_runs": true,
           "shell": "",
@@ -16271,7 +15600,6 @@
                     "version": "fixture-version",
                     "mcp": true,
                     "mcp_import": true,
-                    "page_accounts": true,
                     "attachment_places": true,
                     "attachment_runs": true,
                     "shell": ""
@@ -16331,7 +15659,6 @@
                     "version": "fixture-version",
                     "mcp": true,
                     "mcp_import": true,
-                    "page_accounts": true,
                     "attachment_places": true,
                     "attachment_runs": true,
                     "shell": ""
@@ -16375,7 +15702,6 @@
           "stats": true,
           "mcp": true,
           "mcp_import": true,
-          "page_accounts": true,
           "attachment_places": true,
           "attachment_runs": true,
           "shell": "",
@@ -16450,7 +15776,6 @@
                     "version": "fixture-version",
                     "mcp": true,
                     "mcp_import": true,
-                    "page_accounts": true,
                     "attachment_places": true,
                     "attachment_runs": true,
                     "shell": ""
@@ -16510,7 +15835,6 @@
                     "version": "fixture-version",
                     "mcp": true,
                     "mcp_import": true,
-                    "page_accounts": true,
                     "attachment_places": true,
                     "attachment_runs": true,
                     "shell": ""
@@ -16554,7 +15878,6 @@
           "stats": true,
           "mcp": true,
           "mcp_import": true,
-          "page_accounts": true,
           "attachment_places": true,
           "attachment_runs": true,
           "shell": "",
@@ -16630,7 +15953,6 @@
                     "version": "fixture-version",
                     "mcp": true,
                     "mcp_import": true,
-                    "page_accounts": true,
                     "attachment_places": true,
                     "attachment_runs": true,
                     "shell": ""
@@ -16690,7 +16012,6 @@
                     "version": "fixture-version",
                     "mcp": true,
                     "mcp_import": true,
-                    "page_accounts": true,
                     "attachment_places": true,
                     "attachment_runs": true,
                     "shell": ""
@@ -16734,7 +16055,6 @@
           "stats": true,
           "mcp": true,
           "mcp_import": true,
-          "page_accounts": true,
           "attachment_places": true,
           "attachment_runs": true,
           "shell": "",
@@ -16810,7 +16130,6 @@
                     "version": "fixture-version",
                     "mcp": true,
                     "mcp_import": true,
-                    "page_accounts": true,
                     "attachment_places": true,
                     "attachment_runs": true,
                     "shell": ""
@@ -16870,7 +16189,6 @@
                     "version": "fixture-version",
                     "mcp": true,
                     "mcp_import": true,
-                    "page_accounts": true,
                     "attachment_places": true,
                     "attachment_runs": true,
                     "shell": ""
@@ -16914,7 +16232,6 @@
           "stats": true,
           "mcp": true,
           "mcp_import": true,
-          "page_accounts": true,
           "attachment_places": true,
           "attachment_runs": true,
           "shell": "",
@@ -16989,7 +16306,6 @@
                     "version": "fixture-version",
                     "mcp": true,
                     "mcp_import": true,
-                    "page_accounts": true,
                     "attachment_places": true,
                     "attachment_runs": true,
                     "shell": ""
@@ -17049,7 +16365,6 @@
                     "version": "fixture-version",
                     "mcp": true,
                     "mcp_import": true,
-                    "page_accounts": true,
                     "attachment_places": true,
                     "attachment_runs": true,
                     "shell": ""
@@ -17093,7 +16408,6 @@
           "stats": true,
           "mcp": true,
           "mcp_import": true,
-          "page_accounts": true,
           "attachment_places": true,
           "attachment_runs": true,
           "shell": "",
@@ -17170,7 +16484,6 @@
                     "version": "fixture-version",
                     "mcp": true,
                     "mcp_import": true,
-                    "page_accounts": true,
                     "attachment_places": true,
                     "attachment_runs": true,
                     "shell": ""
@@ -17230,7 +16543,6 @@
                     "version": "fixture-version",
                     "mcp": true,
                     "mcp_import": true,
-                    "page_accounts": true,
                     "attachment_places": true,
                     "attachment_runs": true,
                     "shell": ""
@@ -17265,7 +16577,6 @@
           "version": "fixture-version",
           "mcp": true,
           "mcp_import": true,
-          "page_accounts": true,
           "attachment_places": true,
           "attachment_runs": true,
           "shell": ""
@@ -17841,6 +17152,50 @@
             }
           ]
         }
+      }
+    ],
+    "machine_presence": [
+      {
+        "machine": "laptop",
+        "hubs": [
+          {
+            "hub": "w-0123456789abcdef",
+            "revision": 17,
+            "current": true,
+            "access": "granted"
+          }
+        ]
+      },
+      {
+        "machine": "laptop",
+        "hubs": [
+          {
+            "hub": "w-0123456789abcdef",
+            "revision": 17,
+            "current": true,
+            "access": "not_granted"
+          }
+        ]
+      },
+      {
+        "machine": "laptop",
+        "hubs": [
+          {
+            "hub": "w-0123456789abcdef",
+            "revision": 17,
+            "access": "unknown"
+          }
+        ]
+      },
+      {
+        "machine": "laptop",
+        "hubs": [
+          {
+            "hub": "w-0123456789abcdef",
+            "revision": 17,
+            "access": "stopped"
+          }
+        ]
       }
     ]
   },
@@ -22165,6 +21520,10 @@
         "answer": {
           "decision": "accept"
         }
+      },
+      {
+        "do": "goal",
+        "objective": "把这一版做完"
       }
     ],
     "controlled": [
@@ -22223,8 +21582,19 @@
         "usage": null
       },
       {
+        "gathering": true,
+        "controls": [],
+        "commands": [],
+        "models": [],
+        "model": "model",
+        "effort": null,
+        "service_tier": null,
+        "usage": null
+      },
+      {
         "control_queue": true,
         "controls_told": true,
+        "control_goal": true,
         "pending_controls": [
           {
             "id": "control-1",
@@ -22232,6 +21602,17 @@
               "do": "compact"
             },
             "at": "2026-10-21T00:00:00Z",
+            "state": "waiting"
+          }
+        ],
+        "pending_newer": [
+          {
+            "id": "control-2",
+            "control": {
+              "do": "goal",
+              "objective": "把这一版做完"
+            },
+            "at": "2026-10-21T00:00:01Z",
             "state": "waiting"
           }
         ],
@@ -23955,6 +23336,28 @@
         "number": 1,
         "document": "document-a",
         "update": "AAA="
+      },
+      {
+        "kind": "mutate",
+        "number": 4,
+        "mutation": {
+          "operation": "files-a",
+          "do": "files_on",
+          "target": {
+            "kind": "draft"
+          },
+          "epoch": 0,
+          "files_on": null
+        }
+      },
+      {
+        "kind": "mutate",
+        "number": 7,
+        "mutation": {
+          "operation": "withdraw-a",
+          "do": "withdraw",
+          "send": "send-native"
+        }
       }
     ],
     "frames": [
@@ -23984,6 +23387,85 @@
             "update": "AAA="
           }
         ]
+      },
+      {
+        "kind": "state",
+        "version": 1,
+        "state": {
+          "revision": 7,
+          "draft": {
+            "id": "document-a",
+            "revision": 3,
+            "epoch": 0,
+            "attachments": [],
+            "uploads": [],
+            "files_on": null
+          },
+          "queue": [],
+          "commands": [],
+          "unobserved": [],
+          "held": null,
+          "awaiting_turn": null
+        },
+        "documents": [],
+        "vectors": [
+          {
+            "document": "document-a",
+            "vector": "AA=="
+          }
+        ],
+        "mutations": true
+      },
+      {
+        "kind": "result",
+        "number": 4,
+        "revision": 9,
+        "operation": {
+          "operation": "send-a",
+          "delivery": "queued-cd34",
+          "accepted": true,
+          "landed": null,
+          "failure": null
+        }
+      },
+      {
+        "kind": "result",
+        "number": 5,
+        "revision": 9,
+        "operation": {
+          "operation": "send-queued",
+          "delivery": null,
+          "accepted": false,
+          "landed": null,
+          "failure": null
+        }
+      },
+      {
+        "kind": "result",
+        "number": 6,
+        "revision": 10,
+        "operation": {
+          "operation": "send-native",
+          "delivery": "queued-cd34",
+          "accepted": false,
+          "landed": {
+            "kind": "new_turn",
+            "turn": "turn-a"
+          },
+          "failure": null
+        }
+      },
+      {
+        "kind": "result",
+        "number": 7,
+        "revision": 10,
+        "operation": {
+          "operation": "withdraw-a",
+          "delivery": null,
+          "accepted": false,
+          "landed": null,
+          "failure": "these words were already sent"
+        }
       },
       {
         "kind": "update",
@@ -24029,6 +23511,15 @@
         "do": "send_document",
         "document": "document-a",
         "snapshot": "AAA=",
+        "attachments": []
+      },
+      {
+        "operation": "send-native",
+        "do": "send_document",
+        "document": "document-a",
+        "epoch": 0,
+        "snapshot": "AAA=",
+        "take": "AAA=",
         "attachments": []
       }
     ]
@@ -25457,19 +24948,22 @@
             "at": "2026-10-12T09:00:00Z",
             "person": 0,
             "tokens": 1840000,
-            "usd": 2910000
+            "usd": 2910000,
+            "fable": 1200000
           },
           {
             "at": "2026-10-12T09:00:00Z",
             "person": 1,
             "tokens": 220000,
-            "usd": 310000
+            "usd": 310000,
+            "fable": 0
           },
           {
             "at": "2026-10-12T14:00:00Z",
             "person": 0,
             "tokens": 960000,
-            "usd": 1480000
+            "usd": 1480000,
+            "fable": 400000
           }
         ],
         "week": {
@@ -25689,19 +25183,22 @@
             "at": "2026-10-12T09:00:00Z",
             "person": 0,
             "tokens": 1840000,
-            "usd": 2910000
+            "usd": 2910000,
+            "fable": 1200000
           },
           {
             "at": "2026-10-12T09:00:00Z",
             "person": 1,
             "tokens": 220000,
-            "usd": 310000
+            "usd": 310000,
+            "fable": 0
           },
           {
             "at": "2026-10-12T14:00:00Z",
             "person": 0,
             "tokens": 960000,
-            "usd": 1480000
+            "usd": 1480000,
+            "fable": 400000
           }
         ],
         "week": {

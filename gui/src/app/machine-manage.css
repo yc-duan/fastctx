@@ -21,7 +21,7 @@
   max-width: 16em;
   height: 6px;
   border-radius: var(--radius-full);
-  background: var(--fill-strong);
+  background: var(--bar-track);
   overflow: hidden;
 }
 

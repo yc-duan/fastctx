@@ -1,4 +1,13 @@
 //! Reasons to keep a host runtime, and opportunistic retirement.
+//!
+//! A conversation's host runtime is kept for the model's activity alone
+//! (2026-11-16): a turn running, and, for Claude, for `IDLE` after the model
+//! last acted (`sweep`). Who looks at the conversation — a window that keeps
+//! it open, a subscription, `fastctx attach` — and a card that waits for the
+//! user's answer keep nothing: what wakes a conversation (its words, the
+//! World's events) wakes it again. The few seconds a word is handed over, a
+//! control runs or the conversation is deleted are not a reason to keep it
+//! but steps not to be cut through.
 
 use super::{ReleaseReason, adapters::Adapter};
 use crate::Node;
@@ -9,7 +18,7 @@ use std::{
     time::Duration,
 };
 
-const IDLE: Duration = Duration::from_secs(90 * 60);
+const IDLE: Duration = Duration::from_secs(75 * 60);
 const SWEEP: Duration = Duration::from_secs(60);
 
 pub(super) fn idle_delay() -> Duration {
@@ -23,18 +32,18 @@ pub(super) fn idle_delay() -> Duration {
     IDLE
 }
 
+/// Whether the model last acted `idle_delay` ago or longer: as the World
+/// saw its turns begin and end (`now.since`), and as the host last wrote the
+/// work of its own it runs between them (`host`, a Claude worker's job).
+pub(super) fn rested(since: jiff::Timestamp, host: Option<jiff::Timestamp>) -> bool {
+    let acted = host.map_or(since, |host| host.max(since));
+    jiff::Timestamp::now().as_second().saturating_sub(acted.as_second()) >= idle_delay().as_secs() as i64
+}
+
 pub(crate) async fn held(node: &Node, id: &ResidentId) -> Result<bool, Failure> {
     let Some(now) = node.residents.now(id) else { return Ok(true) };
-    if now.activity == Activity::Busy
-        || now.turn.is_some()
-        || now.waiting_for_user
-        || now.asked.as_ref().is_some_and(|asked| asked.waits)
-        || now.desk
-        || node.desk.held_by(id)
-        || node.watchers.watched(id)
-        || node.attached.contains(id)
-        || node.residents.is_deleting(id)
-    {
+    // The model at work, a turn running; and a deletion, not cut through.
+    if now.activity == Activity::Busy || now.turn.is_some() || node.residents.is_deleting(id) {
         return Ok(true);
     }
     if crate::control_queue::pending(node, id)
@@ -44,11 +53,16 @@ pub(crate) async fn held(node: &Node, id: &ResidentId) -> Result<bool, Failure> 
     {
         return Ok(true);
     }
-    // Context that rides with the next turn does not itself require a runtime.
-    // Untaken plugin envelopes return to Waiting when that activation ends.
+    // Words on their way into the host, handed over or waking it. Context
+    // that rides with the next turn does not itself require a runtime, nor
+    // do words still waiting for a way in — a login's turn, say: they wake
+    // the host when they go in (codex-4bf06087 #2). Untaken plugin envelopes
+    // return to Waiting when that activation ends.
     let directory = node.world.conversation(id);
     fastctx_platform::task::spawn_blocking(move || {
-        crate::inbox::any(&directory, |row| row.delivery.notice.along().is_none())
+        crate::inbox::any(&directory, |row| {
+            row.delivery.notice.along().is_none() && row.state != fastctx_types::residents::PendingState::Waiting
+        })
     })
     .await
     .map_err(|error| Failure::new(error.to_string()))?
@@ -61,16 +75,8 @@ async fn consider(node: &Arc<Node>, id: &ResidentId) -> Result<(), Failure> {
         return Ok(());
     }
     let Some(adapter) = Adapter::for_conversation(&about).filter(|adapter| !adapter.delayed()) else { return Ok(()) };
-    if node.watchers.watched(id) && adapter.needs_subscription(node, &about)? {
-        let actions = crate::control_queue::gate(node, id);
-        let _action = actions.lock().await;
-        let management = node.residents.management(id)?;
-        let _reading = management.read().await;
-        if node.watchers.watched(id) && node.residents.active(id).is_ok() {
-            super::wake::wake(node, id, super::wake::Source::View, None).await.map_err(|error| error.failure)?;
-        }
-        return Ok(());
-    }
+    // A Codex thread is loaded for a turn and let go as it ends: one looked
+    // at is shown from what the World keeps of it, never loaded to be seen.
     if held(node, id).await? {
         return Ok(());
     }

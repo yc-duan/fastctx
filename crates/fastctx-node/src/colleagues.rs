@@ -48,7 +48,7 @@ pub struct Born {
 /// Starts the named callee configured by an account the caller serves.
 pub async fn ask(
     node: &Arc<Node>,
-    asker: ResidentId,
+    requester: Requester,
     town: Option<TownName>,
     label: String,
     prompt: String,
@@ -56,7 +56,8 @@ pub async fn ask(
     login: Option<&fastctx_types::collab::Caller>,
 ) -> Result<Born, Failure> {
     let at = Timestamp::now();
-    let turn = node.residents.now(&asker).and_then(|now| now.turn);
+    let Requester { address, turn } = requester;
+    let asker = address.resident;
     let (about, _) =
         node.residents.about(&asker).ok_or_else(|| Failure::not_run(format!("no resident {asker} lives here")))?;
     let choices = crate::collab::require(node, &asker, login).await?;
@@ -180,7 +181,18 @@ async fn ask_for_account(
         prompt: request.prompt,
         started,
     };
-    match link.call(&lives_on.name, account, Purpose::Agents, call).await {
+    let asking = crate::submitted::Asking::begin();
+    let reply = loop {
+        match link.call(&lives_on.name, account, Purpose::Agents, call.clone()).await {
+            Ok(reply) => {
+                if let Some(reply) = asking.settled(reply).await {
+                    break Ok(reply);
+                }
+            }
+            Err(failure) => break Err(failure),
+        }
+    };
+    match reply {
         Ok(Ok(RemoteReply::Asked { colleague, waiting })) => {
             Ok(Born { colleague: Address { machine: lives_on.name.clone(), resident: colleague }, waiting })
         }
@@ -307,6 +319,7 @@ pub async fn ask_here(
         focus: Default::default(),
         home,
         callee: Some(started.callee.name.clone()),
+        born_shared: crate::timeline::born_shared::now(node),
     };
     let now = Now {
         activity: Activity::Busy,

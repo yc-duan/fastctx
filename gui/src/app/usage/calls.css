@@ -298,6 +298,21 @@
   color: var(--text-3);
 }
 
+/* The page shown stays while the next is read, faded once the reading has
+   taken long enough to be noticed (`--wait-delay`, waiting.css). */
+.uc-rows > * {
+  transition: opacity var(--settle) var(--ease-out);
+}
+
+.uc-rows[aria-busy="true"] > :not(.wait-block) {
+  opacity: 0.45;
+  transition-delay: var(--wait-delay, 200ms);
+}
+
+:root[data-reduced] .uc-rows > * {
+  transition: none;
+}
+
 .uc-slip.wrong {
   color: var(--wrong);
 }

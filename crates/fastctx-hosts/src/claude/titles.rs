@@ -2,9 +2,10 @@
 
 use std::io;
 
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-#[derive(Default)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Titles {
     custom: Option<String>,
     automatic: Option<String>,

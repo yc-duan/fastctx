@@ -1,6 +1,8 @@
 // A conversation's own parts, for the side of the desk while it is in focus
 // (`world-gui.md`, 对话的侧面板): its overview first, a card for each part,
-// then its goal, its plan and its history, each a page of the side; the
+// then its goal, its files and its history, each a page of the side opened
+// on a tab, as each file read there is; a card, or the whole side, can be
+// taken out into a window of its own (`board.ts`) and put back; the
 // goal's bar above the input while the goal is worked toward. Who works with
 // it is drawn from two places: the colleagues it asked, from the World, and
 // the host's own agents, from the conversation itself as it goes. A colleague
@@ -8,10 +10,7 @@
 // it, and one of the host's agents, are read in a sheet. Where it works is
 // said in the desk's corner, whether the side is open or folded away.
 
-import { Sheet } from "../app/confirm";
 import type { AgentRun } from "../conversation/agents";
-import { glyph } from "../conversation/glyphs";
-import { escape } from "../conversation/prose";
 import { PlanPage, type PlanShown } from "../plan/panel";
 import { planShape } from "../plan/shape";
 import type { Address } from "../world/wire";
@@ -20,13 +19,21 @@ import { GoalBar } from "./goal-bar";
 import { GoalPage } from "./goal-page";
 import { HistoryCard } from "./history-card";
 import { SideHome } from "./home";
+import { SideFiles } from "./files-page";
+import type { ChangedFile } from "../files/model";
+import type { ViewTab } from "../files/view";
 import { SideWhere } from "./where";
-import type { PanePart, PartSet, Peek } from "./pane";
+import { ALONE, ONLY, PULLS, askBack, bringFront, pullOut, sendFile, serve, standsOut, type FileAsked, type Served } from "./board";
+import { cardNames } from "./shown";
+import type { Reading } from "./file-tabs";
+import type { FileLines } from "../files/view";
+import { idsIn, type LiveFact } from "../plan/live";
+import type { PanePart, PartSet, Tab } from "./pane";
 import type { Following, SideSeams } from "./seams";
-import type { CollabNode, GoalShown, NodeState } from "./types";
+import type { CollabNode, GoalShown, NodeState, WhereShown } from "./types";
 
 /** The side's own parts, as their marks are named. */
-export const PART = { home: "part:home", goal: "part:goal", history: "part:history" } as const;
+export const PART = { home: "part:home", goal: "part:goal", files: "part:files", history: "part:history" } as const;
 
 export interface PartsContext {
   host: "claude" | "codex";
@@ -35,20 +42,39 @@ export interface PartsContext {
   say(text: string, detail?: string): void;
   /** Sends the user's words into the conversation at once, as an answer. */
   answer(text: string): Promise<void>;
-  /** What one of the host's agents did, as a box the side can show. */
-  agentBox(run: AgentRun): { element: HTMLElement; update(run: AgentRun): void; destroy(): void };
-  /** Brings the row of the call that sent one of the host's agents into view. */
+  /** Brings the row of the call that sent one of the host's agents into
+   *  view and opens it: what the agent did is read there, in the
+   *  conversation, not in a window over it. */
   jump(id: string): void;
   /** What one of the host's agents does this moment, in a few words. */
   doing?(run: AgentRun): string | null;
+  /** Opens a file of the conversation's over the side's parts: to what it
+   *  holds, or to its changes. */
+  openFile?(machine: string, path: string, tab: ViewTab | null): void;
+  detail?(error: unknown): string;
+  /** How a file of the conversation's is read, for the window its files'
+   *  card stands in. */
+  reading?: Reading;
+  /** In a window of its own (`board.ts`), where one who works with the
+   *  conversation is opened: in the desk's window, not here. */
+  away?: { node(node: CollabNode): void };
 }
+
+/** A file's changes as they cross to a board: whether each has lines to
+ *  read stands in for the way to read them. */
+export type ChangedTold = (Omit<ChangedFile, "changes"> & { changes: (Omit<ChangedFile["changes"][number], "rows"> & { rowed: boolean })[] })[];
+
+/** What a board follows of a conversation's side, by name. */
+type Topic = "plan" | "goal" | "team" | "where" | "changed";
 
 /** The side showing these parts, while their conversation is in focus. */
 export interface PartsFrame {
   /** Opens the side at one of these parts. */
   show(part: string): void;
-  /** Reads something over the parts, the side opened for it. */
-  peek(peek: Peek): void;
+  /** Opens a page on a tab of the side, the side opened for it. */
+  add(tab: Tab): void;
+  /** Shuts the tabs that read files. */
+  shutFiles(): void;
   /** How these parts stand changed. */
   restate(): void;
   /** Whether the side lies over the whole desk, with no room beside. */
@@ -65,19 +91,8 @@ function stateOf(run: AgentRun): NodeState {
   return "unknown";
 }
 
-/** Whether `id` is `node` or anyone under it. */
-function contains(node: CollabNode, id: string): boolean {
-  return node.id === id || node.children.some((child) => contains(child, id));
-}
-
-/** One of the host's agents as a node, with those it sent under it. */
-function nodeOf(
-  run: AgentRun,
-  host: "claude" | "codex",
-  under: Map<string, AgentRun[]>,
-  now: number,
-  doing?: (run: AgentRun) => string | null,
-): CollabNode {
+/** One of the host's agents as a node. */
+function nodeOf(run: AgentRun, host: "claude" | "codex", now: number, doing?: (run: AgentRun) => string | null): CollabNode {
   const began = run.began ?? now;
   const took = run.duration ?? Math.max(0, (run.ended ?? (run.going ? now : began)) - began);
   return {
@@ -94,7 +109,6 @@ function nodeOf(
     tokens: run.tokens,
     model: run.model,
     steps: run.tools ?? run.steps.length,
-    children: (under.get(run.id) ?? []).map((child) => nodeOf(child, host, under, now, doing)),
   };
 }
 
@@ -104,6 +118,7 @@ const minutes = (name: string, value: unknown) => (name === "took" ? Math.floor(
 
 export class SideParts implements PartSet {
   readonly parts: PanePart[];
+  readonly tabs: Tab[] = [];
   readonly where: SideWhere;
   part: string | null = null;
   /** Someone new works with the conversation while its side was not seen. */
@@ -115,14 +130,15 @@ export class SideParts implements PartSet {
   history: { part: string; label: string } | null = null;
   private readonly bar: GoalBar;
   private readonly home: SideHome;
-  private readonly collab: CollabPage;
-  /** Everyone who works with the conversation, while their sheet is open. */
-  private teamSheet: Sheet | null = null;
+  /** The colleagues it asked, and the host's agents it sent, each a page
+   *  set into its own card of the overview. */
+  private readonly colleaguesPage: CollabPage;
+  private readonly agentsPage: CollabPage;
   private readonly goalPage: GoalPage;
+  private readonly filesPage: SideFiles | null = null;
   private readonly planPage: PlanPage;
   private readonly stops: (() => void)[] = [];
   private colleagues: CollabNode[] = [];
-  private teamReading = false;
   /** The colleagues followed, read in full while a page shows them. */
   private following: Following | null = null;
   private detailed = false;
@@ -133,8 +149,13 @@ export class SideParts implements PartSet {
   private shownTeam = "";
   /** The goal as last shown, whose version a change is made against. */
   private shownGoal: GoalShown | null = null;
-  /** The box of the host's agent read over the parts, followed as it goes. */
-  private box: { id: string; update(run: AgentRun): void } | null = null;
+  /** What was last shown of each thing a board follows, and the boards
+   *  told of it as it changes. */
+  private shownPlan: PlanShown | null = null;
+  private shownWhere: WhereShown | null = null;
+  private teamNodes: CollabNode[] = [];
+  private changedFiles: ChangedFile[] = [];
+  private readonly telling: Record<Topic, Set<(...args: unknown[]) => void>> = { plan: new Set(), goal: new Set(), team: new Set(), where: new Set(), changed: new Set() };
 
   constructor(
     page: HTMLElement,
@@ -164,25 +185,53 @@ export class SideParts implements PartSet {
       clear: () => void this.act(seams.goal.clear(version())),
       expand: () => this.frame?.show(PART.goal),
     });
-    this.collab = new CollabPage(words.collab, words.goal, (node) => this.openNode(node));
+    // The files it changed and the folders it works in: what their card of
+    // the overview turns to; in a window of their own, the window's first
+    // page.
+    if (seams.files)
+      this.filesPage = new SideFiles({
+        words: seams.files.words,
+        machine: seams.self.machine,
+        list: seams.files.list,
+        home: seams.files.home,
+        browse: seams.files.browse,
+        open: (machine, path, tab) => context.openFile?.(machine, path, tab),
+        detail: (error) => context.detail?.(error) ?? String(error),
+      });
+    this.colleaguesPage = new CollabPage(words.collab, words.goal, (node) => this.openNode(node), ["colleague", "side"]);
+    this.agentsPage = new CollabPage(words.collab, words.goal, (node) => this.openNode(node), ["subagent"]);
     page.querySelector(".composer-dock > form.composer")?.before(this.bar.element);
     this.home = new SideHome(
       words,
       {
         page: () => this.frame?.show(PART.goal),
-        node: (node) => this.openNode(node),
-        team: () => this.openTeam(),
+        file: (machine, path) => context.openFile?.(machine, path, "changes"),
+        // A card taken out stands in a window of its own, its place kept
+        // here; the files' goes with the files open, which are shut here.
+        away: (card) => card !== "goal" && standsOut(seams.self, card),
+        front: (card) => card !== "goal" && bringFront(seams.self, card),
+        back: (card) => card !== "goal" && askBack(seams.self, card),
+        pull: PULLS
+          ? (card, from) => {
+              if (card === "goal" || !pullOut(seams.self, card, card === "files" ? this.filesOpen() : [], from, `${cardNames(words)[card]} - Fastctx`)) return;
+              if (card === "files") this.frame?.shutFiles();
+            }
+          : undefined,
       },
       !seams.noGoal,
       this.planPage.element,
+      seams.files?.words ?? null,
+      // The pages set into their cards. The files in a window of their own
+      // are that window's first page, not a card's.
+      { colleagues: this.colleaguesPage, agents: this.agentsPage, ...(this.filesPage && ONLY !== "files" ? { files: this.filesPage } : {}) },
     );
-    this.parts = [
-      { id: PART.home, name: words.home.name, page: this.home },
-      ...(seams.noGoal ? [] : [{ id: PART.goal, name: words.pages.goal, page: this.goalPage }]),
-    ];
+    this.parts =
+      ONLY === "files" && this.filesPage && seams.files
+        ? [{ id: PART.files, name: seams.files.words.side.name, page: this.filesPage }]
+        : [{ id: PART.home, name: words.home.name, page: this.home }, ...(seams.noGoal ? [] : [{ id: PART.goal, name: words.pages.goal, page: this.goalPage }])];
     // The history its model works with, a page of its own that the mark in
     // the desk's corner opens: its project's, else its own.
-    if (seams.history) {
+    if (seams.history && !ONLY) {
       const history = seams.history;
       const earlier = history.earlier;
       const card = new HistoryCard({
@@ -200,48 +249,81 @@ export class SideParts implements PartSet {
       this.stops.push(history.watch((catalog) => card.show(catalog)));
       if (earlier) this.stops.push(earlier.watch((catalog) => card.showEarlier(catalog)));
     }
-    this.following = seams.colleagues((nodes, reading = false) => {
+    this.following = seams.colleagues((nodes) => {
       this.colleagues = nodes;
-      this.teamReading = reading;
       this.goalPage.showTeam(nodes);
       this.drawTeam();
     });
     const following = this.following;
     this.stops.push(
-      seams.where((where) => this.where.show(where)),
+      seams.where((where) => {
+        this.shownWhere = where;
+        this.where.show(where);
+        this.filesPage?.place(where);
+        this.tell("where");
+      }),
       seams.plan.watch((plan) => this.plan(plan)),
       ...(seams.noGoal ? [] : [seams.goal.watch((goal) => this.goal(goal))]),
       () => following.stop(),
     );
     this.drawTeam();
+    // The cards of this side that stand in windows of their own are shown
+    // and worked from here.
+    if (!ALONE) this.stops.push(serve(seams.self, this.served()));
   }
 
   /** The host's own agents, as the conversation now knows them. */
   agents(runs: AgentRun[]): void {
     this.runs = runs;
     this.drawTeam();
-    if (this.box) {
-      const run = runs.find((at) => at.id === this.box!.id);
-      if (run) this.box.update(run);
-    }
   }
 
-  /** One of the host's agents, opened in a sheet from the row that sent
-   *  it; false where the conversation does not know it. */
-  openAgent(id: string): boolean {
-    const run = this.runs.find((at) => at.id === id);
-    if (!run) return false;
-    this.openNode(nodeOf(run, this.context.host, new Map(), Date.now()));
-    return true;
+  /** The files the conversation changed, as they now stand. */
+  changed(files: ChangedFile[]): void {
+    this.changedFiles = files;
+    this.home.files(files);
+    this.filesPage?.changed(files);
+    this.tell("changed");
   }
 
-  /** A file read in the side over the parts, the side opened for it, over
-   *  the whole desk where there is no room beside; false where the side is
+  /** The conversation these are the parts of. */
+  get self(): Address {
+    return this.context.seams.self;
+  }
+
+  /** A page opened on a tab of the side, the side opened for it, over the
+   *  whole desk where there is no room beside; false where the side is
    *  showing another conversation's parts. */
-  openFile(page: Peek): boolean {
+  openTab(tab: Tab): boolean {
     if (!this.frame) return false;
-    this.frame.peek(page);
+    this.frame.add(tab);
     return true;
+  }
+
+  /** Turns the side to a tab already open; false where there is none, or
+   *  the side is showing another conversation's parts. */
+  showTab(id: string): boolean {
+    if (!this.frame || !this.tabs.some((tab) => tab.id === id)) return false;
+    this.frame.show(id);
+    return true;
+  }
+
+  /** Files opened here on tabs: those a board had open as it came back,
+   *  or the ones the desk sent a board. */
+  reopen(files: FileAsked[]): void {
+    for (const file of files) this.context.openFile?.(file.machine, file.path, file.tab);
+  }
+
+  /** The files read on tabs here. */
+  filesOpen(): FileAsked[] {
+    return this.tabs.flatMap((tab) => (tab.file ? [{ ...tab.file, tab: null }] : []));
+  }
+
+  /** A file pressed in the conversation goes to where its files are read
+   *  in a window of their own: true where it was sent there. `lost` where
+   *  the window turns out to be gone. */
+  sendOut(file: FileAsked, lost: () => void): boolean {
+    return sendFile(this.self, file, lost);
   }
 
   /** Whether a goal may be set here, from the input among others. */
@@ -256,7 +338,7 @@ export class SideParts implements PartSet {
 
   /** Where the side opens with nothing chosen: at the overview. */
   firstPart(): string {
-    return PART.home;
+    return this.parts[0]!.id;
   }
 
   /** The part in view, none while the side is shut or shows another
@@ -268,90 +350,35 @@ export class SideParts implements PartSet {
   }
 
   private follow(): void {
-    const detailed = this.shownPart === PART.home || this.shownPart === PART.goal || this.teamSheet !== null;
+    const detailed = this.shownPart === PART.home || this.shownPart === PART.goal || this.telling.team.size > 0;
     if (detailed === this.detailed) return;
     this.detailed = detailed;
     this.following?.detail(detailed);
   }
 
-  /** Everyone who works with the conversation, in a sheet: a colleague
-   *  pressed opens beside the conversation, one of the host's agents in the
-   *  sheet, the way back to everyone at its head. */
-  private openTeam(): void {
-    const sheet = this.teamSheet ?? new Sheet("cs-sheet");
-    if (!this.teamSheet) {
-      this.teamSheet = sheet;
-      sheet.dialog.addEventListener("close", () => {
-        if (this.teamSheet === sheet) this.teamSheet = null;
-        this.follow();
-      });
-    }
-    const words = this.context.seams.words;
-    sheet.body.innerHTML = sheet.head(words.pages.collab, words.close);
-    sheet.body.append(this.collab.element);
-    sheet.anew();
-    sheet.show();
-    this.follow();
-  }
-
-  /** One of the host's agents, read in a sheet: in everyone's sheet where it
-   *  was pressed there, with the way back to them; its row in the
-   *  conversation a press away. */
-  private readAgent(run: AgentRun, node: CollabNode): void {
-    const words = this.context.seams.words;
-    const back = this.teamSheet;
-    const sheet = back ?? new Sheet("cs-sheet");
-    const box = this.context.agentBox(run);
-    let gone = false;
-    const done = () => {
-      if (gone) return;
-      gone = true;
-      if (this.box === held) this.box = null;
-      box.destroy();
-    };
-    const way = back ? `<button class="text-button page-back cs-back" type="button">${glyph("back", 18)}<span>${escape(words.pages.collab)}</span></button>` : "";
-    sheet.body.innerHTML = `<header class="sheet-head cs-head">${way}<h2 class="sheet-title">${escape(node.task || node.name)}</h2><button class="text-button cs-jump" type="button">${escape(words.collab.jump)}</button><button class="icon-button sheet-close" type="button" aria-label="${escape(words.close)}">${glyph("close", 18)}</button></header>`;
-    sheet.body.append(box.element);
-    sheet.body.querySelector(".cs-back")?.addEventListener("click", () => {
-      done();
-      this.openTeam();
-    });
-    sheet.body.querySelector(".cs-jump")!.addEventListener("click", () => {
-      sheet.close();
-      this.context.jump(node.id);
-    });
-    sheet.dialog.addEventListener("close", done, { once: true });
-    this.box = { id: node.id, update: (next) => box.update(next) };
-    const held = this.box;
-    sheet.anew();
-    sheet.show();
-  }
-
   leave(): void {
     for (const stop of this.stops) stop();
+    for (const tab of this.tabs.splice(0)) tab.leave?.();
   }
 
-  /** One that works with the conversation, pressed in its whole or in the
-   *  conversation: a colleague opens beside it on the desk, one of the
-   *  host's agents is read in the side. */
+  /** One that works with the conversation, pressed on its card: a
+   *  colleague opens beside it on the desk; one of the host's agents is
+   *  read in the conversation, under the row of the call that sent it,
+   *  which is brought into view and opened. */
   private openNode(node: CollabNode): void {
+    if (this.context.away) return this.context.away.node(node);
     if (node.kind === "colleague" || node.kind === "side") {
-      this.teamSheet?.close();
       this.frame?.beside({ resident: node.id, machine: node.machine ?? this.context.seams.self.machine });
       return;
     }
-    // An agent a colleague sent is read in the colleague's conversation.
-    if (!this.runs.some((run) => run.id === node.id)) {
-      const colleague = this.colleagues.find((one) => contains(one, node.id));
-      if (colleague) this.openNode(colleague);
-      return;
-    }
-    this.readAgent(this.runs.find((at) => at.id === node.id)!, node);
+    this.context.jump(node.id);
   }
 
   /** The plan: its page, and its card on the overview, how far it is and
    *  what it asks. */
   private plan(plan: PlanShown | null): void {
+    this.shownPlan = plan;
+    this.tell("plan");
     this.planPage.show(plan ?? { source: null, version: 0, when: "" });
     this.home.plan(plan?.source ?? null, plan?.source ? planShape(plan.source) : null);
   }
@@ -360,6 +387,7 @@ export class SideParts implements PartSet {
    *  for its page; its card on the overview while the bar does not say it. */
   private goal(goal: GoalShown | null): void {
     this.shownGoal = goal;
+    this.tell("goal");
     this.goalPage.show(goal);
     const barred = !this.context.seams.noGoal && goal && goal.status !== "complete" ? goal : null;
     this.bar.show(barred);
@@ -370,34 +398,152 @@ export class SideParts implements PartSet {
    *  in it, how each stands, and the minutes they have worked. */
   private drawTeam(): void {
     const now = Date.now();
-    const under = new Map<string, AgentRun[]>();
-    const known = new Set(this.runs.map((run) => run.id));
-    const top: AgentRun[] = [];
-    for (const run of this.runs) {
-      if (run.parent && known.has(run.parent)) under.set(run.parent, [...(under.get(run.parent) ?? []), run]);
-      else top.push(run);
-    }
     const doing = this.context.doing?.bind(this.context);
-    const nodes = [...this.colleagues, ...top.map((run) => nodeOf(run, this.context.host, under, now, doing))];
-    const shown = JSON.stringify([nodes, this.teamReading], minutes);
+    // The host's agents are one level with the colleagues: one an agent
+    // sent of its own stands among them, not under it.
+    const nodes = [...this.colleagues, ...this.runs.map((run) => nodeOf(run, this.context.host, now, doing))];
+    const shown = JSON.stringify(nodes, minutes);
     if (shown === this.shownTeam) return;
     this.shownTeam = shown;
     // What is new is told by what the World pushes, the same whether a
-    // page reads the colleagues in full or not: a colleague's goal and its
-    // agents come and go with the page and tell nothing.
+    // page reads the colleagues in full or not: a colleague's goal comes
+    // and goes with the page and tells nothing.
     const colleagues = nodes
       .filter((node) => node.kind === "colleague")
-      .map((node) => ({ ...node, goal: null, branchOf: null, why: null, children: [] }))
+      .map((node) => ({ ...node, goal: null, branchOf: null, why: null }))
       .sort((a, b) => `${a.machine}/${a.id}`.localeCompare(`${b.machine}/${b.id}`));
     const key = JSON.stringify([...colleagues, ...nodes.filter((node) => node.kind !== "colleague")], minutes);
     const fresh = this.drawnTeam !== "" && key !== this.drawnTeam;
     this.drawnTeam = key;
-    this.collab.show(nodes, this.teamReading);
+    this.teamNodes = nodes;
+    this.tell("team");
+    this.colleaguesPage.show(nodes);
+    this.agentsPage.show(nodes);
     this.home.team(nodes);
     if (fresh) {
       this.fresh = true;
       this.frame?.restate();
     }
+  }
+
+  /** What a board is told of `topic` now: the plan with what is known of
+   *  each id it names, which a board cannot ask as it draws. */
+  private said(topic: Topic): unknown[] {
+    if (topic === "plan") {
+      const facts: Record<string, LiveFact | null> = {};
+      for (const id of idsIn(this.shownPlan?.source ?? "")) facts[id] = this.context.seams.plan.seams.facts(id);
+      const plan = this.shownPlan;
+      return [plan && { source: plan.source, version: plan.version, when: plan.when }, facts];
+    }
+    if (topic === "goal") return [this.shownGoal];
+    if (topic === "team") return [this.teamNodes];
+    if (topic === "where") return [this.shownWhere];
+    const told: ChangedTold = this.changedFiles.map((file) => ({ ...file, changes: file.changes.map(({ rows, ...change }) => ({ ...change, rowed: !!rows })) }));
+    return [told];
+  }
+
+  /** Tells the boards following `topic` how it stands now. */
+  private tell(topic: Topic): void {
+    if (!this.telling[topic].size) return;
+    const said = this.said(topic);
+    for (const tell of this.telling[topic]) tell(...said);
+  }
+
+  /** What the cards of this side standing in windows of their own ask of
+   *  the desk's window, and follow there (`board.ts`). Nothing more is read
+   *  for them: they are told what this side already knows. */
+  private served(): Served {
+    const { context } = this;
+    const { seams } = context;
+    const reading = context.reading;
+    const none = () => Promise.reject(new Error("files are not read here"));
+    /** The files a board reads, by the number it was given for each. */
+    const lines = new Map<number, { board: string; source: FileLines }>();
+    let given = 0;
+    const source = (at: number) => {
+      const held = lines.get(at);
+      if (!held) throw new Error("the file is no longer held");
+      return held.source;
+    };
+    const follow = (topic: Topic) => (_board: string, tell: (...args: unknown[]) => void) => {
+      this.telling[topic].add(tell);
+      tell(...this.said(topic));
+      if (topic === "team") this.follow();
+      return () => {
+        this.telling[topic].delete(tell);
+        if (topic === "team") this.follow();
+      };
+    };
+    return {
+      calls: {
+        hello: () => ({ host: context.host, list: !!seams.files?.list, browse: !!seams.files?.browse, reveal: !!seams.reveal, picture: !!reading?.picture, outside: !!reading?.outside }),
+        "plan.save": (_board, text: string, expected: number) => seams.plan.seams.save(text, expected),
+        "plan.open": (_board, id: string) => {
+          seams.plan.seams.open?.(id);
+          window.focus();
+        },
+        answer: (_board, text: string) => context.answer(text),
+        say: (_board, text: string, detail: string | null) => context.say(text, detail ?? undefined),
+        "files.list": (_board, machine: string, path: string) => seams.files?.list?.(machine, path) ?? none(),
+        "files.home": (_board, machine: string) => seams.files?.home(machine) ?? null,
+        "files.browse": (_board, machine: string, folder: string | null) => {
+          seams.files?.browse?.(machine, folder);
+          window.focus();
+        },
+        reveal: (_board, path: string) => seams.reveal?.(path),
+        // One who works with the conversation is opened here, as from the
+        // side: a colleague beside it, one of the host's agents at the row
+        // of the conversation that sent it.
+        node: (_board, id: string) => {
+          const node = this.teamNodes.find((one) => one.id === id);
+          if (!node) return;
+          this.openNode(node);
+          window.focus();
+        },
+        rows: (_board, id: string) =>
+          this.changedFiles
+            .flatMap((file) => file.changes)
+            .find((change) => change.id === id)
+            ?.rows?.() ?? null,
+        "lines.open": async (board, machine: string, path: string) => {
+          const opened = await (reading?.lines(machine, path) ?? none());
+          lines.set((given += 1), { board, source: opened });
+          return { handle: given, extent: opened.extent };
+        },
+        "lines.read": (_board, at: number, start: number, count: number) => source(at).read(start, count, new AbortController().signal),
+        "lines.find": (_board, at: number, query: string, from: { line: number; offset?: number }, direction: 1 | -1) => source(at).find(query, from, direction, new AbortController().signal),
+        "lines.close": async (_board, at: number) => {
+          const held = lines.get(at);
+          lines.delete(at);
+          await held?.source.close();
+        },
+        picture: (_board, machine: string, path: string, max: number) => reading?.picture?.(machine, path, max) ?? none(),
+        outside: (_board, machine: string, path: string) => reading?.outside?.(machine, path),
+      },
+      topics: {
+        plan: follow("plan"),
+        goal: follow("goal"),
+        team: follow("team"),
+        where: follow("where"),
+        changed: follow("changed"),
+        // A file's lines as they change, and the way to them breaking.
+        lines: (_board, tell, at: number) => {
+          const held = lines.get(at)?.source;
+          if (!held) return () => {};
+          const stops = [held.subscribe((change) => tell("changed", change, held.extent)), held.interruptions?.((broken) => tell("broken", broken)) ?? (() => {})];
+          return () => stops.forEach((stop) => stop());
+        },
+      },
+      left: (board) => {
+        for (const [at, held] of lines) {
+          if (held.board !== board) continue;
+          lines.delete(at);
+          void held.source.close().catch(() => {});
+        }
+      },
+      gone: (error) => reading?.gone(error) ?? false,
+      detail: (error) => context.detail?.(error) ?? (error instanceof Error ? error.message : String(error)),
+    };
   }
 
   /** What the user did to the goal: said beside the input when it did not

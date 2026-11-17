@@ -1,6 +1,6 @@
 use std::ffi::OsString;
 use std::fs::{self, File, OpenOptions};
-use std::io::{self, Read};
+use std::io;
 use std::mem::{offset_of, size_of};
 use std::os::windows::ffi::OsStringExt;
 use std::os::windows::fs::{MetadataExt, OpenOptionsExt};
@@ -68,6 +68,7 @@ impl Attributes {
         if result == 0 && io::Error::last_os_error().raw_os_error() != Some(ERROR_INSUFFICIENT_BUFFER as i32) {
             return Err(io::Error::last_os_error());
         }
+        fastctx_platform::read_budget::allocation(path, (needed as usize).saturating_add(3))?;
         let mut security = vec![0u32; (needed as usize).div_ceil(size_of::<u32>())];
         // SAFETY: the aligned buffer has at least the requested size.
         check(unsafe {
@@ -172,6 +173,7 @@ impl Attributes {
 
 fn streams(file: &File, path: &Path) -> io::Result<Vec<(OsString, Vec<u8>)>> {
     let expected = identity(file)?;
+    fastctx_platform::read_budget::allocation(path, size_of::<FILE_STREAM_INFO>().div_ceil(8) * 8)?;
     let mut buffer = vec![0u64; size_of::<FILE_STREAM_INFO>().div_ceil(8)];
     loop {
         // SAFETY: the buffer is aligned for FILE_STREAM_INFO and grows when
@@ -193,6 +195,7 @@ fn streams(file: &File, path: &Path) -> io::Result<Vec<(OsString, Vec<u8>)>> {
         }
         if matches!(error.raw_os_error(), Some(code) if code == ERROR_INSUFFICIENT_BUFFER as i32 || code == windows_sys::Win32::Foundation::ERROR_MORE_DATA as i32)
         {
+            fastctx_platform::read_budget::allocation(path, buffer.len().saturating_mul(16))?;
             buffer.resize(buffer.len() * 2, 0);
         } else {
             return Err(error);
@@ -218,12 +221,11 @@ fn streams(file: &File, path: &Path) -> io::Result<Vec<(OsString, Vec<u8>)>> {
         if name != "::$DATA" {
             let mut stream = path.as_os_str().to_os_string();
             stream.push(&name);
-            let mut reader = OpenOptions::new().read(true).custom_flags(FILE_FLAG_OPEN_REPARSE_POINT).open(stream)?;
+            let mut reader = OpenOptions::new().read(true).custom_flags(FILE_FLAG_OPEN_REPARSE_POINT).open(&stream)?;
             if identity(&reader)? != expected {
                 return Err(io::Error::other("stream belongs to another filesystem object"));
             }
-            let mut bytes = Vec::new();
-            reader.read_to_end(&mut bytes)?;
+            let bytes = fastctx_platform::read_budget::from_reader(&mut reader, Path::new(&stream))?;
             result.push((name, bytes));
         }
         if info.NextEntryOffset == 0 {

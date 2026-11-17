@@ -154,15 +154,6 @@ export interface OnSaid {
   going: boolean;
 }
 
-/** A page published, a version of it. */
-export interface PageDeed {
-  kind: "page";
-  command: string | null;
-  name: string;
-  title: string;
-  machine: string;
-  version: number;
-}
 
 export interface ProjectDeed {
   kind: "project";
@@ -214,7 +205,7 @@ export interface WritesDeed {
 }
 
 /** A deed, and where the command that did it ran, where the script said. */
-export type Deed = (TestsDeed | ChecksDeed | CommitDeed | StatusDeed | LogDeed | PushDeed | SearchDeed | FileDeed | CopyDeed | JobDeed | StopDeed | PageDeed | ProjectDeed | PictureDeed | WorldDeed | FanDeed | PlainDeed | WritesDeed) & { where?: string | null };
+export type Deed = (TestsDeed | ChecksDeed | CommitDeed | StatusDeed | LogDeed | PushDeed | SearchDeed | FileDeed | CopyDeed | JobDeed | StopDeed | ProjectDeed | PictureDeed | WorldDeed | FanDeed | PlainDeed | WritesDeed) & { where?: string | null };
 
 /** What a reader finds in a run's output: a deed, and the line it begins
  *  at, so the commands that printed them can be told in order. */
@@ -254,7 +245,7 @@ export interface DeedWords {
    *  rows name it after the verb `world.look`. */
   looks: { machines: string; working: string; projects: string; plan: string; goal: string; accounts: string; usage(of: string): string };
   /** The World's own doings, as their rows say them. */
-  world: Record<"wait" | "stop" | "publish" | "enter" | "plan" | "sense" | "look", string>;
+  world: Record<"wait" | "stop" | "enter" | "plan" | "sense" | "look", string>;
   /** What the plan is called on its row. */
   thePlan: string;
   /** A goal settled: the verb its row says, and what its card says. */

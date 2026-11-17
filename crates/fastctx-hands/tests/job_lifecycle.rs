@@ -259,13 +259,20 @@ async fn node(mut listener: Listener, world: WorldDir, machine: MachineName, not
                 &serde_json::to_vec(&Welcome::Accepted {
                     goal_runtime: false,
                     watch_many: false,
+                    composer_documents: false,
                     sentinels: false,
                     goal_commands: false,
                     profiles: false,
                     account_records: false,
                     conversation_plans: false,
+                    timeline_reads: false,
+                    watch_live: false,
+                    topics: false,
+                    remote_topics: false,
                     scratch_locations: false,
                     collaboration_watch: false,
+                    timer_pages: true,
+                    file_changes: false,
                     machine: machine.clone(),
                     version: "test".into(),
                     node_lifetime: None,
@@ -274,7 +281,7 @@ async fn node(mut listener: Listener, world: WorldDir, machine: MachineName, not
             )
             .await
             .unwrap();
-        let ClientFrame::Call { id, call } =
+        let ClientFrame::Call { id, call, .. } =
             serde_json::from_slice(&connection.recv().await.unwrap().unwrap()).unwrap()
         else {
             panic!("expected call")

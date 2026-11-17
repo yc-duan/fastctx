@@ -22,15 +22,19 @@ const HABITS: Habit[] = [
     machine: "desktop",
     rate: 6,
     sessions: [
-      { session: "claude-3f2a@desktop", agent: "claude", held: true, project: "mark50" },
-      { session: "codex-7b1c@desktop", agent: "codex", held: false },
-      { session: "codex-a41d@desktop", agent: "codex", held: true, project: "telemetry" },
+      { session: "claude-2b1c@laptop", agent: "claude", held: true, project: "mark50" },
+      { session: "codex-5e2a@desktop", agent: "codex", held: false },
+      { session: "codex-6b19@desktop", agent: "codex", held: true, project: "telemetry" },
     ],
     scripts: [
       { script: "on desktop cargo test -p firmware-sim", seconds: 48, fails: 0.18 },
       { script: "on desktop <<'RUN'\ncd ~/mark50/firmware && cargo fmt && cargo clippy --all-targets\nRUN", seconds: 26, touched: [{ path: "C:/Users/me/mark50/firmware/src/radio.rs", how: "changed", added: 4, removed: 4, seen: true }] },
       { script: "on desktop edit C:/Users/me/mark50/firmware/src/radio.rs", seconds: 1, touched: [{ path: "C:/Users/me/mark50/firmware/src/radio.rs", how: "changed", added: 18, removed: 6 }] },
       { script: "on desktop write C:/Users/me/mark50/firmware/src/telemetry/frame.rs", seconds: 1, touched: [{ path: "C:/Users/me/mark50/firmware/src/telemetry/frame.rs", how: "added", added: 64, removed: 0 }] },
+      { script: "on desktop edit C:/Users/me/mark50/firmware/src/pid/controller.rs", seconds: 1, touched: [{ path: "C:/Users/me/mark50/firmware/src/pid/controller.rs", how: "changed", added: 41, removed: 27 }] },
+      { script: "on desktop write C:/Users/me/mark50/firmware/tests/pid_fixed.rs", seconds: 1, touched: [{ path: "C:/Users/me/mark50/firmware/tests/pid_fixed.rs", how: "added", added: 132 }] },
+      { script: "on desktop <<'RUN'\ncd ~/mark50/firmware && git rm src/pid/float.rs\nRUN", seconds: 1, touched: [{ path: "C:/Users/me/mark50/firmware/src/pid/float.rs", how: "removed", removed: 88, seen: true }] },
+      { script: "on desktop edit C:/Users/me/mark50/firmware/Cargo.toml", seconds: 1, touched: [{ path: "C:/Users/me/mark50/firmware/Cargo.toml", how: "changed", added: 1, removed: 1 }] },
       { script: "on desktop rg -n \"TX_POWER\" ~/mark50/firmware", seconds: 1 },
       { script: "on desktop fastctx view C:/Users/me/mark50/notes/bringup.pdf --pages 3-5", seconds: 2 },
       { script: "on desktop git -C ~/mark50 log --oneline -20", seconds: 1 },
@@ -40,7 +44,7 @@ const HABITS: Habit[] = [
   {
     machine: "server",
     rate: 3,
-    sessions: [{ session: "claude-3f2a@desktop", agent: "claude", held: true, project: "telemetry" }],
+    sessions: [{ session: "claude-41aa@server", agent: "claude", held: true, project: "telemetry" }],
     scripts: [
       { script: "on server <<'RUN'\ncd /srv/telemetry && journalctl -u ingest --since -1h | tail -80\nRUN", seconds: 3 },
       { script: "on server systemctl restart ingest", seconds: 4, fails: 0.08 },
@@ -51,7 +55,7 @@ const HABITS: Habit[] = [
   {
     machine: "gpu",
     rate: 0.6,
-    sessions: [{ session: "codex-a41d@desktop", agent: "codex", held: true, project: "telemetry" }],
+    sessions: [{ session: "codex-6b19@desktop", agent: "codex", held: true, project: "telemetry" }],
     scripts: [
       { script: "on gpu <<'RUN'\ncd ~/runs && python train.py --epochs 3 --batch 64\nRUN", seconds: 2600, fails: 0.2, touched: [{ path: "/home/bo/runs/checkpoints/epoch-3.pt", how: "added" }] },
       { script: "on gpu nvidia-smi", seconds: 1 },
@@ -116,10 +120,10 @@ function deedsOf(habit: Habit, from: number, to: number, now: number): Deed[] {
   // Something runs this very minute on the computer and the server.
   if (now >= from && now < to + HOUR) {
     if (habit.machine === "desktop") {
-      deeds.push({ job: "j-runnow", began: new Date(now - 140_000).toISOString(), session: "claude-3f2a@desktop", agent: "claude", held: true, project: "mark50", script: "on desktop cargo test -p firmware-sim -- --include-ignored", outcome: "running", output: 18_200, looked: 0, copied: 0 });
+      deeds.push({ job: "j-runnow", began: new Date(now - 140_000).toISOString(), from: "laptop", session: "claude-2b1c@laptop", agent: "claude", held: true, project: "mark50", script: "on desktop cargo test -p firmware-sim -- --include-ignored", outcome: "running", output: 18_200, looked: 0, copied: 0 });
     }
     if (habit.machine === "gpu") {
-      deeds.push({ job: "j-trains", began: new Date(now - 41 * 60_000).toISOString(), from: "desktop", session: "codex-a41d@desktop", agent: "codex", held: true, project: "telemetry", script: "on gpu <<'RUN'\ncd ~/runs && python train.py --epochs 3 --batch 64\nRUN", outcome: "running", output: 2_400_000, looked: 0, copied: 0 });
+      deeds.push({ job: "j-trains", began: new Date(now - 41 * 60_000).toISOString(), from: "desktop", session: "codex-6b19@desktop", agent: "codex", held: true, project: "telemetry", script: "on gpu <<'RUN'\ncd ~/runs && python train.py --epochs 3 --batch 64\nRUN", outcome: "running", output: 2_400_000, looked: 0, copied: 0 });
     }
   }
   return deeds;

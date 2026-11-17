@@ -55,6 +55,7 @@ fn let_go(world: &WorldDir, directory: &Path, conversation: &str, fingerprint: &
     // A node last run before moves were kept has not made their tables.
     let creating = db.transaction()?;
     super::initialize(&creating)?;
+    creating.execute_batch(fastctx_jobs::SCHEMA)?;
     creating.commit()?;
     let tables = schema::tables(&db)?;
     if let Some(kept) = unfinished(&db, conversation, fingerprint, &tables)? {
@@ -86,6 +87,18 @@ fn let_go(world: &WorldDir, directory: &Path, conversation: &str, fingerprint: &
             Error::new("its records changed since that export; export it again, move that, and let it go once taken")
         })?;
     }
+    for table in tables.iter().filter(|table| !manifest.tables.iter().any(|proof| proof.name == table.name)) {
+        let remains: bool = transaction.query_row(
+            &format!("SELECT EXISTS(SELECT 1 FROM {} WHERE conversation=?1)", schema::quote(&table.name)),
+            [conversation],
+            |row| row.get(0),
+        )?;
+        if remains {
+            return Err(Error::new(
+                "new source assets were retained after that export; export and transfer them before release",
+            ));
+        }
+    }
     let at = jiff::Timestamp::now().as_millisecond();
     let kept = world.released().join(format!("{conversation}-{at}"));
     {
@@ -98,6 +111,7 @@ fn let_go(world: &WorldDir, directory: &Path, conversation: &str, fingerprint: &
             )?;
         }
     }
+    fastctx_jobs::forget(&transaction, conversation)?;
     transaction.execute("DELETE FROM node_conversation_arrivals WHERE name=?1", [conversation])?;
     transaction.execute(
         "INSERT INTO node_conversation_releases(name,fingerprint,at,kept) VALUES(?1,?2,?3,?4)",

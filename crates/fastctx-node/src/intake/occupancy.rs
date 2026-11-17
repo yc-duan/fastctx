@@ -36,6 +36,7 @@ pub(super) fn describe(state: &State, pool: Pool, request: &Request, why: &str) 
             Phase::Queued => "waiting",
             Phase::Running => "running",
             Phase::Settling => "finishing",
+            Phase::Staying => "staying for submitted work",
         };
         *holders.entry((entry.request.account.to_string(), entry.request.kind.as_str(), phase)).or_default() += 1;
     }

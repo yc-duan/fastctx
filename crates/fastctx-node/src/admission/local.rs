@@ -124,7 +124,7 @@ fn reached<'a>(node: &Node, call: &'a Call) -> Option<&'a ResidentId> {
         | Call::Watch { resident, machine, .. }
         | Call::Goal { resident, machine, .. }
         | Call::Composer { resident, machine, .. }
-        | Call::Stop { resident, machine }
+        | Call::Stop { resident, machine, .. }
         | Call::Control { resident, machine, .. }
         | Call::Manage { resident, machine, .. }
         | Call::Offers { resident, machine }
@@ -134,6 +134,7 @@ fn reached<'a>(node: &Node, call: &'a Call) -> Option<&'a ResidentId> {
         {
             Some(resident)
         }
+        Call::Timeline { machine, request } if here(machine.as_ref()) => Some(request.resident()),
         Call::Forget { resident, machine } if node.is_here(machine) => Some(resident),
         Call::Attach { resident }
         | Call::HoldHost { resident }

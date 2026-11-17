@@ -13,7 +13,6 @@ use fastctx_types::{
 use jiff::Timestamp;
 use sha2::{Digest, Sha256};
 use std::{
-    collections::HashMap,
     io,
     path::Path,
     sync::{Arc, Mutex},
@@ -22,23 +21,14 @@ use std::{
 use tokio::sync::Notify;
 
 const FAMILY: &str = "timers";
-#[derive(Default, Clone)]
-struct Claims {
-    active: HashMap<String, NoticeId>,
-    /// Firings put off after their persistence failed, until when: only
-    /// while that is still ahead, and only for a timer's current firing.
-    delayed: HashMap<(String, NoticeId), Timestamp>,
-}
+/// The most timers one owner's list gives: a sentinel or a conversation
+/// keeps a few, and one that kept more is shown the first of them.
+const OWNED: usize = 4096;
+use super::claims::Claims;
 
-impl Claims {
-    /// Forgets the timer `id`'s firings put off: it fires anew, or no more.
-    fn settled(&mut self, id: &str) {
-        self.delayed.retain(|(timer, _), _| timer != id);
-    }
-}
 pub struct Store {
-    directory: ConversationDir,
-    claims: Mutex<Claims>,
+    pub(super) directory: ConversationDir,
+    pub(super) claims: Mutex<Claims>,
     pub changed: Notify,
 }
 impl Store {
@@ -74,7 +64,7 @@ impl Store {
         })?;
         Ok(Self { directory, claims: Mutex::new(Claims::default()), changed: Notify::new() })
     }
-    async fn work<T: Send + 'static>(
+    pub(super) async fn work<T: Send + 'static>(
         self: &Arc<Self>,
         action: impl FnOnce(&Self) -> io::Result<T> + Send + 'static,
     ) -> io::Result<T> {
@@ -110,14 +100,20 @@ impl Store {
                 Priority::Interactive,
                 serde_json::to_vec(&timer)?.len(),
                 move |rows| {
-                    if get_timer(rows, &timer.id)?.is_some_and(|old| old.owner != timer.owner) {
+                    if super::headers::get(rows, &timer.id, false)?
+                        .is_some_and(|old| old.owner.as_ref() != Some(&timer.owner))
+                    {
                         return Err(fastctx_storage::Error::new("cancel a timer before changing its owner"));
                     }
                     save(rows, &timer)?;
                     Ok(timer)
                 },
             )?;
-            store.claims.lock().expect("timer claims").settled(&result.id);
+            {
+                let mut claims = store.claims.lock().expect("timer claims");
+                claims.settled(&result.id);
+                claims.replaced(&result.id, &result.delivery);
+            }
             store.changed.notify_one();
             Ok(result)
         })
@@ -125,17 +121,64 @@ impl Store {
     }
     pub async fn get(self: &Arc<Self>, id: &str) -> io::Result<Option<Timer>> {
         let id = id.to_string();
-        self.work(move |store| records::read(&store.directory, |rows| get_timer(rows, &id))).await
+        self.work(move |store| records::read(&store.directory, |rows| get_timer_bounded(rows, &id))).await
     }
-    pub async fn list(self: &Arc<Self>, owner: Option<&Owner>) -> io::Result<Vec<Timer>> {
+    pub(super) async fn page(
+        self: &Arc<Self>,
+        owner: Option<&Owner>,
+        after: Option<&str>,
+    ) -> io::Result<super::page::Page> {
         let owner = owner.cloned();
-        self.work(move |store| store.list_now(owner.as_ref())).await
+        let after = after.unwrap_or_default().to_string();
+        self.work(move |store| records::read(&store.directory, |rows| super::page::read(rows, owner.as_ref(), &after)))
+            .await
     }
-    fn list_now(&self, owner: Option<&Owner>) -> io::Result<Vec<Timer>> {
-        let category = owner.map(serde_json::to_string).transpose()?;
+    /// One owner's timers, by its own index, at most `OWNED` of them; the
+    /// whole table is read a page at a time (`page`).
+    pub async fn list(self: &Arc<Self>, owner: &Owner) -> io::Result<Vec<Timer>> {
+        let owner = owner.clone();
+        self.work(move |store| store.list_now(&owner)).await
+    }
+    /// Every one of an owner's timers, read `OWNED` at a time: what the
+    /// asset library holds of them is made from all of them (PP17).
+    pub async fn list_all(self: &Arc<Self>, owner: &Owner) -> io::Result<Vec<Timer>> {
+        let owner = owner.clone();
+        self.work(move |store| store.list_all_now(&owner)).await
+    }
+    fn list_all_now(&self, owner: &Owner) -> io::Result<Vec<Timer>> {
+        let category = serde_json::to_string(owner)?;
+        let (mut all, mut after) = (Vec::new(), String::new());
+        loop {
+            let page: Vec<(String, Timer)> = records::read(&self.directory, |rows| {
+                let mut query = rows.connection().prepare_cached("SELECT identity, body FROM conversation_records r WHERE family='timers' AND category=?1 AND identity > ?2 AND NOT EXISTS(SELECT 1 FROM node_conversation_transfers t WHERE t.name=r.conversation AND t.rejected=0) ORDER BY identity LIMIT ?3")?;
+                query
+                    .query_map(fastctx_storage::rusqlite::params![category, after, OWNED as i64], |row| {
+                        Ok((row.get::<_, String>(0)?, row.get::<_, Vec<u8>>(1)?))
+                    })?
+                    .map(|row| {
+                        let (identity, body) = row?;
+                        Ok((identity, records::decode(&body)?))
+                    })
+                    .collect()
+            })?;
+            let full = page.len() == OWNED;
+            if let Some((last, _)) = page.last() {
+                after = last.clone();
+            }
+            all.extend(page.into_iter().map(|(_, timer)| timer));
+            if !full {
+                return Ok(all);
+            }
+        }
+    }
+    fn list_now(&self, owner: &Owner) -> io::Result<Vec<Timer>> {
+        let category = serde_json::to_string(owner)?;
         records::read(&self.directory, |rows| {
-            let mut query=rows.connection().prepare_cached("SELECT body FROM conversation_records r WHERE family='timers' AND NOT EXISTS(SELECT 1 FROM node_conversation_transfers t WHERE t.name=r.conversation AND t.rejected=0) AND (?1 IS NULL OR category=?1) ORDER BY identity")?;
-            query.query_map([category], |row| row.get::<_, Vec<u8>>(0))?.map(|row| records::decode(&row?)).collect()
+            let mut query=rows.connection().prepare_cached("SELECT body FROM conversation_records r WHERE family='timers' AND category=?1 AND NOT EXISTS(SELECT 1 FROM node_conversation_transfers t WHERE t.name=r.conversation AND t.rejected=0) ORDER BY identity LIMIT ?2")?;
+            query
+                .query_map(fastctx_storage::rusqlite::params![category, OWNED as i64], |row| row.get::<_, Vec<u8>>(0))?
+                .map(|row| records::decode(&row?))
+                .collect()
         })
     }
     fn candidate(&self) -> io::Result<Option<(Timestamp, Timer)>> {
@@ -154,11 +197,12 @@ impl Store {
         })?;
         Ok(rows
             .into_iter()
-            .filter(|row| !claims.active.contains_key(&row.id))
+            .filter(|row| !claims.active.contains_key(row.id.as_str()))
             .map(|row| {
                 let due = claims
                     .delayed
-                    .get(&(row.id.clone(), row.delivery.clone()))
+                    .get(row.id.as_str())
+                    .and_then(|generations| generations.get(&row.delivery))
                     .copied()
                     .unwrap_or(row.next_attempt)
                     .max(row.next_attempt);
@@ -177,22 +221,23 @@ impl Store {
                     return Ok(None);
                 }
                 let mut claims = store.claims.lock().expect("timer claims");
-                claims.delayed.retain(|_, until| *until > now);
-                if claims.active.contains_key(&timer.id) {
+                claims.delayed.retain(|_, generations| {
+                    generations.retain(|_, until| *until > now);
+                    !generations.is_empty()
+                });
+                if claims.active.contains_key(timer.id.as_str()) {
                     continue;
                 }
-                claims.active.insert(timer.id.clone(), timer.delivery.clone());
-                claims.delayed.remove(&(timer.id.clone(), timer.delivery.clone()));
+                let key = claims.alias(&timer.id, &timer.delivery);
+                claims.active.insert(key, timer.delivery.clone());
+                claims.delayed.remove(timer.id.as_str());
                 return Ok(Some(timer));
             }
         })
         .await
     }
     pub fn unclaim(&self, timer: &Timer) {
-        let mut claims = self.claims.lock().expect("timer claims");
-        if claims.active.get(&timer.id) == Some(&timer.delivery) {
-            claims.active.remove(&timer.id);
-        }
+        self.claims.lock().expect("timer claims").unclaim(timer);
         self.changed.notify_one();
     }
     async fn update(
@@ -245,17 +290,25 @@ impl Store {
     }
     /// Failed persistence changes only scheduling, never the durable first firing.
     pub fn release(&self, timer: &Timer, now: Timestamp) {
-        self.claims.lock().expect("timer claims").delayed.insert(
-            (timer.id.clone(), timer.delivery.clone()),
-            now.checked_add(Duration::from_secs(60)).unwrap_or(now),
-        );
+        {
+            let mut claims = self.claims.lock().expect("timer claims");
+            let key = claims.alias(&timer.id, &timer.delivery);
+            claims
+                .delayed
+                .entry(key)
+                .or_default()
+                .insert(timer.delivery.clone(), now.checked_add(Duration::from_secs(60)).unwrap_or(now));
+        }
         self.unclaim(timer);
     }
     pub async fn complete(self: &Arc<Self>, timer: &Timer) -> io::Result<bool> {
         let (id, delivery, timer_id) = (timer.id.clone(), timer.delivery.clone(), timer.id.clone());
         self.work(move |store| {
             let removed = records::write_at(&store.directory, Priority::Interactive, 128, move |rows| {
-                if get_timer(rows, &id)?.is_none_or(|row| row.delivery != delivery) {
+                // Its header says whether it is still this firing's: a row
+                // an older node left with a very large payload completes
+                // without that payload being read.
+                if super::headers::delivery(rows, &id)?.is_none_or(|current| current != delivery.as_str()) {
                     return Ok(false);
                 }
                 delete_timer(rows, &id)
@@ -301,6 +354,9 @@ fn scope(owner: &Owner) -> &str {
         _ => "@node",
     }
 }
+/// The whole timer, whatever its size: what fires it and reschedules it
+/// reads the row the worker already chose, also one an older node left with
+/// a payload past every bound of today's.
 fn get_timer(rows: &records::Rows<'_>, id: &str) -> Result<Option<Timer>> {
     use fastctx_storage::rusqlite::OptionalExtension;
     let bytes: Option<Vec<u8>> = rows
@@ -310,6 +366,24 @@ fn get_timer(rows: &records::Rows<'_>, id: &str) -> Result<Option<Timer>> {
         })
         .optional()?;
     bytes.map(|bytes| records::decode(&bytes)).transpose()
+}
+/// A timer read for someone who asked: a payload past the bound is refused
+/// rather than loaded for them.
+fn get_timer_bounded(rows: &records::Rows<'_>, id: &str) -> Result<Option<Timer>> {
+    use fastctx_storage::rusqlite::OptionalExtension;
+    let bytes: Option<Option<Vec<u8>>> = rows
+        .connection()
+        .query_row("SELECT CASE WHEN length(body)<=16777216 THEN body ELSE NULL END FROM conversation_records r WHERE family='timers' AND identity=?1 AND NOT EXISTS(SELECT 1 FROM node_conversation_transfers t WHERE t.name=r.conversation AND t.rejected=0)", [id], |row| {
+            row.get(0)
+        })
+        .optional()?;
+    bytes
+        .map(|bytes| {
+            let bytes = bytes
+                .ok_or_else(|| fastctx_storage::Error::new("a stored timer exceeds the 16777216 byte read limit"))?;
+            records::decode(&bytes)
+        })
+        .transpose()
 }
 fn delete_timer(rows: &records::Rows<'_>, id: &str) -> Result<bool> {
     Ok(rows.connection().execute("DELETE FROM conversation_records WHERE family='timers' AND identity=?1", [id])? > 0)

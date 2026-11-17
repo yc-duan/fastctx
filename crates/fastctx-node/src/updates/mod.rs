@@ -7,12 +7,14 @@
 //! (`application`). Everything kept is under `<root>/updates`.
 
 mod application;
+mod changes;
 mod doctor;
 mod legacy_repair;
 mod packages;
 pub(crate) mod repair;
 mod retry;
 mod schedule;
+pub(crate) mod submission;
 mod withdrawal;
 
 pub(crate) use application::Open;
@@ -34,6 +36,7 @@ use crate::Node;
 #[derive(Default)]
 pub(crate) struct Updates {
     held: Mutex<Held>,
+    observer: Mutex<Option<fastctx_watch::Watcher>>,
     packages: fastctx_update::pool::Pool,
     repair_launching: std::sync::atomic::AtomicBool,
     repair_logged: Mutex<String>,
@@ -104,6 +107,13 @@ fn cache(node: &Node) -> Cache {
     Cache::new(dir(node).join("packages"))
 }
 
+/// Observes external update publications independently of storage recovery.
+pub(crate) fn observe(node: &Arc<Node>) {
+    if let Err(error) = changes::start(node) {
+        node.log.line(format_args!("watching published update state: {error}"));
+    }
+}
+
 /// Reads what was kept, and looks on GitHub from now on.
 pub(crate) fn start(node: &Arc<Node>) {
     let dir = dir(node);
@@ -141,6 +151,8 @@ pub(crate) fn start(node: &Arc<Node>) {
         };
         held.started = true;
     }
+    node.topics.changed(fastctx_types::topics::UPDATE);
+    submission::register(node);
     retry::complete(node, env!("CARGO_PKG_VERSION"));
     if let Some(version) = application(node) {
         application::took(node, &version);
@@ -177,6 +189,7 @@ fn look(node: &Arc<Node>) {
         held.looked.checking = true;
         previous
     };
+    node.topics.changed(fastctx_types::topics::UPDATE);
     report(node);
     let node = node.clone();
     fastctx_platform::task::spawn(async move {
@@ -196,6 +209,7 @@ fn look(node: &Arc<Node>) {
                 node.log.line(format_args!("keeping what was found of new versions: {error}"));
             }
         }
+        node.topics.changed(fastctx_types::topics::UPDATE);
         report(&node);
         auto(&node);
     });
@@ -368,14 +382,8 @@ pub(crate) fn report(node: &Node) {
 
 /// An interface here asks.
 pub(crate) async fn call(node: &Arc<Node>, call: UpdateCall) -> Result<State, String> {
-    if !fastctx_platform::follows_releases()
-        && matches!(
-            call,
-            UpdateCall::Look | UpdateCall::Fetch { .. } | UpdateCall::Kernel { .. } | UpdateCall::Choose { .. }
-        )
-    {
-        return Err("development builds do not follow releases".into());
-    }
+    submission::allowed(&call)?;
+    let _changed = (!matches!(&call, UpdateCall::State)).then(|| node.topics.writing(fastctx_types::topics::UPDATE.into()));
     match call {
         UpdateCall::Progress { stage } => {
             if let Stage::Installing { version } = &stage {
@@ -452,6 +460,18 @@ pub(crate) async fn call(node: &Arc<Node>, call: UpdateCall) -> Result<State, St
             }
         }
         UpdateCall::Fetch { version, target } => fetch(node, version, target)?,
+        UpdateCall::Bring { version, target } => {
+            // Another machine's program, brought and verified as this one's
+            // update is (GitHub, else the hubs), apart from it: held a while
+            // past its answer, for the upload that follows.
+            let held = packages::retain(node, &version);
+            let manifest = manifest_of(node, &version).await?;
+            bring(node, &manifest, &target).await.map_err(|problem| problem.why)?;
+            fastctx_platform::task::spawn(async move {
+                tokio::time::sleep(BROUGHT_HELD).await;
+                drop(held);
+            });
+        }
         UpdateCall::Kernel { version } => kernel(node, version.as_deref(), None).await?,
         UpdateCall::Choose { version } => {
             let chosen = match version {
@@ -469,6 +489,9 @@ pub(crate) async fn call(node: &Arc<Node>, call: UpdateCall) -> Result<State, St
 async fn manifest_of(node: &Arc<Node>, version: &str) -> Result<Manifest, String> {
     fastctx_update::catalog::manifest(&state(node), cache(node).manifests(), &node.links(), version).await
 }
+
+/// How long a package brought for another machine is held past its answer.
+const BROUGHT_HELD: Duration = Duration::from_secs(30 * 60);
 
 /// Brings the package `target` of `version` here, in the background.
 fn fetch(node: &Arc<Node>, version: String, target: String) -> Result<(), String> {
@@ -491,6 +514,7 @@ fn fetch(node: &Arc<Node>, version: String, target: String) -> Result<(), String
             total: None,
         });
     }
+    node.topics.changed(fastctx_types::topics::UPDATE);
     let node = node.clone();
     fastctx_platform::task::spawn(async move {
         let outcome = match manifest_of(&node, &version).await {
@@ -499,6 +523,7 @@ fn fetch(node: &Arc<Node>, version: String, target: String) -> Result<(), String
         };
         let outcome = withdrawal::check(&node, &version).and(outcome);
         node.updates.held.lock().expect("never poisoned").fetching = None;
+        node.topics.changed(fastctx_types::topics::UPDATE);
         if let Err(why) = outcome {
             node.log.line(format_args!("bringing {target} of {version} here: {why}"));
             retry::failed(&node, Failed { version, target, why: why.why, reason: Some(why.reason) });
@@ -518,13 +543,16 @@ async fn bring(node: &Arc<Node>, manifest: &Manifest, target: &str) -> Result<Pa
     let sources: Vec<_> = links.iter().map(|link| link.as_ref()).collect();
     let progressing = node.clone();
     let mut progress = move |progress: fastctx_update::Progress| {
-        if let Some(fetching) = &mut progressing.updates.held.lock().expect("never poisoned").fetching
+        let mut held = progressing.updates.held.lock().expect("never poisoned");
+        if let Some(fetching) = &mut held.fetching
             && fetching.version == manifest.version
             && fetching.target == target
         {
             fetching.via = progress.via;
             fetching.received = progress.received;
             fetching.total = progress.total;
+            drop(held);
+            progressing.topics.changed(fastctx_types::topics::UPDATE);
         }
     };
     let logging = node.clone();
@@ -583,6 +611,8 @@ fn github_reached(node: &Node, at: jiff::Timestamp) {
     if let Err(error) = keep(node, "looked.json", &held.looked) {
         node.log.line(format_args!("keeping when GitHub was reached: {error}"));
     }
+    drop(held);
+    node.topics.changed(fastctx_types::topics::UPDATE);
 }
 
 /// Keeps how fast this machine's download from GitHub went, and tells its
@@ -698,8 +728,10 @@ async fn kernel(node: &Arc<Node>, version: Option<&str>, asker: Option<Asker>) -
             total: None,
         });
     }
+    node.topics.changed(fastctx_types::topics::UPDATE);
     let taken = take(node, &offer, &target, asker).await;
     node.updates.held.lock().expect("never poisoned").fetching = None;
+    node.topics.changed(fastctx_types::topics::UPDATE);
     if let Err(why) = &taken {
         retry::failed(
             node,
@@ -806,7 +838,7 @@ pub(crate) async fn machine(
     if node.is_here(&machine) {
         return call(node, update).await.map_err(Failure::new);
     }
-    if matches!(update, UpdateCall::App { .. } | UpdateCall::Fetch { .. } | UpdateCall::Progress { .. }) {
+    if matches!(update, UpdateCall::App { .. } | UpdateCall::Fetch { .. } | UpdateCall::Bring { .. } | UpdateCall::Progress { .. }) {
         return Err(Failure::new("only an interface on that machine says what it is or brings packages there"));
     }
     if matches!(update, UpdateCall::Repair { .. }) {
@@ -837,7 +869,11 @@ pub(crate) async fn machine(
     });
     let running = match heard {
         Some(kernel) => Some(kernel),
-        None => match node.call(acting, &machine, fastctx_types::access::Purpose::Look, RemoteCall::Facts).await {
+        None => match submission::call_machine(
+            node, acting, &machine, fastctx_types::access::Purpose::Look, RemoteCall::Facts,
+        )
+        .await
+        {
             Ok(Ok(RemoteReply::Facts(facts))) => Some(facts.version),
             _ => None,
         },
@@ -860,13 +896,17 @@ pub(crate) async fn machine(
             )));
         }
     };
-    match node
-        .call(acting, &machine, fastctx_types::access::Purpose::Hands, call)
-        .await
-        .map_err(|failure| Failure::new(failure.to_string()))??
-    {
-        RemoteReply::Update(state) => Ok(*state),
-        _ => Err(Failure::new(format!("{machine} answered something other than how its updates stand"))),
+    let asking = crate::submitted::Asking::begin();
+    loop {
+        let reply = submission::call_machine(
+            node, acting, &machine, fastctx_types::access::Purpose::Hands, call.clone(),
+        )
+        .await?;
+        match reply {
+            Ok(RemoteReply::Update(state)) => return Ok(*state),
+            Ok(_) => return Err(Failure::new(format!("{machine} answered something other than how its updates stand"))),
+            Err(failure) => asking.accepted(failure).await?,
+        }
     }
 }
 
@@ -934,7 +974,7 @@ pub(crate) async fn remote(node: &Arc<Node>, asker: Asker, update: Option<Update
         Some(UpdateCall::Kernel { version }) => {
             kernel(node, version.as_deref(), Some(asker)).await.map(|()| state(node))
         }
-        Some(UpdateCall::App { .. } | UpdateCall::Fetch { .. } | UpdateCall::Progress { .. }) => {
+        Some(UpdateCall::App { .. } | UpdateCall::Fetch { .. } | UpdateCall::Bring { .. } | UpdateCall::Progress { .. }) => {
             Err(format!("only an interface on {} says what it is or brings packages there", node.machine()))
         }
         Some(update) => call(node, update).await,
@@ -1054,6 +1094,7 @@ pub(crate) fn within(state: &State) -> Option<String> {
 
 /// The hubs told of versions anew.
 pub(crate) fn heard(node: &Arc<Node>) {
+    node.topics.changed(fastctx_types::topics::UPDATE);
     auto(node);
     doctor::heard(node);
 }

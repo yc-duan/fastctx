@@ -23,14 +23,16 @@ import { askKey, forPeople, type AskState } from "./ask-state";
 import { userWords } from "./told";
 import { Agents, type AgentRun } from "./agents";
 import { Requests } from "./requests";
+import { eventBase, sameProjection } from "./timeline-fold";
 import type { PendingControl } from "../world/control";
 
 export type Use = "done" | "failed" | "declined" | "cut" | "unknown";
 
 export type SendState =
   /** On their way. `retry` is set once their host has failed to start for
-   *  a minute and is being started again: why it did not start. */
-  | { state: "going"; retry?: string }
+   *  a minute and is being started again: why it did not start. `starting`
+   *  while their host is being started for them, as its machine tells. */
+  | { state: "going"; retry?: string; starting?: Starting }
   /** No answer came yet; they are said again, under the same id, until one
    *  does: why the last try got none. */
   | { state: "waiting"; why: string }
@@ -74,6 +76,35 @@ export interface KeptWords {
   /** Whether they wait for one of their callee's colleagues at work to
    *  end (`world-colleagues.md`, 同事从哪里来、能去哪里). */
   for_callee?: boolean;
+  /** While their host is being started for them: how far that came. */
+  starting?: Starting;
+}
+
+/** A host being started for kept words, as its machine tells it. */
+export interface Starting {
+  /** When the World first asked for the host (an instant, as text). */
+  since: string;
+  /** `preparing`, `launching`, `connecting`, `retrying`, or one of a newer
+   *  version. */
+  phase: string;
+  /** Starts that failed and are tried again. */
+  failures?: number;
+  /** Why the last one failed. */
+  reason?: string;
+  /** When the next try begins, while one waits. */
+  next?: string;
+}
+
+/** How the start of a conversation's host shows on its turn line: since
+ *  when (null where not told), how many tries failed and why the last did,
+ *  and, while it waits in line, how many go before it and for what. */
+export interface StartShown {
+  since: number | null;
+  failures: number;
+  reason: string | null;
+  ahead?: number;
+  memory?: boolean;
+  callee?: boolean;
 }
 
 /** Something the user attached to their words, as it is shown with them. */
@@ -82,6 +113,10 @@ export interface ShownAttachment {
   size: number | null;
   image: boolean;
   preview: string | null;
+  /** Its bytes' digest, where it is known before the World's telling of
+   *  the words comes: what a picture on its way is known by
+   *  (`picture-frame.ts`). */
+  digest?: string;
   /** The file as the World kept it, once it has: what a small picture is
    *  asked for and the original opened from. */
   kept?: Attachment;
@@ -108,6 +143,7 @@ export type Entry = {
       /** Words sent from here, once the World answered for them: their id
        *  on the machine they went to, `null` where it gave none. */
       delivery?: string | null;
+      messageId?: string;
       /** Words sent from here while a turn was under way: they wait below
        *  the turn's line until a turn takes them in. Words sent to a
        *  conversation at rest begin the next turn, above it. */
@@ -178,6 +214,8 @@ export interface Activity {
   key: string;
   turn: string;
   members: Entry[];
+  partialBefore?: boolean;
+  partialAfter?: boolean;
   stamp: number;
   /** One of its tools started or names one of the host's own agents,
    *  which move on their own (`agentStamp`). */
@@ -199,6 +237,8 @@ export interface Gap {
   first: boolean;
   /** Its turns are being read. */
   loading: boolean;
+  later?: boolean;
+  paged?: boolean;
 }
 
 /** What the agent said to the user through the World's `message_user`
@@ -254,6 +294,8 @@ interface Derived {
   latest: string | null;
   moving: boolean;
   waiting: boolean;
+  /** The start the first words kept wait on (`starting`). */
+  start: StartShown | null;
   /** Whether anything of the agent's own has been shown: a turn's work or
    *  words, its end, a request. */
   heardFrom: boolean;
@@ -338,6 +380,17 @@ export class Fold {
    *  turns then running, or, when none was, the turn the words on their way
    *  start once it does. */
   private halted: Set<string> | null = null;
+  /** The turns the conversation's machine says were asked to stop, by this
+   *  device or another (`now`): calling off this device's stop leaves them. */
+  private machineHalted = new Set<string>();
+  /** The words on their way when a stop was asked with no turn running:
+   *  the stop is of the turn that takes them. Each is known by its entry,
+   *  by its delivery once the World answers for it (`named`), and by what
+   *  it says only while it has no delivery (`takesHalted`). */
+  private haltedWords: { key: string; delivery: string | null | undefined; text: string }[] = [];
+  /** A reading did not show those words taken: the stop waits for them, and
+   *  is spent once the machine no longer keeps them (`now`). */
+  private haltedUnseen = false;
   private derivedCache: Derived | null = null;
   private blocksCache: { clock: number; blocks: Block[] } | null = null;
   /** In a fork, what this fold held before the point it was made at: what
@@ -354,7 +407,11 @@ export class Fold {
     entry.stamp = ++this.clock;
   }
 
+  private preferredKeys: Map<string, string> | null = null;
   private add(entry: Entry): void {
+    if ("item" in entry && "turn" in entry && typeof entry.turn === "string") entry.key = this.preferredKeys?.get(itemKey(entry.turn, entry.item)) ?? entry.key;
+    if (entry.kind === "heard") entry.key = (entry.delivery ? this.preferredKeys?.get(`heard:d:${entry.delivery}`) : undefined)
+      ?? (entry.messageId ? this.preferredKeys?.get(`heard:m:${entry.messageId}`) : undefined) ?? entry.key;
     entry.stamp = ++this.clock;
     entry.at = this.current;
     this.entries.push(entry);
@@ -398,15 +455,30 @@ export class Fold {
   /** What came before, replacing what is shown; `carry`, what the part's
    *  turns read of what came before it (its title, its context, the model
    *  that answered), read first as nothing of its own. */
-  history(events: SessionEvent[], carry: SessionEvent[] = []): void {
+  history(events: SessionEvent[], carry: SessionEvent[] = [], places?: readonly string[], keepWaiting = true, authoritativePending?: SessionEvent[]): void {
     // Requests still waiting are kept: the host asked them, and they are
     // not part of the history it gives back. So are words sent from here
     // that this reading does not hold yet.
-    const waiting = this.entries.filter((entry) => entry.kind === "ask" && entry.state.state === "waiting");
+    this.preferredKeys = places ? new Map(this.entries.flatMap((entry): [string, string][] => {
+      if ("item" in entry && "turn" in entry && typeof entry.turn === "string") return [[itemKey(entry.turn, entry.item), entry.key]];
+      if (entry.kind === "heard") return [...(entry.delivery ? [[`heard:d:${entry.delivery}`, entry.key] as [string, string]] : []), ...(entry.messageId ? [[`heard:m:${entry.messageId}`, entry.key] as [string, string]] : [])];
+      return [];
+    })) : null;
+    const waiting = keepWaiting ? this.entries.filter((entry) => entry.kind === "ask" && entry.state.state === "waiting") : [];
     const pending = this.entries.filter((entry): entry is Heard => entry.kind === "heard" && entry.sending !== undefined);
     const known = new Set(this.entries.filter((entry) => entry.kind === "heard").map((entry) => entry.key));
     const halted = this.halted;
     this.entries = [];
+    this.byCall.clear();
+    if (places) {
+      this.attachments.clear();
+      this.controlStates.clear();
+      this.requests.clear();
+    }
+    this.placedEntries.clear();
+    this.eventBases.clear();
+    this.eventSources.clear();
+    this.pendingIds = authoritativePending === undefined ? null : new Set(authoritativePending.flatMap((event) => event.event === "changed" && event.change.kind === "request" ? [askKey(event.change.id)] : []));
     this.byKey.clear();
     this.byItem.clear();
     this.byTurn.clear();
@@ -414,9 +486,13 @@ export class Fold {
     this.endedTurns.clear();
     this.over.clear();
     this.stretches.clear();
+    this.pagedGroups = places !== undefined;
+    if (!this.pagedGroups) this.previousGroups.clear();
     this.sequences.clear();
     this.stale = false;
     this.halted = null;
+    // What the machine said was asked to stop stands through a reading
+    // again: it goes when the turn ends or no turn runs.
     this.running.clear();
     this.began.clear();
     this.thoughtTokens.clear();
@@ -432,14 +508,33 @@ export class Fold {
     } finally {
       this.replaying = false;
     }
-    this.extend(events);
+    this.ignoreHistoricalRequests = authoritativePending !== undefined;
+    this.extend(events, places);
+    this.ignoreHistoricalRequests = false;
+    if (authoritativePending) this.extend(authoritativePending);
+    this.preferredKeys = null;
     // A history the node gives whole is as it stands after every change it
     // holds: a change of history among its events is shown already, and is
     // no reason to read it again. One that comes after it is.
     this.stale = false;
     // A stop asked of what still runs, or of words still on their way,
-    // stands through a reading again.
-    if (halted && (this.running.size > 0 || halted.size === 0)) this.halt();
+    // stands through a reading again: only on the turns it was asked of,
+    // never on one the reading shows starting after they ended. Words on
+    // their way are stopped in the turn the reading shows taking them:
+    // stopped if it still runs, spent if it ended. A reading that does not
+    // show them taken — an older page, a window that begins later — leaves
+    // the stop waiting for them as before.
+    if (halted?.size === 0) {
+      const target = [...carry, ...events, ...(authoritativePending ?? [])].flatMap((event) => {
+        if (event.event !== "heard" || !event.turn) return [];
+        const said = (event.from ? event.text : userWords(event.text)?.body ?? event.text).trim();
+        return this.takesHalted(event.delivery, said) ? [event.turn] : [];
+      })[0];
+      this.haltedUnseen = target === undefined;
+      if (target === undefined) this.halted = new Set();
+      else if (this.running.has(target)) this.haltTurn(target);
+    } else for (const turn of halted ?? []) if (this.running.has(turn)) this.haltTurn(turn);
+    for (const turn of this.machineHalted) if (this.running.has(turn)) this.haltTurn(turn);
     for (const ask of waiting) {
       if (ask.kind === "ask" && !this.entries.some((entry) => entry.kind === "ask" && askKey(entry.id) === askKey(ask.id))) this.add(ask);
     }
@@ -464,20 +559,206 @@ export class Fold {
 
   /** More of what came before, after what is shown: a reading given in
    *  parts, as a cache answers and then what is new since. */
-  extend(events: SessionEvent[]): void {
+  extend(events: SessionEvent[], places?: readonly string[]): void {
     this.replaying = true;
     try {
-      for (const event of events) this.event(event);
+      for (const [index, event] of events.entries()) this.event(event, places?.[index]);
     } finally {
       this.replaying = false;
     }
   }
 
   /** One more event of this fold's part. */
-  event(event: SessionEvent): void {
+  private placedEntries = new Map<string, Set<string>>();
+  private eventBases = new Map<string, Entry[]>();
+  private eventSources = new Map<string, SessionEvent>();
+
+  /** Item-only changes update their own entries and dependent facts. */
+  reviseItems(events: readonly SessionEvent[], places: readonly string[], changed: readonly string[], removed: readonly string[]): void {
+    this.evictPlaces(removed);
+    const positions = new Map(places.map((place, at) => [place, at]));
+    this.replaying = true;
+    try {
+      for (const place of changed) {
+        const at = positions.get(place)!;
+        const event = events[at]!;
+        this.folded = at;
+        this.event(event, place);
+        if (event.event !== "finished") continue;
+        for (const fact of events) {
+          if (fact.event !== "changed") continue;
+          const change = fact.change;
+          if ((change.kind === "run_facts_updated" && change.update.call_id === event.item.id)
+            || (change.kind === "message_usage" && change.items.includes(event.item.id))
+            || (change.kind === "usage" && fact.turn === event.turn && event.item.kind === "thinking")) this.late(fact);
+        }
+        const entry = this.find(event.turn, event.item.id);
+        if (entry?.kind === "tool" && entry.ended === null && this.endedTurns.has(event.turn)) {
+          const end = events.find((event) => event.event === "turn_ended" && event.turn === entry.turn);
+          entry.ended = { at: end ? Date.parse(end.at) : Date.parse(event.at), use: "cut" };
+          this.touch(entry);
+        }
+      }
+    } finally { this.replaying = false; }
+    const ordered = new Map<string, number>();
+    for (const [place, owned] of this.placedEntries) {
+      const at = positions.get(place);
+      if (at === undefined) continue;
+      for (const key of owned) ordered.set(key, Math.min(at, ordered.get(key) ?? Infinity));
+    }
+    this.entries.sort((a, b) => (ordered.get(a.key) ?? Infinity) - (ordered.get(b.key) ?? Infinity));
+    for (const entry of this.entries) entry.at = ordered.get(entry.key) ?? events.length;
+    this.folded = events.length;
+    this.reindex();
+  }
+
+  /** Reproject changed payloads and the small contextual facts. Unchanged
+   * payloads reuse their pre-fact entries; no transcript is refolded. */
+  revised(before: readonly SessionEvent[], previous: readonly string[], events: readonly SessionEvent[], places: readonly string[], pending: readonly SessionEvent[]): Fold {
+    const old = new Map(previous.map((place, at) => [place, before[at]]));
+    const next = new Fold(this.scope);
+    next.thoughtWords = this.thoughtWords;
+    next.clock = this.clock;
+    next.pagedGroups = true;
+    next.title = this.title; next.context = this.context; next.answeredBy = this.answeredBy;
+    next.previousGroups = new Map(this.previousGroups);
+    next.stretches = new Map([...this.stretches].map(([turn, keys]) => [turn, [...keys]]));
+    next.halted = this.halted ? new Set(this.halted) : null;
+    next.machineHalted = new Set(this.machineHalted);
+    next.haltedWords = this.haltedWords.map((word) => ({ ...word }));
+    next.haltedUnseen = this.haltedUnseen;
+    next.sends = this.sends; next.heardSeq = this.heardSeq;
+    next.settlers = new Map(this.settlers);
+    next.unclaimed = [...this.unclaimed]; next.claimedHeard = new Set(this.claimedHeard);
+    next.pendingIds = new Set(pending.flatMap((event) => event.event === "changed" && event.change.kind === "request" ? [askKey(event.change.id)] : []));
+    next.ignoreHistoricalRequests = true;
+    next.replaying = true;
+    next.preferredKeys = new Map(this.entries.flatMap((entry): [string, string][] => {
+      if ("item" in entry && "turn" in entry && typeof entry.turn === "string") return [[itemKey(entry.turn, entry.item), entry.key]];
+      if (entry.kind === "heard") return [...(entry.delivery ? [[`heard:d:${entry.delivery}`, entry.key] as [string, string]] : []), ...(entry.messageId ? [[`heard:m:${entry.messageId}`, entry.key] as [string, string]] : [])];
+      return [];
+    }));
+    for (let at = 0; at < events.length; at += 1) {
+      const event = events[at]!; const place = places[at]!;
+      next.folded = at; next.current = at;
+      const base = old.get(place) === event && this.eventSources.get(place) === event ? this.eventBases.get(place) : undefined;
+      if (base && (event.event === "finished" || event.event === "began" || event.event === "updated" || event.event === "heard")) {
+        next.currentPlace = place; next.placed = true;
+        if (event.event === "heard") {
+          for (const file of event.message?.attachments ?? []) next.attachments.set(file.path.replaceAll("\\", "/"), file.name);
+          const turn = event.turn ?? "";
+          next.heardIn.set(turn, (next.heardIn.get(turn) ?? 0) + 1);
+        } else {
+          if (event.item.draft) next.renamed(event.turn, event.item.draft, event.item.id);
+          if (["message", "thinking", "plan", "tool", "compaction"].includes(event.item.kind) && !next.find(event.turn, event.item.id)) next.overtaken(event.turn);
+          if (event.event === "finished" && event.item.id) next.over.add(itemEntryKey(event.turn, event.item.id));
+        }
+        const owned = new Set<string>();
+        for (const entry of base) {
+          const restored = { ...entry, at };
+          const held = next.byKey.get(restored.key);
+          if (held?.kind === "tool" && restored.kind === "tool") {
+            restored.began = held.began;
+            restored.ended ??= held.ended;
+            if (!restored.tool.run && held.tool.run) restored.tool = { ...restored.tool, run: held.tool.run };
+          } else if (held?.kind === "prose" && restored.kind === "prose") {
+            if (held.began !== undefined) restored.began = held.began;
+            if (restored.took === undefined && held.took !== undefined) restored.took = held.took;
+            restored.writing = held.writing && restored.writing;
+          }
+          if (held) next.replace(held, restored);
+          else next.add(restored);
+          owned.add(restored.key);
+        }
+        next.placedEntries.set(place, owned);
+        next.eventBases.set(place, base);
+        next.eventSources.set(place, event);
+        next.folded = at + 1;
+      } else next.event(event, place);
+    }
+    next.ignoreHistoricalRequests = false;
+    next.extend([...pending]);
+    next.replaying = false;
+    next.preferredKeys = null;
+    next.stale = false;
+    next.endings = this.endings; next.lastEnding = this.lastEnding;
+    for (const sent of this.entries.filter((entry): entry is Heard => entry.kind === "heard" && entry.sending !== undefined)) {
+      if (!next.entries.some((entry) => entry.kind === "heard" && entry.sending === undefined && entry.text.trim() === sent.text.trim())) next.add(sent);
+    }
+    next.entries = next.entries.map((entry) => {
+      const prior = this.byKey.get(entry.key);
+      if (prior && sameProjection(prior, entry)) { prior.at = entry.at; return prior; }
+      return entry;
+    });
+    next.reindex();
+    return next;
+  }
+  private pendingIds: Set<string> | null = null;
+  private ignoreHistoricalRequests = false;
+  evictPlaces(places: readonly string[]): void {
+    if (places.length === 0) return;
+    const gone = new Set<string>();
+    for (const place of places) {
+      for (const key of this.placedEntries.get(place) ?? []) gone.add(key);
+      this.placedEntries.delete(place);
+      this.eventBases.delete(place);
+      this.eventSources.delete(place);
+    }
+    for (const keys of this.placedEntries.values()) for (const key of keys) gone.delete(key);
+    if (![...gone].some((key) => this.byKey.has(key))) return;
+    this.remove((entry) => gone.has(entry.key));
+    const turns = new Set(this.entries.flatMap((entry) => "turn" in entry && entry.turn ? [entry.turn] : []));
+    for (const map of [this.began, this.heardIn, this.stretches]) for (const turn of map.keys()) if (!turns.has(turn)) map.delete(turn);
+    const items = new Set(this.entries.flatMap((entry) => "turn" in entry && "item" in entry && typeof entry.turn === "string" ? [itemEntryKey(entry.turn, entry.item)] : []));
+    for (const key of this.over) if (!items.has(key)) this.over.delete(key);
+    for (const turn of this.endedTurns) if (!turns.has(turn)) this.endedTurns.delete(turn);
+  }
+  placeOf(key: string): string | null {
+    for (const [place, entries] of this.placedEntries) if (entries.has(key)) return place;
+    return null;
+  }
+  livePending(event: SessionEvent): void {
+    if (event.event !== "changed") return;
+    const change = event.change;
+    if (change.kind === "request") {
+      this.pendingIds?.add(askKey(change.id));
+      const existing = this.ask(change.id);
+      if (existing) {
+        if (existing.turn !== event.turn || existing.request !== change.request || JSON.stringify(existing.params) !== JSON.stringify(change.params)) {
+          existing.turn = event.turn; existing.request = change.request; existing.params = change.params;
+          existing.state = { state: "waiting" }; existing.version += 1; this.touch(existing);
+        }
+        return;
+      }
+    }
+    this.event(event);
+    if (change.kind === "resolved") {
+      this.pendingIds?.delete(askKey(change.id));
+      this.remove((entry) => entry.kind === "ask" && askKey(entry.id) === askKey(change.id));
+    }
+  }
+  private currentPlace = "";
+  private placed = false;
+  event(event: SessionEvent, place?: string): void {
     this.current = this.folded;
+    this.placed = place !== undefined;
+    this.currentPlace = place ?? `${this.scope}@${this.current}`;
     this.folded += 1;
+    const before = this.clock;
     this.read(event);
+    if (place !== undefined) {
+      this.eventSources.set(place, event);
+      let base: Entry | undefined;
+      if (event.event === "finished" || event.event === "began" || event.event === "updated") base = event.item.id ? this.find(event.turn, event.item.id) : this.byKey.get(`n:${place}`);
+      else if (event.event === "grew") base = this.find(event.turn, event.item);
+      else if (event.event === "heard") base = [...this.entries].reverse().find((entry) => entry.kind === "heard" && entry.stamp > before);
+      if (base) this.eventBases.set(place, [eventBase(event, base)]);
+      else this.eventBases.delete(place);
+      if (event.event === "grew") {
+        const entry = this.find(event.turn, event.item);
+        if (entry && !this.placedEntries.has(place)) this.placedEntries.set(place, new Set([entry.key]));
+      } else this.placedEntries.set(place, new Set(this.entries.filter((entry) => entry.stamp > before).map((entry) => entry.key)));
+    }
   }
 
   /** How many events of its part this fold has read. */
@@ -517,6 +798,12 @@ export class Fold {
         // carry the head note the World wrapped them in.
         const user = event.from ? null : userWords(event.text);
         const heard = user ? { ...event, from: { kind: "user" as const, machine: user.machine }, text: user.body } : event;
+        // Words a stop waits for, taken into a turn a reading did not show:
+        // that turn is the one asked to stop.
+        if (heard.turn && !this.replaying && this.halted?.size === 0 && this.haltedUnseen && this.takesHalted(heard.delivery, heard.text.trim())) {
+          this.haltedUnseen = false;
+          this.haltTurn(heard.turn);
+        }
         // Words taken into a turn say the turn is under way, whichever of
         // the two the World tells first.
         if (heard.turn) this.underWay(heard.turn, at);
@@ -526,6 +813,19 @@ export class Fold {
         // Words once said not to be known to have gone in did: the host
         // tells them now (`world-concurrency.md`, 一句话从发出到落定).
         if (heard.delivery) this.remove((entry) => entry.kind === "uncertain" && entry.key === `u:${heard.delivery}`);
+        const identified = this.placed ? this.entries.find((entry): entry is Heard => entry.kind === "heard" &&
+          (!!heard.delivery && entry.delivery === heard.delivery || !!heard.message?.id && entry.messageId === heard.message.id)) : undefined;
+        if (identified) {
+          identified.text = heard.text; identified.turn = heard.turn; identified.from = heard.from; identified.time = at;
+          if (heard.delivery) identified.delivery = heard.delivery;
+          if (heard.message?.id) identified.messageId = heard.message.id;
+          if (heard.notice) identified.notice = heard.notice;
+          const attached = this.attachedOf(heard);
+          if (attached.length) { identified.attached = attached; identified.kept = heard.message?.attachments ?? []; }
+          delete identified.sending; delete identified.intoTurn;
+          this.reindex(); this.touch(identified);
+          return;
+        }
         if (heard.from?.kind === "user") {
           const said = heard.text.trim();
           // Known by the id the World gave them where it did, else by what
@@ -558,7 +858,7 @@ export class Fold {
         }
         const turnKey = heard.turn ?? "";
         const known =
-          heard.turn !== null &&
+          !this.placed && heard.turn !== null &&
           (this.byTurn.get(heard.turn) ?? []).some((entry) => entry.kind === "heard" && entry.text.trim() === heard.text.trim());
         if (!known) {
           const attached = this.attachedOf(heard);
@@ -570,10 +870,10 @@ export class Fold {
             ? `h:${event.delivery}`
             : heard.message?.id
               ? `h:m:${heard.message.id}`
-              : turnKey
+              : this.placed ? `h:${this.currentPlace}` : turnKey
                 ? `h:${turnKey}:${ordinal}`
-                : `h:${this.scope}@${this.current}`;
-          const shown = this.byKey.has(key) ? `${key}:${this.scope}@${this.current}` : key;
+                : `h:${this.currentPlace}`;
+          const shown = this.byKey.has(key) ? `${key}:${this.currentPlace}` : key;
           this.add({
             kind: "heard",
             key: shown,
@@ -583,6 +883,8 @@ export class Fold {
             from: heard.from,
             text: heard.text,
             turn: heard.turn,
+            ...(heard.delivery ? { delivery: heard.delivery } : {}),
+            ...(heard.message?.id ? { messageId: heard.message.id } : {}),
             ...(attached.length ? { attached, kept: heard.message?.attachments ?? [] } : {}),
             ...(event.event === "heard" && event.notice ? { notice: event.notice } : {}),
           });
@@ -662,6 +964,7 @@ export class Fold {
         this.running.delete(event.turn);
         this.began.delete(event.turn);
         if (this.halted?.delete(event.turn) && this.halted.size === 0) this.halted = null;
+        this.machineHalted.delete(event.turn);
         this.clock += 1;
         if (this.endedTurns.has(event.turn)) return;
         if (!this.replaying) this.endings += 1;
@@ -690,7 +993,9 @@ export class Fold {
         return;
       case "changed": {
         const change = event.change;
+        if (this.ignoreHistoricalRequests && (change.kind === "request" || change.kind === "resolved")) return;
         if (change.kind === "request") {
+          if (this.pendingIds !== null && !this.pendingIds.has(askKey(change.id))) return;
           if (!forPeople(change.request) || this.ask(change.id)) return;
           this.add({
             kind: "ask",
@@ -813,11 +1118,23 @@ export class Fold {
   }
 
   /** A turn is seen to start. The one words on their way start is the one
-   *  asked to stop; any other is new, and shown as it goes. */
+   *  asked to stop; any other is new, and shown as it goes. Once a reading
+   *  did not show those words taken, a turn starting is not known to be
+   *  theirs: only the words' own `heard` binds the stop then. */
   private started(turn: string): void {
     if (!this.halted) return;
-    if (this.halted.size === 0) this.halted.add(turn);
-    else if (!this.halted.has(turn)) this.halted = null;
+    if (this.halted.size === 0) {
+      if (!this.haltedUnseen) this.halted.add(turn);
+    } else if (!this.halted.has(turn)) this.halted = null;
+  }
+
+  /** Whether words heard with `delivery`, saying `said`, are words a stop
+   *  waits for: by their delivery where they have one, by what they say
+   *  only where they have none. */
+  private takesHalted(delivery: string | null | undefined, said: string): boolean {
+    return this.haltedWords.some((word) =>
+      typeof word.delivery === "string" ? delivery === word.delivery : word.text === said,
+    );
   }
 
   private ask(id: JsonValue): Extract<Entry, { kind: "ask" }> | undefined {
@@ -843,7 +1160,7 @@ export class Fold {
   private health(health: Health): void {
     const last = this.entries[this.entries.length - 1];
     if (last?.kind === "health" && last.health.kind === health.kind && last.health.text === health.text) return;
-    this.add({ kind: "health", key: `x:${this.scope}@${this.current}`, stamp: 0, at: 0, health });
+    this.add({ kind: "health", key: `x:${this.currentPlace}`, stamp: 0, at: 0, health });
   }
 
   /** An item began or finished: shown where it first appeared, as it now
@@ -852,7 +1169,7 @@ export class Fold {
     const startedAt = native.started_at ? Date.parse(native.started_at) : at;
     const id = native.id;
     if (id && native.draft) this.renamed(turn, native.draft, id);
-    const key = id ? itemEntryKey(turn, id) : `n:${this.scope}@${this.current}`;
+    const key = id ? itemEntryKey(turn, id) : `n:${this.currentPlace}`;
     if (id && !finished && this.over.has(key)) return;
     if (id && finished) this.over.add(key);
     const said = native.kind === "message" || native.kind === "thinking" || native.kind === "plan" || native.kind === "tool" || native.kind === "compaction";
@@ -1199,9 +1516,9 @@ export class Fold {
 
   /** Words the user is sending, shown at once; returns their key. */
   sending(text: string, here: MachineName | null, attached: ShownAttachment[] = []): string {
-    // What the user says after asking to stop is shown as it goes, as is
-    // the turn it starts.
-    this.halted = null;
+    // What the user says after asking to stop starts the turn after the one
+    // stopped (its node waits for that turn's end), so the stopped turn
+    // stays stopped here: its later words still do not grow it.
     const key = `s:${++this.sends}`;
     this.add({
       kind: "heard",
@@ -1311,6 +1628,9 @@ export class Fold {
   unsend(key: string): void {
     this.settlers.delete(key);
     this.remove((entry) => entry.key === key);
+    // Words that did not go start no turn: a stop waiting for them has
+    // nothing of them to find, by id or by what they say.
+    this.haltedWords = this.haltedWords.filter((word) => word.key !== key);
   }
 
   /** Keeps how the words being sent under `key` are sent again or taken
@@ -1341,12 +1661,15 @@ export class Fold {
   named(key: string, delivery: string | null): void {
     const entry = this.byKey.get(key);
     if (entry?.kind === "heard" && entry.sending) entry.delivery = delivery;
+    // A stop asked before the World answered waits for them by it now.
+    for (const word of this.haltedWords) if (word.key === key) word.delivery = delivery;
   }
 
   /** The World says no turn runs: what is still shown under way here
    *  ended unseen, and stands as cut off, whichever turn it was in. */
   noTurnRuns(): void {
     this.halted = null;
+    this.machineHalted.clear();
     const at = Date.now();
     let changed = this.running.size > 0;
     for (const entry of this.entries) {
@@ -1373,6 +1696,9 @@ export class Fold {
    *  on their way stay as they are: the turn they start stops too. */
   halt(): void {
     this.halted = new Set(this.running);
+    this.haltedUnseen = false;
+    const sending = this.entries.filter((entry): entry is Heard => entry.kind === "heard" && entry.sending !== undefined);
+    this.haltedWords = sending.map((entry) => ({ key: entry.key, delivery: entry.delivery, text: entry.text.trim() }));
     const at = Date.now();
     for (const entry of this.entries) {
       if (entry.kind === "tool" && entry.ended === null) {
@@ -1387,11 +1713,61 @@ export class Fold {
     this.clock += 1;
   }
 
+  /** The words on their way a stop pressed now, seeing no turn, is for:
+   *  those of `keys`, or all on their way. `words` are the ids the World
+   *  answered for them with; `unnamed` counts those it has not answered
+   *  for yet. Words it answered for without an id are in neither. */
+  coming(keys?: readonly string[]): { keys: string[]; words: string[]; unnamed: number } {
+    const found = { keys: [] as string[], words: [] as string[], unnamed: 0 };
+    const entries = keys ? keys.map((key) => this.byKey.get(key)) : this.entries;
+    for (const entry of entries) {
+      if (entry?.kind !== "heard" || entry.sending === undefined || entry.sending.state === "settled") continue;
+      found.keys.push(entry.key);
+      if (typeof entry.delivery === "string") found.words.push(entry.delivery);
+      else if (entry.delivery === undefined) found.unnamed += 1;
+    }
+    return found;
+  }
+
+  /** How many of the words a stop waits for the World has not answered for
+   *  yet, heard by now or not (`named` keeps their ids as they come). */
+  haltedUnnamed(): number {
+    return this.haltedWords.filter((word) => word.delivery === undefined).length;
+  }
+
+  /** The ids the World answered for the words a stop waits for with,
+   *  those that have one by now (`named` keeps them). */
+  haltedIds(): string[] {
+    return this.haltedWords.flatMap((word) => (typeof word.delivery === "string" ? [word.delivery] : []));
+  }
+
+  /** A turn the user asked to stop, as its machine tells every viewer: what
+   *  it writes no longer grows here, and what it has under way shows cut
+   *  off, as `halt` does for the device where the stop was pressed. */
+  private haltTurn(turn: string): void {
+    if (this.halted?.has(turn)) return;
+    this.halted = new Set([...(this.halted ?? []), turn]);
+    const at = Date.now();
+    for (const entry of this.byTurn.get(turn) ?? []) {
+      if (entry.kind === "tool" && entry.ended === null) {
+        entry.ended = { at, use: "cut" };
+        this.touch(entry);
+      }
+      if (entry.kind === "prose" && entry.writing) {
+        entry.writing = false;
+        this.touch(entry);
+      }
+    }
+  }
+
   /** The stop did not reach the agent: it goes on, and what was held back
    *  here is read again. */
   unhalt(): void {
     if (!this.halted) return;
-    this.halted = null;
+    // A turn its machine says was asked to stop, from any device, stays
+    // stopped: only this device's own stop is called off.
+    const told = [...this.halted].filter((turn) => this.machineHalted.has(turn));
+    this.halted = told.length > 0 ? new Set(told) : null;
     this.stale = true;
     this.clock += 1;
   }
@@ -1411,9 +1787,38 @@ export class Fold {
    *  turn it runs is under way; when none runs, nothing shown is; words the
    *  World answered for stand as it keeps them, or, kept no more, as said.
    *  Words whose host has not started for a minute say why on their way. */
-  now(busy: boolean, turn: string | null, kept: KeptWords[]): void {
+  now(busy: boolean, turn: string | null, kept: KeptWords[], halted: string | null = null): void {
+    // Words a reading did not show taken, which the machine keeps no more,
+    // were taken by a turn this view did not see start: the stop of them
+    // is spent rather than left for the next turn to start. Judged before
+    // the turn the machine runs now is taken in, which is not theirs then.
+    const words = this.haltedWords;
+    const keeps = (word: { delivery: string | null | undefined }) => kept.some((held) => held.id === word.delivery);
+    if (this.haltedUnseen && this.halted?.size === 0 && words.length > 0
+      && words.every((word) => typeof word.delivery === "string") && !words.some(keeps)) {
+      this.halted = null;
+      this.haltedUnseen = false;
+    }
     if (busy && turn) this.underWay(turn, Date.now());
-    if (!busy) this.noTurnRuns();
+    if (!busy) {
+      // No turn runs, but words the stop waits for may still be on their
+      // way: kept by the machine, or not yet answered for. The stop of them
+      // stands until a turn takes them.
+      const waiting = this.halted?.size === 0
+        && words.some((word) => word.delivery === undefined || (typeof word.delivery === "string" && keeps(word)));
+      const unseen = this.haltedUnseen;
+      this.noTurnRuns();
+      if (waiting) {
+        this.halted = new Set();
+        this.haltedUnseen = unseen;
+      }
+    }
+    // A stop the user asked for, here or on another device, shows on every
+    // viewer at once.
+    if (busy && halted !== null && halted === turn) {
+      this.machineHalted.add(halted);
+      this.haltTurn(halted);
+    }
     const keeping = new Map(kept.map((words) => [words.id, words]));
     for (const entry of this.entries) {
       if (entry.kind !== "heard" || !entry.sending || entry.delivery === undefined) continue;
@@ -1429,7 +1834,12 @@ export class Fold {
             : { state: "queued", ahead: words.queued };
       else if (words?.state === "waiting") next = { state: "landed", how: "kept", machine: entry.from?.kind === "user" ? entry.from.machine : "" };
       else if (words === undefined && !busy) next = { state: "settled" };
-      else if (words !== undefined) next = words.host_retry ? { state: "going", retry: words.host_retry.reason } : { state: "going" };
+      else if (words !== undefined)
+        next = {
+          state: "going",
+          ...(words.host_retry ? { retry: words.host_retry.reason } : {}),
+          ...(words.starting ? { starting: words.starting } : {}),
+        };
       if (next && JSON.stringify(next) !== JSON.stringify(entry.sending)) {
         entry.sending = next;
         this.touch(entry);
@@ -1452,6 +1862,13 @@ export class Fold {
   /** Whether a turn the World told of is under way. */
   turning(): boolean {
     return this.running.size > 0;
+  }
+
+  /** The turn shown under way, the latest to begin; null when none is. */
+  runningTurn(): string | null {
+    let latest: string | null = null;
+    for (const turn of this.running) latest = turn;
+    return latest;
   }
 
   /** When the turn under way began, as the World told it; null when no
@@ -1482,6 +1899,13 @@ export class Fold {
     return this.derived().moving;
   }
 
+  /** The start of the agent's host for the first words kept that wait on
+   *  one: in line for room, being started, or tried again. Null when no
+   *  words wait on a start. */
+  starting(): StartShown | null {
+    return this.derived().start;
+  }
+
   private derived(): Derived {
     if (this.derivedCache?.clock === this.clock) return this.derivedCache;
     const lastMessage = new Map<string, string>();
@@ -1490,6 +1914,7 @@ export class Fold {
     let moving = false;
     let waiting = false;
     let heardFrom = false;
+    let start: StartShown | null = null;
     for (const entry of this.entries) {
       switch (entry.kind) {
         case "prose":
@@ -1502,9 +1927,33 @@ export class Fold {
           if (sayOf(entry)) spoke.add(entry.turn);
           heardFrom = true;
           break;
-        case "heard":
-          if (entry.sending?.state === "going") moving = true;
+        case "heard": {
+          // Words on their way, or in line for room, keep the turn's line:
+          // what they wait on is said there.
+          const sending = entry.sending;
+          if (sending?.state === "going" || sending?.state === "queued") moving = true;
+          if (start === null && sending?.state === "queued")
+            start = {
+              since: null,
+              failures: 0,
+              reason: null,
+              ahead: sending.ahead,
+              ...(sending.memory ? { memory: true } : {}),
+              ...(sending.callee ? { callee: true } : {}),
+            };
+          else if (start === null && sending?.state === "going" && (sending.starting || sending.retry)) {
+            const told = sending.starting;
+            const since = told ? Date.parse(told.since) : NaN;
+            start = {
+              since: Number.isFinite(since) ? since : null,
+              // A machine from before `starting` tells only that it failed,
+              // not how often.
+              failures: told ? (told.failures ?? 0) : 0,
+              reason: told ? (told.reason ?? null) : (sending.retry ?? null),
+            };
+          }
           break;
+        }
         case "ask":
           if (entry.state.state === "waiting") waiting = true;
           heardFrom = true;
@@ -1530,7 +1979,7 @@ export class Fold {
           break;
       }
     }
-    this.derivedCache = { clock: this.clock, lastMessage, latest, moving, waiting, heardFrom, spoke };
+    this.derivedCache = { clock: this.clock, lastMessage, latest, moving, waiting, heardFrom, spoke, start };
     return this.derivedCache;
   }
 
@@ -1550,6 +1999,8 @@ export class Fold {
    *  A message not yet begun is nothing to show. Words sent into a turn
    *  under way and not yet taken in come last, in the order sent: they
    *  stand below the turn's line and divide nothing. */
+  private pagedGroups = false;
+  private previousGroups = new Map<string, string>();
   blocks(): Block[] {
     if (this.blocksCache?.clock === this.clock) return this.blocksCache.blocks;
     const blocks: Block[] = [];
@@ -1598,6 +2049,18 @@ export class Fold {
       }
     }
     blocks.push(...below);
+    if (this.pagedGroups) {
+      const reused = new Set<string>();
+      const next = new Map<string, string>();
+      for (const block of blocks) {
+        if (block.kind !== "activity-group") continue;
+        const known = block.members.map((member) => this.previousGroups.get(member.key)).find((key) => key !== undefined && !reused.has(key));
+        if (known) block.key = known;
+        reused.add(block.key);
+        for (const member of block.members) next.set(member.key, block.key);
+      }
+      this.previousGroups = next;
+    }
     this.blocksCache = { clock: this.clock, blocks };
     return blocks;
   }

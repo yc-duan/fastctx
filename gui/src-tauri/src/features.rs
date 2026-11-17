@@ -49,7 +49,7 @@ pub enum Piece {
 #[fastctx_gui_command::command]
 pub(crate) async fn features_watch(
     shell: tauri::State<'_, Shell>,
-    pieces: Channel<crate::watch_delivery::Wake>,
+    pieces: Channel<crate::watch_delivery::Push>,
 ) -> Result<u64, String> {
     let page = shell.page.load(Ordering::Relaxed);
     let world = shell.world();

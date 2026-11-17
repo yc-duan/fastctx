@@ -38,22 +38,40 @@ pub(crate) fn report(
     owner: bool,
 ) -> io::Result<UsageReport> {
     let ledger = super::ledger(node, agent, dir);
+    super::with_book(node, &ledger, |book| made(agent, &ledger, book, only, owner))
+}
+
+/// `agent`'s ledger at `ledger`, read whole now and kept nowhere: one put
+/// back together from copies (`super::copied`), everyone's use in it, or
+/// `only`'s alone.
+pub(super) fn report_of(agent: &str, ledger: &Path, only: Option<&HubAccount>, owner: bool) -> io::Result<UsageReport> {
+    let mut book = super::ledger::Book::default();
+    book.load_at(ledger, Timestamp::now())?;
+    made(agent, ledger, &mut book, only, owner)
+}
+
+/// The report of the ledger at `ledger`, loaded as `book`.
+fn made(
+    agent: &str,
+    ledger: &Path,
+    book: &mut super::ledger::Book,
+    only: Option<&HubAccount>,
+    owner: bool,
+) -> io::Result<UsageReport> {
     let now = Timestamp::now();
     let oldest = now - SignedDuration::from_hours(24 * super::KEPT_DAYS);
     let since = Timestamp::from_second(oldest.as_second().div_euclid(86400) * 86400).expect("retained day");
-    super::with_book(node, &ledger, |book| {
-        let history = book.reset_history();
-        let mut entries = book.history.entries(&ledger, since, now, book.reading.as_ref(), &history)?;
-        entries.extend(book.balances().into_iter().filter(|row| row.at() >= since));
-        let resets = (owner && only.is_none()).then(|| {
-            let mut resets: Vec<_> = history.iter().map(|(_, reset)| reset.clone()).collect();
-            resets.sort_by_key(|reset| std::cmp::Reverse(reset.confirmed_at));
-            resets
-        });
-        let mut report = summarize(agent, only, now, book.reading.as_ref(), entries, &history)?;
-        report.resets = resets;
-        Ok(report)
-    })
+    let history = book.reset_history();
+    let mut entries = book.history.entries(ledger, since, now, book.reading.as_ref(), &history)?;
+    entries.extend(book.balances().into_iter().filter(|row| row.at() >= since));
+    let resets = (owner && only.is_none()).then(|| {
+        let mut resets: Vec<_> = history.iter().map(|(_, reset)| reset.clone()).collect();
+        resets.sort_by_key(|reset| std::cmp::Reverse(reset.confirmed_at));
+        resets
+    });
+    let mut report = summarize(agent, only, now, book.reading.as_ref(), entries, &history)?;
+    report.resets = resets;
+    Ok(report)
 }
 
 pub(super) fn summarize(
@@ -105,6 +123,7 @@ pub(super) fn summarize(
     people.dedup();
     let person = |who: &Option<HubAccount>| people.iter().position(|known| known == who).expect("known person") as u32;
     let mut hours: BTreeMap<(Timestamp, u32), UsageSum> = BTreeMap::new();
+    let mut fable_hours: BTreeMap<(Timestamp, u32), Usd> = BTreeMap::new();
     let mut used: BTreeMap<(usize, u32), UsageSum> = BTreeMap::new();
     let mut weekly: BTreeMap<u32, UsageSum> = BTreeMap::new();
     let mut fable: BTreeMap<u32, UsageSum> = BTreeMap::new();
@@ -156,6 +175,13 @@ pub(super) fn summarize(
             let count = usage.tokens.total();
             let hour = if matches!(entry, Entry::Summary { .. }) { at } else { bucket(at, &boundaries) };
             hours.entry((hour, index)).or_default().add(count, usage.usd);
+            let on_fable = agent == "claude"
+                && fastctx_hosts::claude::pricing::is_fable(&usage.model)
+                && usage.call.as_ref().is_none_or(|call| call.observed);
+            if on_fable {
+                let spent = fable_hours.entry((hour, index)).or_insert(Usd::ZERO);
+                *spent = spent.saturating_add(usage.usd.unwrap_or(Usd::ZERO));
+            }
             if let Some(span) = span_of(at) {
                 used.entry((span, index)).or_default().add(count, usage.usd);
                 *weights.entry((span, index)).or_default() += weight(agent, Some(&usage.tokens), usage.usd);
@@ -165,9 +191,7 @@ pub(super) fn summarize(
             }
             if in_week(at) {
                 weekly.entry(index).or_default().add(count, usage.usd);
-                if fastctx_hosts::claude::pricing::is_fable(&usage.model)
-                    && usage.call.as_ref().is_none_or(|call| call.observed)
-                {
+                if on_fable {
                     fable.entry(index).or_default().add(count, usage.usd);
                 }
                 went.entry(index).or_default().add(&usage);
@@ -190,7 +214,15 @@ pub(super) fn summarize(
                 }
             })
             .collect(),
-        hours: hours.into_iter().map(|((at, person), sum)| UsageHour { at, person, sum }).collect(),
+        hours: hours
+            .into_iter()
+            .map(|((at, person), sum)| UsageHour {
+                at,
+                person,
+                sum,
+                fable: (agent == "claude").then(|| fable_hours.get(&(at, person)).copied().unwrap_or(Usd::ZERO)),
+            })
+            .collect(),
         week: UsageWeek { start: Some(week.start), end: Some(week.end), window: week.window, went: all.went() },
         readings,
         resets: None,

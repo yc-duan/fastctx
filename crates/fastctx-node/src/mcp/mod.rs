@@ -17,6 +17,9 @@ use fastctx_types::{AccountName, MachineName};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+/// How long the list waits for each machine to say which commands it keeps.
+const STATUS_WITHIN: std::time::Duration = std::time::Duration::from_secs(5);
+
 fn failed(error: impl ToString) -> Failure {
     Failure::new(error.to_string())
 }
@@ -118,17 +121,38 @@ pub(crate) async fn call(
                     machines.entry(machine.clone()).or_default().push(name.clone());
                 }
             }
+            // Every machine is asked at once, each for as long as `STATUS_WITHIN`:
+            // the list takes as long as the slowest answer, not their sum.
+            let mut asked = tokio::task::JoinSet::new();
             for (machine, names) in machines {
-                let view = link.view();
-                let online = view.is_me(&machine) || view.member(&machine).is_some_and(|m| m.online);
-                let answer = if online {
-                    Some(
-                        machine_call(node, &link, &account, &machine, MachineCall::Status { names: names.clone() })
-                            .await,
-                    )
-                } else {
-                    None
-                };
+                let (node, link, account) = (node.clone(), link.clone(), account.clone());
+                asked.spawn(async move {
+                    let view = link.view();
+                    let online = view.is_me(&machine) || view.member(&machine).is_some_and(|m| m.online);
+                    let answer = if online {
+                        let status = MachineCall::Status { names: names.clone() };
+                        Some(
+                            match tokio::time::timeout(
+                                STATUS_WITHIN,
+                                machine_call(&node, &link, &account, &machine, status),
+                            )
+                            .await
+                            {
+                                Ok(answer) => answer,
+                                Err(_) => Err(failed(format!(
+                                    "{machine} did not say within {} s",
+                                    STATUS_WITHIN.as_secs()
+                                ))),
+                            },
+                        )
+                    } else {
+                        None
+                    };
+                    (names, answer)
+                });
+            }
+            while let Some(done) = asked.join_next().await {
+                let (names, answer) = done.map_err(|error| failed(format!("asking a machine: {error}")))?;
                 for name in names {
                     let state = match &answer {
                         None => CommandState::Offline,

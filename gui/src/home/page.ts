@@ -115,7 +115,7 @@ export class HomePage {
   constructor(private readonly options: HomeOptions) {
     this.element = document.createElement("div");
     this.element.className = "front-page";
-    this.element.innerHTML = `${options.head}<div class="front-body"><div class="front-map"></div><div class="front-board arriving"></div></div>`;
+    this.element.innerHTML = `${options.head}<div class="front-body"><div class="front-map"></div><div class="front-board arriving" role="tabpanel"></div></div>`;
     // The two views are chosen in the head, where the page has no title.
     const views = document.createElement("div");
     views.className = "front-views";

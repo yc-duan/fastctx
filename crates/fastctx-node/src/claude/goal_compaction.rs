@@ -116,6 +116,7 @@ pub(crate) async fn run(
             }),
         )
         .map_err(failure)?;
+        super::channel::wake(node, &prepared.host.session);
         ticket = Some(prepared);
     }
     drop(action);

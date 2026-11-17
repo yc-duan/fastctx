@@ -103,6 +103,18 @@ async fn digest(path: &Path) -> std::io::Result<(u64, String)> {
     }
 }
 
+/// Why an upload into the shared input came to nothing: `again` where no
+/// answer came, so the page asks again under the same operation and the
+/// node answers with what became of it (an attachment already made is not
+/// made twice); otherwise the upload failed.
+fn not_uploaded(error: fastctx_client::Error) -> crate::NotSaid {
+    crate::NotSaid { again: World::unanswered(&error) || World::busy(&error), message: error.to_string() }
+}
+
+fn refused(message: String) -> crate::NotSaid {
+    crate::NotSaid { message, again: false }
+}
+
 pub async fn composer_path(
     world: &World,
     resident: fastctx_types::ResidentId,
@@ -110,16 +122,15 @@ pub async fn composer_path(
     scope: fastctx_types::composer::UploadScope,
     path: &Path,
     sent: Channel<u64>,
-) -> Result<fastctx_types::composer::UploadResult, String> {
-    let name =
-        path.file_name().map(|name| name.to_string_lossy().into_owned()).ok_or("an attachment has no file name")?;
-    let (size, sha256) = digest(path).await.map_err(|error| format!("{}: {error}", path.display()))?;
-    let file = tokio::fs::File::open(path).await.map_err(|error| format!("{}: {error}", path.display()))?;
+) -> Result<fastctx_types::composer::UploadResult, crate::NotSaid> {
+    let name = path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .ok_or_else(|| refused("an attachment has no file name".into()))?;
+    let (size, sha256) = digest(path).await.map_err(|error| refused(format!("{}: {error}", path.display())))?;
+    let file = tokio::fs::File::open(path).await.map_err(|error| refused(format!("{}: {error}", path.display())))?;
     let upload = UploadFile { media_type: media_type_of(&name).to_string(), name, size, sha256 };
-    world
-        .upload_composer(resident, node, upload, scope, Counted { inner: file, sent, total: 0 })
-        .await
-        .map_err(|error| error.to_string())
+    world.upload_composer(resident, node, upload, scope, Counted { inner: file, sent, total: 0 }).await.map_err(not_uploaded)
 }
 
 pub async fn composer_bytes(
@@ -130,14 +141,14 @@ pub async fn composer_bytes(
     name: String,
     media_type: String,
     bytes: Vec<u8>,
-) -> Result<fastctx_types::composer::UploadResult, String> {
+) -> Result<fastctx_types::composer::UploadResult, crate::NotSaid> {
     let upload = UploadFile {
         media_type: if media_type.is_empty() { media_type_of(&name).to_string() } else { media_type },
         name,
         size: bytes.len() as u64,
         sha256: hex(&Sha256::digest(&bytes)),
     };
-    world.upload_composer(resident, node, upload, scope, bytes.as_slice()).await.map_err(|error| error.to_string())
+    world.upload_composer(resident, node, upload, scope, bytes.as_slice()).await.map_err(not_uploaded)
 }
 
 fn hex(bytes: &[u8]) -> String {

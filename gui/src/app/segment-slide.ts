@@ -9,6 +9,11 @@
 // sides hold their own easing back while the wash travels and as it lands,
 // or the wash would pale and come again under it. Where motion is off,
 // nothing slides.
+//
+// The chosen side can also be taken hold of (`grabSwitches`): dragged, its
+// wash leaves the side and follows the pointer along the track, the side it
+// is nearest named in the page's ink; let go, it springs to that side, which
+// is then chosen as if it had been pressed (用户 2026-11-15).
 
 import { reducedMotion } from "../motion";
 
@@ -44,11 +49,12 @@ export function followSwitches(): void {
       // The side already chosen pressed again moves nothing.
       if (!before || before.contains(target)) return;
       const look = getComputedStyle(before);
-      if (!painted(look.backgroundColor)) return;
+      const own = marksItself(look);
+      if (!own && !painted(look.backgroundColor)) return;
       const from = boxIn(before, track);
       const where = track.getBoundingClientRect();
       const centre = { x: where.left + where.width / 2, y: where.top + where.height / 2 };
-      const wash = { colour: look.backgroundColor, radius: look.borderRadius };
+      const wash = { colour: look.backgroundColor, radius: look.borderRadius, own };
       let frames = 0;
       const landed = () => {
         // The page may have drawn the switch anew where it stood.
@@ -72,6 +78,20 @@ function painted(colour: string): boolean {
   return colour !== "transparent" && !/rgba\([^)]*,\s*0\)$/.test(colour);
 }
 
+/** Whether the chosen side is marked by something other than a fill of its
+ *  own (a stroke under it, a ring round it): its style sheet says so with
+ *  `--seg-own`, and draws the same mark on a `.seg-own` that travels. */
+function marksItself(look: CSSStyleDeclaration): boolean {
+  return look.getPropertyValue("--seg-own").trim() === "1";
+}
+
+/** What travels: a wash of the side's colour, or a mark of its making. */
+function dress(thumb: HTMLElement, wash: { colour: string; radius: string; own: boolean }): void {
+  if (wash.own) thumb.classList.add("seg-own");
+  else thumb.style.background = wash.colour;
+  thumb.style.borderRadius = wash.radius;
+}
+
 /** Where `element` is inside `track`'s padding box. */
 function boxIn(element: HTMLElement, track: HTMLElement): Box {
   const outer = track.getBoundingClientRect();
@@ -81,15 +101,14 @@ function boxIn(element: HTMLElement, track: HTMLElement): Box {
 
 /** A wash from `from` to `to` in `track`, the chosen side's own wash held
  *  back meanwhile. */
-function slide(track: HTMLElement, from: Box, to: Box, wash: { colour: string; radius: string }): void {
+function slide(track: HTMLElement, from: Box, to: Box, wash: { colour: string; radius: string; own: boolean }): void {
   if (Math.abs(from.x - to.x) < 1 && Math.abs(from.y - to.y) < 1) return;
   track.querySelector(":scope > .seg-thumb")?.remove();
   if (getComputedStyle(track).position === "static") track.style.position = "relative";
   const thumb = document.createElement("span");
   thumb.className = "seg-thumb";
   thumb.setAttribute("aria-hidden", "true");
-  thumb.style.background = wash.colour;
-  thumb.style.borderRadius = wash.radius;
+  dress(thumb, wash);
   place(thumb, from);
   track.prepend(thumb);
   track.classList.add("seg-sliding");
@@ -121,4 +140,107 @@ function place(thumb: HTMLElement, box: Box): void {
   thumb.style.setProperty("--thumb-y", `${box.y}px`);
   thumb.style.setProperty("--thumb-w", `${box.w}px`);
   thumb.style.setProperty("--thumb-h", `${box.h}px`);
+}
+
+/** How far the pointer moves before a press is a drag. */
+const SLACK = 4;
+const MARKS = ["chosen", "current"] as const;
+const ARIA = ["aria-selected", "aria-checked", "aria-pressed"] as const;
+
+/** Lets every switch's chosen side be dragged to another, for as long as
+ *  `root` lives. */
+export function grabSwitches(root: Document | HTMLElement = document): void {
+  // The click a drag's release makes is not a press of what it ended on.
+  let dragged = 0;
+  root.addEventListener(
+    "click",
+    (event) => {
+      if (performance.now() - dragged < 80 && event.isTrusted) event.stopPropagation();
+    },
+    true,
+  );
+  root.addEventListener("pointerdown", (event) => {
+    const down = event as PointerEvent;
+    if (down.button !== 0 || reducedMotion()) return;
+    const track = (down.target as Element | null)?.closest<HTMLElement>(TRACKS);
+    const from = track ? chosenIn(track) : null;
+    if (!track || !from || !from.contains(down.target as Node)) return;
+    const sides = [...track.children].filter((side): side is HTMLElement => side instanceof HTMLElement && !side.classList.contains("seg-thumb") && !side.hidden);
+    if (sides.length < 2) return;
+    const look = getComputedStyle(from);
+    const own = marksItself(look);
+    if (!own && !painted(look.backgroundColor)) return;
+    const boxes = new Map(sides.map((side) => [side, boxIn(side, track)]));
+    const home = boxes.get(from)!;
+    const low = boxes.get(sides[0]!)!.x;
+    const last = boxes.get(sides[sides.length - 1]!)!;
+    const high = last.x + last.w - home.w;
+    let thumb: HTMLElement | null = null;
+    let near = from;
+
+    const move = (moved: PointerEvent) => {
+      const by = moved.clientX - down.clientX;
+      if (!thumb) {
+        if (Math.abs(by) < SLACK) return;
+        thumb = document.createElement("span");
+        thumb.className = "seg-thumb seg-held";
+        thumb.setAttribute("aria-hidden", "true");
+        dress(thumb, { colour: look.backgroundColor, radius: look.borderRadius, own });
+        place(thumb, home);
+        if (getComputedStyle(track).position === "static") track.style.position = "relative";
+        track.prepend(thumb);
+        track.classList.add("seg-sliding", "seg-dragging");
+        track.setPointerCapture(moved.pointerId);
+      }
+      const x = Math.min(high, Math.max(low, home.x + by));
+      thumb.style.setProperty("--thumb-x", `${x}px`);
+      const centre = x + home.w / 2;
+      near = sides.reduce((best, side) => {
+        const one = boxes.get(side)!;
+        const was = boxes.get(best)!;
+        return Math.abs(one.x + one.w / 2 - centre) < Math.abs(was.x + was.w / 2 - centre) ? side : best;
+      }, from);
+      for (const side of sides) side.classList.toggle("seg-near", side === near);
+    };
+    const end = () => {
+      track.removeEventListener("pointermove", move);
+      track.removeEventListener("pointerup", end);
+      track.removeEventListener("pointercancel", end);
+      if (!thumb) return;
+      dragged = performance.now();
+      const held = thumb;
+      const to = boxes.get(near)!;
+      // Let go, it springs to the side it is nearest.
+      held.classList.replace("seg-held", "seg-let");
+      held.style.setProperty("--thumb-x", `${to.x}px`);
+      held.style.setProperty("--thumb-w", `${to.w}px`);
+      const token = getComputedStyle(held).getPropertyValue("--settle").trim();
+      const settle = parseFloat(token) * (token.endsWith("ms") ? 1 : 1000) || 0;
+      window.setTimeout(() => {
+        for (const side of sides) side.classList.remove("seg-near");
+        held.remove();
+        track.classList.remove("seg-sliding", "seg-dragging");
+        if (near === from) return;
+        // Marked chosen before it is pressed, so the press slides nothing
+        // more; what it shows still comes from the side it went to
+        // (`arrive.ts` reads where it came from).
+        track.dataset.dragFrom = String(sides.indexOf(from));
+        for (const mark of MARKS) {
+          if (!from.classList.contains(mark)) continue;
+          from.classList.remove(mark);
+          near.classList.add(mark);
+        }
+        for (const name of ARIA) {
+          if (from.getAttribute(name) !== "true") continue;
+          from.setAttribute(name, "false");
+          near.setAttribute(name, "true");
+        }
+        near.click();
+        delete track.dataset.dragFrom;
+      }, Math.min(settle, 260));
+    };
+    track.addEventListener("pointermove", move);
+    track.addEventListener("pointerup", end);
+    track.addEventListener("pointercancel", end);
+  });
 }

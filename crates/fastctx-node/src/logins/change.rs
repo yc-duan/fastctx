@@ -96,6 +96,7 @@ pub(crate) async fn change(
     }
     let started = LoginChange { into, started_at: Timestamp::now(), steps: Vec::new(), end: None };
     set(node, &agent, &dir, |change| *change = started.clone());
+
     // Closing the workbench is kept before the files change, so that nothing
     // starts in the login once the user closed it; opening it, after they
     // changed. The files follow what is kept (`super::refresh`), so a change
@@ -189,6 +190,8 @@ pub(crate) async fn change(
     {
         node.log.line(format_args!("opening the workbench again after a failed change: {error}"));
     }
+    super::snapshot::ask(node);
+    super::snapshot::refresh(node).await;
     Ok(ended(node, &agent, &dir, end))
 }
 
@@ -235,6 +238,10 @@ fn set(node: &Node, agent: &AgentName, dir: &Path, edit: impl FnOnce(&mut LoginC
         }
     };
     edit(&mut changes[index].2);
+    let progress = changes[index].2.clone();
+    drop(changes);
+    super::snapshot::progress(node, agent.as_str(), dir, progress);
+    node.topics.changed(fastctx_types::topics::LOGINS);
 }
 
 /// A step told: the same step told again while running replaces its state.

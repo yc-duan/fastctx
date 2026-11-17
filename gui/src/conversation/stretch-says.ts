@@ -112,6 +112,11 @@ export function stretchSays(
   }
   const ended = !running && tools.length && tools.every((tool) => tool.ended) ? last : null;
   const time = running ? (began === null ? "" : clockSays(began, words)) : only ? figures : began !== null && ended !== null ? words.took(ended - began) : "";
+  const partial = [group.partialBefore ? (words.english ? "more above" : "上面还有") : "", group.partialAfter ? (words.english ? "more below" : "下面还有") : ""].filter(Boolean).join(words.figureGap);
+  if (partial) {
+    parts = [...(parts ?? [{ said: title, kind: "done" }]), { said: partial, kind: "done" }];
+    title = `${title}${words.tallyGap}${partial}`;
+  }
   return { title, parts: parts ?? [{ said: title, kind: "done" }], added, removed, steps, running, only, bare, figures, began, ended, time };
 }
 

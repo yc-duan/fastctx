@@ -2,9 +2,12 @@
 //! A successful write has committed; a reply timeout has an unknown outcome and
 //! must be reconciled using the caller's durable operation key.
 
+pub mod authorization;
 mod blocking;
+mod checkpointer;
 pub mod documents;
 mod error;
+pub mod format_upgrade;
 pub mod guard;
 mod integrity;
 mod keeper;
@@ -45,6 +48,31 @@ const READERS: usize = 16;
 /// Those of them background reads leave to the reads someone waits for.
 const INTERACTIVE_READERS: usize = 2;
 
+/// How a database's file is laid out and held in memory, for one whose rows
+/// are larger or whose writes come in larger batches than a service's
+/// records. What is not given stays as SQLite has it.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Shape {
+    /// The size of a page. It holds for a database made by this open; one
+    /// that exists keeps the size it was made with.
+    pub page_bytes: Option<u32>,
+    /// The pages the writer keeps in memory, in bytes.
+    pub cache_bytes: Option<u32>,
+    /// The pages each reader keeps in memory, in bytes: with the writer's,
+    /// what the database holds at most.
+    pub reader_cache_bytes: Option<u32>,
+    /// The pages of log after which a commit folds the log into the database.
+    pub checkpoint_pages: Option<u32>,
+    /// The log folded inside the commit that takes it past `checkpoint_pages`,
+    /// as SQLite folds it, not beside the writer on a thread of its own.
+    /// Beside the writer a commit never waits for a fold, but the writer's
+    /// own writes meet its disk work: on a slow disk one in ten took past
+    /// two milliseconds (a Windows runner, 2026-11-15; on this computer's
+    /// disk 9 with it inside, 34-54 beside). A drill that holds the writer's
+    /// own work to that budget folds inside; every program folds beside.
+    pub fold_inside: bool,
+}
+
 /// What makes a database's guard from the opened database, if it has one.
 type Maker<'a> = Option<&'a dyn Fn(&rusqlite::Connection) -> Result<Box<dyn Guard>>>;
 
@@ -61,6 +89,11 @@ impl WeakDatabase {
 struct Inner {
     writes: Arc<queue::Queue>,
     readers: Mutex<Vec<rusqlite::Connection>>,
+    /// How a read connection is opened: one at the opening, the rest as
+    /// reads come together to need them, up to `READERS` — an idle database
+    /// keeps no more connections than it ever read with at once (§18 idle
+    /// memory, codex-865aeb9b: about 10 MiB of a node's working set).
+    opening: Option<ReaderOpening>,
     reading: Arc<Semaphore>,
     background_reading: Arc<Semaphore>,
     reads: Arc<Semaphore>,
@@ -74,6 +107,7 @@ struct Inner {
     unsettled: Arc<AtomicBool>,
     /// Shared with the writer thread, which lets it go after its connection.
     _keeper: Option<Arc<keeper::Keeper>>,
+    upgrade: std::sync::OnceLock<format_upgrade::MigrationGate>,
 }
 impl Drop for Inner {
     fn drop(&mut self) {
@@ -84,6 +118,30 @@ impl Drop for Inner {
 impl std::fmt::Debug for Database {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Database").finish_non_exhaustive()
+    }
+}
+
+/// What opens a read connection of a database.
+struct ReaderOpening {
+    path: PathBuf,
+    cache_bytes: Option<u32>,
+    tables: Arc<std::collections::HashSet<String>>,
+    policy: Option<Arc<dyn authorization::WritePolicy>>,
+}
+
+impl ReaderOpening {
+    fn open(&self) -> Result<rusqlite::Connection> {
+        let mut reader = rusqlite::Connection::open_with_flags(
+            &self.path,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        )?;
+        reader.busy_timeout(ADMISSION)?;
+        reader.set_prepared_statement_cache_capacity(64);
+        if let Some(cache) = self.cache_bytes {
+            reader.pragma_update(None, "cache_size", -i64::from((cache / 1024).max(1)))?;
+        }
+        authorization::install(&mut reader, self.tables.clone(), false, self.policy.clone())?;
+        Ok(reader)
     }
 }
 
@@ -140,7 +198,25 @@ impl Database {
         schema: &str,
         initialize: impl Fn(&rusqlite::Connection) -> Result<()>,
     ) -> Result<Self> {
-        Self::open_kept(path, schema, &initialize, None)
+        Self::open_kept(path, schema, &initialize, None, Shape::default())
+    }
+
+    /// Opens as `open` does, with the file laid out and cached as `shape` says.
+    #[track_caller]
+    pub fn open_shaped(path: &Path, schema: &str, shape: Shape) -> Result<Self> {
+        Self::open_kept(path, schema, &|_| Ok(()), None, shape)
+    }
+
+    /// Opens as `open_initialized` does, with the file laid out and cached as
+    /// `shape` says.
+    #[track_caller]
+    pub fn open_initialized_shaped(
+        path: &Path,
+        schema: &str,
+        shape: Shape,
+        initialize: impl Fn(&rusqlite::Connection) -> Result<()>,
+    ) -> Result<Self> {
+        Self::open_kept(path, schema, &initialize, None, shape)
     }
 
     /// Opens as `open_initialized`, the writer keeping the rules of `guard`,
@@ -152,7 +228,20 @@ impl Database {
         guard: impl Fn(&rusqlite::Connection) -> Result<Box<dyn Guard>>,
         initialize: impl Fn(&rusqlite::Connection) -> Result<()>,
     ) -> Result<Self> {
-        Self::open_kept(path, schema, &initialize, Some(&guard))
+        Self::open_kept(path, schema, &initialize, Some(&guard), Shape::default())
+    }
+
+    /// Opens as `open_guarded` does, with the file laid out, cached and its
+    /// log folded as `shape` says.
+    #[track_caller]
+    pub fn open_guarded_shaped(
+        path: &Path,
+        schema: &str,
+        shape: Shape,
+        guard: impl Fn(&rusqlite::Connection) -> Result<Box<dyn Guard>>,
+        initialize: impl Fn(&rusqlite::Connection) -> Result<()>,
+    ) -> Result<Self> {
+        Self::open_kept(path, schema, &initialize, Some(&guard), shape)
     }
 
     #[track_caller]
@@ -161,6 +250,7 @@ impl Database {
         schema: &str,
         initialize: &dyn Fn(&rusqlite::Connection) -> Result<()>,
         guard: Maker<'_>,
+        shape: Shape,
     ) -> Result<Self> {
         fastctx_platform::roles::in_place("opening a database", || {
             let parent = path.parent().ok_or_else(|| Error::new("the database has no parent directory"))?;
@@ -170,13 +260,13 @@ impl Database {
                 fastctx_platform::ensure_private_dir(parent)?;
             }
             let kept = keeper::keep(path)?;
-            match Self::open_once(path, schema, initialize, guard, &kept) {
+            match Self::open_once(path, schema, initialize, guard, &kept, shape) {
                 // Damage the cheap checks did not see is set aside and salvaged
                 // as theirs is, and the salvage opened instead; only when no
                 // other connection to it is open.
                 Err(error) if error.is_database_damage() && kept.sole => {
                     recovery::mark_damaged(path, &error.to_string())?;
-                    Self::open_once(path, schema, initialize, guard, &kept)
+                    Self::open_once(path, schema, initialize, guard, &kept, shape)
                 }
                 opened => opened,
             }
@@ -189,6 +279,7 @@ impl Database {
         initialize: &dyn Fn(&rusqlite::Connection) -> Result<()>,
         guard: Maker<'_>,
         kept: &keeper::Kept,
+        shape: Shape,
     ) -> Result<Self> {
         let readings = readings::Readings::of(path);
         // Another handle of this process has it open, or is closing it: its
@@ -200,10 +291,17 @@ impl Database {
         let mut connection = rusqlite::Connection::open(path)?;
         connection.busy_timeout(ADMISSION)?;
         connection.set_prepared_statement_cache_capacity(64);
+        if let Some(page) = shape.page_bytes {
+            // Before the log's mode: a database in it keeps its page size.
+            connection.pragma_update(None, "page_size", page)?;
+        }
         connection.pragma_update(None, "journal_mode", "WAL")?;
         connection.pragma_update(None, "synchronous", "FULL")?;
         connection.pragma_update(None, "foreign_keys", "ON")?;
-        connection.pragma_update(None, "wal_autocheckpoint", 1000)?;
+        connection.pragma_update(None, "wal_autocheckpoint", shape.checkpoint_pages.unwrap_or(1000))?;
+        if let Some(cache) = shape.cache_bytes {
+            connection.pragma_update(None, "cache_size", -i64::from(cache / 1024))?;
+        }
         connection.pragma_update(None, "journal_size_limit", 8 * 1024 * 1024)?;
         let transaction = connection.transaction()?;
         versions::engine(&transaction)?;
@@ -216,38 +314,42 @@ impl Database {
             Some(make) => Some(Arc::new(Mutex::new(make(&connection)?))),
             None => None,
         };
+        let tables = authorization::tables(&connection)?;
+        let policy = guard.as_ref().and_then(|guard| guard::lock(guard).write_policy());
+        authorization::install(&mut connection, tables.clone(), true, policy.clone())?;
         let count = READERS;
-        let mut readers = Vec::with_capacity(count);
-        for _ in 0..count {
-            let reader = rusqlite::Connection::open_with_flags(
-                path,
-                rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
-            )?;
-            reader.busy_timeout(ADMISSION)?;
-            reader.set_prepared_statement_cache_capacity(64);
-            readers.push(reader);
-        }
+        let opening = ReaderOpening { path: path.to_path_buf(), cache_bytes: shape.reader_cache_bytes, tables: tables.clone(), policy: policy.clone() };
+        // One opened now, so that one that cannot be opened fails the opening.
+        let readers = vec![opening.open()?];
         let writes = Arc::new(queue::Queue::new());
         let damage = Arc::new(integrity::Damage::new(path.to_path_buf(), &readings));
         let metrics = Arc::new(metrics::Metrics::new(readings));
-        let unsettled = Arc::new(AtomicBool::new(false));
-        let (queue, measurements, noticed, file, held, relaxed) = (
-            writes.clone(),
-            metrics.clone(),
-            damage.clone(),
-            path.to_path_buf(),
-            kept.keeper.clone(),
-            unsettled.clone(),
-        );
+        // What a process before this one committed without waiting for the
+        // disk may not be on it yet, its log still in the system's memory
+        // after the process ended: the first settle synchronizes it.
+        let unsettled = Arc::new(AtomicBool::new(true));
+        // After `wal_autocheckpoint`, whose fold inside the commit the hook
+        // takes the place of. A hook not put on fails the opening: the
+        // connection may keep a hook whose state was freed.
+        let ending = if shape.fold_inside {
+            checkpointer::inside(path, kept.keeper.clone())
+        } else {
+            checkpointer::install(&mut connection, path, shape.checkpoint_pages.unwrap_or(1000), kept.keeper.clone())?
+        };
+        let (queue, measurements, noticed, file, relaxed) =
+            (writes.clone(), metrics.clone(), damage.clone(), path.to_path_buf(), unsettled.clone());
         std::thread::Builder::new().name("sqlite-writer".into()).spawn(move || {
+            // Dropped as the writer ends, unwinding too, after its connection
+            // and with it the last checkpoint: the thread that folded the log
+            // beside it is gone, then the file's keeper is let go.
+            let _ending = ending;
             writer::run(connection, queue, measurements, noticed, file, relaxed, guard);
-            // The connection, and with it the last checkpoint, is done.
-            drop(held);
         })?;
         integrity::watch(Arc::downgrade(&damage), path.to_path_buf())?;
         Ok(Self(Arc::new(Inner {
             writes,
             readers: Mutex::new(readers),
+            opening: Some(opening),
             reading: Arc::new(Semaphore::new(count)),
             background_reading: Arc::new(Semaphore::new(count - INTERACTIVE_READERS)),
             reads: Arc::new(Semaphore::new(1024)),
@@ -258,6 +360,7 @@ impl Database {
             salvaged,
             unsettled,
             _keeper: Some(kept.keeper.clone()),
+            upgrade: std::sync::OnceLock::new(),
         })))
     }
 
@@ -272,7 +375,7 @@ impl Database {
         schema: &str,
         initialize: impl Fn(&rusqlite::Connection) -> Result<()>,
     ) -> Self {
-        Self::or_unavailable(path, Self::open_kept(path, schema, &initialize, None))
+        Self::or_unavailable(path, Self::open_kept(path, schema, &initialize, None, Shape::default()))
     }
 
     /// Opens as `open_or_unavailable`, the writer keeping `guard`'s rules.
@@ -283,7 +386,12 @@ impl Database {
         guard: impl Fn(&rusqlite::Connection) -> Result<Box<dyn Guard>>,
         initialize: impl Fn(&rusqlite::Connection) -> Result<()>,
     ) -> Self {
-        Self::or_unavailable(path, Self::open_kept(path, schema, &initialize, Some(&guard)))
+        Self::or_unavailable(path, Self::open_kept(path, schema, &initialize, Some(&guard), Shape::default()))
+    }
+
+    /// Keeps startup refusal available to diagnostics without touching the file.
+    pub fn refused(path: &Path, error: Error) -> Self {
+        Self::or_unavailable(path, Err(error))
     }
 
     fn or_unavailable(path: &Path, opened: Result<Self>) -> Self {
@@ -299,6 +407,7 @@ impl Database {
                 Self(Arc::new(Inner {
                     writes,
                     readers: Mutex::new(Vec::new()),
+                    opening: None,
                     reading: Arc::new(Semaphore::new(0)),
                     background_reading: Arc::new(Semaphore::new(0)),
                     reads: Arc::new(Semaphore::new(0)),
@@ -309,6 +418,7 @@ impl Database {
                     salvaged: None,
                     unsettled: Arc::new(AtomicBool::new(false)),
                     _keeper: None,
+                    upgrade: std::sync::OnceLock::new(),
                 }))
             }
         }
@@ -423,7 +533,13 @@ impl Database {
         read: impl FnOnce(&rusqlite::Connection) -> Result<T>,
     ) -> Result<T> {
         fastctx_platform::cost::database_read();
-        let connection = self.0.readers.lock().expect("reader pool").pop().expect("a permit reserves a connection");
+        // A permit holds a place for a connection: one kept, or one opened
+        // now, never more than `READERS` in all.
+        let kept = self.0.readers.lock().expect("reader pool").pop();
+        let connection = match kept {
+            Some(connection) => connection,
+            None => self.0.opening.as_ref().ok_or_else(unavailable)?.open()?,
+        };
         let reader = Reader { inner: &self.0, connection: Some(connection), _permit: permit };
         let _holding = Holding::begin();
         let start = Instant::now();
@@ -472,6 +588,29 @@ impl Database {
         write: impl FnOnce(&rusqlite::Connection) -> Result<T> + Send + 'static,
         committed: impl FnOnce(&T) + Send + 'static,
     ) -> Result<T> {
+        self.write_committed_at(priority, bytes, true, write, committed).await
+    }
+
+    /// Publishes after commit without requiring a disk synchronization. The
+    /// notification survives cancellation or timeout of the awaiting caller.
+    pub async fn write_relaxed_then_at<T: Send + 'static>(
+        &self,
+        priority: Priority,
+        bytes: usize,
+        write: impl FnOnce(&rusqlite::Connection) -> Result<T> + Send + 'static,
+        committed: impl FnOnce(&T) + Send + 'static,
+    ) -> Result<T> {
+        self.write_committed_at(priority, bytes, false, write, committed).await
+    }
+
+    async fn write_committed_at<T: Send + 'static>(
+        &self,
+        priority: Priority,
+        bytes: usize,
+        durable: bool,
+        write: impl FnOnce(&rusqlite::Connection) -> Result<T> + Send + 'static,
+        committed: impl FnOnce(&T) + Send + 'static,
+    ) -> Result<T> {
         self.available()?;
         let permit = tokio::time::timeout(QUEUE_WAIT, self.0.writes.admit(priority, bytes))
             .await
@@ -480,11 +619,22 @@ impl Database {
         let (send, receive) = oneshot::channel();
         self.submit(
             priority,
-            writer::job(permit, true, write, committed, move |result| {
+            writer::job(permit, durable, write, committed, move |result| {
                 let _ = send.send(result);
             }),
         )?;
         tokio::time::timeout(ANSWER, receive).await.map_err(|_| unknown())?.map_err(|_| unknown())?
+    }
+
+    /// Commits as `write` does without waiting for the disk, as
+    /// `write_relaxed_now_at` says: for what a later durable commit of the
+    /// same work makes whole, and what is done again, unharmed, when lost.
+    pub async fn write_relaxed<T: Send + 'static>(
+        &self,
+        bytes: usize,
+        write: impl FnOnce(&rusqlite::Connection) -> Result<T> + Send + 'static,
+    ) -> Result<T> {
+        self.write_relaxed_then_at(Priority::Normal, bytes, write, |_| {}).await
     }
 
     /// Blocking-thread compatibility; it parks on the same admission and commit
@@ -534,6 +684,97 @@ impl Database {
         write: impl FnOnce(&rusqlite::Connection) -> Result<T> + Send + 'static,
     ) -> Result<T> {
         self.commit_now(priority, bytes, false, write, |_| {})
+    }
+
+    /// Commits each of `writes` in order and durably, as `write_now_at`
+    /// commits one, without waiting for one before giving the writer the
+    /// next: those it finds waiting it takes into one transaction, each in a
+    /// savepoint of its own, so that one disk synchronization serves them
+    /// all. Each sees what those before it wrote, and stands on them: once
+    /// one fails — its write, by an error or a panic, or the commit of the
+    /// transaction it was in — none after it writes anything. The results,
+    /// in order; once one cannot be given to the writer, none after it is.
+    /// The writes are admitted within one wait, and answered within one, as
+    /// one write is.
+    #[track_caller]
+    #[allow(clippy::type_complexity)]
+    pub fn write_many_now_at<T: Send + 'static>(
+        &self,
+        priority: Priority,
+        writes: Vec<(usize, Box<dyn FnOnce(&rusqlite::Connection) -> Result<T> + Send>)>,
+    ) -> Vec<Result<T>> {
+        fastctx_platform::roles::in_place("database writes", || {
+            let total = writes.len();
+            let refused = |error: Error| -> Vec<Result<T>> { (0..total).map(|_| Err(error.clone())).collect() };
+            if let Err(error) = self.available() {
+                return refused(error);
+            }
+            if writer::on_writer() {
+                debug_assert!(false, "a database writer waited for a write");
+                return refused(Error::with_kind(ErrorKind::Invalid, "a database's writer cannot wait for a write"));
+            }
+            let mut answers = Vec::with_capacity(total);
+            // Set while a write of the run has not stood — set as it begins,
+            // cleared once its savepoint is kept, so an error, a panic or a
+            // guard's refusal leaves it set — and by the answer of one whose
+            // commit failed: the writer answers a transaction's writes before
+            // it begins the next.
+            let failed = Arc::new(AtomicBool::new(false));
+            let admitted_by = Instant::now() + QUEUE_WAIT;
+            for (index, (bytes, write)) in writes.into_iter().enumerate() {
+                let left = admitted_by.saturating_duration_since(Instant::now());
+                let permit = match blocking::wait(self.0.writes.admit(priority, bytes), left) {
+                    Some(Ok(permit)) => permit,
+                    Some(Err(error)) => {
+                        answers.push(Err(error));
+                        break;
+                    }
+                    None => {
+                        answers.push(Err(busy("write admission")));
+                        break;
+                    }
+                };
+                self.admitted(priority);
+                let (send, receive) = oneshot::channel();
+                let (stands, kept, answered) = (failed.clone(), failed.clone(), failed.clone());
+                let write = move |connection: &rusqlite::Connection| {
+                    if stands.load(Ordering::Acquire) {
+                        return Err(Error::with_kind(ErrorKind::Invalid, "not written: a write before it in the run failed"));
+                    }
+                    stands.store(true, Ordering::Release);
+                    write(connection)
+                };
+                let stood = move || kept.store(false, Ordering::Release);
+                let job = writer::job_in_run(permit, true, index + 1 < total, stood, write, |_: &T| {}, move |result: Result<T>| {
+                    if result.is_err() {
+                        answered.store(true, Ordering::Release);
+                    }
+                    let _ = send.send(result);
+                });
+                if let Err(error) = self.submit(priority, job) {
+                    answers.push(Err(error));
+                    break;
+                }
+                answers.push(Ok(receive));
+            }
+            // One deadline for the run, as for one write: a stuck writer is
+            // told within it, not once for each.
+            let deadline = Instant::now() + ANSWER;
+            let mut results: Vec<Result<T>> = answers
+                .into_iter()
+                .map(|answer| match answer {
+                    Ok(receive) => {
+                        let left = deadline.saturating_duration_since(Instant::now());
+                        blocking::wait(receive, left).ok_or_else(unknown)?.map_err(|_| unknown())?
+                    }
+                    Err(error) => Err(error),
+                })
+                .collect();
+            while results.len() < total {
+                results.push(Err(busy("an earlier write of the batch")));
+            }
+            results
+        })
     }
 
     /// Makes every relaxed write committed so far as durable as any other,

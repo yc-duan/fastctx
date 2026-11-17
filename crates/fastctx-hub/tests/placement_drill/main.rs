@@ -23,6 +23,18 @@ mod resume;
 #[path = "../../../../gui/src-tauri/src/transcript/core.rs"]
 #[allow(dead_code)]
 mod transcript;
+/// The shell's paged window types, which the shell's pieces and transcript
+/// name and the drill never makes: the window itself needs the whole shell.
+mod timeline_delta {
+    #[derive(Clone, serde::Serialize)]
+    pub(crate) struct Placement;
+    #[derive(Clone, serde::Serialize)]
+    pub(crate) struct Delta;
+}
+mod timeline_window {
+    #[derive(Clone, serde::Serialize)]
+    pub(crate) struct Edges;
+}
 use conversation_piece::Piece;
 fn epoch_ms(at: std::time::SystemTime) -> u64 {
     at.duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() as u64
@@ -31,6 +43,7 @@ mod scale;
 mod shared_controls;
 mod sharing;
 mod skills;
+mod submissions;
 use anyhow::{Context, Result};
 use fastctx_client::World;
 use fastctx_net::{
@@ -68,6 +81,30 @@ fn record(what: &str, ok: bool, detail: Value) {
 }
 async fn pause() {
     tokio::time::sleep(Duration::from_millis(250)).await;
+}
+/// Until the computer at `root` holds the account's whole share of the
+/// machine in force. The hub answers a new share at once, and the share
+/// gives nothing until the machine has cleared what the account may not see
+/// (sync v2 design §6.3): what the account does on the machine as one of its
+/// holders belongs after that.
+async fn share_in_force(root: &Path, on: &str, account: &str) -> Result<()> {
+    let world = World::new(WorldDir::under(root), Peer::Command { resident: None, session: None });
+    let mut seen = None;
+    for _ in 0..240 {
+        seen = world
+            .accounts()
+            .await?
+            .hubs
+            .iter()
+            .flat_map(|hub| &hub.shares)
+            .find(|share| share.machine == machine(on) && share.account == name(account))
+            .map(|share| share.pending);
+        if seen == Some(None) {
+            return Ok(());
+        }
+        pause().await;
+    }
+    anyhow::bail!("{account}'s share of {on} never came into force there: {seen:?}")
 }
 async fn ask(root: &Path, call: Value) -> Result<Value> {
     let mut client =
@@ -257,6 +294,7 @@ fn serve(base: &Path) -> Result<Child> {
         .env("HOME", base.join("user"))
         .env("LANG", "C.UTF-8")
         .env("FASTCTX_UPDATE_RELEASES", "http://127.0.0.1:9/releases")
+        .env("FASTCTX_HUB_HEALTH_SECONDS", "1")
         .args(["hub", "serve", "--dir"])
         .arg(base.join("hub"))
         .stdin(Stdio::null())
@@ -393,6 +431,7 @@ async fn main() -> Result<()> {
                 daily: None,
                 five_hour: None,
                 turns: None,
+                share: None,
             },
         )
         .await
@@ -482,6 +521,7 @@ async fn main() -> Result<()> {
         AccountChange::Share { machine: machine("host"), to: name("mobile"), shared: true, jobs: None },
     )
     .await?;
+    share_in_force(&host, "host", "mobile").await?;
     let before = last_turn(&host, &m);
     wm.talk(
         sm.to.resident.clone(),
@@ -581,7 +621,7 @@ async fn main() -> Result<()> {
         plan_file(&host, &a)? == pa,
         json!(null),
     );
-    wa.stop(sa.to.resident.clone(), Some("host".parse()?)).await?;
+    wa.stop(sa.to.resident.clone(), Some("host".parse()?), None, None).await?;
     anyhow::ensure!(idle_after(&host, &a, before).await, "the held turn did not stop");
     let local_home = base.join("alice-codex");
     std::fs::create_dir_all(&local_home)?;
@@ -737,10 +777,23 @@ async fn main() -> Result<()> {
     }
     anyhow::ensure!(focused_back, "the focused computer did not reconnect");
     wa.manage(sa.to.resident.clone(), Some("host".parse()?), Management::Focus { focus: focused("alice-two") }).await?;
-    let before = last_turn(&host, &a);
-    wa.talk(sa.to.resident.clone(), Some("host".parse()?), "ALICE_NEW_PLACE".into()).await?;
-    anyhow::ensure!(idle_after(&host, &a, before).await, "the new-place turn did not settle");
-    let moved = plan_file(&host, &a)?;
+    // Back as alice-pc sees it is not yet back as the conversation's own
+    // computer hears it: until then a turn there has no working computer and
+    // its receipt names no path. Another turn is begun until one has it.
+    let mut moved = None;
+    for _ in 0..40 {
+        let before = last_turn(&host, &a);
+        wa.talk(sa.to.resident.clone(), Some("host".parse()?), "ALICE_NEW_PLACE".into()).await?;
+        anyhow::ensure!(idle_after(&host, &a, before).await, "the new-place turn did not settle");
+        if let Ok(path) = plan_file(&host, &a) {
+            moved = Some(path);
+            break;
+        }
+        for _ in 0..4 {
+            pause().await;
+        }
+    }
+    let moved = moved.context("no turn after the focused computer came back had a working place")?;
     record("the next turn gets the selected replica path", moved.starts_with(&alice_two) && moved != pa, json!(moved));
     record(
         "both copies retain the recovered edit",
@@ -781,7 +834,9 @@ async fn main() -> Result<()> {
     let endpoint = std::env::args().nth(3).context("goal mock endpoint")?;
     goals::exercise(&wa, &host, &moved, &sa.to.resident, &endpoint).await?;
     history::exercise(&wa, &host, &alice_two, &sa.to.resident, &writer.to).await?;
+    submissions::exercise(&base, &wo, &host, &home).await?;
     sharing::exercise(&base, &host, &owner_pc, &wo, &wb, &so.to.resident, &sb.to, &home).await?;
+    submissions::exercise_management(&base, &wo).await?;
     host_node.kill()?;
     host_node.wait()?;
     let host_offline =

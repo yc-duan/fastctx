@@ -127,11 +127,6 @@ export function teamSample(english: boolean): CollabNode[] {
       ended: null,
       steps: 48,
       machine: "lab",
-      children: [
-        { id: "hopper", kind: "subagent", agent: "codex", name: "Hopper", task: english ? "Read how posts are stored" : "读文章是怎样存的", state: "done", took: 4 * minute, began: ago(58), ended: ago(54), tokens: 41_200, model: "gpt-6.1-sol", steps: 17, children: [] },
-        { id: "turing", kind: "subagent", agent: "codex", name: "Turing", task: english ? "Load the comments of every post at once" : "一次读出全部文章的评论", state: "failed", took: 6 * minute, began: ago(31), ended: ago(25), tokens: 18_400, model: "gpt-6.1-sol", steps: 9, why: english ? "stream disconnected before completion: model overloaded" : "stream disconnected before completion: model overloaded", children: [] },
-        { id: "lovelace", kind: "subagent", agent: "codex", name: "Lovelace", task: english ? "Try the migration on a copy" : "在副本上试迁移", state: "working", took: 9 * minute, began: ago(9), ended: null, doing: english ? "Run cargo test -p migrate" : "运行 cargo test -p migrate", model: "gpt-6.1-sol", steps: 12, children: [] },
-      ],
     },
     {
       id: "codex-d3pl",
@@ -147,7 +142,6 @@ export function teamSample(english: boolean): CollabNode[] {
       ended: null,
       steps: 14,
       machine: "laptop",
-      children: [],
     },
     {
       id: "codex-p4ge",
@@ -163,7 +157,6 @@ export function teamSample(english: boolean): CollabNode[] {
       ended: ago(41),
       steps: 6,
       machine: "lab",
-      children: [],
     },
     {
       id: "codex-f0rm",
@@ -179,7 +172,6 @@ export function teamSample(english: boolean): CollabNode[] {
       ended: ago(32),
       steps: 31,
       machine: "laptop",
-      children: [],
     },
     {
       id: "codex-l1nk",
@@ -195,47 +187,28 @@ export function teamSample(english: boolean): CollabNode[] {
       ended: ago(164),
       steps: 26,
       machine: "lab",
-      children: [],
     },
-    { id: "explore-1", kind: "subagent", agent: "claude", name: "Explore", task: english ? "Where the blog renders a post" : "博客在哪里渲染一篇文章", state: "done", took: 2 * minute, began: ago(16), ended: ago(14), steps: 9, children: [] },
-    // `?team=many`: a colleague that fanned its work out wide, to see the
-    // rows scroll under a clock that stays.
+    // `?team=many`: more colleagues than their card is tall, to see the
+    // rows scroll in it.
     ...(new URLSearchParams(location.search).get("team") === "many"
-      ? [
-          {
-            id: "codex-w1de",
+      ? Array.from({ length: 16 }, (_, index) => {
+          const begun = 38 - (index % 12) * 3;
+          const ended = index % 5 === 0 ? null : begun - 1 - (index % 4);
+          return {
+            id: `codex-w${index}`,
             kind: "colleague" as const,
             agent: "codex" as const,
-            name: "GPT-6.1 Sol",
-            task: english ? "Read every module for the old comment calls" : "逐个模块找旧评论接口的调用",
-            state: "working" as const,
-            goal: "active" as const,
-            took: 40 * minute,
-            began: ago(40),
-            ended: null,
-            steps: 120,
+            name: index % 2 ? "GPT-6.1 Sol" : "GPT-6.1 Luna",
+            task: english ? `Module ${index + 1}: where it calls the comments` : `第 ${index + 1} 个模块：哪里调了评论`,
+            state: (ended === null ? "working" : index % 7 === 3 ? "failed" : "done") as "working" | "failed" | "done",
+            goal: (ended === null ? "active" : "complete") as "active" | "complete",
+            took: 0,
+            began: ago(begun),
+            ended: ended === null ? null : ago(ended),
+            steps: 4 + (index % 9),
             machine: "lab",
-            children: Array.from({ length: 48 }, (_, index) => {
-              const begun = 38 - (index % 12) * 3;
-              const ended = index % 5 === 0 ? null : begun - 1 - (index % 4);
-              return {
-                id: `wide-${index}`,
-                kind: "subagent" as const,
-                agent: "codex" as const,
-                name: `Scout ${index + 1}`,
-                task: english ? `Module ${index + 1}: where it calls the comments` : `第 ${index + 1} 个模块：哪里调了评论`,
-                state: (ended === null ? "working" : index % 7 === 3 ? "failed" : "done") as "working" | "failed" | "done",
-                took: 0,
-                began: ago(begun),
-                ended: ended === null ? null : ago(ended),
-                ...(ended === null ? { doing: english ? `Read src/module_${index + 1}.rs` : `读 src/module_${index + 1}.rs` } : {}),
-                steps: 4 + (index % 9),
-                children: [],
-              };
-            }),
-          },
-        ]
+          };
+        })
       : []),
-    { id: "general-2", kind: "subagent", agent: "claude", name: "general-purpose", task: english ? "Why the old comments plugin was dropped" : "旧的评论插件为什么被拿掉", state: "failed", took: 6 * minute, began: ago(22), ended: ago(16), steps: 22, children: [] },
   ];
 }

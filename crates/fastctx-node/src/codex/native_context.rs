@@ -69,7 +69,9 @@ pub(crate) async fn observe(node: &Arc<Node>, id: &ResidentId) -> Result<(), Fai
         let path_changed = observer.as_ref().is_some_and(|observer| observer.path != path);
         let mut observer = observer.filter(|observer| observer.path == path).unwrap_or_else(|| Observer {
             path: path.clone(),
-            tail: Tail::default(),
+            // Only its compactions are looked for: a line too large to read
+            // is passed over, not every row after it (design §28.49).
+            tail: Tail::passing_large(),
             last: None,
         });
         let mut rewritten = path_changed;
@@ -82,6 +84,12 @@ pub(crate) async fn observe(node: &Arc<Node>, id: &ResidentId) -> Result<(), Fai
                 Found::Row(row) if row["type"] == "compacted" => {
                     observer.last =
                         Some(crate::profile::session::hash(&serde_json::to_string(row).map_err(io::Error::other)?));
+                }
+                // A line too large to read may have been a compaction: taken
+                // as one, so the context is told again rather than thought
+                // unchanged (design §28.49).
+                Found::Unread { at } => {
+                    observer.last = Some(crate::profile::session::hash(&format!("unread line at {at} of {}", path.display())));
                 }
                 _ => {}
             }

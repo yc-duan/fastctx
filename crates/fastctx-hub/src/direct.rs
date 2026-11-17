@@ -10,6 +10,8 @@
 //! says which layer kept the hub out. An address only machines on the same
 //! network reach, the hub cannot check from elsewhere, and says so.
 
+pub(crate) mod submission;
+
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -102,6 +104,13 @@ pub(crate) async fn change(
     .await
 }
 
+/// The most addresses a machine is said to take direct connections at: a
+/// machine has a handful, one for each of its networks and each kind of
+/// address.
+const AT_MOST: usize = 64;
+/// How many of them the hub checks at once.
+const PROBES_AT_ONCE: usize = 8;
+
 fn authorized(
     directory: &fastctx_net::directory::Directory,
     asker: &crate::origin::Origin,
@@ -110,6 +119,9 @@ fn authorized(
     at: &[SocketAddr],
 ) -> Result<fastctx_net::sign::PublicKey, String> {
     asker.check(directory)?;
+    if at.len() > AT_MOST {
+        return Err(format!("a machine takes direct connections at {AT_MOST} addresses at most"));
+    }
     if !directory.logged_in(asker, account) {
         return Err(format!("{asker} is not logged in to the account {account}"));
     }
@@ -182,12 +194,22 @@ async fn allow(
     };
     let firewall = firewall.map_err(|why| format!("{machine} could not take direct connections: {why}"))?;
     let hub_id = hub.store().hub.id.clone();
-    let probes = at.iter().map(|address| {
-        let (hub_id, machine) = (hub_id.clone(), machine.clone());
-        async move { (*address, fastctx_net::peer::probe(*address, &hub_id, &machine, &key).await) }
-    });
+    // Made before they are polled, so that the stream holds the probes and
+    // not the closure that makes them.
+    let probes: Vec<_> = at
+        .iter()
+        .copied()
+        .map(|address| {
+            let (hub_id, machine) = (hub_id.clone(), machine.clone());
+            async move { (address, fastctx_net::peer::probe(address, &hub_id, &machine, &key).await) }
+        })
+        .collect();
     let mut failures = Vec::new();
-    for (address, outcome) in futures_util::future::join_all(probes).await {
+    let checked: Vec<_> = {
+        use futures_util::StreamExt as _;
+        futures_util::stream::iter(probes).buffer_unordered(PROBES_AT_ONCE).collect().await
+    };
+    for (address, outcome) in checked {
         match outcome {
             Ok(()) => {}
             // Only machines on its own network reach such an address; the

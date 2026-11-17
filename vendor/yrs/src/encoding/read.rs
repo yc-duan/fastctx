@@ -84,6 +84,18 @@ impl<'a> Read for Cursor<'a> {
 pub trait Read: Sized {
     fn read_exact(&mut self, len: usize) -> Result<&[u8], Error>;
 
+    /// Rejects collection counts that cannot fit the remaining encoded input.
+    /// Streaming and compressed readers may supply their own allocation bound.
+    fn check_count(&self, _count: usize) -> Result<(), Error> {
+        Ok(())
+    }
+
+    /// Enters a nested lib0 value. Bounded readers can reject excessive depth.
+    fn enter_value(&mut self) -> Result<(), Error> {
+        Ok(())
+    }
+    fn leave_value(&mut self) {}
+
     /// Read a single byte.
     fn read_u8(&mut self) -> Result<u8, Error> {
         let buf = self.read_exact(1)?;
@@ -134,7 +146,7 @@ pub trait Read: Sized {
     /// Read string of variable length.
     fn read_string(&mut self) -> Result<&str, Error> {
         let buf = self.read_buf()?;
-        Ok(unsafe { std::str::from_utf8_unchecked(buf) })
+        std::str::from_utf8(buf).map_err(|_| Error::UnexpectedValue)
     }
 
     /// Read float32 in big endian order

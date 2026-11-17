@@ -189,7 +189,7 @@
   flex: 1;
   height: 8px;
   border-radius: var(--radius-full);
-  background: var(--hairline);
+  background: var(--bar-track);
   overflow: hidden;
 }
 

@@ -139,7 +139,7 @@ export class LocalTranscript implements PartSource {
   }
 
   async part(generation: number, edge: Edge): Promise<PartRead | null> {
-    if (generation !== this.generation) return null;
+    if (generation !== this.generation || edge.edge === "latest" || edge.edge === "position" || edge.edge === "turn") return null;
     const len = this.events.length;
     let start: number;
     let end: number;

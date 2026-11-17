@@ -214,7 +214,7 @@ export class HubMoving {
     // One question at a time: a slow answer is not asked over again.
     let asking = false;
     const look = () => {
-      if (asking) return;
+      if (asking || document.visibilityState !== "visible") return;
       asking = true;
       this.options.move(login, { request: "status" }).then(
         (reply) => {

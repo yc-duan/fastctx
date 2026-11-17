@@ -14,10 +14,20 @@ use fastctx_types::{Call, Reply};
 use crate::Shell;
 
 /// The updater target this application's packages are for: the official
-/// updater's `<os>-<arch>-<installer>`, or the phone's own.
+/// updater's `<os>-<arch>-<installer>`, or the phone's: the APK for its own
+/// processor, the library it runs being that processor's however it was
+/// installed (`scripts/release-manifest.py`); `android-apk`, of all four,
+/// where none is known.
 pub(crate) fn target() -> String {
     if cfg!(target_os = "android") {
-        return "android-apk".to_string();
+        let abi = match std::env::consts::ARCH {
+            "aarch64" => "arm64-v8a",
+            "arm" => "armeabi-v7a",
+            "x86" => "x86",
+            "x86_64" => "x86_64",
+            _ => return "android-apk".to_string(),
+        };
+        return format!("android-{abi}-apk");
     }
     let os = match std::env::consts::OS {
         "macos" => "darwin",
@@ -73,6 +83,22 @@ async fn once(shell: &Shell, call: UpdateCall) -> Result<State, String> {
         Reply::Update(state) => Ok(*state),
         other => Err(format!("the World answered {other:?}")),
     }
+}
+
+/// The command-line program `target` (`fastctx-<triple>`) of this
+/// application's version, brought here and verified by this computer's
+/// node, for another machine: what a remote install uploads to a server.
+/// The local path of its archive, which the node holds a while for that.
+#[cfg(desktop)]
+pub(crate) async fn program_for(shell: &Shell, target: &str) -> Result<std::path::PathBuf, String> {
+    let version = env!("CARGO_PKG_VERSION").to_string();
+    let state = ask(shell, UpdateCall::Bring { version: version.clone(), target: target.to_string() }).await?;
+    state
+        .kept
+        .iter()
+        .find(|kept| kept.version == version && kept.target == target)
+        .map(|kept| std::path::PathBuf::from(&kept.path))
+        .ok_or_else(|| format!("the node brought {target} of {version} but does not keep it"))
 }
 
 /// Tells the node or the device which application this is, and where it

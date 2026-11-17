@@ -59,6 +59,8 @@ pub enum Job {
         to: ResidentId,
         machine: MachineName,
         text: String,
+        /// The words shown as sent from here, whose outcome this is.
+        local: u64,
     },
     Stop {
         resident: ResidentId,
@@ -158,10 +160,16 @@ pub enum Job {
 /// What the World answered a job.
 #[derive(Debug)]
 pub enum Done {
-    Said(Said),
+    /// Words said, and those that went: the line beside their attachment
+    /// where they went as one (design §28.49).
+    Said(Said, String),
+    /// Words the node refused for certain, why: not sent, to be sent again.
+    Refused(String),
     Stopped(bool),
     Attachable(HostCommand),
-    Opened(Said),
+    /// A session opened, and its first words as they went: the line beside
+    /// their attachment where they went as one (design §28.49).
+    Opened(Said, String),
     Record(Box<TownRecord>),
     Journal(Box<JournalView>),
     /// The line that installs a server, and until when it works.

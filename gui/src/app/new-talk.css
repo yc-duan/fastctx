@@ -646,7 +646,7 @@ button.agent-machine:hover,
   width: 40px;
   height: 4px;
   border-radius: var(--radius-full);
-  background: var(--fill-strong);
+  background: var(--bar-track);
   overflow: hidden;
 }
 

@@ -20,7 +20,7 @@ pub struct TurnFactsArgs {
 
 pub fn run(args: TurnFactsArgs) -> anyhow::Result<()> {
     let call = if args.stop {
-        Call::Stop { resident: args.resident, machine: None }
+        Call::Stop { resident: args.resident, machine: None, turn: None, words: None }
     } else if args.compact {
         Call::CompactBetweenTurns { resident: args.resident }
     } else {

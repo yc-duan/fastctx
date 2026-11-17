@@ -64,8 +64,8 @@ const SPECIMENS: Record<string, Specimen> = {
       { account: home("me"), daily: 18, weekday: 0.6, weekend: 0.25, since: 150 },
       { account: home("ada"), daily: 6, weekday: 0.7, weekend: 0.2, since: 45 },
       { account: home("bo"), daily: 4, weekday: 0.6, weekend: 0.3, since: 30, owl: true },
-      { account: home("chen"), daily: 3, weekday: 0.7, weekend: 0.1, since: 20 },
-      { account: home("dai"), daily: 2, weekday: 0.5, weekend: 0.2, since: 18 },
+      { account: home("chen"), daily: 8.2, weekday: 0.9, weekend: 0.3, since: 20 },
+      { account: home("dai"), daily: 5.4, weekday: 0.9, weekend: 0.6, since: 18 },
       { account: home("eve"), daily: 1.5, weekday: 0.6, weekend: 0.1, since: 12 },
       { account: home("fang"), daily: 1, weekday: 0.4, weekend: 0.2, since: 10 },
     ],
@@ -77,6 +77,8 @@ const SPECIMENS: Record<string, Specimen> = {
   "gpu|claude|/home/bo/.claude": { people: [{ account: null, daily: 22, weekday: 0.8, weekend: 0.6, since: 220, owl: true }, { account: home("me"), daily: 9, weekday: 0.3, weekend: 0.1, since: 90 }], claude: true, week: 0.38, five: 0.12, resetsIn: 5 * DAY },
   "lab|codex|/home/me/.codex": { people: [{ account: null, daily: 2, weekday: 0.4, weekend: 0.1, since: 120 }], claude: false, week: 0.05, five: 0, resetsIn: 6 * DAY },
   "build|codex|/home/ops/.codex": { people: [{ account: null, daily: 7, weekday: 0.8, weekend: 0.1, since: 300 }, { account: acme("yc"), daily: 4, weekday: 0.6, weekend: 0.1, since: 80 }], claude: false, week: 0.44, five: 0.2, resetsIn: 4 * DAY },
+  "cy-mac|claude|/Users/cy/.claude": { people: [{ account: home("me"), daily: 70, weekday: 0.7, weekend: 0.3, since: 40 }], claude: true, week: 0.47, five: 0.22, resetsIn: 3 * DAY, assisted: true },
+  "cy-mac|codex|/Users/cy/.codex": { people: [{ account: home("me"), daily: 5, weekday: 0.6, weekend: 0.2, since: 25 }], claude: false, week: 0.3, five: 0.1, resetsIn: 4 * DAY, assisted: true },
   "render|claude|/home/ops/.claude": { people: [{ account: acme("yc"), daily: 11, weekday: 0.75, weekend: 0.2, since: 70 }], claude: true, week: 0.52, five: 0.33, resetsIn: DAY + 18 * HOUR, assisted: true },
 };
 

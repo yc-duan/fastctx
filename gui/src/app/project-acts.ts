@@ -5,6 +5,7 @@
 
 import { escape } from "../conversation/prose";
 import { loginsOf, type AccountChange, type HubAccounts, type Login, type ProjectSeen } from "../world/accounts";
+import { coOwnersOf, isLocked, isVisitor } from "./reach";
 import type { ResidentNow } from "../world/world";
 import type { AccessWords } from "./account-words";
 import { ActsMenu, type MenuAct } from "./acts-menu";
@@ -38,20 +39,20 @@ export const zhProjectActs: ProjectActsWords = {
   share: "共享…",
   transfer: "转交…",
   shareTitle: (project) => `共享「${project}」`,
-  shareWhat: "对方能读、能写这个项目的记录，也能在里面开对话。",
-  shareSees: "对方在项目里写下的，你都看得到",
+  shareWhat: "对方可读写此项目的记录，并可在其中新建对话。",
+  shareSees: "对方在项目中写下的内容对你可见",
   sharedTo: "已共享给",
   shareGo: "共享",
   transferTitle: (project) => `转交「${project}」`,
-  transferWhat: "项目和它的记录从此归对方所有。",
-  transferTo: "交给",
+  transferWhat: "项目及其记录将归对方所有。",
+  transferTo: "转交给",
   transferGo: "转交",
   sharedBy: (owner) => `${owner} 共享给你`,
   remove: "删除项目…",
   removeTitle: (project) => `删除「${project}」`,
   removeWhat: (conversations) =>
-    conversations ? `项目、它的记录和里面的 ${conversations} 段对话都会删掉，拿不回来。` : "项目和它的记录都会删掉，拿不回来。",
-  removeShared: "共享给的人在里面的对话会移出项目。",
+    conversations ? `将删除项目、其记录及其中的 ${conversations} 段对话，无法恢复。` : "将删除项目及其记录，无法恢复。",
+  removeShared: "被共享者在其中的对话将移出项目。",
   removeGo: "删除",
 };
 
@@ -91,13 +92,16 @@ export interface ProjectActsOptions {
   deleted(town: string): void;
 }
 
-/** How the reader holds a project: as which login, on which hub, and
- *  whether it is theirs. */
+/** How the reader holds a project: as which login, on which hub, whether
+ *  it is theirs — its owner's, or, opened on a machine shared whole, one
+ *  that holds that machine (§6.2) — and whether they may give it on, which
+ *  a visitor among its holders may not. */
 interface Hold {
   login: Login;
   hub: HubAccounts;
   project: ProjectSeen;
   mine: boolean;
+  gives: boolean;
 }
 
 export class ProjectActs {
@@ -114,8 +118,8 @@ export class ProjectActs {
     const { words } = this.options;
     if (!hold) return [];
     return [
-      ...(hold.mine ? [{ act: "share", icon: "colleague" as const, label: words.share }] : []),
-      ...(hold.mine ? [{ act: "transfer", icon: "move" as const, label: words.transfer }] : []),
+      ...(hold.gives ? [{ act: "share", icon: "colleague" as const, label: words.share }] : []),
+      ...(hold.gives ? [{ act: "transfer", icon: "move" as const, label: words.transfer }] : []),
       ...(hold.mine && hold.hub.deletes_projects ? [{ act: "delete", icon: "trash" as const, label: words.remove, danger: true }] : []),
     ];
   }
@@ -205,9 +209,17 @@ export class ProjectActs {
       if (!project) continue;
       const logins = loginsOf(world.accounts).filter((login) => login.hub === hub.hub);
       const owner = logins.find((login) => login.account === project.owner);
-      const login = owner ?? logins[0];
+      // A co-owner (`coOwnersOf`): one that may give and is not locked
+      // chosen before a visitor or a locked one; and before the owner when
+      // the owner is locked here and a co-owner is not.
+      const coOwners = coOwnersOf(world, hub, project);
+      const unlocked = coOwners.find((one) => !isLocked(world, one));
+      const holder = owner && !isLocked(world, owner) ? undefined : (unlocked ?? (owner ? undefined : coOwners[0]));
+      const login = holder ?? owner ?? logins[0];
       if (!login) continue;
-      return { login, hub, project, mine: !!owner };
+      const free = (one: Login) => !isVisitor(world, one) && !isLocked(world, one);
+      // Locked here, the owner gives nothing either: the hub would refuse it.
+      return { login, hub, project, mine: !!owner || !!holder, gives: holder ? free(holder) : !!owner && !isLocked(world, owner) };
     }
     return null;
   }

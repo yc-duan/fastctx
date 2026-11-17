@@ -5,6 +5,7 @@
 import { MemoryLines } from "../longview";
 import type { Removing } from "../app/removal";
 import type { PhoneSeam } from "../app/phone";
+import type { CopySeam, CopyTier } from "../app/phone-copy";
 import type { RenewalStatus } from "../world/renewal";
 import type { RemovalItem, RemovalPlan, Setup } from "../world/bridge";
 import type { TokenPeek } from "../world/accounts";
@@ -278,10 +279,22 @@ export const specimenPhone: PhoneSeam = {
     manufacturer: "HONOR",
     model: "ANN-AN00",
     deviceName: "HONOR 80",
-    background: { vendor: "honor", backgroundRestricted: false },
+    serviceRunning: true,
+    serviceError: null,
+    connection: { name: "phone" },
+    background: { vendor: "honor", backgroundRestricted: false, hasAutostart: true, lastExit: null },
   }),
   allow: async () => {},
   open: () => Promise.reject(new Error("this is a specimen")),
+};
+
+/** A specimen phone keeping recent content; a change is kept for the page. */
+let specimenTier: CopyTier = "light";
+export const specimenCopy: CopySeam = {
+  tier: async () => specimenTier,
+  setTier: async (tier) => {
+    specimenTier = tier;
+  },
 };
 
 /** What removing fastctx from a specimen computer would take: one that is

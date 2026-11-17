@@ -42,14 +42,20 @@ mod management;
 pub mod mcp_relay;
 pub mod memory;
 mod originals;
-pub mod pages;
 pub mod plans;
 mod profile;
+#[cfg(feature = "replica")]
+pub mod records_copy;
 pub mod renewal;
 mod sentinels;
 pub mod shown;
 mod skills;
+mod submission;
 mod thumbnail;
+mod timeline;
+#[cfg(feature = "replica")]
+pub mod timeline_copy;
+mod topics;
 pub mod town;
 pub mod world;
 pub mod world_now;
@@ -128,12 +134,21 @@ pub struct Client {
     pub profiles: bool,
     pub account_records: bool,
     pub conversation_plans: bool,
+    pub timeline_reads: bool,
+    pub watch_live: bool,
+    pub topics: bool,
+    /// Waits on another machine's topics (`Call::RemoteTopics`).
+    pub remote_topics: bool,
     pub goal_runtime: bool,
     pub watch_many: bool,
+    pub composer_documents: bool,
     pub scratch_locations: bool,
     pub sentinels: bool,
     pub goal_commands: bool,
     pub collaboration_watch: bool,
+    pub timer_pages: bool,
+    /// Answers the files a conversation changed (`TimelineAsk::Files`).
+    pub file_changes: bool,
     /// The connected node's facts, including when another starter won.
     pub node_lifetime: Option<Box<fastctx_types::node_lifetime::NodeLifetime>>,
 }
@@ -181,12 +196,19 @@ impl Client {
                 profiles,
                 account_records,
                 conversation_plans,
+                timeline_reads,
+                watch_live,
+                topics,
+                remote_topics,
                 goal_runtime,
                 watch_many,
+                composer_documents,
                 scratch_locations,
                 sentinels,
                 goal_commands,
                 collaboration_watch,
+                timer_pages,
+                file_changes,
             } => Ok(Self {
                 connection,
                 next: 0,
@@ -196,12 +218,19 @@ impl Client {
                 profiles,
                 account_records,
                 conversation_plans,
+                timeline_reads,
+                watch_live,
+                topics,
+                remote_topics,
                 goal_runtime,
                 watch_many,
+                composer_documents,
                 scratch_locations,
                 sentinels,
                 goal_commands,
                 collaboration_watch,
+                timer_pages,
+                file_changes,
             }),
             Welcome::Refused { reason, mismatch } => {
                 let mismatch = mismatch.or_else(|| renewal::legacy_mismatch(&reason));
@@ -312,6 +341,26 @@ impl Client {
 
     /// Sends `call` and waits for its answer.
     pub async fn call(&mut self, call: Call) -> Result<Reply, CallError> {
+        if !self.file_changes
+            && matches!(&call, Call::Timeline { request: fastctx_types::timeline_pages::TimelineAsk::Files { .. }, .. })
+        {
+            return Err(CallError::Failed(Failure::not_run(
+                "this node does not keep the files conversations changed; update it",
+            )));
+        }
+        if !self.timer_pages && matches!(&call, Call::Timer { timer } if timer.needs_pages()) {
+            return Err(CallError::Failed(Failure::not_run(
+                "this node does not support timer pages or handles; update it",
+            )));
+        }
+        if !self.topics && matches!(call, Call::Topics { .. }) {
+            return Err(CallError::Failed(Failure::not_run(
+                "this node does not tell when its state changes; update it",
+            )));
+        }
+        if !self.timeline_reads && matches!(call, Call::Timeline { .. }) {
+            return Err(CallError::Failed(Failure::not_run("this node does not answer timeline pages; update it")));
+        }
         if !self.conversation_plans
             && matches!(call, Call::Plan { .. } | Call::PlanRead { .. } | Call::PlanWrite { .. })
         {
@@ -361,9 +410,28 @@ impl Client {
                 self.machine
             ))));
         }
-        self.next += 1;
-        let id = self.next;
-        self.connection.send(&to_json(&ClientFrame::Call { id, call })).await.map_err(CallError::Broken)?;
+        // The call is named: where its work is submitted and not done yet,
+        // it is asked again under the name until what came of it is known
+        // (`submission`).
+        let named = submission::fresh().map_err(CallError::Broken)?;
+        let mut frame = ClientFrame::Call { id: 0, call, submission: Some(named) };
+        let began = std::time::Instant::now();
+        loop {
+            self.next += 1;
+            let id = self.next;
+            if let ClientFrame::Call { id: numbered, .. } = &mut frame {
+                *numbered = id;
+            }
+            self.connection.send(&to_json(&frame)).await.map_err(CallError::Broken)?;
+            match self.answer(id).await? {
+                Err(failure) if submission::asks_again(&failure, began) => {}
+                reply => return reply.map_err(CallError::Failed),
+            }
+        }
+    }
+
+    /// The one answer to the call `id`.
+    async fn answer(&mut self, id: u64) -> Result<Result<Reply, Failure>, CallError> {
         let frame = self
             .connection
             .recv()
@@ -372,7 +440,7 @@ impl Client {
             .ok_or_else(|| CallError::Broken(std::io::ErrorKind::UnexpectedEof.into()))?;
         let broken = |what: String| CallError::Broken(std::io::Error::other(what));
         match serde_json::from_slice::<NodeFrame>(&frame).map_err(|error| broken(error.to_string()))? {
-            NodeFrame::Reply { id: answered, reply } if answered == id => reply.map_err(CallError::Failed),
+            NodeFrame::Reply { id: answered, reply } if answered == id => Ok(reply),
             // Calls on one client go one at a time, so any other id is a
             // fault in the node.
             NodeFrame::Reply { id: answered, .. } => {
@@ -397,7 +465,10 @@ impl Client {
     pub async fn on(mut self, call: Call) -> Result<OnStream, CallError> {
         self.next += 1;
         let id = self.next;
-        self.connection.send(&to_json(&ClientFrame::Call { id, call })).await.map_err(CallError::Broken)?;
+        self.connection
+            .send(&to_json(&ClientFrame::Call { id, call, submission: None }))
+            .await
+            .map_err(CallError::Broken)?;
         Ok(OnStream { client: self, id })
     }
 
@@ -423,6 +494,9 @@ impl Client {
 
     /// Sends a `Watch` call; the connection carries the watch from then on.
     pub async fn watch(mut self, call: Call) -> Result<Watching, CallError> {
+        if !(self.watch_live && self.timeline_reads) && matches!(call, Call::Watch { live_only: true, .. }) {
+            return Err(local_watch::older_timeline());
+        }
         if !self.goal_runtime && matches!(call, Call::Watch { goal: Some(_), .. }) {
             return Err(CallError::Failed(Failure::not_run(fastctx_types::goals::words::OLDER_NODE)));
         }
@@ -431,7 +505,10 @@ impl Client {
         }
         self.next += 1;
         let id = self.next;
-        self.connection.send(&to_json(&ClientFrame::Call { id, call })).await.map_err(CallError::Broken)?;
+        self.connection
+            .send(&to_json(&ClientFrame::Call { id, call, submission: None }))
+            .await
+            .map_err(CallError::Broken)?;
         Ok(Watching { transport: WatchingTransport::Local { client: self, id } })
     }
 
@@ -441,7 +518,7 @@ impl Client {
         self.next += 1;
         let id = self.next;
         self.connection
-            .send(&to_json(&ClientFrame::Call { id, call: Call::WatchFeatures }))
+            .send(&to_json(&ClientFrame::Call { id, call: Call::WatchFeatures, submission: None }))
             .await
             .map_err(CallError::Broken)?;
         Ok((self, id))
@@ -449,11 +526,11 @@ impl Client {
 
     /// Sends a `WatchWorld` call; the connection carries the World as an
     /// interface shows it from then on.
-    pub(crate) async fn watch_world(mut self) -> Result<(Client, u64), CallError> {
+    pub(crate) async fn watch_world(mut self, known: Vec<String>) -> Result<(Client, u64), CallError> {
         self.next += 1;
         let id = self.next;
         self.connection
-            .send(&to_json(&ClientFrame::Call { id, call: Call::WatchWorld }))
+            .send(&to_json(&ClientFrame::Call { id, call: Call::WatchWorld { known }, submission: None }))
             .await
             .map_err(CallError::Broken)?;
         Ok((self, id))
@@ -466,7 +543,7 @@ impl Client {
         self.next += 1;
         let id = self.next;
         self.connection
-            .send(&to_json(&ClientFrame::Call { id, call: Call::WatchHistory { scope } }))
+            .send(&to_json(&ClientFrame::Call { id, call: Call::WatchHistory { scope }, submission: None }))
             .await
             .map_err(CallError::Broken)?;
         Ok((self, id))
@@ -476,7 +553,7 @@ impl Client {
         self.next += 1;
         let id = self.next;
         self.connection
-            .send(&to_json(&ClientFrame::Call { id, call: Call::WatchMemory { town } }))
+            .send(&to_json(&ClientFrame::Call { id, call: Call::WatchMemory { town }, submission: None }))
             .await
             .map_err(CallError::Broken)?;
         Ok((self, id))
@@ -498,7 +575,10 @@ impl Client {
     pub async fn watch_tools(mut self, call: Call) -> Result<ToolsWatch, CallError> {
         self.next += 1;
         let id = self.next;
-        self.connection.send(&to_json(&ClientFrame::Call { id, call })).await.map_err(CallError::Broken)?;
+        self.connection
+            .send(&to_json(&ClientFrame::Call { id, call, submission: None }))
+            .await
+            .map_err(CallError::Broken)?;
         Ok(ToolsWatch { client: self, id })
     }
 }
@@ -627,11 +707,14 @@ pub fn command_peer() -> std::io::Result<Peer> {
             _ => Err(invalid(name)),
         }
     };
-    if let Some(page) = set("FASTCTX_PAGE")? {
-        let page = serde_json::from_str(&page).map_err(|_| invalid("FASTCTX_PAGE"))?;
-        // The page's script runs as a job; the node checks it is that job.
-        let job = set("FASTCTX_JOB")?.map(|job| job.parse().map_err(|_| invalid("FASTCTX_JOB"))).transpose()?;
-        return Ok(Peer::Page { page, job });
+    // A script an earlier release's page ran: pages are no more (beta.18),
+    // and what one runs speaks as no one, never as the user at the terminal
+    // (codex-e7b1552a R4).
+    if set("FASTCTX_PAGE")?.is_some() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "pages were removed in Fastctx beta.18: a page's script cannot use the World",
+        ));
     }
     let resident =
         set("FASTCTX_RESIDENT")?.map(|value| value.parse().map_err(|_| invalid("FASTCTX_RESIDENT"))).transpose()?;

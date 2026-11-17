@@ -10,7 +10,7 @@
 //! its trouble did happen, what must hold however it went, and, on this
 //! release's hub, that the hub was left as it was found.
 //!
-//!     network_drill [--root DIR] [--earlier FASTCTX] [--earlier-version VERSION] [--only NAME,...]
+//!     network_drill [--root DIR] [--earlier FASTCTX] [--earlier-version VERSION] [--only NAME,...] [--skip NAME,...]
 //!     network_drill hub DIR      (the hub, served in a child process)
 //!
 //! `DIR` and `FASTCTX` are absolute paths; the drill's directory is under
@@ -68,7 +68,7 @@ const SCENARIOS: [&str; 18] = [
 
 /// The longest a scenario may take.
 const LONGEST: Duration = Duration::from_secs(8 * 60);
-pub const EXPECTED_EARLIER: &str = "1.0.1-beta.16";
+pub const EXPECTED_EARLIER: &str = "1.0.1-beta.17";
 static EARLIER_VERSION: std::sync::OnceLock<String> = std::sync::OnceLock::new();
 pub fn expected_earlier() -> &'static str {
     EARLIER_VERSION.get().map_or(EXPECTED_EARLIER, String::as_str)
@@ -107,11 +107,15 @@ struct Options {
     earlier: Option<PathBuf>,
     earlier_version: String,
     only: Option<Vec<String>>,
+    /// Scenarios left to another run: CI runs the drill in two parts at
+    /// once, one `--only` a list and the other `--skip` it, so that a
+    /// scenario added later runs in the second.
+    skip: Vec<String>,
 }
 
 fn options(args: &[String]) -> anyhow::Result<Options> {
     let mut root = std::env::var_os("FASTCTX_TEST_ROOT").map(PathBuf::from).unwrap_or_else(std::env::temp_dir);
-    let (mut earlier, mut only) = (None, None);
+    let (mut earlier, mut only, mut skip) = (None, None, Vec::new());
     let mut earlier_version = EXPECTED_EARLIER.to_string();
     let mut args = args.iter();
     while let Some(arg) = args.next() {
@@ -121,6 +125,7 @@ fn options(args: &[String]) -> anyhow::Result<Options> {
             "--earlier" => earlier = Some(PathBuf::from(value()?)),
             "--earlier-version" => earlier_version = value()?.clone(),
             "--only" => only = Some(value()?.split(',').map(str::to_string).collect::<Vec<_>>()),
+            "--skip" => skip = value()?.split(',').map(str::to_string).collect::<Vec<_>>(),
             other => anyhow::bail!("unknown argument {other}"),
         }
     }
@@ -129,12 +134,10 @@ fn options(args: &[String]) -> anyhow::Result<Options> {
         anyhow::ensure!(earlier.is_absolute(), "the earlier kernel {} is not an absolute path", earlier.display());
         anyhow::ensure!(earlier.is_file(), "there is no earlier kernel at {}", earlier.display());
     }
-    if let Some(only) = &only {
-        for name in only {
-            anyhow::ensure!(SCENARIOS.contains(&name.as_str()), "there is no scenario {name}");
-        }
+    for name in only.iter().flatten().chain(&skip) {
+        anyhow::ensure!(SCENARIOS.contains(&name.as_str()), "there is no scenario {name}");
     }
-    Ok(Options { root, earlier, earlier_version, only })
+    Ok(Options { root, earlier, earlier_version, only, skip })
 }
 
 fn drill(args: &[String]) -> anyhow::Result<bool> {
@@ -160,7 +163,9 @@ fn drill(args: &[String]) -> anyhow::Result<bool> {
     let runtime = tokio::runtime::Builder::new_multi_thread().enable_all().build()?;
     let (mut passed, mut failed, mut skipped) = (0, 0, 0);
     for name in SCENARIOS {
-        if options.only.as_ref().is_some_and(|only| !only.iter().any(|wanted| wanted == name)) {
+        if options.only.as_ref().is_some_and(|only| !only.iter().any(|wanted| wanted == name))
+            || options.skip.iter().any(|left| left == name)
+        {
             continue;
         }
         let earlier = name.starts_with("earlier-");

@@ -1,5 +1,5 @@
 //! Durable, per-session accounting receipts written through the official mod filesystem API.
-use fastctx_platform::{Permissions, publish};
+use fastctx_platform::{Permissions, publish_unsynced};
 use std::io;
 use std::path::Path;
 
@@ -16,7 +16,7 @@ pub(super) fn promote(directory: &Path, writer_ended: bool) -> io::Result<Vec<St
             continue;
         }
         let name = path.file_name().expect("receipt name");
-        if directory.join("applied").join(name).exists() {
+        if name.to_str().map(|name| super::exchange::was_applied(directory, name)).transpose()? == Some(true) {
             clean(directory, name)?;
             continue;
         }
@@ -32,9 +32,11 @@ pub(super) fn promote(directory: &Path, writer_ended: bool) -> io::Result<Vec<St
         };
         fastctx_platform::ensure_private_dir(&directory.join("events"))?;
         let event = directory.join("events").join(name);
+        // The receipt stays in `accounting/` until its report is applied
+        // (`clean`), so a copy a lost power takes is made again.
         if !event.with_extension("done").exists() {
-            publish(&event, &bytes, Permissions::Private)?;
-            publish(&event.with_extension("done"), b"", Permissions::Private)?;
+            publish_unsynced(&event, &bytes, Permissions::Private)?;
+            publish_unsynced(&event.with_extension("done"), b"", Permissions::Private)?;
         }
     }
     Ok(problems)

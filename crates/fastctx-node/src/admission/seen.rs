@@ -34,11 +34,20 @@ pub enum Looker<'a> {
     Here(&'a Acting),
 }
 
+/// Whether the hub `asker` asks through keeps every asset sealed, by this
+/// machine's view of it: nothing of an account's goes to another machine
+/// meanwhile, a watch begun before among it (design §28.41).
+fn sealed_for(node: &Node, asker: &Asker) -> bool {
+    node.link_of(&asker.hub).is_some_and(|link| link.view().assets_sealed.is_some())
+}
+
 impl Looker<'_> {
     /// Whether what works for `account` is the looker's to see.
     pub(crate) fn sees_account(self, node: &Node, account: &HubAccount) -> bool {
         match self {
-            Looker::Asker(asker) => account.hub == asker.hub && account.account == asker.account,
+            Looker::Asker(asker) => {
+                account.hub == asker.hub && account.account == asker.account && !sealed_for(node, asker)
+            }
             Looker::Here(acting) => node.serves(acting, &account.hub, &account.account),
         }
     }
@@ -49,7 +58,7 @@ impl Looker<'_> {
     /// logged in to.
     pub(crate) fn sees(self, node: &Node, acting: &Acting) -> bool {
         match (self, acting) {
-            (Looker::Asker(asker), _) => node.serves(acting, &asker.hub, &asker.account),
+            (Looker::Asker(asker), _) => node.serves(acting, &asker.hub, &asker.account) && !sealed_for(node, asker),
             (Looker::Here(_), Acting::Accounts { accounts }) => {
                 accounts.iter().any(|account| self.sees_account(node, account))
             }
@@ -249,6 +258,9 @@ pub fn since(node: &Node, looker: Looker, mut reply: SinceReply) -> SinceReply {
         | SinceKind::ResidentMoved { resident, .. }
         | SinceKind::ClaudeRegistered { resident, .. }
         | SinceKind::SubmissionUncertain { resident, .. } => seen(resident),
+        // An ended job's event names the conversation that ran it, which may
+        // be one of another account's elsewhere: seen as that conversation
+        // is (§28.47; the job's record itself is in the machine's book).
         SinceKind::JobEnded { owner: job_owner, account, .. } => owner(node, looker, job_owner, account.as_ref()),
         SinceKind::ColleagueAsked { asker: who, colleague, .. } => seen(who) && other_end(colleague),
         SinceKind::AnswerDelivery { colleague, to, .. } => seen(colleague) && other_end(to),

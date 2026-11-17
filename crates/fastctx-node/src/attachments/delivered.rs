@@ -81,7 +81,11 @@ pub(crate) struct Kept {
     book: Mutex<BTreeMap<NoticeId, Vec<Attachment>>>,
 }
 pub(crate) fn of(node: &Node, resident: &ResidentId) -> Kept {
-    Kept { directory: node.world.conversation(resident), book: Mutex::new(BTreeMap::new()) }
+    at(node.world.conversation(resident))
+}
+/// The receipts kept in the conversation `directory`.
+pub(crate) fn at(directory: ConversationDir) -> Kept {
+    Kept { directory, book: Mutex::new(BTreeMap::new()) }
 }
 impl Receipts for Kept {
     fn of(&self, delivery: &NoticeId) -> Vec<Attachment> {

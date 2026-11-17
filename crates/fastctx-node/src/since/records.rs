@@ -661,7 +661,31 @@ impl Scan<'_> {
             let Some(signed) = self.optional::<Signed>(&path) else { continue };
             match signed.claim::<Entry>() {
                 Ok(entry) if entry.hub == place.hub && entry.town == place.town => {
-                    self.ledger_entry(town, &path, entry)
+                    self.ledger_entry(town, &path, &entry.hub, entry.files)
+                }
+                Ok(_) => self.issue(&path, "entry belongs to another project"),
+                Err(error) => self.issue(&path, error),
+            }
+        }
+        // A project taken from the hub's projection (design §28.58): each
+        // entry as the hub told it, checked against its record on intake and
+        // kept under this machine's word.
+        let projected = self.json_files(&world.town(town).projected());
+        if projected.is_empty() {
+            return;
+        }
+        let key = match crate::ledger::own_key(world) {
+            Ok(key) => key.public(),
+            Err(error) => {
+                self.issue(&world.town(town).projected(), error);
+                return;
+            }
+        };
+        for path in projected {
+            let Some(signed) = self.optional::<Signed>(&path) else { continue };
+            match signed.open::<crate::ledger::projected::KeptEntry>(&key, fastctx_net::sign::Domain::LedgerKept) {
+                Ok(kept) if kept.town == place.town => {
+                    self.ledger_entry(town, &path, &place.hub, kept.projection.files)
                 }
                 Ok(_) => self.issue(&path, "entry belongs to another project"),
                 Err(error) => self.issue(&path, error),
@@ -669,13 +693,19 @@ impl Scan<'_> {
         }
     }
 
-    // These are the signed payloads checked on intake, as read by
+    // These are the payloads checked on intake, as read by
     // ledger::entries_after. The editable projections are not evidence.
-    fn ledger_entry(&mut self, town: &TownName, path: &Path, entry: Entry) {
-        for file in entry.files {
+    fn ledger_entry(
+        &mut self,
+        town: &TownName,
+        path: &Path,
+        hub: &fastctx_net::ids::HubId,
+        files: Vec<fastctx_net::ledger::File>,
+    ) {
+        for file in files {
             match ledger_fact(town, &file.path, &file.bytes.0) {
                 Ok(Some((at, machine, what))) => self.events.push(SinceEvent {
-                    hub: Some(entry.hub.clone()),
+                    hub: Some(hub.clone()),
                     source: None,
                     id: identity("ledger-fact", &[town.as_str(), &file.path]),
                     at,

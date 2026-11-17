@@ -13,7 +13,6 @@ import { escape, render } from "../conversation/prose";
 import { Sketch } from "../pen/sketch";
 import { composeText, splitHeader, type HistoryAuthor, type HistoryDocument, type HistoryRevision } from "../world/history";
 import type { HistoryWords } from "./history-words";
-import "../pages/pages.css";
 import "./history.css";
 
 export interface HistoryPageOptions {

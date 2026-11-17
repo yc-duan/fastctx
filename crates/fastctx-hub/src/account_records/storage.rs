@@ -1,5 +1,6 @@
 //! The account's creation timestamp separates its records from a later account
-//! with the same name. Removed incarnations remain archived and are never opened.
+//! with the same name. Removed incarnations remain archived, opened again only
+//! for the conversations described into a body (§29, 2.6).
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
@@ -68,62 +69,101 @@ pub(crate) struct Records {
     pub owners: Mutex<crate::owned_records::index::Index>,
     dir: PathBuf,
     accounts: Mutex<HashMap<Identity, Arc<Slot>>>,
+    /// Revisions found staged as the records were loaded, settled once the
+    /// asset library is open (`settle_staged`).
+    staged: Mutex<Vec<(Identity, PathBuf)>>,
 }
 
 impl Records {
     pub fn open(dir: &Path, directory: &fastctx_net::directory::Directory) -> std::io::Result<Self> {
-        let records = Self { dir: dir.join("account-records"), accounts: Mutex::default(), owners: Mutex::default() };
+        let records = Self {
+            dir: dir.join("account-records"),
+            accounts: Mutex::default(),
+            owners: Mutex::default(),
+            staged: Mutex::default(),
+        };
         for owner in &directory.accounts {
-            let slot = records.account(&owner.name, owner.opened);
-            let files = match fastctx_platform::disk::read_dir(&slot.dir) {
-                Ok(files) => files,
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
-                Err(error) => return Err(error),
-            };
-            let mut account = slot.records.try_lock().expect("not shared during startup");
-            for file in files {
-                let path = file?.path();
-                if path.file_name().is_some_and(|name| name == "skill-edit.json")
-                    || path.extension().is_none_or(|extension| extension != "json")
-                {
-                    continue;
-                }
-                let bytes = fastctx_platform::disk::read(&path)?;
-                let record: Record = serde_json::from_slice(&bytes).map_err(std::io::Error::other)?;
-                let metadata = record.metadata.clone();
-                if metadata.kind == fastctx_types::owned_records::KIND && !metadata.deleted {
-                    let conversation = serde_json::from_value(record.body.clone()).map_err(std::io::Error::other)?;
-                    records.owners.lock().expect("never poisoned").take(
-                        &owner.name,
-                        owner.opened,
-                        &metadata.key,
-                        Some(conversation),
-                    );
-                }
-                if slot.path(&metadata.kind, &metadata.key) != path {
-                    return Err(std::io::Error::other(format!("unexpected record path {}", path.display())));
-                }
-                let history = history_head(&record)?;
-                account.bytes += bytes.len();
-                account.entries.insert(
-                    (metadata.kind.clone(), metadata.key.clone()),
-                    Entry { metadata, size: bytes.len(), history, conversation: record_conversation(&record) },
-                );
+            records.load(&owner.name, owner.opened)?;
+        }
+        Ok(records)
+    }
+
+    /// Loads the records of `name` as opened at `opened`, during startup: an
+    /// account's now, or a removed one's that a body's conversation still
+    /// keeps its records in (§29, 2.6).
+    pub fn load(&self, name: &AccountName, opened: Timestamp) -> std::io::Result<()> {
+        let slot = self.account(name, opened);
+        let files = match fastctx_platform::disk::read_dir(&slot.dir) {
+            Ok(files) => files,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(error) => return Err(error),
+        };
+        let mut account = slot.records.try_lock().expect("not shared during startup");
+        for file in files {
+            let path = file?.path();
+            if super::staged::is_staged(&path) {
+                self.staged.lock().expect("never poisoned").push(((name.clone(), opened), path));
+                continue;
             }
-            crate::skill_storage::recover(&slot, &mut account).map_err(std::io::Error::other)?;
-            for entry in account.entries.values().filter(|entry| {
-                entry.metadata.deleted
-                    && matches!(
-                        entry.metadata.kind.as_str(),
-                        fastctx_types::plan::KIND | fastctx_types::history::RECORD_KIND
-                    )
-            }) {
-                super::history::delete(&slot.history(&entry.metadata.kind, &entry.metadata.key))?;
+            if path.file_name().is_some_and(|name| name == "skill-edit.json")
+                || path.extension().is_none_or(|extension| extension != "json")
+            {
+                continue;
+            }
+            let bytes = fastctx_platform::disk::read(&path)?;
+            let record: Record = serde_json::from_slice(&bytes).map_err(std::io::Error::other)?;
+            let metadata = record.metadata.clone();
+            if metadata.kind == fastctx_types::owned_records::KIND && !metadata.deleted {
+                let conversation = serde_json::from_value(record.body.clone()).map_err(std::io::Error::other)?;
+                self.owners.lock().expect("never poisoned").take(name, opened, &metadata.key, Some(conversation));
+            }
+            if slot.path(&metadata.kind, &metadata.key) != path {
+                return Err(std::io::Error::other(format!("unexpected record path {}", path.display())));
+            }
+            let history = history_head(&record)?;
+            account.bytes += bytes.len();
+            account.entries.insert(
+                (metadata.kind.clone(), metadata.key.clone()),
+                Entry { metadata, size: bytes.len(), history, conversation: record_conversation(&record) },
+            );
+        }
+        crate::skill_storage::recover(&slot, &mut account).map_err(std::io::Error::other)?;
+        for entry in account.entries.values().filter(|entry| {
+            entry.metadata.deleted
+                && matches!(entry.metadata.kind.as_str(), fastctx_types::plan::KIND | fastctx_types::history::RECORD_KIND)
+        }) {
+            super::history::delete(&slot.history(&entry.metadata.kind, &entry.metadata.key))?;
+        }
+        slot.count.store(account.entries.len(), Ordering::Relaxed);
+        slot.bytes.store(account.bytes, Ordering::Relaxed);
+        Ok(())
+    }
+
+    /// Settles the revisions staged as the hub stopped (`staged::settle`):
+    /// `taken` says whether the asset library holds one. One the library
+    /// cannot say of stays staged for the next opening. Says what it did.
+    pub fn settle_staged(
+        &self,
+        taken: impl Fn(&AccountName, Timestamp, &Record) -> Result<bool, String>,
+    ) -> Result<Vec<String>, String> {
+        let staged = std::mem::take(&mut *self.staged.lock().expect("never poisoned"));
+        let mut said = Vec::new();
+        for ((name, opened), path) in staged {
+            let slot = self.account(&name, opened);
+            let mut account = slot.records.try_lock().map_err(|_| "the records are shared while the hub opens")?;
+            match super::staged::settle(&slot, &mut account, &path, |record| taken(&name, opened, record))? {
+                super::staged::Settled::Published => {
+                    said.push(format!("published a revision of {name}'s records the asset library took as the hub stopped"));
+                }
+                super::staged::Settled::Dropped => {}
+                super::staged::Settled::Unknown(why) => {
+                    said.push(format!("left a staged revision of {name}'s records for the next opening: {why}"));
+                }
             }
             slot.count.store(account.entries.len(), Ordering::Relaxed);
             slot.bytes.store(account.bytes, Ordering::Relaxed);
         }
-        Ok(records)
+        Ok(said)
     }
 
     pub fn account(&self, name: &AccountName, opened: Timestamp) -> Arc<Slot> {
@@ -142,12 +182,15 @@ impl Records {
             .clone()
     }
 
-    /// A deleted account's files stay archived under its former incarnation.
+    /// A deleted account's files stay archived under its former incarnation;
+    /// one a body's conversation keeps its records in stays loaded, as the
+    /// hub loads it as it starts (§29, 2.6), so its records are written on
+    /// where they are.
     pub fn settle(&self, directory: &fastctx_net::directory::Directory) {
-        self.accounts
-            .lock()
-            .expect("never poisoned")
-            .retain(|(name, opened), _| directory.account(name).is_some_and(|account| account.opened == *opened));
+        let kept = self.owners.lock().expect("never poisoned").body_openers();
+        self.accounts.lock().expect("never poisoned").retain(|(name, opened), _| {
+            directory.account(name).is_some_and(|account| account.opened == *opened) || kept.contains(&(name.clone(), *opened))
+        });
     }
 
     pub fn health(&self) -> serde_json::Value {

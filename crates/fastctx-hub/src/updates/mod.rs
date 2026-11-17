@@ -9,6 +9,8 @@
 //! memory: each tells the rest again.
 
 mod announce;
+#[cfg(feature = "change-drill")]
+pub(crate) mod change_probe;
 mod due_batch;
 mod publishing;
 pub(crate) use publishing::start;
@@ -18,6 +20,7 @@ mod repair_batch;
 mod rollout;
 pub(crate) use rollout::watch as watch_rollouts;
 mod view;
+pub(crate) mod submission;
 pub(crate) use view::request as view_request;
 mod attempt;
 mod cleanup;
@@ -26,8 +29,8 @@ use attempt::{Attempt, Race};
 mod discovery;
 mod inventory;
 mod obtain;
-mod receipt_writer;
-mod transfer;
+pub(crate) mod receipt_writer;
+pub(crate) mod transfer;
 
 use std::collections::HashMap;
 use std::path::Path;

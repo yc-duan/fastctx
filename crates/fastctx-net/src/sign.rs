@@ -38,6 +38,29 @@ pub enum Domain {
     /// An old hub proving to the place its hub moves to that it holds the
     /// move's key, bound to one TLS connection.
     Handover,
+    /// A device's word on a frame header it orders (sync v2 design §5).
+    /// The first version's other sync domains — hub-source-batch,
+    /// accepted-operation, producer-release, epoch-handover,
+    /// exposure-receipt — signed nothing and are retired as the second
+    /// version froze (§29 1): their names are never taken again.
+    SyncSourceBatch,
+    /// The old service key's word that a new one follows it (§6.1).
+    SyncHubKeyRotation,
+    /// What a hub's service key says of assets (design §6.1): receipts,
+    /// epoch descriptors, gap facts, checkpoints, each bound to the hub's
+    /// chain head as it stood (`hub_word`).
+    AssetHub,
+    /// A machine saying it cleared what a share that waits for it may not
+    /// see, at a holding revision (sync v2 design §6.3).
+    ShareCleared,
+    /// A device letting a stream it orders go to another machine (sync v2
+    /// design §28.10).
+    AssetRelease,
+    /// A machine's word, to itself, on an entry of a project's ledger it
+    /// took from the hub's projection for the account it reads the project
+    /// as (design §28.58): what it keeps of it is checked as a ledger it
+    /// signs itself is, never taken from a file anyone could write.
+    LedgerKept,
 }
 
 impl Domain {
@@ -49,8 +72,47 @@ impl Domain {
             Domain::Ledger => "ledger",
             Domain::Peer => "peer",
             Domain::Handover => "handover",
+            Domain::SyncSourceBatch => "fastctx-sync/source-batch/v1",
+            Domain::SyncHubKeyRotation => "fastctx-sync/hub-key-rotation/v1",
+            Domain::AssetHub => "fastctx-asset/hub/v1",
+            Domain::ShareCleared => "fastctx-share/cleared/v1",
+            Domain::AssetRelease => "fastctx-asset/release/v1",
+            Domain::LedgerKept => "fastctx-ledger/kept/v1",
         }
     }
+}
+
+/// A hub's word on `statement` under its service key, bound to its chain
+/// head (`seq`, `head`) as it stood (design §6.1): the head, then the
+/// signature over the statement followed by it.
+pub fn hub_word(key: &SecretKey, seq: u64, head: &[u8; 32], statement: &[u8]) -> Vec<u8> {
+    let mut bound = Vec::with_capacity(statement.len() + 40);
+    bound.extend_from_slice(statement);
+    bound.extend_from_slice(&seq.to_le_bytes());
+    bound.extend_from_slice(head);
+    let signature = key.sign(Domain::AssetHub, &bound);
+    let mut word = Vec::with_capacity(104);
+    word.extend_from_slice(&seq.to_le_bytes());
+    word.extend_from_slice(head);
+    word.extend_from_slice(&signature.to_bytes());
+    word
+}
+
+/// The chain head a hub's word on `statement` is bound to, when the word
+/// is the service key `key`'s.
+pub fn heard_word(key: &PublicKey, statement: &[u8], word: &[u8]) -> Option<(u64, [u8; 32])> {
+    if word.len() != 104 {
+        return None;
+    }
+    let seq = u64::from_le_bytes(word[..8].try_into().ok()?);
+    let head: [u8; 32] = word[8..40].try_into().ok()?;
+    let signature = Signature::from_bytes(word[40..].try_into().ok()?);
+    let mut bound = Vec::with_capacity(statement.len() + 40);
+    bound.extend_from_slice(statement);
+    bound.extend_from_slice(&seq.to_le_bytes());
+    bound.extend_from_slice(&head);
+    key.verify(Domain::AssetHub, &bound, &signature).ok()?;
+    Some((seq, head))
 }
 
 fn signing_input(domain: Domain, bytes: &[u8]) -> Vec<u8> {
@@ -114,12 +176,6 @@ impl SecretKey {
         let file = KeyFile { kind: "ed25519".to_string(), seed: Zeroizing::new(URL_SAFE_NO_PAD.encode(*self.seed())) };
         let bytes = Zeroizing::new(serde_json::to_vec(&file).map_err(io::Error::other)?);
         publish_new(path, &bytes, Permissions::Private)
-    }
-}
-
-impl fmt::Debug for SecretKey {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "SecretKey({})", self.public())
     }
 }
 

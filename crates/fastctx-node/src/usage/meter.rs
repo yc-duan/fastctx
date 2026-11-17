@@ -87,7 +87,7 @@ pub(super) fn record(
     let Some(session) = &about.session else { return Ok(false) };
     let identity = (session.clone(), Some(process.clone()));
     let key = priced.as_ref().map(|p| format!("claude:{session}:{process}:{}", p.key));
-    if key.as_ref().is_some_and(|key| book.keys.contains(key)) {
+    if key.as_ref().is_some_and(|key| book.keys.contains_key(key)) {
         return Ok(false);
     }
     let previous = book.meters.get(&identity);
@@ -108,7 +108,7 @@ pub(super) fn record(
         usage: None,
         unidentified: Vec::new(),
         detail: Detail {
-            conversation: id.clone(),
+            conversation: Some(id.clone()),
             acting: about.acting.clone(),
             turn: None,
             source: CallSource::Background,
@@ -162,7 +162,7 @@ pub(super) fn record(
             usd: Some(usd),
             tokens: priced.tokens,
             call: Some(Detail {
-                conversation: id.clone(),
+                conversation: Some(id.clone()),
                 acting: about.acting.clone(),
                 turn: priced.turn,
                 source: priced.source,

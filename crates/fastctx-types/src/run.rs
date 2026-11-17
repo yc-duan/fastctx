@@ -146,8 +146,11 @@ pub struct OutputWindow {
     /// How many bytes of the log were captured for this window.
     pub bytes: u64,
     /// How many lines the log held then; a last line without a newline
-    /// counts.
+    /// counts. Zero when `sampled` is present: the total was not read.
     pub lines: u64,
+    /// Large logs are sampled by byte range instead of replayed in full.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sampled: Option<OutputSample>,
     pub pieces: Vec<OutputPiece>,
     /// Shown lines that were not UTF-8 but decoded in the machine's legacy
     /// code page.
@@ -156,9 +159,18 @@ pub struct OutputWindow {
     /// bytes appear as `\xNN`.
     pub escaped_lines: u64,
     /// The World's commands in it that failed, each as it was given, in the
-    /// order they failed, wherever in the output they did.
+    /// order they failed, wherever in the output they did. Incomplete when sampled:
+    /// markers in the unread interior have not been checked.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub failed: Vec<String>,
+}
+
+/// The raw byte ranges shown of a capture too large for a bounded replay.
+/// Piece line numbers are zero because the unread interior was not counted.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OutputSample {
+    pub head_bytes: u64,
+    pub tail_from: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -171,6 +183,7 @@ pub struct LegacyLines {
 #[serde(rename_all = "snake_case", tag = "kind")]
 pub enum OutputPiece {
     /// Text from line `first_line` (counting from 1), as a terminal shows it.
+    /// Zero identifies a sampled range whose line numbers were not counted.
     Text { first_line: u64, text: String },
     /// Characters `from` to `to` (counting from 1) of a line `of`
     /// characters long, when the whole line does not fit.
@@ -180,7 +193,8 @@ pub enum OutputPiece {
     Omitted { first_line: u64, last_line: u64 },
     /// An image the output drew with a terminal graphics sequence.
     Image { mime: String, width: u32, height: u32, base64: String },
-    /// A graphics sequence that cannot be shown as an image, and why.
+    /// An unread range or graphics sequence, and why. Line zero means the
+    /// unread prefix prevents assigning a line number.
     Unreadable { line: u64, reason: String },
 }
 

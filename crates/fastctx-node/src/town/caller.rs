@@ -11,7 +11,6 @@ use crate::Node;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Caller {
-    Page(Box<fastctx_types::pages::PageSource>),
     User,
     /// A resident of this machine or another.
     Resident(Address),
@@ -28,11 +27,6 @@ pub fn of(node: &Node, peer: &Peer) -> Result<Caller, Failure> {
     let here = node.machine();
     let resident = |id| Caller::Resident(Address { machine: here.clone(), resident: id });
     match peer {
-        Peer::Page { page, job } => {
-            crate::pages::identity::job(node, page, job.as_ref())?;
-            crate::pages::identity::acting(node, page)?;
-            Ok(Caller::Page(page.clone()))
-        }
         Peer::Command { resident: Some(address), .. } => {
             if node.is_me(&address.machine) {
                 node.residents.active(&address.resident)?;
@@ -63,7 +57,6 @@ fn unrecognized(message: &str) -> Failure {
 impl Caller {
     pub fn writer(&self) -> Writer {
         match self {
-            Caller::Page(page) => Writer::Page { page: page.clone() },
             Caller::User => Writer::User,
             Caller::Resident(address) => Writer::Resident { address: address.clone() },
             Caller::Session(agent) => Writer::Session { agent: agent.clone() },
@@ -74,7 +67,6 @@ impl Caller {
     /// that lives in one.
     pub fn town(&self, node: &Node) -> Option<TownName> {
         match self {
-            Caller::Page(page) => Some(page.town.clone()),
             Caller::Resident(address) if node.is_me(&address.machine) => {
                 node.residents.town_of(&address.resident).flatten()
             }

@@ -46,7 +46,8 @@ pub fn integrations(places: &Places) -> Result<Vec<Integration>, Error> {
     if let Some(bytes) = Snapshot::read(places.root.join("config.toml"))?.bytes()
         && let Some(receipt) = legacy::Receipt::from_bytes(bytes)?
     {
-        let home = Path::new(receipt.config_path()).parent().ok_or_else(|| Error::Io("legacy home is absent".into()))?;
+        let home =
+            Path::new(receipt.config_path()).parent().ok_or_else(|| Error::Io("legacy home is absent".into()))?;
         let integration = Integration { host: Host::Codex, home: home.to_path_buf(), approved_limit: None };
         if !integrations.contains(&integration) {
             integrations.push(integration);
@@ -77,7 +78,7 @@ pub fn remember_withdrawn(places: &Places, integrations: &[Integration]) -> Resu
 }
 
 pub fn read_withdrawn(places: &Places) -> Result<Vec<Integration>, Error> {
-    match std::fs::read(path(&places.root)) {
+    match fastctx_platform::disk::read(path(&places.root)) {
         Ok(bytes) => {
             serde_json::from_slice(&bytes).map_err(|error| Error::Io(format!("withdrawn integrations: {error}")))
         }
@@ -94,7 +95,7 @@ pub fn restore_withdrawn(places: &Places) -> Result<Report, Error> {
     while let Some(integration) = remembered.first().cloned() {
         let selected = places.at_home(integration.host, &integration.home)?;
         let approval = if integration.host == Host::Codex && integration.approved_limit.is_some() {
-            let config = std::fs::read_to_string(selected.codex_home.join("config.toml"))
+            let config = fastctx_platform::disk::read_to_string(selected.codex_home.join("config.toml"))
                 .map_err(io("checking the original approved Codex limit"))?;
             let config: toml::Table =
                 config.parse().map_err(|_| Error::Io("the Codex configuration cannot be read".into()))?;

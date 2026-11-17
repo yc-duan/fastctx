@@ -3,7 +3,7 @@
 
 mod input;
 
-use super::{Opening, Told, live, opening};
+use super::{Opening, Told, opening};
 use crate::Node;
 use fastctx_net::{
     data::Stream,
@@ -86,7 +86,8 @@ pub(crate) async fn serve(
     let mut latest = 1;
     let mut views = context.node.views.subscribe();
     let mut retiring = tokio::task::JoinSet::new();
-    loop {
+    let started = std::time::Instant::now();
+    let served = async { loop {
         if workers.0.is_empty() && retiring.is_empty() {
             return Ok(RemoteReply::Watched);
         }
@@ -102,6 +103,12 @@ pub(crate) async fn serve(
                 }
                 Some(watch_mux::commands::ReceivedCommand { command: Command::Unsubscribe { id }, .. }) => {
                     if let Some(worker) = workers.0.remove(&id) {
+                        if worker.subscription.collaboration.is_some() {
+                            context.node.log.line(format_args!(
+                                "{} stopped following {}'s collaboration on watch {watch}: it was cancelled",
+                                context.caller.machine, worker.subscription.resident
+                            ));
+                        }
                         worker.task.abort();
                         let output = context.output.clone();
                         retiring.spawn(async move { cancel(&output, id).await });
@@ -161,7 +168,29 @@ pub(crate) async fn serve(
                 }
             }
         }
+    } }
+    .await;
+    // Why the collaborations it followed stopped being followed, where it
+    // still followed some: a closed connection, or what failed.
+    let following: Vec<String> = workers
+        .0
+        .values()
+        .filter(|worker| worker.subscription.collaboration.is_some())
+        .map(|worker| worker.subscription.resident.to_string())
+        .collect();
+    if !following.is_empty() {
+        let why = match &served {
+            Ok(_) => "its connection closed".to_string(),
+            Err(failure) => failure.message.clone(),
+        };
+        context.node.log.line(format_args!(
+            "watch {watch} from {} ended after {}, following the collaboration of {}: {why}",
+            context.caller.machine,
+            crate::talk::lasted(started),
+            following.join(", ")
+        ));
     }
+    served
 }
 
 struct Context {
@@ -292,7 +321,7 @@ async fn run(
                     watch,
                     subscription: id,
                     number: next.fetch_add(1, Ordering::Relaxed),
-                    event: Event::Piece { watched },
+                    event: Event::Piece { watched: Box::new(watched) },
                 },
                 consumed,
             )
@@ -331,9 +360,9 @@ async fn run(
                     subscription: id,
                     number: next.fetch_add(1, Ordering::Relaxed),
                     event: Event::Piece {
-                        watched: fastctx_types::session::Watched::Documents {
+                        watched: Box::new(fastctx_types::session::Watched::Documents {
                             frame: Box::new(Arc::unwrap_or_clone(frame)),
-                        },
+                        }),
                     },
                 },
                 consumed,
@@ -346,7 +375,7 @@ async fn run(
         let account = fastctx_types::access::HubAccount { hub: asker.hub.clone(), account: asker.account.clone() };
         (None, crate::goals::watch::opening(node, &request.resident, &account).await?)
     } else {
-        opening(node, &request.resident, request.composer.clone(), held.as_ref()).await?
+        opening(node, &request.resident, request.composer.clone(), held.as_ref(), request.live_only).await?
     };
     drop(held);
     drop(memory);
@@ -354,7 +383,8 @@ async fn run(
     let _lease = lease;
     let Opening { pieces, mut events, slim } = opened;
     let mut told = Told::new(node, &request.resident, request.now && request.composer.is_none());
-    for watched in pieces.into_iter().chain(told.first()) {
+    for piece in pieces.into_iter().chain(told.first().map(super::OpeningPiece::Made)) {
+        let watched = piece.made().await?;
         flow.deliver(
             link,
             output,
@@ -362,7 +392,7 @@ async fn run(
                 watch,
                 subscription: id,
                 number: next.fetch_add(1, Ordering::Relaxed),
-                event: Event::Piece { watched },
+                event: Event::Piece { watched: Box::new(watched) },
             },
             consumed,
         )
@@ -374,7 +404,7 @@ async fn run(
                 Ok(Some(event)) => {
                     if request.goal && !crate::goals::watch::is_goal(&event) { continue; }
                     if !crate::goals::visible(node, crate::admission::seen::Looker::Asker(&asker), &request.resident, &event) { continue; }
-                    { let marked = Arc::unwrap_or_clone(event); live(marked.event, slim.as_ref()).map(|event| fastctx_types::session::Watched::Live { event, mark: marked.mark }) }
+                    { let marked = Arc::unwrap_or_clone(event); super::likeness::watched(marked.event, marked.mark, slim.as_ref(), request.live_only) }
                 }
                 Ok(None) => return Ok(()),
                 Err(error) => return Err(Failure::new(error.to_string())),
@@ -389,7 +419,7 @@ async fn run(
                     watch,
                     subscription: id,
                     number: next.fetch_add(1, Ordering::Relaxed),
-                    event: Event::Piece { watched },
+                    event: Event::Piece { watched: Box::new(watched) },
                 },
                 consumed,
             )

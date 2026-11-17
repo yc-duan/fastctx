@@ -16,20 +16,77 @@ use std::{
     time::Duration,
 };
 
+/// The conversations whose handing over waits to be tried again, each with
+/// the trouble last told of it, so the log does not repeat itself.
 #[derive(Default)]
-pub(crate) struct Retrying(Mutex<HashMap<ResidentId, Arc<tokio::sync::Notify>>>);
+pub(crate) struct Retrying(Mutex<HashMap<ResidentId, Option<String>>>);
+
+/// The kind of job that hands a conversation's waiting work to its host.
+const HANDING: &str = "host/hand-over";
+/// Conversations handed to at once: a handing over may start a host session.
+const HANDED_AT_ONCE: usize = 32;
+/// The longest one step may take.
+const HANDS_WITHIN: Duration = Duration::from_secs(10 * 60);
+/// Steps in a row that may be dropped for taking too long before the job is
+/// set aside until the conversation is kicked again.
+const HAND_TRIES: u32 = 5;
+/// How soon work that still waits is looked at again when nothing says the
+/// host is ready sooner (`changed`).
+const LOOKS_AGAIN: Duration = Duration::from_secs(3);
 
 #[derive(Clone, Serialize, Deserialize)]
 pub(crate) struct Progress {
     pub began: Timestamp,
     pub next: Timestamp,
-    failures: u32,
+    /// Starts that failed; what the host said while it started is not one.
+    pub failures: u32,
+    /// Why the last start failed.
     pub reason: Option<String>,
     pub attempted: bool,
     #[serde(default)]
     pub accepted: bool,
     #[serde(default)]
     pub after_activation: Option<String>,
+    /// What watching the host start last said, kept for the log and the
+    /// doctor: never a failure.
+    #[serde(default)]
+    pub observed: Option<String>,
+    /// When the host's process was last asked for, and when it took the
+    /// words: the phases of a start, and how long each took.
+    #[serde(default)]
+    pub attempted_at: Option<Timestamp>,
+    #[serde(default)]
+    pub accepted_at: Option<Timestamp>,
+}
+
+impl Progress {
+    /// How far the start has come (`KeptWords::starting`).
+    pub fn starting(&self) -> fastctx_types::session::Starting {
+        use fastctx_types::session::{StartPhase, Starting};
+        let now = Timestamp::now();
+        let waiting = self.failures > 0 && !self.attempted && self.next > now;
+        let phase = if waiting {
+            StartPhase::Retrying
+        } else if !self.attempted {
+            StartPhase::Preparing
+        } else if !self.accepted {
+            StartPhase::Launching
+        } else {
+            StartPhase::Connecting
+        };
+        Starting {
+            since: self.began,
+            phase,
+            failures: self.failures,
+            reason: (self.failures > 0).then(|| self.reason.clone()).flatten(),
+            next: waiting.then_some(self.next),
+        }
+    }
+}
+
+/// Milliseconds from `from` to now, for the log.
+fn since(from: Timestamp) -> i64 {
+    Timestamp::now().as_millisecond().saturating_sub(from.as_millisecond())
 }
 
 pub(crate) fn directory(node: &Node, id: &ResidentId) -> io::Result<fastctx_types::layout::ConversationDir> {
@@ -56,6 +113,9 @@ fn initial() -> Progress {
         attempted: false,
         accepted: false,
         after_activation: None,
+        observed: None,
+        attempted_at: None,
+        accepted_at: None,
     }
 }
 fn update<T: Send + 'static>(
@@ -97,19 +157,46 @@ pub(crate) fn begin_after(
 }
 /// Commit the host boundary before issuing a command that could accept words.
 pub(crate) fn attempting(node: &Node, id: &ResidentId, input: &NoticeId) -> Result<(), Failure> {
-    update(node, id, input, false, |row| {
+    let row = update(node, id, input, false, |row| {
         row.attempted = true;
         row.accepted = false;
-        Ok(())
+        row.attempted_at = Some(Timestamp::now());
+        Ok(row.clone())
     })?
-    .ok_or_else(|| failure("missing host preflight"))
+    .ok_or_else(|| failure("missing host preflight"))?;
+    node.log.line(format_args!(
+        "lifecycle {id}: launching its host, {} ms after the start began (try {})",
+        since(row.began),
+        row.failures + 1
+    ));
+    Ok(())
 }
 pub(crate) fn accepted(node: &Node, id: &ResidentId, input: &NoticeId) -> Result<(), Failure> {
-    update(node, id, input, false, |row| {
+    let row = update(node, id, input, false, |row| {
         row.accepted = true;
-        Ok(())
-    })
-    .map(|_| ())
+        row.accepted_at = Some(Timestamp::now());
+        Ok(row.clone())
+    })?;
+    if let Some(row) = row {
+        node.log.line(format_args!(
+            "lifecycle {id}: its host took the words, {} ms after the start began, {} ms after launching",
+            since(row.began),
+            row.attempted_at.map_or(0, since)
+        ));
+    }
+    Ok(())
+}
+
+/// Logs how long a start took, phase by phase, once a turn took its words.
+pub(crate) fn started(node: &Node, id: &ResidentId, progress: &Progress) {
+    let at = |phase: Option<Timestamp>| phase.map_or_else(|| "-".to_string(), |at| format!("{} ms", since(at)));
+    node.log.line(format_args!(
+        "lifecycle {id}: a turn took the words {} ms after the start began ({} since launching, {} since its host took them; {} failed tries)",
+        since(progress.began),
+        at(progress.attempted_at),
+        at(progress.accepted_at),
+        progress.failures
+    ));
 }
 
 pub(crate) async fn unavailable(
@@ -209,9 +296,9 @@ pub(crate) fn queued_now(node: &Arc<Node>, id: &ResidentId, input: &NoticeId, re
 pub(crate) fn observing(node: &Node, id: &ResidentId, input: &NoticeId, reason: String) -> Result<(), Failure> {
     let why = reason.clone();
     let changed = update(node, id, input, true, move |row| {
-        let changed = row.reason.as_ref() != Some(&why);
+        let changed = row.observed.as_ref() != Some(&why);
         if changed {
-            row.reason = Some(why);
+            row.observed = Some(why);
         }
         Ok(changed)
     })?
@@ -234,116 +321,123 @@ pub(crate) fn clear_now(node: &Node, id: &ResidentId, input: &NoticeId) -> io::R
     })
 }
 
-pub(crate) fn kick(node: &Arc<Node>, id: &ResidentId) {
-    let signal = {
-        let mut workers = node.retrying.0.lock().expect("never poisoned");
-        let std::collections::hash_map::Entry::Vacant(entry) = workers.entry(id.clone()) else { return };
-        let signal = Arc::new(tokio::sync::Notify::new());
-        entry.insert(signal.clone());
-        signal
-    };
-    let (node, id) = (node.clone(), id.clone());
-    fastctx_platform::task::spawn(run(node, id, signal));
+/// Asks for the conversation's waiting work to be handed to its host, as a
+/// job (`fastctx_jobs`): one for the conversation however often it is asked.
+pub(crate) fn kick(node: &Node, id: &ResidentId) {
+    let job = fastctx_jobs::Job { kind: HANDING, key: id.to_string(), unit: id.to_string(), payload: Vec::new() };
+    let (database, jobs) = (node.database.clone(), node.durable_jobs.clone());
+    fastctx_platform::task::spawn(async move {
+        let bytes = job.key.len() * 2 + 64;
+        if database.write_relaxed(bytes, move |db| fastctx_jobs::submit(db, &job)).await.is_ok() {
+            jobs.stir(HANDING);
+        }
+    });
 }
 
 /// Host readiness and consuming-turn receipts release waiting arrivals
-/// immediately. A retry request itself does not notify its own worker.
+/// immediately: a handing over that waits to be tried again is due now.
+/// Where none waits there is nothing to hurry.
 pub(crate) fn changed(node: &Node, id: &ResidentId) {
-    if let Some(signal) = node.retrying.0.lock().expect("never poisoned").get(id) {
-        signal.notify_one();
+    if node.retrying.0.lock().expect("never poisoned").contains_key(id) {
+        kick(node, id);
     }
 }
 
-fn run(
-    node: Arc<Node>,
-    id: ResidentId,
-    signal: Arc<tokio::sync::Notify>,
-) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> {
-    Box::pin(async move {
-        node.ready_for(&id).await;
-        let mut trouble = None;
-        loop {
-            if node.residents.active(&id).is_err() {
-                break;
-            }
-            let Some((about, _)) = node.residents.about(&id) else { break };
-            let directory = node.world.conversation(&id);
-            let input = match first_ready(&node, &about, &directory).await {
-                Ok(Some(input)) => input,
-                Ok(None) => match crate::control_queue::waiting_for_host(&node, &id).await {
-                    Ok(true) => {
-                        if let Err(error) = crate::control_queue::run_pending(&node, &id).await {
-                            node.log.line(format_args!("lifecycle {id}: retrying control: {error}"));
-                        }
-                        tokio::time::sleep(Duration::from_secs(3)).await;
-                        continue;
-                    }
-                    Ok(false) => break,
-                    Err(error) => {
-                        node.log.line(format_args!("lifecycle {id}: reading pending controls: {error}"));
-                        tokio::time::sleep(Duration::from_secs(3)).await;
-                        continue;
-                    }
-                },
-                Err(error) => {
-                    let error = error.to_string();
-                    if trouble.as_ref() != Some(&error) {
-                        node.log.line(format_args!("lifecycle {id}: reading pending work; retrying: {error}"));
-                        trouble = Some(error);
-                    }
-                    tokio::time::sleep(Duration::from_secs(3)).await;
-                    continue;
-                }
-            };
-            match progress(&node, &id, &input.delivery.id).await {
-                Ok(Some(progress)) => {
-                    let remaining = progress.next.as_millisecond().saturating_sub(Timestamp::now().as_millisecond());
-                    if remaining > 0 {
-                        tokio::time::sleep(Duration::from_millis(remaining.min(60_000) as u64)).await;
-                        continue;
-                    }
-                }
-                Ok(None) => {}
-                Err(error) => {
-                    node.log.line(format_args!("lifecycle {id}: cannot read host progress: {error}"));
-                    tokio::time::sleep(Duration::from_secs(3)).await;
-                    continue;
+/// Names what hands waiting work to hosts, before the node's jobs start.
+pub(crate) fn register(node: &Arc<Node>) {
+    use fastctx_jobs::{Kind, Outcome, Taken};
+    let jobs = node.durable_jobs.clone();
+    let node = Arc::downgrade(node);
+    let run = move |taken: Taken| -> std::pin::Pin<Box<dyn std::future::Future<Output = Outcome> + Send>> {
+        let node = node.upgrade();
+        Box::pin(async move {
+            let Some(node) = node else { return Outcome::Failed("the node is stopping".into()) };
+            let Ok(id) = taken.unit.parse::<ResidentId>() else { return Outcome::Done };
+            match step(&node, &id).await {
+                Some(after) => Outcome::Again { after },
+                None => {
+                    node.retrying.0.lock().expect("never poisoned").remove(&id);
+                    Outcome::Done
                 }
             }
-            let Some((about, _)) = node.residents.about(&id) else { break };
-            if let Err(error) = crate::speech::hand_over(&node, &id, &about, &directory, input.clone()).await {
-                // A failure after handover is not permission to repeat it.
-                // Only the still-Waiting state proves no submission happened.
-                if still_waiting(&directory, &input.delivery.id).await {
-                    if let Err(error) = defer(&node, &id, &input.delivery.id, &error.message).await {
-                        node.log.line(format_args!("lifecycle {id}: keeping retry: {error}"));
-                    }
-                } else {
-                    node.log.line(format_args!("lifecycle {id}: handover needs reconciliation: {error}"));
+        })
+    };
+    jobs.register(
+        Kind { name: HANDING, at_once: HANDED_AT_ONCE, within: HANDS_WITHIN, tries: HAND_TRIES },
+        Arc::new(run),
+    );
+}
+
+/// Tells trouble with a conversation's waiting work once for as long as it
+/// stays the same.
+fn troubled(node: &Node, id: &ResidentId, error: String) {
+    let mut retrying = node.retrying.0.lock().expect("never poisoned");
+    let said = retrying.entry(id.clone()).or_default();
+    if said.as_ref() != Some(&error) {
+        node.log.line(format_args!("lifecycle {id}: reading pending work; retrying: {error}"));
+        *said = Some(error);
+    }
+}
+
+/// One step of handing the conversation's waiting work to its host: none
+/// when nothing is left to hand over, and otherwise how long until the next
+/// step, which `changed` may hurry.
+async fn step(node: &Arc<Node>, id: &ResidentId) -> Option<Duration> {
+    node.ready_for(id).await;
+    node.residents.active(id).ok()?;
+    let (about, _) = node.residents.about(id)?;
+    let directory = node.world.conversation(id);
+    // Marked as waiting before anything is read: a host that becomes ready
+    // meanwhile then hurries the step after this one.
+    node.retrying.0.lock().expect("never poisoned").entry(id.clone()).or_default();
+    let input = match first_ready(node, &about, &directory).await {
+        Ok(Some(input)) => input,
+        Ok(None) => match crate::control_queue::waiting_for_host(node, id).await {
+            Ok(true) => {
+                if let Err(error) = crate::control_queue::run_pending(node, id).await {
+                    node.log.line(format_args!("lifecycle {id}: retrying control: {error}"));
                 }
+                return Some(LOOKS_AGAIN);
             }
-            if still_waiting(&directory, &input.delivery.id).await {
-                tokio::select! {
-                    () = signal.notified() => {},
-                    () = tokio::time::sleep(Duration::from_secs(3)) => {},
-                }
+            Ok(false) => return None,
+            Err(error) => {
+                node.log.line(format_args!("lifecycle {id}: reading pending controls: {error}"));
+                return Some(LOOKS_AGAIN);
+            }
+        },
+        Err(error) => {
+            troubled(node, id, error.to_string());
+            return Some(LOOKS_AGAIN);
+        }
+    };
+    match progress(node, id, &input.delivery.id).await {
+        Ok(Some(progress)) => {
+            let remaining = progress.next.as_millisecond().saturating_sub(Timestamp::now().as_millisecond());
+            if remaining > 0 {
+                return Some(Duration::from_millis(remaining.min(60_000) as u64));
             }
         }
-        node.retrying.0.lock().expect("never poisoned").remove(&id);
-        // An arrival racing the final empty read either starts its own worker
-        // after this removal, or is picked up by this recheck.
-        if node.residents.active(&id).is_ok() {
-            let ready = match node.residents.about(&id) {
-                Some((about, _)) => {
-                    first_ready(&node, &about, &node.world.conversation(&id)).await.is_ok_and(|first| first.is_some())
-                }
-                None => false,
-            };
-            if ready || crate::control_queue::waiting_for_host(&node, &id).await.unwrap_or(false) {
-                kick(&node, &id);
-            }
+        Ok(None) => {}
+        Err(error) => {
+            node.log.line(format_args!("lifecycle {id}: cannot read host progress: {error}"));
+            return Some(LOOKS_AGAIN);
         }
-    })
+    }
+    let (about, _) = node.residents.about(id)?;
+    if let Err(error) = crate::speech::hand_over(node, id, &about, &directory, input.clone()).await {
+        // A failure after handover is not permission to repeat it.
+        // Only the still-Waiting state proves no submission happened.
+        if still_waiting(&directory, &input.delivery.id).await {
+            if let Err(error) = defer(node, id, &input.delivery.id, &error.message).await {
+                node.log.line(format_args!("lifecycle {id}: keeping retry: {error}"));
+            }
+        } else {
+            node.log.line(format_args!("lifecycle {id}: handover needs reconciliation: {error}"));
+        }
+    }
+    // What still waits is looked at again in a while or when its host is
+    // ready; what went in makes way for the next at once.
+    Some(if still_waiting(&directory, &input.delivery.id).await { LOOKS_AGAIN } else { Duration::ZERO })
 }
 
 /// The first of what waits in `directory` that may go in now, read where

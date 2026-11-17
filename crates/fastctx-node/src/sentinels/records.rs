@@ -64,6 +64,9 @@ impl Records for AccountRecords {
                 };
                 match self.ask(scope, request).await? {
                     Response::Written { metadata } => {
+                        if let Some(node) = self.0.upgrade() {
+                            node.topics.changed(fastctx_types::topics::SENTINELS);
+                        }
                         return Ok(value.map(|value| Record { version: metadata.version, value }));
                     }
                     // Writing over what was deleted names the version the hub kept.
@@ -90,6 +93,7 @@ impl Records for AccountRecords {
                 .watch_account_records(scope.account.clone(), kind.into())
                 .map_err(Error::Unavailable)?;
             let (sender, receiver) = broadcast::channel(64);
+            let node = self.0.clone();
             // Ending closes the receiver, and the sentinel subscribes and lists again.
             fastctx_platform::task::spawn(async move {
                 loop {
@@ -107,6 +111,9 @@ impl Records for AccountRecords {
                         }
                         Err(_) => return,
                     };
+                    if let Some(node) = node.upgrade() {
+                        node.topics.changed(fastctx_types::topics::SENTINELS);
+                    }
                     for change in changes {
                         if sender.send(change).is_err() {
                             return;

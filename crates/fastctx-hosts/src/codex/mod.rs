@@ -29,6 +29,9 @@ mod contract;
 pub mod control_error;
 mod control_start;
 mod controls;
+#[cfg(feature = "drill")]
+pub mod drill;
+pub mod follow;
 mod history;
 pub mod identify;
 mod image_position;
@@ -40,6 +43,7 @@ mod management;
 mod models;
 mod notifications;
 mod offers;
+mod preparing;
 mod presentation;
 mod server;
 mod steering;
@@ -337,6 +341,8 @@ struct State {
     /// (`title`). Only their attributed usage deltas reach the node.
     title_waiters: HashMap<String, oneshot::Sender<Result<String, String>>>,
     title_usage: HashMap<String, title::Usage>,
+    /// Threads being made ready for words (`preparing`).
+    preparing: HashMap<String, preparing::Making>,
 }
 
 struct StateGuard<'a>(std::sync::MutexGuard<'a, State>);
@@ -429,6 +435,12 @@ impl CodexHost {
         &self.codex_home
     }
 
+    /// Whether its app-server is running now. Asking it anything while it
+    /// is not starts it first, which can take from seconds to minutes.
+    pub fn serving(&self) -> bool {
+        self.lock().server.is_some()
+    }
+
     /// A host for the Codex configured in `codex_home`; its app-server runs
     /// in `workdir` with exactly the environment `env`, and starts at the
     /// first call that needs it.
@@ -460,6 +472,7 @@ impl CodexHost {
                 catalog: None,
                 title_waiters: HashMap::new(),
                 title_usage: HashMap::new(),
+                preparing: HashMap::new(),
             }),
             finished,
             generation: Mutex::new(()),
@@ -574,8 +587,10 @@ impl CodexHost {
     /// when the turn starts and does not wait for a server still starting.
     /// Returns why the World's tools are missing, when they are.
     pub async fn prepare(self: &Arc<Self>, thread: &str) -> Result<Option<String>, String> {
+        let preparing = self.preparing(thread);
         let server = self.server().await?;
         self.ensure_loaded(&server, thread).await?;
+        preparing.connecting();
         // Resume may hand back the runtime the app-server already had, as it
         // does for one not idle: its tools did not restart, so no word of
         // them comes, and what was known of them still holds.
@@ -795,6 +810,49 @@ impl CodexHost {
                 history::read(&server, thread, running.as_deref(), Some(owner)).await
             }
             read => read,
+        }
+    }
+
+    /// The thread read past `seam` (`follow`): none where it is not
+    /// followed — a new thread with nothing to read yet, one whose history
+    /// is not kept in pages — so it is read whole as ever. A seam whose turn
+    /// moved, or a settled turn found changed, reads it from its start;
+    /// why, with it. `accept` says whether every turn the World saw begin
+    /// before a time had ended by then. A reading from its start is kept in
+    /// `keeping` as it is read, where given (`follow::Keeping`).
+    pub async fn follow<'k>(
+        self: &Arc<Self>,
+        thread: &str,
+        owner: &fastctx_types::Address,
+        seam: &follow::Seam,
+        accept: &(dyn Fn(Timestamp) -> bool + Send + Sync),
+        mut keeping: Option<&mut (dyn follow::Keeping + 'k)>,
+    ) -> Result<Option<(follow::Tail, Option<String>)>, String> {
+        let server = self.server().await?;
+        if self.lock().threads.get(thread).is_some_and(|t| t.created_here && !t.completed_item) {
+            return Ok(None);
+        }
+        let running = self.running_turn(thread);
+        let mut seam = seam.clone();
+        let mut restarted = None;
+        loop {
+            let read = match follow::tail(&server, thread, running.as_deref(), Some(owner), &seam, accept, keeping.as_deref_mut()).await {
+                // One a Codex of another version wrote reads once it is loaded.
+                Err(error) if error == not_loaded(thread) => {
+                    self.ensure_loaded(&server, thread).await?;
+                    follow::tail(&server, thread, running.as_deref(), Some(owner), &seam, accept, keeping.as_deref_mut()).await?
+                }
+                read => read?,
+            };
+            match read {
+                Ok(tail) => return Ok(Some((tail, restarted))),
+                Err(follow::Restart::Legacy) => return Ok(None),
+                Err(why) if seam.turn.is_some() => {
+                    restarted = Some(why.to_string());
+                    seam = follow::Seam::default();
+                }
+                Err(why) => return Err(why.to_string()),
+            }
         }
     }
 

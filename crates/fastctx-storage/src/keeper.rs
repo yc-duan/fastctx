@@ -55,6 +55,25 @@ pub(crate) fn keep(path: &Path) -> Result<Kept> {
     }
 }
 
+pub(crate) fn wait_closed(path: &Path, within: Duration) -> Result<()> {
+    let deadline = Instant::now() + within;
+    loop {
+        let open = KEPT
+            .lock()
+            .expect("kept databases")
+            .as_ref()
+            .and_then(|kept| kept.get(path))
+            .is_some_and(|kept| kept.strong_count() > 0);
+        if !open {
+            return Ok(());
+        }
+        if Instant::now() >= deadline {
+            return Err(Error::with_kind(ErrorKind::Busy, "database connections are still closing; deletion deferred"));
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
 fn lock_file(path: &Path) -> PathBuf {
     let mut name = path.file_name().unwrap_or_default().to_os_string();
     name.push("-keeper");

@@ -5,6 +5,7 @@
 // devices logged in, the projects, and who came into an account lately.
 // Serialized replies, before any presentation.
 
+import type { AccountSync } from "./sync";
 import type { LinkState, Strain } from "./world";
 import type { MachineName, Timestamp, TownName } from "./wire";
 
@@ -126,6 +127,9 @@ export interface ShareSeen {
   account: AccountName;
   /** The most jobs the account runs on it at once; absent is no limit. */
   jobs?: number;
+  /** Given but not yet in force: the machine clears what the account may not
+   *  see first, at this holding revision. */
+  pending?: number;
 }
 
 /** One login of an agent on a machine, assisting an account. */
@@ -149,6 +153,9 @@ export interface AssistSeen {
   /** The most turns the login runs at once, its owner's own counted too;
    *  absent leaves it to the vendor's rate limits. */
   turns?: number;
+  /** The part of the login's week the account may use, in percent of the
+   *  week its owner set; Fable is half of it. A hub of before keeps none. */
+  share?: number;
 }
 
 /** A plan a login names none of (a Claude Code long-lived token), set by
@@ -163,6 +170,8 @@ export interface PlanSeen {
    *  agent's default login there. */
   home: string | null;
   plan: PlanLabel;
+  /** Max shown as Ultra, Anthropic's newer name for what was Max 20x. */
+  ultra?: boolean;
 }
 
 /** A machine of another whose agents may reach an account's machines,
@@ -177,6 +186,11 @@ export interface ProjectSeen {
   name: TownName;
   owner: AccountName;
   granted: AccountName[];
+  /** The machine shared whole it was opened on: whoever holds it disposes
+   *  of the project as its owner does. */
+  shared_on?: MachineName;
+  /** Those who held that machine as it left the network: co-owners still. */
+  frozen?: AccountName[];
 }
 
 /** A device that logged in to an account, or a machine registered under
@@ -334,6 +348,17 @@ export interface HubAccounts {
   logins: AccountName[];
   home: AccountName | null;
   self_registration: boolean;
+  /** The hub seals its assets and opens them again as asked; an earlier
+   *  one refuses being asked. */
+  asset_seals?: boolean;
+  /** The hub seals every asset each time it starts, until the super
+   *  administrator opens them. */
+  asset_seal_at_start?: boolean;
+  /** Why every asset is sealed now, if it is. */
+  assets_sealed?: string;
+  /** How the machines of the accounts logged in here stand in syncing with
+   *  the hub, as it last sampled them (`world/sync.ts`). */
+  synced?: AccountSync[];
   accounts: AccountSeen[];
   members: MemberSeen[];
   shares: ShareSeen[];
@@ -386,8 +411,8 @@ export interface Dissolution {
 /** A change made as an account (`fastctx_types::accounts::AccountChange`). */
 export type AccountChange =
   | { change: "share"; machine: MachineName; to: AccountName; shared: boolean; jobs?: number }
-  | { change: "assist"; machine: MachineName; to: AccountName; agent: string; home?: string; assisting: boolean; until?: Timestamp; weekly?: number; daily?: number; five_hour?: number; turns?: number }
-  | { change: "plan"; machine: MachineName; agent: string; home?: string; plan: PlanLabel | null }
+  | { change: "assist"; machine: MachineName; to: AccountName; agent: string; home?: string; assisting: boolean; until?: Timestamp; weekly?: number; daily?: number; five_hour?: number; turns?: number; share?: number }
+  | { change: "plan"; machine: MachineName; agent: string; home?: string; plan: PlanLabel | null; ultra?: boolean }
   | { change: "stop_acting"; machine: MachineName }
   /** The administrator's change: the server checks it reaches the machine
    *  at `at` before it counts; none, no longer. */
@@ -424,6 +449,12 @@ export type AccountChange =
   /** The super administrator dissolves the network named `name`, typed as
    *  it is. */
   | { change: "dissolve"; name: HubName }
+  /** Whether the hub seals every asset each time it starts, until the
+   *  super administrator opens them. */
+  | { change: "asset_seal"; at_start: boolean }
+  /** The super administrator opens the assets the hub sealed as it
+   *  started. */
+  | { change: "open_assets" }
   | { change: "share_project"; town: TownName; with: AccountName; shared: boolean }
   | { change: "move_project"; town: TownName; to: AccountName }
   /** The owner deletes a project and its ledger, on a hub that says it

@@ -1,0 +1,44 @@
+//! The rows and derived structures a catalog edit can change. The general
+//! path remains available to callers that do not declare a narrower edit.
+
+#[derive(Clone, Default)]
+pub(crate) enum BookEdit {
+    #[default]
+    Full,
+    /// Only audit records and their sequence change.
+    Audit,
+    /// In-place configuration, preserving name, level and locked status.
+    Account(usize),
+    /// In-place group labels, preserving all identity and authority fields.
+    Groups(Vec<usize>),
+    /// Token rows may be inserted, removed or reordered.
+    Tokens,
+    /// A relation changed: only these lists may have, each diffed whole;
+    /// the derived index is rebuilt as for `Full`.
+    Relations(&'static [&'static str]),
+}
+
+impl BookEdit {
+    pub(crate) fn list(&self, kind: &str) -> (bool, Option<&[usize]>) {
+        match self {
+            Self::Full => (true, None),
+            Self::Account(at) if kind == "accounts" => (true, Some(std::slice::from_ref(at))),
+            Self::Groups(positions) if kind == "members" => (true, Some(positions)),
+            Self::Tokens if kind == "tokens" => (true, None),
+            Self::Relations(kinds) if kinds.contains(&kind) => (true, None),
+            _ => (false, None),
+        }
+    }
+
+    pub(crate) fn is_full(&self) -> bool {
+        matches!(self, Self::Full)
+    }
+
+    /// Whether the edit may change who a body's members are (design §6.2):
+    /// a whole save, or one of the shares or of the machines' homes. A share
+    /// taken back is such an edit, and its body's members are kept as it
+    /// leaves them, for when its machine leaves too.
+    pub(crate) fn may_change_bodies(&self) -> bool {
+        self.is_full() || self.list("shares").0 || self.list("members").0
+    }
+}

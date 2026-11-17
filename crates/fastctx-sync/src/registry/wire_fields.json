@@ -1,0 +1,26 @@
+[
+  {
+    "type": "crates/fastctx-types/src/timers.rs::TimerCall",
+    "fields": ["List.paged", "List.after"],
+    "purpose": "Observation",
+    "capability": "Welcome.timer_pages",
+    "gate": "crates/fastctx-client/src/lib.rs::Client::call",
+    "default": "Unpaged requests receive the complete list or an explicit limit error."
+  },
+  {
+    "type": "crates/fastctx-types/src/timers.rs::TimerCall",
+    "fields": ["Set.handle", "Cancel.handle"],
+    "purpose": "ExecutionControl",
+    "capability": "Welcome.timer_pages",
+    "gate": "crates/fastctx-client/src/lib.rs::Client::call",
+    "default": "Without a handle, the existing identity selects the row."
+  },
+  {
+    "type": "crates/fastctx-types/src/calls.rs::Reply",
+    "fields": ["Timers.next", "Timers.oversized"],
+    "purpose": "Observation",
+    "capability": "TimerCall.List.paged",
+    "gate": "crates/fastctx-node/src/timers/mod.rs::page_reply",
+    "default": "Absent fields mean a complete list with no oversized rows."
+  }
+]

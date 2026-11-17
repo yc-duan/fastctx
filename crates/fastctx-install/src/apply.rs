@@ -1238,7 +1238,7 @@ fn read_plugin_record(path: &Path, settings: &Path, record: &Record) -> Result<O
 }
 
 fn load_plugin_record(path: &Path) -> Result<Option<PluginRecord>, Error> {
-    match std::fs::read(path) {
+    match fastctx_platform::disk::read(path) {
         Ok(bytes) => {
             let plugin: PluginRecord = serde_json::from_slice(&bytes)
                 .map_err(|error| Error::Io(format!("reading {}: {error}", path.display())))?;

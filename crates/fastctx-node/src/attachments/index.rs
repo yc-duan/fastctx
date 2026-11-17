@@ -241,7 +241,7 @@ pub(super) fn reference(directory: &ConversationDir, file: &Attachment) -> io::R
     })
 }
 
-pub(super) fn listed(directory: &ConversationDir) -> io::Result<Vec<Attachment>> {
+pub(crate) fn listed(directory: &ConversationDir) -> io::Result<Vec<Attachment>> {
     prepare(directory)?;
     records::read_background(directory, |rows| {
         let budget = rows.get::<Budget>(BUDGET, "current")?.unwrap_or_default();

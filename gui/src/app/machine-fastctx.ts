@@ -102,6 +102,7 @@ export class FastctxBlock {
     clearTimeout(this.timer);
     this.subject = subject;
     if (!subject || !this.shown || this.asking) return;
+    if (document.hidden) { this.timer = window.setTimeout(() => void this.ask(), EVERY_MS); return; }
     const { machine, manages } = subject;
     const older = this.older(subject);
     this.away = machine.online === false;

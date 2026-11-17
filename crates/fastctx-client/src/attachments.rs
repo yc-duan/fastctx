@@ -39,7 +39,10 @@ impl Client {
         let id = self.next;
         let size = file.size;
         let call = Call::Upload { target, node, file, composer };
-        self.connection.send(&crate::to_json(&ClientFrame::Call { id, call })).await.map_err(CallError::Broken)?;
+        self.connection
+            .send(&crate::to_json(&ClientFrame::Call { id, call, submission: None }))
+            .await
+            .map_err(CallError::Broken)?;
         let (mut reader, mut writer) = self.connection.split();
         let send = async {
             let mut buffer = vec![0u8; UPLOAD_CHUNK];
@@ -222,4 +225,125 @@ impl World {
             other => Err(Error::Unexpected(format!("{other:?}"))),
         }
     }
+}
+
+/// What is said beside a text attachment of long words: the words are in it.
+const IN_ATTACHMENT: &str = "(The full text is in the attached file.)";
+/// The name a text attachment of long words is given, as the input box names
+/// one in English.
+const TEXT_FILE: &str = "Pasted text.txt";
+
+impl World {
+    /// Words longer than an input box holds, as an input box sends them
+    /// (design §28.49): uploaded to `target` on `node` as a text attachment,
+    /// with a line beside it; shorter ones as they are. The upload is the
+    /// ordinary one, its receipt passed on unchanged.
+    pub async fn as_attachment(&self, target: UploadTarget, node: Option<Written>, text: String) -> Result<(String, Vec<Attachment>), Error> {
+        if !long(&text) {
+            return Ok((text, Vec::new()));
+        }
+        let bytes = text.into_bytes();
+        let file = UploadFile { name: TEXT_FILE.into(), media_type: "text/plain;charset=utf-8".into(), size: bytes.len() as u64, sha256: sha256(&bytes) };
+        let attachment = self.upload(target, node, file, bytes.as_slice()).await?;
+        Ok((IN_ATTACHMENT.into(), vec![attachment]))
+    }
+
+    /// Talks to `to`, words longer than an input box holds going as a text
+    /// attachment (`as_attachment`): what was said, and the words that went
+    /// — the line beside the attachment, where they went as one. A
+    /// conversation on another machine keeps the file on this computer, as
+    /// the input box keeps what it sends; its machine unnamed, it is found as
+    /// talk finds it (the node's upload). The upload is named by the words
+    /// and the conversation, so the same words sent again — a failed send
+    /// asked again — take the upload made before rather than another.
+    pub async fn talk_long(
+        &self,
+        to: fastctx_types::ResidentId,
+        machine: Option<Written>,
+        text: String,
+        id: Option<String>,
+    ) -> Result<(Said, String), Error> {
+        if !long(&text) {
+            let said = self.talk_with_attachments(to, machine, text.clone(), Vec::new(), None, id).await?;
+            return Ok((said, text));
+        }
+        let inner = UploadTarget::Resident { resident: to.clone() };
+        let target = match &machine {
+            Some(machine) => UploadTarget::Sent {
+                machine: machine.clone(),
+                target: Box::new(inner),
+                operation: format!("words-{}-{}", to, &sha256(text.as_bytes())[..32]),
+                account: None,
+                files_on: None,
+            },
+            None => inner,
+        };
+        let (text, attachments) = self.as_attachment(target, machine.clone(), text).await?;
+        let said = self.talk_with_attachments(to, machine, text.clone(), attachments, None, id).await?;
+        Ok((said, text))
+    }
+
+    /// Opens a session, first words longer than an input box holds going as a
+    /// text attachment (`as_attachment`), for the account and the files'
+    /// place `choices` names, as the input box uploads for a new one: what
+    /// was said, and the first words as they went.
+    pub async fn open_long(
+        &self,
+        agent: fastctx_types::AgentName,
+        town: Option<fastctx_types::TownName>,
+        node: Option<Written>,
+        text: String,
+        options: fastctx_types::agents::SessionOptions,
+        choices: fastctx_types::agents::Choices,
+    ) -> Result<(Said, String), Error> {
+        if !long(&text) {
+            let said = self.open_with(agent, town, node, text.clone(), options, choices).await?;
+            return Ok((said, text));
+        }
+        let inner = UploadTarget::New { agent: agent.clone(), town: town.clone() };
+        let machine = match &node {
+            Some(node) => Some(node.clone()),
+            None if self.device().is_none() => Some(self.connect().await?.machine.into()),
+            None => None,
+        };
+        let target = match machine {
+            Some(machine) => UploadTarget::Sent {
+                machine,
+                target: Box::new(inner),
+                // One opening: the words do not name it — the same first
+                // words may open another conversation after this one.
+                operation: new_operation(),
+                account: choices.account.clone(),
+                files_on: choices.files_on.clone(),
+            },
+            None => inner,
+        };
+        let (text, attachments) = self.as_attachment(target, node.clone(), text).await?;
+        let said = self.open_with_attachments(agent, town, node, text.clone(), options, attachments, choices).await?;
+        Ok((said, text))
+    }
+}
+
+/// An operation for one upload of its own, stable for its retries within it.
+/// A name for words a device sends, its own for them (`Call::Talk::id`):
+/// the machine they go to names their delivery by it, and tells it back.
+pub fn words_id() -> String {
+    new_operation()
+}
+
+fn new_operation() -> String {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let at = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|since| since.as_nanos()).unwrap_or_default();
+    format!("words-{}-{at:x}-{}", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed))
+}
+
+/// Whether `text` is longer than an input box holds.
+fn long(text: &str) -> bool {
+    text.chars().count() > fastctx_types::composer::MAX_DOCUMENT_CHARACTERS
+}
+
+fn sha256(bytes: &[u8]) -> String {
+    use sha2::Digest as _;
+    sha2::Sha256::digest(bytes).iter().map(|byte| format!("{byte:02x}")).collect()
 }

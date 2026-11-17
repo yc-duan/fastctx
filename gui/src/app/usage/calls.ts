@@ -19,6 +19,7 @@ import type { CallCursor, CallOutcome, CallPerson, CallSource, UsageCall, UsageC
 import type { ResidentId } from "../../world/wire";
 import type { ActsMenu, MenuEntry } from "../acts-menu";
 import { detailOf } from "../problem";
+import { waiting, waitingInline } from "../waiting";
 import { RangeSheet, addDays, midnight, type DaySpan } from "./calls-range";
 import type { CallsWords } from "./calls-words";
 import type { UsageWords } from "./words";
@@ -459,7 +460,7 @@ export class CallsList {
       : this.problem
         ? `<p class="feature-note uc-note" title="${escape(this.problem)}">${escape(this.options.usage.failed)}</p>`
         : this.reading
-          ? `<p class="feature-quiet uc-note">${escape(this.options.usage.reading)}</p>`
+          ? waiting({ label: this.options.usage.reading, shape: "rows", rows: 8 })
           : `<p class="feature-quiet uc-note">${escape(filtered ? words.noneFiltered : words.none)}</p>`;
     const shape = `${several ? " several" : ""}${this.options.claude ? " dollars" : ""}`;
     const drawn = `${shape}|${html}|${empty}`;
@@ -483,7 +484,9 @@ export class CallsList {
     this.foot.hidden = this.legacy ? page === 1 && !this.next : pages! <= 1;
     if (this.foot.hidden) return;
     const slip = this.foot.querySelector<HTMLElement>(".uc-slip")!;
-    slip.textContent = this.slip ? usage.failed : this.reading ? usage.reading : "";
+    if (this.reading && !this.slip) {
+      if (!slip.querySelector(".wait-inline")) slip.innerHTML = waitingInline(usage.reading);
+    } else slip.textContent = this.slip ? usage.failed : "";
     slip.title = this.slip ?? "";
     slip.classList.toggle("wrong", !!this.slip);
     this.foot.querySelector<HTMLElement>(".uc-count")!.textContent = pages === null ? "" : words.count(this.total);

@@ -207,8 +207,11 @@ pub(super) fn mount(path: &Path) -> io::Result<u64> {
         }
         Ok(data.stx_mnt_id)
     }
+    // A path that is gone is not found, as statx says of it on Linux: a
+    // resumed copy passes by what an earlier try already retired.
     #[cfg(not(target_os = "linux"))]
     {
-        Ok(super::Object::read(path)?.ok_or_else(|| super::conflict("source disappeared"))?.identity.volume)
+        let gone = || io::Error::new(io::ErrorKind::NotFound, "source disappeared");
+        Ok(super::Object::read(path)?.ok_or_else(gone)?.identity.volume)
     }
 }

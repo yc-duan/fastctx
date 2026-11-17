@@ -14,6 +14,7 @@ use fastctx_types::{
     residents::About,
 };
 mod observed;
+pub(crate) mod selection;
 use observed::{Seen, keep as keep_seen, read as seen};
 
 fn remember(node: &Node, id: &ResidentId, account: HubAccount, page: &Page) -> Result<(), Failure> {
@@ -47,38 +48,11 @@ pub(crate) async fn call(
     if node.is_me(&address.machine) {
         return here(node, &address.resident, hub.as_ref(), account.as_ref(), None, operation, of).await;
     }
-    let mut choices = Vec::new();
-    let (reading, owner) = (node.clone(), address.clone());
-    let running = fastctx_platform::task::spawn_blocking(move || {
-        crate::jobs::running_for(&reading.world, &reading.names(), &owner)
-    })
-    .await
-    .map_err(|error| Failure::new(error.to_string()))?;
-    for acting in running {
-        let Some(link) = node.link_of(&acting.hub) else { continue };
-        if hub.as_ref().is_some_and(|hub| link.hub_name() != *hub)
-            || account.as_ref().is_some_and(|account| *account != acting.account)
-        {
-            continue;
-        }
-        link.refresh().await.map_err(Failure::new)?;
-        let view = link.view();
-        if view.admits(&view.me, &acting.account, &address.machine, Purpose::Echo).is_ok() {
-            choices.push((link, acting));
-        }
-    }
-    if choices.len() != 1 {
-        return Err(Failure::refused(words::ROUTE));
-    }
-    let (link, acting) = choices.pop().expect("one route");
-    if !link.view().conversation_plans {
-        return Err(Failure::not_run(words::OLDER));
-    }
+    let acting = selection::remote(node, address, hub.as_ref(), account.as_ref()).await?;
+    let link = node.link_of(&acting.hub).ok_or_else(|| Failure::refused(words::ROUTE))?;
     let call = RemoteCall::Plan { resident: address.resident.clone(), operation, of };
-    match link
-        .call(&address.machine, &acting.account, Purpose::Echo, call)
-        .await
-        .map_err(|error| Failure::new(error.to_string()))??
+    match crate::record_changes::transport::linked(&link, &address.machine, &acting.account, Purpose::Echo, call)
+        .await?
     {
         RemoteReply::Plan { result } => Ok(result),
         _ => Err(Failure::new(words::REPLY)),
@@ -94,34 +68,48 @@ pub(crate) async fn here(
     operation: Operation,
     of: Option<plan::Of>,
 ) -> Result<plan::Result, Failure> {
+    work(node, id, (hub, account, requesting), operation, of, None).await
+}
+
+pub(crate) async fn here_selected(
+    node: &Arc<Node>,
+    id: &ResidentId,
+    scope: &selection::Scope,
+    preparation: Option<&crate::placement::location::selection::Selected>,
+    operation: Operation,
+    of: Option<plan::Of>,
+) -> Result<plan::Result, Failure> {
+    work(node, id, (None, None, None), operation, of, Some((scope, preparation))).await
+}
+
+async fn work(
+    node: &Arc<Node>,
+    id: &ResidentId,
+    options: (Option<&HubName>, Option<&AccountName>, Option<&HubAccount>),
+    operation: Operation,
+    of: Option<plan::Of>,
+    fixed: Option<(&selection::Scope, Option<&crate::placement::location::selection::Selected>)>,
+) -> Result<plan::Result, Failure> {
+    let (hub, account, requesting) = options;
     let gate = node.residents.management(id)?;
     let _one = crate::gate_waits::alone(node, id, &gate).await?;
     node.residents.active(id)?;
-    let (reading, resident) = (node.clone(), id.clone());
-    fastctx_platform::task::spawn_blocking(move || crate::context::plugin_heard(&reading, &resident))
-        .await
-        .map_err(|error| Failure::new(error.to_string()))?
-        .map_err(|error| Failure::new(error.to_string()))?;
+    heard(node, id).await?;
     let (about, _) = node.residents.about(id).ok_or_else(|| Failure::refused(words::RESIDENT))?;
     let whose = Address { machine: about.machine.clone(), resident: id.clone() };
     let previous = observed::load(node, id).await?;
-    let caller = Caller::Resident(Address { machine: node.machine(), resident: id.clone() });
-    let selected = requesting.or_else(|| {
-        if hub.is_none() && account.is_none() { previous.as_ref().map(|seen| &seen.account) } else { None }
-    });
-    let (link, account) = match selected {
-        Some(acting) => {
-            if !node.serves(&about.acting, &acting.hub, &acting.account)
-                && !crate::record_ownership::allows(node, &about, &acting.hub, &acting.account)
-            {
-                return Err(Failure::refused(words::ROUTE));
-            }
-            let link = node.link_of(&acting.hub).ok_or_else(|| Failure::refused(words::ROUTE))?;
-            (link, acting.account.clone())
+    let selected = match fixed {
+        Some((selected, _)) => {
+            selected.check(node, id)?;
+            selected.clone()
         }
-        None => crate::profile::scope(node, &caller, hub, account)?,
+        None => {
+            selection::here(node, id, &about, previous.as_ref().map(|seen| &seen.account), hub, account, requesting)?
+        }
     };
-    let scope = HubAccount { hub: link.membership().id, account: account.clone() };
+    let scope = selected.account;
+    let link = node.link_of(&scope.hub).ok_or_else(|| Failure::refused(words::ROUTE))?;
+    let account = scope.account.clone();
     let result = match operation {
         Operation::Read => {
             // Another conversation's plan is read as the account sees it, and
@@ -130,7 +118,38 @@ pub(crate) async fn here(
                 let page = link.plan_read_named(&account, of).await.map_err(Failure::new)?;
                 return Ok(plan::Result::Page { page });
             }
-            let page = link.plan_read_of(&account, &whose).await.map_err(Failure::new)?;
+            // The copy here first, while it is as fresh as anything seen here
+            // of the plan (design §15 `switch`); otherwise the hub.
+            let fresh = {
+                let (asking, resident, machine) = (node.clone(), whose.resident.clone(), whose.machine.clone());
+                let (hub, reader) = (link.membership().id.to_string(), account.clone());
+                fastctx_platform::task::spawn_blocking(move || {
+                    crate::timeline::copied_records::fresh_plan(&asking, &resident, Some(&machine), &hub, &reader)
+                })
+                .await
+                .ok()
+                .flatten()
+            };
+            let page = match fresh {
+                Some(page) => Ok(page),
+                None => link.plan_read_of(&account, &whose).await,
+            };
+            let page = match page {
+                Ok(page) => page,
+                // The hub not reached: the plan as the copy here holds it (plan 3-5).
+                Err(error) if !matches!(link.status(), fastctx_net::link::Status::Online { .. }) => {
+                    let (asking, resident, machine) = (node.clone(), whose.resident.clone(), whose.machine.clone());
+                    let (hub, reader) = (link.membership().id.to_string(), account.clone());
+                    fastctx_platform::task::spawn_blocking(move || {
+                        crate::timeline::copied_records::plan(&asking, &resident, Some(&machine), &hub, &reader)
+                    })
+                    .await
+                    .ok()
+                    .flatten()
+                    .ok_or_else(|| Failure::new(error))?
+                }
+                Err(error) => return Err(Failure::new(error)),
+            };
             if let Some(other) = link.plan_of_another(&page, &whose) {
                 return Err(Failure::not_run(words::elsewhere(other)));
             }
@@ -143,9 +162,11 @@ pub(crate) async fn here(
         // it whole is told where the file is.
         Operation::Write { .. } => {
             let _ = (previous, scope);
-            let location = crate::placement::location::prepare(node, id, &about.origin, &about.acting)
-                .await?
-                .ok_or_else(|| Failure::not_run("there is no online working computer for the plan file"))?;
+            let location = match fixed.and_then(|(_, preparation)| preparation) {
+                Some(preparation) => preparation.prepare(node, id, &about.origin, &about.acting).await?,
+                None => crate::placement::location::prepare(node, id, &about.origin, &about.acting).await?,
+            }
+            .ok_or_else(|| Failure::not_run("there is no online working computer for the plan file"))?;
             return Err(Failure::not_run(words::file(
                 std::path::Path::new(&crate::placement::plan_path(&location)),
                 &location.machine,
@@ -158,6 +179,14 @@ pub(crate) async fn here(
         publish_observed(node, id, scope, page).await?;
     }
     Ok(result)
+}
+
+async fn heard(node: &Arc<Node>, id: &ResidentId) -> Result<(), Failure> {
+    let (reading, resident) = (node.clone(), id.clone());
+    fastctx_platform::task::spawn_blocking(move || crate::context::plugin_heard(&reading, &resident))
+        .await
+        .map_err(|error| Failure::new(error.to_string()))?
+        .map_err(|error| Failure::new(error.to_string()))
 }
 
 /// Refreshes the plan projection without advancing the conversation's observed
@@ -331,7 +360,7 @@ pub(crate) fn records_allowed(
     // runtime's own provider reaches the record below this gate, not through it).
     if [crate::goals::operations::KIND, crate::goals::past::KIND].contains(&request.kind())
         && matches!(request, Request::Write { .. } | Request::Delete { .. })
-        && matches!(caller, Caller::Resident(_) | Caller::Page(_))
+        && matches!(caller, Caller::Resident(_))
     {
         return Err(Failure::refused(fastctx_types::goals::words::DIRECT_RECORD));
     }
@@ -339,14 +368,14 @@ pub(crate) fn records_allowed(
     // the user's settings; their home is the account's word that a machine may act for it.
     if [fastctx_sentinel::lifecycle::KIND, fastctx_types::sentinel_settings::RECORD_KIND].contains(&request.kind())
         && matches!(request, Request::Write { .. } | Request::Delete { .. })
-        && matches!(caller, Caller::Resident(_) | Caller::Page(_))
+        && matches!(caller, Caller::Resident(_))
     {
         return Err(Failure::refused(fastctx_sentinel::words::DIRECT_RECORD));
     }
     // Skills are the user's to write: a session reads them, never changes them.
     if [fastctx_types::skills::KIND, fastctx_types::skills::INDEX_KIND].contains(&request.kind())
         && matches!(request, Request::Write { .. } | Request::Delete { .. })
-        && matches!(caller, Caller::Resident(_) | Caller::Page(_))
+        && matches!(caller, Caller::Resident(_))
     {
         return Err(Failure::refused(fastctx_types::skills::words::USER_ONLY));
     }

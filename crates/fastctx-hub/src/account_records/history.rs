@@ -23,7 +23,7 @@ pub(super) fn immutable(path: &Path, bytes: &[u8]) -> io::Result<()> {
     }
 }
 
-pub(super) fn preserve(current: &Path, directory: &Path) -> io::Result<()> {
+pub(crate) fn preserve(current: &Path, directory: &Path) -> io::Result<()> {
     let bytes = match fastctx_platform::disk::read(current) {
         Ok(bytes) => bytes,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),

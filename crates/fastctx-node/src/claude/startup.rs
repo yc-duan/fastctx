@@ -70,6 +70,7 @@ pub(super) fn observe(node: &Arc<Node>, resident: &ResidentId, id: NoticeId, wak
         // Tried again after waits that double up to a minute, told once for
         // each new reason.
         let (mut again, mut told) = (crate::again::Again::default(), None);
+        let watching = std::time::Instant::now();
         loop {
             let result = async {
                 if !pending(&node, &resident, &id, waking)? {
@@ -80,7 +81,13 @@ pub(super) fn observe(node: &Arc<Node>, resident: &ResidentId, id: NoticeId, wak
                 watch(&node, &resident, &id, &command, waking).await
             }
             .await;
-            let Err(error) = result else { break };
+            let Err(error) = result else {
+                node.log.line(format_args!(
+                    "lifecycle {resident}: its session came up and its words were taken, {} ms after Claude Code took them",
+                    watching.elapsed().as_millis()
+                ));
+                break;
+            };
             let error = error.to_string();
             if let Err(error) = report(&node, &resident, &id, error.clone()) {
                 node.log.line(format_args!("keeping startup observation: {error}"));
@@ -299,7 +306,7 @@ fn daemon_said(command: &super::Command, short: &str) -> Option<String> {
 }
 
 /// Whether Claude Code's daemon logged that it settled the session `short`.
-fn settled(command: &super::Command, short: &str) -> bool {
+pub(super) fn settled(command: &super::Command, short: &str) -> bool {
     daemon_said(command, short).is_some_and(|line| line.contains(&format!("bg settled {short}")))
 }
 
@@ -310,11 +317,15 @@ const DAEMON_TAIL: u64 = 256 * 1024;
 /// they still wait as waking, no turn is recorded for them, and the
 /// session's transcript holds nothing submitted since they were sent.
 /// Anything unread or unknown counts as taken, so words never go in twice.
+/// Words only queued count as taken while the host that queued them may
+/// still be running — its queue may yet give them to the model — and as
+/// untaken once its activation `ended` (codex-4bf06087 #1).
 pub(super) fn untaken(
     node: &Node,
     session: &str,
     directory: &fastctx_types::layout::ConversationDir,
     id: &NoticeId,
+    ended: bool,
 ) -> std::io::Result<bool> {
     if crate::delivery::input_turn(directory, id)?.is_some() {
         return Ok(false);
@@ -332,7 +343,7 @@ pub(super) fn untaken(
     let Ok(Some(transcript)) = exchange::transcript(&host_directory) else {
         return Ok(false);
     };
-    Ok(matches!(submitted_since(&transcript, since), Ok(false)))
+    Ok(matches!(submitted_since(&transcript, since, !ended), Ok(false)))
 }
 
 /// The activation ended and `untaken` proved no submission. Remove its old
@@ -356,20 +367,45 @@ pub(super) fn retry_untaken(
         .map_err(std::io::Error::other)
 }
 
-/// Whether the transcript at `path` holds, at or after `since`, words
-/// submitted to the session: a prompt, or one queued for it. Its lines are in
-/// the order they were written. One that cannot be read, as a row cut short
+/// Whether the transcript at `path` holds, at or after `since`, words the
+/// session took: a prompt as it opens a turn (`user`), or one put into the
+/// turn running (`attachment`). Both are written before the model is asked.
+/// Words only queued — an `enqueue`, even a `dequeue`, with neither after
+/// it — never reached the model when the host was stopped first, as Claude
+/// Code's daemon does with a session it retires (seen 2026-11-16 on a Linux
+/// server);
+/// while it may run on they still may, and count when `queued` says so.
+/// Its lines are in the order they were written. One that cannot be read, as a row cut short
 /// when the host was killed, may hold an accepted prompt: it counts as
 /// submitted, which makes the delivery uncertain rather than repeated, unless
 /// a later line was written before `since`. A row damaged long ago therefore
 /// does not make every later wake of the session uncertain.
-fn submitted_since(path: &std::path::Path, since: jiff::Timestamp) -> std::io::Result<bool> {
-    use std::io::BufRead as _;
+fn submitted_since(path: &std::path::Path, since: jiff::Timestamp, queued: bool) -> std::io::Result<bool> {
     let since = since.as_millisecond();
     let mut unreadable = false;
-    for line in std::io::BufReader::new(fastctx_platform::disk::open(path)?).split(b'\n') {
-        let line = line?;
+    let mut reader = std::io::BufReader::new(fastctx_platform::disk::open(path)?);
+    let mut line = Vec::new();
+    loop {
+        line.clear();
+        // A line past the bound World reads is one that cannot be read: it
+        // may hold an accepted prompt (design §28.49). Gone over to its end,
+        // and no further — the next line is read as any other.
+        match fastctx_hosts::bounded::read_bounded(&mut reader, &mut line)? {
+            fastctx_hosts::bounded::Read::Line(0) => break,
+            fastctx_hosts::bounded::Read::Line(_) => {}
+            fastctx_hosts::bounded::Read::Refused { ended } => {
+                if !ended {
+                    fastctx_hosts::bounded::skip_line(&mut reader)?;
+                }
+                unreadable = true;
+                continue;
+            }
+        }
         if line.iter().all(u8::is_ascii_whitespace) {
+            continue;
+        }
+        if fastctx_hosts::bounded::too_many_values(&line) {
+            unreadable = true;
             continue;
         }
         let Ok(entry) = serde_json::from_slice::<serde_json::Value>(&line) else {
@@ -380,7 +416,9 @@ fn submitted_since(path: &std::path::Path, since: jiff::Timestamp) -> std::io::R
         if at.is_some_and(|at| at.as_millisecond() < since) {
             unreadable = false;
         }
-        if matches!(entry["type"].as_str(), Some("user" | "queue-operation")) {
+        if matches!(entry["type"].as_str(), Some("user" | "attachment"))
+            || (queued && entry["type"].as_str() == Some("queue-operation"))
+        {
             match at {
                 Some(at) if at.as_millisecond() >= since => return Ok(true),
                 Some(_) => {}
@@ -389,6 +427,11 @@ fn submitted_since(path: &std::path::Path, since: jiff::Timestamp) -> std::io::R
         }
     }
     Ok(unreadable)
+}
+
+/// When the words `id` were last handed over or woke the session with.
+fn handed_at(node: &Node, resident: &ResidentId, id: &NoticeId) -> std::io::Result<Option<jiff::Timestamp>> {
+    Ok(crate::inbox::read(&node.world.conversation(resident), id)?.and_then(|pending| pending.since))
 }
 
 fn pending(node: &Node, resident: &ResidentId, id: &NoticeId, waking: bool) -> std::io::Result<bool> {
@@ -450,6 +493,11 @@ async fn watch(
         if !pending(node, resident, id, waking)? {
             return Ok(());
         }
+        // The handover this look's evidence is of: words woken with again
+        // since — retried after the host was seen gone — are another's, and
+        // what is seen here of the host before says nothing of them
+        // (codex-4bf06087, second round #1).
+        let handed = handed_at(node, resident, id)?;
         let listed = listing.agents(command, after).await;
         after = None;
         if !pending(node, resident, id, waking)? {
@@ -545,12 +593,16 @@ async fn watch(
                         if node.residents.about(resident).is_none() {
                             return Ok(());
                         }
+                        if waking && handed_at(node, resident, id)? != handed {
+                            drop((births, held));
+                            continue;
+                        }
                         let directory = node.world.conversation(resident);
                         // Words that woke a session which ended before taking
                         // them wake it again: Claude Code's daemon, short of
                         // memory, retires the very worker it just claimed
                         // for them as one long idle.
-                        if waking && untaken(node, &session, &directory, id)? {
+                        if waking && untaken(node, &session, &directory, id, true)? {
                             drop((births, held));
                             retry_untaken(node, resident, &session, id)?;
                             return Ok(());

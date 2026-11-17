@@ -7,6 +7,9 @@
 //! before anything else that waits: a backlog of letters and answers never
 //! holds back the frame that says this machine is there, nor the one that
 //! lets the hub send the next window (`specs/world-engine.md`, 连接与判活).
+//! Then a way for what a person waits on: a stop, words for a conversation,
+//! a control, their short answers and cancels. They go ahead of letters and
+//! large answers, in their own order.
 
 use tokio::sync::{mpsc, oneshot};
 
@@ -19,6 +22,12 @@ use crate::wire::Up;
 const QUEUED: usize = 8192;
 /// The most bytes of them.
 const QUEUED_BYTES: usize = 64 * 1024 * 1024;
+/// The most frames, and bytes, that wait on the way for what a person waits
+/// on; past either, they wait with the rest.
+const SOON: usize = 1024;
+const SOON_BYTES: usize = 4 * 1024 * 1024;
+/// The largest answer that goes the way for what a person waits on.
+pub(crate) const SOON_ANSWER: usize = 64 * 1024;
 
 #[derive(Clone)]
 pub(crate) struct Outgoing {
@@ -26,6 +35,7 @@ pub(crate) struct Outgoing {
     /// Heartbeats and receipts: one every few seconds, and one a window of
     /// letters, so this way needs no bound.
     first: mpsc::UnboundedSender<Frame>,
+    soon: queue::Sender<Frame>,
 }
 
 pub(crate) struct Frame {
@@ -34,18 +44,38 @@ pub(crate) struct Frame {
     pub written: Option<oneshot::Sender<()>>,
 }
 
-/// The writer's end: the first way first, then the rest in the order queued.
+/// The writer's end: the first way first, then the way for what a person
+/// waits on, then the rest in the order queued. The rest is never starved:
+/// after `SOON_RUN` frames of the soon way in a row, one queued frame goes.
 pub(crate) struct Writing {
     queued: queue::Receiver<Frame>,
     first: mpsc::UnboundedReceiver<Frame>,
+    soon: queue::Receiver<Frame>,
+    soon_run: usize,
 }
+
+/// How many frames the soon way takes in a row while queued ones wait.
+pub(crate) const SOON_RUN: usize = 16;
 
 impl Writing {
     pub async fn recv(&mut self) -> Option<Frame> {
+        if self.soon_run >= SOON_RUN
+            && let Some(frame) = self.queued.try_recv()
+        {
+            self.soon_run = 0;
+            return Some(frame);
+        }
         tokio::select! {
             biased;
             Some(frame) = self.first.recv() => Some(frame),
-            frame = self.queued.recv() => frame,
+            Some(frame) = self.soon.recv() => {
+                self.soon_run += 1;
+                Some(frame)
+            }
+            frame = self.queued.recv() => {
+                self.soon_run = 0;
+                frame
+            }
         }
     }
 }
@@ -54,7 +84,37 @@ impl Outgoing {
     pub fn channel() -> (Self, Writing) {
         let (queued, receiving) = queue::bounded(QUEUED, QUEUED_BYTES, "link.outgoing");
         let (first, first_receiving) = mpsc::unbounded_channel();
-        (Self { queued, first }, Writing { queued: receiving, first: first_receiving })
+        let (soon, soon_receiving) = queue::bounded(SOON, SOON_BYTES, "link.outgoing.soon");
+        (Self { queued, first, soon }, Writing { queued: receiving, first: first_receiving, soon: soon_receiving, soon_run: 0 })
+    }
+
+    /// Sends what a person waits on ahead of letters and large answers; when
+    /// that way is full, with the rest. Whether it went the soon way: what
+    /// follows it about the same call (a cancel) goes the same way, never
+    /// ahead of it.
+    pub fn send_soon(&self, value: Up) -> Result<bool, ()> {
+        let bytes = crate::wire::encode(&value);
+        let size = bytes.len();
+        match self.soon.try_send(Frame { bytes, written: None }, size) {
+            Ok(()) => Ok(true),
+            Err(frame) => self.queued.send(frame, size).map(|()| false).map_err(|_| ()),
+        }
+    }
+
+    /// `write`, the way for what a person waits on when the frame is short.
+    pub async fn write_soon(&self, value: Up) -> Result<(), String> {
+        let bytes = crate::wire::encode(&value);
+        if bytes.len() > SOON_ANSWER {
+            return self.write(value).await;
+        }
+        let (written, received) = oneshot::channel();
+        let size = bytes.len();
+        if let Err(frame) = self.soon.try_send(Frame { bytes, written: Some(written) }, size) {
+            self.queued
+                .send(frame, size)
+                .map_err(|_| "the control connection closed before the answer was queued".to_string())?;
+        }
+        received.await.map_err(|_| "the control connection closed before the answer was written".to_string())
     }
 
     fn queue(&self, value: &Up, written: Option<oneshot::Sender<()>>) -> Result<(), ()> {

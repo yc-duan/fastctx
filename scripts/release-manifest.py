@@ -29,7 +29,13 @@ def packages(version):
         f'Fastctx_{version}_x64.app.tar.gz': ['darwin-x86_64-app', 'darwin-x86_64'],
         f'Fastctx_{version}_amd64.AppImage': ['linux-x86_64-appimage', 'linux-x86_64'],
         f'Fastctx_{version}_amd64.deb': ['linux-x86_64-deb'],
+        # The APK of all four processors under the target every phone asked by until 1.0.1-beta.18,
+        # and one for each processor, which a phone since asks by its own (`updates.rs`).
         f'Fastctx_{version}_universal.apk': ['android-apk'],
+        f'Fastctx_{version}_arm64-v8a.apk': ['android-arm64-v8a-apk'],
+        f'Fastctx_{version}_armeabi-v7a.apk': ['android-armeabi-v7a-apk'],
+        f'Fastctx_{version}_x86.apk': ['android-x86-apk'],
+        f'Fastctx_{version}_x86_64.apk': ['android-x86_64-apk'],
     }
 
 

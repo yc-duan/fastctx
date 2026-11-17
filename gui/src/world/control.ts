@@ -17,7 +17,10 @@ export type Control =
   | { do: "agents" }
   | { do: "agent_messages"; agent_id: string }
   /** Withdraws a control still waiting for the turn under way to end. */
-  | { do: "cancel_control"; id: string };
+  | { do: "cancel_control"; id: string }
+  /** `/goal`, queued among the words as every slash command is; sent only
+   *  to a node whose offers say `control_goal`. */
+  | { do: "goal"; objective: string };
 
 export type ControlKind = Control["do"];
 
@@ -109,13 +112,20 @@ export interface AccountSkill {
 }
 
 export interface Offers {
+  /** Its host is being started to say the rest: asked again a little later. */
+  gathering?: boolean;
   /** The node takes controls to do once a turn ends, and their withdrawal. */
   control_queue?: boolean;
   /** The node tells each control in its conversation as it begins and ends:
    *  the conversation shows them, not the line beside the input. */
   controls_told?: boolean;
+  /** The node takes `/goal` as a control, in its order among the words. */
+  control_goal?: boolean;
   /** Those it holds, waiting or being done. */
   pending_controls?: PendingControl[];
+  /** Pending controls of kinds an older interface cannot read (a goal),
+   *  told apart from `pending_controls`; shown with them. */
+  pending_newer?: PendingControl[];
   controls: ControlKind[];
   commands: CommandOffer[];
   /** The skills of the account it works for, kept in Fastctx: words

@@ -13,6 +13,16 @@ use crate::mcp::McpCall;
 use crate::remote::RemoteCall;
 use crate::update::UpdateCall;
 
+mod response;
+pub use response::Response;
+
+/// The largest encoded control frame; a larger call goes over a data
+/// connection.
+pub const CONTROL_FRAME_BYTES: usize = 256 * 1024;
+/// The most bytes a call's request may be where its kind says no less: what
+/// a machine assembles of one call sent over a data connection.
+pub const REQUEST_BYTES: usize = 64 * 1024 * 1024;
+
 /// How long a stream whose machine speaks first, as a line source or a file
 /// search opened through its own connection, is waited for to say it is
 /// open: past that its caller gives it up, which ends it there too. Once
@@ -42,6 +52,13 @@ pub struct Contract {
     /// Whether a node handing the World to its successor answers it before
     /// it goes; a stream instead goes on with the successor.
     pub held: bool,
+    /// How this call is meant to answer; its current handler may still need to
+    /// move work out of the response path.
+    pub response: Response,
+    /// The most bytes in this call's encoded JSON request, checked once its
+    /// kind is known, before queuing or running it. Stream payloads are separate;
+    /// receiving a large request of an unknown kind follows the transport bound.
+    pub max_request_bytes: usize,
 }
 
 /// The kinds of place a call takes on the machine answering it, each
@@ -73,16 +90,35 @@ pub enum Pool {
 
 impl Contract {
     /// A question answered from what the machine holds.
-    const QUERY: Self =
-        Self { within: Some(Duration::from_secs(60)), pool: Pool::Short, cancellable: true, held: true };
+    const QUERY: Self = Self {
+        within: Some(Duration::from_secs(60)),
+        pool: Pool::Short,
+        cancellable: true,
+        held: true,
+        response: Response::Answer,
+        max_request_bytes: REQUEST_BYTES,
+    };
     /// A question whose answer may wait on an agent's own program, which
     /// keeps its own deadlines of up to two minutes.
     const ASKS_AGENT: Self = Self { within: Some(Duration::from_secs(150)), ..Self::QUERY };
     /// A change, which may start or stop an agent's session first.
-    const CHANGE: Self =
-        Self { within: Some(Duration::from_secs(300)), pool: Pool::Change, cancellable: false, held: true };
+    const CHANGE: Self = Self {
+        within: Some(Duration::from_secs(300)),
+        pool: Pool::Change,
+        cancellable: false,
+        held: true,
+        response: Response::Submit,
+        max_request_bytes: REQUEST_BYTES,
+    };
     /// Work that answers once it is done, however long that takes.
-    const LONG: Self = Self { within: None, pool: Pool::Long, cancellable: false, held: true };
+    const LONG: Self = Self {
+        within: None,
+        pool: Pool::Long,
+        cancellable: false,
+        held: true,
+        response: Response::Submit,
+        max_request_bytes: REQUEST_BYTES,
+    };
     /// Running a script there, which answers within the longest a run
     /// waits (ten minutes, `fastctx_hands::run::LONGEST_WAIT`), the job going
     /// on there past that.
@@ -95,21 +131,37 @@ impl Contract {
     /// after again.
     const UPDATE: Self = Self { within: Some(Duration::from_secs(3600)), ..Self::LONG };
     /// A stream the successor of a node handing over takes on.
-    const STREAM: Self = Self { within: None, pool: Pool::Stream, cancellable: false, held: false };
+    const STREAM: Self = Self {
+        within: None,
+        pool: Pool::Stream,
+        cancellable: false,
+        held: false,
+        response: Response::Stream,
+        max_request_bytes: REQUEST_BYTES,
+    };
     /// A read over a data connection, held as it moves bytes.
     const READ: Self = Self { cancellable: true, held: true, ..Self::STREAM };
     /// A transfer that writes here, held as it moves bytes, and resumed
     /// rather than stopped halfway.
     const TRANSFER: Self = Self { held: true, ..Self::STREAM };
     /// Stopping and interrupting.
-    const CONTROL: Self =
-        Self { within: Some(Duration::from_secs(60)), pool: Pool::Control, cancellable: false, held: true };
+    const CONTROL: Self = Self {
+        within: Some(Duration::from_secs(60)),
+        pool: Pool::Control,
+        cancellable: false,
+        held: true,
+        response: Response::Answer,
+        max_request_bytes: REQUEST_BYTES,
+    };
 }
+
+/// Encoded byte limit shared by local and remote detail requests.
+pub const LOOK_REQUEST_BYTES: usize = 32 * 1024;
 
 impl RemoteCall {
     /// What this call is (`Contract`).
     pub fn contract(&self) -> Contract {
-        match self {
+        let contract = match self {
             Self::Composer { request: crate::composer::Request::Read, .. } => Contract::QUERY,
             Self::Composer { request: crate::composer::Request::Mutate { mutation }, .. }
                 if matches!(
@@ -186,7 +238,9 @@ impl RemoteCall {
             Self::Mcp { mcp: crate::mcp::MachineCall::Test { .. } } => Contract::ASKS_AGENT,
             Self::McpServe { .. } => Contract { cancellable: true, ..Contract::STREAM },
             Self::Collaboration { .. } => Contract { cancellable: true, ..Contract::ASKS_AGENT },
-            Self::MemoryFolders { .. }
+            Self::Timeline { .. }
+            | Self::Topics { .. }
+            | Self::MemoryFolders { .. }
             | Self::Scratch { .. }
             | Self::AttachmentPlaces { .. }
             | Self::Who { .. }
@@ -227,7 +281,6 @@ impl RemoteCall {
             | Self::EnterProject { .. }
             | Self::ReserveAttachment { .. }
             | Self::CommitAttachment { .. }
-            | Self::PageAction { .. }
             | Self::Relay { .. }
             | Self::Forget { .. }
             | Self::Write { .. }
@@ -238,6 +291,7 @@ impl RemoteCall {
             | Self::AgentFolder { .. }
             | Self::SetAgentTitle { .. }
             | Self::SetAgentResetInPlace { .. }
+            | Self::SetAgentWeek { .. }
             | Self::ChangeAgentModels { .. }
             | Self::ChangeAgentLogin { .. }
             | Self::MemoryRoom { bytes: Some(_) }
@@ -253,6 +307,7 @@ impl RemoteCall {
                     | UpdateCall::Progress { .. }
                     | UpdateCall::App { .. }
                     | UpdateCall::Fetch { .. }
+                    | UpdateCall::Bring { .. }
                     | UpdateCall::Choose { .. }
                     | UpdateCall::Repair { .. },
             } => Contract::CHANGE,
@@ -274,7 +329,36 @@ impl RemoteCall {
             Self::Place { .. } | Self::Upload { .. } | Self::CopyReceive { .. } => Contract::TRANSFER,
             Self::AttachmentReferences { .. } | Self::Facts => Contract { cancellable: true, ..Contract::CONTROL },
             Self::WordsCame { .. } => Contract::CONTROL,
-        }
+        };
+        let max_request_bytes = match self {
+            Self::SentinelControl { request: crate::sentinel_control::Request::Create { .. } } => 64 * 1024,
+            // Conversation-wrapped Create requests cannot reach shared controls.
+            Self::SentinelControl { .. } => 4096,
+            Self::SentinelHome {
+                request:
+                    crate::sentinel_control::HomeRequest::Inspect { .. }
+                    | crate::sentinel_control::HomeRequest::Record { .. }
+                    | crate::sentinel_control::HomeRequest::Overview
+                    | crate::sentinel_control::HomeRequest::Conversation { .. },
+            } => 4096,
+            Self::SentinelKeys | Self::SentinelSettings { change: None } => 4096,
+            Self::Inspect { inspect: crate::inspect::Inspect::Jobs | crate::inspect::Inspect::Resources, .. } => {
+                4 * 1024
+            }
+            Self::Inspect { inspect: crate::inspect::Inspect::Processes { .. }, .. } => 32 * 1024,
+            Self::Inspect { .. } => 64 * 1024,
+            Self::Stats { .. } => 32 * 1024,
+            Self::Book { .. } | Self::WaitingJobs { .. } | Self::Who { .. } | Self::Since { .. } => 4 * 1024,
+            Self::Look { .. } => LOOK_REQUEST_BYTES,
+            Self::FindFiles { request } => file_search_bytes(request),
+            Self::Folders { .. } | Self::Thumbnail { .. } | Self::CopyReceive { .. } => 32 * 1024,
+            Self::Outline { .. } => 1024 * 1024,
+            Self::AttachmentThumbnail { .. } => 64 * 1024,
+            Self::Lines { request } => lines_bytes(request),
+            Self::Interfaces => 1024,
+            _ => contract.max_request_bytes,
+        };
+        Contract { response: self.response(), max_request_bytes, ..contract }
     }
 }
 
@@ -337,8 +421,12 @@ impl Call {
                     Leaving::Stop
                 }
             }
-            Self::DoctorCalls | Self::DoctorReadings | Self::PlanRead { .. } | Self::Skill { .. } => Leaving::Stop,
-            Self::Plan { .. } | Self::PlanWrite { .. } => Leaving::Finish,
+            Self::DoctorCalls { .. }
+            | Self::DoctorReadings
+            | Self::SyncStatus { .. }
+            | Self::PlanRead { .. }
+            | Self::Skill { .. } => Leaving::Stop,
+            Self::Plan { .. } | Self::PlanWrite { .. } | Self::AdoptConversation { .. } => Leaving::Finish,
             Self::AccountRecords {
                 request: crate::account_records::Request::Read { .. } | crate::account_records::Request::List { .. },
                 ..
@@ -356,6 +444,7 @@ impl Call {
                 }
             }
             Self::WatchHistory { .. } => Leaving::Stop,
+            Self::Timeline { .. } | Self::Topics { .. } | Self::RemoteTopics { .. } => Leaving::Stop,
             Self::PrepareCopies { .. } => Leaving::Finish,
             Self::Memory(crate::memory::MemoryCall::List { .. } | crate::memory::MemoryCall::Read { .. }) => {
                 Leaving::Stop
@@ -467,6 +556,7 @@ impl Call {
             | Self::AgentFolder { .. }
             | Self::SetAgentTitle { .. }
             | Self::SetAgentResetInPlace { .. }
+            | Self::SetAgentWeek { .. }
             | Self::ChangeAgentModels { .. }
             | Self::ChangeAgentLogin { .. }
             | Self::Talk { .. }
@@ -485,7 +575,6 @@ impl Call {
             | Self::Taken { .. }
             | Self::Project { .. }
             | Self::Journal { .. }
-            | Self::Page { .. }
             | Self::JobChanged { .. }
             | Self::Login { .. }
             | Self::PeekToken { .. }
@@ -504,5 +593,62 @@ impl Call {
             | Self::UninstallPrepare { .. }
             | Self::BringIn { .. } => Leaving::Finish,
         }
+    }
+}
+
+impl Call {
+    /// Encoded request budget for local sentinel and timer calls, including their envelope.
+    pub fn max_request_bytes(&self) -> usize {
+        match self {
+            // Raw legacy identities still select existing rows. Reserve their
+            // worst JSON escaping plus bounded routing/text, capped by the frame
+            // budget; a new identity is rejected at 4096 bytes after point lookup.
+            Self::Timer { timer: crate::timers::TimerCall::Set { id, handle: None, .. } } => {
+                id.len().saturating_mul(6).saturating_add(256 * 1024).min(64 * 1024 * 1024)
+            }
+            Self::Timer { timer: crate::timers::TimerCall::Cancel { id, handle: None } } => {
+                id.len().saturating_mul(6).saturating_add(4096).min(64 * 1024 * 1024)
+            }
+            Self::Timer { timer: crate::timers::TimerCall::Cancel { .. } } => 4096,
+            Self::Timer { .. } => 512 * 1024,
+            Self::Sentinel { request: crate::sentinel_control::Request::Create { .. }, .. } => 64 * 1024,
+            Self::Sentinel { .. } => 4096,
+            Self::SentinelSettings { change: None, .. } => 4096,
+            // The local list and diagnostic calls.
+            Self::DoctorCalls { .. }
+            | Self::DoctorReadings
+            | Self::Nodes
+            | Self::Data(crate::data::DataCall::List { .. }) => 1024,
+            Self::SyncStatus { .. } | Self::AdoptConversation { .. } => 4096,
+            Self::Who { .. } | Self::Since { .. } | Self::Book { .. } => 4 * 1024,
+            Self::Machines { .. } | Self::Stats { .. } => 32 * 1024,
+            Self::Look { .. } => LOOK_REQUEST_BYTES,
+            Self::WorldNow { .. } | Self::WatchWorld { .. } => 32 * 1024 * 1024,
+            // File requests, which also come in over local IPC.
+            Self::FindFiles { request, .. } => file_search_bytes(request),
+            Self::Folders { .. } | Self::Thumbnail { .. } => 32 * 1024,
+            Self::AttachmentThumbnail { .. } => 64 * 1024,
+            Self::Lines { request, .. } => lines_bytes(request),
+            Self::Saw { .. } => 2 * 1024 * 1024,
+            _ => REQUEST_BYTES,
+        }
+    }
+}
+
+/// A file search's request: a query's text is short, but escaped JSON can
+/// take several bytes for each of its characters.
+fn file_search_bytes(request: &FileSearchRequest) -> usize {
+    match request {
+        FileSearchRequest::Start { .. } | FileSearchRequest::Open { .. } => 1024 * 1024,
+        FileSearchRequest::Query { .. } => 32 * 1024,
+        FileSearchRequest::Close { .. } => 2 * 1024,
+    }
+}
+
+fn lines_bytes(request: &Lines) -> usize {
+    match request {
+        Lines::Open { .. } => 64 * 1024,
+        Lines::Find { .. } => 32 * 1024,
+        Lines::Read { .. } | Lines::Changed { .. } | Lines::Close { .. } => 2 * 1024,
     }
 }

@@ -3,7 +3,8 @@
 //! with them, and each chosen folder's last search; and what the user chose
 //! in `<world>/agent-homes.json`, the logins taken up and the folders
 //! searched (`world-agent-logins.md`). Nothing in either is a credential:
-//! who is logged in, as the agents said it, and paths.
+//! who is logged in, as the agents said it, paths, and a digest that tells
+//! one sign-in from another without telling what it is.
 
 use std::collections::BTreeMap;
 use std::io;
@@ -19,6 +20,10 @@ use serde::{Deserialize, Serialize};
 use crate::Node;
 
 const VERSION: u32 = 1;
+const RECORD_BYTES: u32 = 16 * 1024 * 1024;
+const CHOSEN_BYTES: u32 = 1024 * 1024;
+const LOGINS: usize = 1024;
+const FOLDERS: usize = 256;
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub(super) struct Kept {
@@ -118,9 +123,32 @@ pub(super) struct KeptLogin {
     /// (`super::sign_in`); none in a record kept before they were.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub signed: Option<Vec<Option<FileStamp>>>,
+    /// What tells this sign-in from another (`super::sign_in::credential`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub credential: Option<String>,
+    /// How the sign-in files stood when this sign-in was first asked. An
+    /// account no one is named for is known by it (`usage::accounts::key`):
+    /// it holds while the sign-in does, however its files are written again.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account_signed: Option<Vec<Option<FileStamp>>>,
 }
 
 impl KeptLogin {
+    /// What an unnamed account of this login is known by; in a record kept
+    /// before sign-ins were told apart, how its files stood when last asked.
+    pub fn account_generation(&self) -> &Option<Vec<Option<FileStamp>>> {
+        if self.account_signed.is_some() { &self.account_signed } else { &self.signed }
+    }
+
+    /// Keeps how the sign-in files stand now. The same credential, or files
+    /// that did not change, are the same sign-in, and its account stays.
+    pub fn sign(&mut self, signed: Vec<Option<FileStamp>>, credential: Option<String>) {
+        let same = self.signed.as_ref() == Some(&signed) || (credential.is_some() && self.credential == credential);
+        self.account_signed = if same { self.account_generation().clone() } else { Some(signed.clone()) };
+        self.signed = Some(signed);
+        self.credential = credential;
+    }
+
     /// The login `dir`, found as `found`, as asking it gave while its
     /// sign-in files stood as `signed`. What asking did not learn stays as
     /// `before`, the login as last kept, had it: who is logged in, its
@@ -130,6 +158,7 @@ impl KeptLogin {
         found: Found,
         asked: super::identify::Asked,
         signed: Vec<Option<FileStamp>>,
+        credential: Option<String>,
         before: Option<&KeptLogin>,
     ) -> Self {
         let mut launcher = asked.launcher;
@@ -147,15 +176,19 @@ impl KeptLogin {
             Some(before) if !known(&asked.identified) && known(&before.identified) => before.identified.clone(),
             _ => asked.identified,
         };
-        Self {
+        let mut login = Self {
             dir,
             found,
             identified,
             launcher,
             asked_file,
             models: asked.models.or_else(|| before.map(|before| before.models.clone())).unwrap_or_default(),
-            signed: Some(signed),
-        }
+            signed: before.and_then(|before| before.signed.clone()),
+            credential: before.and_then(|before| before.credential.clone()),
+            account_signed: before.and_then(|before| before.account_signed.clone()),
+        };
+        login.sign(signed, credential);
+        login
     }
 }
 
@@ -195,7 +228,7 @@ fn path(node: &Node) -> PathBuf {
 
 /// The record as last kept.
 pub(super) fn read(node: &Node) -> io::Result<Kept> {
-    let kept: Kept = match fastctx_platform::disk::read(path(node)) {
+    let kept: Kept = match fastctx_platform::durable_file::read_bounded(&path(node), RECORD_BYTES) {
         Ok(bytes) => serde_json::from_slice(&bytes)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, format!("agent-scan.json: {error}")))?,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Kept::default()),
@@ -210,9 +243,25 @@ pub(super) fn read(node: &Node) -> io::Result<Kept> {
     Ok(kept)
 }
 
+/// Refuses a record grown past its bounds. One past them already, as an
+/// earlier version may have kept it, is still read and still changed: only
+/// what makes it larger is refused.
+fn bounded(kept: &Kept, prior: &Kept) -> io::Result<()> {
+    let logins = |kept: &Kept| {
+        kept.codex.logins.len()
+            + kept.claude.logins.len()
+            + kept.others.values().map(|agent| agent.logins.len()).sum::<usize>()
+    };
+    if logins(kept) > LOGINS.max(logins(prior)) || kept.folders.len() > FOLDERS.max(prior.folders.len()) {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "the login record exceeds 1024 logins or 256 folders"));
+    }
+    Ok(())
+}
+
 pub(super) fn write(node: &Node, kept: &Kept) -> io::Result<()> {
-    let mut kept = kept.clone();
     let prior = read(node)?;
+    bounded(kept, &prior)?;
+    let mut kept = kept.clone();
     for (agent, record) in [("codex", &prior.codex), ("claude", &prior.claude)] {
         for login in &record.logins {
             if crate::usage::accounts::first(node, agent, &login.dir)?.is_none()
@@ -222,7 +271,7 @@ pub(super) fn write(node: &Node, kept: &Kept) -> io::Result<()> {
                     node,
                     agent,
                     &login.dir,
-                    crate::usage::accounts::key(value, &login.signed),
+                    crate::usage::accounts::key(value, login.account_generation()),
                     login.identified.at,
                 )?;
             }
@@ -240,7 +289,7 @@ pub(super) fn write(node: &Node, kept: &Kept) -> io::Result<()> {
                     node,
                     agent,
                     &login.dir,
-                    crate::usage::accounts::key(value, &login.signed),
+                    crate::usage::accounts::key(value, login.account_generation()),
                     login.identified.at,
                 )?;
             }
@@ -249,7 +298,14 @@ pub(super) fn write(node: &Node, kept: &Kept) -> io::Result<()> {
     kept.version = VERSION;
     let mut bytes = serde_json::to_vec_pretty(&kept).map_err(io::Error::other)?;
     bytes.push(b'\n');
-    publish(&path(node), &bytes, Permissions::Private)
+    if bytes.len() > RECORD_BYTES as usize {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "the login record exceeds 16 MiB"));
+    }
+    publish(&path(node), &bytes, Permissions::Private)?;
+    super::snapshot::kept(node, &prior, &kept);
+    node.logins.sign_in_watch.notify_one();
+    node.topics.changed(fastctx_types::topics::LOGINS);
+    Ok(())
 }
 
 /// Changes the kept record under the node's lock for it.
@@ -283,7 +339,7 @@ fn added_path(node: &Node) -> PathBuf {
 }
 
 pub(super) fn chosen(node: &Node) -> io::Result<Added> {
-    match fastctx_platform::disk::read(added_path(node)) {
+    match fastctx_platform::durable_file::read_bounded(&added_path(node), CHOSEN_BYTES) {
         Ok(bytes) => serde_json::from_slice::<Added>(&bytes)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, format!("agent-homes.json: {error}"))),
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(Added::default()),
@@ -295,10 +351,21 @@ pub(super) fn chosen(node: &Node) -> io::Result<Added> {
 fn choose(node: &Node, edit: impl FnOnce(&mut Added)) -> io::Result<()> {
     let _keeping = node.logins.keeping.lock().expect("never poisoned");
     let mut added = chosen(node)?;
+    let (logins, folders) = (added.added.len(), added.folders.len());
     edit(&mut added);
+    // As with the record: only what grows past the bounds is refused.
+    if added.added.len() > LOGINS.max(logins) || added.folders.len() > FOLDERS.max(folders) {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "the chosen logins exceed 1024 logins or 256 folders"));
+    }
     let mut bytes = serde_json::to_vec_pretty(&added).map_err(io::Error::other)?;
     bytes.push(b'\n');
-    publish(&added_path(node), &bytes, Permissions::Private)
+    if bytes.len() > CHOSEN_BYTES as usize {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "the chosen logins exceed 1 MiB"));
+    }
+    publish(&added_path(node), &bytes, Permissions::Private)?;
+    super::snapshot::chosen(node, &added);
+    node.topics.changed(fastctx_types::topics::LOGINS);
+    Ok(())
 }
 
 /// Adds `dir` to the directories the user took up for `agent`, once.

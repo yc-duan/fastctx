@@ -38,7 +38,7 @@ pub(crate) async fn collaboration_watch(
     shell: tauri::State<'_, Shell>,
     resident: String,
     machine: Option<String>,
-    pieces: Channel<crate::watch_delivery::Wake>,
+    pieces: Channel<crate::watch_delivery::Push>,
 ) -> Result<Watching, String> {
     let page = shell.page.load(std::sync::atomic::Ordering::Relaxed);
     let world = shell.world();

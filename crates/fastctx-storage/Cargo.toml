@@ -14,7 +14,7 @@ harness = false
 
 [dependencies]
 fastctx-platform = { path = "../fastctx-platform" }
-rusqlite = { version = "0.41", features = ["bundled", "backup"] }
+rusqlite = { version = "0.41", features = ["bundled", "backup", "hooks"] }
 tokio = { workspace = true, features = ["rt", "sync", "time"] }
 
 [lints]

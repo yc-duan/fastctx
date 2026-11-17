@@ -77,10 +77,18 @@ pub(super) fn overview(view: &TownView, you: Option<&Address>, all: bool, now: T
             Some(accounts) => format!("{owner} for {accounts}"),
             None => owner,
         };
+        // A job whose shell is gone but whose processes run on says so.
+        let exited = match (job.exited, job.remaining) {
+            (Some(status), Some(remaining)) => {
+                let processes = if remaining == 1 { "1 process".to_string() } else { format!("{remaining} processes") };
+                format!("  (exited {}; {processes} left running)", exit_said(status))
+            }
+            _ => String::new(),
+        };
         running.push((
             job.machine.clone(),
             format!(
-                "  {}  {}  {}  {owner}  {}\n",
+                "  {}  {}  {}  {owner}  {}{exited}\n",
                 job.written(),
                 job.job,
                 ago(job.started_at, now),
@@ -278,4 +286,12 @@ pub(super) fn step(resident: &ResidentNow, now: Timestamp) -> String {
 
 pub(super) fn tool(tool: &CurrentTool) -> String {
     if tool.detail.is_empty() { tool.name.clone() } else { format!("{} {}", tool.name, tool.detail) }
+}
+
+/// A shell's exit as `w` says it.
+fn exit_said(status: fastctx_types::run::ExitStatus) -> String {
+    match status {
+        fastctx_types::run::ExitStatus::Code(code) => code.to_string(),
+        fastctx_types::run::ExitStatus::Signal(signal) => format!("on signal {signal}"),
+    }
 }

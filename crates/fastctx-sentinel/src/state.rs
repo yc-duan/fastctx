@@ -84,14 +84,70 @@ impl State {
 }
 pub struct Store {
     directory: PathBuf,
+    changed: Option<std::sync::Arc<dyn Fn() + Send + Sync>>,
 }
 impl Store {
     /// The caller supplies a private directory and serializes this sentinel's writes.
     pub fn new(directory: PathBuf) -> Self {
-        Self { directory }
+        Self { directory, changed: None }
+    }
+    /// Notifies a host after any published snapshot, including a run in progress.
+    pub fn observing(mut self, changed: std::sync::Arc<dyn Fn() + Send + Sync>) -> Self {
+        self.changed = Some(changed);
+        self
+    }
+    /// A run snapshot was published by the agent runtime.
+    pub(crate) fn changed(&self) {
+        if let Some(changed) = &self.changed {
+            changed();
+        }
     }
     pub fn directory(&self) -> &Path {
         &self.directory
+    }
+    /// Reads the published state and a completed snapshot for its pending wake.
+    /// Full history recovery belongs to reconciliation, outside the read path.
+    pub fn snapshot(&self) -> Result<Option<State>, String> {
+        let Some(current): Option<State> =
+            crate::bounded::load(&self.directory.join("state.json"), crate::bounded::STATE_BYTES)?
+        else {
+            return Ok(None);
+        };
+        if let Some(sequence) = current.sequence.checked_add(1) {
+            let path = self.directory.join("history").join(format!("{sequence:020}.json"));
+            if let Some(recovered) = crate::bounded::load::<State>(&path, crate::bounded::STATE_BYTES)? {
+                if recovered.sequence != sequence
+                    || recovered.pending.is_some()
+                    || recovered.definition != current.definition
+                {
+                    return Err("invalid completed sentinel snapshot".into());
+                }
+                return Ok(Some(recovered));
+            }
+        }
+        if let Some(pending) = &current.pending {
+            let path = self.directory.join("history").join(format!("{:020}.json", current.sequence));
+            if let Some(recovered) = crate::bounded::load::<State>(&path, crate::bounded::STATE_BYTES)? {
+                if recovered.sequence != current.sequence
+                    || recovered.pending.is_some()
+                    || recovered.definition != current.definition
+                {
+                    return Err("invalid completed sentinel snapshot".into());
+                }
+                if recovered.wake_id == pending.id {
+                    return Ok(Some(recovered));
+                }
+            }
+        }
+        Ok(Some(current))
+    }
+    /// Reads normally from the bounded published frontier. A missing publication
+    /// keeps the legacy history-discovery recovery and its first response.
+    pub fn read_state(&self) -> Result<Option<State>, String> {
+        match self.snapshot()? {
+            Some(state) => Ok(Some(state)),
+            None => crate::state_read::recover(&self.directory),
+        }
     }
     pub fn load(&self) -> Result<Option<State>, String> {
         let mut current: Option<State> = load(&self.directory.join("state.json"))?;
@@ -126,11 +182,18 @@ impl Store {
         Ok(current)
     }
     pub fn checkpoint(&self, state: &State) -> Result<(), String> {
-        save(&self.directory.join("state.json"), state)
+        save(&self.directory.join("state.json"), state)?;
+        self.changed();
+        Ok(())
     }
     pub fn commit(&self, state: &State) -> Result<(), String> {
-        save(&self.directory.join("history").join(format!("{:020}.json", state.sequence)), state)?;
-        save(&self.directory.join("state.json"), state)
+        let result = save(&self.directory.join("history").join(format!("{:020}.json", state.sequence)), state)
+            .and_then(|()| {
+                self.changed();
+                save(&self.directory.join("state.json"), state)
+            });
+        self.changed();
+        result
     }
     pub fn run_path(&self, sequence: u64) -> PathBuf {
         self.directory.join("runs").join(format!("{sequence:020}.json"))
@@ -156,13 +219,15 @@ impl Store {
         kept.input = kept.input.saturating_add(usage.input);
         kept.output = kept.output.saturating_add(usage.output);
         kept.elapsed_ms = kept.elapsed_ms.saturating_add(elapsed_ms);
-        save(&path, &days)
+        save(&path, &days)?;
+        self.changed();
+        Ok(())
     }
     /// The days counted since `since` (milliseconds since the epoch), the
     /// one it falls in among them.
     pub fn tally(&self, since: i64) -> Result<Vec<fastctx_types::sentinel_control::WakeDay>, String> {
         let mut days: Vec<fastctx_types::sentinel_control::WakeDay> =
-            load(&self.directory.join("tally.json"))?.unwrap_or_default();
+            crate::bounded::load(&self.directory.join("tally.json"), 64 * 1024)?.unwrap_or_default();
         days.retain(|kept| kept.day + DAY_MS > since);
         Ok(days)
     }

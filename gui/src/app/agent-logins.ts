@@ -15,6 +15,7 @@
 // page of usage (`./usage/login-page`). The machine last shown is kept on
 // this device; coming from a machine's page shows that one.
 
+import { followState, LOGINS, type Following } from "../world/topics";
 import { Popover } from "../conversation/popover";
 import { escape } from "../conversation/prose";
 import { glyph } from "../conversation/glyphs";
@@ -45,6 +46,7 @@ import { keepRecord, keptRecord, keptReport, readerNow, readReport, reportKey } 
 import { usageOf } from "./usage/model";
 import { assistingMe, namer } from "./usage/people";
 import type { UsageWords } from "./usage/words";
+import { waiting } from "./waiting";
 
 type Agent = "codex" | "claude";
 
@@ -78,7 +80,7 @@ export interface AgentLoginsOptions {
   pick: (() => Promise<string | null>) | null;
   /** A machine's folders, walked by its node, where its picker is out of
    *  reach. */
-  folders(machine: string, path: string | null): Promise<Folders>;
+  folders(machine: string, path: string | null, cursor?: string | null): Promise<Folders>;
   preview(machine: string, agent: Agent, dir: string, into: boolean, takeBack: boolean, workbench?: boolean): Promise<ChangePreview>;
   /** `expected`: the fingerprint of the change the user was shown;
    *  `workbench`: the workbench opened or closed in the login with it. */
@@ -139,7 +141,7 @@ export class AgentLoginsPage implements Page {
   private readonly changing = new Set<string>();
   /** The machine whose record was asked for since it was shown. */
   private fetched: string | null = null;
-  private following = 0;
+  private following: Following | null = null;
   /** What the last thing done on a machine, row or folder left to say. */
   private notes = new Map<string, { text: string; detail: string }>();
   /** Machines a folder is being chosen on. */
@@ -171,7 +173,7 @@ export class AgentLoginsPage implements Page {
       scan: (machine, stop) => options.scan(as(machine), stop),
       add: (machine, agent, dir) => options.add(as(machine), agent, dir),
       folder: (machine, dir, change) => options.folder(as(machine), dir, change),
-      folders: (machine, path) => options.folders(as(machine), path),
+      folders: (machine, path, cursor) => options.folders(as(machine), path, cursor),
       preview: (machine, agent, dir, into, takeBack, workbench) => options.preview(as(machine), agent, dir, into, takeBack, workbench),
       change: (machine, agent, dir, into, raise, takeBack, expected, workbench) => options.change(as(machine), agent, dir, into, raise, takeBack, expected, workbench),
       limits: (machine, agent, dir) => options.limits(as(machine), agent, dir),
@@ -196,6 +198,7 @@ export class AgentLoginsPage implements Page {
     this.sheet = new AgentChangeSheet(options.changeWords, {
       preview: (target) => this.calls.preview(target.machine, this.agent, target.dir, target.into, !!target.takeBack, target.workbench),
       change: (target, raise, expected) => this.calls.change(target.machine, this.agent, target.dir, target.into, raise, !!target.takeBack, expected, target.workbench),
+      written: (target) => as(target.machine),
       benched: (open) => options.benched(open),
       progress: async (target) => {
         const record = await this.calls.read(target.machine);
@@ -231,7 +234,7 @@ export class AgentLoginsPage implements Page {
     this.readRevision += 1;
     this.reading = null;
     this.stop();
-    clearTimeout(this.following);
+    this.following?.();
     this.machines?.element.remove();
     this.menu.close();
   }
@@ -247,7 +250,10 @@ export class AgentLoginsPage implements Page {
       this.record = keptRecord(machine.name);
       if (this.record) this.draw();
     }
-    void this.read();
+    this.following?.();
+    // Another machine's logins are waited on through this one's node; a
+    // machine that does not tell them is read on the timer.
+    this.following = followState(LOGINS, () => this.read(true, true), () => this.running() ? FOLLOW_MS : false, machine.here ? null : machine.written);
   }
 
   /** The machines of the menu, and the one shown among them. */
@@ -272,7 +278,7 @@ export class AgentLoginsPage implements Page {
 
   /** Reads what the machine shown recorded; while a scan or a change runs
    *  there, reads again until it ends. Then its logins' usage. */
-  private async read(force = false): Promise<void> {
+  private async read(force = false, retry = false): Promise<void> {
     const machine = this.current(this.options.store.world.peek()).machine;
     if (this.left || !machine || (!force && this.reading === machine.name)) return;
     const name = machine.name;
@@ -280,6 +286,7 @@ export class AgentLoginsPage implements Page {
     const revision = ++this.readRevision;
     const asked = readerNow();
     const current = () => !this.left && this.readRevision === revision && readerNow() === asked;
+    let failure: unknown = null;
     try {
       const world = await this.calls.read(name);
       const heard = world.machines.find((one) => (one.kind === "answered" ? one.logins.machine : one.machine) === name) ?? world.machines[0];
@@ -293,20 +300,23 @@ export class AgentLoginsPage implements Page {
         this.problem = { machine: name, detail: heard.kind === "no_answer" ? heard.reason : "", offline: heard.kind === "offline" };
       }
     } catch (error) {
+      failure = error;
       if (current()) this.problem = { machine: name, detail: detailOf(error), offline: false };
     } finally {
       if (this.readRevision === revision) this.reading = null;
     }
     if (!current() || this.current(this.options.store.world.peek()).machine?.name !== name) return;
     this.draw();
-    clearTimeout(this.following);
-    if (this.running()) this.following = window.setTimeout(() => void this.read(), FOLLOW_MS);
+    this.following?.refresh();
+
     void this.readUsage();
+    if (failure && retry) throw failure;
   }
 
   /** Reads the usage of the logins listed under the tab shown, those not
    *  read for a while; each row fills in as its own comes. */
   private async readUsage(): Promise<void> {
+    if (document.hidden) return;
     const record = this.record;
     if (!record) return;
     const agent = this.agent;
@@ -425,7 +435,7 @@ export class AgentLoginsPage implements Page {
 
   private machineBody(machine: Shown, world: WorldNow | null, now: Date): string {
     const { words } = this.options;
-    if (machine.heard.kind === "reading") return `<p class="feature-quiet logins-reading">${escape(words.reading)}</p>`;
+    if (machine.heard.kind === "reading") return waiting({ label: words.reading, shape: "rows", rows: 2 });
     if (machine.heard.kind === "away") {
       return `<div class="logins-empty">${glyph(machine.here ? "desktop" : "server", 40)}<p class="feature-quiet" title="${escape(machine.heard.detail)}">${escape(machine.heard.said)}</p></div>`;
     }
@@ -800,7 +810,7 @@ export class AgentLoginsPage implements Page {
    *  the machine's folders walked by its node anywhere else. */
   private chooseFolder(machine: string): void {
     const here = this.shown(this.options.store.world.peek())?.here ?? false;
-    const walk = () => this.choosing.open({ machine, folders: (path) => this.calls.folders(machine, path), chosen: (dir) => void this.choose(machine, dir) });
+    const walk = () => this.choosing.open({ machine, folders: (path, cursor) => this.calls.folders(machine, path, cursor), chosen: (dir) => void this.choose(machine, dir) });
     const pick = this.options.pick;
     if (!here || !pick) {
       walk();
@@ -906,6 +916,7 @@ export class AgentLoginsPage implements Page {
       this.record = record;
       this.problem = null;
       this.draw();
+      this.following?.refresh();
     }
   }
 

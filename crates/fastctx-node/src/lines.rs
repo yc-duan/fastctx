@@ -1,5 +1,6 @@
 //! User-only line sources, owned by live connections and the holding file.
 
+mod copied;
 mod projection;
 pub(crate) mod reading;
 
@@ -36,6 +37,12 @@ struct Source {
     _watcher: Mutex<fastctx_watch::Watcher>,
     cancelled: Arc<AtomicBool>,
     requests: Mutex<Vec<Weak<AtomicBool>>>,
+    /// Whether a job's output written out from the copy here is whole, as
+    /// the copy said when it was written out; none for any other source.
+    copy_whole: Option<bool>,
+    /// A job's output written out from the copy here (`copied`), gone with
+    /// the source: last, so what reads it is let go first.
+    _copied: Option<crate::attachments::kept_here::Passing>,
 }
 struct State {
     index: Option<fastctx_hands::lines::Index>,
@@ -98,10 +105,55 @@ pub(crate) async fn open(
     decoding: Decoding,
 ) -> std::result::Result<(Reply, Lease), Failure> {
     if let Some(machine) = machine.filter(|machine| !node.is_here(machine)) {
+        // A job's output the copy here has whole, or what came of it while
+        // its machine is away, is read here (plan 3-5); as history read it
+        // (`Immutable`), only whole.
+        // History's notes on it are on its machine alone: read there
+        // (codex-847f57fd #6).
+        let job = match &decoding {
+            Decoding::Output { job } => Some((job, false)),
+            Decoding::Immutable { decoding: inner, annotation, .. } if annotation.as_deref().is_none_or(str::is_empty) => match inner.as_ref() {
+                Decoding::Output { job } => Some((job, true)),
+                _ => None,
+            },
+            _ => None,
+        };
+        if let Some((job, immutable)) = job
+            && let Some((copy, whole)) = copied::output(node, &machine, job, &path).await
+            && (whole || !immutable)
+        {
+            let local = copy.path().to_string_lossy().into_owned();
+            return opened_here(node, from, Some((machine.name.clone(), path)), local, decoding, Some((copy, whole))).await;
+        }
         let (link, account) = node.speaking(&Acting::Here, &machine, Purpose::Hands).await.map_err(failed)?;
         let (reply, lease) = fastctx_net::lines::open(link, machine.name, account, path, decoding).await?;
         return Ok((reply, Lease::Remote(lease)));
     }
+    opened_here(node, from, None, path, decoding, None).await
+}
+
+/// Whether the line source `source` of `from` was opened on this machine: a
+/// job's output read from the copy here goes on being read here, though the
+/// requests name the machine it ran on.
+fn held_here(node: &Node, from: &MachineName, source: &str) -> bool {
+    node.line_sources.0.lock().expect("line sources").contains_key(&(from.clone(), source.to_string()))
+}
+
+/// Opens the line source at `path` on this machine: a file of its own, or a
+/// job's output written out from the copy here (`copy`) for the machine it
+/// ran on, at the path it has there (`standing_for`).
+async fn opened_here(
+    node: &Arc<Node>,
+    from: MachineName,
+    standing_for: Option<(MachineName, String)>,
+    path: String,
+    decoding: Decoding,
+    copy: Option<(crate::attachments::kept_here::Passing, bool)>,
+) -> std::result::Result<(Reply, Lease), Failure> {
+    let (copy, copy_whole) = match copy {
+        Some((copy, whole)) => (Some(copy), Some(whole)),
+        None => (None, None),
+    };
     let initializing = crate::initializing::take().await?;
     let (decoding, expected, policy, annotation) = match decoding {
         Decoding::Immutable { content, policy, annotation, decoding } => {
@@ -120,8 +172,13 @@ pub(crate) async fn open(
     if !path.is_absolute() {
         return Err(failed("the text path must be absolute"));
     }
-    crate::replicas::sync::repair_paths(node, std::slice::from_ref(&path)).await.map_err(failed)?;
+    if copy.is_none() {
+        crate::replicas::sync::repair_paths(node, std::slice::from_ref(&path)).await.map_err(failed)?;
+    }
     let (job_record, notes_record) = match &decoding {
+        // Written out from the copy here: no record of the job on this
+        // machine, and the file grows no more.
+        Decoding::Output { .. } if copy.is_some() => (None, None),
         Decoding::Output { job } => {
             let found = crate::look::look_here(node, job.as_str()).await?.0;
             let Some(fastctx_types::town::Looked::Job { record, .. }) = found else {
@@ -191,7 +248,10 @@ pub(crate) async fn open(
             {
                 return Err(failed("the text source changed during indexing"));
             }
-            let complete = complete(record_path.as_deref()).map_err(failed)?;
+            let complete = match copy_whole {
+                Some(whole) => whole,
+                None => complete(record_path.as_deref()).map_err(failed)?,
+            };
             let extent = Extent { length: index.length, complete, version: 0 };
             let (projection, writes, writes_revision) =
                 projection::open(&read_path, snapshot.size, note_path.as_deref(), &cancel).map_err(failed)?;
@@ -225,6 +285,8 @@ pub(crate) async fn open(
         _watcher: Mutex::new(watcher),
         cancelled: Arc::new(AtomicBool::new(false)),
         requests: Mutex::new(Vec::new()),
+        copy_whole,
+        _copied: copy,
     });
     let mut random = [0; 16];
     getrandom::fill(&mut random).map_err(failed)?;
@@ -237,13 +299,8 @@ pub(crate) async fn open(
     // another filesystem event to happen after the monitor starts.
     refresh(source.clone(), Some(initializing)).await?;
     let extent = source.state.lock().expect("line source").extent.clone();
-    Ok((
-        Reply {
-            machine: node.machine(),
-            result: Answer::Opened { source: id, path: path.to_string_lossy().into_owned(), extent },
-        },
-        lease,
-    ))
+    let (machine, path) = standing_for.unwrap_or_else(|| (node.machine(), path.to_string_lossy().into_owned()));
+    Ok((Reply { machine, result: Answer::Opened { source: id, path, extent } }, lease))
 }
 
 /// How often the output of a job still running is looked at again, beside its file's events: its
@@ -301,7 +358,10 @@ async fn refresh(
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Err(ending(err(error))),
                 Err(error) => return Err(passing(err(error))),
             };
-            let ended = complete(source.job_record.as_deref()).map_err(passing)?;
+            let ended = match source.copy_whole {
+                Some(whole) => whole,
+                None => complete(source.job_record.as_deref()).map_err(passing)?,
+            };
             let revision = projection::revision(source.notes_record.as_deref()).map_err(passing)?;
             if state.snapshot == snapshot
                 && state.extent.complete == ended
@@ -383,7 +443,16 @@ pub(crate) async fn call(
     machine: Option<Written>,
     request: Request,
 ) -> std::result::Result<Reply, Failure> {
-    if let Some(machine) = machine.filter(|machine| !node.is_here(machine)) {
+    let named = match &request {
+        Request::Read { source, .. }
+        | Request::Find { source, .. }
+        | Request::Changed { source, .. }
+        | Request::Close { source } => Some(source.as_str()),
+        Request::Open { .. } => None,
+    };
+    if let Some(machine) = machine.filter(|machine| !node.is_here(machine))
+        && !named.is_some_and(|source| held_here(node, &from, source))
+    {
         return match node
             .call_with_stream(
                 &Acting::Here,
@@ -463,17 +532,20 @@ pub(crate) async fn call(
         }
     }
     let result = fastctx_platform::task::spawn_blocking(move || {
-        let mut state = source.state.lock().expect("line source");
-        let index = state.index.as_mut().ok_or_else(|| "line source closed".to_string())?;
-        let result = match request {
+        let (mut state, result) = match request {
             Request::Read { start, count, .. } => {
-                Answer::Lines { start, lines: index.read(start, count, &cancel)?, notes: Vec::new() }
+                let mut state = source.state.lock().expect("line source");
+                let index = state.index.as_mut().ok_or_else(|| "line source closed".to_string())?;
+                let lines = index.read(start, count, &cancel)?;
+                (state, Answer::Lines { start, lines, notes: Vec::new() })
             }
             Request::Find { query, position, direction, .. } => {
-                Answer::Found { found: index.find(&query, &position, direction, &cancel)? }
+                let (state, found) = find(&source, &query, &position, direction, &cancel)?;
+                (state, Answer::Found { found })
             }
             _ => unreachable!("handled before blocking"),
         };
+        let state = &mut *state;
         let snapshot = observe(&source.path).map_err(err)?;
         if source.job_record.is_none() && snapshot != state.snapshot
             || !snapshot.same_file(&state.snapshot)
@@ -487,6 +559,61 @@ pub(crate) async fn call(
     .map_err(failed)?
     .map_err(failed)?;
     Ok(Reply { machine: node.machine(), result })
+}
+
+/// How many bytes of lines one stretch of a search reads holding the
+/// source: between stretches it grows, and is read, as it would without one.
+const SEARCH_STRETCH: u64 = 1 << 20;
+
+/// How many times a search starts over because lines it had searched
+/// changed before it gives up.
+const SEARCH_RESTARTS: usize = 8;
+
+/// Finds `query` from `position` a stretch at a time, letting the source go
+/// between stretches. Lines that grew past where the search reached are
+/// searched as they are now; a change to a line it had searched starts it
+/// over, so it finds what one search holding the source throughout would.
+/// Gives back the source held after the last stretch, for the caller's last
+/// look at the file.
+fn find<'a>(
+    source: &'a Source,
+    query: &str,
+    position: &fastctx_types::lines::Position,
+    direction: fastctx_types::lines::Direction,
+    cancel: &std::sync::atomic::AtomicBool,
+) -> Result<(std::sync::MutexGuard<'a, State>, Option<fastctx_types::lines::Match>), String> {
+    use fastctx_hands::lines::Searched;
+    use fastctx_types::lines::{Direction, Position};
+    let mut at = position.clone();
+    let mut version = None;
+    let mut restarts = 0;
+    loop {
+        let mut state = source.state.lock().expect("line source");
+        let now = state.extent.version;
+        if let Some(seen) = version
+            && seen != now
+        {
+            // The first line the change touched; any, when several came.
+            let first = if now == seen + 1 { state.first } else { 0 };
+            let searched = match direction {
+                Direction::Forward => first < at.line,
+                Direction::Backward => first <= position.line,
+            };
+            if searched {
+                restarts += 1;
+                if restarts > SEARCH_RESTARTS {
+                    return Err("the text kept changing where it was being searched".into());
+                }
+                at = position.clone();
+            }
+        }
+        version = Some(now);
+        let index = state.index.as_mut().ok_or_else(|| "line source closed".to_string())?;
+        match index.find_within(query, &at, position, direction, cancel, SEARCH_STRETCH)? {
+            Searched::Done(found) => return Ok((state, found)),
+            Searched::From(line) => at = Position { line, offset: None },
+        }
+    }
 }
 
 pub(crate) async fn serve(

@@ -8,6 +8,7 @@
 //! its copies (`Arc`), so an entry that did not change is the very one the
 //! rows were written from, and telling it apart costs a pointer.
 
+mod patch;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io;
 use std::sync::Arc;
@@ -29,9 +30,11 @@ pub(crate) struct Changes {
     /// Whether the machine log is written whole: what it held is deleted first.
     pub(crate) log_cleared: bool,
     pub(crate) log_after: Option<u64>,
-    /// Machine log records kept before this moment, in seconds since 1970,
-    /// are deleted.
-    pub(crate) expired: Option<jiff::Timestamp>,
+    /// Whether these are control facts — the directory readers are judged
+    /// by — which take their place in the hub's chain (design §6.1).
+    pub(crate) control: bool,
+    /// Bodies' members as the directory saved here has them (design §6.2).
+    pub(crate) bodies: Vec<crate::assets::bodies::BodyChange>,
 }
 
 pub(crate) struct Put {
@@ -51,7 +54,7 @@ impl Changes {
             && self.log.is_empty()
             && !self.log_cleared
             && self.log_after.is_none()
-            && self.expired.is_none()
+            && self.bodies.is_empty()
     }
 
     /// About how many bytes it writes.
@@ -61,6 +64,7 @@ impl Changes {
             + self.deleted.iter().map(|(_, key)| key.len() + 16).sum::<usize>()
             + self.meta.iter().map(|(_, value)| value.len() + 16).sum::<usize>()
             + self.log.iter().map(crate::machine_log::Row::bytes).sum::<usize>()
+            + self.bodies.iter().map(|body| body.id.len() + body.machine.len() + body.members.len() + 96).sum::<usize>()
     }
 
     pub(crate) fn meta(&mut self, name: &'static str, value: Vec<u8>) {

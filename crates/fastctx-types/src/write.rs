@@ -1,5 +1,9 @@
 //! Requests and committed effects of the World's file-writing tools.
 
+pub mod literal_edit;
+pub mod merge;
+pub mod text;
+
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 

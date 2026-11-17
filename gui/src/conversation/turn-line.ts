@@ -14,14 +14,17 @@
 // the turn ends or is stopped. The dots go on where the system asks for
 // less motion: they are the one sign that the model is at work.
 
+import type { StartShown } from "./model";
 import { curve } from "../design/curve";
 import { blot, seeded } from "../pen/shapes";
 import { bezier } from "./flight";
 
 /** What the line says. */
 export type LineSays =
-  /** The first words are on their way and nothing has come back yet. */
-  | { kind: "starting" }
+  /** Words wait on their agent's host to start, or the first words are on
+   *  their way and nothing has come back yet: since when, how far
+   *  (`StartShown`), where told. */
+  | ({ kind: "starting" } & Partial<StartShown>)
   /** The model is working, since `since`. */
   | { kind: "working"; since: number | null }
   /** The turn waits on the user; `said` where nothing above says so. */
@@ -32,6 +35,27 @@ export interface LineWords {
   working: string;
   waitingForYou: string;
   took(ms: number): string;
+  startRetrying(failures: number): string;
+  hostRetrying(agent: string | undefined): string;
+  hostRetryWhy(reason: string): string;
+  queuedTurn(ahead: number): string;
+  queuedTurnWhy: string;
+  queuedCalleeWhy: string;
+  queuedMemory(ahead: number): string;
+  queuedMemoryWhy: string;
+}
+
+/** What the line says of a start, and why, for the pointer. */
+function startSaid(says: Partial<StartShown>, words: LineWords): [string, string] {
+  if (says.ahead !== undefined) {
+    return says.memory
+      ? [words.queuedMemory(says.ahead), words.queuedMemoryWhy]
+      : [words.queuedTurn(says.ahead), says.callee ? words.queuedCalleeWhy : words.queuedTurnWhy];
+  }
+  const why = says.reason ? words.hostRetryWhy(says.reason) : "";
+  if (says.failures) return [words.startRetrying(says.failures), why];
+  if (says.reason) return [words.hostRetrying(undefined), why];
+  return [words.starting, ""];
 }
 
 /** Where the six dots of 「……」 sit: two marks of three, a breath apart. */
@@ -209,15 +233,19 @@ export class TurnLine {
   /** Says `says`. */
   say(says: LineSays): void {
     const { words } = this;
-    const step = says.kind === "waiting" && says.said ? words.waitingForYou : "";
-    const heard = says.kind === "starting" ? words.starting : says.kind === "waiting" ? words.waitingForYou : words.working;
+    // A start says how far it came, and how long it has taken; why, where
+    // it is in line or tried again, rests under the pointer.
+    const [started, why] = says.kind === "starting" ? startSaid(says, words) : ["", ""];
+    const step = says.kind === "waiting" && says.said ? words.waitingForYou : started;
+    const heard = says.kind === "starting" ? started : says.kind === "waiting" ? words.waitingForYou : words.working;
     this.element.classList.toggle("waiting", says.kind === "waiting");
     this.element.classList.toggle("starting", says.kind === "starting");
     if (this.step.textContent !== step) this.step.textContent = step;
+    if (this.element.title !== why) this.element.title = why;
     // The dots say nothing to a screen reader; the state does.
     const mark = this.element.querySelector<HTMLElement>(".turn-status-mark")!;
     if (mark.getAttribute("aria-label") !== heard) mark.setAttribute("aria-label", heard);
-    this.since = says.kind === "working" ? says.since : null;
+    this.since = says.kind === "working" ? says.since : says.kind === "starting" ? (says.since ?? null) : null;
     this.hold(says.kind === "waiting");
     this.tick();
   }

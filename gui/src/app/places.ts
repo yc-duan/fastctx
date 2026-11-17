@@ -9,6 +9,10 @@ export type Feature = "conversations" | "collaboration" | "sentinels" | "history
 const features: Feature[] = ["conversations", "collaboration", "sentinels", "history"];
 const sections: AgentSection[] = ["claude", "codex", "prompt", "skills", "mcp"];
 
+/** A login's page's views but the first (`ledger/login-page.ts`). */
+export type LoginTab = "calls" | "assist" | "settings";
+const loginTabs: LoginTab[] = ["calls", "assist", "settings"];
+
 export type Place =
   | { kind: "home" }
   /** What agents did with run on the user's machines (`world-layers.md`). */
@@ -24,8 +28,6 @@ export type Place =
   | { kind: "history"; town: string; name: string; from?: Address }
   /** One document of the history of a conversation outside any project. */
   | { kind: "talk-history"; address: Address; name: string }
-  /** A page of a project: a version of it, or the current one. */
-  | { kind: "page"; town: string; page: string; version: number | null }
   /** The drawing of the machines, with one chosen when `focus` names it;
    *  or their update view, with that one ticked. */
   | { kind: "machines"; focus?: string; updates?: boolean; alerts?: boolean }
@@ -45,7 +47,7 @@ export type Place =
   | { kind: "prompt"; agent: "claude" | "codex" }
   /** What an agent's login on a machine was used for; opened on one
    *  turn's requests when a conversation asks for them. */
-  | { kind: "usage"; machine: string; agent: "codex" | "claude"; dir: string; turn?: { conversation: string; turn: string } }
+  | { kind: "usage"; machine: string; agent: "codex" | "claude"; dir: string; tab?: LoginTab; turn?: { conversation: string; turn: string } }
   /** The features, one card each, and a feature's own page. */
   | { kind: "features" }
   | { kind: "feature"; feature: Feature }
@@ -62,8 +64,13 @@ export type Place =
   | { kind: "login"; way?: "join" | "new" | "code" }
   /** The user's own things in the network shown: 「我」. */
   | { kind: "account" }
+  /** How the user's devices stand in syncing, a step in from 「我」. */
+  | { kind: "sync" }
   /** A file on a machine, read whole, or its end when it keeps growing. */
   | { kind: "file"; machine: string; path: string; tail: boolean }
+  /** A machine's folders, and a file among them opened to what it holds or
+   *  to its changes. */
+  | { kind: "files"; machine: string; path: string | null; tab: "content" | "changes" | null; /** The folder its tree starts at, where no file is asked for. */ folder?: string | null }
   /** What one of a conversation's watchers did, read on the machine it
    *  lives on: the life of it `generation` names. */
   | { kind: "sentinel"; home: string; id: string; generation: number }
@@ -91,8 +98,6 @@ export function link(place: Place): string {
       return `#/history/${part(place.town)}/${part(place.name)}${place.from ? `/from/${part(`${place.from.resident}@${place.from.machine}`)}` : ""}`;
     case "talk-history":
       return `#/talk-history/${part(`${place.address.resident}@${place.address.machine}`)}/${part(place.name)}`;
-    case "page":
-      return `#/page/${part(place.town)}/${part(place.page)}${place.version === null ? "" : `/${place.version}`}`;
     case "projects":
       return "#/projects";
     case "machines":
@@ -110,7 +115,7 @@ export function link(place: Place): string {
     case "prompt":
       return `#/agents/prompt/${place.agent}`;
     case "usage":
-      return `#/agents/${part(place.machine)}/${place.agent}/${part(place.dir)}${place.turn ? `/calls/${part(place.turn.conversation)}/${part(place.turn.turn)}` : ""}`;
+      return `#/agents/${part(place.machine)}/${place.agent}/${part(place.dir)}${place.turn ? `/calls/${part(place.turn.conversation)}/${part(place.turn.turn)}` : place.tab ? `/${place.tab}` : ""}`;
     case "features":
       return "#/features";
     case "feature":
@@ -127,8 +132,13 @@ export function link(place: Place): string {
       return place.way ? `#/login/${place.way}` : "#/login";
     case "account":
       return "#/account";
+    case "sync":
+      return "#/sync";
     case "file":
       return `#/file/${part(place.machine)}/${place.tail ? "tail" : "whole"}/${part(place.path)}`;
+    case "files":
+      if (place.path === null) return place.folder ? `#/files/${part(place.machine)}/in/${part(place.folder)}` : `#/files/${part(place.machine)}`;
+      return `#/files/${part(place.machine)}/${place.tab ?? "content"}/${part(place.path)}`;
     case "sentinel":
       return `#/sentinel/${part(place.home)}/${part(place.id)}/${place.generation}`;
     case "sentinels":
@@ -162,12 +172,6 @@ export function placeOf(hash: string): Place {
       if (parts[1] && parts[2] && at > 0) return { kind: "talk-history", address: { resident: parts[1].slice(0, at), machine: parts[1].slice(at + 1) }, name: parts[2] };
       break;
     }
-    case "page":
-      if (parts[1] && parts[2]) {
-        const version = parts[3] ? Number(parts[3]) : null;
-        return { kind: "page", town: parts[1], page: parts[2], version: version !== null && Number.isInteger(version) && version > 0 ? version : null };
-      }
-      break;
     case "projects":
       return { kind: "projects" };
     case "machines":
@@ -182,7 +186,8 @@ export function placeOf(hash: string): Place {
     case "agents":
       if (parts[1] && (parts[2] === "codex" || parts[2] === "claude") && parts[3]) {
         const turn = parts[4] === "calls" && parts[5] && parts[6] ? { turn: { conversation: parts[5], turn: parts[6] } } : {};
-        return { kind: "usage", machine: parts[1], agent: parts[2], dir: parts[3], ...turn };
+        const tab = loginTabs.includes(parts[4] as LoginTab) ? { tab: parts[4] as LoginTab } : {};
+        return { kind: "usage", machine: parts[1], agent: parts[2], dir: parts[3], ...tab, ...turn };
       }
       // A host's preferences; `#/agents/prefs` alone was the preferences'
       // own section, now the last host's.
@@ -222,10 +227,16 @@ export function placeOf(hash: string): Place {
     case "network":
     case "account":
       return { kind: "account" };
+    case "sync":
+      return { kind: "sync" };
     case "admin":
       return { kind: "machines" };
     case "file":
       if (parts[1] && parts[3]) return { kind: "file", machine: parts[1], path: parts.slice(3).join("/"), tail: parts[2] === "tail" };
+      break;
+    case "files":
+      if (parts[1] && parts[2] === "in" && parts[3]) return { kind: "files", machine: parts[1], path: null, tab: null, folder: parts.slice(3).join("/") };
+      if (parts[1]) return { kind: "files", machine: parts[1], path: parts[3] ? parts.slice(3).join("/") : null, tab: parts[2] === "changes" ? "changes" : parts[2] === "content" && parts[3] ? "content" : null };
       break;
     case "sentinel": {
       const generation = Number(parts[3]);

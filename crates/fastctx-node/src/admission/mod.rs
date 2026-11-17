@@ -45,6 +45,7 @@ fn resident_of(call: &RemoteCall) -> Option<&ResidentId> {
             request: fastctx_types::sentinel_control::Request::Conversation { owner, .. },
         } => Some(&owner.resident),
         RemoteCall::GoalCommand { actor, request, .. } => Some(request.resident(actor)),
+        RemoteCall::Timeline { request } => Some(request.resident()),
         RemoteCall::Plan { resident: who, .. }
         | RemoteCall::Goal { resident: who, .. }
         | RemoteCall::ConversationDebt { resident: who, .. }
@@ -53,7 +54,7 @@ fn resident_of(call: &RemoteCall) -> Option<&ResidentId> {
         | RemoteCall::Talk { to: who, .. }
         | RemoteCall::Composer { resident: who, .. }
         | RemoteCall::Watch { resident: who, .. }
-        | RemoteCall::Stop { resident: who }
+        | RemoteCall::Stop { resident: who, .. }
         | RemoteCall::Control { resident: who, .. }
         | RemoteCall::Manage { resident: who, .. }
         | RemoteCall::Offers { resident: who }
@@ -84,7 +85,6 @@ pub(crate) fn town_of(call: &RemoteCall) -> Option<&TownName> {
         | RemoteCall::Follow { origin, .. }
         | RemoteCall::StopOn { origin, .. }
         | RemoteCall::PipeOut { origin, .. } => origin.town.as_ref(),
-        RemoteCall::PageAction { source, .. } => Some(&source.town),
         RemoteCall::Place { attachment, .. } => attachment.town.as_ref(),
         RemoteCall::AttachmentPlaces { target, .. }
         | RemoteCall::Upload { target, .. }
@@ -100,6 +100,41 @@ pub(crate) fn town_of(call: &RemoteCall) -> Option<&TownName> {
 
 /// Refuses a call `caller` may not make here; otherwise, who asked.
 pub fn admit(node: &Arc<Node>, link: &Arc<Link>, caller: &Caller, call: &RemoteCall) -> Result<Asker, Failure> {
+    admit_inner(node, link, caller, call, true, true)
+}
+
+/// Admission before durable submission. Project membership is checked by the
+/// worker after the same refresh the synchronous entrance used to perform.
+pub(crate) fn admit_for_submission(
+    node: &Arc<Node>,
+    link: &Arc<Link>,
+    caller: &Caller,
+    call: &RemoteCall,
+) -> Result<Asker, Failure> {
+    admit_inner(node, link, caller, call, false, true)
+}
+
+/// Admission of what a letter the hub kept carries: the hub took it before
+/// its assets were sealed, and refuses any new one while they are, so a
+/// seal met on the way pauses nothing here into a refusal for good (design
+/// §28.41).
+pub(crate) fn admit_held(
+    node: &Arc<Node>,
+    link: &Arc<Link>,
+    caller: &Caller,
+    call: &RemoteCall,
+) -> Result<Asker, Failure> {
+    admit_inner(node, link, caller, call, true, false)
+}
+
+fn admit_inner(
+    node: &Arc<Node>,
+    link: &Arc<Link>,
+    caller: &Caller,
+    call: &RemoteCall,
+    project_ready: bool,
+    sealing: bool,
+) -> Result<Asker, Failure> {
     let here = node.machine();
     // Nothing of a call turned away here ran.
     let refuse = |why: String| Failure::refused(format!("{here} refused {}: {why}", caller.machine));
@@ -112,6 +147,14 @@ pub fn admit(node: &Arc<Node>, link: &Arc<Link>, caller: &Caller, call: &RemoteC
         return Err(refuse("the attachment names a different holding machine".into()));
     }
     let view = crate::authorization::current_view(link)?;
+    // Its hub's assets sealed, nothing of an account's goes between machines
+    // until they are opened: not over a direct link either (design §28.41).
+    if sealing
+        && let Some(why) = view.assets_sealed.as_ref()
+        && !view.same(&caller.machine, &here)
+    {
+        return Err(refuse(format!("{}{why}", fastctx_types::assets::SEALED_RELAY)));
+    }
     if let RemoteCall::ConversationDebt { requester, .. } | RemoteCall::WaitingJobs { owner: requester } = call
         && !view.same(&requester.machine, &caller.machine)
     {
@@ -144,6 +187,7 @@ pub fn admit(node: &Arc<Node>, link: &Arc<Link>, caller: &Caller, call: &RemoteC
             | RemoteCall::AgentFolder { .. }
             | RemoteCall::SetAgentTitle { .. }
             | RemoteCall::SetAgentResetInPlace { .. }
+            | RemoteCall::SetAgentWeek { .. }
             | RemoteCall::ChangeAgentModels { .. }
             | RemoteCall::PreviewAgentChange { .. }
             | RemoteCall::ChangeAgentLogin { .. }
@@ -166,7 +210,7 @@ pub fn admit(node: &Arc<Node>, link: &Arc<Link>, caller: &Caller, call: &RemoteC
     }
     crate::devices::admit(&view, &caller.machine, call)?;
     let hub = link.membership().id.clone();
-    if let Some(town) = town_of(call) {
+    if project_ready && let Some(town) = town_of(call) {
         let allowed = view
             .projects
             .iter()

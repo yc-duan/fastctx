@@ -1,0 +1,29 @@
+[package]
+name = "fastctx-timeline-core"
+description = "The node's timeline work store and the merging of a host's record, cut from fastctx-node"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[features]
+# The timeline's writing, for fastctx-bench (as the node's own `bench`).
+bench = []
+# What the node's own tests read of the work store.
+test-support = []
+
+[dependencies]
+fastctx-content = { path = "../fastctx-content" }
+fastctx-hosts = { path = "../fastctx-hosts" }
+fastctx-platform = { path = "../fastctx-platform" }
+fastctx-storage = { path = "../fastctx-storage" }
+fastctx-types = { path = "../fastctx-types" }
+getrandom = { version = "0.3", features = ["std"] }
+jiff.workspace = true
+serde_json.workspace = true
+sha2 = "0.10"
+
+[lints]
+workspace = true

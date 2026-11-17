@@ -1,0 +1,194 @@
+//! Reading a conversation's timeline a page at a time.
+//!
+//! The timeline is the conversation's history as its machine keeps it in
+//! its content database: each event an item, in the conversation's order. A
+//! viewer reads the last page, reads on towards the start as it is scrolled
+//! to, and asks to be told when the timeline moves; it never receives the
+//! whole history.
+
+use crate::ResidentId;
+use serde::{Deserialize, Serialize};
+
+/// The most events one page holds, whatever is asked.
+pub const PAGE_EVENTS: u32 = 400;
+/// The most bytes of events one page holds, one event at least.
+pub const PAGE_BYTES: u32 = 1024 * 1024;
+/// The most bytes one read of an object gives.
+pub const OBJECT_BYTES: u32 = 256 * 1024;
+
+/// Where an event stands in a timeline. A reader hands it back as it was
+/// given to read on from there; it says nothing else.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TimelinePlace {
+    pub order: String,
+    pub item: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "from", rename_all = "snake_case")]
+pub enum TimelineFrom {
+    /// The timeline's last events.
+    Latest,
+    /// The events just before a place.
+    Before { place: TimelinePlace },
+    /// The events just after a place.
+    After { place: TimelinePlace },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "do", rename_all = "snake_case")]
+pub enum TimelineAsk {
+    /// A page of the conversation's events, earliest first.
+    Page { resident: ResidentId, from: TimelineFrom, max_events: u32, max_bytes: u32 },
+    /// Answered once the timeline's revision is past `after`, or after a
+    /// while with the revision it has: the asker asks again.
+    Moved { resident: ResidentId, after: u64 },
+    /// One current running snapshot, paired with its live-stream watermark.
+    Running { resident: ResidentId, turn: String, item: String },
+    /// A range of an event kept whole as an object, named as a page named it.
+    Object { resident: ResidentId, object: String, offset: u64, length: u32 },
+    /// What the timeline's records brought after the first `after` of them:
+    /// the events written and those gone, in the order they were. `after`
+    /// is the `through` an earlier page or changes gave. A reader that holds
+    /// part of the timeline brings it up to date by these, and reads no
+    /// page again.
+    Changes { resident: ResidentId, after: u64, max_events: u32, max_bytes: u32 },
+    /// The files the conversation changed, each change a record kept beside
+    /// its timeline (`conversation.files`), those written after the first
+    /// `after` of them: `through` an earlier answer gave, 0 for all. A
+    /// machine that keeps no such records answers that it does not.
+    Files { resident: ResidentId, after: u64, max_items: u32 },
+}
+
+/// The most file changes one answer holds.
+pub const FILES_ITEMS: u32 = 512;
+
+impl TimelineAsk {
+    pub fn resident(&self) -> &ResidentId {
+        match self {
+            Self::Page { resident, .. }
+            | Self::Moved { resident, .. }
+            | Self::Running { resident, .. }
+            | Self::Object { resident, .. }
+            | Self::Changes { resident, .. }
+            | Self::Files { resident, .. } => resident,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum TimelineTold {
+    Running {
+        event: Option<Box<crate::session::SessionEvent>>,
+        mark: Option<crate::session::Mark>,
+    },
+    Page {
+        /// The timeline's revision as the page was read; none while the
+        /// conversation's timeline is not made yet.
+        revision: Option<u64>,
+        /// Explicitly true until the first complete history reading was installed.
+        /// Older nodes omit this and retain their revision-based behavior.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        initializing: Option<bool>,
+        events: Vec<TimelineEvent>,
+        /// Where to read on from towards the start, when there may be more.
+        older: Option<TimelinePlace>,
+        /// Where to read on from towards the end, when there may be more.
+        newer: Option<TimelinePlace>,
+        /// How many records the timeline held as the page was read: what
+        /// `Changes` is asked after, for what comes after this page. None
+        /// from a machine that answers no changes.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        through: Option<u64>,
+    },
+    Moved {
+        revision: Option<u64>,
+        /// Explicitly true until the first complete history reading was installed.
+        /// Older nodes omit this and retain their revision-based behavior.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        initializing: Option<bool>,
+    },
+    Object {
+        /// The bytes asked for, in base64; none when the conversation's
+        /// timeline refers to no such object.
+        base64: Option<String>,
+    },
+    Changes {
+        /// The timeline's revision as its records were read.
+        revision: Option<u64>,
+        /// Explicitly true until the first complete history reading was installed.
+        /// Older nodes omit this and retain their revision-based behavior.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        initializing: Option<bool>,
+        /// In the order they were written. An event may be among them more
+        /// than once: the last is how it stands.
+        changes: Vec<TimelineChange>,
+        /// What to ask `Changes` after next.
+        through: u64,
+        /// Whether the timeline holds records after these.
+        more: bool,
+    },
+    /// The timeline does not hold its records from the place asked after,
+    /// as one made anew: the reader reads its pages again.
+    Reread,
+    Files {
+        /// Whether the conversation's file changes are kept where it was
+        /// read: not by a machine or hub of an earlier release, nor for a
+        /// conversation kept outside the asset library.
+        known: bool,
+        /// In the order they were written; an item may be among them more
+        /// than once, the last as it stands.
+        changes: Vec<FileChangeTold>,
+        /// What to ask `Files` after next.
+        through: u64,
+        /// Whether more were written after these.
+        more: bool,
+    },
+}
+
+/// One file change as it stands from then on, or its end: `change` is the
+/// record (`fastctx_content::v2::ConversationFileChange`), none once gone.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FileChangeTold {
+    pub item: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub change: Option<serde_json::Value>,
+}
+
+/// One record of a timeline: an event as it stands from then on, or its end.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "change", rename_all = "snake_case")]
+pub enum TimelineChange {
+    /// The event stands at its place as shown. A reader that holds an event
+    /// of the same item holds this one instead, where this one stands.
+    Is { event: TimelineEvent },
+    /// The timeline no longer holds the item.
+    Gone { item: String },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TimelineEvent {
+    pub place: TimelinePlace,
+    /// The timeline's count of records as this event was written: a reader
+    /// that holds the event at a lower count takes this one in its place.
+    pub sequence: u64,
+    /// The original event's name and content before occurrence numbering or previewing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub likeness: Option<[u8; 32]>,
+    #[serde(flatten)]
+    pub shown: TimelineShown,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "shown", rename_all = "snake_case")]
+pub enum TimelineShown {
+    /// The event as JSON. Readers decode each event independently, skipping
+    /// those they do not understand.
+    Event { event: serde_json::Value },
+    /// An event too large for a page: how long it is, the object that holds
+    /// it whole, and in `slim` the same event with what is long in it cut
+    /// short: still an event, and the one it stands for by its time, kind,
+    /// turn and item. None when no cut keeps it that.
+    Oversized { bytes: u64, slim: Option<serde_json::Value>, object: String },
+}

@@ -37,14 +37,8 @@
 }
 
 .data-bar {
-  display: block;
   width: 100%;
-  height: 32px;
-  overflow: visible;
-}
-
-.data-ink {
-  mix-blend-mode: var(--pen-blend);
+  height: 16px;
 }
 
 .data-ink.data-conversations { fill: var(--data-conversations); }
@@ -297,4 +291,11 @@
   .data-row-open .data-size {
     min-width: 0;
   }
+}
+
+/* Over what was last measured, while it is measured again
+   (`DataPage.freshness`). */
+.data-fresh {
+  margin: 0 0 var(--space-3);
+  font-size: var(--size-text);
 }

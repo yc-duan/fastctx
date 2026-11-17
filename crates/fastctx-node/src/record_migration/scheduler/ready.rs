@@ -52,24 +52,6 @@ impl Scopes {
             self.bytes -= conversation.len() + 128 + families.iter().map(|family| family.len() + 128).sum::<usize>();
         }
     }
-    fn forget(&mut self, conversation: &str, prefix: &str) {
-        let Some(families) = self.scopes.get_mut(conversation) else { return };
-        let before = families.len();
-        let mut freed = 0;
-        families.retain(|family| {
-            let kept = !family.starts_with(prefix);
-            if !kept {
-                freed += family.len() + 128;
-            }
-            kept
-        });
-        self.count -= before - families.len();
-        self.bytes -= freed;
-        if families.is_empty() {
-            self.scopes.remove(conversation);
-            self.bytes -= conversation.len() + 128;
-        }
-    }
 }
 
 #[derive(Default)]
@@ -103,12 +85,7 @@ impl Ready {
         self.cached.delete(conversation);
         self.told();
     }
-    /// Lets go of the families under `prefix`, retired with what they held.
-    pub(super) fn forget(&mut self, conversation: &str, prefix: &str) {
-        self.unread.forget(conversation, prefix);
-        self.cached.forget(conversation, prefix);
-        self.told();
-    }
+
     pub(super) fn extend(&mut self, other: Self) {
         for scopes in [other.unread, other.cached] {
             for (conversation, families) in scopes.scopes {

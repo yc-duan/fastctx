@@ -14,7 +14,7 @@ use std::sync::Arc;
 fn publish(
     node: &Node,
     about: &About,
-    restriction: Option<&(fastctx_types::access::HubAccount, UsedUp)>,
+    restriction: Option<&(Option<fastctx_types::access::HubAccount>, UsedUp)>,
 ) -> std::io::Result<()> {
     if about.host.agent.as_str() != "claude" {
         return Ok(());
@@ -25,7 +25,7 @@ fn publish(
         return Ok(());
     }
     let path = directory.join("hold.json");
-    let desired = restriction.map(|(account, used)| json!({"until": used.expires(), "said": used.said(account), "models": if used.fable() { Some(["fable"]) } else { None }}));
+    let desired = restriction.map(|(account, used)| json!({"until": used.expires(), "said": used.said(account.as_ref()), "models": if used.fable() { Some(["fable"]) } else { None }}));
     match desired {
         Some(value) => {
             let bytes = serde_json::to_vec(&value).map_err(std::io::Error::other)?;
@@ -49,10 +49,12 @@ pub(super) fn refresh(node: &Arc<Node>, login: Option<(&str, &Path)>) -> Option<
     let defaults = (node.codex.default().config_home().to_path_buf(), super::claude_default());
     let mut logins: BTreeMap<String, Vec<(ResidentId, About)>> = BTreeMap::new();
     for record in node.residents.everyone() {
-        if record.removed.is_some() || !matches!(record.about.acting, Acting::Accounts { .. }) {
+        let agent = record.about.host.agent.as_str();
+        // Those working for accounts may be held by their assistance; the
+        // machine's own Claude Code conversations by the login's Fable line.
+        if record.removed.is_some() || !(matches!(record.about.acting, Acting::Accounts { .. }) || agent == "claude") {
             continue;
         }
-        let agent = record.about.host.agent.as_str();
         let dir = match (&record.about.home, agent) {
             (Some(home), _) => home.clone(),
             (None, "codex") => defaults.0.clone(),
@@ -108,7 +110,7 @@ fn refresh_login(node: &Arc<Node>, records: Vec<(ResidentId, About)>) -> Option<
                 {
                     node.log.line(format_args!("stopping {id} at its allowance: {}", failure.message));
                 }
-                let health = Health { kind: HealthKind::Warning, text: used.said(&account) };
+                let health = Health { kind: HealthKind::Warning, text: used.said(account.as_ref()) };
                 if let Err(error) = crate::turns::health(&node, &id, None, health) {
                     node.log.line(format_args!("recording {id}'s usage hold: {error}"));
                 }

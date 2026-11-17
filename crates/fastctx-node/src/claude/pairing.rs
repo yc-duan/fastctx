@@ -37,6 +37,9 @@ pub(crate) async fn directory(
             "the Claude session was {deleted}, a conversation deleted here"
         )));
     }
+    if node.claude.copies.is_copy(node, &session)? {
+        return Err(fastctx_types::ipc::Failure::new("the Claude session is an excluded copy"));
+    }
     let started_here = |id: &ResidentId| {
         node.residents.about(id).is_some_and(|(about, _)| about.world_started && about.host.agent.as_str() == "claude")
     };
@@ -61,11 +64,19 @@ pub(crate) async fn directory(
             (started_here(&id) && crate::homes::same_dir(cwd, node.world.conversation(&id).path())).then_some(id)
         }),
     };
-    // A session that names no conversation may be a copy Claude Code started
-    // instead of waking one: a wake in flight says so before it pairs.
+    // The copy Claude Code starts in place of waking a session is a
+    // background session that names no conversation, and neither its history
+    // nor its place establishes whose it is. The World's own launches name
+    // their conversation through settings or their recorded launch ID.
     if known.is_none() {
-        node.claude.copies.settled().await;
-        if node.claude.copies.is_copy(&session) {
+        let assigned = node.residents.resident_of_thread(&session).is_some()
+            || session.get(..8).is_some_and(|short| node.residents.resident_of_thread(short).is_some());
+        if background != Some(false) && !assigned && node.claude.copies.unwanted(node, &session)? {
+            return Err(fastctx_types::ipc::Failure::new(
+                "a background session that names no conversation came as a wake was in flight; it is taken for the copy Claude Code starts in place of waking a session",
+            ));
+        }
+        if node.claude.copies.is_copy(node, &session)? {
             node.log.line(format_args!("refused the Claude session {session}: it is a copy the World stopped"));
             return Err(fastctx_types::ipc::Failure::new(
                 "the Claude session is a copy Claude Code started instead of waking a running session; the World stopped it",
@@ -146,6 +157,7 @@ pub(crate) async fn directory(
         node.residents.active(&id).map_err(|failure| io::Error::other(failure.message))?;
         crate::context::refresh_local_now(node, &id)?;
         crate::context::hand_to_session(node, &id, &source)?;
+        super::channel::tell(node, &source, &registration.session, true);
         if registration.process.is_some() {
             fastctx_platform::publish(
                 &source.join("session.json"),
@@ -190,6 +202,19 @@ pub(super) fn resident(
 ) -> io::Result<ResidentId> {
     if let Some(deleted) = node.residents.deleted_session(&registration.session) {
         return Err(io::Error::other(format!("it was {deleted}, a conversation deleted here")));
+    }
+    if node.claude.copies.is_copy(node, &registration.session).map_err(|error| io::Error::other(error.message))? {
+        return Err(io::Error::other("the Claude session is an excluded copy"));
+    }
+    let assigned = node.residents.resident_of_thread(&registration.session).is_some()
+        || registration.session.get(..8).is_some_and(|short| node.residents.resident_of_thread(short).is_some());
+    if !arrival.own
+        && !assigned
+        && node.claude.copies.unwanted(node, &registration.session).map_err(|error| io::Error::other(error.message))?
+    {
+        return Err(io::Error::other(
+            "it names no conversation and came as a wake was in flight; it is taken for the copy Claude Code starts in place of waking a session",
+        ));
     }
     let root = exchange::sessions(node.world.path());
     let mut chain = Vec::new();
@@ -269,7 +294,12 @@ pub(super) fn resident(
     let id = match candidates.into_iter().next() {
         Some(id) => id,
         None => {
-            if node.claude.copies.is_copy(&registration.session) {
+            if node
+                .claude
+                .copies
+                .is_copy(node, &registration.session)
+                .map_err(|error| io::Error::other(error.message))?
+            {
                 return Err(io::Error::other(
                     "it is a copy Claude Code started instead of waking a running session; the World stopped it",
                 ));
@@ -301,6 +331,7 @@ pub(super) fn resident(
                 focus: Default::default(),
                 home,
                 callee: None,
+                born_shared: crate::timeline::born_shared::now(node),
             };
             node.residents.create(&node.world, about, None, crate::residents::idle(at))?;
             id

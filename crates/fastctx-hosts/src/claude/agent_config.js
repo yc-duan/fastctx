@@ -5,9 +5,13 @@
 // before and says so in Claude Code's debug log: the session goes on.
 async function refreshAccountAgents($, context) {
   try {
-    const result = await $.process.run([FASTCTX, 'claude-subagents', WORLD, context.sessionId])
-    if (result.exitCode !== 0) throw new Error(result.stderr.replace(/^fastctx:\s*/, '').trim() || 'the node did not answer')
-    const configuration = JSON.parse(result.stdout)
+    // Asked on the node's channel where it is reached, without a process.
+    let configuration = await channelSubagents($, context)
+    if (configuration === null) {
+      const result = await $.process.run([FASTCTX, 'claude-subagents', WORLD, context.sessionId])
+      if (result.exitCode !== 0) throw new Error(result.stderr.replace(/^fastctx:\s*/, '').trim() || 'the node did not answer')
+      configuration = JSON.parse(result.stdout)
+    }
     const revision = JSON.stringify(configuration)
     if (context.accountAgentRevision === revision) return
     const active = new Map()

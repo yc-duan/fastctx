@@ -20,6 +20,9 @@ import type { Store } from "./store";
 import type { TalkActs } from "./talk-acts";
 import { talksOf } from "./talk-row";
 
+/** The conversations listed, as the sidebar lists them. */
+type Talks = ReturnType<typeof talksOf>["listed"];
+
 export interface ProjectsWords {
   title: string;
   add: string;
@@ -34,9 +37,9 @@ export const zhProjects: ProjectsWords = {
   title: "项目",
   add: "新建",
   search: "搜索项目",
-  none: "还没有项目",
-  noneFound: "没有找到",
-  talks: (count, waiting) => `${count} 段对话${waiting ? `，${waiting} 段在等你` : ""}`,
+  none: "暂无项目",
+  noneFound: "无匹配项目",
+  talks: (count, waiting) => `${count} 段对话${waiting ? `，${waiting} 段等待回复` : ""}`,
 };
 
 export const enProjects: ProjectsWords = {
@@ -64,6 +67,10 @@ export class ProjectsPage implements Page {
   private readonly stop: () => void;
   private query = "";
   private drawn = "";
+  /** Each project's conversations, counted once for each state of the World
+   *  and of what is under way, not again for each letter typed. */
+  private counted: { world: WorldNow | null; acts: number; byTown: Map<unknown, Talks> } | null = null;
+  private actsSeen = 0;
 
   constructor(private readonly options: ProjectsPageOptions) {
     const { words } = options;
@@ -88,6 +95,7 @@ export class ProjectsPage implements Page {
     this.stop = effect(() => {
       const world = options.store.world.get();
       options.acts.changed.get();
+      this.actsSeen += 1;
       this.draw(world);
     });
   }
@@ -105,7 +113,16 @@ export class ProjectsPage implements Page {
   private draw(world: WorldNow | null): void {
     const { words, acts } = this.options;
     const towns = world?.towns ?? [];
-    const { listed } = talksOf(world, acts);
+    if (!this.counted || this.counted.world !== world || this.counted.acts !== this.actsSeen) {
+      const byTown = new Map<unknown, Talks>();
+      for (const talk of talksOf(world, acts).listed) {
+        const mine = byTown.get(talk.town);
+        if (mine) mine.push(talk);
+        else byTown.set(talk.town, [talk]);
+      }
+      this.counted = { world, acts: this.actsSeen, byTown };
+    }
+    const { byTown } = this.counted;
     const groups = groupsOf(world);
     // Each account's own, under its name where there are several; one rule
     // and its 「新建」 where there is one.
@@ -117,7 +134,7 @@ export class ProjectsPage implements Page {
       const key = section.login ? `${section.login.hub}/${section.login.account}` : "";
       const add = `<button class="text-button quiet-button pjl-add" type="button" data-pjl-add="${escape(key)}">${glyph("plus", 15)}<span>${escape(words.add)}</span></button>`;
       const title = groups.length > 1 && section.login ? `<span>${escape(loginLabel(section.login))}</span>` : `<span class="pjl-said">${escape(words.title)}</span>`;
-      const rows = shown.map((town) => this.row(town, listed.filter((r) => r.town === town.town))).join("");
+      const rows = shown.map((town) => this.row(town, byTown.get(town.town) ?? [])).join("");
       const empty = !anything ? `<div class="pjl-none">${glyph("folder", 40)}<p class="prof-quiet">${escape(words.none)}</p></div>` : !shown.length ? `<p class="prof-quiet pjl-quiet">${escape(words.noneFound)}</p>` : "";
       html += `<section class="home-section pjl-section"><h2 class="section-title pjl-title">${title}${add}</h2>${rows ? `<ul class="pjl-rows">${rows}</ul>` : empty}</section>`;
     }

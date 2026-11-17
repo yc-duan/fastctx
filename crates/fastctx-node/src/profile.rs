@@ -17,7 +17,7 @@ pub(crate) fn scope(
     account: Option<&AccountName>,
 ) -> Result<(Arc<Link>, AccountName), Failure> {
     let acting = crate::around::acting_of(node, caller);
-    if matches!(caller, Caller::Page(_) | Caller::Session(_)) {
+    if matches!(caller, Caller::Session(_)) {
         return Err(Failure::refused("this caller has no account configuration"));
     }
     let mut choices = Vec::new();

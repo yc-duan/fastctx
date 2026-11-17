@@ -114,6 +114,7 @@ pub(super) async fn upload(
             "choose which of this account's machines receives the file before uploading"
         })
     })?;
+    let scope = composer.clone();
     let expected = sent::reserve(node, from, &node.machine(), &acting, target, file, operation, composer).await?;
     let resident = expected.conversation().resident.clone();
     let directory = node.world.conversation(&resident).attachments().join(expected.id.as_str());
@@ -121,6 +122,30 @@ pub(super) async fn upload(
     let _lock = FileLock::try_acquire(&directory.join("forward.lock"))
         .map_err(failure)?
         .ok_or_else(|| Failure::unanswered("this attachment is being forwarded; retry the same operation"))?;
+    // Reserved, its card is in the draft here: a forwarding that fails from
+    // now on leaves it failed there, said while this try holds the lock.
+    let home: Written = node.machine().into();
+    let reserved = expected.clone();
+    let forwarded = forward(node, from, acting, expected, resident, choice, target_machine, input).await;
+    if let Err(error) = &forwarded {
+        sent::failed_here(node, &home, &reserved, scope.as_ref(), error).await;
+    }
+    forwarded
+}
+
+/// Forwards the reserved `expected` to `target_machine`, and keeps what it
+/// became there.
+#[allow(clippy::too_many_arguments)]
+async fn forward(
+    node: &Arc<Node>,
+    from: &MachineName,
+    acting: Acting,
+    expected: Attachment,
+    resident: ResidentId,
+    choice: std::path::PathBuf,
+    target_machine: Written,
+    input: Input,
+) -> Result<Uploaded, Failure> {
     let selected = (target_machine.clone(), acting.clone());
     match references::optional::<(Written, Acting)>(&choice)? {
         Some(kept) if kept != selected => {

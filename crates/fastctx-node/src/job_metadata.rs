@@ -15,6 +15,14 @@ use std::{
     path::{Path, PathBuf},
 };
 
+/// A conversation's owed jobs by their record's path: each owed marker
+/// comes and goes with its entry in one transaction, so the jobs a
+/// conversation waits on are found without opening every job's record.
+const OWED: &str = "owed-jobs";
+/// Set for a job directory, by its path, once the owed list was made from
+/// the records there, as an earlier version kept markers without it.
+const OWED_COMPLETE: &str = "owed-jobs-complete";
+
 #[derive(Clone)]
 pub(crate) struct Job {
     directory: ConversationDir,
@@ -97,25 +105,48 @@ impl Job {
     pub(crate) fn put(&self, kind: &str, value: &impl Serialize) -> io::Result<()> {
         self.put_raw(kind, &serde_json::to_vec(value)?)
     }
+    /// This job's entry in its conversation's owed list, when `kind` is
+    /// the owed marker.
+    fn listed(&self, kind: &str) -> Option<String> {
+        (kind == "owed").then(|| self.record.to_string_lossy().into_owned())
+    }
     pub(crate) fn put_raw(&self, kind: &str, bytes: &[u8]) -> io::Result<()> {
         self.scalar(kind)?;
         let bytes = bytes.to_vec();
-        self.change(kind, bytes.len(), move |rows, family| rows.put_raw(family, "value", &bytes))
+        let listed = self.listed(kind);
+        self.change(kind, bytes.len(), move |rows, family| {
+            rows.put_raw(family, "value", &bytes)?;
+            if let Some(path) = &listed {
+                rows.put(OWED, path, path)?;
+            }
+            Ok(())
+        })
     }
     pub(crate) fn create(&self, kind: &str, bytes: &[u8]) -> io::Result<bool> {
         self.scalar(kind)?;
         let bytes = bytes.to_vec();
+        let listed = self.listed(kind);
         self.change(kind, bytes.len(), move |rows, family| {
             if rows.get_raw(family, "value")?.is_some() {
                 return Ok(false);
             }
             rows.put_raw(family, "value", &bytes)?;
+            if let Some(path) = &listed {
+                rows.put(OWED, path, path)?;
+            }
             Ok(true)
         })
     }
     pub(crate) fn delete(&self, kind: &str) -> io::Result<()> {
         self.scalar(kind)?;
-        self.change(kind, 64, |rows, family| rows.delete(family, "value").map(|_| ()))
+        let listed = self.listed(kind);
+        self.change(kind, 64, move |rows, family| {
+            rows.delete(family, "value")?;
+            if let Some(path) = &listed {
+                rows.delete(OWED, path)?;
+            }
+            Ok(())
+        })
     }
     pub(crate) fn page<T: DeserializeOwned>(&self, kind: &str, cursor: &mut u64) -> io::Result<Vec<T>> {
         let page = self.read(kind, |rows, family| rows.page(family, *cursor, 128))?;
@@ -150,55 +181,37 @@ impl Job {
                 .unwrap_or(0) as u64)
         })
     }
-    /// Called while artifact deletion owns the job's collection claim, before
-    /// deleting the supervisor record. Small transactions keep unrelated writers moving.
-    pub(crate) fn delete_all(&self) -> io::Result<()> {
-        crate::run_facts::delete_step_view(self)?;
-        loop {
-            let prefix = self.prefix.clone();
-            let count = records::write_at(&self.directory, Priority::Background, 4096, move |rows| {
-                let mut query = rows.connection().prepare_cached("SELECT family,identity FROM record_payload_roots WHERE conversation=?1 AND family>=?2 AND family<?3 LIMIT 16")?;
-                let keys = query
-                    .query_map((rows.conversation(), &prefix, format!("{prefix}\u{10ffff}")), |row| {
-                        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-                    })?
-                    .collect::<std::result::Result<Vec<_>, _>>()?;
-                for (family, key) in &keys {
-                    crate::record_payloads::link(rows.connection(), rows.conversation(), family, key, None)?;
-                }
-                Ok(keys.len())
-            })?;
-            if count == 0 {
-                break;
-            }
+}
+
+/// The records the owed list names in the job directory `jobs`; none until
+/// the list is complete for it. An entry may outlive its marker (one owed
+/// while the list was being made, and paid meanwhile), so each is still
+/// checked against its marker by the reader.
+pub(crate) fn owed_listed(jobs: &Path) -> io::Result<Option<Vec<PathBuf>>> {
+    let (directory, ..) = crate::record_database::item(&jobs.join("listed.json"))?;
+    let at = jobs.to_string_lossy().into_owned();
+    records::read(&directory, |rows| {
+        if !rows.exists(OWED_COMPLETE, &at)? {
+            return Ok(None);
         }
-        loop {
-            let prefix = self.prefix.clone();
-            let count = records::write_at(&self.directory, Priority::Background, 4096, move |rows| {
-                Ok(rows.connection().execute("DELETE FROM conversation_records WHERE conversation=?1 AND position IN (SELECT position FROM conversation_records WHERE conversation=?1 AND family>=?2 AND family<?3 LIMIT 64)",(rows.conversation(),&prefix,format!("{prefix}\u{10ffff}")))?)
-            })?;
-            if count == 0 {
-                break;
-            }
+        let paths: Vec<String> = rows.all(OWED)?;
+        Ok(Some(paths.into_iter().map(PathBuf::from).filter(|path| path.parent() == Some(jobs)).collect()))
+    })
+}
+
+/// Lists `owed`, the records with an owed marker found in the job
+/// directory `jobs`, and marks the list complete for it.
+pub(crate) fn complete_owed(jobs: &Path, owed: &[PathBuf]) -> io::Result<()> {
+    let (directory, ..) = crate::record_database::item(&jobs.join("listed.json"))?;
+    let at = jobs.to_string_lossy().into_owned();
+    let owed: Vec<String> = owed.iter().map(|path| path.to_string_lossy().into_owned()).collect();
+    let bytes = owed.iter().map(|path| path.len() * 2 + 64).sum::<usize>() + at.len() + 64;
+    records::write_at(&directory, Priority::Normal, bytes, move |rows| {
+        for path in &owed {
+            rows.put(OWED, path, path)?;
         }
-        let prefix = self.prefix.clone();
-        records::write_at(&self.directory, Priority::Background, 256, move |rows| {
-            for table in ["conversation_record_imports", "conversation_record_versions"] {
-                rows.connection().execute(
-                    &format!("DELETE FROM {table} WHERE conversation=?1 AND family>=?2 AND family<?3"),
-                    (rows.conversation(), &prefix, format!("{prefix}\u{10ffff}")),
-                )?;
-            }
-            Ok(())
-        })?;
-        let (_, conversation) = records::locate(&self.directory)?;
-        crate::record_migration::scheduler::forget(
-            &crate::record_migration::world(&self.directory)?,
-            &conversation,
-            &self.prefix,
-        );
-        Ok(())
-    }
+        rows.put_raw(OWED_COMPLETE, &at, b"1")
+    })
 }
 
 pub(crate) fn get<T: DeserializeOwned>(marker: &Path) -> io::Result<Option<T>> {

@@ -6,7 +6,7 @@ use tokio::sync::oneshot;
 
 async fn request(connection: &mut Connection) -> (u64, Call) {
     let bytes = connection.recv().await.unwrap().expect("the session must retain its arrival");
-    let ClientFrame::Call { id, call } = serde_json::from_slice(&bytes).unwrap() else { panic!("expected call") };
+    let ClientFrame::Call { id, call, .. } = serde_json::from_slice(&bytes).unwrap() else { panic!("expected call") };
     (id, call)
 }
 
@@ -32,13 +32,20 @@ async fn cancelling_a_call_during_its_probe_keeps_the_original_arrival() {
                 &serde_json::to_vec(&Welcome::Accepted {
                     goal_runtime: false,
                     watch_many: false,
+                    composer_documents: false,
                     sentinels: false,
                     goal_commands: false,
                     profiles: false,
                     account_records: false,
                     conversation_plans: false,
+                    timeline_reads: false,
+                    watch_live: false,
+                    topics: false,
+                    remote_topics: false,
                     scratch_locations: false,
                     collaboration_watch: false,
+                    timer_pages: true,
+                    file_changes: false,
                     machine: "fixture".parse().unwrap(),
                     version: env!("CARGO_PKG_VERSION").into(),
                     node_lifetime: None,

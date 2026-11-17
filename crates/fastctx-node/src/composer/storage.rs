@@ -45,14 +45,19 @@ pub(super) fn load<'a>(node: &'a Arc<Node>, id: &'a ResidentId, cell: &'a mut Op
             changed |= super::recovery::settle(node, id, &mut state).await?;
             changed |= uploads::recover(node, id, &mut state).await?;
         }
+        changed |= state.documents().any(|document| document.metadata_dirty());
         if !state.persisted || changed {
             let prepared = persistence::prepare(id, &mut state)?;
+            let compact_due = prepared.compact_due();
             node.database
                 .write_at(fastctx_storage::Priority::Interactive, prepared.bytes, move |transaction| {
                     prepared.commit(transaction)
                 })
                 .await
                 .map_err(failure)?;
+            if compact_due {
+                node.durable_jobs.stir(compaction::KIND);
+            }
         }
         // The draft file an older node kept goes once the database holds
         // the draft; where removing it fails, the database is read first.
@@ -62,13 +67,18 @@ pub(super) fn load<'a>(node: &'a Arc<Node>, id: &'a ResidentId, cell: &'a mut Op
         }
         watching::restore(node, id, &mut state);
         failures::apply(node, id, &mut state);
-        let view = state.view();
+        submissions::restore_stop(node, id, &state);
+        let revision = state.revision;
         let busy = super::idle::busy(&state);
         *cell = Some(state);
+        let runtime = tokio::runtime::Handle::current();
         if recover {
-            publication::committed(node, &tokio::runtime::Handle::current(), id, Arc::new(view), busy);
+            publication::settled(node, &runtime, id, revision, busy);
+            if watching::legacy(node, id) {
+                legacy_refresh::request(node, &runtime, id, revision);
+            }
         } else {
-            cache(node, id, view);
+            publication::invalidate(node, &runtime, id, revision);
         }
         Ok(())
     })
@@ -103,40 +113,66 @@ pub(super) fn publish_then<'a>(
     node: &'a Arc<Node>,
     id: &'a ResidentId,
     cell: &'a mut Option<Stored>,
+    next: Stored,
+    committed: impl FnOnce() + Send + 'static,
+) -> Future<'a, ()> {
+    publish_at(node, id, cell, next, true, committed)
+}
+
+/// As `publish_then`, committed without waiting for the disk where not
+/// `durable`: words sent are taken so (受理, design §3) — their record
+/// in the asset library and its operation are what is waited for
+/// (已落盘), and the sender keeps them until then, sending them again
+/// under the same operation where this commit was lost.
+pub(super) fn publish_at<'a>(
+    node: &'a Arc<Node>,
+    id: &'a ResidentId,
+    cell: &'a mut Option<Stored>,
     mut next: Stored,
+    durable: bool,
     committed: impl FnOnce() + Send + 'static,
 ) -> Future<'a, ()> {
     Box::pin(async move {
         if !node.residents.knows(id) {
             return Err(failure("unknown resident"));
         }
+        let mut operations = next.operations();
+        super::settling::shown(node, id, &mut operations);
         let prepared = persistence::prepare(id, &mut next)?;
-        let documents = node.composers.streams.prepare(id, synchronized(&mut next, &prepared)?);
-        let view = Arc::new(next.view());
+        let compact_due = prepared.compact_due();
+        let documents = node.composers.streams.prepare(id, synchronized(&mut next, &prepared, operations)?);
+        let view = watching::legacy(node, id).then(|| Arc::new(next.view()));
+        let revision = next.revision;
         let busy = super::idle::busy(&next);
         let (weak, published_id, runtime) = (Arc::downgrade(node), id.clone(), tokio::runtime::Handle::current());
-        let result = node
-            .database
-            .write_then_at(
-                fastctx_storage::Priority::Interactive,
-                prepared.bytes,
-                move |transaction| prepared.commit(transaction),
-                move |_| {
-                    documents.committed();
-                    if let Some(node) = weak.upgrade() {
-                        publication::committed(&node, &runtime, &published_id, view, busy);
-                    }
-                    committed();
-                },
-            )
-            .await;
+        let bytes = prepared.bytes;
+        let write = move |transaction: &fastctx_storage::rusqlite::Connection| prepared.commit(transaction);
+        let after = move |_: &_| {
+            documents.committed();
+            if let Some(node) = weak.upgrade() {
+                if compact_due {
+                    node.durable_jobs.stir(compaction::KIND);
+                }
+                match view {
+                    Some(view) => publication::committed(&node, &runtime, &published_id, view, busy),
+                    None => publication::settled(&node, &runtime, &published_id, revision, busy),
+                }
+            }
+            committed();
+        };
+        let priority = fastctx_storage::Priority::Interactive;
+        let result = if durable {
+            node.database.write_then_at(priority, bytes, write, after).await
+        } else {
+            node.database.write_relaxed_then_at(priority, bytes, write, after).await
+        };
         match result {
             Ok(()) => {
                 *cell = Some(next);
                 Ok(())
             }
             Err(reason) => {
-                let error = failure(reason);
+                let error = failures::storage(reason);
                 failures::hold(node, id, next.revision, next.held.unwrap_or_else(|| error.message.clone()));
                 node.watchers.publish(
                     id,
@@ -157,6 +193,7 @@ pub(super) fn publish_then<'a>(
 fn synchronized(
     state: &mut Stored,
     prepared: &persistence::Prepared,
+    operations: Vec<fastctx_types::composer::sync::Operation>,
 ) -> Result<fastctx_types::composer::sync::Frame, Failure> {
     use fastctx_types::composer::sync::{self, Bytes, Frame, Update};
     let visible = state.visible_document_ids();
@@ -175,11 +212,15 @@ fn synchronized(
         });
     }
     state.observed_documents = visible;
-    Ok(Frame::State { version: sync::VERSION, state: Box::new(state.metadata()), documents })
-}
-
-pub(super) fn cache(node: &Node, id: &ResidentId, composer: fastctx_types::composer::Composer) {
-    publication::cache(&node.composers.snapshots, id, Arc::new(composer));
+    let mut metadata = state.metadata();
+    metadata.operations = operations;
+    Ok(Frame::State {
+        version: sync::VERSION,
+        state: Box::new(metadata),
+        documents,
+        vectors: Vec::new(),
+        mutations: true,
+    })
 }
 
 pub(super) fn event(composer: fastctx_types::composer::Composer) -> SessionEvent {

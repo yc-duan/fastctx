@@ -4,7 +4,7 @@
 // where they failed; a check a shield with its tick or its drops; a commit
 // its seal and the way to the branch; a copy two machines, the sheet
 // carried from one to the other; a job its terminal and how it ended, its
-// last lines; a page published, a project entered, the plan written, a goal
+// last lines; a project entered, the plan written, a goal
 // settled, a sentinel set; pictures as themselves. A command not
 // recognised is named on a quiet line; at the foot, the run's own words,
 // folded, as they were always shown.
@@ -12,11 +12,11 @@
 import "./deeds.css";
 import { glyph, type GlyphName } from "../glyphs";
 import { drops } from "./marks";
-import { carried, grid, pennant, planned, published, seal, shield, terminal, town, watching } from "../cards/drawings";
+import { carried, grid, pennant, planned, seal, shield, terminal, town, watching } from "../cards/drawings";
 import { escape } from "../prose";
 import type { LongText } from "../long-text";
 import type { StepSummary } from "../../world/run-facts";
-import type { ChecksDeed, CommitDeed, CopyDeed, Deed, DeedWords, FileDeed, JobDeed, LogDeed, PageDeed, PictureDeed, PlainDeed, PushDeed, SearchDeed, StatusDeed, StopDeed, TestsDeed, WorldDeed, WritesDeed } from "./types";
+import type { ChecksDeed, CommitDeed, CopyDeed, Deed, DeedWords, FileDeed, JobDeed, LogDeed, PictureDeed, PlainDeed, PushDeed, SearchDeed, StatusDeed, StopDeed, TestsDeed, WorldDeed, WritesDeed } from "./types";
 import { bytesSaid } from "../../bytes";
 import { fanCard, sentHtml, troubled } from "./fan";
 
@@ -112,8 +112,6 @@ function drawn(deed: Exclude<Deed, FileDeed | WritesDeed | PictureDeed>, words: 
       return job(deed, words);
     case "stop":
       return stopped(deed, words);
-    case "page":
-      return page(deed, words);
     case "project":
       return scene(town(deed.town).svg, `<span class="dd-big">${escape(deed.town)}</span><span>${escape(words.entered)}</span>`);
     case "world":
@@ -180,11 +178,6 @@ function job(deed: JobDeed, words: DeedWords): HTMLElement {
 function stopped(deed: StopDeed, words: DeedWords): HTMLElement {
   const said = `<span class="dd-big${deed.stopped ? "" : " dd-wrong"}">${escape(words.stopped(deed.how))}</span><span class="dd-line"><code class="dd-hash">${escape(deed.what)}</code>${deed.machine ? `<span>${escape(deed.machine)}</span>` : ""}</span>`;
   return scene(terminal(deed.what, deed.stopped ? "stopped" : "failed").svg, said);
-}
-
-function page(deed: PageDeed, words: DeedWords): HTMLElement {
-  const said = `<span class="dd-big">${escape(deed.title)}</span><span class="dd-line"><span>${escape(deed.name)}</span><span class="dd-quiet">${escape(words.version(deed.version))}</span></span>`;
-  return scene(published(deed.name).svg, said);
 }
 
 /** The plan written, a goal settled, a sentinel set. */

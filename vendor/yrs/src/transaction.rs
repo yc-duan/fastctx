@@ -726,6 +726,9 @@ impl<'doc> TransactionMut<'doc> {
                 if let TypePtr::Branch(mut parent) = item.parent {
                     parent.block_len -= item.len();
                     parent.content_len -= item.content_len(store.offset_kind);
+                    if let ItemContent::String(text) = &item.content {
+                        parent.text_scalar_len -= text.as_str().chars().count() as u32;
+                    }
                 }
             }
 

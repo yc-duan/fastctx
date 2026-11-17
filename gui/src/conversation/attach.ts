@@ -8,6 +8,7 @@
 import { leave } from "../app/leave";
 import { viewAttached } from "./attached-pictures";
 import { AttachmentRows } from "./attachment-rows";
+import type { TextWords } from "./text-words";
 
 /** Where an attachment's bytes come from: a file on this computer, which
  *  the shell reads itself, or bytes the page holds (pasted, picked on a
@@ -15,6 +16,7 @@ import { AttachmentRows } from "./attachment-rows";
 export type AttachSource = { kind: "path"; path: string } | { kind: "bytes"; file: File };
 
 export interface AttachWords {
+  text: TextWords;
   attach: string;
   /** Taking a photo straight into the words, on a device with a camera. */
   photo: string;
@@ -64,6 +66,9 @@ let serial = 0;
 export class AttachTray {
   readonly element: HTMLElement;
   private items: Attached[] = [];
+  /** What went with words already shown in the conversation, out of the
+   *  tray while it is still on its way (`setAside`). */
+  private readonly aside = new Set<Attached>();
   private readonly rows: AttachmentRows;
   private sent = new Map<string, number>();
   /** Whether files other than images are taken now: why not, when not. */
@@ -126,6 +131,20 @@ export class AttachTray {
     }
   }
 
+  /** A generated text file, with a completion receipt for preserving refused edits. */
+  async addText(file: File): Promise<void> {
+    const why = this.refusal(false);
+    if (why) throw new Error(why);
+    serial += 1;
+    const item: Attached = { key: `attach-${serial}`, name: file.name, size: file.size, image: false, preview: null,
+      source: { kind: "bytes", file }, state: this.deferred ? "waiting" : "sending", ref: null, why: null };
+    this.items.push(item);
+    this.draw();
+    if (this.deferred) return;
+    await this.send(item);
+    if (!this.items.includes(item) || item.state === "failed") throw new Error(item.why ?? item.name);
+  }
+
   /** Files on this computer, by path: dropped onto the window. */
   addPaths(paths: string[]): void {
     for (const path of paths) {
@@ -171,21 +190,49 @@ export class AttachTray {
     return this.items.filter((item) => !item.image).length;
   }
 
-  /** What the World answered for each attached file that has arrived. */
-  get arrived(): unknown[] {
-    return this.items.filter((item) => item.state === "ready").map((item) => item.ref);
-  }
-
-  /** Sends what is held, one after another, since the first may make the
-   *  place the rest go to; resolves when all have arrived, or rejects with
-   *  the first that did not. */
-  async sendAll(): Promise<void> {
-    for (const item of [...this.items]) {
+  /** Sends `items`, what is held now unless said, one after another, since
+   *  the first may make the place the rest go to; resolves when all have
+   *  arrived, or rejects with the first that did not. What is attached
+   *  meanwhile is not among them: it stays held for the next words. */
+  async sendAll(items: readonly Attached[] = this.items): Promise<void> {
+    for (const item of [...items]) {
       // One taken out while the others went is not sent.
-      if (item.state === "ready" || !this.items.includes(item)) continue;
+      if (item.state === "ready" || (!this.items.includes(item) && !this.aside.has(item))) continue;
       await this.send(item);
       if (item.state === "failed") throw new Error(item.why ?? item.name);
     }
+  }
+
+  /** Takes `items` out of the tray while they go on their way: the words
+   *  they went with already show them in the conversation, so they are not
+   *  shown twice (`putBack` returns them if the words did not go). */
+  setAside(items: readonly Attached[]): void {
+    for (const item of items) if (this.items.includes(item)) this.aside.add(item);
+    this.items = this.items.filter((item) => !this.aside.has(item));
+    this.draw();
+    this.changed();
+  }
+
+  /** Puts what was set aside back at the head of the tray, as it was: its
+   *  words did not go, and it goes again with the next. */
+  putBack(items: readonly Attached[]): void {
+    const back = items.filter((item) => this.aside.delete(item));
+    if (!back.length) return;
+    this.items = [...back, ...this.items];
+    this.draw();
+    this.changed();
+  }
+
+  /** Lets go of `items`, which went with their words; what was attached
+   *  since stays. Their pictures stay with the words they went with. */
+  went(items: readonly Attached[]): void {
+    for (const item of items) {
+      this.aside.delete(item);
+      this.sent.delete(item.key);
+    }
+    this.items = this.items.filter((item) => !items.includes(item));
+    this.draw();
+    this.changed();
   }
 
   /** What was sent no longer fits where the words will go (another
@@ -289,14 +336,18 @@ export class AttachTray {
 
   private draw(): void {
     const { words } = this;
-    this.rows.draw(this.items.map((item) => ({
-      key: item.key, name: item.name, image: item.image, preview: item.preview, state: item.state,
-      fact: item.state === "failed" ? words.failed(item.why ?? "")
-        : item.state === "sending" ? words.sending
-        : item.size === null ? "" : words.size(item.size),
-      why: item.why, retry: item.state === "failed" ? item.key : null, remove: item.key,
-      progress: item.state === "sending" && item.size ? 100 * (this.sent.get(item.key) ?? 0) / item.size : null,
-    })));
+    this.rows.draw(this.items.map((item) => {
+      const file = item.source?.kind === "bytes" ? item.source.file : null;
+      return {
+        key: item.key, name: item.name, image: item.image, preview: item.preview, state: item.state,
+        ...(file?.type.startsWith("text/plain") ? { open: () => { void import("./text-preview").then(({ previewText }) => previewText(file, words.text)); } } : {}),
+        fact: item.state === "failed" ? words.failed(item.why ?? "")
+          : item.state === "sending" ? words.sending
+          : item.size === null ? "" : words.size(item.size),
+        why: item.why, retry: item.state === "failed" ? item.key : null, remove: item.key,
+        progress: item.state === "sending" && item.size ? 100 * (this.sent.get(item.key) ?? 0) / item.size : null,
+      };
+    }));
     this.changed();
   }
 }

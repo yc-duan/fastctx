@@ -30,10 +30,32 @@ pub enum Call {
         session: String,
     },
     /// Local operational diagnostics. Never relayed through another machine.
-    DoctorCalls,
+    DoctorCalls {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        after: Option<u64>,
+    },
     /// The node's measures of itself, its health and the scenes it left.
     /// Never relayed through another machine.
     DoctorReadings,
+    /// How `account`'s machines stand in syncing with `hub` over the last
+    /// `hours` (design §28.9): what this machine sees itself, and what the
+    /// hub reckons when it is reached. Never relayed through another machine.
+    SyncStatus {
+        hub: crate::access::HubId,
+        account: crate::AccountName,
+        hours: u32,
+        /// The one machine whose line is drawn in full: the others' lines
+        /// come coarser where the account has many (`assets::Request`).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        machine: Option<crate::MachineName>,
+    },
+    /// The account that opened the conversation `resident`, logged in here,
+    /// has it written on here from now on, the device it lived on lost
+    /// (design §28.10): its streams that device ordered are taken over.
+    /// Never relayed through another machine.
+    AdoptConversation {
+        resident: ResidentId,
+    },
     Plan {
         hub: Option<crate::HubName>,
         account: Option<crate::AccountName>,
@@ -87,6 +109,23 @@ pub enum Call {
         paths: Vec<std::path::PathBuf>,
     },
     History(crate::history::HistoryCall),
+    /// A conversation's installed timeline, read without its host's record
+    /// (`crate::timeline_pages`).
+    Timeline {
+        machine: Option<Written>,
+        request: crate::timeline_pages::TimelineAsk,
+    },
+    /// Waits until a piece of this machine's state a reader reads from has
+    /// changed (`crate::topics`), in place of reading it again on a timer.
+    Topics {
+        request: crate::topics::TopicsAsk,
+    },
+    /// Waits on topics of another machine, for a page here that shows its
+    /// state (`RemoteCall::Topics`); none when that machine does not tell.
+    RemoteTopics {
+        machine: crate::access::Written,
+        request: crate::topics::TopicsAsk,
+    },
     WatchHistory {
         scope: crate::history::Scope,
     },
@@ -168,6 +207,12 @@ pub enum Call {
         hub: crate::HubName,
         account: crate::AccountName,
         before: Option<u64>,
+        /// The asker reads the records of the hub's assets sealed and
+        /// opened (`machine_log::Needs::AssetSeals`). A local tool of an
+        /// earlier release does not say so, and is given none: it could
+        /// read nothing of a page with one.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        asset_seals: bool,
     },
     /// The account's history switch, or this computer's with neither name.
     HistorySwitchRead {
@@ -258,10 +303,18 @@ pub enum Call {
     WatchFeatures,
     /// The World as an interface shows it, read from what this computer
     /// holds (`crate::world::WorldNow`).
-    WorldNow,
+    WorldNow {
+        /// Machines retained by the interface, whose current visibility the node also decides.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        known: Vec<String>,
+    },
     /// Answered with `NodeFrame::World`: the World as an interface shows it,
     /// then again each time it changes, until the client leaves.
-    WatchWorld,
+    WatchWorld {
+        /// Machines retained across earlier watches or application restarts.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        known: Vec<String>,
+    },
     /// Answered `Done` once a way from this computer to `machine` opens that
     /// was not there when asked: its line to the hub came back, the machine
     /// connected anew, or a direct link with it came up. An interface that
@@ -426,6 +479,8 @@ pub enum Call {
     Folders {
         machine: Option<Written>,
         path: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cursor: Option<String>,
     },
     /// What a machine, or this computer, keeps free in memory for its
     /// agents; sets it first when `bytes` is given (`crate::stats::MEMORY_ROOMS`).
@@ -573,6 +628,17 @@ pub enum Call {
         dir: std::path::PathBuf,
         on: bool,
     },
+    /// The week of the login `dir` on `machine`, in quota dollars: what an
+    /// assistance's share and the whole login's Fable line are reckoned of.
+    /// None sets the World's default again. Set by whoever may manage the
+    /// login.
+    SetAgentWeek {
+        machine: Written,
+        agent: AgentName,
+        dir: std::path::PathBuf,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        week: Option<crate::usage::Usd>,
+    },
     /// Changes the models the World offers in the Claude Code login `dir` on
     /// `machine`; changed by whoever may manage the login, offered to
     /// everyone who uses it, those it assists too (`world-gui.md`, 对话).
@@ -700,6 +766,10 @@ pub enum Call {
         /// The viewer reads `session::Watched::Now`.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         now: bool,
+        /// Only events from the subscription onward, acknowledged by Resumed.
+        /// Requires watch_live; no history is prepared or transmitted.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        live_only: bool,
         /// Follows the conversation's collaboration instead of its history
         /// (`session::Watched::Collaboration`); said only to a node whose
         /// welcome says `collaboration_watch`.
@@ -724,6 +794,16 @@ pub enum Call {
     Stop {
         resident: ResidentId,
         machine: Option<Written>,
+        /// The turn the user saw running: only it is stopped, never one
+        /// begun since. A node before this field stops whatever runs.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        turn: Option<String>,
+        /// Seeing no turn, the words on their way when the user pressed
+        /// stop: only the turn that takes them is stopped, never one of
+        /// words sent after. A node before this field stops whatever runs
+        /// or comes.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        words: Option<Vec<NoticeId>>,
     },
     /// Does something to a resident's conversation on any machine for the
     /// user, besides speaking into it (`session::control`).
@@ -836,7 +916,6 @@ pub enum Call {
     Project(ProjectCall),
     /// `fastctx journal`.
     Journal(JournalCall),
-    Page(crate::pages::PageCall),
     /// A supervisor says its job's record has changed: the shell started
     /// or exited, the output ended, or nothing of the job runs any more.
     JobChanged {
@@ -975,6 +1054,18 @@ pub enum Reply {
     },
     DoctorCalls {
         calls: Vec<crate::stats::CallWork>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        partial: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        next: Option<u64>,
+    },
+    SyncStatus {
+        local: crate::sync_status::LocalSync,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        hub: Option<Box<crate::sync_status::SyncStatus>>,
+        /// Why the hub's part is missing, when it is.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        unreached: Option<String>,
     },
     DoctorReadings {
         readings: Box<crate::readings::Readings>,
@@ -995,6 +1086,10 @@ pub enum Reply {
     },
     Collaboration(Box<crate::collaboration::Tree>),
     History(crate::history::HistoryReply),
+    Timeline(crate::timeline_pages::TimelineTold),
+    Topics(crate::topics::TopicsTold),
+    /// Another machine's topics, or none when it does not tell them.
+    RemoteTopics(Option<crate::topics::TopicsTold>),
     Memory(crate::memory::MemoryReply),
     MemorySettings(crate::memory::Settings),
     Layer(crate::layers::Chosen),
@@ -1004,6 +1099,11 @@ pub enum Reply {
     },
     Timers {
         timers: Vec<crate::timers::Timer>,
+        /// Empty pages can still have a continuation, for example during a transfer.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        next: Option<String>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        oversized: Vec<crate::timers::OversizedTimer>,
     },
     TurnEvidence {
         evidence: Box<crate::turn_evidence::TurnEvidence>,
@@ -1039,26 +1139,6 @@ pub enum Reply {
     Features(crate::features::Features),
     ComposerUploaded(Box<crate::composer::UploadResult>),
     Composer(Box<crate::composer::Updated>),
-    Page {
-        view: Box<crate::pages::PageView>,
-    },
-    Pages {
-        town: TownName,
-        pages: Vec<crate::pages::PageSummary>,
-    },
-    PageHistory {
-        town: TownName,
-        page: crate::PageName,
-        versions: Vec<crate::pages::PageVersion>,
-    },
-    PageConsent {
-        town: TownName,
-        page: crate::PageName,
-        consent: crate::pages::PageConsent,
-    },
-    PageAct {
-        result: crate::pages::PageResult,
-    },
     FilesFound(crate::file_search::FileSearchReply),
     Folders(crate::focus::Folders),
     Stats(Box<crate::stats::MachineStats>),
@@ -1370,4 +1450,259 @@ pub struct HostCommand {
     pub program: std::path::PathBuf,
     pub args: Vec<String>,
     pub env: Vec<(String, String)>,
+}
+
+/// Each call new to the world protocol states its routing purpose here; the
+/// calls that predate it have none. The match stays exhaustive so a new call
+/// cannot pass without one.
+impl Call {
+    pub fn purpose(&self) -> Option<crate::sync::transfer::Purpose> {
+        use crate::sync::transfer::Purpose;
+        match self {
+            Self::Account { .. }
+            | Self::AccountRecords { .. }
+            | Self::Accounts { .. }
+            | Self::AddAgentLogin { .. }
+            | Self::AgentActivity { .. }
+            | Self::AgentCalls { .. }
+            | Self::AgentFolder { .. }
+            | Self::AgentLogins { .. }
+            | Self::AgentUsage { .. }
+            | Self::Agents { .. }
+            | Self::Arrive { .. }
+            | Self::Ask { .. }
+            | Self::Attach { .. }
+            | Self::AttachmentPlaces { .. }
+            | Self::AttachmentThumbnail { .. }
+            | Self::Book { .. }
+            | Self::BringIn { .. }
+            | Self::ChangeAgentLogin { .. }
+            | Self::ChangeAgentModels { .. }
+            | Self::ClaudeConsent { .. }
+            | Self::ClaudeContext { .. }
+            | Self::ClaudeSessionDirectory { .. }
+            | Self::ClaudeSubagents { .. }
+            | Self::CollabRead { .. }
+            | Self::CollabWrite { .. }
+            | Self::Collaboration { .. }
+            | Self::Collect { .. }
+            | Self::CompactBetweenTurns { .. }
+            | Self::Composer { .. }
+            | Self::Control { .. }
+            | Self::Copy { .. }
+            | Self::Data { .. }
+            | Self::DoctorCalls { .. }
+            | Self::DoctorReadings { .. }
+            | Self::Features { .. }
+            | Self::FindFiles { .. }
+            | Self::Folders { .. }
+            | Self::Forget { .. }
+            | Self::Goal { .. }
+            | Self::GoalCommand { .. }
+            | Self::HandOver { .. }
+            | Self::History { .. }
+            | Self::HistorySwitchRead { .. }
+            | Self::HistorySwitchWrite { .. }
+            | Self::HoldHost { .. }
+            | Self::Homes { .. }
+            | Self::HubArrived { .. }
+            | Self::HubMove { .. }
+            | Self::HubProxy { .. }
+            | Self::ItemDetail { .. }
+            | Self::JobChanged { .. }
+            | Self::Journal { .. }
+            | Self::Layer { .. }
+            | Self::Lines { .. }
+            | Self::Login { .. }
+            | Self::LoginWithToken { .. }
+            | Self::Look { .. }
+            | Self::MachineLog { .. }
+            | Self::MachineUpdates { .. }
+            | Self::Machines { .. }
+            | Self::Manage { .. }
+            | Self::Mcp { .. }
+            | Self::McpRelay { .. }
+            | Self::Memory { .. }
+            | Self::MemoryRoom { .. }
+            | Self::MemorySettings { .. }
+            | Self::Message { .. }
+            | Self::NetworkUpdates { .. }
+            | Self::Nodes { .. }
+            | Self::Offers { .. }
+            | Self::On { .. }
+            | Self::Open { .. }
+            | Self::OpenAccount { .. }
+            | Self::PeekToken { .. }
+            | Self::Plan { .. }
+            | Self::PlanRead { .. }
+            | Self::PlanWrite { .. }
+            | Self::PrepareCopies { .. }
+            | Self::PreviewAgentChange { .. }
+            | Self::ProfileRead { .. }
+            | Self::ProfileSubagents { .. }
+            | Self::ProfileWrite { .. }
+            | Self::Project { .. }
+            | Self::ReadAgentLimits { .. }
+            | Self::ReadAttachment { .. }
+            | Self::ReadFile { .. }
+            | Self::ReadLineNotes { .. }
+            | Self::ReadLines { .. }
+            | Self::RecordRunFailure { .. }
+            | Self::RenameHere { .. }
+            | Self::Reopened { .. }
+            | Self::Run { .. }
+            | Self::Saw { .. }
+            | Self::Say { .. }
+            | Self::ScanAgents { .. }
+            | Self::SeenDissolved { .. }
+            | Self::Sentinel { .. }
+            | Self::SentinelKey { .. }
+            | Self::SentinelSettings { .. }
+            | Self::SentinelTry { .. }
+            | Self::ServerCommand { .. }
+            | Self::SetAgentResetInPlace { .. }
+            | Self::SetAgentTitle { .. }
+            | Self::SetFeature { .. }
+            | Self::SetLanguage { .. }
+            | Self::Since { .. }
+            | Self::Skill { .. }
+            | Self::SkillFiles { .. }
+            | Self::Stats { .. }
+            | Self::Stepped { .. }
+            | Self::Stop { .. }
+            | Self::StopJob { .. }
+            | Self::StoreRunFacts { .. }
+            | Self::Taken { .. }
+            | Self::Talk { .. }
+            | Self::Thumbnail { .. }
+            | Self::Timer { .. }
+            | Self::TurnEvidence { .. }
+            | Self::UninstallPrepare { .. }
+            | Self::Update { .. }
+            | Self::UpdateMachine { .. }
+            | Self::Upload { .. }
+            | Self::Wait { .. }
+            | Self::Watch { .. }
+            | Self::WatchAccountRecords { .. }
+            | Self::WatchFeatures { .. }
+            | Self::WatchHistory { .. }
+            | Self::WatchMany { .. }
+            | Self::WatchMemory { .. }
+            | Self::WatchTools { .. }
+            | Self::WatchWorld { .. }
+            | Self::Who { .. }
+            | Self::WorldNow { .. }
+            | Self::Write { .. } => None,
+            Self::Timeline { .. } => Some(Purpose::AssetSync),
+            Self::Topics { .. } | Self::RemoteTopics { .. } | Self::SyncStatus { .. } => Some(Purpose::Observation),
+            // Takes over the streams the lost device ordered (design §28.10).
+            Self::AdoptConversation { .. } => Some(Purpose::AssetSync),
+            // Sets what a login's assistances and its Fable line are held to.
+            Self::SetAgentWeek { .. } => Some(Purpose::ExecutionControl),
+        }
+    }
+}
+
+/// The answers' purposes, kept the same way as the calls'.
+impl Reply {
+    pub fn answer_purpose(&self) -> Option<crate::sync::transfer::Purpose> {
+        use crate::sync::transfer::Purpose;
+        match self {
+            Self::AccountRecords { .. }
+            | Self::Accounts { .. }
+            | Self::AgentActivity { .. }
+            | Self::AgentCalls { .. }
+            | Self::AgentChangePreview { .. }
+            | Self::AgentLoginChanged { .. }
+            | Self::AgentLogins { .. }
+            | Self::AgentUsage { .. }
+            | Self::Agents { .. }
+            | Self::Arrived { .. }
+            | Self::Asked { .. }
+            | Self::Attachable { .. }
+            | Self::AttachmentPlaces { .. }
+            | Self::Book { .. }
+            | Self::Changed { .. }
+            | Self::ClaudeConsent { .. }
+            | Self::ClaudeContext { .. }
+            | Self::ClaudeSessionDirectory { .. }
+            | Self::ClaudeSubagents { .. }
+            | Self::CollabRead { .. }
+            | Self::CollabWritten { .. }
+            | Self::Collaboration { .. }
+            | Self::Compacted { .. }
+            | Self::Composer { .. }
+            | Self::ComposerUploaded { .. }
+            | Self::Controlled { .. }
+            | Self::Copied { .. }
+            | Self::Data { .. }
+            | Self::DoctorCalls { .. }
+            | Self::DoctorReadings { .. }
+            | Self::Done { .. }
+            | Self::Entered { .. }
+            | Self::EntryAdded { .. }
+            | Self::Features { .. }
+            | Self::FileRead { .. }
+            | Self::FilesFound { .. }
+            | Self::Folders { .. }
+            | Self::Forgetting { .. }
+            | Self::Goal { .. }
+            | Self::History { .. }
+            | Self::HistorySwitch { .. }
+            | Self::HubMove { .. }
+            | Self::HubProxy { .. }
+            | Self::ItemDetail { .. }
+            | Self::JobStopped { .. }
+            | Self::Journal { .. }
+            | Self::Journals { .. }
+            | Self::Layer { .. }
+            | Self::Lines { .. }
+            | Self::LoggedIn { .. }
+            | Self::Looked { .. }
+            | Self::MachineAgentLogins { .. }
+            | Self::MachineLog { .. }
+            | Self::Machines { .. }
+            | Self::Managed { .. }
+            | Self::Map { .. }
+            | Self::Mcp { .. }
+            | Self::Memory { .. }
+            | Self::MemoryRoom { .. }
+            | Self::MemorySettings { .. }
+            | Self::NetworkUpdates { .. }
+            | Self::Nodes { .. }
+            | Self::Notices { .. }
+            | Self::Offers { .. }
+            | Self::Opened { .. }
+            | Self::Plan { .. }
+            | Self::Profile { .. }
+            | Self::ProfileSubagents { .. }
+            | Self::ProfileWritten { .. }
+            | Self::Record { .. }
+            | Self::Run { .. }
+            | Self::Sentinel { .. }
+            | Self::SentinelSettings { .. }
+            | Self::SentinelTried { .. }
+            | Self::ServerInvitation { .. }
+            | Self::Since { .. }
+            | Self::Skill { .. }
+            | Self::SkillFiles { .. }
+            | Self::Spoken { .. }
+            | Self::Stats { .. }
+            | Self::Stopped { .. }
+            | Self::Thumbnail { .. }
+            | Self::Timers { .. }
+            | Self::TokenPeek { .. }
+            | Self::Told { .. }
+            | Self::Towns { .. }
+            | Self::TurnEvidence { .. }
+            | Self::Update { .. }
+            | Self::Uploaded { .. }
+            | Self::Waited { .. }
+            | Self::Who { .. }
+            | Self::WorldNow { .. }
+            | Self::Written { .. } => None,
+            Self::Timeline(_) => Some(Purpose::AssetSync),
+            Self::Topics(_) | Self::RemoteTopics(_) | Self::SyncStatus { .. } => Some(Purpose::Observation),
+        }
+    }
 }

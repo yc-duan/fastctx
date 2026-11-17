@@ -13,19 +13,22 @@ import { bytesSaid } from "../bytes";
 import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
 import { enProblems, known, zhProblems } from "./problem";
-import { outline, seeded, type Point } from "../pen/shapes";
+import { bar } from "../pen/bar";
 import { OUTPUT_DAYS, type ConversationSpace, type DataCall, type DataReply, type Group, type Space } from "../world/data";
 import type { Confirm } from "./confirm";
 import { link } from "./places";
 import { redrawKeepingFocus } from "./focus";
 import { detailOf } from "./problem";
 import type { Page } from "./shell";
+import { waiting, waitingInline } from "./waiting";
 
 export interface DataWords {
   title: string;
   /** The way on to the archived conversations. */
   archived: string;
   total(size: string): string;
+  /** Under the total: entries that could not be read and are not counted. */
+  unread(entries: number): string;
   kinds: { conversations: string; command_output: string; cache: string; program: string; other: string };
   conversations: string;
   groups: Record<Group, string>;
@@ -44,6 +47,7 @@ export interface DataWords {
   refused(name: string, why: string): string;
   output: string;
   outputSaid: string;
+  outputUnlimited: string;
   days(n: number): string;
   cache: string;
   cacheSaid: string;
@@ -54,21 +58,24 @@ export interface DataWords {
   keeps(days: number): string;
   failed: string;
   reading: string;
+  /** Over what was last measured, while it is measured again. */
+  refreshing(ago: string): string;
 }
 
 export const zhData: DataWords = {
   archived: "已归档的对话",
   title: "本机数据",
-  total: (size) => `Fastctx 在这台电脑上占 ${size}`,
+  total: (size) => `Fastctx 在本机占用 ${size}`,
+  unread: (entries) => `另有 ${entries} 项无法读取，未计入`,
   kinds: { conversations: "对话", command_output: "命令输出", cache: "缓存", program: "程序", other: "其他" },
   conversations: "对话",
-  groups: { listed: "在列", removed: "已归档", elsewhere: "别处的" },
-  none: "这里没有",
+  groups: { listed: "列表中", removed: "已归档", elsewhere: "其他机器的" },
+  none: "无",
   untitled: "未命名的对话",
   parts: { records: "历史与附件原件", command_output: "命令输出", host: (agent) => `${agent} 自己的记录` },
-  hostGone: (days) => (days ? `Claude Code 已按 ${days} 天的保留期删掉` : "Claude Code 已自己删掉"),
-  hostMissing: "不在它该在的地方",
-  livesOn: (machine) => `家在 ${machine}`,
+  hostGone: (days) => (days ? `Claude Code 已按 ${days} 天保留期删除` : "Claude Code 已自行删除"),
+  hostMissing: "不在预期位置",
+  livesOn: (machine) => `位于 ${machine}`,
   ago: (at, now) => {
     const minutes = Math.round((now.getTime() - at.getTime()) / 60000);
     if (minutes < 60) return `${Math.max(1, minutes)} 分钟前`;
@@ -76,34 +83,37 @@ export const zhData: DataWords = {
     return `${Math.round(minutes / 1440)} 天前`;
   },
   delete: (n, size) => `删除 ${n} 段，${size}`,
-  deleteTitle: (n) => `删除 ${n} 段对话在这台电脑上的数据？`,
+  deleteTitle: (n) => `删除 ${n} 段对话在本机的数据？`,
   deleteWhat: (home, guests) =>
     [
-      home ? `${home} 段家在这台：它在这台上的一切都删掉，连同 Codex 或 Claude Code 自己的记录，侧栏里也就没了。` : "",
-      guests ? `${guests} 段家在别处：只删它在这台留下的东西，它的家不碰。` : "",
-      "删了找不回来。",
+      home ? `${home} 段位于本机：删除其在本机的全部数据，包括 Codex 或 Claude Code 自身的记录，并从侧栏中移除。` : "",
+      guests ? `${guests} 段位于其他机器：仅删除其在本机留下的数据。` : "",
+      "删除后无法恢复。",
     ]
       .filter(Boolean)
       .join(""),
   deleteGo: "删除",
   deleted: (n, size) => `已删除 ${n} 段，腾出 ${size}`,
-  refused: (name, why) => `${name} 没删${known(why, zhProblems) ? `：${known(why, zhProblems)}` : ""}`,
+  refused: (name, why) => `${name} 未删除${known(why, zhProblems) ? `：${known(why, zhProblems)}` : ""}`,
   output: "命令输出",
-  outputSaid: "模型拿到之后，完整输出再留",
+  outputSaid: "模型读取后，完整输出的保留时长",
+  outputUnlimited: "长期保留。作业输出是资产，不设保留期。",
   days: (n) => `${n} 天`,
   cache: "缓存",
-  cacheSaid: "点开过的文件、拍照留下的图与看过的对话；到期也会自己删",
+  cacheSaid: "打开过的文件、拍摄的图片与查看过的对话；到期自动删除",
   clear: "清空",
   cleared: "已清空",
-  keeps: (days) => `Claude Code 会删掉 ${days} 天没动过的会话记录`,
-  failed: "读不到",
-  reading: "正在量",
+  keeps: (days) => `Claude Code 会删除 ${days} 天未改动的会话记录`,
+  failed: "读取失败",
+  reading: "正在统计本机占用",
+  refreshing: (ago) => `${ago}统计，正在更新`,
 };
 
 export const enData: DataWords = {
   archived: "Archived conversations",
   title: "Data on this computer",
   total: (size) => `Fastctx uses ${size} on this computer`,
+  unread: (entries) => `${entries} more ${entries === 1 ? "entry" : "entries"} could not be read and ${entries === 1 ? "is" : "are"} not counted`,
   kinds: { conversations: "Conversations", command_output: "Command output", cache: "Cache", program: "Program", other: "Other" },
   conversations: "Conversations",
   groups: { listed: "Listed", removed: "Archived", elsewhere: "From elsewhere" },
@@ -132,6 +142,7 @@ export const enData: DataWords = {
   refused: (name, why) => `${name} not deleted${known(why, enProblems) ? `: ${known(why, enProblems)}` : ""}`,
   output: "Command output",
   outputSaid: "After the model has its answer, keep the full output for",
+  outputUnlimited: "Kept indefinitely. Job output is an asset with no retention deadline.",
   days: (n) => (n === 1 ? "1 day" : `${n} days`),
   cache: "Cache",
   cacheSaid: "Files opened, photos taken and conversations viewed; they expire on their own too",
@@ -139,7 +150,8 @@ export const enData: DataWords = {
   cleared: "Emptied",
   keeps: (days) => `Claude Code deletes sessions untouched for ${days} days`,
   failed: "Couldn't read",
-  reading: "Measuring",
+  reading: "Measuring what is kept on this computer",
+  refreshing: (ago) => `Measured ${ago}, updating`,
 };
 
 export interface DataPageOptions {
@@ -157,6 +169,8 @@ export interface DataPageOptions {
 }
 
 const KIND_ORDER = ["conversations", "command_output", "cache", "program", "other"] as const;
+/** A measure younger than this, shown at once, is not made again. */
+const FRESH_MS = 10_000;
 
 export class DataPage implements Page {
   readonly element: HTMLElement;
@@ -169,6 +183,8 @@ export class DataPage implements Page {
   private chosen = new Set<string>();
   private open = new Set<string>();
   private said: { text: string; detail: string } | null = null;
+  /** While it is measured again: what is shown is what was last measured. */
+  private refreshing = false;
 
   constructor(private readonly options: DataPageOptions) {
     this.title = options.words.title;
@@ -190,16 +206,39 @@ export class DataPage implements Page {
 
   private async read(): Promise<void> {
     const { data, cache } = this.options;
+    this.refreshing = true;
+    // This device's cache is asked beside the measure, never after it.
+    const cached = cache?.size().then((bytes) => {
+      this.deviceCache = bytes;
+      if (!this.options.data) this.draw();
+    });
+    // Its failure is told below, once the measure is through.
+    cached?.catch(() => undefined);
     try {
-      if (data) {
-        const reply = await data({ do: "list" });
-        if (reply.data === "listed") this.space = reply;
+      // What was last measured here, shown at once while it is measured
+      // again: measuring walks everything kept here. Asked before the
+      // measure, not beside it: an earlier node takes the question for a
+      // measure, and one measured just now is not measured again.
+      let fresh = false;
+      if (data && !this.space) {
+        const kept = await data({ do: "list", kept: true }).catch(() => null);
+        if (kept?.data === "listed") {
+          this.space = kept;
+          fresh = this.options.now().getTime() - Date.parse(kept.at) < FRESH_MS;
+          this.draw();
+        }
       }
-      if (cache) this.deviceCache = await cache.size();
+      if (data && !fresh) {
+        const reply = await data({ do: "list" });
+        if (reply.data !== "listed") throw new Error(`the node answered ${reply.data} to a list`);
+        this.space = reply;
+      }
+      await cached;
       this.problem = null;
     } catch (error) {
       this.problem = detailOf(error);
     }
+    this.refreshing = false;
     this.draw();
   }
 
@@ -207,16 +246,25 @@ export class DataPage implements Page {
     const { words } = this.options;
     const space = this.space;
     let html: string;
-    if (this.problem) html = `<p class="feature-note" title="${escape(this.problem)}">${escape(words.failed)}</p>`;
-    else if (space) html = `${this.bar(space)}${this.archivedWay()}${this.conversations(space)}${this.output(space)}${this.cacheSection(null)}`;
+    if (this.problem && !space) html = `<p class="feature-note" title="${escape(this.problem)}">${escape(words.failed)}</p>`;
+    else if (space) html = `${this.freshness(space)}${this.bar(space)}${this.archivedWay()}${this.conversations(space)}${this.output(space)}${this.cacheSection(null)}`;
     else if (!this.options.data && this.deviceCache !== null) html = `${this.archivedWay()}${this.cacheSection(this.deviceCache)}`;
-    else html = `<p class="feature-note">${escape(words.reading)}</p>`;
+    else html = waiting({ label: words.reading, shape: "bar-rows", rows: 5 });
     redrawKeepingFocus(this.body, () => {
       this.body.innerHTML = html;
     });
   }
 
-  /** The hand-drawn bar of everything here, a colour for each kind. */
+  /** Over what was last measured while it is measured again, when; and a
+   *  measure again that failed, over what stays shown. */
+  private freshness(space: Space): string {
+    const { words } = this.options;
+    if (this.refreshing) return `<p class="data-fresh">${waitingInline(words.refreshing(words.ago(new Date(space.at), this.options.now())))}</p>`;
+    if (this.problem) return `<p class="feature-note data-fresh" title="${escape(this.problem)}">${escape(words.failed)}</p>`;
+    return "";
+  }
+
+  /** The bar of everything here, a colour for each kind. */
   private bar(space: Space): string {
     const { words } = this.options;
     const sizes: Record<(typeof KIND_ORDER)[number], number> = {
@@ -227,25 +275,15 @@ export class DataPage implements Page {
       other: space.kinds.other,
     };
     const total = totalOf(space) || 1;
-    const width = 600;
-    let at = 4;
-    const random = seeded("data-bar");
-    const strokes = KIND_ORDER.filter((kind) => sizes[kind] > 0)
-      .map((kind) => {
-        const length = Math.max(6, ((width - 8) * sizes[kind]) / total);
-        const points: Point[] = [];
-        for (let x = at; x <= at + length; x += 8) points.push([x, 16 + Math.sin(x / 23) * 0.7]);
-        points.push([at + length, 16]);
-        at += length;
-        return `<path class="data-ink data-${kind}" d="${outline(points, 14, random, { pressure: 0.16, taperStart: 0.02, taperEnd: 0.02 })}"/>`;
-      })
-      .join("");
+    const shown = KIND_ORDER.filter((kind) => sizes[kind] > 0);
+    const drawn = bar({ parts: shown.map((kind) => ({ share: sizes[kind] / total, className: `data-ink data-${kind}` })), seed: "data-bar", thick: 12 }, "data-bar");
     const legend = KIND_ORDER.filter((kind) => sizes[kind] > 0)
       .map((kind) => `<li><span class="data-swatch data-${kind}" aria-hidden="true"></span><span>${escape(words.kinds[kind])}</span><span class="data-size">${escape(size(sizes[kind]))}</span></li>`)
       .join("");
     return `<section class="data-top">
       <p class="data-total" title="${escape(space.root)}">${escape(words.total(size(totalOf(space))))}</p>
-      <svg class="data-bar" viewBox="0 0 ${width} 32" preserveAspectRatio="none" aria-hidden="true"><g filter="url(#pen-marker-lite)">${strokes}</g></svg>
+      ${space.unread ? `<p class="feature-note" title="${escape(space.unread.first ?? "")}">${escape(words.unread(space.unread.entries))}</p>` : ""}
+      ${drawn}
       <ul class="data-legend">${legend}</ul>
     </section>`;
   }
@@ -319,6 +357,9 @@ export class DataPage implements Page {
 
   private output(space: Space): string {
     const { words } = this.options;
+    if (space.output_retention === "unlimited") {
+      return `<section class="home-section data-section"><h2 class="section-title">${escape(words.output)}</h2><p class="data-said">${escape(words.outputUnlimited)}</p></section>`;
+    }
     return `<section class="home-section data-section"><h2 class="section-title">${escape(words.output)}</h2>
       <p class="data-said">${escape(words.outputSaid)}</p>
       <div class="choice-options" role="radiogroup" aria-label="${escape(words.outputSaid)}">${OUTPUT_DAYS.map(
@@ -353,7 +394,11 @@ export class DataPage implements Page {
     if (days && this.space && this.options.data) {
       try {
         const reply = await this.options.data({ do: "output_days", days: Number(days) });
-        if (reply.data === "output_days") this.space.output_days = reply.days;
+        if (reply.data === "output_days") {
+          this.space.output_days = reply.days;
+          if (reply.output_retention === undefined) delete this.space.output_retention;
+          else this.space.output_retention = reply.output_retention;
+        }
       } catch (error) {
         this.said = { text: this.options.words.failed, detail: detailOf(error) };
       }

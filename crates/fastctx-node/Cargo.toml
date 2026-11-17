@@ -19,22 +19,37 @@ required-features = ["storage-drill"]
 
 [features]
 storage-drill = []
+timeline-drill = []
+# The timeline's writing, for fastctx-bench; nothing of the node changes with it.
+bench = ["fastctx-timeline-core/bench"]
+# What the timeline's library tests look into (`cargo test -p fastctx-node --lib
+# --features timeline-test-support`). A feature of its own, not a
+# dev-dependency's: one would give the timeline another set of features
+# whenever any test of the node is built, and the node with it, so that the
+# release tests could not be built of the kernel's own units
+# (scripts/kernel.mjs --tests), as the hub's content-drill says.
+timeline-test-support = ["fastctx-timeline-core/test-support"]
 
 [dependencies]
+fastctx-timeline-core = { path = "../fastctx-timeline-core" }
 tempfile = "3"
 anyhow.workspace = true
 base64 = "0.22"
+bytes = "1"
 fastctx-hands = { path = "../fastctx-hands" }
-fastctx-client = { path = "../fastctx-client" }
+fastctx-client = { path = "../fastctx-client", features = ["replica"] }
+fastctx-content = { path = "../fastctx-content" }
 fastctx-file-search = { path = "../fastctx-file-search" }
 fastctx-hosts = { path = "../fastctx-hosts" }
 fastctx-hub = { path = "../fastctx-hub" }
 fastctx-install = { path = "../fastctx-install" }
+fastctx-jobs = { path = "../fastctx-jobs" }
 fastctx-net = { path = "../fastctx-net" }
 fastctx-agent = { path = "../fastctx-agent" }
 fastctx-sentinel = { path = "../fastctx-sentinel" }
 fastctx-platform = { path = "../fastctx-platform" }
 fastctx-storage = { path = "../fastctx-storage" }
+fastctx-sync = { path = "../fastctx-sync" }
 fastctx-draft = { path = "../fastctx-draft" }
 fastctx-ripgrep = { path = "../fastctx-ripgrep" }
 fastctx-types = { path = "../fastctx-types" }
@@ -42,6 +57,9 @@ fastctx-watch = { path = "../fastctx-watch" }
 fastctx-uninstall = { path = "../fastctx-uninstall" }
 fastctx-update = { path = "../fastctx-update" }
 getrandom = { version = "0.3", features = ["std"] }
+http-body-util = "0.1"
+hyper = { version = "1", features = ["http1", "server"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
 image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
 jiff.workspace = true
 notify = "8"
@@ -49,7 +67,7 @@ quick-xml = "0.42"
 serde.workspace = true
 serde_json = { workspace = true, features = ["raw_value"] }
 sha2 = "0.10"
-tokio = { workspace = true, features = ["fs", "io-util", "macros", "rt-multi-thread", "sync", "time", "signal"] }
+tokio = { workspace = true, features = ["fs", "io-util", "macros", "net", "rt-multi-thread", "sync", "time", "signal"] }
 
 [lints]
 workspace = true

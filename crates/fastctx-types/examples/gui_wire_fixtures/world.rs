@@ -15,6 +15,7 @@ pub struct Fixtures {
     pub nodes: Vec<NodesReply>,
     pub towns: Vec<TownSummary>,
     pub journals: Vec<JournalSummary>,
+    pub machine_presence: Vec<MachinePresence>,
 }
 
 fn at() -> Timestamp {
@@ -119,6 +120,7 @@ fn residents() -> Vec<ResidentNow> {
                 },
                 home: (i == 1).then(|| "C:/Users/ada/.codex-work".into()),
                 callee: None,
+                born_shared: Default::default(),
             },
             town: (i != 0).then(|| "project-0".parse().unwrap()),
             here: i != 2,
@@ -253,6 +255,8 @@ fn who(towns: &[TownSummary]) -> Vec<WorldWho> {
                                     hub: "w-0123456789abcdef".parse().unwrap(),
                                     account: "bob".parse().unwrap(),
                                 }),
+                                exited: None,
+                                remaining: None,
                             })
                             .collect(),
                     },
@@ -331,7 +335,6 @@ fn nodes() -> Vec<NodesReply> {
         version: "fixture-version".into(),
         mcp: true,
         mcp_import: true,
-        page_accounts: true,
         attachment_places: true,
         attachment_runs: true,
         memory_folders: false,
@@ -339,6 +342,10 @@ fn nodes() -> Vec<NodesReply> {
         replicated_records: false,
         collaboration_tree: false,
         collaboration_watch: false,
+        timeline_reads: false,
+        file_changes: false,
+        topics: false,
+        watch_live: false,
         completion_receipts: false,
         control_letters: lifetime,
         run_stops: lifetime,
@@ -495,5 +502,18 @@ fn journals() -> Vec<JournalSummary> {
 
 pub fn fixtures() -> Fixtures {
     let towns = towns();
-    Fixtures { who: who(&towns), nodes: nodes(), towns, journals: journals() }
+    let machine_presence =
+        [MachineAccess::Granted, MachineAccess::NotGranted, MachineAccess::Unknown, MachineAccess::Stopped]
+            .into_iter()
+            .map(|access| MachinePresence {
+                machine: "laptop".into(),
+                hubs: vec![HubMachinePresence {
+                    hub: "w-0123456789abcdef".parse().unwrap(),
+                    revision: 17,
+                    current: matches!(access, MachineAccess::Granted | MachineAccess::NotGranted),
+                    access,
+                }],
+            })
+            .collect();
+    Fixtures { who: who(&towns), nodes: nodes(), towns, journals: journals(), machine_presence }
 }

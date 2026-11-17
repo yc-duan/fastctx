@@ -53,14 +53,16 @@ html.framed .sp-host {
   display: none;
 }
 
-/* Beside the conversations the side has no ground of its own: its cards
-   stand on the page. Over the whole page, as on a phone, it keeps the
-   page's ground over what it covers. */
+/* Beside the conversations the side is a sheet of its own from the window's
+   top to its foot, a shade under the page as the sidebar across the desk
+   is (`shell.css`): the conversations are the page between two margins.
+   Over the whole page, as on a phone, it keeps the page's ground over what
+   it covers. */
 .sp-split > .sp-panel:not(.sp-over) {
   flex: none;
   width: 0;
   overflow: hidden;
-  background: transparent;
+  background: var(--bg-sunken);
   transition: width var(--glide) var(--glide-easing), height var(--glide) var(--glide-easing);
 }
 
@@ -107,6 +109,37 @@ html.framed .sp-host {
   display: block;
   width: 4px;
   height: 100%;
+}
+
+/* Its edge is a line ruled by hand, as the sidebar's is. */
+.sp-margin::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -3px;
+  width: 6px;
+  background: var(--pen-rule);
+  opacity: 0.55;
+  -webkit-mask: var(--pen-rule-down) 50% 0 / 100% 100% no-repeat;
+  mask: var(--pen-rule-down) 50% 0 / 100% 100% no-repeat;
+}
+
+.sp-split[data-dock="left"] .sp-margin::before {
+  left: auto;
+  right: -3px;
+}
+
+.sp-split[data-dock="bottom"] .sp-margin::before {
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: auto;
+  width: auto;
+  height: 1px;
+  -webkit-mask: none;
+  mask: none;
+  opacity: 0.4;
 }
 
 /* The same stroke in ink over it, coming up while the line is held or
@@ -216,14 +249,10 @@ html.framed .sp-panel.sp-over .sp-line {
   --sp-end: var(--gutter);
 }
 
-.sp-split[data-dock="right"] > .sp-panel:not(.sp-over) {
-  --sp-start: var(--space-1);
-  --sp-end: var(--space-3);
-}
-
+.sp-split[data-dock="right"] > .sp-panel:not(.sp-over),
 .sp-split[data-dock="left"] > .sp-panel:not(.sp-over) {
-  --sp-start: var(--space-3);
-  --sp-end: var(--space-1);
+  --sp-start: var(--space-2);
+  --sp-end: var(--space-2);
 }
 
 .sp-page {
@@ -236,21 +265,168 @@ html.framed .sp-panel.sp-over .sp-line {
   line-height: var(--leading-prose);
 }
 
-/* The way back to the overview, over the page it left, where a card's
-   name begins. */
-.sp-back {
-  padding: 0 var(--sp-end) 0 calc(var(--sp-start) + var(--space-3));
+/* The pages open in the side, each on its tab: the overview's first, then
+   what was opened from it, a part or a file. They stand on one line ruled
+   across the sheet, the one in view in the page's ink with a pen's stroke
+   under it in clay, as the views in a page's head do
+   (`design/head-switch.css`); with the overview alone there is no line of
+   tabs at all. More than the line holds, it moves along them. */
+.sp-tabs {
+  position: relative;
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-1);
+  min-width: 0;
+  margin-bottom: var(--space-2);
+  padding: 0 var(--sp-end) 0 var(--sp-start);
 }
 
-.sp-back[hidden] {
+.sp-tabs[hidden] {
   display: none;
 }
 
-/* It has a line of its own, so a phone keeps its name too. */
-@media (max-width: 640px) {
-  .sp-back .page-back span {
-    display: inline;
+.sp-tabs::after {
+  content: "";
+  position: absolute;
+  left: calc(var(--sp-start) + var(--space-3));
+  right: calc(var(--sp-end) + var(--space-3));
+  bottom: 0;
+  height: 8px;
+  background: var(--pen-rule);
+  -webkit-mask: var(--pen-rule-1) 0 50% / 100% 100% no-repeat;
+  mask: var(--pen-rule-1) 0 50% / 100% 100% no-repeat;
+  pointer-events: none;
+}
+
+.sp-tabs-run {
+  flex: 1 1 auto;
+  display: flex;
+  min-width: 0;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+}
+
+.sp-tabs-run::-webkit-scrollbar {
+  display: none;
+}
+
+.sp-tab {
+  position: relative;
+  flex: none;
+  display: flex;
+  align-items: center;
+  max-width: 220px;
+  min-height: 36px;
+  padding: 0 2px 7px var(--space-3);
+  color: var(--text-2);
+  transition: color var(--hover) var(--ease);
+}
+
+.sp-tab.fixed {
+  padding-right: var(--space-3);
+}
+
+.sp-tab:hover,
+.sp-tab.chosen {
+  color: var(--text);
+}
+
+.sp-tab.chosen {
+  color: var(--text-strong);
+}
+
+.sp-tab-name {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  padding: 3px 0;
+  font: inherit;
+  color: inherit;
+  white-space: nowrap;
+}
+
+.sp-tab-name > span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sp-tab-hint {
+  flex: none;
+  color: var(--text-3);
+  font-size: var(--size-fine);
+}
+
+/* The stroke under the one in view; under a name the pointer rests on, the
+   faint line of one about to be drawn. */
+.sp-tab::after {
+  content: "";
+  position: absolute;
+  left: var(--space-3);
+  right: 10px;
+  bottom: 3px;
+  height: 2px;
+  -webkit-mask:
+    linear-gradient(#000, #000) 0 0 / calc(100% - 12px) 100% no-repeat,
+    var(--pen-seg-tip) 100% 0 / 12px 100% no-repeat;
+  mask:
+    linear-gradient(#000, #000) 0 0 / calc(100% - 12px) 100% no-repeat,
+    var(--pen-seg-tip) 100% 0 / 12px 100% no-repeat;
+  background: transparent;
+  transition: background-color var(--hover) var(--ease);
+}
+
+.sp-tab:hover:not(.chosen)::after {
+  background: var(--pen-rule);
+}
+
+.sp-tab.chosen::after {
+  background: var(--accent);
+}
+
+/* A tab's cross keeps its room, so no name moves as it comes: it is there
+   on the tab in view, and on one the pointer rests on. */
+.sp-tab-shut {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  margin-left: 2px;
+  border-radius: var(--radius-s);
+  color: var(--text-3);
+  opacity: 0;
+  transition: opacity var(--hover) var(--ease), color var(--hover) var(--ease), background-color var(--hover) var(--ease);
+}
+
+.sp-tab:hover > .sp-tab-shut,
+.sp-tab.chosen > .sp-tab-shut,
+.sp-tab-shut:focus-visible {
+  opacity: 1;
+}
+
+.sp-tab-shut:hover {
+  background: var(--hairline);
+  color: var(--text);
+}
+
+/* Where no pointer rests on anything, every tab keeps its cross. */
+@media (hover: none) {
+  .sp-tab-shut {
+    opacity: 1;
   }
+}
+
+/* The side pulled out into a window of its own, at the line's end. */
+.sp-out {
+  flex: none;
+  margin-bottom: 6px;
+  color: var(--text-3);
+}
+
+.sp-panel.sp-over .sp-out {
+  display: none;
 }
 
 /* With the side open beside them, the conversations keep a narrow margin. */
@@ -263,16 +439,24 @@ html.framed .sp-panel.sp-over .sp-line {
 }
 
 /* The side's first page: a card for each part with anything to say, each
-   folding away under its name, as tall as it needs; the plan's no more than
-   a little over half the side, its plan scrolling in it. */
+   folding away under its name, as tall as it needs. The plan's takes what
+   height the others leave, its plan scrolling in it, and gives way to them
+   down to a few lines; only where they do not fit even so does the page
+   itself scroll, rather than cut a card off. */
 .sh-page.sp-page {
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-width: thin;
   padding-bottom: var(--space-3);
 }
 
+/* A card is a thing of its own on the side's sheet (the user, 2026-11-16:
+   "要做成一个个卡片的形式…只是加上一个背景而已"): a box that folds away
+   under its name, and can be taken out of the side and put back, which a
+   part of the sheet ruled off from the next would not look like. */
 .sh-card {
   flex: none;
   display: flex;
@@ -290,16 +474,20 @@ html.framed .sp-panel.sp-over .sp-line {
   display: none;
 }
 
-/* Open or shut, the plan's card keeps its ceiling, and its floor comes and
-   goes with the fold: the card never rises past it as it shuts, nor jumps
-   to it as it opens. */
+/* The plan's card has no ceiling of its own: capped at a little over half
+   the side, it left the rest of the side empty under the other cards
+   while its plan was cut short. Its floor comes and goes with the fold. */
 .sh-card[data-of="plan"] {
-  max-height: 56%;
+  /* It gives way to the others open or shut alike. Shut, it used to stop
+     giving way at once, and so sprang to its whole height before folding:
+     its foot, and the fade there, leapt down and came back up. */
+  flex: 0 1 auto;
+  min-height: 40px;
+  min-height: calc(1lh + 2 * var(--space-2));
   transition: min-height var(--expand) var(--expand-easing);
 }
 
 .sh-card[data-of="plan"]:not(.shut) {
-  flex: 0 1 auto;
   min-height: 160px;
 }
 
@@ -407,6 +595,106 @@ html.framed .sp-panel.sp-over .sp-line {
   to {
     --sh-fade-foot: 0px;
   }
+}
+
+/* A card's head: its name, pressed to fold it, and at its end its marks:
+   the one that turns the files' card to their page, the one that takes a
+   card out of the side. The head is also what the card is carried by. */
+.sh-top {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.sh-top > .sh-head {
+  flex: 1 1 auto;
+}
+
+.sh-mark {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  margin-right: var(--space-1);
+  color: var(--text-3);
+  opacity: 0.55;
+  transition: opacity var(--hover) var(--ease), color var(--hover) var(--ease);
+}
+
+.sh-card:hover .sh-mark,
+.sh-mark:focus-visible {
+  opacity: 1;
+}
+
+.sh-mark:hover {
+  color: var(--text);
+}
+
+/* Not where the side lies over the whole desk: a phone opens no window. */
+.sp-over .sh-pull {
+  display: none;
+}
+
+/* The place of a card that stands in a window of its own: its outline,
+   and a line saying so. */
+.sh-page .sh-card.sh-away {
+  flex: none;
+  min-height: 0;
+  background: none;
+  outline: 1px dashed var(--hairline);
+  outline-offset: -1px;
+}
+
+.sh-away .sh-name {
+  color: var(--text-3);
+}
+
+/* A card being carried: where it stood it fades; its head goes with the
+   pointer, lifted; a line in clay marks where among the cards it would
+   stand. Past the side's edge the head is ruled round, as a window is. */
+.sh-card.lifted {
+  opacity: 0.35;
+}
+
+.sh-ghost {
+  position: fixed;
+  z-index: 9500;
+  top: 0;
+  left: 0;
+  display: flex;
+  align-items: center;
+  border-radius: var(--radius-m);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-pop);
+  color: var(--text);
+  font-family: var(--font-reading);
+  font-size: var(--size-text);
+  pointer-events: none;
+}
+
+.sh-ghost.leaving {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.sh-drop {
+  position: fixed;
+  z-index: 9400;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--accent);
+  pointer-events: none;
+}
+
+.sh-drop[hidden] {
+  display: none;
+}
+
+html.sh-carrying,
+html.sh-carrying * {
+  cursor: grabbing !important;
+  user-select: none !important;
 }
 
 .sh-head {
@@ -554,20 +842,94 @@ html.framed .sp-panel.sp-over .sp-line {
   text-overflow: ellipsis;
 }
 
-.sh-lines {
+/* What a card holds scrolls in the card past a height: the card stands as
+   tall as what it holds up to that and no taller, and nothing of it is left
+   out to be asked for (the user, 2026-11-17: "全部搞成能滚动的，就没有展开
+   逻辑了"). The page set into a card is what scrolls; its frame is the
+   height it may take. */
+.sh-frame {
   display: flex;
   flex-direction: column;
+  min-height: 0;
+  max-height: min(38dvh, 280px);
 }
 
-.sh-lines .cp-line {
-  padding-left: var(--space-2);
+.sh-frame > .cp-page {
+  flex: 0 1 auto;
 }
 
-/* Under the lines, where they begin. */
-.sh-all {
-  align-self: flex-start;
-  margin: var(--space-1) var(--space-1) 0;
-  padding: 0 var(--space-2);
+/* The files' page stands taller: its switch stays at its head, the list or
+   the trees under it scroll. How many files and by how many lines is said
+   at the card's head. */
+.sh-card[data-of="files"] .sh-frame {
+  max-height: min(56dvh, 520px);
+  padding: 0 var(--space-3);
+}
+
+.sh-frame > .sf-page {
+  flex: 0 1 auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.sh-frame .sf-sum {
+  display: none;
+}
+
+/* What scrolls in a card fades out at an edge where more of it lies past
+   the edge, as the plan does, so that there is more is seen before it is
+   scrolled to. */
+.sh-files,
+.sh-frame > .cp-page,
+.sh-frame .sf-changes,
+.sh-frame .sf-folders {
+  -webkit-mask-image: linear-gradient(to bottom, transparent, black var(--sh-fade-head), black calc(100% - var(--sh-fade-foot)), transparent);
+  mask-image: linear-gradient(to bottom, transparent, black var(--sh-fade-head), black calc(100% - var(--sh-fade-foot)), transparent);
+}
+
+@supports (animation-timeline: scroll()) {
+  .sh-files,
+  .sh-frame > .cp-page,
+  .sh-frame .sf-changes,
+  .sh-frame .sf-folders {
+    animation: sh-fade-head linear both, sh-fade-foot linear both;
+    animation-timeline: scroll(self), scroll(self);
+    animation-range: 0 var(--space-6), calc(100% - var(--space-8)) 100%;
+  }
+}
+
+/* The files' card has two things to show, the files a line each and their
+   page, in one place: turned from the one to the other (`home.ts`,
+   `browse`), the card goes from the one height to the other while the one
+   left fades out over the one coming in. */
+.sh-views {
+  display: grid;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.sh-view {
+  grid-area: 1 / 1;
+  min-width: 0;
+  min-height: 0;
+}
+
+.sh-view:not(.shown, .leaving) {
+  display: none;
+}
+
+.sh-view.leaving {
+  align-self: start;
+  pointer-events: none;
+}
+
+/* How many files and by how many lines, after how the card stands. */
+.sh-state > .cf-figures {
+  gap: 6px;
+  margin-left: var(--space-2);
+  vertical-align: bottom;
 }
 
 .sh-none {
@@ -581,48 +943,6 @@ html.framed .sp-panel.sp-over .sp-line {
   .sh-ask {
     min-height: 44px;
   }
-}
-
-/* Everyone who works with the conversation, and one of the host's agents,
-   in a sheet: the sheet scrolls, its head stays. */
-@media (min-width: 761px) {
-  .cs-sheet > .sheet-body {
-    width: min(640px, 100vw - 32px);
-  }
-}
-
-.cs-sheet .cp-page {
-  overflow: visible;
-}
-
-.cs-sheet .agent-scroll {
-  max-height: none;
-}
-
-.cs-sheet .agent-box {
-  margin: 0;
-  padding: 0;
-  background: transparent;
-}
-
-.cs-head {
-  gap: var(--space-2);
-}
-
-.cs-head .sheet-title {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-
-.cs-head .page-back {
-  max-width: none;
-}
-
-.cs-jump {
-  flex: none;
 }
 
 /* The history a conversation's model works with: its documents one to a
@@ -684,7 +1004,6 @@ html.framed .sp-panel.sp-over .sp-line {
   align-items: center;
   gap: 2px;
   max-width: calc(100% - var(--sp-switch-right) - var(--space-4));
-  background: var(--bg);
 }
 
 .sp-corner-bar[hidden] {
@@ -712,11 +1031,6 @@ html.framed .sp-panel.sp-over .sp-line {
   display: none;
 }
 
-/* On the desk the window's buttons stand on the paper's own ground too, so
-   the side slides in beneath them. */
-html.on-desk .window-controls {
-  background: var(--bg);
-}
 
 .sp-host.sp-over.sp-visible .sp-corner-bar {
   display: none;
@@ -776,6 +1090,16 @@ html.on-desk .window-controls {
   height: var(--side-height);
 }
 
+/* Along the foot nothing of the corner stands over it: it keeps no line
+   for a head, only a little room over its cards. */
+.sp-split[data-dock="bottom"] > .sp-panel:not(.sp-over) .sp-head {
+  display: none;
+}
+
+.sp-split[data-dock="bottom"] > .sp-panel:not(.sp-over) > .sp-sheet {
+  padding-top: var(--space-2);
+}
+
 .sp-split[data-dock="left"] .sp-margin,
 .sp-split[data-dock="left"] .sp-grip {
   left: auto;
@@ -808,6 +1132,31 @@ html.on-desk .window-controls {
 .sp-dock {
   position: relative;
   flex: none;
+  display: grid;
+  grid-template-columns: 1fr;
+  transition: grid-template-columns var(--glide) var(--glide-easing), margin-left var(--glide) var(--glide-easing);
+}
+
+/* It comes into the corner's line and leaves it at the side's own pace:
+   the line widens and narrows as the side opens and shuts, and nothing in
+   it, nor the head beside it, leaps. */
+.sp-more-room {
+  min-width: 0;
+  overflow: hidden;
+  transition: opacity var(--glide) var(--glide-easing);
+}
+
+.sp-dock.away {
+  display: grid;
+  grid-template-columns: 0fr;
+  /* The line's own gap, which a thing of no width would keep twice. */
+  margin-left: -2px;
+  visibility: hidden;
+  transition: grid-template-columns var(--glide) var(--glide-easing), margin-left var(--glide) var(--glide-easing), visibility 0s var(--glide);
+}
+
+.sp-dock.away > .sp-more-room {
+  opacity: 0;
 }
 
 .sp-menu {
@@ -853,6 +1202,71 @@ html.on-desk .window-controls {
 .sp-menu-row[aria-checked="true"] {
   background: var(--accent-wash);
   color: var(--text-strong);
+}
+
+/* A card of the overview, shown or put away: its mark, its name, a tick
+   after it while it is shown. */
+.sp-menu-cards {
+  display: flex;
+  flex-direction: column;
+  gap: var(--row-gap);
+}
+
+.sp-menu-card {
+  width: 100%;
+  min-width: 176px;
+  font: inherit;
+  text-align: left;
+}
+
+.sp-menu-card > span {
+  flex: 1;
+}
+
+.sp-menu-card > .glyph:last-child {
+  visibility: hidden;
+  color: var(--text-2);
+}
+
+.sp-menu-card[aria-checked="true"] {
+  background: none;
+  color: var(--text);
+}
+
+.sp-menu-card[aria-checked="true"]:hover {
+  background: var(--hairline);
+}
+
+.sp-menu-card[aria-checked="true"] > .glyph:last-child {
+  visibility: visible;
+}
+
+.sp-menu-card[aria-checked="false"] {
+  color: var(--text-3);
+}
+
+.sp-menu-rule {
+  height: 1px;
+  margin: var(--space-1) var(--space-2);
+  background: var(--divider);
+}
+
+/* The overview's own menu, where the other button was pressed. */
+.sp-menu-float {
+  position: fixed;
+  z-index: 9000;
+  top: 0;
+  right: auto;
+  font-family: var(--font-reading);
+  font-size: var(--size-text);
+  opacity: var(--shown);
+  animation: sp-menu-in var(--enter) var(--fold-easing) both;
+}
+
+@keyframes sp-menu-in {
+  from {
+    --shown: 0;
+  }
 }
 
 /* On a phone the side lies over the whole page, coming up as it opens and
@@ -1304,110 +1718,28 @@ button.gh-goal:hover,
   }
 }
 
-/* Who works with the conversation: a card for each, those at work first;
-   the cards scroll in their own place. */
+/* Who works with the conversation: a row for each, those at work first;
+   the rows scroll in their own place. */
 .cp-page {
   flex: 1;
   min-height: 0;
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
   overflow: auto;
   overscroll-behavior: contain;
   scrollbar-width: thin;
 }
 
-/* A group under its name: the colleagues, the host's agents, the
-   conversations branched off. */
-.cp-group {
-  flex: none;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-}
-
-.cp-group + .cp-group {
-  margin-top: var(--space-3);
-}
-
-.cp-group-name {
-  margin: 0;
-  padding: 0 var(--space-1);
-  color: var(--text-2);
-  font: inherit;
-  font-family: var(--font-emphasis);
-  line-height: 24px;
-}
-
-/* The agents a colleague sent, under its own line: how many, then a short
-   line each, set in under its task. */
-.cp-sent {
-  padding: var(--space-1) var(--space-3) 0 calc(var(--space-3) + 16px + var(--space-2));
-  color: var(--text-3);
-  font-size: var(--size-fine);
-  line-height: 18px;
-}
-
-.cp-sents {
-  display: flex;
-  flex-direction: column;
-  padding: 2px 0 var(--space-2);
-}
-
-.cp-line {
-  display: grid;
-  grid-template-columns: 16px minmax(0, 1fr) auto;
-  column-gap: var(--space-2);
-  align-items: center;
-  margin: 0 var(--space-1);
-  padding: 2px var(--space-2) 2px calc(var(--space-2) + 16px + var(--space-2));
-  border-radius: var(--radius-s);
-  color: var(--text-2);
-  font: inherit;
-  text-align: left;
-  transition: background-color var(--hover) var(--ease);
-}
-
-.cp-line:hover {
-  background: var(--fill-strong);
-}
-
-.cp-line.working,
-.cp-line.waiting {
-  color: var(--text);
-}
-
-.cp-line.failed .cp-state {
-  color: var(--wrong);
-}
-
-.cp-line .cp-took {
-  color: var(--text-3);
-}
-
-.cp-line .cp-end {
-  display: flex;
-  align-items: baseline;
-  gap: var(--space-2);
-  white-space: nowrap;
-}
-
-.cp-card {
-  flex: none;
-  display: flex;
-  flex-direction: column;
-  border-radius: var(--radius-m);
-  background: var(--fill);
-}
-
-/* How it stands at the head, its task, and under the task how long and
-   what it does or spent. */
+/* How it stands at the head, its task, how long; and under the task who
+   it is and what it does or spent. */
 .cp-entry {
+  flex: none;
   display: grid;
   grid-template-columns: 16px minmax(0, 1fr) auto;
   column-gap: var(--space-2);
-  padding: var(--space-2) var(--space-3);
-  border-radius: var(--radius-m);
+  margin: 0 var(--space-1);
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-s);
   color: var(--text-2);
   font: inherit;
   text-align: left;
@@ -1442,10 +1774,6 @@ button.gh-goal:hover,
   line-height: 24px;
 }
 
-.cp-entry.heads .cp-task {
-  font-family: var(--font-emphasis);
-}
-
 .cp-meta {
   grid-column: 2 / 4;
   display: flex;
@@ -1471,6 +1799,7 @@ button.gh-goal:hover,
 
 .cp-took {
   color: var(--text-3);
+  line-height: 24px;
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
 }
@@ -1520,30 +1849,8 @@ button.gh-goal:hover,
   background: currentColor;
 }
 
-/* The line ruled between a colleague and the agents it sent. */
-.cp-rule {
-  display: block;
-  width: calc(100% - 2 * var(--space-3));
-  height: 6px;
-  margin: 0 var(--space-3);
-  fill: var(--pen-trace);
-}
-
-.cp-earlier {
-  flex: none;
-  align-self: flex-start;
-  padding: var(--space-1) var(--space-3);
-  color: var(--text-3);
-  font: inherit;
-  transition: color var(--hover) var(--ease);
-}
-
-.cp-earlier:hover {
-  color: var(--text);
-}
-
 .cp-empty {
-  margin: var(--space-3) 0 0;
+  margin: var(--space-1) var(--space-3) 0;
   color: var(--text-2);
 }
 
@@ -1559,45 +1866,229 @@ button.gh-goal:hover,
 }
 
 @media (pointer: coarse) {
-  .cp-entry,
-  .cp-line,
-  .cp-earlier {
+  .cp-entry {
     min-height: 44px;
   }
 }
 
-/* What one of the host's agents did fills the side's body, to be read;
-   the way to the row that sent it stands at the top. */
-.sp-page.agent-box {
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto auto;
-  overflow: hidden;
-  margin: 0;
-  padding: 0;
-  border-radius: 0;
-  background: transparent;
+/* The files the conversation changed: their card on the overview, a line
+   to a file; their page (`files-page.ts`), the list or the trees of the
+   folders it works in; and a file read on a tab (`files/view.ts`). */
+.sh-files {
+  display: flex;
+  flex-direction: column;
+  max-height: min(30dvh, 208px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
 }
 
-.sp-page.agent-box > .agent-scroll {
-  max-height: none;
-}
-
-/* An agent read over the parts: the way back, named by its task, and the
-   way to the row that sent it. */
-.sp-peek-head {
+.sh-file {
+  flex: none;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: var(--space-3);
+  gap: 8px;
   min-width: 0;
-  padding: var(--space-2) var(--space-4) 0;
+  margin: 0 var(--space-1);
+  padding: 5px var(--space-2);
+  border-radius: var(--radius-s);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  transition: background-color var(--hover) var(--ease);
 }
 
-.sp-peek-head .page-back {
-  max-width: none;
-  margin-left: calc(var(--space-2) * -1);
+.sh-file:hover {
+  background: var(--fill-strong);
 }
 
-.sp-jump {
+.sh-file-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.sh-file .cf-figures {
+  gap: 6px;
+  font-size: var(--size-fine);
+}
+
+.sf-page.sp-page {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding-bottom: var(--space-3);
+}
+
+.sf-head {
+  position: relative;
   flex: none;
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  min-height: 36px;
+  margin: 0 0 var(--space-3);
+}
+
+/* The line under the switch, ruled across the page. */
+.sf-head::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 8px;
+  background: var(--pen-rule);
+  -webkit-mask: var(--pen-rule-1) 0 50% / 100% 100% no-repeat;
+  mask: var(--pen-rule-1) 0 50% / 100% 100% no-repeat;
+  pointer-events: none;
+}
+
+.sf-shows .segment small {
+  margin-left: 6px;
+  font-size: var(--size-fine);
+  color: var(--text-3);
+}
+
+.sf-sum {
+  margin-left: auto;
+  padding-bottom: 9px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* What the switch chooses between, under the head: the one shown comes
+   in from the side the switch moved to (`files-page.ts`, `turnTo`). */
+.sf-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.sf-changes,
+.sf-folders {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.sf-changes[hidden],
+.sf-folders[hidden] {
+  display: none;
+}
+
+/* The folder every file of the list lies in, said once over it. */
+.sf-under {
+  margin: 0 4px var(--space-2);
+  overflow: hidden;
+  color: var(--text-3);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  direction: rtl;
+  text-align: left;
+}
+
+.sf-none {
+  margin: var(--space-3) var(--space-1);
+  color: var(--text-2);
+}
+
+.sf-page .cf-row {
+  min-height: 40px;
+  padding: 0 12px;
+}
+
+.sf-page .cf-squares {
+  display: none;
+}
+
+.sf-root + .sf-root {
+  margin-top: var(--space-4);
+}
+
+/* A machine's folder, folding away under its head as a card does; at the
+   head's end, the mark that goes to the machine's own page of files. */
+.sf-root-top {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  margin: 0 0 2px;
+}
+
+.sf-root-go {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  color: var(--text-3);
+}
+
+.sf-root-go:hover {
+  color: var(--text);
+}
+
+.sf-root-head {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  min-height: 30px;
+  padding: 0 6px 0 0;
+  border-radius: var(--radius-s);
+  font: inherit;
+  text-align: left;
+  color: var(--text-3);
+  white-space: nowrap;
+  transition: color var(--hover) var(--ease);
+}
+
+.sf-root-head:hover {
+  color: var(--text-2);
+}
+
+.sf-root-head > .sh-turn {
+  flex: none;
+  width: 20px;
+  color: var(--text-2);
+}
+
+.sf-root.shut .sh-turn {
+  --turn: -90deg;
+}
+
+.sf-root-head > .glyph,
+.sf-root-head > b {
+  flex: none;
+}
+
+.sf-root-head > b {
+  font-weight: 400;
+  color: var(--text-2);
+}
+
+.sf-root-head > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  direction: rtl;
+}
+
+.sf-root .ft-tree {
+  padding-inline: 0;
+  padding-bottom: 0;
+}
+
+.sp-page.fx-view {
+  height: auto;
+  overflow: hidden;
+  padding: 0 calc(var(--sp-end) + var(--space-3)) var(--space-4) calc(var(--sp-start) + var(--space-3));
+}
+
+.sp-page.fx-view .fx-name {
+  font-size: var(--size-text);
 }

@@ -53,20 +53,20 @@ export const zhBatch: BatchWords = {
   bar: { share: "共享", group: "分组", update: "更新", remove: "移除" },
   pickOne: (name) => `选中 ${name}`,
   pickAll: (label) => `选中 ${label} 的全部机器`,
-  pickGroup: "选中这一组",
+  pickGroup: "选中此组",
 
-  allRun: (count, version) => `这 ${count} 台都在跑 ${version}`,
-  oldestRuns: (count, version) => `这 ${count} 台里最旧的在跑 ${version}`,
+  allRun: (count, version) => `${count} 台均运行 ${version}`,
+  oldestRuns: (count, version) => `${count} 台中最旧的运行 ${version}`,
 
-  waysTitle: (count) => `这 ${count} 台怎样更新`,
-  waysFailed: failure(zhProblems, "没能更改"),
+  waysTitle: (count) => `${count} 台的更新方式`,
+  waysFailed: failure(zhProblems, "更改失败"),
   auto: "自动更新",
-  relays: "帮网络传包",
+  relays: "转发安装包",
   on: "开",
   off: "关",
-  keep: "不改",
+  keep: "保持",
   apply: (count) => `应用到 ${count} 台`,
-  set: "已设好",
+  set: "已设置",
 };
 
 export const enBatch: BatchWords = {

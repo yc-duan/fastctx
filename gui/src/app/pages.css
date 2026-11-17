@@ -1132,6 +1132,27 @@ a.details-job {
   transition: none !important;
 }
 
+/* A switch's wash taken hold of (`grabSwitches`): it follows the pointer
+   with no easing of its own, and let go, springs to the side it is
+   nearest; the side it is nearest is named in the page's ink. */
+.seg-thumb.seg-held {
+  scale: 0.96;
+  transition: none;
+}
+.seg-thumb.seg-let {
+  transition: --thumb-x var(--settle) var(--spring), --thumb-w var(--settle) var(--spring);
+}
+.seg-dragging,
+.seg-dragging > * {
+  cursor: grabbing;
+}
+.seg-dragging > :not(.seg-thumb) {
+  color: var(--text-2) !important;
+}
+.seg-dragging > .seg-near {
+  color: var(--text-strong) !important;
+}
+
 /* A file chosen through the system's picker, by a button of the page's own;
    the name of the one chosen beside it. */
 .pick-file {
@@ -1298,6 +1319,24 @@ a.details-job {
 .token-sheet .device-facts dd > .mono {
   min-width: 0;
   overflow-wrap: anywhere;
+}
+
+/* On a phone a label stands over its value, so an address keeps to one
+   line rather than breaking inside its number. */
+@media (max-width: 560px) {
+  .token-sheet .device-facts {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .token-sheet .device-facts dt,
+  .token-sheet .device-facts dd {
+    grid-column: 1;
+  }
+
+  .token-sheet .device-facts dt {
+    min-height: 0;
+    padding-top: var(--space-2);
+  }
 }
 
 .device-added {

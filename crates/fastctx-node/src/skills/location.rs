@@ -78,10 +78,14 @@ pub(super) async fn locate(
         if !matches!(facts,RemoteReply::Facts(facts) if facts.plan_copies) {
             return Err(Failure::not_run("update the working computer to use skill folders"));
         }
-        match link
-            .call(&machine, account, Purpose::Hands, RemoteCall::WorkingCopy { owner, placement, resource })
-            .await
-            .map_err(|error| Failure::new(error.to_string()))??
+        match crate::record_changes::transport::linked(
+            link,
+            &machine,
+            account,
+            Purpose::Hands,
+            RemoteCall::WorkingCopy { owner, placement, resource },
+        )
+        .await?
         {
             RemoteReply::WorkingCopy { location } => location,
             _ => return Err(Failure::new("the working computer did not return the skill path")),

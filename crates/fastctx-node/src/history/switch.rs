@@ -45,6 +45,22 @@ pub(crate) fn read(
     }
 }
 
+/// Writes through the link already selected for this account, without resolving
+/// a hub name again after a submitted change has waited for its turn.
+pub(crate) async fn write_on(
+    node: &Arc<Node>,
+    link: &Arc<Link>,
+    account: &AccountName,
+    on: bool,
+) -> Result<(), Failure> {
+    link.history_switch_write(account, on).await.map_err(Failure::new)?;
+    if on {
+        super::import::schedule(node);
+        crate::ledger::joined(node, &link.membership().id);
+    }
+    Ok(())
+}
+
 pub(crate) async fn write(
     node: &Arc<Node>,
     hub: Option<&HubName>,
@@ -54,12 +70,7 @@ pub(crate) async fn write(
     match account {
         Some(account) => {
             let link = crate::world::hub_link(node, hub)?;
-            link.history_switch_write(account, on).await.map_err(Failure::new)?;
-            if on {
-                super::import::schedule(node);
-                crate::ledger::joined(node, &link.membership().id);
-            }
-            Ok(())
+            write_on(node, &link, account, on).await
         }
         None => {
             own(node, hub)?;

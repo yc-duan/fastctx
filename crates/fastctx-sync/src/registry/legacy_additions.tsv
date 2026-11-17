@@ -1,0 +1,2 @@
+# Additional legacy entries require: surface, selector, baseline source path, git blob SHA-1, evidence file, exact source anchor.
+# The evidence file must contain the original blob from the frozen baseline_sources.tsv.

@@ -30,7 +30,9 @@ pub async fn snapshot(node: &Arc<Node>, id: &ResidentId) -> Result<(), Failure> 
     let cell = node.composers.cell(id);
     let mut cell = cell.lock().await;
     load(node, id, &mut cell).await?;
-    node.watchers.publish(id, &event(cell.as_ref().expect("loaded").view()));
+    drop(cell);
+    let (composer, _) = legacy_refresh::snapshot(node, id).await?;
+    node.watchers.publish(id, &event(composer));
     Ok(())
 }
 

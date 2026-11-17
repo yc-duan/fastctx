@@ -1,5 +1,6 @@
 import type { AttachWords } from "./attach";
 import { glyph } from "./glyphs";
+import { rememberSize } from "./picture-frame";
 
 /** One attachment keeps its card and image while its upload changes state. */
 export interface AttachmentRow {
@@ -7,8 +8,12 @@ export interface AttachmentRow {
   name: string;
   image: boolean;
   preview: string | null;
+  /** Its bytes' digest, once the World has kept it: what the picture is
+   *  known by after it is sent. */
+  digest?: string | null;
   state: "waiting" | "sending" | "ready" | "failed";
   fact: string;
+  open?: (() => void) | undefined;
   why?: string | null;
   retry?: string | null;
   remove: string;
@@ -19,12 +24,14 @@ interface Card {
   element: HTMLLIElement;
   picture: HTMLElement;
   name: HTMLElement;
+  text: HTMLElement;
   fact: HTMLElement;
   retry: HTMLButtonElement;
   remove: HTMLButtonElement;
   progress: HTMLElement;
   preview: string | null;
   image: boolean;
+  digest: string | null;
 }
 
 /** Shared by the local input and node-owned drafts, including queued edits. */
@@ -60,8 +67,9 @@ export class AttachmentRows {
       if (event.animationName === "attach-in") element.classList.remove("fresh");
     });
     const picture = document.createElement("span");
-    const text = document.createElement("span");
-    text.className = "attach-text";
+    const text = document.createElement(row.open ? "button" : "span");
+    if (text instanceof HTMLButtonElement) text.type = "button";
+    text.className = row.open ? "attach-text attach-open" : "attach-text";
     const name = document.createElement("span");
     name.className = "attach-name";
     const fact = document.createElement("span");
@@ -80,7 +88,7 @@ export class AttachmentRows {
     const progress = document.createElement("span");
     progress.className = "attach-progress";
     element.append(picture, text, retry, remove, progress);
-    return { element, picture, name, fact, retry, remove, progress, preview: null, image: !row.image };
+    return { element, picture, name, text, fact, retry, remove, progress, preview: null, image: !row.image, digest: null };
   }
 
   private update(card: Card, row: AttachmentRow): void {
@@ -89,6 +97,7 @@ export class AttachmentRows {
       const picture = row.preview ? document.createElement("img") : document.createElement("span");
       picture.className = row.preview ? "attach-thumb" : "attach-thumb attach-glyph";
       if (picture instanceof HTMLImageElement) {
+        picture.addEventListener("load", () => this.sized(card));
         picture.src = row.preview!;
         picture.alt = row.name;
       } else picture.innerHTML = glyph(row.image ? "image" : "file", 18);
@@ -97,6 +106,15 @@ export class AttachmentRows {
       card.preview = row.preview;
       card.image = row.image;
     }
+    if (!!row.open !== (card.text instanceof HTMLButtonElement)) {
+      const next = document.createElement(row.open ? "button" : "span");
+      if (next instanceof HTMLButtonElement) next.type = "button";
+      next.className = row.open ? "attach-text attach-open" : "attach-text";
+      next.append(card.name, card.fact);
+      card.text.replaceWith(next);
+      card.text = next;
+    }
+    card.text.onclick = row.open ?? null;
     card.name.textContent = row.name;
     card.name.title = row.name;
     card.fact.textContent = row.fact;
@@ -110,5 +128,19 @@ export class AttachmentRows {
     card.remove.dataset.remove = row.remove;
     card.progress.hidden = row.progress == null;
     if (row.progress != null) card.progress.style.width = `${Math.max(0, Math.min(100, row.progress))}%`;
+    if (card.digest !== (row.digest ?? null)) {
+      card.digest = row.digest ?? null;
+      this.sized(card);
+    }
+  }
+
+  /** Keeps the size of a card's picture, by the copy the page holds and by
+   *  the file's digest: once sent, its frame above the words is as large
+   *  as the picture from the start (`picture-frame.ts`). */
+  private sized(card: Card): void {
+    const picture = card.picture;
+    if (!(picture instanceof HTMLImageElement) || !picture.naturalWidth) return;
+    rememberSize(card.preview, picture.naturalWidth, picture.naturalHeight);
+    rememberSize(card.digest, picture.naturalWidth, picture.naturalHeight);
   }
 }

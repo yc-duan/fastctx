@@ -5,6 +5,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::MachineName;
 
+mod presence;
+pub use presence::{HubMachinePresence, MachineAccess, MachinePresence};
+
 /// What kind of device a machine is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -95,9 +98,6 @@ pub struct MachineFacts {
     /// Lists private import metadata and rereads selected URL definitions.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub mcp_import: bool,
-    /// Keeps page consent and execution scoped to one account.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub page_accounts: bool,
     /// Answers attachment destination queries before receiving any file bytes.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub attachment_places: bool,
@@ -120,6 +120,20 @@ pub struct MachineFacts {
     /// (`RemoteCall::Watch::collaboration`).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub collaboration_watch: bool,
+    /// Answers bounded timeline queries (`RemoteCall::Timeline`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub timeline_reads: bool,
+    /// Answers the files a conversation changed (`TimelineAsk::Files`); an
+    /// older machine is never asked.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub file_changes: bool,
+    /// Tells when a piece of its state changed (`RemoteCall::Topics`), so a
+    /// page that shows it waits instead of asking again on a timer.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub topics: bool,
+    /// Supports Watch.live_only with a post-registration Resumed barrier.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub watch_live: bool,
     /// The bash `run` uses there, such as `bash 5.2.37 (Git for Windows,
     /// MSYS)`: on MSYS, arguments shaped like Unix paths are rewritten
     /// before a Windows program sees them (`world-run.md`). Empty when the
@@ -327,4 +341,8 @@ pub struct WorldNow {
     pub nodes: NodesReply,
     pub towns: Vec<crate::project::TownSummary>,
     pub accounts: crate::accounts::AccountsReply,
+    /// Look permissions and network membership, including machines the interface remembers.
+    /// An older producer supplies no conclusions about machines absent from its listing.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub machine_presence: Vec<MachinePresence>,
 }

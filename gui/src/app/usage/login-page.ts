@@ -34,7 +34,7 @@ import { effect, type Signal } from "../signals";
 import type { Store } from "../store";
 import { CallsList, type CallsContext } from "./calls";
 import type { CallsWords } from "./calls-words";
-import { bar, calendar, fitInks, meter, parts, punch, quota, weeks, type Amounts, type RingPart } from "./draw";
+import { bar, calendar, meter, parts, punch, quota, weeks, type Amounts, type RingPart } from "./draw";
 import { keepRecord, keptRecord, keptReport, readerNow, readReport, reportKey } from "./kept";
 import { allowanceTrack, between, byDay, byHourOfWeek, dayOf, DAY_MS, daysBefore, longestRun, pace, total, track, valueOf, windowOf, type Person, type Span, type Unit, type Usage, type Went } from "./model";
 import { assistingMe, assistsOf, namer } from "./people";
@@ -43,6 +43,7 @@ import { assistingOwner, machineWritten } from "../reach";
 import { ownerLoginOf } from "../machine-logins";
 import { resetHistory } from "./resets";
 import type { UsageWords } from "./words";
+import { waiting } from "../waiting";
 
 type Agent = "codex" | "claude";
 type Tab = "calendar" | "quota" | "weeks" | "punch" | "calls" | "resets";
@@ -134,7 +135,6 @@ export class LoginUsagePage implements Page {
     this.resize = new ResizeObserver(() => {
       const figure = this.body.querySelector<HTMLElement>(".ledger-figure");
       if (figure && (Math.abs(figure.clientWidth - this.width) >= 1 || Math.abs(figure.clientHeight - this.height) >= 1)) this.draw();
-      fitInks(this.body);
     });
     this.resize.observe(this.body);
     this.stop = effect(() => {
@@ -157,6 +157,7 @@ export class LoginUsagePage implements Page {
     const { options } = this;
     clearTimeout(this.again);
     if (!options.workbench.peek()) return;
+    if (document.hidden) { this.again = window.setTimeout(() => void this.read(), AGAIN_MS); return; }
     this.asked = true;
     const asked = readerNow();
     const record = options.read(options.machine).then((world) => {
@@ -164,6 +165,8 @@ export class LoginUsagePage implements Page {
       if (heard?.kind === "answered") {
         this.record = heard.logins;
         keepRecord(heard.logins, asked);
+        // Each is drawn as it comes, never held for the other.
+        if (!this.left) this.draw();
       }
     });
     // A login the workbench is closed in has no use read.
@@ -172,6 +175,7 @@ export class LoginUsagePage implements Page {
       : readReport(this.key, () => options.usage(options.machine, options.agent, options.dir)).then((report) => {
           this.report = report;
           this.problem = null;
+          if (!this.left) this.draw();
         });
     const [, used] = await Promise.allSettled([record, report]);
     // Left while it read: nothing more is drawn or asked.
@@ -233,7 +237,7 @@ export class LoginUsagePage implements Page {
     if (!this.open()) {
       html = `<p class="feature-quiet">${escape(words.workbenchOff)}</p>`;
     } else if (!this.report) {
-      html = this.problem ? `<p class="feature-note" title="${escape(this.problem)}">${escape(words.failed)}</p>` : `<p class="feature-quiet ledger-reading">${escape(words.reading)}</p>`;
+      html = this.problem ? `<p class="feature-note" title="${escape(this.problem)}">${escape(words.failed)}</p>` : waiting({ label: words.reading, shape: "card" });
     } else {
       const usage = this.prepared.get(this.report, namer(world, options.machine, words));
       const mine = assistingMe(world, options.machine, options.agent, options.dir, login?.default ?? false);
@@ -291,7 +295,6 @@ export class LoginUsagePage implements Page {
     }
     this.body.scrollTop = top;
     this.body.querySelector(".ledger-sheet.resets .ledger-tablist .current")?.scrollIntoView({ block: "nearest", inline: "nearest" });
-    fitInks(this.body);
     // The figure's size is known once it is laid out: a first drawing at a
     // guess is drawn again, once, at the size it has.
     const figure = this.body.querySelector<HTMLElement>(".ledger-figure");
@@ -710,7 +713,7 @@ export class LoginUsagePage implements Page {
               .slice(0, 5)
               .map((one) => {
                 const share = valueOf(one.sum, unit) / sum;
-                return `<div class="ledger-model"><span class="ledger-model-name" title="${escape(one.model)}">${escape(modelName(one.model))}</span>${bar(share, `${this.key}:${one.model}`, 200, 12, ink)}<span class="ledger-model-share">${Math.round(share * 100)}%</span><span class="ledger-model-value">${escape(amounts.say(valueOf(one.sum, unit)))}</span></div>`;
+                return `<div class="ledger-model"><span class="ledger-model-name" title="${escape(one.model)}">${escape(modelName(one.model))}</span>${bar(share, `${this.key}:${one.model}`, ink)}<span class="ledger-model-share">${Math.round(share * 100)}%</span><span class="ledger-model-value">${escape(amounts.say(valueOf(one.sum, unit)))}</span></div>`;
               })
               .join("")
           : `<p class="ledger-none">${escape(words.noneThisWeek)}</p>`

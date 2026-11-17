@@ -104,7 +104,8 @@ impl Attempt {
 
     /// Takes back the right of a try given up to put its package in place
     /// while it still checks it. This does not end its actual work; `ended`
-    /// resolves only after that work and its cleanup finish.
+    /// resolves only after that work finishes, its temporary file removed or
+    /// left to be removed in the background (`super::cleanup`).
     pub(super) fn revoke(&self) -> bool {
         self.state.send_if_modified(|state| {
             let revoked = *state == Try::Keeping;

@@ -24,9 +24,15 @@
 //! old place, forwards to the new one, as its files say.
 
 mod account_records;
+mod admission;
+mod assets;
+pub use assets::recovery;
 mod afoot;
 mod assists;
 mod catalog;
+#[cfg(feature = "change-drill")]
+#[doc(hidden)]
+pub mod change_drill;
 mod control;
 mod data;
 mod direct;
@@ -46,6 +52,7 @@ mod login;
 mod machine_log;
 mod mailbox;
 mod manage;
+mod manage_edit;
 mod measure;
 mod moving;
 mod network;
@@ -65,10 +72,14 @@ mod records;
 mod releases;
 mod renewal;
 mod sentinel_home;
+mod shares;
 mod skill_files;
 mod skill_storage;
 mod store;
 mod strain;
+#[cfg(feature = "submission-drill")]
+mod submission_drill;
+mod submitted;
 pub mod third;
 mod troubles;
 mod updates;
@@ -77,6 +88,8 @@ mod views;
 mod watchdog;
 mod workbench;
 mod worked;
+mod workers;
+pub use workers::ROLES as WORKER_ROLES;
 
 use crate::locks::{Guard as MutexGuard, Mutex};
 use fastctx_platform::doing::Rank;
@@ -174,6 +187,7 @@ pub fn init(dir: &Path, new: New) -> anyhow::Result<CertPin> {
         public: new.public,
         listen: new.listen,
         self_registration: false,
+        asset_seal_at_start: false,
         dissolved: None,
         updates: Default::default(),
         due: Vec::new(),
@@ -247,6 +261,9 @@ pub fn arriving(dir: &Path) -> io::Result<Option<(fastctx_net::ids::HubId, Strin
 
 /// What every connection shares.
 pub(crate) struct Hub {
+    /// Durable service work submitted with its triggering state change.
+    durable_jobs: Arc<fastctx_jobs::Jobs>,
+    workers: workers::Pools,
     releases: Arc<releases::Releases>,
     catalog: catalog::Catalog,
     post: Arc<post::Post>,
@@ -299,12 +316,17 @@ pub(crate) struct Hub {
     health: health::Health,
     diagnostic_dir: PathBuf,
     account_records: account_records::Records,
+    /// The second version's asset side (`assets`).
+    assets: Arc<assets::Assets>,
     /// What went wrong with the machines and the network lately (`troubles`).
     troubles: troubles::Troubles,
     /// Whether one of each machine's logins has the workbench open, as it
     /// last told (`workbench`).
     workbench: Mutex<HashMap<MachineName, bool>>,
 }
+
+/// Full views built at once when many sessions are told of a change.
+const VIEWS_AT_ONCE: usize = 256;
 
 /// The view a session that reads what changes in its view was last given
 /// (`fastctx_net::view_delta`), numbered among those it was given.
@@ -485,6 +507,26 @@ impl Hub {
         drop(before);
     }
 
+    /// What `machines` see in their views changed, nothing else did: each of
+    /// their sessions is sent what changed in its view, or told to ask.
+    pub(crate) fn views_changed_for(&self, machines: &std::collections::BTreeSet<MachineName>) {
+        let mut outs = Vec::new();
+        let mut changes = Vec::new();
+        for (name, session) in self.sessions().iter().filter(|(name, _)| machines.contains(*name)) {
+            if session.view_deltas {
+                changes.push((name.clone(), session.key, session.generation, session.out.clone()));
+            } else {
+                outs.push(session.out.clone());
+            }
+        }
+        for out in outs {
+            let _ = out.send(Out::Frame(Down::DirectoryChanged));
+        }
+        if !changes.is_empty() {
+            self.push_views(changes);
+        }
+    }
+
     /// `name`'s session `generation` ended: what it was given goes with it.
     pub(crate) fn forget_view(&self, name: &MachineName, generation: u64) {
         let mut given = self.given.lock().expect("never poisoned");
@@ -500,6 +542,16 @@ impl Hub {
     /// a whole view, or whose change is too large for a frame, is told to
     /// ask for it.
     fn push_views(&self, sessions: Vec<(MachineName, PublicKey, u64, outq::Outq)>) {
+        // A bounded number of full views at a time, each batch read at once:
+        // every session's view at one moment was the hub's peak of memory
+        // at ten thousand members.
+        let mut sessions = sessions.into_iter().peekable();
+        while sessions.peek().is_some() {
+            self.push_view_batch(sessions.by_ref().take(VIEWS_AT_ONCE).collect());
+        }
+    }
+
+    fn push_view_batch(&self, sessions: Vec<(MachineName, PublicKey, u64, outq::Outq)>) {
         let trials: Vec<_> = sessions.iter().map(|(name, _, _, _)| self.trial_of(name)).collect();
         let (views, read): (Vec<Result<View, String>>, (u64, u64)) = {
             let store = self.store();
@@ -636,6 +688,26 @@ impl Hub {
                 let _ = out.send(Out::Frame(Down::Presence { machine: name.clone(), presence, rev }));
             }
         }
+    }
+
+    /// Publishes configuration and audit changes that do not alter authority.
+    fn configuration_changed(&self) {
+        afoot::directory_changed(self);
+        self.machine_log_changed.notify_one();
+        self.assists_changed.notify_one();
+        self.directory_changed.notify_one();
+    }
+
+    /// A relation changed (`manage_edit::relation`): every member is told to
+    /// look again and what lost the standing it was allowed under ends; the
+    /// passes that follow only accounts and machines are not run.
+    fn relations_changed(&self) {
+        afoot::directory_changed(self);
+        self.machine_log_changed.notify_one();
+        self.assists_changed.notify_one();
+        self.directory_changed.notify_one();
+        control::cut_calls(self);
+        data::cut_streams(self);
     }
 
     /// The directory changed, or who is online did: every member is told to
@@ -791,12 +863,15 @@ pub async fn serve(dir: &Path, leave: Leave) -> anyhow::Result<()> {
 /// What the hub keeps in its directory, opened for serving, and what opening
 /// it found to tell once the hub listens.
 struct Opened {
+    durable_jobs: Arc<fastctx_jobs::Jobs>,
+    workers: workers::Pools,
     catalog: catalog::Catalog,
     post: Arc<post::Post>,
     troubles: troubles::Troubles,
     releases: releases::Releases,
     updates: updates::Updates,
     account_records: account_records::Records,
+    assets: Arc<assets::Assets>,
     ledgers: ledger::Ledgers,
     secrets: HubSecrets,
     tls: releases::http::Tls,
@@ -811,8 +886,10 @@ struct Opened {
 
 /// Opens the hub kept in `dir` for serving: its files and databases read,
 /// written and set up, as only a blocking thread may.
-fn open(dir: &Path) -> anyhow::Result<Opened> {
-    let mut store = Store::open(dir)?;
+fn open(dir: &Path, log: Arc<log::Log>) -> anyhow::Result<Opened> {
+    let mut store = Store::open_logged(dir, Some(log.clone()))?;
+    let durable_jobs = fastctx_jobs::Jobs::new(store.shelf.0.clone());
+    let workers = workers::Pools::new(std::env::current_exe()?);
     // An assistance whose deadline passed while the hub was stopped is
     // ended before any member is heard.
     assists::end_due(&mut store, Timestamp::now())?;
@@ -824,14 +901,44 @@ fn open(dir: &Path) -> anyhow::Result<Opened> {
         HubSecrets::from_bytes(&fastctx_platform::disk::read(Store::secrets_file(dir))?).map_err(anyhow::Error::msg)?;
     let tls = releases::http::Tls::of(&certificate).map_err(anyhow::Error::msg)?;
     let account_records = account_records::Records::open(dir, &store.book.directory)?;
-    let mut ledgers = ledger::Ledgers::open(dir, &store.hub.id)?;
+    let assets = Arc::new(assets::Assets::open(dir, store.hub.id.as_str(), store.shelf.0.clone())?);
+    if store.hub.asset_seal_at_start {
+        assets.seal_at_start();
+    }
+    store.witness = Some(assets.witness.clone());
+    store.bodies = Some(assets.bodies.clone());
+    // A body's conversations keep their records with their opener's account
+    // removed: those incarnations are loaded too (§29, 2.6).
+    assets.bodies.load_conversations()?;
+    account_records.owners.lock().expect("never poisoned").attach(assets.bodies.clone());
+    for (opener, opened) in assets.bodies.conversation_openers() {
+        if store.book.directory.account(&opener).is_none_or(|account| account.opened != opened) {
+            account_records.load(&opener, opened)?;
+        }
+    }
+    // Members a directory saved before they were kept with it are kept now.
+    assets.bodies.settle(&store.book.directory)?;
+    // The projects' ledgers, in the hub's own library (design §28.58).
+    let library = assets.library(&assets::Owner::Hub)?;
+    let (mut ledgers, imported) = ledger::Ledgers::open(dir, &store.hub.id, library)?;
     let swept = ledgers.sweep(&store.book)?;
     let mut said: Vec<String> = swept
         .iter()
         .map(|town| format!("deleted the ledger of {town}, a project deleted before the hub stopped"))
         .collect();
+    said.extend(imported);
     said.extend(store.upgraded.iter().map(|line| format!("took up the directory of an earlier fastctx: {line}")));
     said.extend(store.tidied.iter().map(|line| format!("on opening, {line}")));
+    // Revisions the asset library took as the hub stopped, before their files
+    // were published, are published before any member is heard (design §15).
+    said.extend(
+        account_records
+            .settle_staged(|account, opened, record| assets::mirror::holds_revision(&assets, account, opened, record))
+            .map_err(anyhow::Error::msg)?,
+    );
+    if let Some(why) = assets.sealed() {
+        said.push(format!("every asset is sealed until recovery ends: {why}"));
+    }
     let mut left = Vec::new();
     let updates = updates::Updates::new(dir, &store.shelf, &store.hub.due, &mut left).map_err(anyhow::Error::msg)?;
     said.extend(left.into_iter().map(|line| format!("on opening, {line}")));
@@ -839,17 +946,20 @@ fn open(dir: &Path) -> anyhow::Result<Opened> {
         outgoing.pending() || (outgoing.stage == fastctx_types::hub_move::MoveStage::Cancelled && outgoing.prepared)
     });
     let post = store.enable_runtime()?;
-    let troubles = troubles::Troubles::open(store.shelf.clone())?;
+    let troubles = troubles::Troubles::open(store.shelf.clone(), log.clone())?;
     let releases = releases::Releases::new(dir, certificate.certificate.clone())?;
     let hub = format!("hub {} ({}) {}", store.hub.name, store.hub.id, env!("CARGO_PKG_VERSION"));
     let listen = store.hub.listen;
     Ok(Opened {
+        durable_jobs,
+        workers,
         catalog: catalog::Catalog::new(store)?,
         post,
         troubles,
         releases,
         updates,
         account_records,
+        assets,
         ledgers,
         secrets,
         tls,
@@ -871,15 +981,19 @@ async fn serving(
 ) -> anyhow::Result<Next> {
     let opened = {
         let dir = dir.to_path_buf();
-        fastctx_platform::task::spawn_blocking(move || open(&dir)).await??
+        let opening_log = log.clone();
+        fastctx_platform::task::spawn_blocking(move || open(&dir, opening_log)).await??
     };
     let Opened {
+        durable_jobs,
+        workers,
         catalog,
         post,
         troubles,
         releases,
         updates,
         account_records,
+        assets,
         ledgers,
         secrets,
         tls,
@@ -896,6 +1010,8 @@ async fn serving(
     }
     let (switched, mut switch) = tokio::sync::oneshot::channel();
     let hub = Arc::new(Hub {
+        durable_jobs,
+        workers,
         releases: Arc::new(releases),
         catalog,
         post,
@@ -927,16 +1043,34 @@ async fn serving(
         health: health::Health::default(),
         diagnostic_dir: dir.to_path_buf(),
         account_records,
+        assets,
         troubles,
         workbench: Mutex::new("hub workbench", Rank::HUB_WORKBENCH, HashMap::new()),
     });
     let _ = hub.this.set(Arc::downgrade(&hub));
+    // Sealed while it runs, every machine is sent a view that says so, what
+    // is afoot elsewhere is told no more, and every call and stream between
+    // machines but an answer to work ends (design §28.41).
+    let sealing = Arc::downgrade(&hub);
+    let _ = hub.assets.on_seal.set(Box::new(move || {
+        let Some(hub) = sealing.upgrade() else { return };
+        fastctx_platform::task::spawn_blocking(move || {
+            control::cut_calls(&hub);
+            data::cut_streams(&hub);
+            afoot::directory_changed(&hub);
+            let machines = hub.sessions().keys().cloned().collect();
+            hub.views_changed_for(&machines);
+        });
+    }));
     hub.post.attach(Arc::downgrade(&hub));
+    hub.assets.bodies.serve(&hub);
     let _watchdog = watchdog::Watchdog::start(&hub, watched.0, watched.1)?;
     if let Err(error) = hub.blocking(|hub| hub_machine::settle(&hub)).await {
         hub.log.line(format_args!("revoking shares of the hub machine: {error}"));
     }
     fastctx_platform::task::spawn(health::keep(Arc::downgrade(&hub)));
+    fastctx_platform::task::spawn(assets::checkpoints(Arc::downgrade(&hub)));
+    fastctx_platform::task::spawn(assets::standing::every_minute(Arc::downgrade(&hub)));
     fastctx_platform::task::spawn(data::expire(Arc::downgrade(&hub)));
     fastctx_platform::task::spawn(expiry::settle(Arc::downgrade(&hub)));
     fastctx_platform::task::spawn(updates::look_every(Arc::downgrade(&hub)));
@@ -952,23 +1086,50 @@ async fn serving(
     if driven {
         moving::out::drive(&hub);
     }
+    // Subsystems register their job kinds before the queue starts and
+    // requests are heard. A queue that does not start is told and tried
+    // again beside the hub, which serves meanwhile.
+    manage::submission::register(&hub);
+    forget::submission::register(&hub);
+    direct::submission::register(&hub);
+    updates::submission::register(&hub);
+    owned_records::submission::register(&hub);
+    owned_records::record_deletions::register(&hub);
+    submitted::upkeep(&hub);
+    if let Err(error) = hub.durable_jobs.start().await {
+        hub.log.line(format_args!("starting the hub's durable jobs; trying again: {error}"));
+        let starting = Arc::downgrade(&hub);
+        fastctx_platform::task::spawn(async move {
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                let Some(hub) = starting.upgrade() else { return };
+                match hub.durable_jobs.start().await {
+                    Ok(()) => return,
+                    Err(error) => hub.log.line(format_args!("starting the hub's durable jobs; trying again: {error}")),
+                }
+            }
+        });
+    }
     let settled = dissolve::settled(&hub);
     tokio::pin!(settled);
     let replaced = renewal::replaced();
     tokio::pin!(replaced);
     // These workers enqueue durable work before awaiting it. Recreating them
     // on every accept would abandon their waits and duplicate that work.
-    let expiring_log = machine_log::expire(&hub);
+    let telling = assets::told::follow(&hub);
     let expiring_assists = assists::expire(&hub);
     let stopping = shutdown_signal();
-    tokio::pin!(expiring_log, expiring_assists, stopping);
+    tokio::pin!(telling, expiring_assists, stopping);
+    let admission = admission::Admission::new();
     let switched = loop {
         tokio::select! {
             accepted = network::accept(&hub.network, &kept.listener) => match accepted {
                 Ok((tcp, peer)) => {
-                    fastctx_net::dial::configure(&tcp);
-                    let host = releases::http::Host::Hub(hub.clone());
-                    fastctx_platform::task::spawn(releases::http::serve(host, tls.clone(), tcp, peer));
+                    if let Some(held) = admission.admit(&hub.log, peer) {
+                        fastctx_net::dial::configure(&tcp);
+                        let host = releases::http::Host::Hub(hub.clone());
+                        fastctx_platform::task::spawn(releases::http::serve(host, tls.clone(), tcp, peer, held));
+                    }
                 }
                 // Out of descriptors, for one: the next accept may succeed.
                 Err(error) => {
@@ -981,7 +1142,7 @@ async fn serving(
                 hub.log.line(format_args!("the program this hub runs from is {version} now: stopping for its service to start it on that"));
                 break false;
             }
-            expired = &mut expiring_log => expired?,
+            told = &mut telling => told?,
             ended = &mut expiring_assists => ended?,
             Ok(()) = &mut switch => break true,
             why = &mut settled => {
@@ -1144,6 +1305,7 @@ async fn intended(
                 parts,
                 call_details,
                 view_deltas,
+                asset_seals,
             },
         ) => {
             let said = control::Said {
@@ -1178,6 +1340,7 @@ async fn intended(
                 parts,
                 call_details,
                 view_deltas,
+                asset_seals,
             };
             control::session(hub, socket, peer, binding, key, proof, letters, said).await;
         }
@@ -1205,6 +1368,9 @@ async fn intended(
         }
         (wire::DATA_PATH, Intent::Deliver { key, proof, id }) => {
             updates::deliver(hub, socket, binding, key, proof, id).await;
+        }
+        (wire::DATA_PATH, Intent::Asset { key, proof, ticket }) => {
+            assets::objects::serve(hub, socket, binding, key, proof, ticket).await;
         }
         (wire::CONTROL_PATH, Intent::Handover { id, role, proof }) => {
             moving::follow::old_connected(hub, socket, binding, id, role, proof).await;

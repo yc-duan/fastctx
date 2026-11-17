@@ -19,7 +19,20 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  sync-architecture:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - run: python scripts/check-sync-inventory.py
+      - run: python scripts/check-sync-dependencies.py
+      - run: python scripts/check-sync-wire.py
+      - run: python scripts/check-sync-entrypoints.py
+
   kernel-windows:
+    needs: sync-architecture
     name: kernel ${{ matrix.target }}
     strategy:
       fail-fast: false
@@ -39,6 +52,12 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.92.0
         with:
           targets: ${{ matrix.target }}
+      # The cache's key counts every toolchain installed, so a runner image's
+      # own idle one would make each image a cache of its own: only the one
+      # the build uses stays (codex-a94c19c2, run 43701326124).
+      - name: Keep only the toolchain the build uses
+        shell: bash
+        run: for t in $(rustup toolchain list | awk '{print $1}'); do case "$t" in 1.92.0-*) ;; *) rustup toolchain uninstall "$t" ;; esac; done
       - uses: Swatinem/rust-cache@v2
         with:
           key: kernel-${{ matrix.target }}
@@ -52,6 +71,7 @@ jobs:
       - run: node scripts/kernel.mjs '${{ matrix.target }}'
 
   kernel-linux:
+    needs: sync-architecture
     name: kernel ${{ matrix.target }}
     strategy:
       fail-fast: false
@@ -69,6 +89,12 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.92.0
         with:
           targets: ${{ matrix.build }}
+      # The cache's key counts every toolchain installed, so a runner image's
+      # own idle one would make each image a cache of its own: only the one
+      # the build uses stays (codex-a94c19c2, run 43701326124).
+      - name: Keep only the toolchain the build uses
+        shell: bash
+        run: for t in $(rustup toolchain list | awk '{print $1}'); do case "$t" in 1.92.0-*) ;; *) rustup toolchain uninstall "$t" ;; esac; done
       - uses: Swatinem/rust-cache@v2
         with:
           key: kernel-${{ matrix.target }}
@@ -103,21 +129,29 @@ jobs:
           python scripts/placement.py --kernel "$PWD/target/${{ matrix.build }}/release/fastctx" --drill "$PWD/tests/placement_drill" --codex "$RUNNER_TEMP/placement-codex/codex-x86_64-unknown-linux-musl" --root /tmp/placement-drill
 
   storage-linux:
+    needs: sync-architecture
     name: storage drills
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.92.0
+      # The cache's key counts every toolchain installed, so a runner image's
+      # own idle one would make each image a cache of its own: only the one
+      # the build uses stays (codex-a94c19c2, run 43701326124).
+      - name: Keep only the toolchain the build uses
+        shell: bash
+        run: for t in $(rustup toolchain list | awk '{print $1}'); do case "$t" in 1.92.0-*) ;; *) rustup toolchain uninstall "$t" ;; esac; done
       - uses: Swatinem/rust-cache@v2
         with:
           key: storage-linux
           cache-on-failure: true
       - name: Build the storage drills
         run: |
-          cargo test --release --locked -p fastctx-storage --test storage_drill --no-run
-          cargo test --release --locked -p fastctx-node --features storage-drill --test record_drill --no-run
+          cargo test --profile drill --locked -p fastctx-storage --test storage_drill --no-run
+          cargo test --profile drill --locked -p fastctx-node --features storage-drill --test record_drill --no-run
 
   storage-windows:
+    needs: sync-architecture
     name: storage drills on Windows
     runs-on: windows-2025
     defaults:
@@ -129,16 +163,23 @@ jobs:
         shell: pwsh
         run: Add-MpPreference -ExclusionPath $env:GITHUB_WORKSPACE, $env:RUNNER_TEMP, "$env:USERPROFILE\.cargo", "$env:USERPROFILE\.rustup"
       - uses: dtolnay/rust-toolchain@1.92.0
+      # The cache's key counts every toolchain installed, so a runner image's
+      # own idle one would make each image a cache of its own: only the one
+      # the build uses stays (codex-a94c19c2, run 43701326124).
+      - name: Keep only the toolchain the build uses
+        shell: bash
+        run: for t in $(rustup toolchain list | awk '{print $1}'); do case "$t" in 1.92.0-*) ;; *) rustup toolchain uninstall "$t" ;; esac; done
       - uses: Swatinem/rust-cache@v2
         with:
           key: storage-windows
           cache-on-failure: true
       - name: Build the storage drills
         run: |
-          cargo test --release --locked -p fastctx-storage --test storage_drill --no-run
-          cargo test --release --locked -p fastctx-node --features storage-drill --test record_drill --no-run
+          cargo test --profile drill --locked -p fastctx-storage --test storage_drill --no-run
+          cargo test --profile drill --locked -p fastctx-node --features storage-drill --test record_drill --no-run
 
   clippy:
+    needs: sync-architecture
     name: clippy ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -156,28 +197,41 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.92.0
         with:
           components: clippy
+      # The cache's key counts every toolchain installed, so a runner image's
+      # own idle one would make each image a cache of its own: only the one
+      # the build uses stays (codex-a94c19c2, run 43701326124).
+      - name: Keep only the toolchain the build uses
+        shell: bash
+        run: for t in $(rustup toolchain list | awk '{print $1}'); do case "$t" in 1.92.0-*) ;; *) rustup toolchain uninstall "$t" ;; esac; done
       - uses: Swatinem/rust-cache@v2
         with:
           key: clippy-${{ matrix.os }}
           cache-on-failure: true
-      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
-      - run: cargo clippy -p fastctx-node --features storage-drill --all-targets --locked -- -D warnings
+      # As the release's clippy builds it (release.yml), so that what this
+      # keeps is what that one takes up.
+      - run: cargo clippy --workspace --all-targets --features fastctx-hub/content-drill,fastctx-node/timeline-test-support --locked -- -D warnings
+      - run: cargo clippy -p fastctx-node --features storage-drill,timeline-test-support --all-targets --locked -- -D warnings
 
   kernel-macos:
+    needs: sync-architecture
     name: kernel ${{ matrix.target }}
     strategy:
       fail-fast: false
       matrix:
         target: [aarch64-apple-darwin, x86_64-apple-darwin]
-    runs-on: macos-15
+    # As release.yml builds them: both on an Intel Mac.
+    runs-on: macos-15-intel
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.92.0
         with:
           targets: ${{ matrix.target }}
-      - if: matrix.target == 'x86_64-apple-darwin'
-        name: Let Apple silicon run what is built for Intel
-        run: softwareupdate --install-rosetta --agree-to-license || /usr/bin/arch -x86_64 /usr/bin/true
+      # The cache's key counts every toolchain installed, so a runner image's
+      # own idle one would make each image a cache of its own: only the one
+      # the build uses stays (codex-a94c19c2, run 43701326124).
+      - name: Keep only the toolchain the build uses
+        shell: bash
+        run: for t in $(rustup toolchain list | awk '{print $1}'); do case "$t" in 1.92.0-*) ;; *) rustup toolchain uninstall "$t" ;; esac; done
       - uses: Swatinem/rust-cache@v2
         with:
           key: kernel-${{ matrix.target }}
@@ -191,6 +245,7 @@ jobs:
       - run: node scripts/kernel.mjs '${{ matrix.target }}'
 
   gui-windows:
+    needs: sync-architecture
     name: gui ${{ matrix.target }}
     strategy:
       fail-fast: false
@@ -213,6 +268,12 @@ jobs:
         with:
           components: rust-docs
           targets: ${{ matrix.target }}
+      # The cache's key counts every toolchain installed, so a runner image's
+      # own idle one would make each image a cache of its own: only the one
+      # the build uses stays (codex-a94c19c2, run 43701326124).
+      - name: Keep only the toolchain the build uses
+        shell: bash
+        run: for t in $(rustup toolchain list | awk '{print $1}'); do case "$t" in 1.92.0-*) ;; *) rustup toolchain uninstall "$t" ;; esac; done
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: gui/src-tauri
@@ -235,6 +296,7 @@ jobs:
         run: node scripts/release.mjs --prepare --kernel-signed --target '${{ matrix.target }}'
 
   gui-macos:
+    needs: sync-architecture
     name: gui ${{ matrix.target }}
     strategy:
       fail-fast: false
@@ -254,6 +316,12 @@ jobs:
       - if: matrix.target == 'x86_64-apple-darwin'
         name: Let Apple silicon run what is built for Intel
         run: softwareupdate --install-rosetta --agree-to-license || /usr/bin/arch -x86_64 /usr/bin/true
+      # The cache's key counts every toolchain installed, so a runner image's
+      # own idle one would make each image a cache of its own: only the one
+      # the build uses stays (codex-a94c19c2, run 43701326124).
+      - name: Keep only the toolchain the build uses
+        shell: bash
+        run: for t in $(rustup toolchain list | awk '{print $1}'); do case "$t" in 1.92.0-*) ;; *) rustup toolchain uninstall "$t" ;; esac; done
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: gui/src-tauri
@@ -276,6 +344,7 @@ jobs:
         run: node scripts/release.mjs --prepare --target '${{ matrix.target }}'
 
   gui-linux:
+    needs: sync-architecture
     name: gui x86_64-unknown-linux-gnu
     runs-on: ubuntu-22.04
     env:
@@ -289,6 +358,12 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.92.0
         with:
           components: rust-docs
+      # The cache's key counts every toolchain installed, so a runner image's
+      # own idle one would make each image a cache of its own: only the one
+      # the build uses stays (codex-a94c19c2, run 43701326124).
+      - name: Keep only the toolchain the build uses
+        shell: bash
+        run: for t in $(rustup toolchain list | awk '{print $1}'); do case "$t" in 1.92.0-*) ;; *) rustup toolchain uninstall "$t" ;; esac; done
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: gui/src-tauri
@@ -311,6 +386,7 @@ jobs:
         run: node scripts/release.mjs --prepare
 
   android:
+    needs: sync-architecture
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -322,6 +398,12 @@ jobs:
         with:
           components: rust-docs
           targets: aarch64-linux-android,armv7-linux-androideabi,i686-linux-android,x86_64-linux-android
+      # The cache's key counts every toolchain installed, so a runner image's
+      # own idle one would make each image a cache of its own: only the one
+      # the build uses stays (codex-a94c19c2, run 43701326124).
+      - name: Keep only the toolchain the build uses
+        shell: bash
+        run: for t in $(rustup toolchain list | awk '{print $1}'); do case "$t" in 1.92.0-*) ;; *) rustup toolchain uninstall "$t" ;; esac; done
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: gui/src-tauri

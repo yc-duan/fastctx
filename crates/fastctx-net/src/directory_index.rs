@@ -88,6 +88,7 @@ impl Index {
         for (at, project) in all.projects.iter().enumerate() {
             index.projects.entry(project.town.clone()).or_insert(at);
             let mut accounts = project.granted.clone();
+            accounts.extend(project.frozen.iter().cloned());
             accounts.insert(project.owner.clone());
             if let Some(machine) = &project.shared_on
                 && let Some(shared) = holders.get(all.canonical(machine))
@@ -264,6 +265,20 @@ impl<'a> Indexed<'a> {
         crate::authorization::authorize(self, account, action)
     }
 
+    /// The same call decision as `Directory::account_for`, using indexed lookups.
+    pub fn account_for<'n>(
+        &self,
+        accounts: impl IntoIterator<Item = &'n AccountName>,
+        from: &MachineName,
+        to: &MachineName,
+        purpose: fastctx_types::access::Purpose,
+    ) -> Option<AccountName> {
+        accounts
+            .into_iter()
+            .find(|account| self.authorize(account, crate::authorization::Action::Call { from, to, purpose }).is_ok())
+            .cloned()
+    }
+
     pub fn rights(&self, account: &AccountName, machine: &MachineName) -> fastctx_types::access::Rights {
         crate::authorization::rights(self, account, machine)
     }
@@ -303,7 +318,7 @@ impl Lookup for Indexed<'_> {
     }
 
     fn is_shared(&self, account: &AccountName, machine: &MachineName) -> bool {
-        self.shares_by_account(account).iter().any(|&at| self.all.shares[at].machine == *machine)
+        self.shares_by_account(account).iter().any(|&at| self.all.shares[at].machine == *machine && self.all.shares[at].active())
     }
 
     fn assists(

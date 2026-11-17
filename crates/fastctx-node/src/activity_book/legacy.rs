@@ -19,6 +19,7 @@ pub(super) struct Context {
     pub source: Database,
     pub target: Database,
     pub world: PathBuf,
+    pub topics: std::sync::Arc<crate::topics::Topics>,
 }
 impl Context {
     pub fn of(node: &crate::Node) -> Self {
@@ -26,6 +27,7 @@ impl Context {
             source: node.database.clone(),
             target: node.book_database.clone(),
             world: node.world.path().to_path_buf(),
+            topics: node.topics.clone(),
         }
     }
 }
@@ -81,18 +83,24 @@ pub(super) fn copy(context: &Context, table: &'static str, rows: &[Vec<Value>]) 
     let bytes = serde_json::to_vec(&encoded(rows))?.len();
     let matches = context
         .target
-        .write_now_at(scheduler::priority(), bytes, move |db| {
-            let marks = (1..=columns.split(',').count()).map(|index| format!("?{index}")).collect::<Vec<_>>().join(",");
-            let mut same = true;
-            for row in owned {
-                db.execute(
-                    &format!("INSERT OR IGNORE INTO {table}({columns}) VALUES({marks})"),
-                    params_from_iter(&row),
-                )?;
-                same &= read(db, table, &row[..keys])?.as_ref() == Some(&row);
-            }
-            Ok(same)
-        })
+        .write_now_then_at(
+            scheduler::priority(),
+            bytes,
+            move |db| {
+                let marks =
+                    (1..=columns.split(',').count()).map(|index| format!("?{index}")).collect::<Vec<_>>().join(",");
+                let mut same = true;
+                for row in owned {
+                    db.execute(
+                        &format!("INSERT OR IGNORE INTO {table}({columns}) VALUES({marks})"),
+                        params_from_iter(&row),
+                    )?;
+                    same &= read(db, table, &row[..keys])?.as_ref() == Some(&row);
+                }
+                Ok(same)
+            },
+            super::changes::committed(&context.topics),
+        )
         .map_err(io::Error::other)?;
     if !matches {
         return Err(io::Error::new(io::ErrorKind::InvalidData, "an old book row conflicts with its destination"));

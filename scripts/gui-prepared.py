@@ -1,7 +1,7 @@
 """Archive a prepared desktop application for bundling in another job of the same run.
 
 Only the finished executable, frontend and generated notices cross the job boundary.
-The kernel and Linux archives arrive separately from their build jobs; no stand-ins or
+The kernel arrives separately from its build job; no stand-ins or
 Cargo caches belong to this artifact. Both jobs use the same host and target triples.
 """
 import argparse

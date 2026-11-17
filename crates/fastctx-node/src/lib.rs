@@ -22,6 +22,7 @@ mod agent_activity;
 mod agents;
 mod around;
 mod asked;
+mod assets;
 mod assists;
 mod attach;
 mod attachment_files;
@@ -40,6 +41,7 @@ mod colleagues;
 mod completion_debt;
 mod completion_delivery;
 mod composer;
+pub use composer::compaction::compact_document as compact_composer_document;
 mod consent;
 pub mod context;
 mod control;
@@ -58,6 +60,8 @@ mod ending;
 #[cfg(test)]
 mod future_sizes;
 pub use ending::flush_log;
+mod asset_preservation;
+mod content_upkeep;
 mod conversation_store;
 mod facts;
 mod features;
@@ -80,11 +84,14 @@ mod homes;
 mod hub_arrival;
 mod hub_moving;
 mod inbox;
+mod incarnations;
 mod initializing;
 mod inspect;
 mod intake;
 mod job_accounts;
+mod job_assets;
 mod job_files;
+mod job_index;
 mod job_metadata;
 mod job_reader;
 mod job_receipts;
@@ -110,6 +117,7 @@ mod managed;
 mod management;
 mod mcp;
 mod memory_room;
+mod network_changes;
 mod obligations;
 mod on;
 mod on_delivery;
@@ -117,7 +125,7 @@ mod on_steps;
 mod on_stop;
 mod outbox;
 mod own_collab;
-mod pages;
+mod passes;
 mod placement;
 mod plan;
 mod plan_file;
@@ -129,14 +137,17 @@ mod ranked;
 mod reach;
 mod received;
 mod record_access;
+mod record_changes;
 mod record_database;
 mod record_gates;
 mod record_migration;
 mod record_ownership;
 mod record_payloads;
 mod record_value;
+mod record_writes;
 mod records;
 mod recovery;
+mod remote_topics;
 mod removed;
 mod renewal;
 mod renewal_legacy;
@@ -167,10 +178,19 @@ mod step_command;
 mod stop;
 mod stops;
 mod stuck;
+mod submission_fallback;
+mod submitted;
 mod talk;
 pub mod thumbnail;
+mod thumbnail_cache;
+mod thumbnail_room;
+mod timeline;
+/// The timeline's writing as fastctx-bench measures it.
+#[cfg(feature = "bench")]
+pub use timeline::bench;
 pub mod timers;
 mod to_end;
+mod topics;
 mod town;
 mod turn_evidence;
 mod turn_slots;
@@ -186,6 +206,8 @@ mod waiting;
 mod watch;
 mod watchdog;
 mod who;
+mod workers;
+pub use workers::ROLES as WORKER_ROLES;
 mod world;
 mod world_format;
 mod world_program;
@@ -211,9 +233,17 @@ pub(crate) struct Node {
     root: PathBuf,
     world: WorldDir,
     database: fastctx_storage::Database,
+    /// Durable service work submitted with its triggering state change.
+    durable_jobs: Arc<fastctx_jobs::Jobs>,
+    submission_kinds: submission_fallback::Started,
+    workers: workers::Pools,
+    /// The content database: what this machine holds of conversations and
+    /// other streams as items, read a page at a time (`timeline`).
+    content: Option<fastctx_content::Content>,
+    /// The second version's asset library and sync (`assets`).
+    assets: Option<assets::Assets>,
     book_database: fastctx_storage::Database,
     record_migration: record_migration::Service,
-    controls_due: std::sync::Mutex<std::collections::HashMap<fastctx_types::ResidentId, bool>>,
     /// This program's own copy under the World, which everything the node
     /// starts from itself runs from (`own.rs`).
     fastctx: PathBuf,
@@ -248,6 +278,8 @@ pub(crate) struct Node {
     collaboration_reads: colleagues::tree::Reads,
     collaboration_followed: colleagues::live::Followed,
     cut_histories: cut_history::CutHistories,
+    /// What 本机数据 last measured here (`data::Measured`).
+    data_space: data::Measured,
     plan_reads: plan_reads::Reads,
     skill_copies: skills::copies::Copies,
     skill_index: skills::cache::Cache,
@@ -290,9 +322,6 @@ pub(crate) struct Node {
     /// How many turns each agent login runs at once, and the turns waiting
     /// for room (`turn_slots`).
     turn_slots: turn_slots::Slots,
-    /// What the machine keeps free in memory for its agents, and the turns
-    /// waiting for it (`memory_room`).
-    memory_room: memory_room::Room,
     /// How far the machine is toward its system's limits over the last day.
     limits: limits::Readings,
     /// Whom each job running here works for (`job_accounts`).
@@ -310,6 +339,9 @@ pub(crate) struct Node {
     /// Moves whenever a hub's view may have changed, or this computer's name
     /// did: what is afoot here is told again then (`afoot`).
     views: tokio::sync::watch::Sender<u64>,
+    /// The pieces of this node's state a reader waits on rather than asks
+    /// for again (`topics`).
+    topics: Arc<topics::Topics>,
     /// Moves whenever what an interface shows of the World may have changed,
     /// beyond the residents and jobs here (`shown`).
     shown: tokio::sync::watch::Sender<u64>,
@@ -324,6 +356,8 @@ pub(crate) struct Node {
     stuck: stuck::Stuck,
     /// What the agents' logins here were used for (`usage`).
     usage: usage::Usage,
+    /// When this machine first saw each account as it is now (`incarnations`).
+    incarnations: incarnations::Incarnations,
     /// Held while the projects' ledgers are taken or written, one at a time.
     syncing: ranked::Syncing,
     ledger_updates: ledger::syncing::Updates,
@@ -356,7 +390,6 @@ pub(crate) struct Node {
     on_deliveries: on_delivery::Deliveries,
     received: received::Received,
     control_letters: control_letters::Receiving,
-    receipts_changed: tokio::sync::Notify,
     outbox: outbox::Outbox,
     delivery_work: delivery::work::Work,
     on_stopping: std::sync::Mutex<std::collections::HashSet<PathBuf>>,
@@ -421,6 +454,9 @@ impl Node {
     pub(crate) fn views_changed(&self) {
         self.contexts.reading.changed(self);
         self.views.send_modify(|changes| *changes = changes.wrapping_add(1));
+        self.topics.changed_prefix(fastctx_types::topics::MAP_PREFIX);
+        self.topics.changed(fastctx_types::topics::SENTINELS);
+        self.topics.changed(fastctx_types::topics::UPDATE);
         self.shown_changed();
     }
 
@@ -743,7 +779,6 @@ pub async fn run_prepared(
                 Arc::new(move |line| codex_log.line(line)),
             );
             let claude = claude::Claude::new();
-            let memory_room = memory_room::Room::new(&world);
             let database = record_database::open(&world);
             if let Some(error) = database.fault() {
                 log.line(format_args!("node record storage unavailable: {error}"));
@@ -754,6 +789,23 @@ pub async fn run_prepared(
 {report}"
                 ));
             }
+            if database.fault().is_none() {
+                record_database::start_upgrade(&database, log.clone()).context("pinning the World upgrade snapshot")?;
+            }
+            let assets = match world::key(&world).and_then(|key| assets::Assets::open(world.assets(), key)) {
+                Ok(assets) => Some(assets),
+                Err(error) => {
+                    log.line(format_args!("the asset library is unavailable: {error}"));
+                    None
+                }
+            };
+            let content = match fastctx_content::Content::open(world.path()) {
+                Ok(content) => Some(content),
+                Err(error) => {
+                    log.line(format_args!("the content database is unavailable: {error}"));
+                    None
+                }
+            };
             let record_migration =
                 record_database::register(&world, &database).context("opening the node record database")?;
             record_migration.report_to(log.clone());
@@ -775,10 +827,14 @@ pub async fn run_prepared(
             let node = Arc::new_cyclic(|weak: &std::sync::Weak<Node>| Node {
                 root: fastctx_root.to_path_buf(),
                 world,
+                durable_jobs: fastctx_jobs::Jobs::new(database.clone()),
+                submission_kinds: submission_fallback::Started::default(),
+                workers: Default::default(),
                 database,
+                content,
+                assets,
                 book_database,
                 record_migration,
-                controls_due: Default::default(),
                 fastctx,
                 machine: RwLock::new(machine),
                 jobs: jobs::Jobs::new(),
@@ -800,6 +856,7 @@ pub async fn run_prepared(
                 collaboration_reads: Default::default(),
                 collaboration_followed: Default::default(),
                 cut_histories: Default::default(),
+                data_space: Default::default(),
                 plan_reads: Default::default(),
                 skill_copies: Default::default(),
                 skill_index: Default::default(),
@@ -828,7 +885,6 @@ pub async fn run_prepared(
                 actions: Default::default(),
                 long_controls: Default::default(),
                 turn_slots: Default::default(),
-                memory_room,
                 limits: Default::default(),
                 job_accounts: Default::default(),
                 cpu_shares,
@@ -838,6 +894,7 @@ pub async fn run_prepared(
                 links: RwLock::new(std::collections::BTreeMap::new()),
                 ways: tokio::sync::watch::channel(0).0,
                 views: tokio::sync::watch::channel(0).0,
+                topics: Arc::new(topics::Topics::new()),
                 shown: tokio::sync::watch::channel(0).0,
                 world_shown: Default::default(),
                 memory_changes: tokio::sync::watch::channel(0).0,
@@ -845,6 +902,7 @@ pub async fn run_prepared(
                 forget_asks: forget::Asks::default(),
                 stuck: Default::default(),
                 usage: usage::Usage::default(),
+                incarnations: Default::default(),
                 syncing: Default::default(),
                 ledger_updates: Default::default(),
                 taking: Default::default(),
@@ -859,7 +917,6 @@ pub async fn run_prepared(
                 on_deliveries: Default::default(),
                 received: Default::default(),
                 control_letters: Default::default(),
-                receipts_changed: Default::default(),
                 outbox: Default::default(),
                 delivery_work: Default::default(),
                 on_stopping: Default::default(),
@@ -898,15 +955,29 @@ pub async fn run_prepared(
         for problem in problems {
             node.log.line(format_args!("could not keep a project of the network's third version: {problem}"));
         }
-        for problem in ledger::finish(&node.world).context("reading the towns' ledgers")? {
+        for problem in ledger::finish(&node).context("reading the towns' ledgers")? {
             node.log.line(format_args!("could not finish a ledger entry: {problem}"));
         }
         town::guard::start(&node).context("watching the towns' ledgers")?;
+        // The asset library is on the networks whose memberships stand and
+        // off every other before any link writes for one: what a network
+        // this computer left, and stopped before it was let go, goes now.
+        let standing: Vec<_> = memberships
+            .iter()
+            .map(|membership| membership.id.clone())
+            .filter(|hub| world::standing(&node.world, hub))
+            .collect();
+        // One that fails is set right later: a network's driver joins it,
+        // the upkeep leaves what no membership stands for.
+        if let Err(why) = assets::membership::settle(&node, &standing) {
+            node.log.line(format_args!("settling which networks the asset library is on: {why}"));
+        }
         for membership in memberships {
             node.log
                 .line(format_args!("on the hub {} ({}) as {}", membership.hub_name, membership.id, membership.name));
             world::start(&node, membership).context("starting a link to a hub")?;
         }
+        assets::upkeep::start(&node);
         replicas::cleanup::start(&node);
         Ok::<_, anyhow::Error>(())
     })
@@ -917,6 +988,7 @@ pub async fn run_prepared(
     let preparing = node.clone();
     fastctx_platform::task::spawn_blocking(move || {
         let node = preparing;
+        updates::observe(&node);
         claude::start(&node).context("writing the World's Claude Code plugin")?;
         composer::prepare_recovery(&node);
         if node.database.fault().is_none() {
@@ -928,7 +1000,48 @@ pub async fn run_prepared(
     let recovering = node.clone();
     fastctx_platform::task::spawn(async move {
         let node = recovering;
-        node.record_migration.wait_started().await;
+        // The queue starts whatever becomes of recovery: controls, answers
+        // and waking a host wait on it, and what runs them waits for its
+        // conversation to be ready itself. What is started with recovered
+        // work below names its own kinds then.
+        timeline::register(&node);
+        attachments::kept_here::clear_left(&node);
+        job_assets::start(&node);
+        assets::logs::start(&node);
+        assets::activity::start(&node);
+        sentinels::wakes::start(&node);
+        management::register(&node);
+        record_changes::register(&node);
+        record_writes::register(&node);
+        control::submission::register(&node);
+        talk::submission::register(&node);
+        goals::submission::register(&node);
+        sentinels::submission::register(&node);
+        logins::submitted::register(&node);
+        content_upkeep::register(&node);
+        outbox::register(&node);
+        control_queue::register(&node);
+        composer::compaction::register(&node);
+        lifecycle::retry::register(&node);
+        claude::register(&node);
+        let (durable_jobs, log) = (node.durable_jobs.clone(), node.log.clone());
+        fastctx_platform::task::spawn(async move {
+            let (mut again, mut said) = (crate::again::Again::default(), String::new());
+            while let Err(error) = durable_jobs.start().await {
+                let error = error.to_string();
+                if error != said {
+                    log.line(format_args!("starting durable jobs; trying again: {error}"));
+                    said = error;
+                }
+                tokio::time::sleep(again.next().max(std::time::Duration::from_secs(1))).await;
+            }
+        });
+        if let Err(error) = node.record_migration.wait_started().await {
+            node.log.line(format_args!("record recovery remains unavailable: {error}"));
+            node.effects_ready.store(true, std::sync::atomic::Ordering::Release);
+            node.effects_changed.notify_waiters();
+            return;
+        }
         startup::recover(&node).await;
         node.effects_ready.store(true, std::sync::atomic::Ordering::Release);
         node.effects_changed.notify_waiters();
@@ -957,6 +1070,9 @@ pub async fn run_prepared(
             plan_file::start(&node);
             profile::session::start(&node);
             context::start(&node);
+            turn_evidence::submitted::start(&node);
+            network_changes::start(&node);
+            logins::sign_in_refresh::register(&node);
             updates::start(&node);
             afoot::start(&node);
             usage::watch(&node);
@@ -969,7 +1085,9 @@ pub async fn run_prepared(
     });
     let jobs_node = node.clone();
     fastctx_platform::task::spawn(async move {
-        jobs_node.record_migration.wait_started().await;
+        if jobs_node.record_migration.wait_started().await.is_err() {
+            return;
+        }
         if jobs_node.database.fault().is_some() {
             return;
         }
@@ -1088,14 +1206,45 @@ pub struct ExportedConversation {
     /// The export's name between machines: the one taking it keeps it, and
     /// this machine lets the conversation go by it.
     pub fingerprint: String,
+    /// Where the release of the streams this machine orders in the
+    /// conversation is, to the machine named (design §28.10); none when none
+    /// was named, or it orders none.
+    pub release: Option<std::path::PathBuf>,
 }
 
 /// Exports every conversation-owned table into its directory while the node is
 /// stopped. Copy that directory with its host records before starting the target.
-pub fn export_conversation(root: &std::path::Path, conversation: &str) -> std::io::Result<ExportedConversation> {
-    world_format::check(&WorldDir::under(root))?;
+/// With `to`, the machine it goes to, the streams this machine orders in the
+/// conversation are released to that machine beside it: there they are
+/// ordered from then on (design §28.10); without, they are held there as a
+/// replica.
+pub fn export_conversation(
+    root: &std::path::Path,
+    conversation: &str,
+    to: Option<&str>,
+) -> std::io::Result<ExportedConversation> {
+    let world = WorldDir::under(root);
+    world_format::check(&world)?;
     let (bundle, fingerprint) = conversation_store::transfer::exporting::export(root, conversation)?;
-    Ok(ExportedConversation { bundle, fingerprint })
+    let directory = bundle.parent().map(std::path::Path::to_path_buf).unwrap_or_default();
+    let release = match to {
+        Some(to) => {
+            let _owner = fastctx_platform::FileLock::try_acquire(&world.node_lock())?.ok_or_else(|| {
+                std::io::Error::new(
+                    std::io::ErrorKind::WouldBlock,
+                    "stop the source node before exporting a conversation",
+                )
+            })?;
+            assets::release::export(&world, &directory, conversation, to)?
+        }
+        // Held there as a replica: what an earlier export released goes
+        // (AP07).
+        None => {
+            assets::release::clear(&directory)?;
+            None
+        }
+    };
+    Ok(ExportedConversation { bundle, fingerprint, release })
 }
 
 /// Lets a conversation go from this stopped node once another machine took

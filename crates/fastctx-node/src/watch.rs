@@ -61,14 +61,38 @@ const KEPT_FOR: Duration = Duration::from_secs(120);
 pub struct Watchers {
     watching: Arc<[RwLock<Sessions>; SHARDS]>,
     pub(crate) changed: Arc<Changed>,
+    /// The conversations whose history grew since their timelines were last
+    /// asked for (`timeline::produce`).
+    pub(crate) produced: Arc<Produced>,
     /// The bytes of the events every conversation keeps.
     kept: Arc<AtomicUsize>,
+}
+
+/// Conversations whose history grew, for their timelines to be brought to it.
+#[derive(Default)]
+pub(crate) struct Produced {
+    ids: Mutex<HashSet<ResidentId>>,
+    pub(crate) notify: tokio::sync::Notify,
+}
+
+impl Produced {
+    fn grew(&self, id: &ResidentId) {
+        if self.ids.lock().expect("never poisoned").insert(id.clone()) {
+            self.notify.notify_one();
+        }
+    }
+
+    /// The conversations that grew since last taken.
+    pub(crate) fn take(&self) -> HashSet<ResidentId> {
+        std::mem::take(&mut *self.ids.lock().expect("never poisoned"))
+    }
 }
 impl Default for Watchers {
     fn default() -> Self {
         Self {
             watching: Arc::new(std::array::from_fn(|_| RwLock::default())),
             changed: Arc::default(),
+            produced: Arc::default(),
             kept: Arc::default(),
         }
     }
@@ -237,12 +261,19 @@ impl Watchers {
             self.watching[shard(id)].write().expect("never poisoned").entry(id.clone()).or_default().clone()
         })
     }
-    pub(crate) fn watched(&self, id: &ResidentId) -> bool {
-        let watched = self.get(id).is_some_and(|session| {
-            session.lock().expect("never poisoned").senders.iter().any(|sender| !sender.is_closed())
-        });
-        retire(&self.watching, id);
-        watched
+
+    pub(crate) fn running(&self, id: &ResidentId, turn: &str, item: &str) -> (Option<SessionEvent>, Option<Mark>) {
+        let Some(session) = self.get(id) else { return (None, None) };
+        let session = session.lock().expect("never poisoned");
+        let event = session
+            .live
+            .snapshots()
+            .find(|event| {
+                matches!(&event.happened,
+            fastctx_types::session::Happened::Began { turn: t, item: i } if t == turn && i.id == item)
+            })
+            .cloned();
+        (event, Some(Mark { epoch: session.told.epoch, sequence: session.told.sequence }))
     }
     pub fn tools(&self, id: &ResidentId) -> Vec<fastctx_types::town::CurrentTool> {
         use fastctx_types::session::Happened;
@@ -369,6 +400,21 @@ impl Watchers {
     }
 
     pub fn publish(&self, id: &ResidentId, event: &SessionEvent) {
+        if matches!(
+            event.happened,
+            fastctx_types::session::Happened::Finished { .. }
+                | fastctx_types::session::Happened::Heard { .. }
+                | fastctx_types::session::Happened::TurnEnded { .. }
+                // The history the timeline is made from changed under it:
+                // turns taken back go from it too (AA07).
+                | fastctx_types::session::Happened::Changed {
+                    change: fastctx_types::session::SessionChange::HistoryChanged
+                        | fastctx_types::session::SessionChange::HistoryCut { .. },
+                    ..
+                }
+        ) {
+            self.produced.grew(id);
+        }
         let cell = self.session(id);
         let measured = watch_queue::event_size(event);
         let empty = {

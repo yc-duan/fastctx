@@ -75,7 +75,7 @@ export interface FocusServers {
 export interface FocusPanelOptions {
   words: FocusWords;
   places(): FocusPlace[];
-  folders(machine: string, path: string | null): Promise<Folders>;
+  folders(machine: string, path: string | null, cursor?: string | null): Promise<Folders>;
   /** Each change, as it is made. */
   changed(focus: Focus): void;
   /** Where the panel has a button to close it with. */
@@ -226,7 +226,7 @@ export class FocusPanel {
     const kept = (chosen?.folders ?? []).filter((path) => !named.some((mark) => mark.path === path)).map((path) => ({ name: folderName(path), path }));
     this.picker.open({
       machine: place.written,
-      folders: (path) => this.options.folders(place.written, path),
+      folders: (path, cursor) => this.options.folders(place.written, path, cursor),
       marks: [...named, ...kept],
       start: chosen?.folders.at(-1) ?? null,
       ...(place.here ? { allow: () => void allowPrivacy() } : {}),

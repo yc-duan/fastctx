@@ -86,7 +86,7 @@ fn identity(home: &std::path::Path) -> Option<fastctx_types::logins::Identity> {
 }
 
 fn read(home: &std::path::Path, name: &str) -> Option<Value> {
-    let text = match std::fs::read_to_string(home.join(name)) {
+    let text = match fastctx_platform::disk::read_to_string(home.join(name)) {
         Ok(text) => text,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Some(Value::Null),
         Err(_) => return None,

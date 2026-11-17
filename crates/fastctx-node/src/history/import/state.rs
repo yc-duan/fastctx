@@ -145,16 +145,3 @@ pub(crate) fn readable(path: &Path) -> Result<PathBuf, String> {
         .and_then(|originals| originals.into_iter().find(|original| original.source() == path))
         .map_or_else(|| path.into(), |original| original.readable().into()))
 }
-
-/// Archive expiry must retain the destinations of incomplete imports.
-pub(crate) fn archive_targets(world: &Path) -> io::Result<Vec<PathBuf>> {
-    let mut targets = Vec::new();
-    for path in crate::record_migration::archive::import_journals(&world.join("conversations"), "history-import.json")?
-    {
-        let Some(transfer) = state::read_or::<Option<Transfer>>(&path, None)? else { continue };
-        if !transfer.done {
-            targets.extend(transfer.originals.into_iter().flatten().map(|original| original.target().to_path_buf()));
-        }
-    }
-    Ok(targets)
-}

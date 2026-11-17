@@ -16,7 +16,7 @@ mod journal;
 #[path = "carry_translation.rs"]
 mod translation;
 use journal::keep;
-pub(crate) use journal::{archive_targets, towns};
+pub(crate) use journal::towns;
 use translation::translated;
 
 #[derive(Serialize, Deserialize)]
@@ -181,7 +181,11 @@ async fn one(node: &Arc<Node>, link: &Arc<Link>, home: &AccountName, town: &Town
             }
         }
         let recovering = originals(&node.world, town).map_err(|error| error.to_string())?.is_some();
-        recover(&node.world, town, history_enabled).map_err(|error| error.to_string())?;
+        {
+            let _map_changed =
+                recovering.then(|| node.topics.writing(format!("{}{town}", fastctx_types::topics::MAP_PREFIX)));
+            recover(&node.world, town, history_enabled).map_err(|error| error.to_string())?;
+        }
         if recovering {
             crate::context::invalidations::project(node, town);
             crate::replicas::updates::schedule(node, link.hub(), crate::replicas::updates::Change::All);
@@ -252,6 +256,9 @@ async fn one(node: &Arc<Node>, link: &Arc<Link>, home: &AccountName, town: &Town
         .iter()
         .enumerate()
         .filter_map(|(index, (_, entry, _))| match topics::omitted(entry, &journal.skipped) {
+            // A page an earlier release published, and nothing else: pages
+            // are no more, and none is carried (codex-e7b1552a R3).
+            _ if !entry.files.is_empty() && entry.files.iter().all(|file| super::removed(&file.path)) => None,
             Ok(true) => None,
             Ok(false) => Some(Ok(index)),
             Err(error) => Some(Err(error)),
@@ -339,7 +346,10 @@ async fn one(node: &Arc<Node>, link: &Arc<Link>, home: &AccountName, town: &Town
     });
     journal.originals = Some(originals);
     keep(&node.world, town, &journal).map_err(|error| error.to_string())?;
-    finish(&node.world, town, &mut journal).map_err(|error| error.to_string())?;
+    {
+        let _map_changed = node.topics.writing(format!("{}{}", fastctx_types::topics::MAP_PREFIX, town));
+        finish(&node.world, town, &mut journal).map_err(|error| error.to_string())?;
+    }
     crate::context::invalidations::project(node, town);
     crate::replicas::updates::schedule(node, &journal.target.hub, crate::replicas::updates::Change::All);
     node.memory_changed();

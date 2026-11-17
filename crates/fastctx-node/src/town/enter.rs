@@ -18,7 +18,6 @@ pub(crate) async fn call(node: &Arc<Node>, caller: &Caller, town: TownName) -> R
         Caller::Resident(address) if node.is_me(&address.machine) => here(node, &address.resident, &town, None).await?,
         Caller::Resident(address) => remote(node, address, &town).await?,
         Caller::User => return Err(Failure::not_run("only an agent's resident conversation enters a project")),
-        Caller::Page(_) => return Err(Failure::not_run("a page does not enter a project")),
         Caller::Session(_) => return Err(Failure::refused("the agent session has no resident identity yet")),
     };
     Ok(Reply::Entered { town, map: Box::new(map) })
@@ -55,10 +54,8 @@ async fn remote(node: &Arc<Node>, address: &Address, town: &TownName) -> Result<
         ));
     }
     let call = RemoteCall::EnterProject { resident: address.resident.clone(), town: town.clone() };
-    match link
-        .call(&address.machine, &account.account, Purpose::Echo, call)
-        .await
-        .map_err(|error| Failure::new(error.to_string()))??
+    match crate::record_changes::transport::linked(&link, &address.machine, &account.account, Purpose::Echo, call)
+        .await?
     {
         RemoteReply::Entered { town: entered, map } if entered == *town => Ok(*map),
         _ => Err(Failure::new("the conversation's home answered something other than project entry")),

@@ -6,7 +6,7 @@
 // machines, agents or groups by account reads them from here, so they all
 // agree.
 
-import { loginsOf, type AccountName, type HubAccounts, type HubId, type HubName, type Login, type Rights } from "../world/accounts";
+import { loginsOf, type AccountName, type HubAccounts, type HubId, type HubName, type Login, type ProjectSeen, type Rights } from "../world/accounts";
 import type { WorldNow } from "../world/bridge";
 import type { MachineFacts, ResidentNow, Strain } from "../world/world";
 import type { MachineName, Result, Timestamp } from "../world/wire";
@@ -445,6 +445,28 @@ export function isSuper(world: WorldNow | null, login: Login): boolean {
  *  lets none of its agents assist anyone. */
 export function isVisitor(world: WorldNow | null, login: Login): boolean {
   return (world ? indexOf(world).hubs.get(login.hub)?.accounts.get(login.account)?.level : undefined) === "visitor";
+}
+
+/** Whether `login`'s account is locked on its hub. */
+export function isLocked(world: WorldNow | null, login: Login): boolean {
+  return (world ? indexOf(world).hubs.get(login.hub)?.accounts.get(login.account)?.locked : undefined) === true;
+}
+
+/** The logins here that are co-owners of `project` of `hub`: those that
+ *  hold the machine it was opened on now — its owner, or a share in force —
+ *  or held it as it left (`frozen`). One that may give and is not locked
+ *  comes first, a visitor or a locked one after (§28.47). */
+export function coOwnersOf(world: WorldNow, hub: HubAccounts, project: ProjectSeen): Login[] {
+  const logins = loginsOf(world.accounts).filter((login) => login.hub === hub.hub);
+  const machine = project.shared_on
+    ? machinesOf(world).find((one) => one.name === project.shared_on && one.on.some((on) => on.hub === hub.hub))
+    : undefined;
+  const inForce = (login: Login) =>
+    !!machine &&
+    (owns(machine, login) || hub.shares.some((share) => share.machine === machine.name && share.account === login.account && share.pending == null));
+  const holders = logins.filter((login) => (project.frozen ?? []).includes(login.account) || inForce(login));
+  const rank = (login: Login) => (isLocked(world, login) ? 2 : 0) + (isVisitor(world, login) ? 1 : 0);
+  return holders.map((login, at) => ({ login, at })).sort((a, b) => rank(a.login) - rank(b.login) || a.at - b.at).map(({ login }) => login);
 }
 
 /** The hub's super administrator, as `login` sees it. */

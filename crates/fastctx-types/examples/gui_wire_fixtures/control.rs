@@ -31,6 +31,7 @@ pub fn fixtures() -> Fixtures {
                 request: json!({"server":"123:2026-10-04T12:00:00Z","id":0}),
                 answer: json!({"decision":"accept"}),
             },
+            Control::Goal { objective: "把这一版做完".into() },
         ],
         controlled: vec![
             Controlled::Done { said: None },
@@ -47,7 +48,10 @@ pub fn fixtures() -> Fixtures {
         ],
         offers: vec![
             Offers::default(),
+            // What is known while the host is still being asked for the rest.
+            Offers { gathering: true, model: Some("model".into()), ..Offers::default() },
             Offers {
+                gathering: false,
                 pending_controls: vec![PendingControl {
                     id: "control-1".into(),
                     control: Control::Compact,
@@ -56,9 +60,18 @@ pub fn fixtures() -> Fixtures {
                     result: None,
                     error: None,
                 }],
+                pending_newer: vec![PendingControl {
+                    id: "control-2".into(),
+                    control: Control::Goal { objective: "把这一版做完".into() },
+                    at: "2026-10-21T00:00:01Z".parse().unwrap(),
+                    state: ControlState::Waiting,
+                    result: None,
+                    error: None,
+                }],
                 control_queue: true,
                 controls_told: true,
                 control_reply_envelope: false,
+                control_goal: true,
                 checkpoints: None,
                 history_limits: None,
                 automatic_model: None,

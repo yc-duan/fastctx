@@ -108,7 +108,11 @@ async fn claude(node: &Arc<Node>, resident: &ResidentId, agent: &str) -> Result<
         ..Default::default()
     };
     let unavailable = (!read.problems.is_empty()).then(|| {
-        format!("{} part(s) of its record could not be read: {}", read.problems.len(), read.problems.join("; "))
+        format!(
+            "{} part(s) of its record could not be read: {}",
+            read.problems.len() + read.problems_omitted,
+            transcript::listed(&read.problems, read.problems_omitted)
+        )
     });
     Ok(AgentActivity { agent: Some(start), events: runs(read.events, agent), unavailable })
 }

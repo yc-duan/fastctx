@@ -18,6 +18,7 @@ use crate::Node;
 
 pub mod control;
 mod directories;
+pub(crate) mod follow;
 pub mod hosts;
 pub(crate) mod native;
 pub(crate) mod native_context;

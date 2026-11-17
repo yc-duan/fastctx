@@ -4,6 +4,9 @@
 //! the disk. A component that keeps to its threads' roles reaches files only
 //! through here; its `clippy.toml` refuses `std::fs` itself.
 
+mod bounded;
+pub use bounded::read_bounded;
+
 use std::fs::{self, File, Metadata, OpenOptions, ReadDir};
 use std::io;
 use std::path::{Path, PathBuf};
@@ -15,12 +18,12 @@ fn in_place<R>(work: impl FnOnce() -> R) -> R {
 
 #[track_caller]
 pub fn read(path: impl AsRef<Path>) -> io::Result<Vec<u8>> {
-    in_place(|| fs::read(path)).inspect(|bytes| crate::cost::read(bytes.len()))
+    in_place(|| crate::read_budget::read(path.as_ref()))
 }
 
 #[track_caller]
 pub fn read_to_string(path: impl AsRef<Path>) -> io::Result<String> {
-    in_place(|| fs::read_to_string(path)).inspect(|text| crate::cost::read(text.len()))
+    in_place(|| crate::read_budget::read_to_string(path.as_ref()))
 }
 
 #[track_caller]

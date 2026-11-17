@@ -339,38 +339,33 @@ pub(crate) fn collect(node: &Node) -> io::Result<()> {
 /// Authoritative removals settle remote-running records without waiting for
 /// a result that can no longer arrive through any of their account's hubs.
 pub(crate) fn start(node: &std::sync::Arc<Node>) {
-    let node = node.clone();
-    let mut ways = node.ways.subscribe();
-    fastctx_platform::task::spawn(async move {
-        let mut again = crate::again::Again::default();
-        loop {
-            ways.borrow_and_update();
-            let working = node.clone();
-            let result = fastctx_platform::task::spawn_blocking(move || {
-                retire_elsewhere(&working).inspect_err(|error| {
-                    let _ = retry(&working, &working.world.path().join("remote-obligations"), &error.to_string());
-                })
+    use crate::passes::Left;
+    crate::passes::register(node, RETIRING, |node: std::sync::Arc<Node>| async move {
+        let working = node.clone();
+        let result = fastctx_platform::task::spawn_blocking(move || {
+            retire_elsewhere(&working).inspect_err(|error| {
+                let _ = retry(&working, &working.world.path().join("remote-obligations"), &error.to_string());
             })
-            .await;
-            let pending = match result {
-                Ok(result) => result.unwrap_or(true),
-                Err(error) => {
-                    node.log.line(format_args!("retiring remote obligations: {error}"));
-                    true
-                }
-            };
-            if !pending {
-                again.reset();
+        })
+        .await;
+        let pending = match result {
+            Ok(result) => result.unwrap_or(true),
+            Err(error) => {
+                node.log.line(format_args!("retiring remote obligations: {error}"));
+                true
             }
-            tokio::select! {
-                () = tokio::time::sleep(again.next()), if pending => {}
-                // Ways change in bursts, as lines come and go: each pass
-                // reads every conversation here, so it waits for them.
-                _ = ways.changed() => tokio::time::sleep(WAYS_SETTLE).await,
-            }
-        }
+        };
+        if pending { Left::Work } else { Left::Nothing }
     });
+    // Ways change in bursts, as lines come and go: each pass reads every
+    // conversation here, so it waits for them.
+    crate::passes::follow(node, RETIRING.name, node.ways.subscribe(), WAYS_SETTLE);
 }
+
+/// Retiring what remote completions can no longer settle is a pass
+/// (`crate::passes`) over every conversation here.
+const RETIRING: crate::passes::Pass =
+    crate::passes::Pass { name: "obligations/retire", within: Duration::from_secs(30 * 60), rests: None };
 
 /// How long after the ways changed obligations are looked at again.
 const WAYS_SETTLE: Duration = Duration::from_secs(5);

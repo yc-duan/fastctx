@@ -32,6 +32,10 @@ pub(crate) fn begin_with_account(
             db.execute("DELETE FROM node_conversation_transfer_progress WHERE name=?1", [&conversation])?;
             db.execute("DELETE FROM node_conversation_transfers WHERE name=?1", [&conversation])?;
             db.execute("DELETE FROM migration_born WHERE name=?1", [&conversation])?;
+            fastctx_jobs::forget(db, &conversation)?;
+            // What the content database keeps of it goes too, as a job of
+            // its own unit: the line above drops the conversation's.
+            crate::content_upkeep::forget_in(db, &conversation)?;
             Ok(())
         })
         .map_err(io::Error::other)?;
@@ -129,6 +133,7 @@ pub(crate) fn purge(database: &Database, conversation: &str) -> Result<u64> {
         // An offer rejected while the deletion went on has nothing left to wait for.
         db.execute("DELETE FROM node_conversation_transfer_progress WHERE name=?1", [&conversation])?;
         db.execute("DELETE FROM node_conversation_transfers WHERE name=?1", [&conversation])?;
+        fastctx_jobs::forget(db, &conversation)?;
         Ok(db.query_row("SELECT bytes FROM node_conversation_deletions WHERE name=?1", [&conversation], |row| {
             row.get::<_, i64>(0)
         })? as u64)

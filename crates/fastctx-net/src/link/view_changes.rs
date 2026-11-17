@@ -24,6 +24,10 @@ impl Inner {
     /// held when that is the one it starts from; else the whole view is
     /// asked for again.
     pub(super) fn heard_view(&self, delta: ViewDelta) {
+        // The view the change starts from is read and replaced under one hold,
+        // so a whole view taken meanwhile is never overwritten by a change made
+        // to the view it replaced.
+        let publishing = self.publishing_view.lock().expect("publishing view");
         let current = self.view();
         let applied = (current.revision == delta.base).then(|| crate::view_delta::apply(&current, &delta));
         let error = match applied {
@@ -36,8 +40,9 @@ impl Inner {
                     member.since = member.since.map(|at| self.local(at));
                     member.settled = member.settled.map(|at| self.local(at));
                 }
-                match self.adopt(view) {
+                match self.adopt_held(view, &publishing) {
                     Ok(()) => {
+                        drop(publishing);
                         self.node.directory_changed();
                         return;
                     }
@@ -47,6 +52,7 @@ impl Inner {
             Some(Err(error)) => error,
             None => String::new(),
         };
+        drop(publishing);
         if !error.is_empty() {
             self.node.log(format!("putting in what changed in the view: {error}; asking for it whole"));
         }
@@ -61,8 +67,13 @@ impl Inner {
 
     /// Takes `view`, its times by this machine's clock, as this member's
     /// view now.
-    pub(super) fn adopt(&self, mut view: View) -> Result<(), String> {
-        let _publishing = self.publishing_view.lock().expect("publishing view");
+    pub(super) fn adopt(&self, view: View) -> Result<(), String> {
+        let publishing = self.publishing_view.lock().expect("publishing view");
+        self.adopt_held(view, &publishing)
+    }
+
+    /// `adopt`, by one who already holds the view's publishing.
+    fn adopt_held(&self, mut view: View, _publishing: &std::sync::MutexGuard<'_, ()>) -> Result<(), String> {
         // Who came or went since the hub made it.
         self.with_presences(&mut view);
         if view.hub != self.hub {
@@ -119,7 +130,7 @@ impl Inner {
 
     /// Writes the view held to disk: at once when none was written within
     /// `KEEPING`, else when that has passed, unless a write is due already.
-    fn keep_view(&self) {
+    pub(super) fn keep_view(&self) {
         if self.keeping.swap(true, Ordering::SeqCst) {
             return;
         }

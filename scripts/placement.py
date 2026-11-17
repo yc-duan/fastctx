@@ -148,7 +148,7 @@ def inside(args):
             # What each node said of its copies, so a failure on a runner explains itself.
             for log in sorted(base.glob("**/world/node.log")):
                 said = [line for line in log.read_text(errors="replace").splitlines()
-                        if any(word in line for word in ("plan copy", "skill", "goal", "sentinel", "working-copy"))]
+                        if any(word in line for word in ("plan copy", "skill", "goal", "sentinel", "working-copy", "whole access", "cleared for", "ledger", "assets with"))]
                 if said:
                     print("NODE LOG", log.relative_to(base), *said[-15:], sep="\n  ", flush=True)
         (base / "requests.json").write_text(json.dumps(mock.requests, ensure_ascii=False, indent=2))

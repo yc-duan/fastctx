@@ -43,7 +43,7 @@ pub const DATA_PATH: &str = "/fastctx/world/4/data";
 /// The largest frame on a control connection. Heartbeats, calls and
 /// letters share that connection, so nothing on it may be large enough to
 /// hold the others up; anything larger goes over a data connection.
-pub const MAX_CONTROL_FRAME: usize = 256 * 1024;
+pub const MAX_CONTROL_FRAME: usize = fastctx_types::contract::CONTROL_FRAME_BYTES;
 
 /// The largest binary message on a data connection.
 pub const MAX_DATA_MESSAGE: usize = 1024 * 1024;
@@ -110,8 +110,15 @@ pub enum Up {
     /// This machine holds the letter the hub numbered `seq`, and all
     /// before it.
     Ack { seq: u64 },
-    /// A question for the hub itself.
-    Ask { id: u64, question: Question },
+    /// A question for the hub itself. `submission` names it for a hub whose
+    /// view says it takes named questions (`View::named_asks`): asked again
+    /// under the name, a question that asks for work is the same asking.
+    Ask {
+        id: u64,
+        question: Question,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        submission: Option<fastctx_types::submission::Submission>,
+    },
     /// A ledger question in ordered JSON parts, only for hubs advertising ledger_parts.
     QuestionPart { id: u64, index: u32, total: u32, text: String },
     /// Abandons only an incomplete question; an accepted append still finishes.
@@ -269,6 +276,11 @@ pub enum Intent {
         /// place of being told to ask for the whole view again.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         view_deltas: bool,
+        /// The member reads the records of the hub's assets sealed and
+        /// opened again. Earlier releases do not say so, and could read
+        /// nothing of a machine log page with one.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        asset_seals: bool,
     },
     /// A password login to `account`: the first OPAQUE message. The hub
     /// answers `Down::LoginResponse`; the device finishes with
@@ -303,6 +315,11 @@ pub enum Intent {
     /// says its size, `{"size":…}`, then sends the bytes, and the hub says
     /// `"done"` once it has checked them, or why it did not take them.
     Deliver { key: PublicKey, proof: Signature, id: u64 },
+    /// An object of the second version's asset sync, put or taken under the
+    /// hub's `ticket` (`fastctx_types::assets::Request::Put`/`Get`): each
+    /// chunk is a `ChunkHead` then its bytes, and the hub says `"done"` once
+    /// it has taken an object put whole, or why it did not.
+    Asset { key: PublicKey, proof: Signature, ticket: u64 },
     /// Whether the hub takes sessions now, through this address: answered
     /// `Down::Ready`, and closed. A machine on a later address of its list
     /// asks the earlier ones.
@@ -480,6 +497,11 @@ pub enum Down {
     },
     LedgerChanged {
         town: TownId,
+    },
+    /// The second version's asset sync tells this machine something
+    /// unasked (`fastctx_types::assets::Push`).
+    Assets {
+        push: fastctx_types::assets::Push,
     },
     AccountRecordChanged {
         changed: fastctx_types::account_records::Changed,
@@ -682,6 +704,11 @@ pub enum CallStatus {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "kind")]
 pub enum Question {
+    /// The second version's asset sync (`fastctx_types::assets`), asked of
+    /// a hub whose view declares `asset_sync`.
+    Assets {
+        request: fastctx_types::assets::Request,
+    },
     RecordWatching {
         account: AccountName,
         record_kind: String,
@@ -941,6 +968,8 @@ pub enum Change {
         five_hour: Option<u8>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         turns: Option<u16>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        share: Option<u8>,
     },
     /// The super administrator sets the plan shown for `agent`'s login
     /// `home` on `machine`, or takes it away.
@@ -950,6 +979,10 @@ pub enum Change {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         home: Option<std::path::PathBuf>,
         plan: Option<fastctx_types::accounts::PlanLabel>,
+        /// Max as Anthropic now names its largest plan, Ultra (what was Max
+        /// 20x). A hub or node that knows no Ultra keeps and shows it as Max.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        ultra: bool,
     },
     /// `machine` no longer acts for the account.
     StopActing {
@@ -1110,6 +1143,14 @@ pub enum Change {
     Dissolve {
         name: HubName,
     },
+    /// Whether the hub seals every asset each time it starts, until the
+    /// super administrator opens them (design §17 (b)).
+    AssetSeal {
+        at_start: bool,
+    },
+    /// The super administrator opens the assets the hub sealed as it
+    /// started.
+    OpenAssets,
     /// Opens a project in the account.
     OpenProject {
         town: TownId,
@@ -1148,6 +1189,9 @@ pub enum Change {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "kind")]
 pub enum Told {
+    Assets {
+        reply: fastctx_types::assets::Reply,
+    },
     SkillFiles {
         reply: fastctx_types::skill_files::Reply,
     },
@@ -1197,6 +1241,10 @@ pub enum Told {
         view: Box<View>,
     },
     Done,
+    /// The hub recorded the work the question asks for and is doing it;
+    /// asked again under the same name, it says what came of it. Told only
+    /// of a question that came with a name.
+    Accepted,
     /// The hub holds the package asked for, of this many bytes.
     Package {
         size: u64,
@@ -1238,4 +1286,190 @@ pub enum Told {
 /// Encodes a frame for the wire.
 pub fn encode(frame: &impl Serialize) -> Vec<u8> {
     serde_json::to_vec(frame).expect("frames always serialize")
+}
+
+/// Each change new to the world protocol states its routing purpose here;
+/// the changes that predate it have none. The match stays exhaustive so a
+/// new change cannot pass without one.
+impl Change {
+    pub fn change_purpose(&self) -> Option<fastctx_types::sync::transfer::Purpose> {
+        use fastctx_types::sync::transfer::Purpose;
+        match self {
+            // The hub's assets sealed at each start, and opened (design §17 (b)).
+            Self::AssetSeal { .. } | Self::OpenAssets { .. } => Some(Purpose::AssetSync),
+            Self::AcceptRole { .. }
+            | Self::Assist { .. }
+            | Self::Collab { .. }
+            | Self::DeleteAccount { .. }
+            | Self::DeleteProject { .. }
+            | Self::Direct { .. }
+            | Self::Dissolve { .. }
+            | Self::Group { .. }
+            | Self::History { .. }
+            | Self::Intake { .. }
+            | Self::Layer { .. }
+            | Self::Logout { .. }
+            | Self::MemorySettings { .. }
+            | Self::MoveProject { .. }
+            | Self::OpenAccount { .. }
+            | Self::OpenProject { .. }
+            | Self::PasswordFinish { .. }
+            | Self::PasswordStart { .. }
+            | Self::Plan { .. }
+            | Self::Profile { .. }
+            | Self::Relay { .. }
+            | Self::Remove { .. }
+            | Self::Rename { .. }
+            | Self::RenameGroup { .. }
+            | Self::RevokeToken { .. }
+            | Self::Rollout { .. }
+            | Self::SetAccount { .. }
+            | Self::SetRole { .. }
+            | Self::Settings { .. }
+            | Self::Share { .. }
+            | Self::ShareProject { .. }
+            | Self::StopActing { .. }
+            | Self::Subagents { .. }
+            | Self::Token { .. }
+            | Self::Transfer { .. }
+            | Self::UpdateDue { .. }
+            | Self::Updates { .. } => None,
+        }
+    }
+}
+
+impl Question {
+    pub fn question_purpose(&self) -> Option<fastctx_types::sync::transfer::Purpose> {
+        use fastctx_types::sync::transfer::Purpose;
+        match self {
+            Self::Assets { .. } => Some(Purpose::AssetSync),
+            Self::AccountRecords { .. }
+            | Self::Directory { .. }
+            | Self::Forget { .. }
+            | Self::HistoryCatalog { .. }
+            | Self::HistoryRead { .. }
+            | Self::HistorySubmitted { .. }
+            | Self::HistoryWrite { .. }
+            | Self::HubArrival { .. }
+            | Self::HubMove { .. }
+            | Self::KernelRelease { .. }
+            | Self::LedgerCatalog { .. }
+            | Self::LedgerProjection { .. }
+            | Self::LedgerRead { .. }
+            | Self::LedgerTowns { .. }
+            | Self::LedgerWrite { .. }
+            | Self::Listening { .. }
+            | Self::MachineLog { .. }
+            | Self::Manage { .. }
+            | Self::MemoryRead { .. }
+            | Self::MemoryWrite { .. }
+            | Self::NetworkUpdates { .. }
+            | Self::OwnedRecords { .. }
+            | Self::Package { .. }
+            | Self::PlanCopies { .. }
+            | Self::PrepareUpdate { .. }
+            | Self::ProjectDeleted { .. }
+            | Self::ProjectIndex { .. }
+            | Self::RecordFollowing { .. }
+            | Self::RecordWatching { .. }
+            | Self::SkillFiles { .. }
+            | Self::Worked { .. } => None,
+        }
+    }
+}
+
+impl Intent {
+    pub fn intent_purpose(&self) -> Option<fastctx_types::sync::transfer::Purpose> {
+        use fastctx_types::sync::transfer::Purpose;
+        match self {
+            Self::Asset { .. } => Some(Purpose::AssetSync),
+            Self::Data { .. }
+            | Self::Deliver { .. }
+            | Self::Handover { .. }
+            | Self::Login { .. }
+            | Self::Package { .. }
+            | Self::Peek { .. }
+            | Self::Probe
+            | Self::Register { .. }
+            | Self::Session { .. }
+            | Self::Token { .. } => None,
+        }
+    }
+}
+
+impl Down {
+    pub fn down_purpose(&self) -> Option<fastctx_types::sync::transfer::Purpose> {
+        use fastctx_types::sync::transfer::Purpose;
+        match self {
+            Self::Assets { .. } => Some(Purpose::AssetSync),
+            Self::AccountRecordChanged { .. }
+            | Self::Ack { .. }
+            | Self::Afoot { .. }
+            | Self::Answered { .. }
+            | Self::Cancelled { .. }
+            | Self::Deliver { .. }
+            | Self::DirectoryChanged { .. }
+            | Self::Fetch { .. }
+            | Self::FetchCancelled { .. }
+            | Self::Forget { .. }
+            | Self::ForgetAccount { .. }
+            | Self::HistoryChanged { .. }
+            | Self::Incoming { .. }
+            | Self::LedgerChanged { .. }
+            | Self::LoggedIn { .. }
+            | Self::LoginResponse { .. }
+            | Self::PackageProgress { .. }
+            | Self::Paired { .. }
+            | Self::Part { .. }
+            | Self::Pong { .. }
+            | Self::Presence { .. }
+            | Self::Ready { .. }
+            | Self::Refused { .. }
+            | Self::RegisterResponse { .. }
+            | Self::Registered { .. }
+            | Self::ReplicasChanged { .. }
+            | Self::Status { .. }
+            | Self::TokenInfo { .. }
+            | Self::Told { .. }
+            | Self::VersionPart { .. }
+            | Self::Versions { .. }
+            | Self::View { .. }
+            | Self::Welcome { .. } => None,
+        }
+    }
+}
+
+impl Told {
+    pub fn told_purpose(&self) -> Option<fastctx_types::sync::transfer::Purpose> {
+        use fastctx_types::sync::transfer::Purpose;
+        match self {
+            Self::Accepted => Some(Purpose::ExecutionControl),
+            Self::Assets { .. } => Some(Purpose::AssetSync),
+            Self::AccountRecords { .. }
+            | Self::CollabWritten { .. }
+            | Self::Directory { .. }
+            | Self::Done { .. }
+            | Self::Entries { .. }
+            | Self::HistoryCatalog { .. }
+            | Self::HistoryDocument { .. }
+            | Self::HistorySubmitted { .. }
+            | Self::HubIdentity { .. }
+            | Self::HubMove { .. }
+            | Self::KernelRelease { .. }
+            | Self::LedgerProjection { .. }
+            | Self::MachineLog { .. }
+            | Self::MemoryDocument { .. }
+            | Self::NetworkUpdates { .. }
+            | Self::OwnedRecords { .. }
+            | Self::Package { .. }
+            | Self::PlanCopies { .. }
+            | Self::ProfileWritten { .. }
+            | Self::ProjectIndex { .. }
+            | Self::RegisterResponse { .. }
+            | Self::SkillFiles { .. }
+            | Self::Token { .. }
+            | Self::Towns { .. }
+            | Self::Written { .. } => None,
+        }
+    }
 }

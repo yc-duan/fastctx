@@ -1,0 +1,527 @@
+/* Where syncing stands, and why (`sync-page.ts`): this computer and the hub
+   drawn with a line each way, then the account's devices as one list by how
+   each stands, a row opening under itself. The list is the agents' pages'
+   (`ledger.css`: heads over a ruled line, rows that share their columns);
+   what is this page's own begins `sy-`. */
+
+.sync-body {
+  flex: 1;
+  min-height: 0;
+  padding: 0 var(--gutter-wide);
+}
+
+/* The agents' pages' frame fills its window; here it is a column in the
+   page's own scroller. */
+.sy.lg-app {
+  display: block;
+  height: auto;
+  overflow: visible;
+  max-width: var(--lg-measure);
+  margin-inline: auto;
+  padding: 12px 0 64px;
+}
+
+.sy[data-coming="page"] > * {
+  opacity: var(--shown);
+  translate: 0 var(--lift);
+  animation: lg-arrive var(--settle) var(--fold-easing) both;
+}
+
+.sy-login + .sy-login {
+  margin-top: 56px;
+}
+
+.sy-login-name {
+  margin: 0 12px 18px;
+  font-family: var(--font-emphasis);
+  font-weight: 400;
+  font-size: var(--size-h3);
+  color: var(--text-strong);
+}
+
+/* This computer and the hub: each a filled box with its name under it, and
+   between them a line each way with what that way says. */
+.sy-top {
+  max-width: 780px;
+  margin-inline: auto;
+}
+
+.sy-link {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
+  column-gap: 18px;
+  padding: 10px 12px 0;
+}
+
+.sy-node {
+  display: grid;
+  justify-items: center;
+  gap: 2px;
+  width: 132px;
+  text-align: center;
+}
+
+.sy-node-box {
+  display: grid;
+  place-items: center;
+  width: 132px;
+  height: 78px;
+  margin-bottom: 8px;
+  border-radius: var(--radius-l);
+  background: var(--fill);
+  color: var(--text);
+}
+
+.sy-node b {
+  max-width: 100%;
+  font-family: var(--font-emphasis);
+  font-weight: 400;
+  color: var(--text-strong);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sy-node small {
+  color: var(--text-3);
+}
+
+/* The ways stand against the boxes: the way up over their middle, the way
+   down under it. */
+.sy-ways {
+  display: grid;
+  align-content: center;
+  gap: 8px;
+  min-height: 78px;
+}
+
+.sy-way {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 2px;
+}
+
+.sy-way-said {
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: 12px;
+  margin: 0;
+  white-space: nowrap;
+}
+
+.sy-way-said > span {
+  color: var(--text-3);
+}
+
+.sy-way-said > b {
+  font-family: inherit;
+  font-weight: 400;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sy-way-arrow {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  color: var(--text-3);
+}
+
+.sy-way-line {
+  flex: 1 1 0;
+  width: 0;
+  min-width: 0;
+  height: 10px;
+}
+
+.sy-way-head {
+  flex: none;
+  width: 10px;
+  height: 10px;
+}
+
+.sy-way-down .sy-way-head {
+  rotate: 180deg;
+}
+
+.sy-way-line path,
+.sy-way-head path {
+  fill: currentColor;
+}
+
+/* Cut off: the lines are broken, and it is said how long. */
+.sy-link.cut .sy-way-arrow {
+  color: var(--caution);
+}
+
+.sy-cut {
+  margin: 4px 0 0;
+  color: var(--caution);
+  text-align: center;
+}
+
+.sy-cut-why {
+  margin: 2px 0 0;
+  color: var(--text-3);
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+
+/* What the hub holds, under the hub. */
+.sy-held {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 2px 20px;
+  margin: 14px 12px 0;
+  color: var(--text-3);
+}
+
+.sy-unreached {
+  margin: 28px 12px 0;
+}
+
+/* Over the list: how its devices stand, to choose among, and the search. */
+.sy-tools {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  min-height: 40px;
+  padding: 36px 12px 0;
+}
+
+.sy-tools .choice-options {
+  gap: 4px 28px;
+}
+
+.sy-tools .choice small {
+  color: var(--text-3);
+}
+
+.sy-count {
+  color: var(--text-2);
+}
+
+.sy-find {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  width: 15em;
+  height: 36px;
+  margin-left: auto;
+  padding: 0 12px;
+  border-radius: var(--radius-m);
+  background: var(--fill);
+  color: var(--text-3);
+}
+
+.sy-find input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: none;
+  color: var(--text);
+  font: inherit;
+}
+
+.sy-find input::-webkit-search-cancel-button {
+  display: none;
+}
+
+/* The list: a device, its two figures, how it stood through the span, and
+   the mark that it opens. */
+.sy-list {
+  --cols: minmax(11em, 1.4fr) minmax(7em, 0.9fr) minmax(8em, 0.9fr) 168px 14px;
+}
+
+.sy-list .sy-group .lg-family-head {
+  padding-top: 26px;
+}
+
+.sy-list .sy-group:first-child .lg-family-head {
+  padding-top: 20px;
+}
+
+/* A few devices need no choosing among: the list follows the picture. */
+.sy-tools:empty {
+  min-height: 0;
+  padding-top: 20px;
+}
+
+.sy-group h2 small {
+  color: var(--text-3);
+  font-family: var(--font-reading);
+}
+
+.sy-name {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.sy-name .glyph {
+  flex: none;
+  color: var(--text-2);
+}
+
+.sy-name b {
+  font-family: inherit;
+  font-weight: 400;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sy-name small {
+  flex: none;
+  color: var(--text-3);
+}
+
+.sy-first {
+  color: var(--text);
+}
+
+.sy-second {
+  color: var(--text-2);
+}
+
+.sy-first,
+.sy-second {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sy-recent {
+  display: inline-flex;
+  align-items: center;
+}
+
+.sy-strip {
+  display: block;
+}
+
+.sy-strip-base {
+  fill: var(--pen-trace);
+}
+
+.sy-strip-ink {
+  fill: var(--pen-graphite);
+}
+
+/* The rest of a long group, a word under its last row. */
+.sy-rest {
+  margin: 6px 12px 0;
+  min-height: 32px;
+  color: var(--text-3);
+}
+
+/* A device opened: a sentence, what is left by kind, the facts, its line. */
+.sy-detail {
+  padding: 4px 12px 22px calc(12px + round(nearest, 18px * var(--icon-scale), 1px) + 12px);
+}
+
+.sy-why {
+  margin: 0;
+  color: var(--text);
+  white-space: normal;
+}
+
+.sy-kinds {
+  max-width: 34em;
+  margin-top: 14px;
+}
+
+.sy-kinds .ledger-parts {
+  width: 100%;
+  height: 16px;
+}
+
+.sy-kinds ul {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 22px;
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+  color: var(--text-2);
+}
+
+.sy-kinds li {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.sy-kinds i {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+}
+
+.sy-kinds b {
+  font-family: inherit;
+  font-weight: 400;
+  color: var(--text);
+}
+
+.sy-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 36px;
+  margin: 16px 0 0;
+}
+
+.sy-facts > div {
+  display: flex;
+  gap: 10px;
+}
+
+.sy-facts dt {
+  color: var(--text-3);
+}
+
+.sy-facts dd {
+  margin: 0;
+  color: var(--text);
+}
+
+.sy-line {
+  margin-top: 22px;
+}
+
+.sy-line-head {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  margin-bottom: 8px;
+}
+
+.sy-line-head h3 {
+  margin: 0;
+  font: inherit;
+  color: var(--text-3);
+}
+
+.sy-line-head .ledger-switch {
+  margin-left: auto;
+}
+
+.sync-lines {
+  display: block;
+  max-width: 100%;
+  overflow: visible;
+}
+
+/* A phone: the picture's boxes are small, the ways' words wrap under one
+   another; a row is its device and its first figure, the rest a press
+   away. */
+@media (max-width: 760px) {
+  .sync-body {
+    padding: 0 var(--gutter);
+  }
+
+  .sy-link {
+    column-gap: 10px;
+    padding-inline: 0;
+  }
+
+  .sy-node,
+  .sy-node-box {
+    width: 84px;
+  }
+
+  .sy-node-box {
+    height: 60px;
+  }
+
+  .sy-way-said {
+    flex-direction: column;
+    align-items: center;
+    gap: 0;
+    white-space: normal;
+    text-align: center;
+  }
+
+  .sy-held {
+    justify-content: flex-start;
+  }
+
+  .sy-tools {
+    flex-wrap: wrap;
+    row-gap: 12px;
+    padding-top: 28px;
+  }
+
+  .sy-find {
+    width: 100%;
+    margin-left: 0;
+  }
+
+  .sy-list {
+    --cols: minmax(0, 1fr) auto 14px;
+  }
+
+  .sy-list .lg-family-head > span,
+  .sy-list .sy-second,
+  .sy-list .sy-recent {
+    display: none;
+  }
+
+  .sy-detail {
+    padding-left: 12px;
+  }
+}
+
+/* The small ring of how many devices are caught up: beside 「我」 in the
+   sidebar while some are not, and on 「我」 itself. */
+.sync-ring {
+  flex: none;
+  overflow: visible;
+}
+
+.sync-ring-trace {
+  fill: var(--pen-trace);
+}
+
+.sync-ring-ink {
+  fill: var(--pen-clay);
+}
+
+.place .sync-ring {
+  margin-left: auto;
+}
+
+.me-sync {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: inherit;
+  text-decoration: none;
+}
+
+.me-sync:hover {
+  color: var(--text-strong);
+}
+
+.account-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
+
+.account-row .account-place {
+  flex: 1;
+  min-width: 0;
+}
+
+.sync-place {
+  flex: none;
+  padding: 4px 8px;
+}

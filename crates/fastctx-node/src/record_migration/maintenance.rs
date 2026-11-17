@@ -4,8 +4,7 @@ mod files;
 use fastctx_storage::{Database, Priority};
 use std::io;
 
-/// Archive retention, damaged originals' too, and completed-proof cleanup do
-/// not wait for every source on the machine to become readable.
+/// Archive recovery and completed-proof cleanup do not expire source assets.
 pub(super) fn start(node: &std::sync::Arc<crate::Node>) {
     let node = node.clone();
     fastctx_platform::task::spawn(async move {
@@ -23,8 +22,7 @@ pub(super) fn start(node: &std::sync::Arc<crate::Node>) {
                 if let Some(error) = failure {
                     working.log.line(format_args!("settling originals set aside: {error}"));
                 }
-                super::archive::damaged_kept(working.world.path(), super::archive::RETENTION)?;
-                super::archive::collect(working.world.path(), super::archive::RETENTION)
+                super::archive::damaged_kept(working.world.path())
             })
             .await;
             match result {

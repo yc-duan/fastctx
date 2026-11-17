@@ -5,12 +5,16 @@
 //! come. The page speaks as the person at this machine, never as a session.
 
 mod accounts;
+#[cfg(desktop)]
+mod board;
 #[cfg(target_os = "android")]
 mod android;
 mod book;
 mod collab;
 mod collaboration;
 mod composer;
+mod composer_documents;
+mod composer_legacy_input;
 mod connection;
 #[cfg(desktop)]
 mod data;
@@ -29,12 +33,15 @@ mod layers;
 mod local_repair;
 mod plan;
 mod profile;
+mod projects;
 #[cfg(desktop)]
 mod repair_probe;
 mod sentinel_controls;
 mod sentinels;
 mod skills;
 mod startup;
+mod sync_status;
+mod topics;
 mod transcript;
 mod updates;
 mod world_watch;
@@ -93,7 +100,6 @@ mod logins;
 mod names;
 #[cfg(windows)]
 mod package_removal;
-mod pages;
 mod reading;
 mod save_as;
 mod uploading;
@@ -106,6 +112,22 @@ mod titlebar;
 mod unix_instance;
 
 mod conversation_watch;
+mod timeline_anonymous;
+mod timeline_body;
+mod timeline_changes;
+mod timeline_delta;
+mod timeline_fuller;
+mod timeline_groups;
+mod timeline_objects;
+mod timeline_overlay;
+mod timeline_preview;
+mod timeline_running;
+mod timeline_scan;
+mod timeline_search;
+mod timeline_search_index;
+mod timeline_walk;
+mod timeline_watch;
+mod timeline_window;
 mod watch_delivery;
 
 struct Shell {
@@ -113,7 +135,9 @@ struct Shell {
     watches: Arc<Mutex<HashMap<u64, JoinHandle<()>>>>,
     /// What each watched conversation holds for its page.
     transcripts: Arc<transcript::Transcripts>,
+    timeline_readers: timeline_watch::Readers,
     deliveries: watch_delivery::Deliveries,
+    composer_inputs: composer_documents::Inputs,
     next: AtomicU64,
     page: AtomicU64,
     line_requests: line_reading::Requests,
@@ -136,7 +160,9 @@ impl Shell {
             watch.abort();
         }
         self.transcripts.close_all();
+        self.timeline_readers.clear();
         self.deliveries.close_all();
+        self.composer_inputs.clear();
     }
 
     fn follow(
@@ -309,22 +335,56 @@ fn machine(name: Option<String>) -> Result<Option<fastctx_types::access::Written
     name.map(|name| name.parse::<fastctx_types::access::Written>().map_err(|error| error.to_string())).transpose()
 }
 
-/// Starts watching a resident: returns the part of it the page opens on,
-/// its latest turns, from what this device keeps of it at once where it
-/// keeps it, and sends what follows down `pieces` until the page lets go.
-/// The shell keeps the rest of it for the page to ask for
-/// (`transcript.rs`).
+/// Opens the latest timeline page after registering realtime events. Older
+/// nodes retain the whole-history Watch path. Both feed the same page window
+/// and send what follows down `pieces` until the page lets go.
 #[fastctx_gui_command::command]
 async fn watch(
     shell: tauri::State<'_, Shell>,
     resident_id: String,
     machine_name: Option<String>,
-    pieces: Channel<watch_delivery::Wake>,
+    pieces: Channel<watch_delivery::Push>,
 ) -> Result<Watch, NotWatched> {
     let page = shell.page.load(Ordering::Relaxed);
     let world = shell.world();
     let resident = resident(resident_id)?;
     let machine = machine(machine_name)?;
+    #[cfg(not(target_os = "android"))]
+    let opened = timeline_watch::open(&world, resident.clone(), machine.clone()).await?;
+    #[cfg(target_os = "android")]
+    let opened = android::timeline::open(&world, resident.clone(), machine.clone()).await?;
+    if let Some(opened) = opened {
+        let id = shell.next.fetch_add(1, Ordering::Relaxed);
+        let reader = opened.reader;
+        let transcript = reader.lock().await.transcript.clone();
+        shell.transcripts.insert(id, transcript);
+        shell.timeline_readers.insert(id, reader.clone());
+        let mut initial = opened.watching;
+        let readers = shell.timeline_readers.clone();
+        if let Err(error) = shell.follow_delivery(
+            page,
+            id,
+            pieces,
+            |piece| match piece {
+                Piece::Now { .. } => Some("now".into()),
+                _ => None,
+            },
+            move |pieces, _| {
+                let (reader, watching, readers) = (reader.clone(), initial.take(), readers.clone());
+                async move {
+                    #[cfg(not(target_os = "android"))]
+                    readers.run(id, reader, watching, &pieces).await;
+                    #[cfg(target_os = "android")]
+                    android::timeline::run(readers, id, reader, watching, pieces).await;
+                }
+            },
+        ) {
+            shell.transcripts.close(id);
+            shell.timeline_readers.close(id);
+            return Err(error.into());
+        }
+        return Ok(Watch { id, window: opened.window });
+    }
     #[cfg(not(target_os = "android"))]
     let (conversation, history) = match &machine {
         Some(machine) => Conversation::open(&world, resident.clone(), machine.clone()).await,
@@ -368,7 +428,9 @@ fn unwatch(shell: tauri::State<'_, Shell>, id: u64) {
         task.abort();
     }
     shell.transcripts.close(id);
+    shell.timeline_readers.close(id);
     shell.deliveries.close(id);
+    shell.composer_inputs.close(id);
 }
 
 /// The user's words to a resident, with the files uploaded for them; those
@@ -538,15 +600,23 @@ async fn agents(
     shell.world().agents(machine(machine_name)?).await.map_err(|error| error.to_string())
 }
 
-/// Stops the turn a resident is running; says whether one was.
+/// Stops the turn a resident is running; says whether one was. Seeing no
+/// turn, `words` are the ids of the words on their way the stop is for.
 #[fastctx_gui_command::command]
 async fn stop(
     shell: tauri::State<'_, Shell>,
     resident_id: String,
     machine_name: Option<String>,
+    turn: Option<String>,
+    words: Option<Vec<String>>,
 ) -> Result<bool, String> {
-    let (_, stopped) =
-        shell.world().stop(resident(resident_id)?, machine(machine_name)?).await.map_err(|error| error.to_string())?;
+    let words =
+        words.map(|words| words.iter().filter_map(|id| id.parse::<fastctx_types::NoticeId>().ok()).collect::<Vec<_>>());
+    let (_, stopped) = shell
+        .world()
+        .stop(resident(resident_id)?, machine(machine_name)?, turn, words)
+        .await
+        .map_err(|error| error.to_string())?;
     Ok(stopped)
 }
 
@@ -577,9 +647,10 @@ async fn folders(
     shell: tauri::State<'_, Shell>,
     machine_name: Option<String>,
     path: Option<String>,
+    cursor: Option<String>,
 ) -> Result<fastctx_types::focus::Folders, fastctx_types::ipc::Failure> {
     let machine = machine(machine_name).map_err(fastctx_types::ipc::Failure::new)?;
-    shell.world().folders(machine, path).await.map_err(|error| match error {
+    shell.world().folders_page(machine, path, cursor).await.map_err(|error| match error {
         fastctx_client::world::Error::Call(fastctx_client::CallError::Failed(failure)) => failure,
         other => fastctx_types::ipc::Failure::new(other.to_string()),
     })
@@ -1034,6 +1105,13 @@ pub(crate) const WINDOW_KEPT: tauri_plugin_window_state::StateFlags = tauri_plug
     .union(tauri_plugin_window_state::StateFlags::POSITION)
     .union(tauri_plugin_window_state::StateFlags::MAXIMIZED);
 
+/// The application's context, made in this one place: each `generate_context!`
+/// embeds the interface's files again, and three of them carried 9 MB of the
+/// same twice over (codex-8c21a7a9, 2026-11-15).
+pub(crate) fn context() -> tauri::Context<tauri::Wry> {
+    tauri::generate_context!()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // WebKitGTK's DMA-BUF renderer leaves the window blank with many GPU
@@ -1066,13 +1144,13 @@ pub fn run() {
             return;
         }
     }
-    #[cfg(all(windows, not(feature = "page-sandbox-probe")))]
+    #[cfg(windows)]
     let (desktop, desktop_error) = match desktop_presence::enter() {
         Ok(Some(instance)) => (Some(instance), None),
         Ok(None) => return,
         Err(error) => (None, Some(error)),
     };
-    let context = tauri::generate_context!();
+    let context = context();
     #[cfg(all(unix, desktop))]
     let instance = match unix_instance::enter(&context.config().identifier) {
         Ok(Some(instance)) => Ok(instance),
@@ -1085,7 +1163,6 @@ pub fn run() {
     updates::take_left(&context.config().identifier);
     let builder = tauri::Builder::default()
         .manage(startup::Startup::default())
-        .plugin(tauri_plugin_world_pages::init())
         // Its script also sends every link that opens a new window to the
         // system's browser, where the webview alone would drop it.
         .plugin(tauri_plugin_opener::init())
@@ -1121,9 +1198,18 @@ pub fn run() {
                 && let Some(shell) = webview.app_handle().try_state::<Shell>()
             {
                 shell.close_page();
+                // The cards taken out of it go with the page that served them.
+                #[cfg(desktop)]
+                board::shut_all(webview.app_handle());
             }
         })
         .invoke_handler(tauri::generate_handler![
+            #[cfg(desktop)]
+            board::board_open,
+            #[cfg(desktop)]
+            board::board_front,
+            #[cfg(desktop)]
+            board::board_close,
             startup::startup_state,
             startup::startup_frontend_failed,
             startup::startup_retry,
@@ -1223,6 +1309,7 @@ pub fn run() {
             data::data,
             #[cfg(desktop)]
             doctor::doctor_readings,
+            sync_status::sync_status,
             accounts::account_change,
             accounts::server_command,
             hub_moving::hub_move,
@@ -1239,8 +1326,12 @@ pub fn run() {
             logins::set_agent_title,
             logins::change_agent_models,
             logins::set_agent_reset_in_place,
+            logins::set_agent_week,
             logins::agent_usage,
             logins::agent_calls,
+            topics::world_topics,
+            projects::project_map,
+            projects::project_who,
             world_watch::world_now,
             world_watch::world_watch,
             since,
@@ -1250,8 +1341,14 @@ pub fn run() {
             project_edit,
             watch,
             unwatch,
-            watch_delivery::watch_delivery_read,
+            watch_delivery::watch_delivery_ack,
+            watch_delivery::watch_delivery_resend,
             transcript::conversation_part,
+            transcript::conversation_follow,
+            timeline_objects::conversation_object,
+            timeline_objects::conversation_files,
+            timeline_scan::conversation_scan,
+            timeline_search::conversation_search,
             transcript::conversation_cut,
             transcript::conversation_locate,
             transcript::conversation_index,
@@ -1268,6 +1365,9 @@ pub fn run() {
             goals::goal_watch,
             composer::composer_read,
             composer::composer_watch,
+            composer_documents::composer_watch_documents,
+            composer_documents::composer_document_input,
+            composer_legacy_input::composer_sync_text,
             composer::composer_update,
             composer::composer_send,
             composer::composer_attach_path,
@@ -1288,12 +1388,6 @@ pub fn run() {
             machine_memory_room,
             accounts::rename_here,
             accounts::hub_proxy,
-            pages::page_read,
-            pages::page_history,
-            pages::page_consent,
-            pages::page_act,
-            pages::page_withdraw,
-            pages::page_restore,
             look,
             read_text,
             read_bytes,
@@ -1340,9 +1434,15 @@ pub fn run() {
         ]);
     #[cfg(desktop)]
     let builder = builder
-        .plugin(tauri_plugin_window_state::Builder::default().with_state_flags(WINDOW_KEPT).build())
+        .plugin(
+            tauri_plugin_window_state::Builder::default()
+                .with_state_flags(WINDOW_KEPT)
+                // A card's window opens where its card was let go, each time.
+                .with_filter(|label| !label.starts_with("board-"))
+                .build(),
+        )
         .plugin(tauri_plugin_updater::Builder::new().build());
-    #[cfg(all(windows, not(feature = "page-sandbox-probe")))]
+    #[cfg(windows)]
     let builder = builder.plugin(desktop_presence::plugin(desktop, desktop_error));
     #[cfg(windows)]
     let builder = builder.plugin(titlebar::plugin());

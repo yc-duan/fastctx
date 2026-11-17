@@ -56,7 +56,7 @@ const widths = [
   { name: "narrow", width: 360, height: 780, scale: 3, mobile: true },
 ];
 const themes = option("theme", null) ? [option("theme")] : ["warm-black", "ink-black", "warm-white"];
-const sessions = only ? only.split(",") : ["welcome", "create", "created", "home", "claude", "codex", "project", "journal", "machines", "settings", "new", "new-project", "invite", "invite-windows", "invite-windows-made", "share", "lend", "relays", "palette", "login", "account", "admin", "home-2", "machines-2", "new-2", "slash", "drawer", "about", "manage", "asks", "asks-question", "asks-form", "asks-link", "asks-claude-permission", "asks-claude-question", "asks-claude-plan", "asks-claude-form", "stop", "new-codex", "new-attach", "new-lent-2", "new-pick-2", "find", "attach", "queue", "rewind", "usage", "service", "remove-keep", "remove-erase", "remove-run", "program", "mention", "decision", "log", "written", "page", "page-ask", "page-versions", "read-card", "panel-code", "panel-file"];
+const sessions = only ? only.split(",") : ["welcome", "create", "created", "home", "claude", "codex", "project", "journal", "machines", "settings", "new", "new-project", "invite", "invite-windows", "invite-windows-made", "share", "lend", "relays", "palette", "login", "account", "sync", "admin", "home-2", "machines-2", "new-2", "slash", "drawer", "about", "manage", "asks", "asks-question", "asks-form", "asks-link", "asks-claude-permission", "asks-claude-question", "asks-claude-plan", "asks-claude-form", "stop", "stop-overdue", "new-codex", "new-attach", "new-lent-2", "new-pick-2", "find", "attach", "queue", "rewind", "usage", "service", "remove-keep", "remove-erase", "remove-run", "program", "mention", "decision", "log", "read-card", "panel-code", "panel-file", "start-launching", "start-connecting", "start-queued", "start-retry"];
 const sizes = option("width", null) ? widths.filter((size) => option("width").split(",").includes(size.name)) : widths.filter((size) => size.name !== "narrow");
 
 const profile = mkdtempSync(join(tmpdir(), "shoot-"));
@@ -154,13 +154,14 @@ for (const session of sessions) {
       const loaded = once("Page.loadEventFired");
       const two = session.endsWith("-2");
       const named = two ? session.slice(0, -2) : session;
-      const shown = named.startsWith("history-side") ? (named.startsWith("history-side-project") ? "claude" : "solo") : named === "strain" || named === "strain-list" || named.startsWith("alerts") || named.startsWith("rollout") ? "machines" : named === "strain-machine" || named === "health" ? "machine" : named.startsWith("patrol") ? "trips" : named.startsWith("invite-") ? "invite" : named === "stop" || named === "program" || named === "read-card" || named === "late" ? "claude" : named === "late-straight" ? "voice" : named === "drawer" || named === "palette" ? "home" : named === "service" || named.startsWith("remove-") ? "settings" : named === "slash" || named === "mention" || named === "find" || named === "attach" || named === "rewind" || named === "usage" ? "codex" : named.startsWith("asks") ? "asks" : named === "new-codex" || named === "new-attach" || named === "new-lent" || named === "new-pick" ? "new" : named === "manage" ? "about" : named === "welcome" || named === "create" || named === "created" ? "login" : named === "share" || named === "relays" ? "machines" : named === "lend" || named.startsWith("ledger") ? "home" : named === "queue" ? "codex" : named.startsWith("page") ? "page" : named.startsWith("panel") && named !== "panel-agent" ? "claude" : named.startsWith("team") || named === "panel-agent" ? "stream" : named.startsWith("repair-") ? "home" : named === "updates-repair" ? "machines" : named === "journal-edit" || named === "journal-versions" ? "journal" : named === "project-write" || named === "project-history" ? "project" : named.startsWith("feature-") || named.startsWith("prefs-") || named.startsWith("activity") || named === "sidebar-drag" ? "home" : named;
+      const shown = named.startsWith("start-") ? "codex" : named.startsWith("history-side") ? (named.startsWith("history-side-project") ? "claude" : "solo") : named === "strain" || named === "strain-list" || named.startsWith("alerts") || named.startsWith("rollout") ? "machines" : named === "strain-machine" || named === "health" ? "machine" : named.startsWith("patrol") ? "trips" : named.startsWith("invite-") ? "invite" : named === "stop" || named === "stop-overdue" || named === "program" || named === "read-card" || named === "late" ? "claude" : named === "late-straight" ? "voice" : named === "drawer" || named === "palette" ? "home" : named === "service" || named.startsWith("remove-") ? "settings" : named === "slash" || named === "mention" || named === "find" || named === "attach" || named === "rewind" || named === "usage" ? "codex" : named.startsWith("asks") ? "asks" : named === "new-codex" || named === "new-attach" || named === "new-lent" || named === "new-pick" ? "new" : named === "manage" ? "about" : named === "welcome" || named === "create" || named === "created" ? "login" : named === "share" || named === "relays" ? "machines" : named === "lend" || named.startsWith("ledger") ? "home" : named === "queue" ? "codex" : named.startsWith("panel") && named !== "panel-agent" ? "claude" : named.startsWith("team") || named === "panel-agent" ? "stream" : named.startsWith("repair-") ? "home" : named === "updates-repair" ? "machines" : named === "journal-edit" || named === "journal-versions" ? "journal" : named === "project-write" || named === "project-history" ? "project" : named.startsWith("feature-") || named.startsWith("prefs-") || named.startsWith("activity") || named === "sidebar-drag" ? "home" : named;
       // `welcome` and `create` are a computer's first open, in no World yet.
       const alone = named === "welcome" || named === "create" || named === "created";
-      const ask = (named.startsWith("strain") ? `&strain${named === "strain-machine" ? "&m=server" : ""}` : "") + (named === "alerts-none" ? "&troubles=0" : "") + (named === "health" ? "&health=strained" : "") + (named === "rollout" || named === "rollout-page" ? "&rollout=stopped" : "") + (session.startsWith("asks-") ? `&ask=${session.slice(5)}` : "") + (named === "late" || named === "late-straight" ? "&slow=200,6000,999999&late=1500" : "") + (two ? "&accounts=2" : "") + (alone ? "&accounts=0" : "") + (named.startsWith("team") || named === "panel-agent" ? "&start=agents" : "") + (named.startsWith("repair-") ? `&repair=${named === "repair-broken" ? "broken" : "failed"}` : "") + (named.startsWith("panel-goal-") ? `&goal=${named.slice("panel-goal-".length)}` : "") + (named.startsWith("panel-goalpage-") ? `&goal=${named.slice("panel-goalpage-".length).replace(/-typed$/, "")}` : "") + (named.startsWith("panel-plan-") ? `&plan=${named.slice("panel-plan-".length)}` : "") + (named.startsWith("page") ? "&layer=workbench" : "") + (named === "feature-history" ? "&history=off" : "");
-      // A page an agent wrote is its own document, with a stand-in host.
-      const written = session === "written";
-      const specimen = named === "mapcanvas" ? "mapcanvas-specimen.html" : named === "longview" ? "longview-specimen.html" : written ? "page-specimen.html" : null;
+      // A conversation at rest woken by words: its host starting, in line,
+      // or tried again after failed starts.
+      const starts = { "start-launching": "&starting=launching", "start-connecting": "&starting=connecting", "start-queued": "&turnline=2", "start-retry": "&starting=retrying,2" };
+      const ask = (starts[named] ?? "") + (named.startsWith("strain") ? `&strain${named === "strain-machine" ? "&m=server" : ""}` : "") + (named === "alerts-none" ? "&troubles=0" : "") + (named === "health" ? "&health=strained" : "") + (named === "rollout" || named === "rollout-page" ? "&rollout=stopped" : "") + (session.startsWith("asks-") ? `&ask=${session.slice(5)}` : "") + (named === "late" || named === "late-straight" ? "&slow=200,6000,999999&late=1500" : "") + (two ? "&accounts=2" : "") + (alone ? "&accounts=0" : "") + (named.startsWith("team") || named === "panel-agent" ? "&start=agents" : "") + (named.startsWith("repair-") ? `&repair=${named === "repair-broken" ? "broken" : "failed"}` : "") + (named.startsWith("panel-goal-") ? `&goal=${named.slice("panel-goal-".length)}` : "") + (named.startsWith("panel-goalpage-") ? `&goal=${named.slice("panel-goalpage-".length).replace(/-typed$/, "")}` : "") + (named.startsWith("panel-plan-") ? `&plan=${named.slice("panel-plan-".length)}` : "") + (named === "feature-history" ? "&history=off" : "");
+      const specimen = named === "mapcanvas" ? "mapcanvas-specimen.html" : named === "longview" ? "longview-specimen.html" : null;
       // `startup-failed` and the like are the page shown until Fastctx opens.
       const startup = named.startsWith("startup-") ? named.slice("startup-".length) : null;
       const url = specimen
@@ -173,25 +174,12 @@ for (const session of sessions) {
       // The interface loads after the engine check: wait until it is there.
       await send("Runtime.evaluate", {
         awaitPromise: true,
-        expression: written
-          ? "new Promise((r) => { const look = () => (customElements.get('w-card') ? setTimeout(r, 900) : setTimeout(look, 30)); look(); })"
-          : startup
+        expression: startup
             ? "new Promise((r) => { const look = () => (document.querySelector('.su-page') ? setTimeout(r, 600) : setTimeout(look, 30)); look(); })"
             : "new Promise((r) => { const look = () => (document.querySelector('.shell') ? r(true) : setTimeout(look, 30)); look(); })",
       });
       if (session === "drawer") {
         await send("Runtime.evaluate", { expression: "document.querySelector('.menu-button')?.click()" });
-      }
-      // An open page asks first what it may do; the frame then draws.
-      if (session.startsWith("page")) {
-        await send("Runtime.evaluate", {
-          awaitPromise: true,
-          expression: `new Promise((r) => setTimeout(r, 1200)).then(() => {
-            if (${JSON.stringify(session)} !== "page-ask") document.querySelector(".page-sheet .sheet-close")?.click();
-            if (${JSON.stringify(session)} === "page-versions") document.querySelector(".page-versions")?.click();
-            return new Promise((r) => setTimeout(r, 900));
-          })`,
-        });
       }
       // `feature-memory` and the like are one feature's page, `feature-history`
       // history's while it is off and `feature-history-on` once it is on;
@@ -430,9 +418,11 @@ for (const session of sessions) {
         if (made.exceptionDetails) problems.push(`attach: ${made.exceptionDetails.exception?.description ?? made.exceptionDetails.text}`);
       }
       // A turn under way, the moment stop is pressed: its specimen never
-      // stops, so it stays as the press shows it.
-      if (session === "stop") {
-        await send("Runtime.evaluate", { awaitPromise: true, expression: "new Promise(r => setTimeout(r, 300)).then(() => { document.querySelector('.composer-action.stop')?.click(); return new Promise(r => setTimeout(r, 500)); })" });
+      // stops, so it shows ended as the press shows it; `stop-overdue` is
+      // the same turn past the two seconds its host is given to end it.
+      if (session === "stop" || session === "stop-overdue") {
+        const settle = session === "stop" ? 500 : 2600;
+        await send("Runtime.evaluate", { awaitPromise: true, expression: `new Promise(r => setTimeout(r, 300)).then(() => { document.querySelector('.composer-action.stop')?.click(); return new Promise(r => setTimeout(r, ${settle})); })` });
       }
       // A link to a program on this computer, clicked: the question it asks
       // before running it (`app/program-sheet.ts`).
@@ -636,6 +626,25 @@ for (const session of sessions) {
           })()`,
         });
       }
+      if (session.startsWith("start-")) {
+        await send("Runtime.evaluate", {
+          awaitPromise: true,
+          expression: `(async () => {
+            const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+            for (let i = 0; i < 50 && !document.querySelector(".composer textarea"); i += 1) await wait(100);
+            // The specimen works when it opens: stopped, it rests, and the
+            // words sent then wake it.
+            await wait(600);
+            document.querySelector(".composer-action.stop")?.click();
+            await wait(1200);
+            const t = document.querySelector(".composer textarea");
+            t.value = ${JSON.stringify("把 lab 上的日志归档发我")};
+            t.dispatchEvent(new Event("input"));
+            document.querySelector(".composer-action").click();
+            await wait(1500);
+          })()`,
+        });
+      }
       if (session === "late" || session === "late-straight") {
         // Words with no answer in time, waiting their turn in the queue or sent
         // straight on: not known to have gone, to send again or take away.
@@ -686,8 +695,7 @@ for (const session of sessions) {
         });
         problems.push(`${session} ${size.name} ${theme}: the page is ${page.w}px wide: ${wide.value}`);
       }
-      // A page an agent wrote scrolls inside the frame the host gives it.
-      if (!written && page.h > page.inner + 1) problems.push(`${session} ${size.name} ${theme}: the page scrolls, ${page.h}px in a ${page.inner}px screen`);
+      if (page.h > page.inner + 1) problems.push(`${session} ${size.name} ${theme}: the page scrolls, ${page.h}px in a ${page.inner}px screen`);
       if (probe) {
         // A probe may be a promise: it is waited for, then said.
         const { result: probed } = await send("Runtime.evaluate", { expression: `Promise.resolve(${probe}).then((value) => JSON.stringify(value))`, awaitPromise: true, returnByValue: true });

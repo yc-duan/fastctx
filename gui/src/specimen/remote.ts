@@ -29,15 +29,15 @@ export function specimenRemote(): RemoteSeams {
       const busy = server.host.includes("busy") ? [22, 80, 443, 7443] : [22];
       return { machine: "izbp19mwh1hladmc1jby2gz", busy, hub, joined: false };
     },
-    withdraw: async (_server, step) => steps(["connect", "check", "upload", "withdraw"], step),
+    withdraw: async (_server, step) => steps(["connect", "check", "bring", "upload", "withdraw"], step),
     logout: async () => {},
     hub: async (request, step) => {
       shut = request.host.includes("shut");
-      await steps(["connect", "check", "upload", "hub"], step);
+      await steps(["connect", "check", "bring", "upload", "hub"], step);
       return { session: 1, address: `203.0.113.20:${request.hubPort}`, machine: "hz-light-01" };
     },
     open: async (_server, step) => {
-      await steps(["connect", "check", "upload"], step);
+      await steps(["connect", "check", "bring", "upload"], step);
       return { session: 2, machine: "gz-cvm-07" };
     },
     join: async (_session, _token, step) => steps(["join"], step),

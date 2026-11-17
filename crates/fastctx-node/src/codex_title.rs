@@ -85,9 +85,10 @@ pub(crate) fn maybe(node: &Arc<Node>, id: &ResidentId, about: &About) {
 /// The first words the user said in the conversation, from its record.
 fn first_user_words(node: &Node, id: &ResidentId) -> Option<String> {
     let directory = node.world.conversation(id);
-    let history = crate::delivery::history(&directory).ok()?;
-    history.into_iter().find_map(|event| match event.happened {
+    // Read a page at a time, not held (design §28.51 ⑥).
+    crate::session_record::first(&directory, &mut |event| match event.happened {
         Happened::Heard { from: Some(Speaker::User { .. }), text, .. } if !text.trim().is_empty() => Some(text),
         _ => None,
     })
+    .ok()?
 }

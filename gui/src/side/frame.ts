@@ -15,8 +15,10 @@
 import { makeGrip } from "../app/grip";
 import { glyph } from "../conversation/glyphs";
 import type { Address } from "../world/wire";
-import { SidePane, type Dock, type Peek } from "./pane";
+import { ALONE, PULLS, firstFiles, onBack, pullOut, putBack, standAs } from "./board";
+import { SidePane, type Dock, type Tab } from "./pane";
 import type { PartsFrame, SideParts } from "./parts";
+import { cardNames } from "./shown";
 import type { SideWords } from "./words";
 
 /** Narrower than this, the side lies over the desk. */
@@ -87,7 +89,7 @@ export class SideFrame implements PartsFrame {
     /** The desk, whose size the side's own follows. */
     private readonly host: HTMLElement,
     main: HTMLElement,
-    words: SideWords,
+    private readonly words: SideWords,
     private readonly seams: {
       /** Another conversation, opened beside the one in focus. */
       beside(address: Address): void;
@@ -99,7 +101,18 @@ export class SideFrame implements PartsFrame {
         this.parts?.seen(this.pane.visible);
       },
       dock: (dock) => this.setDock(dock),
+      out: PULLS ? () => this.pullOut() : undefined,
+      back: ALONE ? () => this.putBack() : undefined,
     });
+    // A board put back into the desk: the side opens beside its
+    // conversation, where that is the one in focus, with the files it had.
+    if (PULLS)
+      onBack((of, files) => {
+        const parts = this.parts;
+        if (!parts || !of(parts.self)) return;
+        if (!this.pane.open) this.pane.show(parts.firstPart());
+        parts.reopen(files);
+      });
     this.split = document.createElement("div");
     this.split.className = "sp-split";
     this.split.append(main, this.pane.element);
@@ -146,6 +159,13 @@ export class SideFrame implements PartsFrame {
       const width = `${Math.ceil(this.corner.getBoundingClientRect().width)}px`;
       if (host.style.getPropertyValue("--sp-corner-width") !== width) host.style.setProperty("--sp-corner-width", width);
     }).observe(this.corner);
+    // How wide the side is this moment, while it opens and shuts too: the
+    // head beside it makes room by what is there now, not by what will be,
+    // so its marks never leap to where they will stand and glide back.
+    new ResizeObserver(([entry]) => {
+      const now = `${entry?.contentRect.width ?? 0}px`;
+      if (host.style.getPropertyValue("--side-now") !== now) host.style.setProperty("--side-now", now);
+    }).observe(this.pane.element);
     this.place(true);
     this.fitting = new ResizeObserver(([entry]) => {
       if (!entry) return;
@@ -179,10 +199,19 @@ export class SideFrame implements PartsFrame {
     if (parts && !this.reopened) {
       this.reopened = true;
       // Open as it was left, once the desk is laid out on the screen: no
-      // glide, as if it had never shut.
+      // glide, as if it had never shut. Alone in its window it is always
+      // open, and takes what its conversation's desk sends it.
       requestAnimationFrame(() => {
         this.place();
-        if (!kept(OPEN_KEPT) || this.placed === "over" || this.pane.open) return;
+        if (ALONE) {
+          standAs(
+            parts.self,
+            (file) => parts.reopen([file]),
+            () => this.putBack(),
+          );
+          parts.reopen(firstFiles());
+        } else if (!kept(OPEN_KEPT) || this.placed === "over") return;
+        if (this.pane.open) return;
         this.pane.show(parts.part ?? parts.firstPart());
         this.host.classList.add("sp-shown");
         this.drawSwitch();
@@ -194,9 +223,30 @@ export class SideFrame implements PartsFrame {
     this.pane.show(part);
   }
 
-  peek(peek: Peek): void {
+  add(tab: Tab): void {
     if (!this.pane.open) this.pane.show();
-    this.pane.peek(peek);
+    this.pane.add(tab);
+  }
+
+  /** The files read on tabs go into a window of their own, as their card
+   *  does, where the side stands on the screen; their tabs are shut here. */
+  private pullOut(): void {
+    const parts = this.parts;
+    if (!parts) return;
+    if (pullOut(parts.self, "files", parts.filesOpen(), this.pane.element.getBoundingClientRect(), `${cardNames(this.words).files} - Fastctx`)) this.shutFiles();
+  }
+
+  /** The tabs that read files are shut, as the files went to a window of
+   *  their own. */
+  shutFiles(): void {
+    for (const tab of [...(this.parts?.tabs ?? [])]) if (tab.file) this.pane.shut(tab.id);
+  }
+
+  /** What stands alone in this window goes back into the desk. */
+  private putBack(): void {
+    const parts = this.parts;
+    if (!parts) return;
+    putBack(parts.self, parts.filesOpen());
   }
 
   restate(): void {
@@ -251,7 +301,7 @@ export class SideFrame implements PartsFrame {
   /** Where the side stands when put at `dock`: there where it fits, else
    *  along the other edge where that fits, else over the whole desk. */
   private placement(dock: Dock, size: DeskSize): Dock | "over" {
-    if (OVER.matches) return "over";
+    if (ALONE || OVER.matches) return "over";
     if (this.fits(dock, size)) return dock;
     const other: Dock = dock === "bottom" ? "right" : "bottom";
     return this.fits(other, size) ? other : "over";

@@ -25,10 +25,6 @@ impl Original {
         &self.source
     }
 
-    pub(crate) fn target(&self) -> &Path {
-        &self.target
-    }
-
     pub(crate) fn verify_archived(&self) -> io::Result<()> {
         if archive::fingerprint(&self.target)? != self.signature {
             return Err(io::Error::other("the archived import source changed after verification"));

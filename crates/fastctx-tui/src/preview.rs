@@ -83,6 +83,7 @@ fn resident(
             focus: Default::default(),
             home: None,
             callee: None,
+            born_shared: Default::default(),
         },
         town: in_town.map(town),
         here: true,
@@ -211,6 +212,8 @@ fn residents(now: Timestamp) -> (Vec<ResidentNow>, Vec<RunningJob>) {
             output: "~/.fastctx/world/towns/mark50/residents/codex-7f3a/out/j-k3x9a2.log".into(),
             stderr: None,
             account: None,
+            exited: None,
+            remaining: None,
         },
         RunningJob {
             source: None,
@@ -224,6 +227,8 @@ fn residents(now: Timestamp) -> (Vec<ResidentNow>, Vec<RunningJob>) {
             output: "~/.fastctx/world/towns/mark50/residents/codex-0d1e/out/j-p0q1r2.log".into(),
             stderr: None,
             account: None,
+            exited: None,
+            remaining: None,
         },
     ];
     (vec![claude, codex, finder, outside], jobs)
@@ -391,11 +396,13 @@ fn nodes(now: Timestamp) -> NodesReply {
         version: "1.0.0".into(),
         mcp: false,
         mcp_import: false,
-        page_accounts: false,
         attachment_places: false,
         attachment_runs: false,
         memory_folders: false,
         collaboration_tree: false,
+        timeline_reads: false,
+        file_changes: false,
+        watch_live: false,
         completion_receipts: false,
         control_letters: false,
         run_stops: false,
@@ -464,7 +471,7 @@ fn map(now: Timestamp) -> MapView {
     let codex = Writer::Resident { address: address("codex-7f3a", "laptop") };
     MapView {
         memory: None,
-        pages: Vec::new(),
+        pages: Default::default(),
         town: town("mark50"),
         ledger: "~/.fastctx/world/towns/mark50/ledger".into(),
         record: towns(now).remove(0).record,

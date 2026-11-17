@@ -134,6 +134,7 @@ export class RemoveMachineSheet {
     this.over = false;
     const began = Date.now();
     const look = (): void => {
+      if (document.hidden) { this.timer = window.setTimeout(look, LOOK_MS); return; }
       void following
         .left()
         .then((left) => {

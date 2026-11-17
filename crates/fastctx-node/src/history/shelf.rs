@@ -88,6 +88,8 @@ pub(crate) struct Shelf {
     documents: BTreeMap<String, Shelved>,
     /// A project's: the ledger's history index and the last entry it took.
     ledger: Option<(Index, u64)>,
+    /// A project's: what its ledger is kept from, as read (§28.58).
+    from: Option<String>,
     /// When the folder that says what changed last changed, as read: the
     /// ledger's entries, or the conversation's records.
     seen: Seen,
@@ -161,14 +163,22 @@ impl Shelf {
     }
 
     fn refresh_project(&mut self, world: &WorldDir, town: &TownName) -> Result<(), String> {
-        let entries = world.town(town).signed();
+        // The entries kept: the hub's projection where taken from it (§28.58).
+        let directory = world.town(town);
+        let entries = match fastctx_platform::disk::is_dir(directory.projected()) {
+            true => directory.projected(),
+            false => directory.signed(),
+        };
         let now = changed(&entries)?;
-        if self.ledger.is_some() && self.seen.holds(now) {
+        let from = crate::ledger::projected::kept_from(&directory).map_err(|error| error.to_string())?;
+        if self.ledger.is_some() && self.seen.holds(now) && self.from == from {
             return Ok(());
         }
         let (mut index, mut through) = self.ledger.take().unwrap_or_default();
-        // A ledger that went back is read again from its start.
-        if crate::ledger::replica_seq(world, town).map_err(|error| error.to_string())? < through {
+        // A ledger that went back, or made again from another projection, is
+        // read again from its start.
+        if crate::ledger::replica_seq(world, town).map_err(|error| error.to_string())? < through || self.from != from {
+            self.from = from;
             (index, through) = (Index::default(), 0);
             self.documents.clear();
         }

@@ -3,4 +3,12 @@
     <!-- The app's name as Android shows it; the generated project's own copy is replaced by this one. -->
     <string name="app_name">"Fastctx"</string>
     <string name="main_activity_title">"Fastctx"</string>
+    <!-- The background connection's own notice, which stays while it runs. -->
+    <string name="connection_title">"Fastctx 正在后台保持在线"</string>
+    <string name="connection_online">"已连接 · 有人找你、对话做完时会提醒你"</string>
+    <string name="connection_reconnecting">"网络断开，正在重连…"</string>
+    <string name="connection_stopped">"已停止连接"</string>
+    <string name="channel_connection">"后台连接"</string>
+    <string name="channel_conversations">"对话提醒"</string>
+    <string name="channel_machines">"机器提醒"</string>
 </resources>

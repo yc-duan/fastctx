@@ -55,6 +55,7 @@ fn empty(call: &str, machine: MachineName, turn: Option<String>, script: &str) -
 
 fn mutate<T: Send + 'static>(
     directory: &ConversationDir,
+    call: String,
     bytes: usize,
     action: impl FnOnce(&Connection, &str) -> StoredResult<T> + Send + 'static,
 ) -> io::Result<T> {
@@ -64,7 +65,7 @@ fn mutate<T: Send + 'static>(
             let before = db.total_changes();
             let result = action(db, &conversation)?;
             if db.total_changes() != before {
-                sql::changed(db, &conversation)?;
+                sql::changed(db, &conversation, &call)?;
             }
             Ok(result)
         })
@@ -83,7 +84,7 @@ pub(crate) fn begin(
         return Err(io::Error::other("unknown resident"));
     }
     let stored = empty(id, machine, turn, script);
-    mutate(&node.world.conversation(resident), script.len() + id.len(), move |db, conversation| {
+    mutate(&node.world.conversation(resident), id.to_string(), script.len() + id.len(), move |db, conversation| {
         if sql::head(db, conversation, &stored.call_id)?.is_none() {
             sql::save(db, conversation, &stored)?;
         }
@@ -117,12 +118,15 @@ pub(super) fn keep(directory: &ConversationDir, id: &str, facts: &RunFacts, disp
     stored.facts.steps.clear();
     stored.facts.visited.clear();
     let bytes = sql::encode(&stored).map_err(io::Error::other)?.len();
-    mutate(directory, bytes, move |db, conversation| {
+    mutate(directory, id.to_string(), bytes, move |db, conversation| {
         let mut preserve_notes = false;
         if let Some(previous) = sql::head(db, conversation, &stored.call_id)? {
             stored.script = previous.script;
             stored.facts.turn = previous.facts.turn.or(stored.facts.turn);
             stored.facts.record = stored.facts.record.or(previous.facts.record);
+            if let (Some(output), Some(kept)) = (&mut stored.facts.output, &previous.facts.output) {
+                preserve_notes |= super::measurements::preserve(output, kept);
+            }
             if let (Some(output), Some(kept)) = (&mut stored.facts.output, &previous.facts.output)
                 && output.content.is_none()
                 && kept.content.is_some()
@@ -152,7 +156,7 @@ pub(crate) fn failed(node: &Node, resident: &ResidentId, id: &str, error: &str) 
         return Err(io::Error::other("unknown resident"));
     }
     let (id, error) = (id.to_string(), error.to_string());
-    mutate(&node.world.conversation(resident), id.len() + error.len(), move |db, conversation| {
+    mutate(&node.world.conversation(resident), id.clone(), id.len() + error.len(), move |db, conversation| {
         if let Some(mut stored) = sql::head(db, conversation, &id)?
             && !stored.launched
         {
@@ -165,7 +169,7 @@ pub(crate) fn failed(node: &Node, resident: &ResidentId, id: &str, error: &str) 
 
 pub(crate) fn legacy_reply(node: &Node, resident: &ResidentId, id: &str, reply: &RunReply) -> io::Result<()> {
     let (id, reply) = (id.to_string(), reply.clone());
-    mutate(&node.world.conversation(resident), id.len() + 1024, move |db, conversation| {
+    mutate(&node.world.conversation(resident), id.clone(), id.len() + 1024, move |db, conversation| {
         let mut stored = sql::head(db, conversation, &id)?
             .ok_or_else(|| fastctx_storage::Error::new("the original run call is unavailable"))?;
         stored.facts.machine = reply.machine.clone();
@@ -185,7 +189,7 @@ pub(crate) fn record_failure(node: &Node, resident: &ResidentId, id: &str, error
         return Err(io::Error::other("unknown resident"));
     }
     let (id, error, machine) = (id.to_string(), error.to_string(), node.machine());
-    mutate(&node.world.conversation(resident), id.len() + error.len(), move |db, conversation| {
+    mutate(&node.world.conversation(resident), id.clone(), id.len() + error.len(), move |db, conversation| {
         let mut stored = sql::head(db, conversation, &id)?.unwrap_or_else(|| empty(&id, machine, None, ""));
         if stored.launched || matches!(stored.facts.state, fastctx_types::run::RunState::Failed { .. }) {
             return Ok(());
@@ -215,7 +219,68 @@ pub(crate) fn receive(node: &Node, resident: &ResidentId, update: &JobFacts) -> 
             },
         );
     })?;
+    // The asset timeline brought to the run's facts: one that settled before
+    // they changed is checked whole (DD06, CC15).
+    crate::timeline::runs_changed(node, resident);
     Ok(())
+}
+
+/// The version of the conversation's run facts (`stamp`'s), and the first
+/// `most` calls whose facts changed after version `after`, in the order of
+/// their last change, with the version of the last of them: the rest after
+/// it (codex-e024d399: never all at once). None where what changed is not
+/// known call by call — changed by an older node, or before calls were
+/// noted (`sql::changed`) — and they are all to be read again.
+/// A page of the calls changed after a version (`changed_since`): the calls,
+/// and the version of the last of them.
+pub(crate) type Changed = (Vec<String>, i64);
+
+pub(crate) fn changed_since(directory: &ConversationDir, after: i64, most: usize) -> io::Result<(i64, Option<Changed>)> {
+    let (database, conversation) = database(directory)?;
+    database
+        .read_now(|db| {
+            let transaction = db.unchecked_transaction()?;
+            changed_in(&transaction, &conversation, after, most)
+        })
+        .map_err(io::Error::other)
+}
+
+/// `changed_since` in `db`, of the conversation `conversation`.
+fn changed_in(db: &Connection, conversation: &str, after: i64, most: usize) -> StoredResult<(i64, Option<Changed>)> {
+    let (version, since, last): (i64, Option<i64>, Option<i64>) = db
+        .query_row("SELECT version, since, last FROM run_versions WHERE conversation=?1", [conversation], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+        })
+        .optional()?
+        .unwrap_or((0, None, None));
+    if version <= after {
+        return Ok((version, Some((Vec::new(), version))));
+    }
+    if !(since.is_some_and(|since| since <= after + 1) && last == Some(version)) {
+        return Ok((version, None));
+    }
+    let mut statement =
+        db.prepare_cached("SELECT call, version FROM run_call_versions WHERE conversation=?1 AND version>?2 ORDER BY version LIMIT ?3")?;
+    let rows = statement.query_map(fastctx_storage::rusqlite::params![conversation, after, most as i64], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+    })?;
+    let rows = rows.collect::<std::result::Result<Vec<_>, _>>()?;
+    // A page short of `most` is the last: through the version now.
+    let through = if rows.len() < most { version } else { rows.last().map_or(version, |(_, at)| *at) };
+    Ok((version, Some((rows.into_iter().map(|(call, _)| call).collect(), through))))
+}
+
+/// The version of the conversation's run facts: one more at each change.
+pub(crate) fn version(directory: &ConversationDir) -> io::Result<i64> {
+    let (database, conversation) = database(directory)?;
+    database
+        .read_now(|db| {
+            Ok(db
+                .query_row("SELECT version FROM run_versions WHERE conversation=?1", [conversation], |row| row.get(0))
+                .optional()?
+                .unwrap_or(0))
+        })
+        .map_err(io::Error::other)
 }
 
 pub(crate) fn stamp(directory: &ConversationDir, digest: &mut impl FnMut(&[u8])) -> io::Result<()> {
@@ -343,3 +408,7 @@ pub(crate) fn pending_machines(directory: &ConversationDir) -> io::Result<Vec<(M
         Ok(result.into_iter().collect())
     }).map_err(io::Error::other)
 }
+
+#[cfg(test)]
+#[path = "storage_tests.rs"]
+mod tests;

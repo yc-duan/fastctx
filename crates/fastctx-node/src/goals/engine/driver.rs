@@ -43,7 +43,7 @@ fn assistance_now(node: &Node, goal: &Goal) -> Result<Option<policy::QuotaHold>,
     Ok(used.expires().map(|reset| policy::QuotaHold {
         source: QuotaSource::Assistance,
         reset,
-        reason: used.said(&goal.account),
+        reason: used.said(Some(&goal.account)),
     }))
 }
 

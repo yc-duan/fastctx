@@ -14,6 +14,7 @@ mod frames;
 mod journal;
 mod log;
 mod migrate;
+mod measurements;
 #[cfg(feature = "storage-drill")]
 pub(crate) mod migration_drill;
 mod projections;
@@ -25,13 +26,13 @@ mod steps;
 pub(crate) mod storage;
 pub(crate) use retirement::SCHEMA as RETIREMENT_SCHEMA;
 pub(crate) use sql::SCHEMA;
-pub(crate) use step_view::delete as delete_step_view;
+
 pub(crate) mod output;
 pub(crate) mod updates;
 pub(crate) mod visits;
 pub(crate) mod writing;
 pub(crate) use steps::tell as tell_step;
-pub(crate) use storage::{evidence, job_updates, observations, pending_machines, stamp};
+pub(crate) use storage::{changed_since, evidence, job_updates, observations, pending_machines, stamp, version};
 mod acceptance;
 mod asynchronous;
 pub(crate) use asynchronous::{begin_for, failed_for, keep_for, keep_reply, legacy_reply, receive, record_failure};
@@ -70,11 +71,12 @@ pub(crate) fn visits(record: &Path) -> io::Result<Vec<(fastctx_types::MachineNam
 const RUN_INLINE: u64 = 256 * 1024;
 
 pub(crate) fn assemble(reply: &RunReply, record: &Path) -> io::Result<RunFacts> {
-    let cut = reply
-        .output
-        .pieces
-        .iter()
-        .any(|piece| matches!(piece, OutputPiece::Omitted { .. } | OutputPiece::PartOfLine { .. }));
+    let cut = reply.output.sampled.is_some()
+        || reply
+            .output
+            .pieces
+            .iter()
+            .any(|piece| matches!(piece, OutputPiece::Omitted { .. } | OutputPiece::PartOfLine { .. }));
     let mut writes = writes(record)?;
     // What one run keeps with the conversation of its changes' rows is
     // bounded, all of them together: past it, a change is read from its
@@ -114,6 +116,16 @@ pub(crate) fn assemble(reply: &RunReply, record: &Path) -> io::Result<RunFacts> 
         notes,
         steps,
     })
+}
+
+/// Whether `event` is a host's call of World's `run`, which `attach` gives
+/// its run's facts.
+pub(crate) fn tells_of_a_run(event: &SessionEvent) -> bool {
+    let (Happened::Began { item, .. } | Happened::Updated { item, .. } | Happened::Finished { item, .. }) = &event.happened else {
+        return false;
+    };
+    let What::Tool(tool) = &item.what else { return false };
+    tool.name == "run" && tool.server.as_deref().is_some_and(|server| server == "fastctx" || server.ends_with("_fastctx"))
 }
 
 pub(crate) fn attach(directory: &ConversationDir, event: &mut SessionEvent) -> io::Result<()> {

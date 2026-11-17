@@ -147,17 +147,42 @@ function onOf(command: string): { machine: string; rest: string; reads: boolean 
   return { machine: match[1] ?? match[2] ?? match[3] ?? "", rest, reads: /^(?:bash|sh|zsh)(?:\s+-\S+)*\s*(?:<<|$)/.test(rest) };
 }
 
+/** The commands that only run another, and their options that take a
+ *  value as the next word (`nice -n 10 cargo build` runs `cargo`). */
+const WRAPPERS: Record<string, readonly string[]> = {
+  time: ["-f", "-o"],
+  env: ["-u", "-C", "-S"],
+  sudo: ["-u", "-g", "-h", "-p", "-C", "-D", "-r", "-t", "-U"],
+  exec: ["-a"],
+  nice: ["-n"],
+  nohup: [],
+  command: [],
+  timeout: ["-k", "-s"],
+};
+
 /** A command without what only surrounds it: leading assignments, `time`,
- *  `timeout N`, `env`, `sudo`, `exec`, `nice`. */
+ *  `timeout N`, `env`, `sudo`, `exec`, `nice`, each with its options. */
 export function bare(command: string): string {
   // A command sent to the background still runs.
   let text = command.trim().replace(/^!\s*/, "").replace(/\s+&$/, "");
   for (;;) {
     const before = text;
-    text = text
-      .replace(/^[A-Za-z_][A-Za-z0-9_]*=(?:'[^']*'|"[^"]*"|\S*)\s+/, "")
-      .replace(/^(?:time|env|sudo|exec|nice|nohup|command)\s+/, "")
-      .replace(/^timeout\s+(?:-\S+\s+)*\d+[smhd]?\s+/, "");
+    text = text.replace(/^[A-Za-z_][A-Za-z0-9_]*=(?:'[^']*'|"[^"]*"|\S*)\s+/, "");
+    const wrapper = /^(time|env|sudo|exec|nice|nohup|command|timeout)\s+/.exec(text);
+    if (wrapper) {
+      const name = wrapper[1]!;
+      text = text.slice(wrapper[0].length);
+      // Its options, and the value of each that takes one.
+      for (;;) {
+        const option = /^(-\S*)\s+/.exec(text);
+        if (!option) break;
+        text = text.slice(option[0].length);
+        if (option[1] === "--") break;
+        if (WRAPPERS[name]!.includes(option[1]!)) text = text.replace(/^\S+\s+/, "");
+      }
+      // `timeout` takes how long before the command.
+      if (name === "timeout") text = text.replace(/^\d+(?:\.\d+)?[smhd]?\s+/, "");
+    }
     if (text === before) return text;
   }
 }

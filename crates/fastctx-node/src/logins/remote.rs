@@ -67,8 +67,11 @@ pub(crate) async fn query(node: &Arc<Node>, acting: &Acting, machine: Option<Wri
 pub(crate) const OWNERS_WINDOWS: &str = "the windows of the login's account are its owner's to see";
 
 /// What this machine's record shows another account: everything to one
-/// that may work here; to one logins assist, those listed logins alone,
-/// without their account's windows, which are their owner's to see.
+/// that may work here; to one logins assist, those listed logins alone.
+/// One given a limit sees nothing of their account's windows, which are
+/// their owner's; one given none shares the login's whole quota and sees
+/// its windows as its owner does, only to look at (用户 2026-11-15: 唯一一个
+/// 越界的例外是配置协助者，不配置用量，那么他就能看到账号的额度条).
 pub(crate) fn seen(view: &fastctx_net::directory::View, asker: &Asker, mut logins: MachineLogins) -> MachineLogins {
     if asker.hands {
         return logins;
@@ -83,22 +86,34 @@ pub(crate) fn seen(view: &fastctx_net::directory::View, asker: &Asker, mut login
         side.programs.clear();
         side.candidates.clear();
         side.elsewhere.clear();
-        side.listed.retain(|login| {
-            view.assisting(&asker.account, &here).any(|assist| {
-                assist.agent.as_str() == agent
-                    && match &assist.home {
-                        None => login.default,
-                        Some(dir) => crate::homes::same_dir(dir, &login.dir),
-                    }
-            })
-        });
+        let assists = |login: &fastctx_types::logins::Login| -> Vec<fastctx_net::directory::Assist> {
+            view.assisting(&asker.account, &here)
+                .filter(|assist| {
+                    assist.agent.as_str() == agent
+                        && match &assist.home {
+                            None => login.default,
+                            Some(dir) => crate::homes::same_dir(dir, &login.dir),
+                        }
+                })
+                .cloned()
+                .collect()
+        };
+        side.listed.retain(|login| !assists(login).is_empty());
         for login in &mut side.listed {
             login.programs.clear();
             login.change = None;
-            login.limits = fastctx_types::agents::Fact::unavailable(OWNERS_WINDOWS);
+            if assists(login).iter().any(limited) {
+                login.limits = fastctx_types::agents::Fact::unavailable(OWNERS_WINDOWS);
+            }
         }
     }
     logins
+}
+
+/// Whether an assistance holds the account to a part of the login: a share
+/// of its week, or dollars a week or a day.
+fn limited(assist: &fastctx_net::directory::Assist) -> bool {
+    assist.share.is_some() || assist.weekly.is_some() || assist.daily.is_some()
 }
 
 /// What this machine's record shows a caller that works for no account of
@@ -147,7 +162,7 @@ fn other(machine: &Written) -> Failure {
 
 pub(crate) async fn scan(node: &Arc<Node>, machine: Written, stop: bool) -> Result<MachineLogins, Failure> {
     if node.is_here(&machine) {
-        return super::scan::scan(node, stop).await;
+        return super::submitted::scan(node, stop).await;
     }
     match ask(node, &machine, Purpose::Hands, RemoteCall::ScanAgents { stop }).await? {
         RemoteReply::AgentLogins(logins) => Ok(*logins),
@@ -162,7 +177,7 @@ pub(crate) async fn add(
     dir: PathBuf,
 ) -> Result<MachineLogins, Failure> {
     if node.is_here(&machine) {
-        return super::take_up(node, agent, dir).await;
+        return super::submitted::add(node, agent, dir).await;
     }
     match ask(node, &machine, Purpose::Hands, RemoteCall::AddAgentLogin { agent, dir }).await? {
         RemoteReply::AgentLogins(logins) => Ok(*logins),
@@ -177,7 +192,7 @@ pub(crate) async fn folder(
     change: FolderChange,
 ) -> Result<MachineLogins, Failure> {
     if node.is_here(&machine) {
-        return super::folders::change(node, dir, change).await;
+        return super::submitted::folder(node, dir, change).await;
     }
     match ask(node, &machine, Purpose::Hands, RemoteCall::AgentFolder { dir, change }).await? {
         RemoteReply::AgentLogins(logins) => Ok(*logins),
@@ -217,7 +232,8 @@ pub(crate) async fn change(
     workbench: Option<bool>,
 ) -> Result<LoginChange, Failure> {
     if node.is_here(&machine) {
-        return super::change::change(node, agent, dir, into, raise_output_limit, take_back, expected, workbench).await;
+        return super::submitted::change(node, agent, dir, into, raise_output_limit, take_back, expected, workbench)
+            .await;
     }
     let call = RemoteCall::ChangeAgentLogin { agent, dir, into, raise_output_limit, take_back, expected, workbench };
     match ask(node, &machine, Purpose::Hands, call).await? {
@@ -233,8 +249,7 @@ pub(crate) async fn read_limits(
     dir: PathBuf,
 ) -> Result<MachineLogins, Failure> {
     if node.is_here(&machine) {
-        super::limits::read(node, &agent, &dir).await?;
-        return super::here(node).await;
+        return super::submitted::read_limits(node, agent, dir, false).await;
     }
     match ask(node, &machine, Purpose::Look, RemoteCall::ReadAgentLimits { agent, dir }).await? {
         RemoteReply::AgentLogins(logins) => Ok(*logins),
@@ -253,11 +268,28 @@ pub(crate) async fn set_resets_in_place(
     on: bool,
 ) -> Result<MachineLogins, Failure> {
     if node.is_here(&machine) {
-        super::set_resets_in_place(node, &agent, &dir, on)?;
-        crate::usage::after_reading(node, agent.as_str(), &dir).await;
-        return super::here(node).await;
+        return super::submitted::set_resets_in_place(node, agent, dir, on).await;
     }
     match ask(node, &machine, Purpose::Hands, RemoteCall::SetAgentResetInPlace { agent, dir, on }).await? {
+        RemoteReply::AgentLogins(logins) => Ok(*logins),
+        _ => Err(other(&machine)),
+    }
+}
+
+/// Sets a login's week in quota dollars, here or on another of the user's
+/// machines.
+pub(crate) async fn set_week(
+    node: &Arc<Node>,
+    machine: Written,
+    agent: AgentName,
+    dir: PathBuf,
+    week: Option<fastctx_types::usage::Usd>,
+) -> Result<MachineLogins, Failure> {
+    if node.is_here(&machine) {
+        super::set_week(node, &agent, &dir, week)?;
+        return super::changed_here(node).await;
+    }
+    match ask(node, &machine, Purpose::Hands, RemoteCall::SetAgentWeek { agent, dir, week }).await? {
         RemoteReply::AgentLogins(logins) => Ok(*logins),
         _ => Err(other(&machine)),
     }
@@ -274,7 +306,7 @@ pub(crate) async fn set_title(
 ) -> Result<MachineLogins, Failure> {
     if node.is_here(&machine) {
         super::set_title(node, &agent, &dir, on)?;
-        return super::here(node).await;
+        return super::changed_here(node).await;
     }
     match ask(node, &machine, Purpose::Hands, RemoteCall::SetAgentTitle { agent, dir, on }).await? {
         RemoteReply::AgentLogins(logins) => Ok(*logins),
@@ -293,7 +325,7 @@ pub(crate) async fn change_models(
 ) -> Result<MachineLogins, Failure> {
     if node.is_here(&machine) {
         super::models::change(node, &agent, &dir, &change)?;
-        return super::here(node).await;
+        return super::changed_here(node).await;
     }
     match ask(node, &machine, Purpose::Hands, RemoteCall::ChangeAgentModels { agent, dir, change }).await? {
         RemoteReply::AgentLogins(logins) => Ok(*logins),
@@ -312,9 +344,28 @@ pub(crate) async fn usage(
     if node.is_here(&machine) {
         return here_usage(node, agent, dir, None, true).await;
     }
-    match ask(node, &machine, Purpose::Look, RemoteCall::AgentUsage { agent, dir }).await? {
-        RemoteReply::AgentUsage(report) => Ok(*report),
-        _ => Err(other(&machine)),
+    // The machine, which tells all of it as the asker may see it; from the
+    // copies here where it is away or does not answer (§28.58): they hold
+    // only the lines of the accounts logged in here, never another's the
+    // asker may see on that machine (codex-357de52a #5).
+    let copied = || {
+        let (asking, written, named, path) = (node.clone(), machine.clone(), agent.clone(), dir.clone());
+        fastctx_platform::task::spawn_blocking(move || {
+            crate::usage::copied::report(&asking, &written, named.as_str(), &path)
+        })
+    };
+    if crate::timeline::copy::away(node, &machine.name)
+        && let Ok(Some(report)) = copied().await
+    {
+        return Ok(report);
+    }
+    match ask(node, &machine, Purpose::Look, RemoteCall::AgentUsage { agent: agent.clone(), dir: dir.clone() }).await {
+        Ok(RemoteReply::AgentUsage(report)) => Ok(*report),
+        Ok(_) => Err(other(&machine)),
+        Err(failure) => match copied().await {
+            Ok(Some(report)) => Ok(report),
+            _ => Err(failure),
+        },
     }
 }
 
@@ -329,9 +380,34 @@ pub(crate) async fn calls(
     if node.is_here(&machine) {
         return here_calls(node, agent, dir, None, query).await;
     }
-    match ask(node, &machine, Purpose::Look, RemoteCall::AgentCalls { agent, dir, query }).await? {
-        RemoteReply::AgentCalls(page) => Ok(*page),
-        _ => Err(other(&machine)),
+    // The machine, or the copies here where it is away, as the report
+    // (`usage`).
+    let copied = || {
+        let (asking, written, named, path, asked) =
+            (node.clone(), machine.clone(), agent.clone(), dir.clone(), query.clone());
+        fastctx_platform::task::spawn_blocking(move || {
+            crate::usage::copied::calls(&asking, &written, named.as_str(), &path, &asked)
+        })
+    };
+    if crate::timeline::copy::away(node, &machine.name)
+        && let Ok(Some(page)) = copied().await
+    {
+        return Ok(page);
+    }
+    match ask(
+        node,
+        &machine,
+        Purpose::Look,
+        RemoteCall::AgentCalls { agent: agent.clone(), dir: dir.clone(), query: query.clone() },
+    )
+    .await
+    {
+        Ok(RemoteReply::AgentCalls(page)) => Ok(*page),
+        Ok(_) => Err(other(&machine)),
+        Err(failure) => match copied().await {
+            Ok(Some(page)) => Ok(page),
+            _ => Err(failure),
+        },
     }
 }
 
@@ -384,21 +460,23 @@ pub(crate) async fn answer(
     let logins = |logins: MachineLogins| RemoteReply::AgentLogins(Box::new(seen(view, asker, logins)));
     match call {
         RemoteCall::AgentLogins => super::here(node).await.map(logins),
-        RemoteCall::ScanAgents { stop } => super::scan::scan(node, stop).await.map(logins),
-        RemoteCall::AddAgentLogin { agent, dir } => super::take_up(node, agent, dir).await.map(logins),
-        RemoteCall::AgentFolder { dir, change } => super::folders::change(node, dir, change).await.map(logins),
+        RemoteCall::ScanAgents { stop } => super::submitted::scan(node, stop).await.map(logins),
+        RemoteCall::AddAgentLogin { agent, dir } => super::submitted::add(node, agent, dir).await.map(logins),
+        RemoteCall::AgentFolder { dir, change } => super::submitted::folder(node, dir, change).await.map(logins),
         RemoteCall::SetAgentTitle { agent, dir, on } => {
             super::set_title(node, &agent, &dir, on)?;
-            super::here(node).await.map(logins)
+            super::changed_here(node).await.map(logins)
         }
         RemoteCall::SetAgentResetInPlace { agent, dir, on } => {
-            super::set_resets_in_place(node, &agent, &dir, on)?;
-            crate::usage::after_reading(node, agent.as_str(), &dir).await;
-            super::here(node).await.map(logins)
+            super::submitted::set_resets_in_place(node, agent, dir, on).await.map(logins)
+        }
+        RemoteCall::SetAgentWeek { agent, dir, week } => {
+            super::set_week(node, &agent, &dir, week)?;
+            super::changed_here(node).await.map(logins)
         }
         RemoteCall::ChangeAgentModels { agent, dir, change } => {
             super::models::change(node, &agent, &dir, &change)?;
-            super::here(node).await.map(logins)
+            super::changed_here(node).await.map(logins)
         }
         RemoteCall::PreviewAgentChange { agent, dir, into, take_back, workbench } => {
             super::change::preview(node, agent, dir, into, take_back, workbench)
@@ -406,26 +484,20 @@ pub(crate) async fn answer(
                 .map(|preview| RemoteReply::AgentChangePreview(Box::new(preview)))
         }
         RemoteCall::ChangeAgentLogin { agent, dir, into, raise_output_limit, take_back, expected, workbench } => {
-            super::change::change(node, agent, dir, into, raise_output_limit, take_back, expected, workbench)
+            super::submitted::change(node, agent, dir, into, raise_output_limit, take_back, expected, workbench)
                 .await
                 .map(|change| RemoteReply::AgentLoginChanged(Box::new(change)))
         }
         RemoteCall::ReadAgentLimits { agent, dir } => {
-            let record = super::here(node).await?;
-            let side = record.of(agent.as_str()).ok_or_else(|| Failure::not_run(format!("{agent} keeps no logins")))?;
-            let login = side
-                .listed
-                .iter()
-                .chain(&side.candidates)
-                .find(|login| crate::homes::same_dir(&login.dir, &dir))
-                // One a login only assists does not read its account's windows.
-                .filter(|login| asker.hands && may_see(view, asker, &agent, &login.dir, login.default))
-                .ok_or_else(|| {
-                    Failure::not_run(format!("no {agent} login {} here is the account's to see", dir.display()))
-                })?;
-            let dir = login.dir.clone();
-            super::limits::read(node, &agent, &dir).await?;
-            super::here(node).await.map(logins)
+            // Only a holder reads account windows. Check before recording work;
+            // the job resolves the requested login from the machine's record.
+            if !asker.hands {
+                return Err(Failure::not_run(format!(
+                    "no {agent} login {} here is the account's to see",
+                    dir.display()
+                )));
+            }
+            super::submitted::read_limits(node, agent, dir, true).await.map(logins)
         }
         RemoteCall::AgentUsage { agent, dir } => {
             let record = super::here(node).await?;

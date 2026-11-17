@@ -34,6 +34,11 @@ impl<'a> Projection<'a> {
         stamps::prepare(directory)?;
         Ok(Self { directory })
     }
+    /// The projection of `directory`, once one was opened there (`open`):
+    /// for one event at a time, without preparing it each time.
+    pub(crate) fn prepared(directory: &'a ConversationDir) -> Self {
+        Self { directory }
+    }
     fn get(&self, client: &str) -> io::Result<Option<Stamp>> {
         if let Some(stamp) = stamps::get(self.directory, client)? {
             return Ok(Some(stamp));

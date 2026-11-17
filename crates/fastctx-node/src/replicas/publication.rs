@@ -53,6 +53,11 @@ pub(crate) fn permitted(node: &Node, route: &Route) -> Result<(), String> {
     if left(&link) {
         return Err("this computer left the replica's network".into());
     }
+    // Shared whole on another network, this computer keeps nothing of this
+    // one: whoever it is shared with there could read it (AA02).
+    if let Some(other) = crate::assets::shared_elsewhere(node, &route.account.hub) {
+        return Err(format!("this computer is shared whole on {other}: it keeps no records of another network"));
+    }
     let view = link.view();
     if view.account(&route.head.owner).is_none_or(|owner| owner.opened != route.head.opened) {
         return Err("the replica's owning account was replaced or removed".into());

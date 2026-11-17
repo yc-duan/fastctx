@@ -183,6 +183,24 @@ pub struct Share {
     /// set; none is no limit (`world-network.md`, 共享机器与智能体协助).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub jobs: Option<u16>,
+    /// A share that gives the account whole access it did not have waits
+    /// until the machine has cleared what the account may not see, at this
+    /// holding revision (sync v2 design §6.3): until then it gives nothing,
+    /// though the machine already holds as if it were in force.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending: Option<u64>,
+    /// The hub's digest of what decides what the machine may hold, as the
+    /// directory was when the share came to wait at its revision: the
+    /// revision moves on only when that changes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub basis: Option<String>,
+}
+
+impl Share {
+    /// Whether the share gives what it gives now.
+    pub fn active(&self) -> bool {
+        self.pending.is_none()
+    }
 }
 
 /// One login of an agent on a machine, assisting an account that is not the
@@ -217,6 +235,11 @@ pub struct Assist {
     /// 一个登录同时开几轮).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub turns: Option<u16>,
+    /// The part of the login's week the account may use, in percent of the
+    /// week its owner set for it; Fable is half of it. A node that knows no
+    /// shares holds to `weekly`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub share: Option<u8>,
 }
 
 impl Assist {
@@ -248,6 +271,10 @@ pub struct LoginPlan {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub home: Option<PathBuf>,
     pub plan: fastctx_types::accounts::PlanLabel,
+    /// Max shown as Ultra (`fastctx_types::accounts::PlanSeen`); a node that
+    /// knows no Ultra reads it as Max.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub ultra: bool,
 }
 
 /// A machine that acts for an account it is not logged in to: the account
@@ -273,6 +300,11 @@ pub struct Project {
     /// A non-assisted origin whose current whole-machine holders share the records.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub shared_on: Option<MachineName>,
+    /// Those who held the machine shared whole it was opened on as that
+    /// machine left the network: its co-owners still, frozen as they were,
+    /// as a body's members are (§6.2, §28.47).
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub frozen: BTreeSet<AccountName>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -410,6 +442,22 @@ impl Directory {
         self.account(account).is_some_and(Account::is_super)
     }
 
+    /// The body `machine` is as this directory has it (design §6.2): its
+    /// key, its owner and when the owner's account was opened, as one name.
+    /// None for a machine with no owner here.
+    pub fn body_of(&self, machine: &MachineName) -> Option<String> {
+        use sha2::{Digest, Sha256};
+        let member = self.member(machine)?;
+        let home = member.home.as_ref()?;
+        let opened = self.account(home)?.opened.as_millisecond();
+        let mut hasher = Sha256::new();
+        hasher.update(b"fastctx-body/1");
+        hasher.update(member.key.as_bytes());
+        hasher.update(home.as_str().as_bytes());
+        hasher.update(opened.to_le_bytes());
+        Some(hasher.finalize()[..16].iter().map(|byte| format!("{byte:02x}")).collect())
+    }
+
     /// Managing a machine has the same authority as working on it
     /// (`world-network.md`, 共享机器与智能体协助).
     pub fn may_update(&self, account: &AccountName, machine: &MachineName) -> bool {
@@ -440,7 +488,7 @@ impl Directory {
     /// Whether `machine` is shared with `account`.
     pub fn shared(&self, account: &AccountName, machine: &MachineName) -> bool {
         let machine = self.canonical(machine);
-        self.shares.iter().any(|share| share.account == *account && share.machine == *machine)
+        self.shares.iter().any(|share| share.account == *account && share.machine == *machine && share.active())
     }
 
     /// The agents' logins on `machine` assisting `account` now. An
@@ -574,13 +622,31 @@ impl Directory {
         accounts.into_iter().find(|account| self.admits(from, account, to, purpose).is_ok()).cloned()
     }
 
-    /// Drops what no longer stands of what acts for accounts: a machine acts
+    /// Drops what no longer stands of what acts for accounts, `before` being
+    /// the directory as it was before the change just made. A machine acts
     /// for an account that used an agent there only while the account may
-    /// still use agents there, so a share or an assistance ended takes it
-    /// along, and assisting again needs another use.
-    pub fn settle_acting(&mut self) {
-        let keep: Vec<bool> =
-            self.acting.iter().map(|acting| self.machine_rights(&acting.account, &acting.machine).agents).collect();
+    /// still use agents there (`authorization`, ActFor), so a use kept
+    /// without that right does nothing. A use is dropped when the machine or
+    /// the account is gone, and when the account loses the agents there that
+    /// came without an assistance, such as a share taken back: sharing again
+    /// needs another use. An assistance ending keeps it, so the owner
+    /// assisting the same account again lets the machine act for it again at
+    /// once (`world-network.md`, 别人机器上的智能体什么时候能访问你的机器).
+    pub fn settle_acting(&mut self, before: &Directory) {
+        let now = Timestamp::now();
+        let keep: Vec<bool> = self
+            .acting
+            .iter()
+            .map(|acting| {
+                let (account, machine) = (&acting.account, &acting.machine);
+                if self.member(machine).is_none() || self.account(account).is_none() {
+                    return false;
+                }
+                let unassisted = before.machine_rights(account, machine).agents
+                    && !crate::authorization::Lookup::assists(before, account, machine, now, &|_| true);
+                self.machine_rights(account, machine).agents || !unassisted
+            })
+            .collect();
         let mut keep = keep.into_iter();
         self.acting.retain(|_| keep.next().expect("one per entry"));
     }
@@ -621,8 +687,19 @@ impl Directory {
                 && self
                     .shares
                     .iter()
-                    .filter(|share| share.machine == member.name && self.holds(&share.account, &member.name))
-                    .all(|share| self.in_project(&share.account, town))
+                    .filter(|share| {
+                        share.machine == member.name && (share.pending.is_some() || self.holds(&share.account, &member.name))
+                    })
+                    .all(|share| {
+                        // A waiting share is judged as it will be: what holding
+                        // this machine gives counts already.
+                        self.in_project(&share.account, town)
+                            || (share.pending.is_some()
+                                && self
+                                    .project(town)
+                                    .and_then(|project| project.shared_on.as_ref())
+                                    .is_some_and(|on| self.same(on, &member.name)))
+                    })
         })
     }
 }
@@ -636,6 +713,10 @@ pub struct View {
     /// The hub takes ledger questions in parts and serves large ledger entries.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub ledger_parts: bool,
+    /// The hub takes a question's name, and may answer a named question
+    /// that it accepted the work asked for (`wire::Told::Accepted`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub named_asks: bool,
     /// Account-scoped project indices and signed memory reads/writes.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub project_memory: bool,
@@ -654,6 +735,10 @@ pub struct View {
     /// The hub keeps each account's layer (`Change::Layer`).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub layers: bool,
+    /// The newest version of the second version's asset sync this hub
+    /// speaks (`fastctx_types::assets::VERSION`); zero where it speaks none.
+    #[serde(default, skip_serializing_if = "is_none_u32")]
+    pub asset_sync: u32,
     pub hub: HubId,
     pub hub_name: HubName,
     /// Current hub host, only when visible to this member.
@@ -671,6 +756,17 @@ pub struct View {
     /// Whether accounts may be opened by anyone who reaches the hub.
     #[serde(default)]
     pub self_registration: bool,
+    /// Whether the hub seals every asset each time it starts, until the
+    /// super administrator opens them (design §17 (b)).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub asset_seal_at_start: bool,
+    /// Why every asset is sealed now, if it is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub assets_sealed: Option<String>,
+    /// How the machines of each account logged in on this member stand in
+    /// syncing with the hub, as it last sampled them (design §28.9).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub synced: Vec<fastctx_types::sync_status::AccountSync>,
     /// Whether this hub takes direct connections between machines: their
     /// allowing, the outside check, and what members say of their lines.
     /// Older hubs omit it.
@@ -778,6 +874,16 @@ pub struct View {
     /// The hub understands the account-scoped goal control call.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub goal_control: bool,
+    /// Whether this hub relays a conversation's timeline pages
+    /// (`RemoteCall::Timeline`). Earlier hubs cannot read such a call and
+    /// refuse it, so a conversation on another machine is then watched
+    /// whole, as before pages.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub timeline_pages: bool,
+    /// Whether this hub relays the question of the files a conversation
+    /// changed (`TimelineAsk::Files`); an earlier hub is never asked it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub file_changes: bool,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub scratch_locations: bool,
     /// The hub relays resident goal commands and requester controls.
@@ -842,18 +948,24 @@ fn is_zero(count: &u64) -> bool {
     *count == 0
 }
 
+fn is_none_u32(version: &u32) -> bool {
+    *version == 0
+}
+
 impl View {
     /// An empty view, before the hub has given one.
     pub fn empty(hub: HubId, hub_name: HubName, me: MachineName) -> Self {
         Self {
             shared_records: false,
             ledger_parts: false,
+            named_asks: false,
             project_memory: false,
             collaboration_tree: false,
             history_switch: false,
             call_details: false,
             machine_log: false,
             layers: false,
+            asset_sync: 0,
             hub,
             hub_name,
             hub_machine: None,
@@ -861,6 +973,9 @@ impl View {
             troubles: Vec::new(),
             me,
             self_registration: false,
+            asset_seal_at_start: false,
+            assets_sealed: None,
+            synced: Vec::new(),
             direct_links: false,
             health: false,
             trial: Vec::new(),
@@ -886,6 +1001,8 @@ impl View {
             skill_files: false,
             record_keys: false,
             goal_control: false,
+            timeline_pages: false,
+            file_changes: false,
             scratch_locations: false,
             goal_commands: false,
             subagents: false,

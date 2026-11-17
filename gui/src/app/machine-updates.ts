@@ -139,7 +139,8 @@ export class MachineUpdates {
   watch(): void {
     clearTimeout(this.timer);
     if (!this.host.shown()) return;
-    void this.ask().finally(() => {
+    const read = document.hidden ? Promise.resolve() : this.ask();
+    void read.finally(() => {
       if (!this.host.shown()) return;
       this.timer = window.setTimeout(() => this.watch(), document.hidden ? HIDDEN_MS : EVERY_MS);
     });

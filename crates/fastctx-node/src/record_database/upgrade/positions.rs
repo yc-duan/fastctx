@@ -12,7 +12,11 @@ pub(super) fn records(db: &Connection) -> Result<()> {
     versions::apply(
         db,
         "node.records",
-        &[Migration { version: 1, sql: crate::records::SCHEMA }, Migration { version: 2, sql: crate::records::SCHEMA }],
+        &[
+            Migration { version: 1, sql: crate::records::SCHEMA },
+            Migration { version: 2, sql: crate::records::SCHEMA },
+            Migration { version: 3, sql: crate::records::SCHEMA },
+        ],
     )?;
     if old {
         rebuild(
@@ -54,8 +58,16 @@ pub(super) fn runs(db: &Connection) -> Result<()> {
             Migration { version: 1, sql: crate::run_facts::SCHEMA },
             Migration { version: 2, sql: crate::run_facts::SCHEMA },
             Migration { version: 3, sql: crate::run_facts::SCHEMA },
+            // The calls' own versions (§28.53): `run_call_versions`, and
+            // since when every change named its call, on `run_versions`.
+            Migration { version: 4, sql: crate::run_facts::SCHEMA },
         ],
     )?;
+    if !super::column(db, "run_versions", "since")? {
+        db.execute_batch("ALTER TABLE run_versions ADD COLUMN since INTEGER; ALTER TABLE run_versions ADD COLUMN last INTEGER;")?;
+    }
+    // What development builds kept apart before (never released).
+    db.execute_batch("DROP TABLE IF EXISTS run_tracked; DROP INDEX IF EXISTS run_call_versions_since;")?;
     for ((table, stream, definition), old) in definitions.into_iter().zip(old) {
         if old {
             rebuild(db, table, definition)?;
@@ -125,3 +137,7 @@ fn rebuild(db: &Connection, table: &str, definition: &str) -> Result<()> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "positions_tests.rs"]
+mod tests;

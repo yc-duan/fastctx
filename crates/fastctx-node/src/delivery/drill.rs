@@ -79,17 +79,11 @@ pub(crate) fn run(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
     let mut interrupted = super::begin(&directory, vec![input(3)])?;
     crate::inbox::keep(&directory, &input(3))?;
     crate::inbox::set_state(&directory, &input(3).delivery.id, PendingState::Sending)?;
-    database.write_now(128, |db| {
-        db.execute_batch("CREATE TRIGGER refusal_fault BEFORE UPDATE OF attempting ON handover_heads BEGIN SELECT RAISE(ABORT,'injected refusal failure'); END;")?;
-        Ok(())
-    })?;
+    crate::storage_drill::outside(&world.path().join("node.sqlite3"), "CREATE TRIGGER refusal_fault BEFORE UPDATE OF attempting ON handover_heads BEGIN SELECT RAISE(ABORT,'injected refusal failure'); END;")?;
     assert!(super::refused(&directory, &mut interrupted).is_err());
     assert_eq!(crate::inbox::read(&directory, &input(3).delivery.id)?.unwrap().state, PendingState::Sending);
     assert!(super::handover(&directory, &interrupted.id)?.unwrap().attempting);
-    database.write_now(128, |db| {
-        db.execute_batch("DROP TRIGGER refusal_fault")?;
-        Ok(())
-    })?;
+    crate::storage_drill::outside(&world.path().join("node.sqlite3"), "DROP TRIGGER refusal_fault")?;
     super::refused(&directory, &mut interrupted)?;
     assert_eq!(crate::inbox::read(&directory, &input(3).delivery.id)?.unwrap().state, PendingState::Waiting);
 

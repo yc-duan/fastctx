@@ -11,8 +11,15 @@ use crate::{AgentName, MachineName, TownName};
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "do")]
 pub enum DataCall {
-    /// What the World keeps here, by kind and by conversation.
-    List,
+    /// What the World keeps here, by kind and by conversation. With `kept`,
+    /// answered at once with what was last measured here (`Unmeasured`
+    /// while nothing was), so a page shows it while a measure goes on:
+    /// measuring walks everything kept here. An earlier node, not knowing
+    /// it, measures.
+    List {
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        kept: bool,
+    },
     /// Deletes conversations kept here, each by the name `List` gives it: a
     /// conversation that lives here with everything it has here, its host's
     /// own record included; a guest room alone.
@@ -28,9 +35,19 @@ pub enum DataCall {
 #[serde(rename_all = "snake_case", tag = "data")]
 pub enum DataReply {
     Listed(Box<Space>),
-    Deleted { deletions: Vec<Deletion> },
-    OutputDays { days: u32 },
-    CacheCleared { bytes: u64 },
+    /// Nothing measured here yet since this node started (`List` with `kept`).
+    Unmeasured,
+    Deleted {
+        deletions: Vec<Deletion>,
+    },
+    OutputDays {
+        days: u32,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        output_retention: Option<String>,
+    },
+    CacheCleared {
+        bytes: u64,
+    },
 }
 
 /// The days full command output may be kept for: what the user chooses from.
@@ -51,9 +68,25 @@ pub struct Space {
     /// How many days full command output stays after the model got its
     /// answer.
     pub output_days: u32,
+    /// An explicit policy overrides the legacy days field when recognized.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_retention: Option<String>,
     /// How long each Claude Code login here keeps its own session records.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub claude_logins: Vec<ClaudeKeeping>,
+    /// Entries under the root that could not be read and are not counted
+    /// (a file another program holds, a directory refused), and the first
+    /// of them with why.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unread: Option<Unread>,
+}
+
+/// What measuring skipped (`Space::unread`).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Unread {
+    pub entries: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub first: Option<String>,
 }
 
 /// What the World keeps here, by kind, in bytes. All but `host_records` is in

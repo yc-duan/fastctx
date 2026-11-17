@@ -108,6 +108,8 @@ fn network() -> Directory {
             machine: machine(rng(&mut seed) as usize % MACHINES),
             account: account(rng(&mut seed) as usize % ACCOUNTS),
             jobs: None,
+            pending: None,
+            basis: None,
         }));
     }
     for _ in 0..2000 {
@@ -121,6 +123,7 @@ fn network() -> Directory {
             daily: None,
             five_hour: None,
             turns: None,
+            share: None,
         }));
     }
     for _ in 0..1000 {
@@ -135,6 +138,7 @@ fn network() -> Directory {
         let granted = (0..3).map(|_| account(rng(&mut seed) as usize % ACCOUNTS)).collect();
         all.projects.push(std::sync::Arc::new(Project {
             shared_on: None,
+            frozen: Default::default(),
             town: fastctx_types::access::TownId::from_bytes((i as u64 + 1).to_le_bytes()),
             name: format!("p{i}").parse().expect("a project name"),
             owner,
@@ -198,7 +202,7 @@ fn views_at_scale() {
     drop(index);
 
     // One more share: only the views it touches change, and by little.
-    all.shares.push(std::sync::Arc::new(Share { machine: machine(4242), account: account(17), jobs: None }));
+    all.shares.push(std::sync::Arc::new(Share { machine: machine(4242), account: account(17), jobs: None, pending: None, basis: None }));
     let index = Index::new(&all);
     let x = Indexed::new(&all, &index);
     let mut told = 0;

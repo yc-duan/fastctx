@@ -32,17 +32,17 @@ function tooOld(): void {
   const lacking = found !== null && Number(found) >= MINIMUM;
   const title = lacking
     ? zh
-      ? "这台设备的浏览器内核画不了这个界面"
+      ? "本设备的浏览器内核无法绘制此界面"
       : "This device's browser engine cannot draw this interface"
     : zh
-      ? "这台设备的浏览器内核太旧了"
+      ? "本设备的浏览器内核版本过旧"
       : "This device's browser engine is too old";
   const why = lacking
     ? zh
-      ? `这台设备的系统浏览器内核（Chromium ${found}）缺少界面要用的绘制能力。`
+      ? `本设备的系统浏览器内核（Chromium ${found}）缺少界面所需的绘制能力。`
       : `This device's browser engine (Chromium ${found}) lacks what the interface is drawn with.`
     : zh
-      ? `Fastctx 的界面要用 Chromium ${MINIMUM} 或更新的系统浏览器内核来画，这台设备上的是 ${found ? `Chromium ${found}` : "更早的版本"}。`
+      ? `Fastctx 界面需要 Chromium ${MINIMUM} 或更高版本的系统浏览器内核，本设备为 ${found ? `Chromium ${found}` : "更早的版本"}。`
       : `Fastctx's interface is drawn by the system's browser engine, which must be Chromium ${MINIMUM} or newer; this device has ${found ? `Chromium ${found}` : "an older one"}.`;
   const what = android
     ? zh
@@ -70,11 +70,15 @@ function tooOld(): void {
 // Inside the shell the World on this device opens after the window does:
 // the interface loads once it has (`startup/gate.ts`). The language is
 // settled next: the interface reads it as it starts.
-if (canDraw())
+// A window a card of the side was taken out into (`side/board.ts`) is that
+// card and nothing else of the app: it loads its own small entry, and reads
+// nothing of the World, which the desk's window has open.
+if (!canDraw()) tooOld();
+else if (new URLSearchParams(location.search).has("board")) void import("./board/main").catch(showStartupFailure);
+else
   void import("./startup/gate")
     .then(({ untilStarted }) => untilStarted())
     .then(() => import("./language"))
     .then(({ settleLanguage }) => settleLanguage())
     .then(() => import("./main"))
     .catch(showStartupFailure);
-else tooOld();

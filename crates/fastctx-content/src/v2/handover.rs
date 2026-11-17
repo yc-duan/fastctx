@@ -1,0 +1,543 @@
+//! A stream's ordering device changing hands (§8): the epochs the hub
+//! signs, the cutoff a handover sets, gap facts, and a predecessor's tail
+//! found after the handover, kept as evidence.
+//!
+//! An epoch is one device's run of a stream. The hub signs the first when
+//! it takes the stream's first frame, and each later one in a handover that
+//! names the next device and where the predecessor stops: the successor's
+//! first sequence and the chain value it follows. A frame is taken only
+//! from its epoch's device. The predecessor's frames are taken up to the
+//! cutoff; the successor's are parked until the applied prefix reaches it,
+//! or until a gap fact says the rest of the predecessor's tail will never
+//! come. Then the stream moves on to the successor and its parked frames
+//! are applied in order. A predecessor's frame past the cutoff, or not
+//! ending where the cutoff says, or come after the stream moved on, is not
+//! taken: it is kept as evidence with its objects held, readable through
+//! the evidence gate only where the device that brought it showed it holds
+//! them (Q05).
+
+use super::Library;
+use super::exchange::RawFrame;
+use super::facts::{EpochFact, EpochKind, GapFact};
+use super::frame::Header;
+use super::hub::{Authorizer, Drained, HubSigner, Prefix, drain, prefix};
+use super::scopes::held;
+use crate::error::invalid;
+use crate::record::ObjectRef;
+use crate::Result;
+use fastctx_storage::Priority;
+use fastctx_storage::rusqlite::{Connection, OptionalExtension, params};
+use std::collections::BTreeSet;
+use std::sync::Arc;
+
+/// Who orders a stream next.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Successor {
+    pub device: [u8; 32],
+    pub key: [u8; 32],
+    pub kind: EpochKind,
+}
+
+/// Where a handover cuts the predecessor: the successor starts at `next`,
+/// chained from `head`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Cutoff {
+    pub next: u64,
+    pub head: [u8; 32],
+}
+
+/// A fact the hub signed, as encoded, and its signature.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Signed {
+    pub fact: Vec<u8>,
+    pub signature: Vec<u8>,
+}
+
+/// An epoch as the hub keeps it.
+pub(super) struct Epoch {
+    pub epoch: u64,
+    pub device: [u8; 32],
+    pub key: [u8; 32],
+    pub start: u64,
+    pub follows: [u8; 32],
+}
+
+/// An epoch's descriptor (§2.2), as signed.
+fn descriptor(scope: &str, stream: &str, epoch: u64, successor: &Successor, start: u64, predecessor: Option<u64>, follows: &[u8; 32]) -> Vec<u8> {
+    EpochFact {
+        scope: scope.to_string(),
+        stream: stream.to_string(),
+        epoch,
+        device: successor.device,
+        key: successor.key,
+        start,
+        kind: successor.kind,
+        predecessor,
+        follows: *follows,
+    }
+    .encode()
+}
+
+/// An epoch's row as read.
+struct Row {
+    epoch: i64,
+    device: Vec<u8>,
+    key: Vec<u8>,
+    start: i64,
+    follows: Vec<u8>,
+}
+
+/// The epoch of `stream` the column `by` names as `number`.
+fn epoch_by(db: &Connection, by: &str, stream: i64, number: u64) -> fastctx_storage::Result<Option<Epoch>> {
+    let row = db
+        .prepare_cached(&format!("SELECT epoch, device, key, start, follows FROM hub_epochs WHERE stream = ?1 AND {by} = ?2"))?
+        .query_row(params![stream, number as i64], |row| {
+            Ok(Row { epoch: row.get(0)?, device: row.get(1)?, key: row.get(2)?, start: row.get(3)?, follows: row.get(4)? })
+        })
+        .optional()?;
+    let Some(Row { epoch, device, key, start, follows }) = row else { return Ok(None) };
+    let array = |bytes: Vec<u8>| -> fastctx_storage::Result<[u8; 32]> { bytes.try_into().map_err(|_| invalid("a malformed epoch")) };
+    Ok(Some(Epoch { epoch: epoch as u64, device: array(device)?, key: array(key)?, start: start as u64, follows: array(follows)? }))
+}
+
+/// The epoch `epoch` of `stream`, if the hub signed it.
+pub(super) fn epoch_of(db: &Connection, stream: i64, epoch: u64) -> fastctx_storage::Result<Option<Epoch>> {
+    epoch_by(db, "epoch", stream, epoch)
+}
+
+/// The epoch that follows `epoch` of `stream`, once a handover named it.
+pub(super) fn successor_of(db: &Connection, stream: i64, epoch: u64) -> fastctx_storage::Result<Option<Epoch>> {
+    epoch_by(db, "predecessor", stream, epoch)
+}
+
+/// Whether `header` may be taken from its device: the epoch it names is
+/// the hub's and that device's, and the frame starts within it. `Ok(true)`
+/// when no epoch of the stream is signed yet and the frame is of the
+/// first: its device is made the first epoch's (§2.2).
+pub(super) fn sequencer(db: &Connection, stream: Option<i64>, header: &Header) -> fastctx_storage::Result<bool> {
+    let known = match stream {
+        Some(stream) => epoch_of(db, stream, header.epoch)?,
+        None => None,
+    };
+    match known {
+        Some(epoch) if epoch.device != header.device || epoch.key != header.key => {
+            Err(invalid("the frame is not of its epoch's device"))
+        }
+        Some(epoch) if header.first < epoch.start => Err(invalid("the frame starts before its epoch")),
+        Some(_) => Ok(false),
+        None => {
+            let any = match stream {
+                Some(stream) => db
+                    .prepare_cached("SELECT 1 FROM hub_epochs WHERE stream = ?1 LIMIT 1")?
+                    .query_row([stream], |_| Ok(()))
+                    .optional()?
+                    .is_some(),
+                None => false,
+            };
+            if !any && header.epoch == 0 {
+                Ok(true)
+            } else {
+                Err(invalid("the frame is of an epoch the hub has not signed"))
+            }
+        }
+    }
+}
+
+/// Makes the stream's first epoch that of the device whose frame came
+/// first.
+pub(super) fn first_epoch(db: &Connection, stream: i64, header: &Header, signer: &dyn HubSigner) -> fastctx_storage::Result<()> {
+    let device = Successor { device: header.device, key: header.key, kind: EpochKind::Source };
+    sign_first(db, (stream, &header.scope, &header.stream), &device, signer)?;
+    Ok(())
+}
+
+/// Signs and keeps the first epoch of a stream, for `device`.
+fn sign_first(db: &Connection, stream: (i64, &str, &str), device: &Successor, signer: &dyn HubSigner) -> fastctx_storage::Result<Signed> {
+    let (id, scope, name) = stream;
+    let fact = descriptor(scope, name, 0, device, 0, None, &[0; 32]);
+    let signature = signer.sign(&fact);
+    db.prepare_cached(
+        "INSERT INTO hub_epochs (stream, epoch, device, key, start, kind, predecessor, follows, fact, signature)
+         VALUES (?1, 0, ?2, ?3, 0, ?4, NULL, ?5, ?6, ?7)",
+    )?
+    .execute(params![id, &device.device[..], &device.key[..], device.kind.name(), &[0u8; 32][..], fact, signature])?;
+    Ok(Signed { fact, signature })
+}
+
+/// Why a frame of the stream `at` stands on is kept as evidence instead
+/// of taken, if it is.
+pub(super) fn evidence(db: &Connection, at: &Prefix, header: &Header) -> fastctx_storage::Result<Option<&'static str>> {
+    if header.epoch < at.epoch {
+        return Ok(Some("it came after its stream moved on to a later epoch"));
+    }
+    // The frame's own epoch, current or later, may have been cut already:
+    // a frame that came after its cutoff was signed answers to it too.
+    if let Some(next) = successor_of(db, at.stream, header.epoch)? {
+        let end = header.first + u64::from(header.count);
+        if end > next.start {
+            return Ok(Some("it goes past where a handover cut its epoch"));
+        }
+        if end == next.start && header.chain() != next.follows {
+            return Ok(Some("it does not end where a handover cut its epoch"));
+        }
+    }
+    Ok(None)
+}
+
+/// What holds evidence's objects: the frame in its holding period, so a
+/// later period that keeps the same frame keeps it under its own; a frame of
+/// the same place and body after other frames is another (AV04).
+fn holder(stream: i64, holding: i64, header: &Header) -> String {
+    let hex = |bytes: &[u8]| bytes.iter().map(|byte| format!("{byte:02x}")).collect::<String>();
+    format!("{stream}:{holding}:{}:{}:{}:{}", header.epoch, header.first, hex(&header.digest), hex(&header.chain()))
+}
+
+/// Keeps a frame as evidence with its objects held; those in `shown` the
+/// device that brought it showed it holds (§6.5's rule), and only those
+/// are read through the evidence gate. The same frame again only adds to
+/// what was shown.
+pub(super) fn keep_evidence(
+    db: &Connection,
+    at: (i64, i64),
+    header: &Header,
+    frame: &RawFrame,
+    why: &str,
+    objects: &[ObjectRef],
+    shown: &BTreeSet<[u8; 32]>,
+) -> fastctx_storage::Result<()> {
+    let (stream, holding) = at;
+    let key = holder(stream, holding, header);
+    db.prepare_cached(
+        "INSERT OR IGNORE INTO evidence (stream, epoch, first, digest, chain, holding, holder, header, signature, body, why, at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+    )?
+    .execute(params![
+        stream,
+        header.epoch as i64,
+        header.first as i64,
+        &header.digest[..],
+        &header.chain()[..],
+        holding,
+        key,
+        frame.header,
+        frame.signature,
+        frame.body,
+        why,
+        super::objects::now()
+    ])?;
+    let mut holding_object = db.prepare_cached(
+        "INSERT INTO object_holds (kind, holder, hash, proven) VALUES ('evidence', ?1, ?2, ?3)
+         ON CONFLICT (kind, holder, hash) DO UPDATE SET proven = MAX(proven, excluded.proven)",
+    )?;
+    for object in objects {
+        // Proven only when its bytes are still here in this transaction: an
+        // object collected after it was shown is held, not proven (§4.3 I3).
+        let proven = shown.contains(&object.hash) && super::objects::present(db, &object.hash)?.is_some();
+        holding_object.execute(params![key, &object.hash[..], i64::from(proven)])?;
+    }
+    Ok(())
+}
+
+/// Moves the stream on to each next epoch whose cutoff the applied prefix
+/// has reached.
+pub(super) fn advance(db: &Connection, at: &mut Prefix) -> fastctx_storage::Result<()> {
+    while let Some(next) = successor_of(db, at.stream, at.epoch)? {
+        if next.start != at.next || next.follows != at.head {
+            break;
+        }
+        db.prepare_cached("UPDATE streams SET epoch = ?2 WHERE id = ?1")?.execute(params![at.stream, next.epoch as i64])?;
+        at.epoch = next.epoch;
+    }
+    Ok(())
+}
+
+impl Library {
+    /// Signs the first epoch of `stream` of `scope` for `device` before the
+    /// hub took anything of it: a stream begun where the hub was not (a
+    /// provisional scope's, §2.1, §2.2), or handed over before anything of
+    /// it came (§8). The same device again gets the same descriptor.
+    pub fn open_epoch(&self, scope: &str, stream: &str, device: Successor, signer: Arc<dyn HubSigner>) -> Result<Signed> {
+        let (key, name) = (scope.to_string(), stream.to_string());
+        Ok(self.database().write_now_at(Priority::Normal, 1024, move |db| {
+            let Some((scope_id, state, Some(holding))) = held(db, &key)? else {
+                return Err(invalid("the scope is not held here"));
+            };
+            if state != "live" {
+                return Err(invalid("the scope is not live"));
+            }
+            let at = prefix(db, scope_id, holding, &name)?;
+            match epoch_of(db, at.stream, 0)? {
+                Some(first) if first.device == device.device && first.key == device.key => Ok(db
+                    .prepare_cached("SELECT fact, signature FROM hub_epochs WHERE stream = ?1 AND epoch = 0")?
+                    .query_row([at.stream], |row| Ok(Signed { fact: row.get(0)?, signature: row.get(1)? }))?),
+                Some(_) => Err(invalid("the stream's first epoch is another device's")),
+                None => sign_first(db, (at.stream, &key, &name), &device, signer.as_ref()),
+            }
+        })?)
+    }
+
+    /// Hands `stream` of `scope` to `successor`, cutting its last epoch at
+    /// `cutoff` (§8): the new epoch's signed descriptor, and the parked
+    /// frames that could apply at once. The caller settled the cutoff: the
+    /// furthest head signed by the predecessor that anyone could bring.
+    pub fn handover(
+        &self,
+        scope: &str,
+        stream: &str,
+        successor: Successor,
+        cutoff: Cutoff,
+        authorizer: Arc<dyn Authorizer>,
+        signer: Arc<dyn HubSigner>,
+    ) -> Result<(Signed, Drained)> {
+        self.handover_from(scope, stream, successor, cutoff, None, authorizer, signer)
+    }
+
+    /// `handover`, from the epoch `expected` alone: one asked for by what saw
+    /// that epoch as the stream's last is not made from a later one (AG05).
+    #[allow(clippy::too_many_arguments)]
+    pub fn handover_from(
+        &self,
+        scope: &str,
+        stream: &str,
+        successor: Successor,
+        cutoff: Cutoff,
+        expected: Option<u64>,
+        authorizer: Arc<dyn Authorizer>,
+        signer: Arc<dyn HubSigner>,
+    ) -> Result<(Signed, Drained)> {
+        let (key, name) = (scope.to_string(), stream.to_string());
+        let (authorizing, signing) = (authorizer.clone(), signer.clone());
+        let ((signed, mut drained), more, holding) = self.database().write_now_at(Priority::Normal, 1 << 20, move |db| {
+            let Some((scope_id, state, Some(holding))) = held(db, &key)? else {
+                return Err(invalid("the scope is not held here"));
+            };
+            if state != "live" {
+                return Err(invalid("the scope is not live"));
+            }
+            let mut at = prefix(db, scope_id, holding, &name)?;
+            let last: Option<i64> = db
+                .prepare_cached("SELECT MAX(epoch) FROM hub_epochs WHERE stream = ?1")?
+                .query_row([at.stream], |row| row.get(0))?;
+            let Some(last) = last else { return Err(invalid("the stream has no epoch to hand over")) };
+            if expected.is_some_and(|expected| expected != last as u64) {
+                return Err(invalid("the stream was handed over since its epoch was seen"));
+            }
+            let last = epoch_of(db, at.stream, last as u64)?.ok_or_else(|| invalid("a malformed epoch"))?;
+            if cutoff.next < last.start {
+                return Err(invalid("the cutoff falls before its epoch starts"));
+            }
+            if at.epoch == last.epoch && cutoff.next < at.next {
+                return Err(invalid("the cutoff falls inside what is applied"));
+            }
+            if at.epoch == last.epoch && cutoff.next == at.next && cutoff.head != at.head {
+                return Err(invalid("the cutoff does not follow what is applied"));
+            }
+            let (signed, drained, more) = cut_over(db, (&key, &name, scope_id, holding), &mut at, &last, &successor, cutoff, authorizer.as_ref(), signer.as_ref())?;
+            Ok(((signed, drained), more, holding))
+        })?;
+        if more {
+            self.drain_on(scope, stream, holding, &authorizing, &signing, &mut drained)?;
+        }
+        Ok((signed, drained))
+    }
+
+    /// The predecessor's tail from the applied prefix to the cutoff will
+    /// never come (§8): signs a gap fact over it, moves the stream on and
+    /// applies what was parked behind it.
+    pub fn gap(
+        &self,
+        scope: &str,
+        stream: &str,
+        why: &str,
+        authorizer: Arc<dyn Authorizer>,
+        signer: Arc<dyn HubSigner>,
+    ) -> Result<(Signed, Drained)> {
+        let (key, name, why) = (scope.to_string(), stream.to_string(), why.to_string());
+        let (authorizing, signing) = (authorizer.clone(), signer.clone());
+        let ((signed, mut drained), more, holding) = self.database().write_now_at(Priority::Normal, 1 << 20, move |db| {
+            let Some((scope_id, state, Some(holding))) = held(db, &key)? else {
+                return Err(invalid("the scope is not held here"));
+            };
+            if state != "live" {
+                return Err(invalid("the scope is not live"));
+            }
+            let mut at = prefix(db, scope_id, holding, &name)?;
+            let Some(next) = successor_of(db, at.stream, at.epoch)? else {
+                return Err(invalid("no handover cut the stream's epoch"));
+            };
+            if at.next >= next.start {
+                return Err(invalid("nothing is missing before the cutoff"));
+            }
+            let (from, to) = (at.next, next.start - 1);
+            let fact = GapFact {
+                scope: key.clone(),
+                stream: name.clone(),
+                epoch: at.epoch,
+                from,
+                to,
+                start: at.head,
+                follows: next.follows,
+                why: why.clone(),
+            }
+            .encode();
+            let signature = signer.sign(&fact);
+            db.prepare_cached(
+                "INSERT INTO gaps (stream, epoch, from_sequence, to_sequence, follows, fact, signature) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            )?
+            .execute(params![at.stream, at.epoch as i64, from as i64, to as i64, &next.follows[..], fact, signature])?;
+            db.prepare_cached(
+                "INSERT INTO cursors (stream, holding, sequence, head) VALUES (?1, ?2, ?3, ?4)
+                 ON CONFLICT (stream, holding) DO UPDATE SET sequence = excluded.sequence, head = excluded.head",
+            )?
+            .execute(params![at.stream, holding, to as i64, &next.follows[..]])?;
+            db.prepare_cached("UPDATE streams SET next = ?2, head = ?3, complete_through = ?4 WHERE id = ?1")?
+                .execute(params![at.stream, next.start as i64, &next.follows[..], to as i64])?;
+            at.next = next.start;
+            at.head = next.follows;
+            advance(db, &mut at)?;
+            let mut drained = Drained::default();
+            let more = drain(db, scope_id, holding, &mut at, authorizer.as_ref(), signer.as_ref(), &mut drained)?;
+            Ok(((Signed { fact, signature }, drained), more, holding))
+        })?;
+        if more {
+            self.drain_on(scope, stream, holding, &authorizing, &signing, &mut drained)?;
+        }
+        Ok((signed, drained))
+    }
+
+    /// The signed descriptors of `stream`'s epochs, in order, and its gap
+    /// facts, for devices to check what they take (§7.5, §8).
+    pub fn succession(&self, scope: &str, stream: &str) -> Result<(Vec<Signed>, Vec<Signed>)> {
+        let (scope, stream) = (scope.to_string(), stream.to_string());
+        Ok(self.database().read_now(move |db| {
+            let rows = |sql: &str| -> fastctx_storage::Result<Vec<Signed>> {
+                let mut statement = db.prepare_cached(sql)?;
+                let rows = statement.query_map(params![scope, stream], |row| Ok(Signed { fact: row.get(0)?, signature: row.get(1)? }))?;
+                Ok(rows.collect::<std::result::Result<_, _>>()?)
+            };
+            Ok((
+                rows(
+                    "SELECT e.fact, e.signature FROM hub_epochs e JOIN streams s ON s.id = e.stream JOIN scopes c ON c.id = s.scope
+                     WHERE c.key = ?1 AND s.name = ?2 ORDER BY e.epoch",
+                )?,
+                rows(
+                    "SELECT g.fact, g.signature FROM gaps g JOIN streams s ON s.id = g.stream JOIN scopes c ON c.id = s.scope
+                     WHERE c.key = ?1 AND s.name = ?2 ORDER BY g.epoch, g.from_sequence",
+                )?,
+            ))
+        })?)
+    }
+}
+
+impl Library {
+    /// The last epoch the hub signed of `stream` of `scope`: its number and
+    /// its device's key.
+    pub fn last_epoch(&self, scope: &str, stream: &str) -> Result<Option<(u64, [u8; 32])>> {
+        let (scope, stream) = (scope.to_string(), stream.to_string());
+        Ok(self.database().read_now(move |db| {
+            let Some((scope_id, _, _)) = held(db, &scope)? else { return Ok(None) };
+            let Some(stream_id) = db
+                .prepare_cached("SELECT id FROM streams WHERE scope = ?1 AND name = ?2")?
+                .query_row(params![scope_id, stream], |row| row.get::<_, i64>(0))
+                .optional()?
+            else {
+                return Ok(None);
+            };
+            let last: Option<i64> =
+                db.prepare_cached("SELECT MAX(epoch) FROM hub_epochs WHERE stream = ?1")?.query_row([stream_id], |row| row.get(0))?;
+            let Some(last) = last else { return Ok(None) };
+            Ok(epoch_of(db, stream_id, last as u64)?.map(|epoch| (epoch.epoch, epoch.key)))
+        })?)
+    }
+}
+
+/// Hands `stream` over at `cutoff` in the transaction `db` is in, the checks
+/// made: the new epoch for `successor` signed and kept, the predecessor's
+/// parked frames past the cut kept as evidence, the prefix moved on and
+/// what was parked behind it applied as far as one batch goes. The new
+/// epoch's descriptor, what was applied, and whether more waits.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn cut_over(
+    db: &Connection,
+    (key, name, scope_id, holding): (&str, &str, i64, i64),
+    at: &mut Prefix,
+    last: &Epoch,
+    successor: &Successor,
+    cutoff: Cutoff,
+    authorizer: &dyn Authorizer,
+    signer: &dyn HubSigner,
+) -> fastctx_storage::Result<(Signed, Drained, bool)> {
+    let epoch = last.epoch + 1;
+    let fact = descriptor(key, name, epoch, successor, cutoff.next, Some(last.epoch), &cutoff.head);
+    let signature = signer.sign(&fact);
+    db.prepare_cached(
+        "INSERT INTO hub_epochs (stream, epoch, device, key, start, kind, predecessor, follows, fact, signature)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+    )?
+    .execute(params![
+        at.stream,
+        epoch as i64,
+        &successor.device[..],
+        &successor.key[..],
+        cutoff.next as i64,
+        successor.kind.name(),
+        last.epoch as i64,
+        &cutoff.head[..],
+        fact,
+        signature
+    ])?;
+    // The predecessor's parked frames past the cut are evidence now;
+    // their objects were shown when they were parked. Their headers
+    // are read first, and only those cut brought in whole, one by one.
+    let parked: Vec<Vec<u8>> = {
+        let mut statement =
+            db.prepare_cached("SELECT header FROM parked WHERE stream = ?1 AND epoch = ?2 AND holding = ?3 ORDER BY first")?;
+        let rows = statement.query_map(params![at.stream, last.epoch as i64, holding], |row| row.get(0))?;
+        rows.collect::<std::result::Result<_, _>>()?
+    };
+    for header_bytes in parked {
+        let header = Header::decode(&header_bytes).map_err(invalid)?;
+        let end = header.first + u64::from(header.count);
+        if end < cutoff.next || (end == cutoff.next && header.chain() == cutoff.head) {
+            continue;
+        }
+        let (frame_signature, body): (Vec<u8>, Vec<u8>) = db
+            .prepare_cached("SELECT signature, body FROM parked WHERE stream = ?1 AND epoch = ?2 AND first = ?3 AND holding = ?4")?
+            .query_row(params![at.stream, header.epoch as i64, header.first as i64, holding], |row| {
+                Ok((row.get(0)?, row.get(1)?))
+            })?;
+        let why = if end > cutoff.next {
+            "it goes past where a handover cut its epoch"
+        } else {
+            "it does not end where a handover cut its epoch"
+        };
+        let objects: Vec<ObjectRef> = {
+            let records = super::frame::open(&header, &body).map_err(invalid)?;
+            let mut seen = BTreeSet::new();
+            records
+                .iter()
+                .filter_map(|record| match &record.record.state {
+                    crate::record::State::Is { objects, .. } => Some(objects.clone()),
+                    crate::record::State::Gone => None,
+                })
+                .flatten()
+                .filter(|object| seen.insert(object.hash))
+                .collect()
+        };
+        let shown: BTreeSet<[u8; 32]> = objects.iter().map(|object| object.hash).collect();
+        let frame = RawFrame { header: header_bytes, signature: frame_signature, body, objects: Vec::new() };
+        keep_evidence(db, (at.stream, holding), &header, &frame, why, &objects, &shown)?;
+        let place = params![at.stream, header.epoch as i64, header.first as i64, holding];
+        for table in ["parked_objects", "parked"] {
+            db.prepare_cached(&format!("DELETE FROM {table} WHERE stream = ?1 AND epoch = ?2 AND first = ?3 AND holding = ?4"))?
+                .execute(place)?;
+        }
+    }
+    advance(db, at)?;
+    let mut drained = Drained::default();
+    let more = drain(db, scope_id, holding, at, authorizer, signer, &mut drained)?;
+    // Handed over, the stream changed though no frame moved it: holders
+    // asking what changed hear of the new epoch (I09).
+    super::changes::moved(db, at.stream, 0, false)?;
+    Ok((Signed { fact, signature }, drained, more))
+}

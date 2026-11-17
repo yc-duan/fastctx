@@ -46,14 +46,14 @@ export const zhTalks: TalksWords = {
   title: "全部对话",
   archived: "已归档",
   search: "搜索对话",
-  outside: "不在项目里",
-  none: "没有对话",
-  noneArchived: "没有归档的对话",
+  outside: "不属于项目",
+  none: "暂无对话",
+  noneArchived: "暂无已归档的对话",
   archivedAt: (at, now) =>
     sameDay(at, now) ? clock(at) : `${at.getFullYear() === now.getFullYear() ? "" : `${at.getFullYear()}年`}${at.getMonth() + 1}月${at.getDate()}日`,
   deleteAll: "全部删除",
   deleteAllTitle: (count) => `删除全部 ${count} 段已归档的对话？`,
-  deleteAllWhat: "所有机器与设备上的都会删掉，拿不回来。",
+  deleteAllWhat: "将从所有机器与设备中删除，无法恢复。",
 };
 export const enTalks: TalksWords = {
   title: "All conversations",
@@ -130,7 +130,7 @@ export class TalksPage implements Page {
       acts: options.acts,
       menu: options.menu,
       menuWords: options.menuWords,
-      reachable: (r) => !isUnreached(r),
+      reachable: (r) => !isUnreached(options.store.world.peek(), r),
       redraw: () => {
         this.drawn = "";
         this.draw();
@@ -191,7 +191,7 @@ export class TalksPage implements Page {
     this.talkList.drawing(talks);
     // An archived one says when it was archived, where another says where it lives.
     const row = (r: ResidentNow) =>
-      talkRow(r, place, now, facts, shell, this.talkList.rowActs(r), assistedBy(this.options.store.world.peek(), r), archivedOnly && r.removed ? words.archivedAt(new Date(r.removed), now) : null);
+      talkRow(world, r, place, now, facts, shell, this.talkList.rowActs(r), assistedBy(this.options.store.world.peek(), r), archivedOnly && r.removed ? words.archivedAt(new Date(r.removed), now) : null);
     let html = "";
     if (!talks.length) html = `<p class="talks-none">${escape(archivedOnly ? words.noneArchived : words.none)}</p>`;
     else {

@@ -43,6 +43,13 @@ pub(super) async fn exercise(world: &World, host: &Path, resident: &ResidentId) 
     drop(back);
     let mut new = world.watch_held(resident.clone(), machine.clone(), fresh()).await?;
     let (cut, _) = history(&mut new).await?;
+    // The timeline written on since the first cut (its producer appends what
+    // was said as it settles): the history is cut anew, with both turns in
+    // it, and nothing of them is told again live.
+    if cut != version {
+        record("a new viewer after the timeline moved is sent its history cut anew", true, json!({"same cut": false}));
+        return Ok(());
+    }
     let since = live(&mut new, 2).await?;
     record(
         "a new viewer is sent the segments cut for the one before and the events since, the history not read again",
@@ -77,7 +84,7 @@ async fn live(watching: &mut Watching, turns: usize) -> Result<Vec<Mark>> {
             .await
             .context("the turn's events did not come within two minutes")??;
         match piece {
-            Some(Watched::Live { event, mark }) => {
+            Some(Watched::Live { event, mark, .. }) => {
                 marks.extend(mark);
                 if matches!(event.happened, Happened::TurnEnded { .. }) {
                     ended += 1;

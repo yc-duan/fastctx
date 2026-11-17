@@ -1,9 +1,9 @@
-import type { UsageCallsQuery, UsageCallsPage } from "./usage-calls";
 // The way to the World from inside the shell: each function is one of the
 // shell's commands (`src-tauri/src/lib.rs`), which is one call of the
 // core's client. Outside the shell there is no World to reach, and
 // `inShell` says so.
 
+import type { UsageCallsQuery, UsageCallsPage } from "./usage-calls";
 import { Channel, invoke } from "@tauri-apps/api/core";
 import { closeDelivery, observe, retryDeliveries } from "./delivery";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -57,16 +57,21 @@ export interface WorldNow {
   /** The accounts this computer or device is logged in to, hub by hub,
    *  with what each sees. */
   accounts: AccountsReply;
+  /** Look visibility and its directory revision, decided by the node or device. */
+  machine_presence?: import("./presence").MachinePresence[];
 }
 
 /** A piece of a watched conversation: the page holds a part of it near its
  *  reader, the shell the rest (`src-tauri/src/transcript.rs`). */
 export type Piece =
   | { kind: "resumed" }
+  | { kind: "reopen" }
   /** Events after all that was given, from `start` on. */
   | { kind: "extended"; start: number; events: SessionEvent[] }
   /** One thing as it happened, the `at`th event of the conversation. */
-  | { kind: "event"; at: number; event: SessionEvent }
+  | { kind: "event"; generation?: number; at: number; event: SessionEvent }
+  | { kind: "live"; object?: string; body?: SessionEvent; generation: number; event: SessionEvent; key: string; older: boolean; evicted?: string[]; placement?: { key: string; after: string | null } }
+  | { kind: "timeline"; delta: import("../conversation/conversation").TimelineDelta }
   | { kind: "ended"; error: string | null }
   /** The conversation was deleted: nothing more of it comes. */
   | { kind: "deleted"; error: string }
@@ -74,14 +79,15 @@ export type Piece =
   | { kind: "refused"; error: string }
   /** Whether it works now, on which turn, and which words its machine
    *  keeps on their way in. */
-  | { kind: "now"; busy: boolean; turn: string | null; kept?: import("../conversation/model").KeptWords[] }
+  | { kind: "now"; busy: boolean; turn: string | null; kept?: import("../conversation/model").KeptWords[]; halted?: string | null }
   /** The part the page holds is now this, in place of all it held. */
   | { kind: "window"; window: Window }
   /** What came before arrived: what the page holds stays, moved along. */
   | { kind: "rebased"; generation: number; offset: number; turns_added: number }
   /** The stream broke and is being read again: why, and since when
-   *  (milliseconds since the epoch). */
-  | { kind: "interrupted"; error: string | null; since: number };
+   *  (milliseconds since the epoch). `gap` when it was this interface that
+   *  fell behind, the line holding: the shell starts it again at once. */
+  | { kind: "interrupted"; error: string | null; since: number; gap?: boolean };
 
 export type Landed =
   | { kind: "uncertain"; why: string }
@@ -91,8 +97,8 @@ export type Landed =
   | { kind: "sent" }
   | { kind: "handed"; id: string };
 
-export function worldNow(): Promise<WorldNow> {
-  return invoke<WorldNow>("world_now");
+export function worldNow(known: string[] = []): Promise<WorldNow> {
+  return invoke<WorldNow>("world_now", { known });
 }
 
 export type WorldPiece =
@@ -104,8 +110,8 @@ export type WorldPiece =
 /** Follows the World: first as it is, then after each change, nothing
  *  asked of any machine meanwhile (`world-network.md`, 近况). Resolves to
  *  the id `unwatch` takes. */
-export function watchWorld(onPiece: (piece: WorldPiece) => void): Promise<number> {
-  return observe<WorldPiece, number>("world_watch", {}, onPiece);
+export function watchWorld(onPiece: (piece: WorldPiece) => void, known: string[] = []): Promise<number> {
+  return observe<WorldPiece, number>("world_watch", { known }, onPiece);
 }
 
 /** Watches a resident: the part it opens on, then each piece as it
@@ -124,11 +130,42 @@ export function unwatch(id: number): Promise<void> {
 
 /** A part of a watched conversation the page does not hold; null when the
  *  page asked about an earlier reading or there is nothing there. */
-export function conversationPart(id: number, generation: number, edge: Edge): Promise<PartRead | null> {
-  return invoke("conversation_part", { id, generation, edge });
+export function conversationPart(id: number, generation: number, edge: Edge, request?: number): Promise<PartRead | null> {
+  return invoke("conversation_part", { id, generation, edge, request });
 }
 
 /** Where a turn of a watched conversation first appears. */
+export function conversationFollow(id: number, revision: number, following: boolean): Promise<void> {
+  return invoke("conversation_follow", { id, revision, following });
+}
+
+export function conversationObject(id: number, generation: number, object: string): Promise<import("../conversation/conversation").ExpandedEvent> {
+  return invoke("conversation_object", { id, generation, object });
+}
+
+/** One file change as the machine a conversation lives on keeps it
+ *  (`conversation.files`), or its end: `change` none once gone. */
+export interface FileChangeTold {
+  item: string;
+  change?: import("./wire").JsonValue;
+}
+
+/** The file changes of a watched conversation written after `after` ("" for
+ *  all); not known where none are kept, as on a machine of an earlier
+ *  release: they are read from its calls then. */
+export interface FileChangesTold {
+  known: boolean;
+  /** The place given means nothing where they were read: read anew. */
+  reread: boolean;
+  changes: FileChangeTold[];
+  through: string;
+  more: boolean;
+}
+
+export function conversationFiles(id: number, after: string): Promise<FileChangesTold> {
+  return invoke("conversation_files", { id, after });
+}
+
 export function conversationLocate(id: number, generation: number, turn: string): Promise<number | null> {
   return invoke("conversation_locate", { id, generation, turn });
 }
@@ -280,13 +317,27 @@ export function agents(machine: MachineName | null): Promise<WorldAgents> {
   return invoke("agents", { machineName: machine });
 }
 
-export function stop(who: Address): Promise<boolean> {
-  return invoke("stop", { residentId: who.resident, machineName: who.machine });
+/** Stops the turn the user saw running (`turn`), and no turn begun since.
+ *  Seeing none, with the ids of the words that were on their way
+ *  (`words`), only the turn that takes those; without either, whatever
+ *  runs. */
+export function stop(who: Address, turn: string | null = null, words: string[] | null = null): Promise<boolean> {
+  return invoke("stop", { residentId: who.resident, machineName: who.machine, turn, words });
 }
 
 /** A project's overview: its map, and who is in its town now. */
 export function project(town: string): Promise<{ map: MapView; who: WorldWho }> {
   return invoke("project", { town });
+}
+
+/** The map alone; live residents and jobs come through WatchWorld. */
+export function projectMap(town: string): Promise<MapView> {
+  return invoke("project_map", { town });
+}
+
+/** Read once on entry, then only after a resident moves into or out of town. */
+export function projectFormer(town: string): Promise<WorldWho> {
+  return invoke("project_who", { town });
 }
 
 /** A text file on a machine, or a piece of it, read for the user; `held`
@@ -388,6 +439,12 @@ export function setAgentTitle(machine: MachineName, agent: string, dir: string, 
  *  a login. */
 export function setAgentResetInPlace(machine: MachineName, agent: string, dir: string, on: boolean): Promise<MachineLogins> {
   return invoke("set_agent_reset_in_place", { machineName: machine, agentName: agent, dir, on });
+}
+
+/** Sets a login's week in quota dollars, millionths of a dollar; none is
+ *  the World's default again. */
+export function setAgentWeek(machine: MachineName, agent: string, dir: string, week: number | null): Promise<MachineLogins> {
+  return invoke("set_agent_week", { machineName: machine, agentName: agent, dir, week });
 }
 
 /** Changes the models a Claude Code login offers, for everyone who uses it. */
@@ -768,4 +825,13 @@ export function arriveHub(): Promise<void> {
 
 export function remoteClose(session: number): Promise<void> {
   return invoke("remote_close", { session });
+}
+
+/** Reads an export page without replacing the visible window. */
+export function conversationScan(id: number, cursor: import("../conversation/conversation").ScanCursor | null): Promise<import("../conversation/conversation").Scanned> {
+  return invoke("conversation_scan", { id, cursor });
+}
+
+export function conversationSearch(id: number, request: import("../conversation/timeline-find").SearchRequest): Promise<import("../conversation/timeline-find").SearchReply> {
+  return invoke("conversation_search", { id, request });
 }

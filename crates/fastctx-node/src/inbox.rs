@@ -37,6 +37,7 @@ use crate::speech::{Owed, tell};
 pub(crate) mod answers;
 pub(crate) mod outgoing;
 pub(crate) mod presence;
+pub(crate) mod standing;
 pub(crate) mod storage;
 use storage::{Receipt, change, read_rows};
 
@@ -44,7 +45,11 @@ use storage::{Receipt, change, read_rows};
 pub fn keep(directory: &ConversationDir, pending: &Pending) -> io::Result<bool> {
     crate::attachments::delivered::prepare(directory)?;
     let (pending, bytes) = (pending.clone(), serde_json::to_vec(pending)?.len());
-    change(directory, bytes, move |rows| {
+    // The user's words are kept on the disk before they are answered for:
+    // an answer the sender takes as landed is never lost to a power cut
+    // after it (M03).
+    let words = crate::timeline::words::is_words(&pending.delivery);
+    let write = move |rows: &crate::records::Rows<'_>| {
         let key = pending.delivery.id.as_str();
         if storage::delivered(rows, key)?
             || rows.get::<Pending>("uncertain-inputs", key)?.is_some()
@@ -55,7 +60,14 @@ pub fn keep(directory: &ConversationDir, pending: &Pending) -> io::Result<bool> 
         crate::attachments::delivered::record_in(rows, std::slice::from_ref(&pending))?;
         rows.put_ordered("pending-inputs", key, &pending, pending.delivery.at)?;
         Ok(true)
-    })
+    };
+    if words {
+        // A lab kill point (plan 3-6): taken, not yet on the disk.
+        fastctx_platform::lab::die_at("words-accepted", "");
+        storage::change_durable(directory, bytes, write)
+    } else {
+        change(directory, bytes, write)
+    }
 }
 pub(crate) fn knows(directory: &ConversationDir, id: &NoticeId) -> io::Result<bool> {
     if crate::lifecycle::refused::contains(directory, id)? {
@@ -131,19 +143,24 @@ pub fn withdraw(directory: &ConversationDir, id: &NoticeId) -> io::Result<()> {
 fn update(
     directory: &ConversationDir,
     id: &NoticeId,
+    durable: bool,
     apply: impl FnOnce(&mut Pending) -> fastctx_storage::Result<()> + Send + 'static,
 ) -> io::Result<()> {
     let key = id.to_string();
-    change(directory, 512, move |rows| {
+    let write = move |rows: &crate::records::Rows<'_>| {
         if let Some(mut row) = rows.get::<Pending>("pending-inputs", &key)? {
             apply(&mut row)?;
             rows.put_ordered("pending-inputs", &key, &row, row.delivery.at)?;
         }
         Ok(())
-    })
+    };
+    if durable { storage::change_durable(directory, 512, write) } else { change(directory, 512, write) }
 }
+/// Where an input stands. Each state it is set to comes before a step
+/// toward its host (handing it over, waking the session, sending it), so it
+/// reaches the disk, with every relaxed change of the inbox before it.
 pub fn set_state(directory: &ConversationDir, id: &NoticeId, state: PendingState) -> io::Result<()> {
-    update(directory, id, move |row| {
+    update(directory, id, true, move |row| {
         row.state = state;
         if matches!(state, PendingState::Handed | PendingState::Waking) {
             row.since = Some(jiff::Timestamp::now());
@@ -153,7 +170,7 @@ pub fn set_state(directory: &ConversationDir, id: &NoticeId, state: PendingState
 }
 pub fn target(directory: &ConversationDir, id: &NoticeId, session: &str) -> io::Result<()> {
     let session = session.to_string();
-    update(directory, id, move |row| {
+    update(directory, id, false, move |row| {
         if row.session.as_deref().is_some_and(|prior| !same_session(prior, &session)) {
             return Err(fastctx_storage::Error::new("these words belong to the prior conversation"));
         }
@@ -169,14 +186,14 @@ pub(crate) fn same_session(bound: &str, session: &str) -> bool {
     bound == session || (short.len() == 8 && long.starts_with(short))
 }
 pub fn unbind(directory: &ConversationDir, id: &NoticeId) -> io::Result<()> {
-    update(directory, id, |row| {
+    update(directory, id, false, |row| {
         row.session = None;
         Ok(())
     })
 }
 pub fn rebind(directory: &ConversationDir, id: &NoticeId, session: &str) -> io::Result<()> {
     let session = session.to_string();
-    update(directory, id, move |row| {
+    update(directory, id, false, move |row| {
         row.session = Some(session);
         Ok(())
     })
@@ -310,15 +327,7 @@ pub(crate) fn consume(directory: &ConversationDir, id: &NoticeId) -> io::Result<
         Ok(())
     })
 }
-pub(crate) fn heard_at(directory: &ConversationDir, id: &NoticeId) -> io::Result<Option<jiff::Timestamp>> {
-    read_rows(directory, |rows| {
-        if rows.get::<Receipt>("delivery-receipts", id.as_str())? == Some(Receipt::Heard) {
-            rows.modified("delivery-receipts", id.as_str())
-        } else {
-            Ok(None)
-        }
-    })
-}
+
 pub fn owe(directory: &ConversationDir, owing: &Owing) -> io::Result<()> {
     let (owing, bytes) = (owing.clone(), serde_json::to_vec(owing)?.len());
     change(directory, bytes, move |rows| owe_in(rows, &owing))

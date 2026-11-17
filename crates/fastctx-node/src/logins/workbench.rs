@@ -145,6 +145,8 @@ pub(crate) fn set(node: &Node, agent: &str, dir: &Path, open: bool) -> std::io::
     if open {
         state.dirs.push((agent.to_owned(), dir.to_path_buf()));
     }
+    drop(state);
+    node.topics.changed(fastctx_types::topics::LOGINS);
     Ok(())
 }
 
@@ -179,6 +181,9 @@ pub(super) fn prune(node: &Node, connected: &[(&str, PathBuf)]) {
 /// The workbench was opened or closed in a login: what waited for it there
 /// is tried at once, and the login asked again, its models too.
 pub(crate) fn changed(node: &Arc<Node>) {
+    super::snapshot::ask(node);
+    super::sign_in_refresh::ask(node);
+    node.topics.changed(fastctx_types::topics::LOGINS);
     node.shown_changed();
     // The owner's other devices are told by the hubs at once.
     for link in node.links() {
@@ -274,6 +279,8 @@ pub(super) fn seed(node: &Node, context: &Context) {
                 }
             }
             state.seeded = true;
+            drop(state);
+            node.topics.changed(fastctx_types::topics::LOGINS);
         }
         Err(error) => node.log.line(format_args!("keeping where the workbench is open: {error}")),
     }

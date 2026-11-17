@@ -30,7 +30,8 @@ impl Decode for Range<u32> {
     fn decode<D: Decoder>(decoder: &mut D) -> Result<Self, Error> {
         let clock = decoder.read_ds_clock()?;
         let len = decoder.read_ds_len()?;
-        Ok(clock..(clock + len))
+        let end = clock.checked_add(len).ok_or(Error::UnexpectedValue)?;
+        Ok(clock..end)
     }
 }
 
@@ -385,6 +386,7 @@ impl Encode for IdRange {
 impl Decode for IdRange {
     fn decode<D: Decoder>(decoder: &mut D) -> Result<Self, Error> {
         let len: u32 = decoder.read_var()?;
+        decoder.check_count(len as usize)?;
         let mut ranges = SmallVec::with_capacity(len as usize);
         for _ in 0..len {
             ranges.push(Range::decode(decoder)?);

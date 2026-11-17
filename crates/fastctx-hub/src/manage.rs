@@ -10,6 +10,9 @@
 //! Opening a project is the one change a machine acting for an account may
 //! make for it, as a resident working there opens one.
 
+mod admission;
+pub(crate) mod submission;
+
 use std::sync::Arc;
 
 use fastctx_net::directory::{Account, Assist, Level, LoginPlan, Project, Share};
@@ -34,7 +37,21 @@ pub(crate) fn change(
     account: &AccountName,
     change: Change,
 ) -> (Result<Told, String>, Vec<(MachineName, Refusal)>) {
+    change_checked(hub, asker, account, change, |_, _| Ok(()))
+}
+
+/// Checks a submission's execution condition under the catalog writer,
+/// before assistance expiration or any other mutation.
+pub(super) fn change_checked(
+    hub: &Hub,
+    asker: &crate::origin::Origin,
+    account: &AccountName,
+    change: Change,
+    check: impl FnOnce(&Store, &Change) -> Result<(), String>,
+) -> (Result<Told, String>, Vec<(MachineName, Refusal)>) {
     let mut ended = Vec::new();
+    let configuration = crate::manage_edit::configuration(&change);
+    let relation = crate::manage_edit::relation(&change);
     let renaming = matches!(change, Change::Rename { .. });
     let dissolving = matches!(change, Change::Dissolve { .. });
     let deleting = match &change {
@@ -42,7 +59,7 @@ pub(crate) fn change(
         _ => None,
     };
     let deleting_account = matches!(change, Change::DeleteAccount { .. });
-    let told = match made(hub, asker, account, change, &mut ended, renaming) {
+    let (told, reconcile) = match made(hub, asker, account, change, &mut ended, renaming, check) {
         Ok(told) => told,
         Err(reason) => return (Err(reason), Vec::new()),
     };
@@ -62,7 +79,13 @@ pub(crate) fn change(
     if deleting_account {
         crate::forget::accounts::tell(hub, None);
     }
-    hub.changed();
+    if configuration && !reconcile {
+        hub.configuration_changed();
+    } else if relation && !reconcile {
+        hub.relations_changed();
+    } else {
+        hub.changed();
+    }
     if dissolving {
         crate::dissolve::changed(hub);
     }
@@ -85,48 +108,63 @@ fn made(
     change: Change,
     ended: &mut Vec<(MachineName, Refusal)>,
     renaming: bool,
-) -> Result<Told, String> {
+    check: impl FnOnce(&Store, &Change) -> Result<(), String>,
+) -> Result<(Told, bool), String> {
     {
+        // A hub put back keeps every asset sealed, and grants no access
+        // until it is reopened (design §17); the seal is held while a grant
+        // commits, so none slips in as the hub seals. Opening the seal the
+        // hub put on as it started holds it the same way, taken before the
+        // directory as every holder takes it, and lets it go only once the
+        // opening is written in the hub's log.
+        let grants = matches!(
+            &change,
+            Change::Share { shared: true, .. }
+                | Change::Assist { assisting: true, .. }
+                | Change::ShareProject { shared: true, .. }
+                | Change::MoveProject { .. }
+        );
+        let opening = matches!(&change, Change::OpenAssets);
+        // Nor is an account's configuration written meanwhile: a view gives
+        // it whole to every machine logged in to the account, a login taken
+        // back after the copy among them (design §28.41).
+        let configures = matches!(&change, Change::Profile { .. } | Change::Collab { .. } | Change::Subagents { .. });
+        let mut seal = (grants || opening || configures).then(|| hub.assets.seal_held());
+        if (grants || configures) && seal.as_ref().is_some_and(|seal| seal.is_some()) {
+            return Err(
+                "every asset is sealed until the hub is reopened: no access is granted and no account's configuration is written meanwhile"
+                    .into(),
+            );
+        }
         let mut store = hub.edit_store();
         asker.check(&store.book.directory)?;
+        check(&store, &change)?;
         // An assistance past its deadline is ended first, as the hub's own
         // doing, so no change is made over it: letting that login assist
         // again is a new assistance, which the account uses again before
         // its machine acts for it once more.
         let expired = crate::assists::end_due(&mut store, Timestamp::now())
             .map_err(|error| format!("the hub could not end an assistance past its deadline: {error}"))?;
-        let before = store.book.clone();
-        let action = crate::machine_log::action(&change, &before, &store.hub.updates);
-        let authenticated = may_change(&before.directory, &change, asker, account);
-        let actor =
-            Actor { account: Some(account.clone()), authenticated, member: Some(asker.name.clone()), peer: None };
-        let before_hub = store.hub.clone();
-        let result = (|| {
-            let directory = &before.directory;
-            let found = directory.account(account).cloned().ok_or_else(|| format!("there is no account {account}"))?;
-            if found.locked {
-                return Err(format!("the account {account} is locked"));
+        let reconcile = expired || !store.acting_clean || store.moves.iter().any(crate::moving::Incoming::forwarding);
+        let held = seal.as_deref().cloned();
+        let result = commit(&mut store, asker, account, change, |store, super_, change| {
+            let told = apply(hub, store, asker, account, super_, change, ended)?;
+            if opening {
+                crate::assets::Assets::openable(held.as_ref().unwrap_or(&None))?;
             }
-            if !may_change(directory, &change, asker, account) {
-                return Err(format!("{asker} is not logged in to the account {account}"));
-            }
-            let super_ = found.level == Level::Super;
-            let told = apply(hub, &mut store, asker, account, super_, change, ended)?;
-            store.book.directory.settle_acting();
-            crate::machine_log::effects(&mut store, &before.directory, &actor, &action)?;
-            let committed = match &told {
-                Told::CollabWritten { version } => fastctx_types::machine_log::Action::Collab { version: *version },
-                Told::ProfileWritten { version } => fastctx_types::machine_log::Action::Profile { version: *version },
-                _ => action.clone(),
-            };
-            crate::machine_log::keep(&mut store, &before.directory, actor.clone(), committed, Outcome::Done)?;
             Ok(told)
-        })();
+        });
         match result {
             Ok(told) => {
-                // What the hub keeps for a renamed machine moves under its
-                // new name once the directory that says it is kept; a hub
-                // stopped in between moves it when it opens.
+                if opening && let Some(seal) = seal.as_mut() {
+                    **seal = None;
+                    // Judged to show nothing put back as the seal opened, what
+                    // was brought is not judged again at each start (AM01).
+                    if let Err(error) = crate::assets::brought::forget(&hub.assets) {
+                        hub.log.line(format_args!("forgetting what was brought while sealed: {error}"));
+                    }
+                }
+                // Names and letters move only after their directory commit.
                 if renaming {
                     match store.settle_names() {
                         Ok(said) => {
@@ -139,9 +177,6 @@ fn made(
                         )),
                     }
                 }
-                // Only now that the directory without them is kept do the
-                // letters waiting for machines taken off go: a change that
-                // was not kept leaves every letter where it was.
                 for (name, refusal) in ended.iter() {
                     if matches!(refusal, Refusal::Removed { .. })
                         && let Err(error) = store.forget_letters(name)
@@ -151,22 +186,9 @@ fn made(
                         ));
                     }
                 }
-                Ok(told)
+                Ok((told, reconcile))
             }
             Err(reason) => {
-                store.book = before;
-                if store.hub != before_hub {
-                    store.hub = before_hub;
-                    store.save_hub().map_err(|error| format!("restoring the hub's settings: {error}"))?;
-                }
-                let directory = store.book.directory.clone();
-                crate::machine_log::keep(
-                    &mut store,
-                    &directory,
-                    actor,
-                    action,
-                    Outcome::Refused { reason: reason.clone() },
-                )?;
                 hub.machine_log_changed.notify_one();
                 drop(store);
                 if expired {
@@ -174,6 +196,63 @@ fn made(
                 }
                 Err(reason)
             }
+        }
+    }
+}
+
+/// Runs the authorized edit and commits its audit in the same transaction.
+/// Callers own the catalog writer. All earlier book changes, including
+/// assistance expiration, must already be committed.
+pub(crate) fn commit(
+    store: &mut Store,
+    asker: &crate::origin::Origin,
+    account: &AccountName,
+    change: Change,
+    apply: impl FnOnce(&mut Store, bool, Change) -> Result<Told, String>,
+) -> Result<Told, String> {
+    let edit = crate::manage_edit::rows(store, account, &change);
+    let settle = !crate::manage_edit::configuration(&change) || !store.acting_clean;
+    store.book_edit = edit.clone();
+    let before = store.book.clone();
+    let action = crate::machine_log::action(&change, &before, &store.hub.updates);
+    let authenticated = may_change(&store.indexed(), &change, asker, account);
+    let actor = Actor { account: Some(account.clone()), authenticated, member: Some(asker.name.clone()), peer: None };
+    let before_hub = store.hub.clone();
+    let result = (|| {
+        let found =
+            store.indexed().account(account).cloned().ok_or_else(|| format!("there is no account {account}"))?;
+        if found.locked {
+            return Err(format!("the account {account} is locked"));
+        }
+        if !may_change(&store.indexed(), &change, asker, account) {
+            return Err(format!("{asker} is not logged in to the account {account}"));
+        }
+        let super_ = found.level == Level::Super;
+        let told = apply(store, super_, change)?;
+        if settle {
+            store.book.directory.settle_acting(&before.directory);
+            crate::machine_log::effects(store, &before.directory, &actor, &action)?;
+        }
+        let committed = match &told {
+            Told::CollabWritten { version } => fastctx_types::machine_log::Action::Collab { version: *version },
+            Told::ProfileWritten { version } => fastctx_types::machine_log::Action::Profile { version: *version },
+            _ => action.clone(),
+        };
+        crate::machine_log::keep(store, &before.directory, actor.clone(), committed, Outcome::Done)?;
+        Ok(told)
+    })();
+    match result {
+        Ok(told) => Ok(told),
+        Err(reason) => {
+            store.book = before;
+            store.book_edit = if edit.is_full() { crate::store::BookEdit::Full } else { crate::store::BookEdit::Audit };
+            if store.hub != before_hub {
+                store.hub = before_hub;
+                store.save_hub().map_err(|error| format!("restoring the hub's settings: {error}"))?;
+            }
+            let directory = store.book.directory.clone();
+            crate::machine_log::keep(store, &directory, actor, action, Outcome::Refused { reason: reason.clone() })?;
+            Err(reason)
         }
     }
 }
@@ -190,18 +269,7 @@ fn apply(
     let need_super =
         || if super_ { Ok(()) } else { Err(format!("the account {account} is not the hub's super administrator")) };
     match change {
-        Change::History { on } => {
-            let found = store
-                .book
-                .directory
-                .accounts
-                .iter_mut()
-                .find(|found| found.name == *account)
-                .map(Arc::make_mut)
-                .expect("checked");
-            found.history = on;
-            Ok(Told::Done)
-        }
+        Change::History { on } => history(store, account, on),
         Change::Collab { mut collab } => {
             collab.validate()?;
             let found = store
@@ -369,18 +437,40 @@ fn apply(
             if shared && jobs == Some(0) {
                 return Err("the most jobs at once is a number above zero".to_string());
             }
-            let share = Share { machine, account: to, jobs: jobs.filter(|_| shared) };
-            directory.shares.retain(|existing| existing.machine != share.machine || existing.account != share.account);
+            let before = directory.shares.iter().find(|existing| existing.machine == machine && existing.account == to).cloned();
+            directory.shares.retain(|existing| existing.machine != machine || existing.account != to);
             if shared {
-                directory.shares.push(Arc::new(share));
+                // Whole access the account has already stays in force; new
+                // whole access to a machine that keeps files waits until the
+                // machine has cleared what the account may not see, and every
+                // share of it still waiting waits for the new holders too
+                // (sync v2 design §6.3).
+                // Only a machine that speaks this asset sync clears; an older
+                // one is given the share at once, as before.
+                let keeps_files = directory
+                    .member(&machine)
+                    .is_some_and(|member| member.is_machine() && !member.managed && hub.assets.spoken(&member.key));
+                let pending = match &before {
+                    Some(before) => before.pending,
+                    None if keeps_files => Some(crate::shares::UNSET),
+                    None => None,
+                };
+                if let (None, Some(_)) = (&before, pending) {
+                    crate::shares::wait_anew(directory, &machine);
+                }
+                let basis = before.as_ref().and_then(|before| before.basis.clone());
+                directory.shares.push(Arc::new(Share { machine, account: to, jobs: jobs.filter(|_| shared), pending, basis }));
             }
             Ok(Told::Done)
         }
-        Change::Assist { machine, to, agent, home, assisting, until, weekly, daily, five_hour, turns } => {
+        Change::Assist { machine, to, agent, home, assisting, until, weekly, daily, five_hour, turns, share } => {
             let directory = &mut store.book.directory;
             let owner = held_machine(directory, account, &machine)?;
             other_account(directory, &owner, &to, &machine)?;
-            if directory.is_visitor(account) {
+            // A visitor gives nothing; ending an assistance on a machine it
+            // holds gives nothing either (`net-sharing-and-assist`
+            // 2026-10-23: 访客收到的共享一样管，只收不给).
+            if assisting && directory.is_visitor(account) {
                 return Err(fastctx_types::sharing::VISITOR_GIVES_NOTHING.into());
             }
             let machine = directory.canonical(&machine).clone();
@@ -402,6 +492,22 @@ fn apply(
             if assisting && turns == Some(0) {
                 return Err("the most turns at once is a number above zero".to_string());
             }
+            if assisting && share.is_some_and(|share| share == 0 || share > 100) {
+                return Err("the share of the login's week is a percent from 1 to 100".to_string());
+            }
+            // A sender that knows no shares (an earlier release) sends the
+            // weekly dollars it was shown and no share: where those dollars
+            // are what was kept, it changed something else of the
+            // assistance, and the share it does not know stays. Other dollars
+            // are a limit it set in dollars.
+            let share = share.or_else(|| {
+                directory
+                    .assists
+                    .iter()
+                    .find(|existing| existing.machine == machine && existing.account == to && existing.agent == agent && existing.home == home)
+                    .filter(|existing| existing.weekly.is_some() && existing.weekly == weekly)
+                    .and_then(|existing| existing.share)
+            });
             let assist = Assist {
                 machine,
                 account: to,
@@ -412,6 +518,7 @@ fn apply(
                 daily: daily.filter(|_| assisting),
                 five_hour: five_hour.filter(|_| assisting),
                 turns: turns.filter(|_| assisting),
+                share: share.filter(|_| assisting),
             };
             directory.assists.retain(|existing| !existing.same(&assist));
             if assisting {
@@ -419,7 +526,7 @@ fn apply(
             }
             Ok(Told::Done)
         }
-        Change::Plan { machine, agent, home, plan } => {
+        Change::Plan { machine, agent, home, plan, ultra } => {
             need_super()?;
             let directory = &mut store.book.directory;
             if !directory.member(&machine).is_some_and(|member| member.is_machine()) {
@@ -427,7 +534,8 @@ fn apply(
             }
             directory.plans.retain(|known| !(known.machine == machine && known.agent == agent && known.home == home));
             if let Some(plan) = plan {
-                directory.plans.push(Arc::new(LoginPlan { machine, agent, home, plan }));
+                let ultra = ultra && plan == fastctx_types::accounts::PlanLabel::Max;
+                directory.plans.push(Arc::new(LoginPlan { machine, agent, home, plan, ultra }));
             }
             Ok(Told::Done)
         }
@@ -484,12 +592,16 @@ fn apply(
                 return Err(format!("the machines of {owner} are not the account {account}'s to group"));
             }
             let to = to.as_deref().map(fastctx_types::accounts::group_name).transpose()?.flatten();
-            let mut grouped = 0;
-            for member in store.book.directory.members.iter_mut() {
-                if member.home.as_ref() == Some(&owner) && member.group.as_deref() == Some(from.as_str()) {
-                    Arc::make_mut(member).group = to.clone();
-                    grouped += 1;
-                }
+            let positions: Vec<_> = store
+                .indexed()
+                .owned(&owner)
+                .iter()
+                .copied()
+                .filter(|&at| store.book.directory.members[at].group.as_deref() == Some(from.as_str()))
+                .collect();
+            let grouped = positions.len();
+            for at in positions {
+                Arc::make_mut(&mut store.book.directory.members[at]).group = to.clone();
             }
             if grouped == 0 {
                 return Err(format!("{owner} has no group {from}"));
@@ -678,6 +790,18 @@ fn apply(
             store.save_hub().map_err(|error| format!("the hub could not keep its settings: {error}"))?;
             Ok(Told::Done)
         }
+        // Takes effect when the hub next starts (design §17 (b)).
+        Change::AssetSeal { at_start } => {
+            need_super()?;
+            store.hub.asset_seal_at_start = at_start;
+            store.save_hub().map_err(|error| format!("the hub could not keep its settings: {error}"))?;
+            Ok(Told::Done)
+        }
+        // Opened by `made`, which holds the seal, once this is written.
+        Change::OpenAssets => {
+            need_super()?;
+            Ok(Told::Done)
+        }
         Change::Updates { policy } => {
             need_super()?;
             if let Some(minimum) = &policy.minimum
@@ -814,6 +938,7 @@ fn apply(
                 owner: account.clone(),
                 granted: Default::default(),
                 shared_on,
+                frozen: Default::default(),
             }));
             Ok(Told::Done)
         }
@@ -822,13 +947,12 @@ fn apply(
             if directory.account(&with).is_none() {
                 return Err(format!("there is no account {with}"));
             }
-            let project = directory.projects.iter_mut().find(|project| project.town == town).map(Arc::make_mut);
-            let project = project.ok_or_else(|| format!("there is no project {town}"))?;
-            // A project is its owner's to share, the super administrator's
+            let at = directory.projects.iter().position(|project| project.town == town);
+            let at = at.ok_or_else(|| format!("there is no project {town}"))?;
+            // A project is its owners' to share, the super administrator's
             // no more than anyone's (`world-network.md`, 项目也照同一个规矩).
-            if project.owner != *account {
-                return Err(format!("the project {} is the account {}'s", project.name, project.owner));
-            }
+            disposes(directory, account, &directory.projects[at], true)?;
+            let project = Arc::make_mut(&mut directory.projects[at]);
             if shared {
                 project.granted.insert(with);
             } else {
@@ -849,12 +973,10 @@ fn apply(
                 Arc::make_mut(&mut project).owner = to;
                 book.directory.projects.push(project);
             } else {
-                let project =
-                    book.directory.projects.iter_mut().find(|project| project.town == town).map(Arc::make_mut);
-                let project = project.ok_or_else(|| format!("there is no project {town}"))?;
-                if project.owner != *account {
-                    return Err(format!("the project {} is the account {}'s", project.name, project.owner));
-                }
+                let at = book.directory.projects.iter().position(|project| project.town == town);
+                let at = at.ok_or_else(|| format!("there is no project {town}"))?;
+                disposes(&book.directory, account, &book.directory.projects[at], true)?;
+                let project = Arc::make_mut(&mut book.directory.projects[at]);
                 project.granted.remove(&to);
                 project.owner = to;
             }
@@ -890,12 +1012,8 @@ fn apply(
             let projects = &mut store.book.directory.projects;
             let position = projects.iter().position(|project| project.town == town);
             let position = position.ok_or_else(|| format!("there is no project {town}"))?;
-            if projects[position].owner != *account {
-                return Err(format!(
-                    "the project {} is the account {}'s",
-                    projects[position].name, projects[position].owner
-                ));
-            }
+            disposes(&store.book.directory, account, &store.book.directory.projects[position], false)?;
+            let projects = &mut store.book.directory.projects;
             // Its ledger goes once the directory without it is kept
             // (`change`).
             let project = Project::clone(&projects[position]);
@@ -917,6 +1035,12 @@ const RELAY_ADDRESSES: usize = 8;
 /// most, and a machine joining tries each in turn.
 const TOKEN_RELAYS: usize = 16;
 
+pub(crate) fn history(store: &mut Store, account: &AccountName, on: bool) -> Result<Told, String> {
+    let at = *store.indexed().accounts_named(account).first().expect("checked");
+    Arc::make_mut(&mut store.book.directory.accounts[at]).history = on;
+    Ok(Told::Done)
+}
+
 /// Whether another machine on a network may reach a relay at `address`: an
 /// address of one of its cards, with a port, not one only the relay itself
 /// reaches or that names no one machine. An IPv6 link-local address is the
@@ -934,7 +1058,7 @@ fn relay_reachable(address: &std::net::SocketAddr) -> bool {
 }
 
 fn may_change(
-    directory: &fastctx_net::directory::Directory,
+    directory: &fastctx_net::directory_index::Indexed<'_>,
     change: &Change,
     asker: &MachineName,
     account: &AccountName,
@@ -1090,6 +1214,7 @@ fn log_out(
     ended: &mut Vec<(MachineName, Refusal)>,
 ) -> Result<(), String> {
     let directory = &mut store.book.directory;
+    let holders = holders_of(directory, name);
     let member = directory.members.iter_mut().find(|member| member.name == *name).map(Arc::make_mut);
     let member = member.ok_or_else(|| format!("there is no member {name}"))?;
     member.logins.remove(account);
@@ -1102,7 +1227,7 @@ fn log_out(
     let left = member.logins.is_empty();
     let key = member.key;
     if unregistered {
-        forget_machine(directory, name);
+        forget_machine(directory, name, &holders);
         store.hub.due.retain(|due| due.key != key);
         store.hub.package_targets.remove(&key);
         store.save_hub().map_err(|e| format!("removing update arrangements: {e}"))?;
@@ -1113,19 +1238,69 @@ fn log_out(
     Ok(())
 }
 
+/// Whether `account` disposes of `project` as its owner does: its owner, or
+/// a co-owner — for one opened on a machine shared whole, any account that
+/// holds that machine now, or held it as it left the network (§6.2,
+/// `net-project-sharing` 2026-10-31, the user 2026-11-14). A visitor
+/// among the co-owners gives nothing: it neither shares the project on nor
+/// hands it over.
+pub(crate) fn disposes(
+    directory: &fastctx_net::directory::Directory,
+    account: &AccountName,
+    project: &Project,
+    gives: bool,
+) -> Result<(), String> {
+    if project.owner == *account {
+        return Ok(());
+    }
+    let holds = project.frozen.contains(account)
+        || project
+            .shared_on
+            .as_ref()
+            .is_some_and(|machine| directory.authorize(account, fastctx_net::authorization::Action::Hold(machine)).is_ok());
+    if holds && !(gives && directory.is_visitor(account)) {
+        return Ok(());
+    }
+    Err(format!("the project {} is the account {}'s", project.name, project.owner))
+}
+
+/// The accounts that hold the machine `name` now — its owner and those it
+/// is shared with whole, the shares in force — as the directory keeps them,
+/// an account locked for now among them: a lock withholds what it may do,
+/// not what it holds.
+fn holders_of(directory: &fastctx_net::directory::Directory, name: &MachineName) -> Vec<AccountName> {
+    let Some(member) = directory.member(name) else { return Vec::new() };
+    let Some(owner) = member.home.as_ref() else { return Vec::new() };
+    let mut holders = vec![owner.clone()];
+    // A visitor's machine is shared with none (`authorization`, Hold).
+    if !directory.is_visitor(owner) {
+        for share in directory.shares.iter().filter(|share| share.machine == member.name && share.active()) {
+            if !holders.contains(&share.account) {
+                holders.push(share.account.clone());
+            }
+        }
+    }
+    holders
+}
+
 /// What was shared of `name`, the assistance of its agents, and what it
-/// acted for go with it as a machine.
-fn forget_machine(directory: &mut fastctx_net::directory::Directory, name: &MachineName) {
+/// acted for go with it as a machine; `holders` held it until now.
+fn forget_machine(directory: &mut fastctx_net::directory::Directory, name: &MachineName, holders: &[AccountName]) {
     directory.shares.retain(|share| share.machine != *name);
     directory.assists.retain(|assist| assist.machine != *name);
     directory.plans.retain(|plan| plan.machine != *name);
     directory.acting.retain(|acting| acting.machine != *name);
-    // A project opened there was its holders'; with the machine gone from
-    // them it is its owner's and those it is shared with, and no later
-    // holder of the name or the machine inherits it.
+    // A project opened there was its holders'. With the machine gone from
+    // them, those who held it then stay its co-owners, frozen as they were
+    // as a body's members are (§6.2) — reading, writing and disposing of it
+    // as before — and no later holder of the name or the machine inherits
+    // it.
     for project in &mut directory.projects {
         if project.shared_on.as_ref() == Some(name) {
-            Arc::make_mut(project).shared_on = None;
+            let project = Arc::make_mut(project);
+            project.shared_on = None;
+            let owner = project.owner.clone();
+            project.frozen.extend(holders.iter().filter(|account| **account != owner).cloned());
         }
     }
 }
@@ -1144,9 +1319,10 @@ fn remove_member(
     ended: &mut Vec<(MachineName, Refusal)>,
 ) -> Result<(), String> {
     let directory = &mut store.book.directory;
+    let holders = holders_of(directory, name);
     let position = directory.members.iter().position(|member| member.name == *name);
     let member = directory.members.remove(position.ok_or_else(|| format!("there is no member {name}"))?);
-    forget_machine(directory, name);
+    forget_machine(directory, name, &holders);
     store.hub.due.retain(|due| due.key != member.key);
     store.hub.package_targets.remove(&member.key);
     store.save_hub().map_err(|e| format!("removing update arrangements: {e}"))?;
@@ -1246,6 +1422,28 @@ fn delete_account(
     // and assistances go: they let go of it once it is gone.
     let forgetting = crate::forget::accounts::audience(store, name);
     let directory = &store.book.directory;
+    // A project it owned on a machine shared whole is its co-owners': it
+    // passes to another that holds that machine now, or held it as it left,
+    // one that may give before a visitor and one not locked before one
+    // that is, and is archived only with none left (§6.2).
+    let heirs: std::collections::BTreeMap<fastctx_types::access::TownId, AccountName> = directory
+        .projects
+        .iter()
+        .filter(|project| project.owner == *name)
+        .filter_map(|project| {
+            let holding = project.shared_on.as_ref().map(|machine| holders_of(directory, machine)).unwrap_or_default();
+            let co_owners: Vec<AccountName> = holding
+                .into_iter()
+                .chain(project.frozen.iter().cloned())
+                .filter(|account| account != name && directory.account(account).is_some())
+                .collect();
+            let rank = |account: &AccountName| {
+                (directory.is_visitor(account), directory.account(account).is_some_and(|found| found.locked))
+            };
+            let heir = co_owners.iter().min_by_key(|account| rank(account))?.clone();
+            Some((project.town.clone(), heir))
+        })
+        .collect();
     let reason = format!("the account {name} was deleted");
     let machines: Vec<MachineName> = directory
         .members
@@ -1273,9 +1471,21 @@ fn delete_account(
     book.directory.shares.retain(|share| share.account != *name);
     book.directory.assists.retain(|assist| assist.account != *name);
     book.directory.acting.retain(|acting| acting.account != *name);
-    let (archived, kept): (Vec<Arc<Project>>, Vec<Arc<Project>>) =
-        std::mem::take(&mut book.directory.projects).into_iter().partition(|project| project.owner == *name);
+    let (archived, kept): (Vec<Arc<Project>>, Vec<Arc<Project>>) = std::mem::take(&mut book.directory.projects)
+        .into_iter()
+        .partition(|project| project.owner == *name && !heirs.contains_key(&project.town));
     book.directory.projects = kept;
+    for project in book.directory.projects.iter_mut().filter(|project| project.owner == *name) {
+        if let Some(heir) = heirs.get(&project.town) {
+            let project = Arc::make_mut(project);
+            project.granted.remove(heir);
+            project.frozen.remove(heir);
+            project.owner = heir.clone();
+        }
+    }
+    for project in book.directory.projects.iter_mut().filter(|project| project.frozen.contains(name)) {
+        Arc::make_mut(project).frozen.remove(name);
+    }
     for project in book.directory.projects.iter_mut().filter(|project| project.granted.contains(name)) {
         Arc::make_mut(project).granted.remove(name);
     }

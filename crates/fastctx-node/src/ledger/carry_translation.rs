@@ -52,7 +52,9 @@ pub(super) fn translated(
     let ours = entry.key == *own && old != here;
     let renamed = |name: &MachineName| if ours && name == old { here.clone() } else { name.clone() };
     let mut files = Vec::new();
-    for file in &entry.files {
+    // A page an earlier release published among an entry's files is not
+    // carried: pages are no more (beta.18).
+    for file in entry.files.iter().filter(|file| !crate::ledger::removed(&file.path)) {
         let bytes = if ours {
             Bytes(crate::town::rename::file(&file.path, &file.bytes.0, old, here)?)
         } else {

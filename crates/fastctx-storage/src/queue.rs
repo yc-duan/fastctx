@@ -20,6 +20,15 @@ pub enum Priority {
 pub(super) const SLOTS: usize = 256;
 const BYTES: [usize; 4] = [16 << 20, 16 << 20, 64 << 20, 16 << 20];
 const SCHEDULE: [usize; 15] = [0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 3];
+const JOB_BYTES: usize = 512;
+
+impl Priority {
+    /// Largest caller-supplied input that fits one write, before other writers
+    /// consume permits. The queue reserves its own job overhead separately.
+    pub const fn input_budget(self) -> usize {
+        BYTES[self as usize] - JOB_BYTES
+    }
+}
 
 #[derive(Default)]
 struct State {
@@ -51,7 +60,7 @@ impl Queue {
     }
 
     pub async fn admit(&self, priority: Priority, bytes: usize) -> crate::Result<Admission> {
-        let amount = u32::try_from(bytes.saturating_add(512))
+        let amount = u32::try_from(bytes.saturating_add(JOB_BYTES))
             .ok()
             .filter(|n| *n <= BYTES[priority as usize] as u32)
             .ok_or_else(|| {

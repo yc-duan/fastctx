@@ -65,7 +65,9 @@ pub(super) fn put(directory: &ConversationDir, turn: &str, kind: &str, step: u64
     let family = prepare(directory, turn)?;
     crate::delivery::prepare(directory)?;
     let (turn, id, member) = (turn.to_string(), key(turn), format!("{kind}-{step:020}"));
-    records::write_at(directory, Priority::Normal, bytes.len() + member.len() + 256, move |rows| {
+    // An observation of a running turn: read again from the host's report
+    // when a lost power takes it (`records::write_relaxed_at`).
+    records::write_relaxed_at(directory, Priority::Normal, bytes.len() + member.len() + 256, move |rows| {
         if crate::delivery::has_terminal_in(rows, &turn)? || rows.exists(CLOSED, &id)? {
             return Ok(());
         }
@@ -88,7 +90,7 @@ pub(super) fn close(directory: &ConversationDir, turn: &str) -> io::Result<()> {
     prepare(directory, turn)?;
     crate::delivery::prepare(directory)?;
     let (turn, id) = (turn.to_string(), key(turn));
-    records::write_at(directory, Priority::Normal, turn.len() + 256, move |rows| {
+    records::write_relaxed_at(directory, Priority::Normal, turn.len() + 256, move |rows| {
         if !crate::delivery::has_terminal_in(rows, &turn)? {
             return Err(Error::with_kind(
                 ErrorKind::Invalid,

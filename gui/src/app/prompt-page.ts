@@ -17,6 +17,7 @@ import { detailOf } from "./problem";
 import type { Page } from "./shell";
 import { effect } from "./signals";
 import type { Store } from "./store";
+import { waiting } from "./waiting";
 
 export interface PromptPageOptions {
   store: Store;
@@ -124,7 +125,7 @@ export class PromptPage implements Page {
         this.body.innerHTML = "";
         return;
       case "reading":
-        this.body.innerHTML = `<p class="prof-quiet">${escape(words.reading)}</p>`;
+        this.body.innerHTML = waiting({ label: words.reading, shape: "lines", rows: 6 });
         return;
       case "failed":
         this.body.innerHTML = `<p class="prof-quiet" title="${escape(state.detail)}">${escape(words.readFailed)}</p>`;

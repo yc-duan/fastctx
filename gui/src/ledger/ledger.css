@@ -1,0 +1,1879 @@
+/* The agents' pages (`specimen.ts`): which logins one works with and how
+   full they are, where Fastctx is connected, and a login's own page of
+   what it used, its requests, whom it assists and what is set on it.
+
+   They are set in the interface's own faces and inks. A page holds one
+   thing: a list whose rows open under themselves, or a drawing with the few
+   figures that go with it. What is drawn by hand is what the interface
+   already draws so: the marker's stroke that says how full, the line ruled
+   under a list's heads and the double rule over a total, the bars and dots
+   of what was used. Nothing moves but properties registered for it
+   (`breath.css`). Every class of its own begins `lg-`; `lgc-` is a chart's. */
+
+:root:has(.lg),
+:root:has(.lg) body {
+  height: 100%;
+}
+
+/* The specimen's frame is `.lg`, the side beside the page; in the app the
+   page is `.lg-app`, inside the app's own frame. What holds in both is
+   written for both. */
+.lg,
+.lg-app {
+  /* Reckoned from the body's size, so a page keeps its proportions at
+     whichever size is chosen: a row of one line, a row of two, and how wide
+     a page reads across. */
+  --lg-row: calc(var(--body-size) * 3);
+  --lg-two: calc(var(--body-size) * 4.6);
+  --lg-measure: calc(var(--body-size) * 70);
+  font-variant-numeric: tabular-nums;
+}
+.lg {
+  display: grid;
+  grid-template-columns: 272px minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  height: 100vh;
+  /* What comes in from a little below must not make the window scroll: a
+     scroll bar coming and going would shove the page sideways and back. */
+  overflow: hidden;
+  font-variant-numeric: tabular-nums;
+}
+:is(.lg, .lg-app) small {
+  font-size: inherit;
+}
+
+/* The frame's side, here only so the page is seen where it will sit. */
+.lg-side {
+  display: flex;
+  flex-direction: column;
+  gap: var(--row-gap);
+  padding: 14px 10px;
+  background: var(--bg-sunken);
+  overflow: hidden;
+}
+.lg-side-net {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 44px;
+  padding: 0 12px;
+  font-family: var(--font-emphasis);
+  color: var(--text-strong);
+}
+.lg-side h2 {
+  margin: 18px 0 4px;
+  padding: 0 12px;
+  font: inherit;
+  color: var(--text-3);
+}
+.lg-side a {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 38px;
+  padding: 0 12px;
+  border-radius: var(--radius-m);
+  color: var(--text-2);
+  text-decoration: none;
+  white-space: nowrap;
+}
+.lg-side a .glyph {
+  flex: none;
+  color: var(--text-3);
+}
+.lg-side a[aria-current] {
+  background: var(--fill-strong);
+  color: var(--text-strong);
+}
+.lg-side a[aria-current] .glyph {
+  color: var(--text);
+}
+.lg-side a span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.lg-side a b {
+  margin-left: auto;
+  font-family: inherit;
+  color: var(--accent);
+}
+.lg-side-foot {
+  margin-top: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--row-gap);
+}
+
+/* A page: its head, then its body, no wider than its measure and in the
+   middle of the room it has. */
+.lg-main {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  padding: 0 var(--gutter-wide);
+  overflow: hidden;
+}
+.lg-page {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  max-width: var(--lg-measure);
+  margin-inline: auto;
+}
+.lg-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-6);
+  min-height: 96px;
+  padding: 14px 12px 10px;
+}
+.lg-title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-weight: 400;
+  font-size: var(--size-title);
+  line-height: 1.2;
+  color: var(--text-strong);
+  white-space: nowrap;
+}
+.lg-head-end {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-5);
+}
+.lg-body {
+  flex: 1;
+  min-height: 0;
+}
+.lg-sheet {
+  overflow: auto;
+  scrollbar-width: none;
+  padding-bottom: 44px;
+  /* What runs under the page's foot fades out, not cut through. */
+  -webkit-mask: linear-gradient(#000 calc(100% - 32px), transparent);
+  mask: linear-gradient(#000 calc(100% - 32px), transparent);
+}
+.lg-sheet::-webkit-scrollbar {
+  display: none;
+}
+
+/* How a page comes says where the reader came from. Into a login, the page
+   comes from the right, and back out of one, from the left; between the
+   views under one head, the body comes from the side its switch moved to,
+   the head standing still; the first page comes up from a little below.
+   What changes in place only fades (`lg-fade`). */
+.lg-main[data-coming="page"] .lg-page > *,
+.lg-main[data-coming="forward"] .lg-page > *,
+.lg-main[data-coming="back"] .lg-page > *,
+.lg-main[data-coming="right"] .lg-body,
+.lg-main[data-coming="left"] .lg-body {
+  opacity: var(--shown);
+  translate: var(--slide) var(--lift);
+}
+.lg-main[data-coming="page"] .lg-page > * {
+  animation: lg-arrive var(--settle) var(--fold-easing) both;
+}
+.lg-main[data-coming="page"] .lg-page > .lg-body {
+  animation-delay: var(--stagger);
+}
+.lg-main[data-coming="forward"] .lg-page > * {
+  animation: lg-from-right var(--settle) var(--fold-easing) both;
+}
+.lg-main[data-coming="back"] .lg-page > * {
+  animation: lg-from-left var(--settle) var(--fold-easing) both;
+}
+.lg-main[data-coming="right"] .lg-body {
+  animation: lg-from-right var(--enter) var(--fold-easing) both;
+}
+.lg-main[data-coming="left"] .lg-body {
+  animation: lg-from-left var(--enter) var(--fold-easing) both;
+}
+@keyframes lg-from-right {
+  from {
+    --shown: 0;
+    --slide: 20px;
+  }
+}
+@keyframes lg-from-left {
+  from {
+    --shown: 0;
+    --slide: -20px;
+  }
+}
+@keyframes lg-fade {
+  from {
+    --shown: 0;
+  }
+}
+@keyframes lg-arrive {
+  from {
+    --shown: 0;
+    --lift: 10px;
+  }
+}
+@keyframes lg-leave {
+  to {
+    --shown: 0;
+  }
+}
+
+/* The switch between a page's views (`.segmented`, as the app's pages have
+   it) and the smaller one between ways of looking at one thing. The wash
+   slides from the side chosen before (`segment-slide.ts`). */
+.lg .segmented {
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+  border-radius: var(--radius-full);
+  background: var(--fill);
+}
+.lg .segment {
+  min-height: 32px;
+  padding: 4px 18px;
+  border-radius: var(--radius-full);
+  color: var(--text-2);
+  white-space: nowrap;
+  transition: color var(--hover) var(--ease), background-color var(--hover) var(--ease);
+}
+.lg .segment:hover:not(.chosen) {
+  color: var(--text);
+}
+.lg .segment.chosen {
+  color: var(--text-strong);
+  background: var(--accent-wash);
+}
+:is(.lg, .lg-app) .ledger-switch {
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+  border-radius: var(--radius-m);
+  background: var(--fill);
+}
+:is(.lg, .lg-app) .ledger-switch button {
+  min-height: 30px;
+  padding: 3px 14px;
+  border-radius: 8px;
+  color: var(--text-2);
+  white-space: nowrap;
+  transition: color var(--hover) var(--ease), background-color var(--hover) var(--ease);
+}
+:is(.lg, .lg-app) .ledger-switch button:hover:not(.current) {
+  color: var(--text);
+}
+:is(.lg, .lg-app) .ledger-switch button.current {
+  color: var(--text-strong);
+  background: var(--fill-strong);
+}
+.lg .seg-thumb {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: var(--thumb-w);
+  height: var(--thumb-h);
+  translate: var(--thumb-x) var(--thumb-y);
+  pointer-events: none;
+  transition: --thumb-x var(--fold) var(--fold-easing), --thumb-y var(--fold) var(--fold-easing), --thumb-w var(--fold) var(--fold-easing), --thumb-h var(--fold) var(--fold-easing);
+}
+.lg .seg-sliding > :not(.seg-thumb) {
+  position: relative;
+  z-index: 1;
+  background-color: transparent !important;
+}
+.lg .seg-sliding > :not(.seg-thumb),
+.lg .seg-landing > :not(.seg-thumb) {
+  transition: none !important;
+}
+
+/* What is pressed answers at once, while the button is still down: a
+   filled thing tightens a little and springs back when let go, a word
+   pales, a row deepens, a switch's knob widens toward where it would go. */
+.lg-go,
+.lg-field,
+.lg-pick,
+.lg-back,
+.lg-more,
+.lg .segment,
+:is(.lg, .lg-app) .ledger-switch button,
+.lg-pages > button,
+:is(.lg, .lg-app) .choice {
+  scale: var(--press);
+  transition: --press var(--settle) var(--spring), color var(--hover) var(--ease), background-color var(--hover) var(--ease);
+}
+.lg-field:active,
+.lg-pick:active,
+.lg-back:active,
+.lg-more:active,
+.lg .segment:active,
+:is(.lg, .lg-app) .ledger-switch button:active,
+.lg-pages > button:active:not(:disabled),
+:is(.lg, .lg-app) .choice:active {
+  --press: 0.95;
+}
+.lg-word:active:not(:disabled),
+:is(.lg, .lg-app) .text-button:active {
+  color: var(--text-3);
+}
+.lg-row:active:not(.lg-still, :has(button:active)) {
+  background: var(--fill-strong);
+}
+.lg-switch .switch-knob {
+  transition: --slide var(--hover) var(--fold-easing), width var(--quick) var(--ease-out);
+}
+.lg-switch:active .switch-knob {
+  width: 17px;
+}
+.lg-switch[aria-checked="true"]:active .switch-knob {
+  --slide: 9px;
+}
+/* A switch's wash taken hold of (`slide.ts`): it follows the pointer with
+   no easing of its own, and let go, springs to the side it is nearest. */
+.lg .seg-thumb.seg-held {
+  scale: 0.96;
+  transition: none;
+}
+.lg .seg-thumb.seg-let {
+  transition: --thumb-x var(--settle) var(--spring), --thumb-w var(--settle) var(--spring);
+}
+.lg .seg-dragging,
+.lg .seg-dragging > * {
+  cursor: grabbing;
+}
+.lg .seg-dragging > :not(.seg-thumb) {
+  color: var(--text-2) !important;
+}
+.lg .seg-dragging > .seg-near {
+  color: var(--text-strong) !important;
+}
+
+/* What is pressed: a word, the page's one filled deed, a field that opens
+   a menu, a switch. */
+.lg-word {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-2);
+  white-space: nowrap;
+  transition: color var(--hover) var(--ease);
+}
+.lg-word:hover:not(:disabled) {
+  color: var(--text-strong);
+}
+.lg-word:disabled {
+  color: var(--text-3);
+}
+.lg-word.lg-accent {
+  color: var(--accent);
+}
+.lg-word.lg-danger {
+  color: var(--wrong);
+}
+.lg-word.busy {
+  color: var(--text-3);
+}
+.lg-go {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 38px;
+  padding: 0 18px;
+  border-radius: var(--radius-m);
+  background: var(--fill-strong);
+  color: var(--text-strong);
+  white-space: nowrap;
+  scale: var(--press);
+  transition: --press var(--settle) var(--spring), background-color var(--hover) var(--ease);
+}
+.lg-go:active {
+  --press: 0.97;
+}
+.lg-field,
+.lg-pick {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 36px;
+  padding: 0 10px 0 14px;
+  border-radius: var(--radius-m);
+  background: var(--fill);
+  color: var(--text-2);
+  white-space: nowrap;
+  transition: color var(--hover) var(--ease), background-color var(--hover) var(--ease);
+}
+.lg-field:hover,
+.lg-pick:hover {
+  color: var(--text);
+}
+.lg-field[data-set] {
+  background: var(--accent-wash);
+  color: var(--text-strong);
+}
+.lg-pick {
+  color: var(--text);
+}
+.lg-pick small {
+  color: var(--text-3);
+}
+.lg-field .lg-chevron,
+.lg-pick .lg-chevron {
+  color: var(--text-3);
+}
+.lg-chevron {
+  display: inline-flex;
+  rotate: var(--turn);
+  transition: --turn var(--expand) var(--expand-easing);
+}
+.lg-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--text-2);
+}
+.lg-more {
+  display: inline-flex;
+  padding: 6px;
+  margin: -6px -6px -6px 6px;
+  border-radius: var(--radius-s);
+  color: var(--text-3);
+  transition: color var(--hover) var(--ease), background-color var(--hover) var(--ease);
+}
+.lg-more:hover {
+  color: var(--text);
+  background: var(--fill);
+}
+:is(.lg, .lg-app) .text-button {
+  white-space: nowrap;
+}
+.lg-soft {
+  color: var(--text-2);
+}
+.lg-caution {
+  color: var(--caution);
+}
+.lg-wrong {
+  color: var(--wrong);
+}
+.lg-num {
+  text-align: right;
+}
+.lg-clip {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The drawn lines. */
+.lg-rule {
+  display: block;
+  width: 100%;
+  height: 8px;
+  overflow: hidden;
+}
+.lg-rule path {
+  fill: var(--text-3);
+  opacity: 0.55;
+}
+.lg-double {
+  display: grid;
+}
+.lg-double .lg-rule {
+  height: 7px;
+  margin-top: -3px;
+}
+.lg-double .lg-rule path {
+  opacity: 0.9;
+}
+
+/* A list: heads over a ruled line, then rows that share their columns. A
+   row under the pointer is filled; one opened is filled together with what
+   it opened, one shape, and folds open and shut at the interface's one
+   pace. */
+.lg-cols {
+  display: grid;
+  grid-template-columns: var(--cols);
+  column-gap: 24px;
+  align-items: center;
+}
+.lg-heads {
+  height: 36px;
+  padding: 0 12px;
+  color: var(--text-3);
+  white-space: nowrap;
+}
+.lg-row {
+  min-height: var(--lg-row);
+  padding: 0 12px;
+  border-radius: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background-color var(--hover) var(--ease);
+}
+.lg-row:hover:not(.lg-still) {
+  background: var(--fill);
+}
+.lg-row.lg-still {
+  cursor: default;
+}
+.lg-item {
+  border-radius: 12px;
+  transition: background-color var(--expand) var(--expand-easing);
+}
+.lg-item.open {
+  background: var(--fill);
+}
+.lg-item.open > .lg-row:hover {
+  background: transparent;
+}
+.lg-fold {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows var(--expand) var(--expand-easing);
+}
+.lg-item.open > .lg-fold {
+  grid-template-rows: 1fr;
+}
+.lg-fold-inner {
+  min-height: 0;
+  overflow: hidden;
+}
+.lg-item:not(.open) > .lg-fold > .lg-fold-inner {
+  visibility: hidden;
+  transition: visibility 0s var(--expand);
+}
+.lg-row .lg-chevron {
+  --turn: -90deg;
+  color: var(--text-3);
+}
+.lg-item.open > .lg-row .lg-chevron {
+  --turn: 0deg;
+}
+.lg-mark-end {
+  display: inline-flex;
+  justify-content: flex-end;
+  color: var(--text-2);
+}
+.lg-item.leaving {
+  opacity: var(--shown);
+  animation: lg-leave var(--settle) var(--ease-in) both;
+}
+/* What a deed just touched is lit for a moment. */
+.fresh,
+.lg-lit {
+  animation: lg-lit var(--fresh) var(--ease-out);
+}
+@keyframes lg-lit {
+  from {
+    background-color: var(--accent-wash);
+  }
+}
+.lg-none {
+  margin: 0;
+  padding: 40px 12px;
+  color: var(--text-3);
+}
+
+/* How full: the marker's stroke along a ruled line (`usage/draw.ts`), then
+   its figure. A line across it is where it stops. */
+.lg-cell {
+  display: block;
+  min-width: 0;
+}
+.lg-cell > small {
+  display: block;
+  margin-top: 2px;
+  color: var(--text-3);
+  white-space: nowrap;
+}
+.lg-meter {
+  display: inline-grid;
+  grid-template-columns: 150px 3.2em;
+  align-items: center;
+  gap: 10px;
+}
+.lg-ink {
+  position: relative;
+  display: block;
+  height: 14px;
+}
+.lg-meter > b {
+  font-family: inherit;
+  text-align: right;
+  color: var(--text);
+}
+.lg-meter.high > b {
+  color: var(--caution);
+}
+.lg-meter.spent > b {
+  color: var(--caution);
+}
+.lg-meter.idle > b {
+  color: var(--text-3);
+}
+:is(.lg, .lg-app) .ledger-meter-ink {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+:is(.lg, .lg-app) .ledger-trace {
+  fill: var(--pen-trace);
+}
+/* One ink for every stroke, the pencil's; one that is at its end or near
+   it is in the caution's colour, and so is its figure. */
+:is(.lg, .lg-app) .ledger-arc {
+  fill: var(--pen-graphite);
+}
+.lg-meter.high .ledger-arc,
+.lg-meter.spent .ledger-arc {
+  fill: var(--caution);
+}
+.lg-meter.idle .ledger-arc {
+  fill: color-mix(in srgb, var(--pen-graphite) 50%, var(--bg));
+}
+.lg-stop {
+  position: absolute;
+  top: -3px;
+  bottom: -3px;
+  width: 2px;
+  margin-left: -1px;
+  border-radius: 1px;
+  background: var(--text-2);
+}
+/* The stroke is drawn in from its start as its page arrives. */
+.lg-main:not([data-coming="quiet"]) .ledger-meter-ink .bar-fill {
+  clip-path: inset(-8px calc((1 - var(--shown)) * 100%) -8px -8px);
+  animation: lg-ink var(--slow) var(--fold-easing) var(--enter) both;
+}
+@keyframes lg-ink {
+  from {
+    --shown: 0;
+  }
+}
+
+/* 「额度」: the logins one works with, under the agent each is a login of. */
+.lg-quota {
+  --cols: minmax(10em, 1fr) repeat(3, minmax(14em, 16em)) 4.6em;
+}
+/* A group's head names the agent and, over its rows, what each column
+   holds. */
+.lg-family-head {
+  align-items: baseline;
+  padding: 26px 12px 6px;
+  color: var(--text-2);
+  white-space: nowrap;
+}
+.lg-family:first-child .lg-family-head {
+  padding-top: 6px;
+}
+.lg-family h2 {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 0;
+  font-family: var(--font-emphasis);
+  font-weight: 400;
+  font-size: var(--size-h3);
+  color: var(--text-strong);
+}
+.lg-family h2 .glyph {
+  color: var(--text);
+}
+.lg-quota .lg-row {
+  min-height: var(--lg-two);
+}
+/* On a narrow screen the columns give way: a login's windows stack under
+   its name, each named, and the group's heads go. */
+@media (max-width: 760px) {
+  :is(.lg, .lg-app) .lg-quota {
+    --cols: minmax(0, 1fr);
+  }
+  :is(.lg, .lg-app) .lg-quota .lg-family-head > span {
+    display: none;
+  }
+  :is(.lg, .lg-app) .lg-quota .lg-row {
+    row-gap: 10px;
+    padding-block: 12px;
+  }
+  :is(.lg, .lg-app) .lg-quota .lg-row > span:empty {
+    display: none;
+  }
+  :is(.lg, .lg-app) .lg-quota .lg-row > .lg-cell {
+    display: grid;
+    grid-template-columns: 4.5em minmax(0, 1fr);
+    column-gap: 12px;
+    align-items: baseline;
+  }
+  :is(.lg, .lg-app) .lg-quota .lg-row > .lg-cell::before {
+    content: attr(data-head);
+    grid-row: span 2;
+    color: var(--text-3);
+  }
+  :is(.lg, .lg-app) .lg-quota .lg-row-end {
+    justify-self: start;
+  }
+}
+.lg-who {
+  min-width: 0;
+}
+.lg-who b {
+  display: block;
+  font-family: inherit;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.lg-who small {
+  display: block;
+  margin-top: 2px;
+  color: var(--text-3);
+}
+.lg-row-end {
+  justify-self: end;
+  visibility: hidden;
+}
+.lg-row:hover .lg-row-end,
+.lg-row:focus-within .lg-row-end {
+  visibility: visible;
+}
+
+/* A page with nothing to list says so in a drawing's place. */
+.lg-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-5);
+  padding-bottom: 12vh;
+  color: var(--text-2);
+  text-align: center;
+}
+.lg-empty p {
+  max-width: 30em;
+  margin: 0;
+}
+.lg-empty > .glyph,
+.lg-empty-marks {
+  display: inline-flex;
+  gap: var(--space-5);
+  color: var(--text-3);
+}
+
+/* 「接入」: a machine's logins as one list, as 「额度」 is: a group for
+   each agent, a row a login on the columns every row shares — who it is,
+   where it is, what is known of it, its workbench's switch, the one deed
+   on it — then the folders searched for more. Above it, what the machine's
+   agents reach, drawn (`agents-overview.css`). */
+:is(.lg, .lg-app) .ao-reach {
+  margin-top: 0;
+}
+.lg-attach {
+  --cols: minmax(12em, 1.5fr) minmax(8em, 1fr) minmax(8em, 1fr) 4.5em 5.5em;
+  padding-top: 8px;
+}
+.at-row {
+  min-height: var(--lg-row);
+}
+.at-who {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+.at-who b {
+  font-family: inherit;
+  font-weight: 400;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* Whether Fastctx is connected to it is drawn by its plug: ink connected,
+   faint found and not yet connected, clay asking to be renewed. */
+.at-plug {
+  flex: none;
+  display: inline-flex;
+  color: var(--text);
+}
+.at-row[data-standing="found"] .at-plug,
+.at-row[data-standing="busy"] .at-plug {
+  color: var(--text-3);
+}
+.at-row[data-standing="found"] .at-who b {
+  color: var(--text-2);
+}
+.at-row[data-standing="renew"] .at-plug {
+  color: var(--accent);
+}
+.at-where,
+.at-known,
+.at-said {
+  min-width: 0;
+  color: var(--text-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.at-known > span + span {
+  margin-left: 14px;
+}
+.at-known .at-warn {
+  color: var(--caution);
+}
+.at-bench {
+  display: inline-flex;
+}
+.at-act {
+  display: inline-flex;
+  justify-content: flex-end;
+}
+/* A folder is where it is, how its search stands across the columns
+   between, and its deed under the logins' own. A long path gives way from
+   its start, so the folder's own name stays in sight. */
+.at-folder .at-plug {
+  color: var(--text-2);
+}
+.at-folder .at-who b {
+  direction: rtl;
+  text-align: left;
+}
+.at-folder .at-said {
+  grid-column: 2 / 5;
+}
+.at-none {
+  padding-block: 14px;
+}
+@media (max-width: 760px) {
+  :is(.lg, .lg-app) .lg-attach {
+    --cols: minmax(0, 1fr) auto auto;
+  }
+  :is(.lg, .lg-app) .lg-attach .lg-family-head > span:not(.at-act) {
+    display: none;
+  }
+  :is(.lg, .lg-app) .lg-attach .lg-family-head > .at-act {
+    grid-column: 3;
+  }
+  :is(.lg, .lg-app) .lg-attach .at-row {
+    row-gap: 2px;
+    padding-block: 10px;
+  }
+  :is(.lg, .lg-app) .lg-attach .at-who {
+    grid-area: 1 / 1;
+  }
+  :is(.lg, .lg-app) .lg-attach .at-where:empty,
+  :is(.lg, .lg-app) .lg-attach .at-known:empty {
+    display: none;
+  }
+  :is(.lg, .lg-app) .lg-attach .at-where,
+  :is(.lg, .lg-app) .lg-attach .at-known,
+  :is(.lg, .lg-app) .lg-attach .at-folder .at-said {
+    grid-column: 1;
+    padding-left: calc(round(nearest, 16px * var(--icon-scale), 1px) + 12px);
+    color: var(--text-3);
+  }
+  :is(.lg, .lg-app) .lg-attach .at-bench {
+    grid-area: 1 / 2;
+  }
+  :is(.lg, .lg-app) .lg-attach .at-act {
+    grid-area: 1 / 3;
+  }
+}
+.lg-note {
+  margin: 28px 0 0;
+  color: var(--text-3);
+  text-align: center;
+}
+.lg-link {
+  cursor: pointer;
+}
+.lg-link:hover {
+  text-decoration: underline;
+  text-decoration-color: var(--text-3);
+  text-underline-offset: 4px;
+}
+
+/* A login's page: back, the agent's mark, who it is and where. */
+.lg-back {
+  display: inline-flex;
+  margin: 0 -10px 0 -8px;
+  padding: 8px;
+  border-radius: var(--radius-m);
+  color: var(--text-3);
+  transition: color var(--hover) var(--ease), background-color var(--hover) var(--ease);
+}
+.lg-back:hover {
+  color: var(--text);
+  background: var(--fill);
+}
+.lg-head-mark {
+  display: inline-flex;
+  color: var(--text);
+}
+.lg-ident {
+  min-width: 0;
+  margin-right: var(--space-4);
+}
+.lg-ident .lg-title {
+  font-family: var(--font-emphasis);
+  font-size: calc(var(--body-size) * 1.3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.lg-ident p {
+  margin: 2px 0 0;
+  color: var(--text-3);
+  white-space: nowrap;
+}
+
+/* 「用量」: the windows now, large; then what was used, drawn. */
+.lg-now {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 56px;
+  padding: 4px 12px 26px;
+}
+.lg-now[data-count="2"] {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.lg-now[data-count="1"] {
+  grid-template-columns: minmax(0, 0.5fr);
+}
+.lg-big h3 {
+  margin: 0;
+  font: inherit;
+  color: var(--text-3);
+}
+.lg-big .lg-meter {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
+}
+.lg-big .lg-meter > b {
+  order: -1;
+  text-align: left;
+  font-size: calc(var(--body-size) * 2.1);
+  line-height: 1.2;
+}
+.lg-big .lg-cell > small {
+  margin-top: 8px;
+}
+.lg-parts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  margin: 8px 0 0;
+  color: var(--text-2);
+}
+.lg-parts i,
+.lg-legend i,
+.lg-person i {
+  display: inline-block;
+  flex: none;
+  width: 10px;
+  height: 10px;
+  margin-right: 7px;
+  border-radius: 3px;
+}
+.lg-rest {
+  background: color-mix(in srgb, var(--pen-graphite) 55%, var(--bg));
+}
+.lg-stats {
+  padding: 0 12px;
+}
+.lg-stats-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: 18px 0 16px;
+}
+.lg-stats-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 16em;
+  align-items: center;
+  gap: 48px;
+  min-height: 290px;
+}
+.lg-stats-body:not([data-kind="split"]) {
+  grid-template-columns: minmax(0, 1fr);
+}
+.lg-legend {
+  display: grid;
+  gap: 14px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.lg-legend li {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto 3em;
+  align-items: center;
+  gap: 4px;
+}
+.lg-legend b {
+  font-family: inherit;
+}
+.lg-legend small {
+  color: var(--text-3);
+  text-align: right;
+}
+.lg-figures {
+  display: flex;
+  gap: 64px;
+  margin: 22px 0 0;
+}
+.lg-figures dt {
+  color: var(--text-3);
+}
+.lg-figures dd {
+  margin: 2px 0 0;
+  font-size: var(--size-figure);
+  color: var(--text-strong);
+}
+.lg-figures dd small {
+  margin-left: 12px;
+  font-size: var(--size-text);
+  color: var(--text-3);
+}
+
+/* What the mark under the pointer says: written in the room over the
+   chart's marks, never on them, and going along from mark to mark. */
+.lg-chart {
+  position: relative;
+}
+.lg-read {
+  --shown: 0;
+  position: absolute;
+  top: 0;
+  left: 0;
+  margin: 0;
+  padding: 0 10px;
+  background: var(--bg);
+  color: var(--text-strong);
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: var(--shown);
+  translate: calc(var(--slide) - 50%) 0;
+  transition: --shown var(--quick) var(--ease-out), --slide var(--quick) var(--ease-out);
+}
+.lg-read.shown {
+  --shown: 1;
+}
+.lg-legend.reading small {
+  visibility: hidden;
+}
+.lgc-day:hover {
+  stroke: var(--text-2);
+  stroke-width: 1.5px;
+}
+/* A chart's marks. */
+.lgc {
+  display: block;
+  overflow: visible;
+}
+.lgc-grid {
+  fill: var(--pen-rule);
+}
+.lgc-floor {
+  fill: var(--text-3);
+  opacity: 0.7;
+}
+.lgc-axis,
+.lgc-over {
+  fill: var(--text-3);
+  font-family: var(--font-reading);
+  font-size: var(--size-fine);
+  font-variant-numeric: tabular-nums;
+}
+.lgc-over {
+  fill: var(--text-2);
+}
+.lgc-hit {
+  fill: transparent;
+  transition: fill var(--hover) var(--ease);
+}
+.lgc-hit:hover {
+  fill: color-mix(in srgb, var(--text-strong) 7%, transparent);
+}
+/* A chart's marks come onto the page a frame at a time (`charts.ts`,
+   `rise`): bars stand up from their foot, dots open from their middle. */
+.lgc-col {
+  transform-box: fill-box;
+  transform-origin: 50% 100%;
+}
+.lgc-day {
+  fill: var(--fill-strong);
+}
+.lgc-day[data-level="1"] {
+  fill: color-mix(in srgb, var(--pen-clay) 30%, var(--bg));
+}
+.lgc-day[data-level="2"] {
+  fill: color-mix(in srgb, var(--pen-clay) 52%, var(--bg));
+}
+.lgc-day[data-level="3"] {
+  fill: color-mix(in srgb, var(--pen-clay) 76%, var(--bg));
+}
+.lgc-day[data-level="4"] {
+  fill: var(--pen-clay);
+}
+.lgc-dot {
+  fill: var(--pen-graphite);
+  transform-box: fill-box;
+  transform-origin: 50% 50%;
+}
+/* Where a figure set by hand stands among what the weeks came to. */
+.ps-strip {
+  margin: 6px 0 0;
+  cursor: ew-resize;
+  touch-action: none;
+}
+.ps-said {
+  margin: 4px 0 0;
+  color: var(--text-3);
+}
+.lgc-week {
+  fill: color-mix(in srgb, var(--pen-graphite) 62%, var(--bg-elevated));
+}
+.lgc-week.lgc-newest {
+  fill: var(--text);
+}
+.lgc-set path {
+  fill: var(--pen-clay);
+}
+.lgc-set-figure {
+  fill: var(--text-strong);
+  font-family: var(--font-reading);
+  font-size: var(--size-text);
+  font-variant-numeric: tabular-nums;
+}
+.lgc-none {
+  fill: var(--text-3);
+  opacity: 0.45;
+}
+
+/* 「调用」: what narrows the list, the list, and under its double rule the
+   total and the pages. */
+.lg-calls-view {
+  display: flex;
+  flex-direction: column;
+}
+.lg-calls-view > .lg-sheet {
+  flex: 1;
+  min-height: 0;
+}
+.lg-bar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 0 16px;
+}
+.lg-day {
+  padding: 20px 12px 6px;
+  color: var(--text-3);
+}
+.lg-heads + .lg-rule + .lg-day {
+  padding-top: 8px;
+}
+.lg-calls.turned > .lg-item,
+.lg-calls.turned > .lg-day {
+  opacity: var(--shown);
+  animation: lg-fade var(--enter) var(--ease-out) both;
+}
+.lg-detail {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0 48px;
+  padding: 6px 12px 16px;
+}
+.lg-detail dl {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-content: start;
+  gap: 8px 16px;
+  margin: 0;
+}
+.lg-detail dt {
+  color: var(--text-3);
+}
+.lg-detail dd {
+  margin: 0;
+  text-align: right;
+}
+.lg-detail-end {
+  display: flex;
+  justify-content: flex-end;
+  padding: 0 12px 14px;
+}
+.lg-foot {
+  flex: none;
+  padding-bottom: 12px;
+}
+.lg-sum {
+  height: 46px;
+  padding: 0 12px;
+}
+.lg-sum-name {
+  grid-column: 1 / -6;
+  font-family: var(--font-emphasis);
+  color: var(--text-strong);
+}
+.lg-sum-name small {
+  margin-left: 16px;
+  font-family: var(--font-reading);
+  color: var(--text-2);
+}
+.lg-pages {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 2px;
+  color: var(--text-3);
+}
+.lg-pages > button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 36px;
+  height: 36px;
+  padding: 0 8px;
+  border-radius: var(--radius-m);
+  color: var(--text-2);
+  transition: color var(--hover) var(--ease), background-color var(--hover) var(--ease);
+}
+.lg-pages > button:hover:not(:disabled, .current) {
+  background: var(--fill);
+  color: var(--text);
+}
+.lg-pages > button.current {
+  background: var(--fill-strong);
+  color: var(--text-strong);
+}
+.lg-pages > button:disabled {
+  color: var(--text-3);
+  opacity: 0.5;
+}
+.lg-pages > span {
+  padding: 0 6px;
+}
+.lg-next .glyph {
+  rotate: 180deg;
+}
+.lg-pages > .lg-size {
+  margin-right: auto;
+  min-width: 0;
+  padding: 0 10px 0 14px;
+}
+.lg-jump {
+  width: 4.4em;
+  height: 36px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--radius-m);
+  background: var(--field);
+  color: var(--text);
+  font: inherit;
+  text-align: center;
+}
+/* The time filter's panel: ranges ready to choose, beside a month to pick
+   a first and a last day in. */
+.lg-pop {
+  position: fixed;
+  z-index: 40;
+  display: flex;
+  gap: var(--space-5);
+  padding: var(--space-3);
+  border-radius: var(--radius-m);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-pop);
+  font-family: var(--font-reading);
+  font-size: var(--size-text);
+  font-variant-numeric: tabular-nums;
+  opacity: var(--shown);
+  translate: 0 var(--lift);
+  animation: lg-pop-in var(--fold) var(--fold-easing) both;
+}
+@keyframes lg-pop-in {
+  from {
+    --shown: 0;
+    --lift: 6px;
+  }
+}
+.lg-pop-list {
+  display: grid;
+  align-content: start;
+  gap: var(--row-gap);
+  min-width: 8em;
+}
+.lg-pop-list button,
+.lg-cal button {
+  min-height: 34px;
+  padding: 0 12px;
+  border-radius: var(--radius-s);
+  color: var(--text-2);
+  transition: color var(--hover) var(--ease), background-color var(--hover) var(--ease);
+}
+.lg-pop-list button:hover,
+.lg-cal button:hover:not(:disabled) {
+  background: var(--fill);
+  color: var(--text);
+}
+.lg-pop-list button.chosen,
+.lg-cal-grid button.chosen {
+  background: var(--accent-wash);
+  color: var(--text-strong);
+}
+.lg-cal {
+  width: max-content;
+}
+.lg-cal header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: 6px;
+}
+.lg-cal header b {
+  font-family: inherit;
+}
+.lg-cal header button {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 8px;
+  color: var(--text-3);
+}
+.lg-cal-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 38px);
+  gap: 2px;
+}
+.lg-cal-grid i {
+  height: 28px;
+  color: var(--text-3);
+  font-style: normal;
+  text-align: center;
+}
+.lg-cal-grid button {
+  padding: 0;
+  text-align: center;
+}
+.lg-cal-grid button:disabled {
+  color: var(--text-3);
+  opacity: 0.45;
+}
+.lg-cal p {
+  margin: 8px 0 0;
+  color: var(--text-3);
+}
+
+/* 「协助」: the people it works for, what each used of what each may, and
+   what holds for all of them. */
+.lg-person {
+  display: inline-flex;
+  align-items: center;
+}
+.lg-people .lg-row {
+  min-height: var(--lg-two);
+}
+.lg-edit {
+  display: grid;
+  gap: 14px;
+  padding: 6px 12px 18px;
+}
+:is(.lg, .lg-app) .choice-row,
+.sheet:is(.lg-change, .lg-assist, .lg-models, .lg-plate) .choice-row {
+  display: grid;
+  grid-template-columns: 7em minmax(0, 1fr);
+  align-items: baseline;
+  gap: 0;
+}
+:is(.lg, .lg-app, .lg-change, .lg-assist, .lg-models, .lg-plate) .choice-name {
+  color: var(--text-3);
+}
+:is(.lg, .lg-app, .lg-change, .lg-assist, .lg-models, .lg-plate) .choice-row > p {
+  margin: 0;
+  color: var(--text-2);
+}
+.lg-edit-end {
+  display: flex;
+  gap: var(--space-6);
+  padding-left: 7em;
+}
+.lg-edit-note {
+  margin: 8px 0 0;
+  color: var(--text-3);
+}
+.lg-mine {
+  margin: -12px 12px 22px;
+  color: var(--text-3);
+}
+.lg-add {
+  padding: 14px 12px 0;
+}
+.lg-lines {
+  display: grid;
+  gap: 16px;
+  margin: 44px 12px 0;
+  max-width: 46em;
+}
+.lg-lines h3 {
+  margin: 0 0 2px;
+  font: inherit;
+  font-family: var(--font-emphasis);
+  color: var(--text-strong);
+}
+
+/* 「设置」: what is set on the login, a line each. */
+.lg-sets {
+  display: grid;
+  max-width: 46em;
+  padding-top: 4px;
+}
+.lg-set {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0 24px;
+  min-height: var(--lg-two);
+  padding: 10px 12px;
+}
+.lg-set-what {
+  flex: 1;
+  min-width: 0;
+}
+.lg-set-what b {
+  display: block;
+  font-family: inherit;
+}
+.lg-set-what small {
+  display: block;
+  margin-top: 2px;
+  color: var(--text-3);
+  overflow-wrap: anywhere;
+}
+.lg-set > .lg-item,
+.lg-set-note {
+  flex-basis: 100%;
+}
+.lg-set-note {
+  margin-top: 2px;
+  color: var(--text-3);
+}
+.lg-resets {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 14px 0 6px;
+  list-style: none;
+}
+.lg-resets li {
+  display: grid;
+  grid-template-columns: 11em 6em 1fr;
+  gap: 16px;
+}
+
+/* The windows opened over the page (`sheet.css` draws the sheet). */
+.sheet.lg-assist .sheet-body {
+  width: min(600px, 100vw - 32px);
+}
+.cs-lead {
+  margin: 2px 0 16px;
+  color: var(--text-2);
+}
+.cs-cards {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.cs-card {
+  display: grid;
+  grid-template-columns: 3.2em minmax(0, 1fr);
+  gap: 14px;
+  padding: 12px 16px;
+  border-radius: var(--radius-m);
+  background: var(--fill);
+}
+.cs-kind {
+  color: var(--accent);
+}
+.cs-what {
+  position: relative;
+}
+.cs-what b {
+  display: block;
+  font-family: inherit;
+  transition: color var(--settle) var(--ease);
+}
+.cs-what small {
+  display: block;
+  color: var(--text-3);
+}
+/* Struck off as it is done, by a line drawn across it. */
+.cs-strike {
+  --shown: 0;
+  position: absolute;
+  left: -6px;
+  top: 0.62em;
+  width: min(100%, 22em);
+  clip-path: inset(0 calc((1 - var(--shown)) * 100%) 0 0);
+  transition: --shown var(--say) var(--fold-easing);
+}
+.cs-strike .lg-rule path {
+  fill: var(--text);
+  opacity: 0.9;
+}
+.cs-card.done .cs-strike {
+  --shown: 1;
+}
+.cs-card.done b {
+  color: var(--text-3);
+}
+.cs-foot {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-5);
+  margin-top: 20px;
+}
+.cs-stamp {
+  --shown: 0;
+  --grow: 1.5;
+  margin-right: auto;
+  padding: 0 6px;
+  color: var(--accent);
+  font-family: var(--font-display);
+  font-size: calc(var(--body-size) * 1.5);
+  rotate: -6deg;
+  opacity: var(--shown);
+  scale: var(--grow);
+  transition: --shown var(--quick) var(--ease-out), --grow var(--settle) var(--spring);
+}
+.cs-stamp.shown {
+  --shown: 1;
+  --grow: 1;
+}
+.as-of {
+  margin: -2px 0 22px;
+  color: var(--text-3);
+}
+/* The form of a sheet: names in one column, what is set in the other, every
+   field beginning on the same line down the page. */
+.as-form {
+  display: grid;
+  grid-template-columns: 4.5em minmax(0, 1fr);
+  align-items: start;
+  gap: 20px 0;
+}
+.as-label {
+  padding-top: 8px;
+  color: var(--text-3);
+}
+.as-form .choice-options {
+  min-height: 40px;
+  align-items: center;
+}
+/* Two ways to give, side by side: each says what the person given it sees. */
+.as-modes {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+.as-mode {
+  display: grid;
+  gap: 2px;
+  padding: 10px 14px;
+  border-radius: var(--radius-m);
+  background: var(--fill);
+  color: var(--text-2);
+  scale: var(--press);
+  transition: --press var(--settle) var(--spring), color var(--hover) var(--ease), background-color var(--hover) var(--ease);
+}
+.as-mode:active {
+  --press: 0.97;
+}
+.as-mode b {
+  font-family: inherit;
+  color: var(--text);
+}
+.as-mode small {
+  color: var(--text-3);
+}
+.as-mode.chosen {
+  background: var(--accent-wash);
+}
+.as-mode.chosen b {
+  color: var(--text-strong);
+}
+.as-mode.chosen small {
+  color: var(--text-2);
+}
+/* What one way of giving needs stands in the place of what the other
+   does, so choosing between them never changes the sheet's height. */
+.as-swap {
+  display: grid;
+  align-items: center;
+  padding-top: 12px;
+}
+.as-swap > * {
+  grid-area: 1 / 1;
+  margin: 0;
+}
+.as-swap > .off,
+.as-date.off {
+  visibility: hidden;
+}
+.as-shared,
+.as-comes {
+  color: var(--text-3);
+}
+.as-until {
+  display: flex;
+  align-items: center;
+  gap: var(--space-5);
+}
+.as-date {
+  color: var(--text);
+}
+.sheet:is(.lg-change, .lg-assist, .lg-models, .lg-plate) .choice-row {
+  margin-bottom: 18px;
+}
+.as-input {
+  width: 100%;
+  height: 40px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: var(--radius-m);
+  background: var(--field);
+  color: var(--text);
+  font: inherit;
+}
+.as-names {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.as-names:not(:empty) {
+  margin-top: 8px;
+}
+.as-names button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 12px;
+  border-radius: var(--radius-s);
+  background: var(--fill);
+  color: var(--text-2);
+}
+.as-limit {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px var(--space-6);
+}
+/* A figure typed in among the choices: a short field with its unit. */
+.as-custom {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 32px;
+  padding: 0 10px;
+  border-radius: var(--radius-s);
+  background: var(--field);
+  color: var(--text-3);
+}
+.as-custom.chosen {
+  color: var(--text);
+}
+.as-custom input {
+  width: 3em;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  text-align: right;
+}
+.as-dollars input {
+  width: 6em;
+  text-align: left;
+}
+.as-when {
+  align-items: start;
+}
+.as-when > .choice-name {
+  padding-top: 4px;
+}
+.as-when > .when:only-child {
+  grid-column: 1 / -1;
+}
+.as-warn {
+  display: flex;
+  gap: 10px;
+  margin: 4px 0 0;
+  color: var(--text-3);
+}
+.as-warn .glyph {
+  flex: none;
+  margin-top: 3px;
+  color: var(--accent);
+}
+.lm-list {
+  display: grid;
+  margin: 0 0 8px;
+  padding: 0;
+  list-style: none;
+}
+.lm-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 44px;
+}
+
+/* A word said at the page's foot for a moment, and the pointer's hint. */
+.lg-said {
+  position: fixed;
+  left: 50%;
+  bottom: 28px;
+  z-index: 70;
+  padding: 8px 14px;
+  border-radius: var(--radius-m);
+  background: var(--text-strong);
+  color: var(--bg);
+  box-shadow: var(--shadow-pop);
+  opacity: var(--shown);
+  translate: -50% var(--lift);
+  animation: lg-arrive var(--enter) var(--fold-easing) both;
+}
+.lg-said.leaving {
+  animation: lg-leave var(--quick) var(--ease-out) both;
+}
+/* The app draws these in its shell (`shell.css`); the specimen, here. */
+:root:has(.lg) .pointer-hint {
+  position: fixed;
+  z-index: 60;
+  max-width: min(80vw, 320px);
+  padding: 6px 10px;
+  border-radius: var(--radius-s);
+  background: var(--text-strong);
+  color: var(--bg);
+  font-size: var(--size-text);
+  line-height: 1.45;
+  white-space: pre-line;
+  pointer-events: none;
+  box-shadow: var(--shadow-pop);
+  opacity: var(--shown);
+  translate: var(--slide) var(--lift);
+  animation: hint-rise var(--hover) var(--ease-out);
+}
+:root:has(.lg) .pointer-hint[popover] {
+  inset: auto;
+  margin: 0;
+  border: 0;
+  overflow: visible;
+}
+@keyframes hint-rise {
+  from {
+    --shown: 0;
+    --lift: 3px;
+  }
+}
+:root:has(.lg) .pointer-hint.leaving {
+  animation: hint-fall var(--quick) var(--ease-out) both;
+}
+@keyframes hint-fall {
+  to {
+    --shown: 0;
+  }
+}
+
+/* In the app: the page sits in the app's frame, and the app's switch keeps
+   to the top of its row unless told otherwise (`pages.css`). */
+.lg-app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+.lg-app > .lg-main {
+  flex: 1;
+}
+.lg-app .lg-head .segmented {
+  align-self: center;
+}
+
+/* A phone: a page's head wraps, a login's switch on a line of its own
+   under who it is; what stood side by side stands one under another; a
+   list too wide for the screen is swiped across under its heads. */
+@media (max-width: 760px) {
+  :is(.lg, .lg-app) .lg-head {
+    flex-wrap: wrap;
+    row-gap: 10px;
+    gap: var(--space-4);
+    min-height: 0;
+    padding: 12px 4px 12px;
+  }
+  :is(.lg, .lg-app) .lg-head .segment {
+    white-space: nowrap;
+  }
+  :is(.lg, .lg-app) .lg-head-end {
+    min-width: 0;
+  }
+  :is(.lg, .lg-app) .lg-head-end .lg-pick {
+    min-width: 0;
+    max-width: 100%;
+  }
+  :is(.lg, .lg-app) .lg-head-end .lg-pick span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  :is(.lg, .lg-app) .lg-head-login .lg-ident {
+    flex: 1 1 calc(100% - 120px);
+    margin-right: 0;
+  }
+  :is(.lg, .lg-app) .lg-head-login .lg-ident p {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  :is(.lg, .lg-app) .lg-head-login .segmented {
+    order: 5;
+  }
+  :is(.lg, .lg-app) .lg-head-login .lg-head-end {
+    order: 6;
+  }
+  :is(.lg, .lg-app) .lg-now,
+  :is(.lg, .lg-app) .lg-now[data-count] {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 24px;
+    padding: 4px 4px 22px;
+  }
+  :is(.lg, .lg-app) .lg-stats {
+    padding: 0 4px;
+  }
+  :is(.lg, .lg-app) .lg-stats-head,
+  :is(.lg, .lg-app) .lg-bar {
+    flex-wrap: wrap;
+    row-gap: 8px;
+  }
+  :is(.lg, .lg-app) .lg-stats-body,
+  :is(.lg, .lg-app) .lg-stats-body[data-kind="split"] {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 24px;
+    min-height: 0;
+  }
+  :is(.lg, .lg-app) .lg-figures {
+    flex-wrap: wrap;
+    gap: 14px 32px;
+  }
+  :is(.lg, .lg-app) .lg-detail {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+  }
+  :is(.lg, .lg-app) .lg-calls,
+  :is(.lg, .lg-app) .lg-people {
+    min-width: max-content;
+  }
+  :is(.lg, .lg-app) .lg-foot .lg-pages {
+    flex-wrap: wrap;
+  }
+}
+

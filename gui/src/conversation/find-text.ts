@@ -5,28 +5,39 @@ export interface TextMatch {
   end: number;
 }
 
-export function textMatches(text: string, query: string): TextMatch[] {
-  if (!query) return [];
-  // Final sigma must fold the same in a substring and in a whole word.
+/** Stream offsets rather than allocating one object for every match. */
+export function* matchingText(text: string, query: string): Generator<TextMatch> {
+  if (!query) return;
   const lower = text.toLowerCase().replace(/ς/g, "σ");
   query = query.toLowerCase().replace(/ς/g, "σ");
-  const offsets: number[] | null = lower.length === text.length ? null : [];
-  if (offsets) {
-    let at = 0;
-    for (const char of text) {
-      for (let index = 0; index < char.toLowerCase().length; index += 1) offsets.push(at);
-      at += char.length;
+  let original = 0; let folded = 0; let previous = -1;
+  const position = (offset: number): number => {
+    while (original < text.length) {
+      const char = String.fromCodePoint(text.codePointAt(original)!);
+      const next = folded + char.toLowerCase().length;
+      if (next > offset) break;
+      folded = next; original += char.length;
     }
-    offsets.push(text.length);
-  }
-  const matches: TextMatch[] = [];
+    return original;
+  };
   for (let at = lower.indexOf(query); at >= 0; at = lower.indexOf(query, at + query.length)) {
-    const start = offsets?.[at] ?? at;
-    const last = offsets?.[at + query.length - 1] ?? at + query.length - 1;
-    const end = offsets ? last + (text.codePointAt(last)! > 0xffff ? 2 : 1) : at + query.length;
-    if (matches[matches.length - 1]?.start !== start) matches.push({ start, end });
+    const start = lower.length === text.length ? at : position(at);
+    const last = lower.length === text.length ? at + query.length - 1 : position(at + query.length - 1);
+    const end = lower.length === text.length ? at + query.length : last + (text.codePointAt(last)! > 0xffff ? 2 : 1);
+    if (start === previous) continue;
+    previous = start;
+    yield { start, end };
   }
-  return matches;
+}
+export function textMatches(text: string, query: string): TextMatch[] { return [...matchingText(text, query)]; }
+export function countTextMatches(text: string, query: string): number {
+  let count = 0;
+  for (const _match of matchingText(text, query)) count += 1;
+  return count;
+}
+export function textMatchAt(text: string, query: string, ordinal: number): TextMatch | null {
+  for (const match of matchingText(text, query)) if (ordinal-- === 0) return match;
+  return null;
 }
 
 const OMIT = "script, style, svg title, svg desc, .katex-mathml, .turn-acts, .code-copy, .io-more, .long-text-full, .unnumbered .diff-num, [hidden]";

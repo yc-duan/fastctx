@@ -40,14 +40,23 @@ impl Pool {
         {
             // One holding as many viewers as it may leaves the next one a
             // connection of its own, as a node without shared watches does.
+            if request.documents.is_some() && !shared.composer_documents {
+                return Err(older_documents().into());
+            }
             if !shared.full() {
                 return shared.subscribe(request).map(watching).map_err(Error::Call);
+            }
+            if request.documents.is_some() {
+                return Err(CallError::Failed(Failure::not_run("the local document watch pool is full")).into());
             }
             drop(slot);
             let client = world.connect().await?;
             return Ok(client.watch(request.call()).await?);
         }
         let mut client = world.connect().await?;
+        if request.documents.is_some() && (!client.composer_documents || !client.watch_many) {
+            return Err(older_documents().into());
+        }
         if !client.watch_many {
             return Ok(client.watch(request.call()).await?);
         }
@@ -60,7 +69,7 @@ impl Pool {
         client.next += 1;
         client
             .connection
-            .send(&crate::to_json(&ClientFrame::Call { id: client.next, call: Call::WatchMany }))
+            .send(&crate::to_json(&ClientFrame::Call { id: client.next, call: Call::WatchMany, submission: None }))
             .await
             .map_err(CallError::Broken)?;
         let (commands, incoming) = mpsc::channel(2 * watch_ipc::SUBSCRIPTIONS + 1);
@@ -68,8 +77,10 @@ impl Pool {
             state: Mutex::new(State::default()),
             commands,
             wake: Notify::new(),
+            composer_documents: client.composer_documents,
             goal_runtime: client.goal_runtime,
             collaboration_watch: client.collaboration_watch,
+            watch_live: client.watch_live && client.timeline_reads,
         });
         let watching = shared.subscribe(request)?;
         *slot = Arc::downgrade(&shared);
@@ -81,8 +92,14 @@ impl Pool {
 fn watching(watching: Watching) -> crate::Watching {
     crate::Watching { transport: crate::WatchingTransport::LocalMany(watching) }
 }
+pub(crate) fn older_documents() -> CallError {
+    CallError::Failed(Failure::unsupported("this node does not support native composer documents"))
+}
 fn older_goal() -> CallError {
     CallError::Failed(Failure::not_run(fastctx_types::goals::words::OLDER_NODE))
+}
+pub(crate) fn older_timeline() -> CallError {
+    CallError::Failed(Failure::unsupported("this node does not support live-only watches; update it"))
 }
 pub(crate) fn older_collaboration() -> CallError {
     CallError::Failed(Failure::not_run(fastctx_types::collab_prompt::WATCH_NODE_OLD))
@@ -103,8 +120,10 @@ struct Shared {
     state: Mutex<State>,
     commands: mpsc::Sender<PendingCommand>,
     wake: Notify,
+    composer_documents: bool,
     goal_runtime: bool,
     collaboration_watch: bool,
+    watch_live: bool,
 }
 impl Shared {
     fn closed(&self) -> bool {
@@ -118,6 +137,9 @@ impl Shared {
     fn subscribe(self: &Arc<Self>, request: Subscription) -> Result<Watching, CallError> {
         if request.goal.is_some() && !self.goal_runtime {
             return Err(older_goal());
+        }
+        if request.live_only && !self.watch_live {
+            return Err(older_timeline());
         }
         if request.collaboration && !self.collaboration_watch {
             return Err(older_collaboration());
@@ -187,7 +209,28 @@ pub(crate) struct Watching {
     id: u64,
     receiver: watch_queue::Receiver<Piece>,
 }
+#[derive(Clone)]
+pub(crate) struct Input {
+    shared: Arc<Shared>,
+    id: u64,
+}
+impl Input {
+    pub fn send(&self, input: fastctx_types::composer::sync::Input) -> Result<(), CallError> {
+        if !self.shared.state.lock().expect("local watch state").slots.contains_key(&self.id) {
+            return Err(CallError::Failed(Failure::not_run("the document subscription is closed")));
+        }
+        let command = PendingCommand::new(&Command::Composer { id: self.id, input: Box::new(input) })
+            .map_err(CallError::Broken)?;
+        self.shared
+            .commands
+            .try_send(command)
+            .map_err(|_| CallError::Failed(Failure::not_run("the document input queue is full")))
+    }
+}
 impl Watching {
+    pub(crate) fn input(&self) -> Input {
+        Input { shared: self.shared.clone(), id: self.id }
+    }
     pub async fn next(&mut self) -> Result<Option<Watched>, CallError> {
         match self.receiver.recv().await {
             Ok(Some(Ok((number, piece)))) => {

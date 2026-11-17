@@ -41,6 +41,7 @@ pub(crate) mod deletion;
 pub(crate) mod letgo;
 pub(crate) mod metadata;
 pub(crate) mod names;
+pub(crate) mod projected;
 pub(crate) mod query;
 pub(crate) mod syncing;
 pub(crate) mod third;
@@ -89,7 +90,9 @@ pub async fn open(
             "the project {town} was assigned to another ledger while it was being opened"
         )));
     }
-    names::set_place(&node.world, town, &place).map_err(|error| Failure::new(format!("recording {town}: {error}")))
+    names::set_place(&node.world, town, &place).map_err(|error| Failure::new(format!("recording {town}: {error}")))?;
+    node.topics.changed(&format!("{}{town}", fastctx_types::topics::MAP_PREFIX));
+    Ok(())
 }
 
 /// Writes an entry into `town`'s ledger: `files`, at paths relative to the
@@ -145,7 +148,9 @@ async fn write_for(
             }
             .map_err(Failure::new)?;
             if link.view().member_keeps_project(&link.view().me, &place.town) {
-                take(node, &link, town, &place.town, accepted).await.map_err(Failure::new)
+                // The hub accepted the entry: its projection is on its way
+                // here, and is waited for.
+                take_latest(node, &link, town, &place.town, accepted, true).await.map_err(Failure::new)
             } else {
                 metadata::refresh(node, &link, Some(&place.town)).await.map_err(Failure::new)
             }
@@ -163,6 +168,7 @@ async fn write_for(
             }
             let writer = node.clone();
             fastctx_platform::task::spawn_blocking(move || {
+                let _map_changed = writer.topics.writing(format!("{}{}", fastctx_types::topics::MAP_PREFIX, town));
                 alone::write(&writer.alone_ledgers, &world, &here, &town, &place, files, machines)
             })
             .await
@@ -221,7 +227,10 @@ pub async fn sync(node: &Arc<Node>, hub: &HubId, town: Option<TownId>) -> Result
         };
         match name {
             Ok(Some(name)) => {
-                if let Err(error) = take(node, &link, &name, &id, latest).await {
+                // A projection not here yet is taken by a later pass, which
+                // this worker comes to by itself: a pass that waited for it
+                // would hold up all that goes after it here.
+                if let Err(error) = take_latest(node, &link, &name, &id, latest, false).await {
                     problems.push(error);
                 }
             }
@@ -253,8 +262,12 @@ fn sync_name(node: &Node, link: &Link, id: &TownId) -> Result<Option<TownName>, 
             .map_err(|error| format!("reading {}: {error}", project.name))?
         {
             Some(kept) => kept,
-            None => names::claim(&node.world, &project.name, &place)
-                .map_err(|error| format!("recording {}: {error}", project.name))?,
+            None => {
+                let kept = names::claim(&node.world, &project.name, &place)
+                    .map_err(|error| format!("recording {}: {error}", project.name))?;
+                node.topics.changed(&format!("{}{}", fastctx_types::topics::MAP_PREFIX, project.name));
+                kept
+            }
         };
         if kept != place {
             return Err(format!(
@@ -268,14 +281,117 @@ fn sync_name(node: &Node, link: &Link, id: &TownId) -> Result<Option<TownName>, 
     })
 }
 
-/// Takes `town`'s entries through `latest`.
-pub(crate) async fn take(
+/// Takes `town`'s entries through `latest`: from the hub's projection for
+/// the account this machine reads it as, where it writes one and the copy
+/// here holds it (design §28.58); otherwise replicated as before. A
+/// projection not here yet is waited for a while where `waits`: an entry the
+/// hub just accepted is written to it and pulled here a moment after the
+/// hub's answer, and the write that made it is not failed for that moment.
+pub(crate) async fn take_latest(
     node: &Arc<Node>,
     link: &Arc<Link>,
     name: &TownName,
     town: &TownId,
     latest: u64,
+    waits: bool,
 ) -> Result<(), String> {
+    // One while for the projection to be here and to come up to `latest`.
+    let until = std::time::Instant::now() + projected::WAITS;
+    let kept_projected = || fastctx_platform::disk::is_dir(node.world.town(name).projected());
+    let source = loop {
+        let seen = {
+            let (looking, link, town) = (node.clone(), link.clone(), town.clone());
+            fastctx_platform::task::spawn_blocking(move || projected::source(&looking, &link, &town))
+                .await
+                .map_err(|error| error.to_string())?
+        };
+        match seen {
+            projected::Seen::At(source) => break source,
+            // A project of no entries waits for nothing.
+            projected::Seen::Waiting { .. } if latest == 0 => return Ok(()),
+            // The projection for the account and machines of now is not here:
+            // what was kept of one for others goes now, not once that one
+            // came, unless it was for the same account and machines all among
+            // those it may work on now (codex-357de52a #2, third round #6,
+            // fourth round #3). Never replicated meanwhile (third round #1).
+            projected::Seen::Waiting { scope, machines } => {
+                if kept_projected()
+                    && !projected_readable(node, name, move |node, name| {
+                        projected::still_readable(node, name, &scope, &machines)
+                    })
+                    .await?
+                {
+                    let_go_projected(node, name).await?;
+                }
+                if !waits || std::time::Instant::now() >= until {
+                    return Err(format!("the hub's projection of {name}'s ledger is not here yet"));
+                }
+                tokio::time::sleep(projected::LOOKS).await;
+            }
+            // A project kept from its projection is never mixed with entries
+            // replicated beside it.
+            projected::Seen::Not if kept_projected() => {
+                return Err(format!("the hub's projection of {name}'s ledger is not here yet"));
+            }
+            projected::Seen::Not => return take(node, link, name, town, latest).await,
+            // Shared whole, it reads no projection: what it kept of one for
+            // its owner alone goes, and the entries are replicated.
+            projected::Seen::Whole => {
+                if kept_projected() {
+                    let_go_projected(node, name).await?;
+                }
+                return take(node, link, name, town, latest).await;
+            }
+        }
+    };
+    // Kept for another account, or machines it may no longer all work on:
+    // gone before anything is taken, so nothing of it is read while the
+    // projection is made again (codex-357de52a, fourth round #3).
+    if kept_projected() {
+        let looked = source.clone();
+        if !projected_readable(node, name, move |node, name| projected::readable_for(node, name, &looked)).await? {
+            let_go_projected(node, name).await?;
+        }
+    }
+    if !link.view().member_keeps_project(&link.view().me, town) {
+        return Err("an assisting host keeps only the project index".into());
+    }
+    let changed = projected::take(node, link, name, town, latest, source, until).await?;
+    let _syncing = node.syncing.lock().await;
+    check_place(node, link, name, town)?;
+    if changed {
+        crate::context::invalidations::project(node, name);
+    }
+    node.memory_changed();
+    Ok(())
+}
+
+/// Whether what is kept of `name` from a projection may be read on, as
+/// `readable` says, looked at off the runtime.
+async fn projected_readable(
+    node: &Arc<Node>,
+    name: &TownName,
+    readable: impl FnOnce(&Node, &TownName) -> bool + Send + 'static,
+) -> Result<bool, String> {
+    let (looking, name) = (node.clone(), name.clone());
+    fastctx_platform::task::spawn_blocking(move || readable(&looking, &name)).await.map_err(|error| error.to_string())
+}
+
+/// Lets go of what is kept of `name` from a projection it may no longer be
+/// read from, with the ledgers' sync held.
+async fn let_go_projected(node: &Arc<Node>, name: &TownName) -> Result<(), String> {
+    let _syncing = node.syncing.lock().await;
+    let (clearing, cleared) = (node.clone(), name.clone());
+    fastctx_platform::task::blocking(move || projected::clear(&clearing, &cleared))
+        .await
+        .map_err(|error| format!("letting go of {name}'s ledger as it was projected before: {error}"))?;
+    crate::context::invalidations::project(node, name);
+    node.memory_changed();
+    Ok(())
+}
+
+/// Takes `town`'s entries through `latest`, replicated from the hub.
+async fn take(node: &Arc<Node>, link: &Arc<Link>, name: &TownName, town: &TownId, latest: u64) -> Result<(), String> {
     if !link.view().member_keeps_project(&link.view().me, town) {
         return Err("an assisting host keeps only the project index".into());
     }
@@ -317,8 +433,12 @@ pub(crate) async fn take(
                         return Err(format!("the hub gave entry {seq} of {name} after {after}"));
                     }
                     match (taken.entry, taken.refused) {
-                        (Some(entry), None) => apply(&keeping.world, &name, seq, &entry, &taken.signed)
-                            .map_err(|error| format!("keeping entry {seq} of {name}: {error}"))?,
+                        (Some(entry), None) => {
+                            let _map_changed =
+                                keeping.topics.writing(format!("{}{}", fastctx_types::topics::MAP_PREFIX, name));
+                            apply(&keeping.world, &name, seq, &entry, &taken.signed)
+                                .map_err(|error| format!("keeping entry {seq} of {name}: {error}"))?;
+                        }
                         (_, reason) => {
                             let reason = reason.unwrap_or_else(|| "it cannot be read".to_string());
                             keeping.log.line(format_args!("refused from the ledger: entry {seq} of {name}: {reason}"));
@@ -409,14 +529,14 @@ fn apply(world: &WorldDir, town: &TownName, seq: u64, entry: &Entry, signed: &Si
     let record = directory.signed().join(format!("{seq:020}.json"));
     let bytes = serde_json::to_vec(signed).map_err(io::Error::other)?;
     same_or_new(&record, &bytes)?;
-    write_files(&directory, entry)
+    write_files(&directory.ledger(), &entry.files)
 }
 
-/// Writes an entry's files, each new or already the same.
-fn write_files(directory: &TownDir, entry: &Entry) -> io::Result<()> {
-    let ledger = directory.ledger();
-    for file in &entry.files {
-        let path = file.path.split('/').fold(ledger.clone(), |path, name| path.join(name));
+/// Writes an entry's files under `ledger`, each new or already the same:
+/// but an earlier release's pages, which are no more (beta.18).
+fn write_files(ledger: &Path, files: &[File]) -> io::Result<()> {
+    for file in files.iter().filter(|file| !removed(&file.path)) {
+        let path = file.path.split('/').fold(ledger.to_path_buf(), |path, name| path.join(name));
         if let Some(parent) = path.parent() {
             ensure_private_dir(parent)?;
         }
@@ -428,9 +548,11 @@ fn write_files(directory: &TownDir, entry: &Entry) -> io::Result<()> {
 
 /// Finishes the files of entries a node that stopped had kept but not yet
 /// written, and says which entries could not be read.
-pub fn finish(world: &WorldDir) -> io::Result<Vec<String>> {
+pub(crate) fn finish(node: &Node) -> io::Result<Vec<String>> {
+    let world = &node.world;
     let mut problems = Vec::new();
     for town in carry::towns(world)? {
+        let _map_changed = node.topics.writing(format!("{}{}", fastctx_types::topics::MAP_PREFIX, town));
         if let Err(error) = carry::recover(world, &town, false) {
             problems.push(format!("finishing the import of {town}: {error}"));
             continue;
@@ -439,8 +561,17 @@ pub fn finish(world: &WorldDir) -> io::Result<Vec<String>> {
             continue;
         }
         let directory = world.town(&town);
-        for (seq, path) in numbered(&directory.signed())? {
-            let finished = read_entry(world, &path).and_then(|(entry, _)| write_files(&directory, &entry));
+        // The pages an earlier release published among the project's files
+        // go (beta.18). The jobs they ran stay: their records and output are
+        // under the project's own `pages` (codex-e7b1552a R1).
+        if let Err(error) = remove(&directory.ledger().join("pages")) {
+            problems.push(format!("letting go of {town}'s pages: {error}"));
+        }
+        let kept = kept_files(&directory)?;
+        let key = kept_key(world, &kept)?;
+        for (seq, path, _) in kept {
+            let finished =
+                read_kept(world, &path, key.as_ref()).and_then(|kept| write_files(&directory.ledger(), &kept.files));
             if let Err(error) = finished {
                 problems.push(format!("entry {seq} of {town}: {error}"));
             }
@@ -449,10 +580,86 @@ pub fn finish(world: &WorldDir) -> io::Result<Vec<String>> {
     Ok(problems)
 }
 
+/// Whether a ledger's file at `path` is of what is no more: the pages an
+/// earlier release let agents publish as HTML (removed in beta.18).
+fn removed(path: &str) -> bool {
+    path.starts_with("pages/")
+}
+
+/// The files of an entry this machine keeps of a project: one its author
+/// signed, or the hub's projection of one for the account this machine
+/// reads the project as (design §28.58); but those of what is no more.
+pub struct Kept {
+    pub files: Vec<File>,
+}
+
+impl Kept {
+    fn of(files: Vec<File>) -> Self {
+        Self { files: files.into_iter().filter(|file| !removed(&file.path)).collect() }
+    }
+}
+
+impl From<Entry> for Kept {
+    fn from(entry: Entry) -> Self {
+        Self::of(entry.files)
+    }
+}
+
+impl From<ledger::Projection> for Kept {
+    fn from(projection: ledger::Projection) -> Self {
+        Self::of(projection.files)
+    }
+}
+
+/// The entries this machine keeps of a project, in order, each with its
+/// file and whether the hub projected it: a project taken from its
+/// projection keeps those alone.
+fn kept_files(directory: &TownDir) -> io::Result<Vec<(u64, PathBuf, bool)>> {
+    if fastctx_platform::disk::is_dir(directory.projected()) {
+        return Ok(numbered(&directory.projected())?.into_iter().map(|(seq, path)| (seq, path, true)).collect());
+    }
+    Ok(numbered(&directory.signed())?.into_iter().map(|(seq, path)| (seq, path, false)).collect())
+}
+
+/// The key what this machine keeps of a project's projection is checked
+/// with, where `files` hold one (`projected::keep`).
+fn kept_key(world: &WorldDir, files: &[(u64, PathBuf, bool)]) -> io::Result<Option<fastctx_net::sign::PublicKey>> {
+    match files.iter().any(|(_, _, projected)| *projected) {
+        true => Ok(Some(own_key(world)?.public())),
+        false => Ok(None),
+    }
+}
+
+/// The entry kept at `path`: one taken from the hub's projection, under
+/// this machine's word `key`, checked as one it signs itself is, and as one
+/// of the project it is kept in.
+fn read_kept(world: &WorldDir, path: &Path, key: Option<&fastctx_net::sign::PublicKey>) -> io::Result<Kept> {
+    let invalid = |error: String| io::Error::new(io::ErrorKind::InvalidData, format!("{}: {error}", path.display()));
+    if let Some(key) = key {
+        let signed: Signed =
+            serde_json::from_slice(&fastctx_platform::disk::read(path)?).map_err(|error| invalid(error.to_string()))?;
+        let kept: projected::KeptEntry =
+            signed.open(key, fastctx_net::sign::Domain::LedgerKept).map_err(|error| invalid(error.to_string()))?;
+        let town = path
+            .parent()
+            .and_then(Path::parent)
+            .and_then(Path::file_name)
+            .and_then(|name| name.to_str())
+            .and_then(|name| TownName::try_from(name).ok())
+            .ok_or_else(|| invalid("the kept entry is outside a project directory".into()))?;
+        if names::place(world, &town)?.map(|place| place.town) != Some(kept.town) {
+            return Err(invalid("the kept entry is another project's".into()));
+        }
+        return Ok(kept.projection.into());
+    }
+    Ok(read_entry(world, path)?.0.into())
+}
+
 /// The number of the latest entry this machine has of `town`; 0 when none.
 pub fn seq(world: &WorldDir, town: &TownName) -> io::Result<u64> {
     let directory = world.town(town);
     if !fastctx_platform::disk::is_dir(directory.signed())
+        && !fastctx_platform::disk::is_dir(directory.projected())
         && let Some(index) = metadata::read(world, town)?
     {
         return Ok(index.seq);
@@ -461,20 +668,16 @@ pub fn seq(world: &WorldDir, town: &TownName) -> io::Result<u64> {
 }
 
 /// The entry of `town` numbered `seq`, when this machine has it.
-pub(crate) fn entry(world: &WorldDir, town: &TownName, seq: u64) -> io::Result<Option<Entry>> {
+pub(crate) fn entry(world: &WorldDir, town: &TownName, seq: u64) -> io::Result<Option<Kept>> {
     if let Some(entries) = carry_source::entries(world, town)? {
-        return Ok(entries.into_iter().find(|(number, _)| *number == seq).map(|(_, entry)| entry));
+        return Ok(entries.into_iter().find(|(number, _)| *number == seq).map(|(_, entry)| entry.into()));
     }
-    let directory = world.town(town).signed();
-    let path = directory.join(format!("{seq:020}.json"));
-    let path = match fastctx_platform::disk::exists(&path)? {
-        true => path,
-        false => match numbered(&directory)?.into_iter().find(|(number, _)| *number == seq) {
-            Some((_, path)) => path,
-            None => return Ok(None),
-        },
+    let kept = kept_files(&world.town(town))?;
+    let key = kept_key(world, &kept)?;
+    let Some((_, path, _)) = kept.into_iter().find(|(number, _, _)| *number == seq) else {
+        return Ok(None);
     };
-    Ok(Some(read_entry(world, &path)?.0))
+    Ok(Some(read_kept(world, &path, key.as_ref())?))
 }
 
 /// The full copy's cursor; an index-only cache is never a replicated entry.
@@ -488,7 +691,29 @@ pub(crate) fn replica_seq(world: &WorldDir, town: &TownName) -> io::Result<u64> 
 
 /// The entries of `town` this machine has after the one numbered `after`,
 /// in order.
-pub fn entries_after(world: &WorldDir, town: &TownName, after: u64) -> io::Result<Vec<(u64, Entry)>> {
+pub fn entries_after(world: &WorldDir, town: &TownName, after: u64) -> io::Result<Vec<(u64, Kept)>> {
+    if let Some(entries) = carry_source::entries(world, town)? {
+        return Ok(entries
+            .into_iter()
+            .filter(|(seq, _)| *seq > after)
+            .map(|(seq, entry)| (seq, entry.into()))
+            .collect());
+    }
+    let kept = kept_files(&world.town(town))?;
+    let key = kept_key(world, &kept)?;
+    let mut entries = Vec::new();
+    for (seq, path, _) in kept {
+        if seq > after {
+            entries.push((seq, read_kept(world, &path, key.as_ref())?));
+        }
+    }
+    Ok(entries)
+}
+
+/// The signed entries of `town` this machine has after the one numbered
+/// `after`, in order: those of a project kept on no hub, which this machine
+/// signs itself.
+pub(crate) fn signed_after(world: &WorldDir, town: &TownName, after: u64) -> io::Result<Vec<(u64, Entry)>> {
     if let Some(entries) = carry_source::entries(world, town)? {
         return Ok(entries.into_iter().filter(|(seq, _)| *seq > after).collect());
     }
@@ -503,7 +728,7 @@ pub fn entries_after(world: &WorldDir, town: &TownName, after: u64) -> io::Resul
 
 /// The last entry taken or refused.
 fn cursor(directory: &TownDir, refused: &BTreeMap<u64, String>) -> io::Result<u64> {
-    let taken = numbered(&directory.signed())?.last().map(|(seq, _)| *seq).unwrap_or(0);
+    let taken = kept_files(directory)?.last().map(|(seq, _, _)| *seq).unwrap_or(0);
     let through: u64 = fastctx_net::link::state::read_or(&directory.path().join("projection-through.json"), 0)?;
     Ok(taken.max(refused.keys().next_back().copied().unwrap_or(0)).max(through))
 }

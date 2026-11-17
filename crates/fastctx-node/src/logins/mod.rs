@@ -1,17 +1,10 @@
-//! This machine's agents' logins, as its node keeps them
-//! (`world-agent-logins.md`): which the World lists and uses, which are
-//! candidates, what a scan found, the folders the user chose and what their
-//! searches found, the limits last read, and the changes of the list under
-//! way. A scan, a search, a change or a fresh read of limits happens only
-//! when the user asks for it, here or from another of their devices.
-//! Reading the record starts no process, but to ask again a login whose
-//! sign-in changed since it was asked (`sign_in`); which program each login
-//! starts is read as starting it reads it (`program`), and what its agent
-//! says is kept fresh as the World starts it for its own work (`heard`).
+//! This machine's login records and their derived listing.
 //!
-//! The list is exactly the logins the World's tools are put into: the apply
-//! record (`applied.json`) says which, so the list and what the user's own
-//! sessions get can never disagree.
+//! Scans and connection changes are explicit operations. Sign-in file
+//! changes are identified by a background pass; another pass derives the
+//! listing, including program selection, connection state, models and usage.
+//! Readers take the last persisted projection and current in-memory progress.
+//! Integration actions still check their current apply records.
 
 pub(crate) mod change;
 pub(crate) mod folders;
@@ -22,17 +15,21 @@ pub(crate) mod limits;
 pub(crate) mod models;
 mod others;
 mod program;
+mod read_limits;
 pub(crate) mod refresh;
 pub(crate) mod remote;
 pub(crate) mod scan;
+mod search_progress;
 mod sign_in;
+pub(crate) mod sign_in_refresh;
+mod snapshot;
+pub(crate) mod submitted;
 pub(crate) mod watch;
 pub(crate) mod workbench;
 
 use fastctx_types::access::Written;
-use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 
 use fastctx_hosts::inventory::walk;
@@ -40,7 +37,7 @@ use fastctx_install::apply::{self, Host, Standing};
 use fastctx_types::AgentName;
 use fastctx_types::agents::{AgentHome, AgentLimits, Fact, HomeFound, Integration};
 use fastctx_types::ipc::Failure;
-use fastctx_types::logins::{AgentLogins, Found, Login, LoginChange, MachineLogins, Stage};
+use fastctx_types::logins::{Found, LoginChange, MachineLogins};
 
 use crate::Node;
 
@@ -72,6 +69,9 @@ pub(crate) struct Logins {
     /// Told when a login was connected or taken out, so that the files
     /// watched are those of the logins as they stand (`watch`).
     rewatch: Arc<tokio::sync::Notify>,
+    /// Rebuilds the sign-in watch after the persisted login list changes.
+    sign_in_watch: Arc<tokio::sync::Notify>,
+    listing: snapshot::Listing,
 }
 
 /// The agents that keep logins.
@@ -131,14 +131,33 @@ pub(crate) fn identities(node: &Node, agent: &AgentName) -> Result<Vec<(PathBuf,
         .collect())
 }
 
-/// The record of this machine's logins, each login whose sign-in changed
-/// since it was asked asked again first.
+/// The record of this machine's logins, without waiting for identification:
+/// as last projected, which a read waits for only where none was ever made
+/// (`snapshot::before_reading`).
 pub(crate) async fn here(node: &Arc<Node>) -> Result<MachineLogins, Failure> {
-    sign_in::ask_changed(node).await;
-    let node = node.clone();
-    fastctx_platform::task::spawn_blocking(move || assemble(&node))
-        .await
-        .map_err(|error| Failure::new(format!("reading the agents' logins: {error}")))?
+    snapshot::before_reading(node).await;
+    snapshot::read(node)
+}
+
+/// The record once what the call just changed is in it: the answer to a
+/// call that changes a login shows the change.
+pub(crate) async fn changed_here(node: &Arc<Node>) -> Result<MachineLogins, Failure> {
+    snapshot::renew(node).await;
+    snapshot::read(node)
+}
+
+/// The same projection in the shape older clients read.
+pub(crate) async fn agents(node: &Arc<Node>) -> Result<fastctx_types::agents::AgentsReply, Failure> {
+    snapshot::before_reading(node).await;
+    snapshot::agents(node)
+}
+
+/// The usage of `agent`'s login `dir` was read anew: its row is projected
+/// again.
+pub(crate) fn usage_read(node: &Node, agent: &str, dir: &Path) {
+    if AGENTS.contains(&agent) {
+        snapshot::quota(node, agent, dir);
+    }
 }
 
 /// Each login of `agent` the World knows here, with how it knows of it:
@@ -186,110 +205,6 @@ fn standing(context: &Context, host: Host, dir: &Path) -> Result<Integration, St
     })
 }
 
-fn assemble(node: &Node) -> Result<MachineLogins, Failure> {
-    let context = Context::of(node)?;
-    workbench::seed(node, &context);
-    let kept = kept::read(node).map_err(|error| Failure::new(format!("reading the agents' logins: {error}")))?;
-    let mut scan = kept.scan.clone();
-    // A scan the record says runs, with none running here, was cut short
-    // when the node stopped.
-    if let Some(scan) = &mut scan
-        && scan.usual == Stage::Running
-        && !node.logins.scanning.load(Ordering::Acquire)
-    {
-        scan.usual = Stage::Failed { at: jiff::Timestamp::now(), reason: "the node stopped during it".into() };
-    }
-    let claude_aliases = fastctx_hosts::claude::exchange::aliases(node.world.path());
-    let changes = node.logins.changes.lock().expect("never poisoned").clone();
-    let mut logins = MachineLogins {
-        machine: node.machine(),
-        scan,
-        codex: AgentLogins::default(),
-        claude: AgentLogins::default(),
-        by_login: true,
-        others: std::collections::BTreeMap::new(),
-        folders: Vec::new(),
-    };
-    let mut known = HashSet::new();
-    for agent in AGENTS {
-        let dirs = dirs(node, &context, &kept, agent)?;
-        let side = logins.of_mut(agent).expect("an agent that keeps logins");
-        side.programs = kept.of(agent).programs.clone();
-        let homes: Vec<AgentHome> =
-            dirs.iter().map(|(dir, _)| AgentHome { dir: dir.clone(), found: HomeFound::Added }).collect();
-        for (dir, found) in &dirs {
-            let default = *found == Found::Default;
-            let known = kept.of(agent).logins.iter().find(|login| crate::homes::same_dir(&login.dir, dir));
-            let integration = match standing(&context, host(agent)?, dir) {
-                Ok(integration) => integration,
-                Err(error) => return Err(Failure::new(format!("reading how {} stands: {error}", dir.display()))),
-            };
-            let listed = integration == Integration::In;
-            let limits = if agent == "codex" { limits::of(node, &kept, dir) } else { claude_limits(node, dir) };
-            let model_edits = (agent == "claude").then(|| models::edits(&kept, dir));
-            let models = match &model_edits {
-                None => known.map(|login| login.models.clone()).unwrap_or_default(),
-                Some(edits) => fastctx_hosts::claude::models::agent_models(
-                    models::aliases(&claude_aliases, &homes, dir).as_deref(),
-                    edits,
-                ),
-            };
-            // The permission is read only where the World's tools are in,
-            // which granted it: a candidate's settings are not the World's
-            // to read.
-            let unattended = if agent == "claude" && listed {
-                Some(apply::claude_consent_at(&context.places, dir).map_err(|error| {
-                    Failure::new(format!("reading Claude Code's permission in {}: {error}", dir.display()))
-                })?)
-            } else {
-                None
-            };
-            let change = changes
-                .iter()
-                .find(|(owner, path, _)| owner.as_str() == agent && crate::homes::same_dir(path, dir))
-                .map(|(_, _, change)| change.clone());
-            let login = Login {
-                dir: dir.clone(),
-                default,
-                found: *found,
-                identity: known.map(|login| login.identified.clone()),
-                limits,
-                programs: if default { (0..side.programs.len() as u32).collect() } else { Vec::new() },
-                integration,
-                unattended,
-                auto_title: agent == "codex"
-                    && !kept.codex.untitled.iter().any(|known| crate::homes::same_dir(known, dir)),
-                reset_in_place: crate::usage::resets_in_place(node, agent, dir),
-                launcher: program::now(node, agent, dir, known),
-                models,
-                model_edits,
-                change,
-                drift: if listed { refresh::of(node, agent, dir) } else { None },
-                workbench: listed
-                    && workbench::is_open(node, &fastctx_types::access::Acting::Here, agent, Some(dir.as_path())),
-            };
-            if listed {
-                side.listed.push(login);
-            } else {
-                side.candidates.push(login);
-            }
-        }
-        known.extend(dirs.iter().map(|(dir, _)| walk::key(dir)));
-    }
-    for agent in fastctx_install::agents::all() {
-        let Ok(name) = AgentName::try_from(agent.name) else { continue };
-        let side = others::side(node, &context, &kept, agent, &changes)?;
-        if side.listed.is_empty() && side.candidates.is_empty() {
-            continue;
-        }
-        known.extend(side.listed.iter().chain(&side.candidates).map(|login| walk::key(&login.dir)));
-        logins.others.insert(name, side);
-    }
-    let chosen = kept::folders(node).map_err(|error| Failure::new(format!("reading the chosen folders: {error}")))?;
-    logins.folders = folders::shown(node, &kept, &chosen, &known);
-    Ok(logins)
-}
-
 /// The most specific login whose sessions a Claude transcript is among.
 /// The Claude Code login a session's transcript is kept in, among those the
 /// World knows here; the default one when it is in none of them.
@@ -335,6 +250,21 @@ pub(crate) fn set_title(node: &Node, agent: &AgentName, dir: &Path, on: bool) ->
     .map_err(|error| Failure::new(format!("keeping the login's naming: {error}")))
 }
 
+/// Sets the week of the Codex or Claude Code login `dir` here, in quota
+/// dollars, as its owner chooses; none is the World's default.
+pub(crate) fn set_week(node: &Node, agent: &AgentName, dir: &Path, week: Option<fastctx_types::usage::Usd>) -> Result<(), Failure> {
+    if !AGENTS.contains(&agent.as_str()) {
+        return Err(Failure::not_run("only Codex and Claude Code logins keep their usage"));
+    }
+    if week.is_some_and(|week| week.0 == 0) {
+        return Err(Failure::not_run("a login's week is an amount above zero"));
+    }
+    known(node, agent, dir)?;
+    crate::usage::set_week(node, agent.as_str(), dir, week).map_err(|error| Failure::new(format!("keeping the login's week: {error}")))?;
+    snapshot::ask(node);
+    Ok(())
+}
+
 /// Turns on or off whether a week the vendor cleared before its reset counts
 /// anew in the Codex or Claude Code login `dir` here, as its owner chooses;
 /// off by default (`world-usage.md`).
@@ -344,7 +274,9 @@ pub(crate) fn set_resets_in_place(node: &Node, agent: &AgentName, dir: &Path, on
     }
     known(node, agent, dir)?;
     crate::usage::set_resets_in_place(node, agent.as_str(), dir, on)
-        .map_err(|error| Failure::new(format!("keeping the login's weekly resets: {error}")))
+        .map_err(|error| Failure::new(format!("keeping the login's weekly resets: {error}")))?;
+    snapshot::ask(node);
+    Ok(())
 }
 
 /// Whether the Codex login `dir` (the default one when none) names its new
@@ -428,7 +360,7 @@ pub(crate) async fn take_up(node: &Arc<Node>, agent: AgentName, dir: PathBuf) ->
     if !dir.is_absolute() {
         return Err(Failure::not_run(format!("{} is not an absolute path", dir.display())));
     }
-    let (found, default, programs, signed, env) = {
+    let (found, default, programs, signed, credential, env) = {
         let (node, dir) = (node.clone(), dir.clone());
         fastctx_platform::task::spawn_blocking(move || {
             if !fastctx_platform::disk::is_dir(&dir) {
@@ -450,7 +382,8 @@ pub(crate) async fn take_up(node: &Arc<Node>, agent: AgentName, dir: PathBuf) ->
                 Found::Added
             };
             let signed = sign_in::now(&context, agent, &dir);
-            Ok::<_, Failure>((found, default, kept.of(agent).programs.clone(), signed, context.env))
+            let credential = sign_in::credential(&context, agent, &dir);
+            Ok::<_, Failure>((found, default, kept.of(agent).programs.clone(), signed, credential, context.env))
         })
         .await
         .map_err(|error| Failure::new(error.to_string()))??
@@ -466,14 +399,14 @@ pub(crate) async fn take_up(node: &Arc<Node>, agent: AgentName, dir: PathBuf) ->
                     .position(|known| crate::homes::same_dir(&known.dir, &dir))
                     .map(|at| logins.remove(at));
                 logins.retain(|known| !crate::homes::same_dir(&known.dir, &dir));
-                logins.push(kept::KeptLogin::asked(dir, found, asked, signed, before.as_ref()));
+                logins.push(kept::KeptLogin::asked(dir, found, asked, signed, credential, before.as_ref()));
             })
             .map_err(|error| Failure::new(format!("keeping the login: {error}")))
         })
         .await
         .map_err(|error| Failure::new(error.to_string()))??;
     }
-    here(node).await
+    changed_here(node).await
 }
 
 /// Claude configuration directories already known on this machine.

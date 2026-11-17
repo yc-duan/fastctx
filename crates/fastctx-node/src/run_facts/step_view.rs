@@ -72,13 +72,6 @@ pub(super) fn refresh_locked(record: &Path) -> io::Result<()> {
     }
 }
 
-/// The journal may discard a segment only after every reader has consumed it.
-pub(super) fn segment(record: &Path) -> io::Result<u64> {
-    Ok(Job::open(record)?
-        .read(CURSOR, |rows, family| rows.get::<Cursor>(family, "value"))?
-        .map_or(0, |cursor| cursor.segment))
-}
-
 pub(super) fn read(record: &Path) -> io::Result<(Vec<RunStep>, Vec<StepSummary>)> {
     let job = Job::open(record)?;
     let cursor_family = job.family(CURSOR);
@@ -103,23 +96,4 @@ pub(super) fn read(record: &Path) -> io::Result<(Vec<RunStep>, Vec<StepSummary>)
         }).collect::<Result<Vec<_>>>()?;
         Ok((steps, folded))
     })
-}
-
-pub(crate) fn delete(job: &Job) -> io::Result<()> {
-    for table in ["run_steps", "run_folded"] {
-        loop {
-            let count = job.change(VIEW, 4096, move |rows, family| {
-                let condition = if table == "run_steps" {
-                    "position IN (SELECT position FROM run_steps WHERE conversation=?1 AND call=?2 LIMIT 64)"
-                } else {
-                    "(conversation,call,machine,kind) IN (SELECT conversation,call,machine,kind FROM run_folded WHERE conversation=?1 AND call=?2 LIMIT 64)"
-                };
-                Ok(rows.connection().execute(&format!("DELETE FROM {table} WHERE {condition}"), (rows.conversation(), family))?)
-            })?;
-            if count == 0 {
-                break;
-            }
-        }
-    }
-    Ok(())
 }

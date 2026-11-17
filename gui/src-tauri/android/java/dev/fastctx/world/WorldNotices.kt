@@ -27,9 +27,9 @@ class WorldNotices(private val context: Context) {
 
     init {
         if (Build.VERSION.SDK_INT >= 26) {
-            manager.createNotificationChannel(NotificationChannel(CONNECTION, "World connection", NotificationManager.IMPORTANCE_LOW))
-            manager.createNotificationChannel(NotificationChannel(ALERTS, "World conversations", NotificationManager.IMPORTANCE_HIGH))
-            manager.createNotificationChannel(NotificationChannel(MACHINES, "World machines", NotificationManager.IMPORTANCE_DEFAULT))
+            manager.createNotificationChannel(NotificationChannel(CONNECTION, context.getString(R.string.channel_connection), NotificationManager.IMPORTANCE_LOW))
+            manager.createNotificationChannel(NotificationChannel(ALERTS, context.getString(R.string.channel_conversations), NotificationManager.IMPORTANCE_HIGH))
+            manager.createNotificationChannel(NotificationChannel(MACHINES, context.getString(R.string.channel_machines), NotificationManager.IMPORTANCE_DEFAULT))
         }
     }
 
@@ -44,13 +44,15 @@ class WorldNotices(private val context: Context) {
 
     fun connectionNotification(state: JSONObject?): Notification {
         val kind = state?.let(WorldRuntime::linkKind)
-        val text = when (kind) {
-            "online" -> "Connected to your World"
-            "stopped" -> "World connection stopped"
-            else -> "Reconnecting to your World"
-        }
+        // What the connection is for, and how it stands: what keeps it running is said, not only
+        // that it is.
+        val text = context.getString(when (kind) {
+            "online" -> R.string.connection_online
+            "stopped" -> R.string.connection_stopped
+            else -> R.string.connection_reconnecting
+        })
         return NotificationCompat.Builder(context, CONNECTION).setSmallIcon(R.drawable.world_notification)
-            .setContentTitle("Fastctx").setContentText(text).setOngoing(true).setOnlyAlertOnce(true)
+            .setContentTitle(context.getString(R.string.connection_title)).setContentText(text).setOngoing(true).setOnlyAlertOnce(true)
             .setContentIntent(launch(null)).setCategory(NotificationCompat.CATEGORY_SERVICE).build()
     }
 

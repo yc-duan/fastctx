@@ -25,10 +25,12 @@ import { effortLabel } from "./effort-slider";
 import { fileRow, mentionAt, mentioned, type FileWords, type FoundFile } from "./mention";
 import { FileLinks } from "./file-links";
 import { fileKind } from "./file-kind";
-import { FilePage } from "../side/file-page";
+import type { ViewTab } from "../files/view";
+import { FileTabs, type Reading } from "../side/file-tabs";
+import type { DiffLine, WriteFact } from "../world/run-facts";
+import { TalkChanges } from "./changed";
 import { whyOf } from "../world/again";
 import { JobsPanel, type Job, type OutputLines } from "./jobs-panel";
-import { AgentBox } from "./agent-box";
 import { SideParts } from "../side/parts";
 import type { Address } from "../world/wire";
 import type { SideSeams } from "../side/seams";
@@ -42,6 +44,7 @@ import type { Entry, Gap } from "./model";
 import { escape, render } from "./prose";
 import { shownOf, skillsHtml } from "./said";
 import { Finder } from "./find";
+import { TimelineFind } from "./timeline-find";
 import { FarFind } from "./find-far";
 import { contextOf, type ModelRequest } from "./requests";
 import { UsageBadge, ring } from "./usage-badge";
@@ -57,6 +60,12 @@ import { DraftFit } from "./fit-draft";
 import { Popover } from "./popover";
 import { Steady } from "../app/steady";
 import { composing } from "../typing";
+import { limitComposerInput } from "./composer/limit";
+import { missingCharacter, recoverable } from "./composer/errors";
+import { textareaText } from "./composer/characters";
+import { attachText, copyRejectedText, showTextNotice } from "./text-attachment";
+import { enText, zhText } from "./text-words";
+import { sayWaiting, waitingInline } from "../app/waiting";
 
 /** How many events the page holds at most, and how many its latest part
  *  holds before what comes before its newest turns is let go, down to how
@@ -67,9 +76,31 @@ const HELD_MOST = 6000;
 const KEEP_SCREENS = 3;
 const LATEST_MOST = 2400;
 const LATEST_KEPT = 800;
+/** How long a turn asked to stop shows ended before its host has ended it
+ *  (`ConversationPage.stop`). */
+const STOP_OVERDUE_MS = 2000;
+/** How long a stop of words on their way waits for the World to answer
+ *  for them, and how often it looks (`stopNamed`). */
+const NAMING_MS = 60_000;
+const NAMING_LOOK_MS = 50;
 
 /** The mark of an agent named "Claude" or "Codex". */
 const markOf = (agent: string) => (/claude/i.test(agent) ? "claude" : "codex");
+
+/** The lines of a write, read where its machine keeps them: a record to a
+ *  line, no more of them than a change is drawn to. */
+async function keptLines(lines: (machine: string, path: string, decoding: Decoding) => Promise<OutputLines>, write: WriteFact): Promise<DiffLine[] | null> {
+  const diff = write.diff;
+  if (!diff) return null;
+  const raw = await lines(diff.machine, diff.path, { kind: "file", encoding: "utf-8" });
+  try {
+    const length = Math.min(raw.extent.length, 2000);
+    const read = length ? await raw.read(0, length, new AbortController().signal) : [];
+    return read.map((line) => JSON.parse(line) as DiffLine);
+  } finally {
+    void raw.close().catch(() => {});
+  }
+}
 
 export interface Someone {
   /** "Claude" or "Codex": the agent by the name it goes by. */
@@ -172,8 +203,10 @@ export interface PageOptions {
   /** Sends the user's words, and what arrived of what was attached;
    *  resolves with what came of them. */
   send(text: string, attached: { refs: unknown[]; shown: Attached[]; filesOn?: string | null }): Promise<Sent> | void;
-  /** Asks the agent to stop; resolves whether a turn was running to stop. */
-  stop(): Promise<boolean> | void;
+  /** Asks the agent to stop the turn shown running (`null` while only words
+   *  are on their way: then `words`, the ids of those words, when known);
+   *  resolves whether a turn was running to stop. */
+  stop(turn: string | null, words: string[] | null): Promise<boolean> | void;
   /** Stops one job it started, on the machine it runs on. */
   stopJob?: ((job: string, machine: string) => Promise<void>) | undefined;
   /** A job's output as lines from the machine running it, read as it
@@ -192,6 +225,8 @@ export interface PageOptions {
   /** The panel beside the conversation: its plan, its goal, and who works
    *  with it (`side/parts.ts`). */
   side?: SideSeams | undefined;
+  /** Where a file is shown among its machine's folders. */
+  filesLink?: ((machine: string, path: string) => string) | undefined;
   /** How the list names another conversation, and its family. */
   named?: ((address: Address) => { name: string; agent: "claude" | "codex" }) | undefined;
   /** What the list calls this conversation, where it calls it anything:
@@ -205,6 +240,9 @@ export interface PageOptions {
 /** How many times what a conversation offers is asked again after asking
  *  failed, before only a turn's end asks again. */
 const OFFERS_TRIES = 5;
+/** How many times what a conversation offers is asked for again while its
+ *  host is still being started: a little over two minutes in all. */
+const GATHERING_TRIES = 12;
 
 /** How long after the reader's own wheel, finger, key or scroll bar the
  *  view is theirs: nothing keeps it at the newest meanwhile. */
@@ -260,8 +298,13 @@ export class ConversationPage {
   private roomFor: string | null = null;
   /** Until when words the user just sent are to be put at the top. */
   private placeUntil = 0;
-  /** A stop was asked for and the turn has not ended yet. */
-  private stopping = false;
+  /** A stop was asked for, its turn has not ended, and its host has not
+   *  ended it within `STOP_OVERDUE_MS`: only then is the turn said to go on,
+   *  with a way to stop it again. */
+  private stopOverdue = false;
+  private stopWatch = 0;
+  /** Stops asked from here, the latest last: an answer speaks only for it. */
+  private stopsAsked = 0;
   /** Words of the shared queue on their way into the turn, by queue item,
    *  as the conversation shows them meanwhile. */
   private readonly onTheirWay = new Map<string, string>();
@@ -277,6 +320,7 @@ export class ConversationPage {
   /** The next asking of what the conversation offers, after one that
    *  failed, and how many failed in a row. */
   private offersAgain = -1;
+  private offersGathering = 0;
   private offersFailed = 0;
   private wasMoving = false;
   private commandMenu: Menu<MenuCommand> | null = null;
@@ -296,6 +340,7 @@ export class ConversationPage {
   /** The latest `@` question; an answer to an earlier one is not shown. */
   private mentionAsked = 0;
   private note: HTMLElement;
+  private readonly textNote: HTMLElement;
   /** What the note says on hover, worked out when the pointer comes to it,
    *  for a line that says how long something has been so. */
   private noteDetail: (() => string) | null = null;
@@ -305,6 +350,8 @@ export class ConversationPage {
   private chip: HTMLButtonElement;
   private finder: Finder;
   private far: FarFind;
+  private timelineFind: TimelineFind;
+  private findingPosition = 0;
   /** Ctrl+F finds in the conversation while its page is shown and in
    *  focus on the desk. */
   private readonly findKey = (event: KeyboardEvent) => {
@@ -341,6 +388,7 @@ export class ConversationPage {
           <div class="composer-confirm" hidden></div>
           <div class="composer-tray"></div>
           <div class="composer-field"><span class="composer-picked" hidden></span><textarea rows="1" enterkeyhint="send" placeholder="${escape(words.sendPlaceholder(someone.agent))}" aria-label="${escape(words.sendPlaceholder(someone.agent))}"></textarea></div>
+          <p class="composer-text-note" role="status" hidden></p>
           <div class="composer-row">
             <div class="composer-tools"><button class="icon-button composer-attach" type="button" hidden></button><input class="composer-pick" type="file" multiple hidden><input class="composer-shot" type="file" accept="image/*" capture="environment" hidden><button class="composer-chip" type="button" hidden></button><button class="composer-jobs" type="button" hidden></button></div>
             <span class="composer-note" aria-live="polite"></span>
@@ -352,21 +400,23 @@ export class ConversationPage {
     this.scroller = this.element.querySelector<HTMLElement>(".talk-scroller")!;
     this.room = this.element.querySelector<HTMLElement>(".talk-room")!;
     const transcript = this.element.querySelector<HTMLElement>(".conversation")!;
+    const owner = this;
     this.finder = new Finder(
       transcript,
       this.scroller,
-      words.find,
+      { ...words.find, english: words.english },
       () => {
         this.following = false;
       },
       {
+        get global() { return options.conversation.paged ? owner.timelineFind : undefined; },
         findChanges: () => this.view.findChanges(),
         revealFind: (match) => this.view.revealFind(match),
         findRange: (match) => this.view.findRange(match),
         // What the page does not hold is found by the shell, from text the
         // page reads aside once (`find-far.ts`).
-        far: {
-          search: (query) => this.far.search(query),
+        get far() { if (options.conversation.paged) return undefined; return {
+          search: (query: string) => far().search(query),
           get more() {
             return far().more;
           },
@@ -374,17 +424,30 @@ export class ConversationPage {
             return far().grown;
           },
           held: () => options.conversation.bounds().join(";"),
-          reach: async (at) => {
+          reach: async (at: number) => {
             await options.conversation.reach(at);
-            cancelAnimationFrame(this.frame);
-            this.render();
+            cancelAnimationFrame(owner.frame);
+            owner.render();
           },
-          close: () => this.far.close(),
-        },
+          close: () => far().close(),
+        }; },
       },
     );
     const far = () => this.far;
     this.far = new FarFind(options.conversation, (block) => this.view.findParts(block), () => this.finder.refresh());
+    this.timelineFind = new TimelineFind(options.conversation,
+      (events, query, signal) => this.view.searchCounts(events, query, signal),
+      async (hit, query, signal) => {
+        signal.throwIfAborted();
+        this.findingPosition += 1;
+        try {
+          if (!(await options.conversation.reachPosition(hit.place))) return null;
+          await options.conversation.expandPosition(hit.place);
+          signal.throwIfAborted();
+          cancelAnimationFrame(owner.frame); owner.render();
+          return await this.view.resolveSearch(hit, query, signal);
+        } finally { this.findingPosition -= 1; }
+      }, () => this.finder.refresh(), () => this.view.searchKnown());
     this.scroller.before(this.finder.element);
     this.element.querySelector(".find-toggle")!.addEventListener("click", () => (this.finder.open ? this.finder.close() : this.finder.show()));
     this.element.querySelector(".view-steps")!.addEventListener("click", () => this.toggleSteps());
@@ -439,6 +502,7 @@ export class ConversationPage {
     this.fitter = new DraftFit(this.input);
     this.action = this.element.querySelector<HTMLButtonElement>(".composer-action")!;
     this.note = this.element.querySelector<HTMLElement>(".composer-note")!;
+    this.textNote = this.element.querySelector<HTMLElement>(".composer-text-note")!;
     this.note.addEventListener("pointerover", () => {
       if (this.noteDetail) this.note.title = this.noteDetail();
     });
@@ -472,6 +536,22 @@ export class ConversationPage {
     if (options.attach) this.attaching(options.attach);
     if (options.composer) void this.share(options.composer);
     const controls = options.controls;
+    // The files it changed (`changed.ts`), read from its own calls: listed
+    // under each turn's last words, and summed in its side.
+    const fileWords = options.side?.files?.words;
+    if (options.side && fileWords) {
+      const self = options.side.self;
+      const lines = options.lines;
+      this.changes = new TalkChanges(options.conversation, {
+        session: `${self.resident}@${self.machine}`,
+        agent: markOf(someone.agent),
+        machine: someone.machine,
+        kept: lines ? (write) => keptLines(lines, write) : undefined,
+      });
+    }
+    const changes = this.changes;
+    // A turn that changed files shows them where it ended, in either view.
+    if (changes) options.conversation.endKept = (turn) => changes.turn(turn).length > 0;
     this.view = new ConversationView(main, options.conversation, {
       words,
       english: words.english,
@@ -483,7 +563,7 @@ export class ConversationPage {
       // Words the user just sent stand at the top of the view.
       sent: (key) => this.sent(key),
       // Turns not held are read as the reader comes near them.
-      near: (gap, side) => void this.fillGap(gap, side),
+      near: (gap, side, explicit) => void this.fillGap(gap, side, explicit),
       // Words being sent leave from where they were typed.
       departure: () => departureOf(this.input),
       here: options.here,
@@ -502,8 +582,16 @@ export class ConversationPage {
       lines: options.lines,
       agentRecord: options.agentRecord,
       turnCalls: options.calls,
-      openAgent: options.side ? (id) => this.side?.openAgent(id) ?? false : undefined,
       openFile: (machine, path) => this.openFile(machine, path),
+      changed:
+        changes && fileWords
+          ? {
+              words: fileWords,
+              turn: (turn) => changes.turn(turn),
+              last: () => changes.last(),
+              open: (machine, path) => void this.readFile(machine, path, null, "changes"),
+            }
+          : undefined,
       named: options.named,
     });
     // The card at a fork's head goes back to where it came from.
@@ -518,25 +606,38 @@ export class ConversationPage {
     // Its parts for the desk's side (`side/parts.ts`): the plan, the goal,
     // and who works with it, the host's own agents among them.
     if (options.side) {
+      // How its files are read: on their tabs here, and for the window its
+      // files' card stands in.
+      const lines = options.lines;
+      const pictures = options.pictures;
+      const reading: Reading | null = lines
+        ? {
+            lines: (on, at) => lines(on, at, { kind: "file", encoding: null }),
+            picture: pictures ? (on, at, max) => pictures.thumbnail(on, at, max) : undefined,
+            outside: (on, at) => this.fileLinks?.openOutside(on, at),
+            gone,
+            detail: whyOf,
+          }
+        : null;
+      if (reading && fileWords)
+        this.fileTabs = new FileTabs({
+          side: () => this.side,
+          words: fileWords,
+          reading,
+          changes: (machine, path) => this.changes?.file(machine, path) ?? [],
+          open: (machine, path) => this.openFile(machine, path),
+          folders: options.filesLink,
+        });
       this.side = new SideParts(this.element, {
         host: markOf(someone.agent) === "codex" ? "codex" : "claude",
         seams: options.side,
+        ...(reading ? { reading } : {}),
         say: (text, detail) => this.say(text, detail ?? ""),
         // Answers go in at once, into the turn if one runs.
         answer: async (text) => {
           const came = await this.options.send(text, { refs: [], shown: [] });
           if (came === "failed") throw new Error(words.notSent(""));
         },
-        agentBox: (run) =>
-          new AgentBox(run, {
-            words,
-            english: words.english,
-            here: options.here,
-            residentMachine: someone.machine,
-            ...(options.lines ? { lines: options.lines } : {}),
-            ...(options.agentRecord ? { record: options.agentRecord } : {}),
-            reading: () => {},
-          }),
         jump: (id) => {
           if (this.view.openAgent(id)) this.following = false;
         },
@@ -548,6 +649,8 @@ export class ConversationPage {
           const said = headline(step.tool, null, words, () => null, true);
           return [said.action, said.object].filter(Boolean).join(" ");
         },
+        openFile: (machine, path, tab) => void this.readFile(machine, path, null, tab),
+        detail: whyOf,
       });
     }
     // For how long a way has been broken, and why, as the note says it.
@@ -594,8 +697,17 @@ export class ConversationPage {
 
     // It opens in the view it was last read in here (`world-voice.md`).
     this.viewing(this.storedView());
-    // What was read of the conversation from the shell is drawn as it comes.
-    options.conversation.changed = () => this.update({ read: true });
+    // What was read of the conversation from the shell is drawn as it comes:
+    // a batch of pieces the shell pushed at once is taken whole, then the
+    // page looks once at what it changed, and draws in the next frame.
+    options.conversation.changed = () => {
+      if (this.changing) return;
+      this.changing = true;
+      queueMicrotask(() => {
+        this.changing = false;
+        this.update({ read: true });
+      });
+    };
     this.latest = this.element.querySelector<HTMLButtonElement>(".to-latest")!;
     this.latest.addEventListener("click", () => this.toLatest());
     // The way back to each step's context, after one of its rows was
@@ -612,6 +724,11 @@ export class ConversationPage {
       event.preventDefault();
       this.submit();
     });
+    this.unlimit = limitComposerInput(this.input, (text, typing) => {
+      const words = this.options.words.english ? enText : zhText;
+      if (typing) showTextNotice(this.textNote, words.limit);
+      else void attachText(text, words, (file) => this.attachTextFile(file), this.textNote).catch(() => {});
+    }, () => this.session ? textareaText(this.session.draft.view.characters) : undefined);
     this.input.addEventListener("input", () => {
       if (this.hinting) {
         this.hinting = false;
@@ -668,6 +785,7 @@ export class ConversationPage {
     const up = () => {
       reading();
       this.following = false;
+      this.options.conversation.follow(false);
       this.drawLatest();
     };
     // Any move of the reader's own makes the view theirs, down as well as
@@ -680,28 +798,58 @@ export class ConversationPage {
     // block) moves that, not the view; keys in a field move its caret.
     this.scroller.addEventListener(
       "wheel",
-      (event) => (event.deltaY < 0 && !scrollsUpWithin(event.target as Element, this.scroller) ? up() : moved()),
+      (event) => {
+        const nested = event.deltaY < 0 && scrollsUpWithin(event.target as Element, this.scroller);
+        if (!nested) {
+          this.pageDirection = event.deltaY < 0 ? "before" : "after";
+          const now = performance.now();
+          if (now - wheelAt > 200) { this.pageGesture += 1; this.view.readerMoved(); }
+          wheelAt = now;
+        }
+        if (event.deltaY < 0 && !nested) up(); else moved();
+      },
       { passive: true },
     );
-    this.scroller.addEventListener("touchmove", moved, { passive: true });
+    let touchY = 0;
+    let wheelAt = -Infinity;
+    this.scroller.addEventListener("touchstart", (event) => { touchY = event.touches[0]?.clientY ?? 0; this.pageGesture += 1; }, { passive: true });
+    this.scroller.addEventListener("touchmove", (event) => {
+      const y = event.touches[0]?.clientY ?? touchY;
+      this.pageDirection = y > touchY ? "before" : "after";
+      touchY = y;
+      this.view.readerMoved();
+      moved();
+    }, { passive: true });
     // The scroll bar is the region itself, not anything in it.
     this.scroller.addEventListener("pointerdown", (event) => {
-      if (event.target === this.scroller) moved();
+      if (event.target === this.scroller) {
+        this.pointerPaging = true;
+        this.pageGesture += 1;
+        window.addEventListener("pointerup", () => { this.pointerPaging = false; }, { once: true });
+        moved();
+      }
     });
     this.scroller.addEventListener("keydown", (event) => {
       if ((event.target as Element).closest("input, textarea, select, [contenteditable]")) return;
-      if (event.key === "PageUp" || event.key === "ArrowUp" || event.key === "Home") up();
-      else if (event.key === "PageDown" || event.key === "ArrowDown" || event.key === "End" || event.key === " ") moved();
+      if (event.key === "PageUp" || event.key === "ArrowUp" || event.key === "Home") {
+        this.pageDirection = "before"; if (!event.repeat) this.pageGesture += 1; this.view.readerMoved(); up();
+      } else if (event.key === "PageDown" || event.key === "ArrowDown" || event.key === "End" || event.key === " ") {
+        this.pageDirection = "after"; if (!event.repeat) this.pageGesture += 1; this.view.readerMoved(); moved();
+      }
     });
     // Otherwise only a scroll the reader made says whether they still
     // follow: one that comes with the region or its content changing size
     // (the browser keeping the view anchored) does not.
-    let sized = { client: 0, content: 0 };
+    let sized = { client: 0, content: 0, top: 0 };
     this.scroller.addEventListener("scroll", () => {
       const { scrollTop, clientHeight, scrollHeight } = this.scroller;
       this.element.classList.toggle("scrolled", scrollTop > 0);
       const resized = clientHeight !== sized.client || scrollHeight !== sized.content;
-      sized = { client: clientHeight, content: scrollHeight };
+      if (this.pointerPaging && scrollTop !== sized.top) {
+        this.pageDirection = scrollTop < sized.top ? "before" : "after";
+        this.view.readerMoved();
+      }
+      sized = { client: clientHeight, content: scrollHeight, top: scrollTop };
       if (resized && !this.reading()) {
         if (this.following) this.scroller.scrollTop = scrollHeight;
         return;
@@ -736,12 +884,18 @@ export class ConversationPage {
 
   /** Back to the newest: at once, however far, and following it from
    *  there, as the reader asked, until they move the view again. */
+  private latestRead = 0;
   private toLatest(): void {
+    const request = ++this.latestRead;
     this.following = true;
+    this.options.conversation.follow(true);
     this.dropRoom();
-    this.render();
-    this.scroller.scrollTop = this.scroller.scrollHeight;
-    this.drawLatest();
+    void this.options.conversation.newest().then(() => {
+      if (request !== this.latestRead || !this.following) return;
+      this.render();
+      this.scroller.scrollTop = this.scroller.scrollHeight;
+      this.drawLatest();
+    }).catch((error: unknown) => console.warn("the newest page could not be read", error));
   }
 
   /** The next words the user sends are put at the top of the view. */
@@ -786,8 +940,24 @@ export class ConversationPage {
   }
 
   /** Reads the turns of a gap the reader came near, then draws them. */
-  private async fillGap(gap: Gap, side: "end" | "start"): Promise<void> {
-    await this.options.conversation.fill(gap, side);
+  private pointerPaging = false;
+  private pageDirection: "before" | "after" | null = null;
+  private pageGesture = 0;
+  private pagedGesture = 0;
+  private paging = false;
+  private async fillGap(gap: Gap, side: "end" | "start", explicit = false): Promise<void> {
+    if (gap.paged && (this.paging || this.restoringPosition || this.findingPosition || (!explicit && (this.following || this.pageGesture === this.pagedGesture || this.pageDirection !== (gap.first ? "before" : "after"))))) {
+      this.view.retryGap(gap.key);
+      return;
+    }
+    if (gap.paged) {
+      this.following = false;
+      this.pagedGesture = this.pageGesture;
+      this.paging = true;
+      this.pointerPaging = false;
+    }
+    try { await this.options.conversation.fill(gap, side); }
+    finally { this.paging = false; }
     this.update({ read: true });
   }
 
@@ -849,6 +1019,11 @@ export class ConversationPage {
    *  reader comes to it, and nothing of it makes an entrance. */
   update(how: { read?: boolean } = {}): void {
     if (how.read) this.read = true;
+    // A stop asked on another device shows here as where it was asked: its
+    // two seconds start when it is told, and end with it.
+    const halting = this.options.conversation.halting();
+    if (halting && this.stopWatch === 0 && !this.stopOverdue) this.watchStop();
+    else if (!halting && (this.stopWatch !== 0 || this.stopOverdue)) this.calledOff();
     // The commands it offers changed (a plugin loaded, a description came).
     if (this.options.conversation.takeOffersChanged()) void this.askOffers();
     if (this.options.conversation.takeControlsChanged()) this.syncControls();
@@ -866,21 +1041,28 @@ export class ConversationPage {
 
   private frame = 0;
   private read = false;
+  /** A look at what a batch of pieces changed is on its way. */
+  private changing = false;
 
   /** Draws the page as the conversation now stands; keeps the newest in
    *  view when the reader was already there. A page not in view is drawn
    *  when it is shown again. */
   private render(): void {
+    if (!this.options.conversation.paged) this.finder.setScope(null);
     this.frame = 0;
     if (!this.element.isConnected) return;
     const follow = this.following;
+    this.options.conversation.follow(this.following);
     this.view.update(this.read);
     this.read = false;
     this.drawAgents();
+    this.drawChanged();
     this.drawTurnActs();
     this.finder.refresh();
     this.drawState();
     this.drawAction();
+    const failure = this.options.conversation.takeReadingFailure();
+    if (failure) this.say(failure);
     if (follow && !this.reading()) this.scroller.scrollTop = this.scroller.scrollHeight;
     this.fitRoom();
     this.drawLatest();
@@ -893,6 +1075,24 @@ export class ConversationPage {
   /** The desk's own buttons in the head. */
   private tools: HTMLElement[] = [];
   private agentsSeen = "";
+  /** The files the conversation changed, as its calls now tell them. */
+  private changes: TalkChanges | null = null;
+  /** The files read in the side, each on its tab, whose changes follow
+   *  the conversation. */
+  private fileTabs: FileTabs | null = null;
+
+  /** What the conversation changed, to its side: its card and its page,
+   *  and the file read there. A reading of the calls that found nothing
+   *  new is the one already drawn. */
+  private drawChanged(): void {
+    const { changes, side } = this;
+    if (!changes || !side) return;
+    side.changed(changes.whole());
+    this.fileTabs?.update();
+    // Those of calls the page does not hold, as the machine it lives on
+    // keeps them.
+    changes.want(() => this.drawChanged());
+  }
 
   /** The host's own agents, as the conversation now knows them, to their
    *  picture whenever one of them moved or the parts held changed. */
@@ -911,9 +1111,13 @@ export class ConversationPage {
 
   /** The page goes out of view and stays alive, its conversation still
    *  followed. */
+  private suspendedPosition: import("./conversation").TimelinePosition | null = null;
   suspend(): void {
     this.suspended = true;
-    if (this.element.isConnected) this.place = this.following ? null : this.view.anchor();
+    if (this.element.isConnected) {
+      this.place = this.following ? null : this.view.anchor();
+      this.suspendedPosition = this.place ? this.options.conversation.positionOf(this.place.key) : null;
+    }
   }
 
   /** The page is shown again, as it was left and as the conversation now
@@ -930,32 +1134,52 @@ export class ConversationPage {
       this.render();
       if (!this.element.isConnected) return;
       if (this.following) this.scroller.scrollTop = this.scroller.scrollHeight;
-      else if (this.place && !this.view.restore(this.place)) this.toLatest();
+      else if (this.place && !this.view.restore(this.place)) {
+        if (this.options.conversation.paged) this.restoreReading(this.place, this.suspendedPosition);
+        else this.toLatest();
+      }
     });
   }
 
   /** What is held is read again (`conversation.ts`): the reader stays
    *  where they were, the turns they read read again where they are no
    *  longer held. */
+  private restoringPosition = false;
   reopened(apply: () => void): void {
     const place = this.following ? null : this.view.anchor();
     const turn = place ? this.turnOf(place.key) : null;
+    const position = place ? this.options.conversation.positionOf(place.key) : null;
     apply();
     this.update({ read: true });
+    if (this.findingPosition) { this.render(); return; }
     if (this.wantedTurn) return this.bringTurn();
     if (!place) return;
     cancelAnimationFrame(this.frame);
     this.render();
     if (this.view.restore(place)) return;
+    if (this.options.conversation.paged) {
+      this.restoreReading(place, position);
+      return;
+    }
     if (!turn) return;
     void this.options.conversation.reachTurn(turn).then((reached) => {
       this.render();
-      if (!reached || !this.view.restore(place)) this.toLatest();
+      if (!reached || !this.view.restore(place)) this.say(this.options.words.english ? "The requested position could not be found." : "暂时找不到请求的位置。");
     });
   }
 
   /** A turn asked for from elsewhere, as a request in its login's usage,
    *  until it is brought into view. */
+  private restoreReading(place: { key: string; offset: number }, position: import("./conversation").TimelinePosition | null): void {
+    const failed = () => this.say(this.options.words.english ? "This position could not be restored. Search the content again." : "暂时无法恢复这个位置，请重新查找这段内容。");
+    if (this.restoringPosition) return;
+    if (!position) return failed();
+    this.restoringPosition = true;
+    void this.options.conversation.reachPosition(position).then((reached) => {
+      this.render();
+      if (!reached || !this.view.restore(place)) failed();
+    }).catch((error) => this.say(String(error))).finally(() => { this.restoringPosition = false; });
+  }
   private wantedTurn: string | null = null;
 
   /** Brings `turn` into view, read first where it is not held; a page
@@ -980,14 +1204,16 @@ export class ConversationPage {
     };
     const held = first();
     if (held) return bring(held.key);
+    this.say(this.options.words.english ? "Finding this turn…" : "正在查找这个回合…", "", false, true);
     void conversation.reachTurn(turn).then((reached) => {
       if (this.wantedTurn !== turn) return;
       const found = reached ? first() : undefined;
       if (found) bring(found.key);
-      // A conversation that came without it does not have it: it opens
-      // as it would.
-      else if (conversation.blocks().length) this.wantedTurn = null;
-    });
+      else {
+        this.wantedTurn = null;
+        this.say(this.options.words.english ? "The requested turn is not in the currently readable history." : "当前可读的历史里暂时找不到这个回合。");
+      }
+    }).catch((error) => { if (this.wantedTurn === turn) this.wantedTurn = null; this.say(String(error)); });
   }
 
   /** The turn a block is in. */
@@ -1023,6 +1249,8 @@ export class ConversationPage {
   leave(): void {
     phoneWide.removeEventListener("change", this.placeDial);
     clearTimeout(this.offersAgain);
+    clearTimeout(this.stopWatch);
+    this.changes?.close();
     cancelAnimationFrame(this.frame);
     this.view.destroy();
     this.badge?.dispose();
@@ -1031,18 +1259,25 @@ export class ConversationPage {
     this.left = true;
     document.removeEventListener("keydown", this.findKey);
     this.stopDrops?.();
+    this.unlimit();
     this.unbindShared?.();
     this.fileLinks?.release();
     this.pictures?.release();
-    const removed = Promise.all([this.nodeTray?.close(), this.nodeQueue?.leave()]);
-    this.tray?.close();
-    void removed.then(() => this.session?.close());
+    try {
+      void Promise.allSettled([this.nodeTray?.close(), this.nodeQueue?.leave()]);
+      this.tray?.close();
+    } finally {
+      // Closing the session releases uploads which wait for reconnection; those
+      // uploads therefore cannot be a prerequisite for closing the session.
+      void this.session?.close().catch((error: unknown) => console.error("saving the departing composer failed", error));
+    }
   }
 
   private left = false;
   /** The node's shared input, once open. */
   private session: ComposerSession | null = null;
   private sharedState: ComposerSessionState | null = null;
+  private readonly unlimit: () => void;
   private unbindShared: (() => void) | null = null;
   private nodeQueue: NodeQueue | null = null;
   private controlQueue: ControlQueue | null = null;
@@ -1053,8 +1288,8 @@ export class ConversationPage {
   private offersAsking: Promise<void> | null = null;
   private offersWanted: Promise<void> | null = null;
   private nodeTray: NodeTray | null = null;
-  /** Words sent straight on from here that the agent has not heard yet. */
-  private straight = 0;
+  private readonly rescued = new WeakSet<import("./composer").ComposerDocument>();
+  private readonly reconciled = new WeakMap<import("./composer").ComposerDocument, number>();
 
   /** Opens the shared input: the words typed here before it opened go into
    *  it, the queue and what is attached become the node's. */
@@ -1082,8 +1317,12 @@ export class ConversationPage {
     } catch {
       // Nothing was kept here.
     }
-    this.unbindShared = bindComposer(this.input, session.draft);
-    if (typed.trim() && !this.input.value.trim()) this.setWords(typed, caret);
+    this.unbindShared = bindComposer(this.input, session.draft, undefined, this.textNote, (this.options.words.english ? enText : zhText).limit);
+    // Words this page kept on its own join the shared draft: in its place
+    // where that is empty, after it where it holds other words.
+    const shared = this.input.value;
+    if (typed.trim() && !shared.trim()) this.setWords(typed, caret);
+    else if (typed.trim() && !shared.includes(typed.trim())) this.setWords(`${shared}${shared.endsWith("\n") ? "" : "\n"}${typed}`);
     // A chip kept here went with its draft if that was sent meanwhile.
     if (this.picked) {
       const now = this.draftEpoch()!;
@@ -1107,7 +1346,7 @@ export class ConversationPage {
         this.onTheirWay.delete(id);
         this.update();
       });
-    });
+    }, this.options.words.english, this.textNote, (file) => this.openTextAttachment(file));
     this.queue.element.replaceWith(this.nodeQueue.element);
     // From now on the commands the node holds stand among the words.
     if (this.options.controls) {
@@ -1117,13 +1356,35 @@ export class ConversationPage {
       this.syncControls();
     }
     if (this.options.attach && this.tray) {
-      this.nodeTray = new NodeTray(this.options.attach.words, session, session.draft, say, assistantFiles, () => this.drawAction());
+      this.nodeTray = new NodeTray(this.options.attach.words, session, session.draft, say, assistantFiles, () => this.drawAction(), (file) => this.openTextAttachment(file));
       const held = this.tray.release();
       this.tray.element.replaceWith(this.nodeTray.element);
       this.nodeTray.adopt(held);
     }
     session.subscribe((state) => {
       this.sharedState = state;
+      for (const document of [session.draft, ...state.editors]) {
+        const view = document.view.state;
+        const words = this.options.words.english ? enText : zhText;
+        if (view.reconciled > (this.reconciled.get(document) ?? 0)) {
+          this.reconciled.set(document, view.reconciled);
+          showTextNotice(this.textNote, words.reconciled);
+        }
+        if (!recoverable(view.error) || view.composing || document.onTheirWay || this.rescued.has(document)) continue;
+        this.rescued.add(document);
+        const changed = missingCharacter(view.error);
+        // Start after the current notification, when the textarea has rendered
+        // and any failed Send has returned its sealed words to the input.
+        void Promise.resolve().then(() => session.recoverText(document, (text) => changed ? copyRejectedText(text, words, this.textNote) : attachText(text, words,
+          async (file) => {
+            if (document === session.draft && this.nodeTray) { await this.nodeTray.addText(file); return; }
+            if (this.imagesOnly()) throw new Error(this.imagesOnly()!);
+            const filesOn = this.options.attach?.filesOn;
+            if (filesOn?.assisting() && document.filesOn === null) await session.setFilesOn(filesOn.place(), document);
+            const added = await session.attachFile(file, document);
+            if ("Err" in added.updated) throw new Error(added.updated.Err);
+          }, this.textNote))).catch(() => {}).finally(() => { this.rescued.delete(document); });
+      }
       if (this.picked && this.pickedEpoch !== null && session.draft.view.state.epoch > this.pickedEpoch) this.pick(null);
       this.showOnTheirWay(state.composer);
       this.nodeQueue?.draw(state);
@@ -1131,10 +1392,11 @@ export class ConversationPage {
       this.fit();
       this.drawAction();
     });
+    for (const recovered of session.recoveredSends) this.sendShared(session, recovered.text, recovered);
   }
 
   /** Shows words of the queue on their way as said, once each. */
-  private onItsWay(id: string, text: string, attachments: readonly { name: string; size: number; media_type: string }[]): void {
+  private onItsWay(id: string, text: string, attachments: readonly Attachment[]): void {
     if (this.onTheirWay.has(id) || this.departed.has(id)) return;
     // The queue and what the agent heard come by two ways: words the agent
     // heard before the queue said they were going stand already.
@@ -1142,7 +1404,7 @@ export class ConversationPage {
       this.onTheirWay.set(id, "");
       return;
     }
-    const shown = attachments.map((one) => ({ name: one.name, size: one.size, image: one.media_type.startsWith("image/"), preview: null }));
+    const shown = attachments.map((one) => ({ name: one.name, size: one.size, image: one.media_type.startsWith("image/"), preview: null, digest: one.sha256, ...(one.media_type.startsWith("text/plain") ? { kept: one } : {}) }));
     this.onTheirWay.set(id, this.options.conversation.sending(text, this.options.here || null, shown));
   }
 
@@ -1169,25 +1431,47 @@ export class ConversationPage {
     this.update();
   }
 
-  /** Asks the agent to stop: what runs shows stopped at once, and the
-   *  button says it is stopping until the turn ends. A World that says no
-   *  turn runs is believed: what still looked under way here had ended. A
-   *  stop that did not get there shows it going on again, and says why. */
+  /** Asks the agent to stop: the turn ends here at once, whatever its host
+   *  takes to end it (`gui-conversation-working-indicator-and-stop`): what
+   *  it writes no longer grows, the button sends again and nothing says it
+   *  is stopping. Only a host that has not ended it two seconds later has
+   *  the turn said to go on, with the button to stop it again. A World that
+   *  says no turn runs is believed: what still looked under way here had
+   *  ended. A stop that did not get there shows it going on again, and says
+   *  why. */
   private stop(): void {
-    const asked = this.options.stop();
+    const target = this.options.conversation.runningTurn();
+    // Seeing no turn, the stop is for the words on their way now, and for
+    // none sent after: by the ids the World answered for them with, once
+    // it has answered for them all.
+    // Words it gave no id for, or none on their way, leave it to stop
+    // whatever runs.
+    const coming = target === null ? this.options.conversation.coming() : null;
+    const mine = this.stopsAsked + 1;
+    const asked = coming && coming.unnamed > 0
+      ? this.stopNamed(coming.keys, mine)
+      : this.options.stop(target, coming && coming.words.length > 0 ? coming.words : null);
     if (!asked) return;
-    this.stopping = true;
+    // Only the answer to the latest stop speaks: one to an earlier stop,
+    // coming late, leaves a stop asked since standing.
+    this.stopsAsked = mine;
     this.options.conversation.halt();
+    this.watchStop();
     this.update();
     asked.then(
       (stopped) => {
-        if (stopped) return;
-        this.stopping = false;
-        this.options.conversation.noTurnRuns();
+        if (stopped || mine !== this.stopsAsked) return;
+        this.calledOff();
+        // The turn asked to stop had ended already: a turn begun since goes
+        // on, and is not called off with it.
+        const now = this.options.conversation.runningTurn();
+        if (now === null || now === target) this.options.conversation.noTurnRuns();
+        else this.options.conversation.unhalt();
         this.update();
       },
       (error: unknown) => {
-        this.stopping = false;
+        if (mine !== this.stopsAsked) return;
+        this.calledOff();
         this.options.conversation.unhalt();
         const why = error instanceof Error ? error.message : String(error);
         this.say(this.options.words.turnNotStopped(why), why, true);
@@ -1196,11 +1480,103 @@ export class ConversationPage {
     );
   }
 
+  /** A stop of words on their way (`keys`) the World has not answered for
+   *  all of yet. Each goes by its id as soon as the World answers for it,
+   *  whether a turn took it meanwhile or not: its machine stops whichever
+   *  turn took it. What is gone without an id leaves nothing to stop. One
+   *  whose stop did not get there is sent again. It keeps watching for
+   *  `NAMING_MS`, or until a later stop is asked (`asked`), and answers with
+   *  what the first stop it sent answers. Never a stop of whatever runs,
+   *  nor of a turn found by what words say, which may be words sent
+   *  after. */
+  private stopNamed(keys: readonly string[], asked: number): Promise<boolean> {
+    const since = Date.now();
+    const { conversation } = this.options;
+    const sent = new Set<string>();
+    return new Promise<boolean>((done, failed) => {
+      let first: Promise<boolean> | null = null;
+      // Later stops on their way: watched until they are answered.
+      let pending = 0;
+      const send = (words: string[]) => {
+        const going = this.options.stop(null, words);
+        if (!going) return;
+        if (first === null) {
+          first = going;
+          going.then(done, failed);
+        } else {
+          pending += 1;
+          // Not there: sent again at the next look.
+          going.then(
+            () => { pending -= 1; },
+            () => {
+              pending -= 1;
+              for (const id of words) sent.delete(id);
+            },
+          );
+        }
+      };
+      const look = () => {
+        if (asked !== this.stopsAsked) {
+          if (first === null) done(false);
+          return;
+        }
+        const coming = conversation.coming(keys);
+        const named = [...new Set([...coming.words, ...conversation.haltedIds()])].filter((id) => !sent.has(id));
+        if (named.length > 0) {
+          for (const id of named) sent.add(id);
+          send(named);
+        }
+        // Words heard before their id came still wait for it: the id is
+        // kept as it comes, whatever became of the words shown sending.
+        const unnamed = Math.max(coming.unnamed, conversation.haltedUnnamed());
+        if ((unnamed > 0 || pending > 0 || named.length > 0) && Date.now() - since < NAMING_MS) {
+          setTimeout(look, NAMING_LOOK_MS);
+          return;
+        }
+        if (first === null) done(false);
+      };
+      // After `halt`, which this stop's words are kept by.
+      setTimeout(look, 0);
+    });
+  }
+
+  /** A stop asked for is over, its turn ended or never stopped. */
+  private calledOff(): void {
+    clearTimeout(this.stopWatch);
+    this.stopWatch = 0;
+    this.stopOverdue = false;
+  }
+
+  /** Starts the two seconds a stop has before its turn is said to go on,
+   *  whether it was asked here or on another device (`update`). */
+  private watchStop(): void {
+    this.stopOverdue = false;
+    clearTimeout(this.stopWatch);
+    this.stopWatch = window.setTimeout(() => {
+      if (!this.options.conversation.halting()) return;
+      this.stopOverdue = true;
+      this.update();
+    }, STOP_OVERDUE_MS);
+  }
+
+  /** Whether the page shows a turn under way: one asked to stop shows
+   *  ended, unless its host has not ended it in time (`stop`). */
+  private underWay(): boolean {
+    const { conversation } = this.options;
+    return conversation.busy() && (!conversation.halting() || this.stopOverdue);
+  }
+
   /** Puts words into the input as if typed, so the shared input has them. */
   private setWords(value: string, caret = value.length): void {
     this.input.value = value;
     this.input.setSelectionRange(caret, caret);
     this.input.dispatchEvent(new Event("input", { bubbles: true }));
+  }
+
+  private async attachTextFile(file: File): Promise<void> {
+    if (this.nodeTray) await this.nodeTray.addText(file);
+    else if (this.tray) await this.tray.addText(file);
+    else throw new Error("the conversation cannot receive attachments");
   }
 
   private attachFiles(files: Iterable<File>): void {
@@ -1215,7 +1591,7 @@ export class ConversationPage {
 
   /** Sends the shared words: the node sends them now, or queues them while
    *  a turn is under way. What goes now is shown at once. */
-  private sendShared(session: ComposerSession, text: string): void {
+  private sendShared(session: ComposerSession, text: string, recovered?: ComposerSession["recoveredSends"][number]): void {
     const { conversation, here } = this.options;
     const draft = this.sharedState?.composer;
     // While the shared input is not connected, the words wait here, shown
@@ -1223,8 +1599,8 @@ export class ConversationPage {
     const connected = session.state.connected;
     const queued = connected && this.queues();
     const going = session.state.attachmentsOnTheirWay;
-    const shown = (draft?.draft.attachments ?? []).filter((one) => !going.has(one.id)).map((one) => ({ name: one.name, size: one.size, image: one.media_type.startsWith("image/"), preview: null }));
-    const key = queued ? null : conversation.sending(text, here || null, shown);
+    const shown = (recovered?.attachments ?? (draft?.draft.attachments ?? []).filter((one) => !going.has(one.id))).map((one) => ({ name: one.name, size: one.size, image: one.media_type.startsWith("image/"), preview: null, digest: one.sha256, ...(one.media_type.startsWith("text/plain") ? { kept: one } : {}) }));
+    let key = queued ? null : conversation.sending(text, here || null, shown);
     if (key && !connected) conversation.sent(key, { state: "waiting", why: session.state.error?.message ?? "" });
     // Words that will wait for the turn to end are in the queue at once, as
     // sent from here, while the node of the conversation's machine takes
@@ -1235,36 +1611,61 @@ export class ConversationPage {
     // With no answer within two minutes, words handed to the node are not
     // known to have gone: they say so, and can be sent again or taken back
     // into the input (`Fold.settles`).
-    const sending = session.send((why) => {
+    const sending = recovered?.sending ?? session.send((why) => {
       if (!key) {
-        waiting?.late(sending.withdraw);
+        waiting?.late(withdraw);
         return;
       }
       conversation.sent(key, { state: "unknown", why });
       this.update();
     });
-    const sent = sending.sent;
-    if (key) conversation.settles(key, { again: sending.again, remove: sending.withdraw });
+    const withdraw = () => {
+      void sending.withdraw().then((result) => {
+        if (result.kind === "sent") {
+          if (key) {
+            conversation.settles(key, null);
+            conversation.sent(key, { state: "landed", how: "handed", machine: this.options.someone.machine });
+          }
+          waiting?.done();
+        } else if (result.kind === "unavailable") {
+          if (key) conversation.sent(key, { state: "unknown", why: result.why });
+          this.say(result.why, result.why, true);
+        }
+        this.update();
+      });
+    };
+    if (recovered) {
+      if (key) conversation.sent(key, { state: "unknown", why: session.state.error?.message ?? "" });
+      waiting?.late(withdraw);
+    }
+    // Words that looked to wait here the node sends straight on: the turn had
+    // ended there, or the user stopped it. They leave the queue for the
+    // conversation as soon as the node says so, not once they have gone.
+    const straightOn = () => {
+      if (key || !waiting) return;
+      waiting.done();
+      key = conversation.sending(text, here || null, shown);
+      conversation.settles(key, { again: sending.again, remove: withdraw });
+      this.update();
+    };
+    void sending.accepted.then(straightOn);
+    const sent = sending.sent.then((updated) => {
+      if (updated?.landed) straightOn();
+      return updated;
+    });
+    if (key) conversation.settles(key, { again: sending.again, remove: withdraw });
     this.update();
     if (waiting) void sent.then(waiting.done, waiting.done);
-    if (key) {
-      this.straight += 1;
-      this.nodeQueue?.goingStraight(this.straight);
-      const heard = () => {
-        this.straight -= 1;
-        this.nodeQueue?.goingStraight(this.straight);
-      };
-      void sent.then(heard, heard);
-    }
-    this.follow(key, sent);
+    this.follow(() => key, sent);
   }
 
   /** Words shown below the turn's line while on their way: where they
    *  landed, or that they failed, as the node answers. */
-  private follow(key: string | null, sending: Promise<ComposerUpdated | null>): void {
+  private follow(shown: () => string | null, sending: Promise<ComposerUpdated | null>): void {
     const { conversation } = this.options;
     sending.then(
       (updated) => {
+        const key = shown();
         if (!key) return;
         conversation.settles(key, null);
         if (!updated) {
@@ -1284,6 +1685,7 @@ export class ConversationPage {
       },
       (error: unknown) => {
         const why = error instanceof Error ? error.message : String(error);
+        const key = shown();
         // Words that did not go are where the node keeps them, back in the
         // input or still in the queue: they leave the conversation, and the
         // reason is said by the input, once for words sent after them too.
@@ -1299,10 +1701,12 @@ export class ConversationPage {
 
   /** Whether words sent now wait in the queue: only while the agent works,
    *  a turn just released has not ended, or other words are on their way,
-   *  as the node decides; with it idle they go straight on. */
+   *  as the node decides; with it idle they go straight on. A turn the user
+   *  stopped works no more: words sent after the stop start the next turn,
+   *  which the node begins once the host has ended this one. */
   private queues(): boolean {
     const composer = this.sharedState?.composer;
-    return this.options.conversation.busy() || !!composer?.awaiting_turn || !!composer?.queue.some((item) => item.sending)
+    return this.underWay() || !!composer?.awaiting_turn || !!composer?.queue.some((item) => item.sending)
       || !!this.session?.state.onTheirWay;
   }
 
@@ -1351,7 +1755,7 @@ export class ConversationPage {
     }
     const attached = !session && this.tray?.count ? { ...this.tray.take(), filesOn } : { refs: [], shown: [], filesOn: null };
     if (!text && !attached.refs.length && !(session && this.nodeTray?.count)) {
-      if (this.options.conversation.busy()) this.stop();
+      if (this.underWay()) this.stop();
       return;
     }
     // What the last command did is behind the conversation now.
@@ -1420,6 +1824,7 @@ export class ConversationPage {
   }
 
   private clear(): void {
+    showTextNotice(this.textNote, "");
     if (this.session) this.setWords("");
     else this.input.value = "";
     this.fit();
@@ -1447,6 +1852,10 @@ export class ConversationPage {
   /** A file the conversation names, pressed: one that reads as text opens
    *  in the side, a picture in the viewer, anything else with this device's
    *  program for its kind (`file-kind.ts`). */
+  private openTextAttachment(file: Attachment): void {
+    if (!this.openElsewhere(file.owner.machine, file.path, file)) this.fileLinks?.openOutside(file.owner.machine, file.path, file);
+  }
+
   private openFile(machine: MachineName, path: string): void {
     if (!this.openElsewhere(machine, path, null)) this.fileLinks?.openOutside(machine, path);
   }
@@ -1463,32 +1872,24 @@ export class ConversationPage {
     return kind === "text" && this.readFile(machine, path, attachment);
   }
 
-  /** A file read in the side, over the conversation's parts; false where
-   *  there is no side to read it in. */
-  private readFile(machine: MachineName, path: string, attachment: AttachmentSource | null): boolean {
-    const { side, options } = this;
-    const lines = options.lines;
-    const words = options.side?.words.file;
-    if (!side || !lines || !words) return false;
-    const pictures = options.pictures;
-    const page = new FilePage({
-      words,
-      machine,
-      path,
-      lines: (on, at) => lines(on, at, { kind: "file", encoding: null }),
-      outside: () => this.fileLinks?.openOutside(machine, path, attachment),
-      open: (on, at) => this.openFile(on, at),
-      picture: pictures ? (on, at, max) => pictures.thumbnail(on, at, max) : undefined,
-      gone,
-      detail: whyOf,
-    });
-    if (side.openFile(page)) return true;
-    page.leave();
-    return false;
+  /** A file read in the side on a tab of its own, at what it holds or at
+   *  what the conversation did to it: the tab it already has is turned to;
+   *  where the files stand in a window of their own, it opens there. False
+   *  where there is no side to read it in. */
+  private readFile(machine: MachineName, path: string, attachment: AttachmentSource | null, tab: ViewTab | null = null): boolean {
+    const { side, fileTabs } = this;
+    if (!side || !fileTabs) return false;
+    if (fileTabs.turn(machine, path, tab)) return true;
+    // A file the user sent is read where the World keeps it, which only
+    // this window knows.
+    if (!attachment && side.sendOut({ machine, path, tab }, () => void this.readFile(machine, path, null, tab))) return true;
+    return fileTabs.open(machine, path, tab, attachment ? (on, at) => this.fileLinks?.openOutside(on, at, attachment) : undefined);
   }
 
-  private say(text: string, detail = "", refused = false): void {
-    this.note.textContent = text;
+  /** `waits`: what is said is awaited (`sayWaiting`). */
+  private say(text: string, detail = "", refused = false, waits = false): void {
+    if (waits && text) sayWaiting(this.note, text);
+    else this.note.textContent = text;
     this.note.title = detail;
     this.noteDetail = null;
     this.note.classList.toggle("refused", refused);
@@ -1859,8 +2260,16 @@ export class ConversationPage {
     try {
       const offered = await controls.offers();
       this.offered = offered;
+      this.syncControls([...(offered.pending_controls ?? []), ...(offered.pending_newer ?? [])]);
+      // Its host is still being started: what came is what the node knows
+      // without it, and the rest is asked for again, soon and then less often.
       this.offersFailed = 0;
-      this.syncControls(offered.pending_controls ?? []);
+      if (offered.gathering && this.offersGathering < GATHERING_TRIES) {
+        const wait = Math.min(15_000, 1500 * 2 ** this.offersGathering++);
+        this.offersAgain = window.setTimeout(() => void this.askOffers(), wait);
+      } else if (!offered.gathering) {
+        this.offersGathering = 0;
+      }
     } catch {
       // The way to its machine broke for a moment: asked again a few times,
       // soon and then less often; after that, when a turn ends. Its machine
@@ -2171,7 +2580,9 @@ export class ConversationPage {
       this.stop();
       return true;
     }
-    if (command.control === "goal") {
+    // A node that takes `/goal` does it in its order among the words, as
+    // every slash command; one from before is given the goal at once.
+    if (command.control === "goal" && !this.offered?.control_goal) {
       this.side?.setGoal(args);
       return true;
     }
@@ -2194,7 +2605,9 @@ export class ConversationPage {
     }
     const what: Control =
       given ??
-      (command.control === "compact"
+      (command.control === "goal"
+        ? { do: "goal", objective: args }
+        : command.control === "compact"
         ? { do: "compact" }
         : command.control === "model"
           ? { do: "model", model: args, effort: null }
@@ -2324,12 +2737,12 @@ export class ConversationPage {
     this.jobs.update(jobs, now);
   }
 
-  private away: "removed" | "deleted" | "away" | null = null;
+  private away: "removed" | "deleted" | "away" | "unreached" | "stopped" | null = null;
 
   /** Whether the user archived it, or deleted it, as the World last listed
    *  it. Archived, it is kept to read and can be brought back where the
    *  composer was; deleted, what is shown is all that is left of it here. */
-  presence(away: "removed" | "deleted" | "away" | null): void {
+  presence(away: "removed" | "deleted" | "away" | "unreached" | "stopped" | null): void {
     if (this.away === away) return;
     this.away = away;
     // Its shared input is no one's now.
@@ -2342,7 +2755,7 @@ export class ConversationPage {
     this.element.querySelector<HTMLElement>(".composer")!.hidden = away !== null;
     // Nothing more is heard of it: no turn is said to go on, and its goal's
     // bar, whose acts would reach nothing, steps aside.
-    const unheard = away === "away" || away === "deleted";
+    const unheard = away !== null && away !== "removed";
     this.view.hearing(!unheard);
     this.element.toggleAttribute("data-unheard", unheard);
     const gone = this.element.querySelector<HTMLElement>(".composer-gone")!;
@@ -2357,7 +2770,9 @@ export class ConversationPage {
           ? `${glyph("trash", 16)}<span>${escape(manage?.words.deleted ?? this.options.words.removedNote)}</span>`
           : away === "away"
             ? `${glyph("lock", 16)}<span>${escape(this.options.someone.assistFrom ? this.options.words.assistEndedNote : this.options.words.departedNote)}</span>`
-            : "";
+            : away === "unreached" || away === "stopped"
+              ? `${glyph("link", 16)}<span>${escape(away === "stopped" ? this.options.words.notConnected : this.options.words.watchInterrupted(null))}</span>`
+              : "";
     this.element.querySelector<HTMLElement>(".talk-menu-toggle")?.toggleAttribute("hidden", away === "deleted");
     this.drawState();
     this.update();
@@ -2585,11 +3000,12 @@ export class ConversationPage {
     this.nameHint();
     // Archived or deleted, it is not said to work or wait.
     const waiting = !this.gone && this.away === null && conversation.waiting();
-    // Working for the whole of a turn, not only while something shows.
-    const working = !this.gone && this.away === null && !waiting && conversation.busy();
-    // Out of reach for good, that is what is said, not that the line broke.
+    // Working for the whole of a turn, not only while something shows; a
+    // turn asked to stop has ended here (`stop`).
+    const working = !this.gone && this.away === null && !waiting && this.underWay();
+    // Current presence takes precedence over an earlier transport error.
     const now =
-      (this.away === "away" ? null : this.gone) ??
+      (this.away !== null ? null : this.gone) ??
       (this.away !== null
         ? this.away === "deleted"
           ? (this.options.manage?.words.deleted ?? words.removed)
@@ -2597,12 +3013,16 @@ export class ConversationPage {
             ? someone.assistFrom
               ? words.assistEnded
               : words.departed
-            : words.removed
+            : this.away === "stopped"
+              ? words.notConnected
+              : this.away === "unreached"
+                ? words.watchInterrupted(null)
+                : words.removed
         : waiting
           ? words.waitingForYou
           : working
-            ? conversation.halting()
-              ? words.stopping
+            ? this.stopOverdue
+              ? words.notStoppedYet
               : words.working
             : words.idle);
     // A screen reader hears the conversation change state, once each time:
@@ -2620,10 +3040,15 @@ export class ConversationPage {
     // where the head has no room for its machine, a long press says it.
     const lives = someone.assistFrom ? this.options.words.assistFrom(someone.assistFrom) : someone.machine;
     who.title = [someone.agent, lives, now, model].filter(Boolean).join("　");
-    const trouble = this.away === "away" ? now : (this.gone ?? (this.away !== null ? now : null));
+    const preparing = conversation.preparing;
+    const trouble = this.away !== null ? now : this.gone ?? (preparing ? (words.english ? "Preparing history…" : "正在整理历史…") : null);
     this.state.hidden = !trouble;
-    if (this.state.textContent !== (trouble ?? "")) this.state.textContent = trouble ?? "";
-    this.state.classList.toggle("gone", trouble !== null);
+    if (this.state.textContent !== (trouble ?? "")) {
+      // Its history being prepared is awaited; being away or gone is said.
+      if (preparing && trouble && this.away === null && this.gone === null) this.state.innerHTML = waitingInline(trouble);
+      else this.state.textContent = trouble ?? "";
+    }
+    this.state.classList.toggle("gone", this.away !== null || this.gone !== null);
     // How long it has been broken is as of when the pointer comes to it.
     const why = this.interrupted && this.brokenSince
       ? words.brokenFor(words.took(Date.now() - this.brokenSince.getTime()), this.brokenWhy)
@@ -2665,19 +3090,18 @@ export class ConversationPage {
   private drawAction(): void {
     const { words, conversation } = this.options;
     const typed = this.input.value.trim() !== "" || !!this.picked || ((this.session ? this.nodeTray?.count : this.tray?.count) ?? 0) > 0;
-    const busy = conversation.busy();
-    if (!busy) this.stopping = false;
+    const busy = this.underWay();
+    if (!conversation.halting()) this.calledOff();
     const stop = !typed && busy;
     this.action.innerHTML = glyph(stop ? "stop" : "send", 18);
     const waits = this.released !== null || (this.session ? this.queues() : busy);
     // Files still on their way hold the words back; the button says why on
     // hover, which a disabled one would not.
     const held = !stop && typed && this.uploading();
-    const label = stop ? (this.stopping ? words.stopping : words.stop) : held ? this.options.attach!.words.wait : typed && waits ? words.queue.queue : words.send;
+    const label = stop ? (this.stopOverdue ? words.stopAgain : words.stop) : held ? this.options.attach!.words.wait : typed && waits ? words.queue.queue : words.send;
     this.action.setAttribute("aria-label", label);
     this.action.title = label;
     this.action.classList.toggle("stop", stop);
-    this.action.classList.toggle("stopping", stop && this.stopping);
     this.action.disabled = !typed && !stop;
     if (held) this.action.setAttribute("aria-disabled", "true");
     else this.action.removeAttribute("aria-disabled");

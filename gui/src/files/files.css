@@ -1,0 +1,1133 @@
+/* Files (`gui-files`): a list of changed files as it is read everywhere (a
+   path, the lines added in green and removed in red, five squares), a
+   change's lines, a machine's folders as a tree, a file opened, and the
+   page that holds a tree and a file side by side. Classes begin `cf-`
+   (changed files), `ft-` (the tree), `fx-` (a file opened), `fb-` (the
+   page). */
+
+/* ---- A list of changed files ---- */
+
+.cf-files {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-radius: var(--radius-l);
+  background: var(--fill);
+  overflow: hidden;
+  font-variant-numeric: tabular-nums;
+}
+
+.cf-file + .cf-file,
+.cf-file + .cf-rest {
+  border-top: 1px solid var(--divider);
+}
+
+/* A file: its mark, its path, whose it is, its lines, its squares. The
+   folder gives way from its start, so the file's own name is always in
+   sight. */
+.cf-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 44px;
+  padding: 0 16px;
+  cursor: pointer;
+  transition: background-color var(--hover) var(--ease);
+}
+
+.cf-row:hover {
+  background: var(--fill);
+}
+
+.cf-row:active {
+  background: var(--fill-strong);
+}
+
+.cf-mark {
+  flex: none;
+  display: block;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.3;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.cf-mark .cf-dot {
+  fill: currentColor;
+  stroke: none;
+}
+
+.cf-mark.cf-added {
+  color: var(--add-fg);
+}
+
+.cf-mark.cf-changed {
+  color: var(--caution);
+}
+
+.cf-mark.cf-removed {
+  color: var(--del-fg);
+}
+
+.cf-mark.cf-copied {
+  color: var(--text-3);
+}
+
+.cf-path {
+  flex: 1 1 auto;
+  display: flex;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.cf-folder {
+  flex: 0 1 auto;
+  min-width: 0;
+  direction: rtl;
+  text-align: left;
+  color: var(--text-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cf-path b {
+  flex: none;
+  max-width: 100%;
+  font-family: inherit;
+  font-weight: 400;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Who changed it: the agent's mark and the conversation's name. */
+.cf-who,
+.cf-where {
+  flex: 0 1 auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 40%;
+  white-space: nowrap;
+  color: var(--text-2);
+}
+
+.cf-who .glyph,
+.cf-where .glyph {
+  flex: none;
+}
+
+.cf-who > span,
+.cf-who > a,
+.cf-where > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cf-who a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.cf-who a:hover {
+  color: var(--text-strong);
+  text-decoration: underline;
+  text-decoration-color: var(--text-3);
+}
+
+.cf-who small {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: inherit;
+  color: var(--text-3);
+}
+
+.cf-where {
+  color: var(--text-3);
+}
+
+/* The lines added and removed: green and red, as they are everywhere. */
+.cf-figures {
+  flex: none;
+  display: inline-flex;
+  gap: 10px;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.cf-figures > .cf-add {
+  color: var(--add-fg);
+}
+
+.cf-figures > .cf-del {
+  color: var(--del-fg);
+}
+
+.cf-figures.cf-none {
+  color: var(--text-3);
+}
+
+.cf-row > .cf-figures {
+  justify-content: flex-end;
+  min-width: 5.5em;
+}
+
+.cf-squares {
+  flex: none;
+  display: inline-flex;
+  gap: 2px;
+}
+
+.cf-squares i {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  background: var(--fill-strong);
+}
+
+.cf-squares i.add {
+  background: var(--add-fg);
+}
+
+.cf-squares i.del {
+  background: var(--del-fg);
+}
+
+.cf-rest {
+  padding: 8px 16px 8px 44px;
+}
+
+.cf-how,
+.cf-note {
+  color: var(--text-3);
+  white-space: nowrap;
+}
+
+.cf-note {
+  margin: 0;
+  white-space: normal;
+}
+
+/* A file opened under its row, folding open and shut at the interface's
+   one pace. */
+.cf-fold {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows var(--expand) var(--expand-easing);
+}
+
+.cf-file.open > .cf-fold {
+  grid-template-rows: 1fr;
+}
+
+.cf-fold-inner {
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.cf-file:not(.open) > .cf-fold > .cf-fold-inner {
+  visibility: hidden;
+  transition: visibility 0s var(--expand);
+}
+
+/* ---- A change's lines ---- */
+
+/* A line too long for the page is carried on under itself: nothing scrolls
+   sideways. */
+.cf-diff {
+  border-radius: var(--radius-m);
+  background: var(--surface-code);
+  font-family: var(--font-code);
+  font-size: var(--size-code);
+  font-variation-settings: var(--code-axes);
+  line-height: 1.6;
+  overflow: hidden;
+}
+
+.cf-diff-lines {
+  padding: 6px 0;
+}
+
+.cf-dl {
+  display: flex;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  tab-size: 4;
+}
+
+.cf-dn {
+  flex: none;
+  width: calc(var(--line-digits, 3) * 1ch + 22px);
+  padding-right: 10px;
+  text-align: right;
+  color: var(--text-3);
+  opacity: 0.8;
+  user-select: none;
+}
+
+.cf-ds {
+  flex: none;
+  width: 2ch;
+  color: var(--text-3);
+  user-select: none;
+}
+
+/* What is carried on hangs two letters past the line's own indentation. */
+.cf-dt {
+  flex: 1 1 0;
+  min-width: 0;
+  padding-right: 12px;
+  padding-left: calc((var(--in, 0) + 2) * 1ch);
+  text-indent: calc((var(--in, 0) + 2) * -1ch);
+  color: var(--text);
+}
+
+.cf-dl.cf-gap > .cf-dt {
+  padding-left: 0;
+  text-indent: 0;
+}
+
+.cf-dl.cf-add {
+  background: var(--add-line);
+}
+
+.cf-dl.cf-add > .cf-ds {
+  color: var(--add-fg);
+}
+
+.cf-dl.cf-del {
+  background: var(--del-line);
+}
+
+.cf-dl.cf-del > .cf-ds {
+  color: var(--del-fg);
+}
+
+/* The lines left alone between two parts: said in a quiet word, no band. */
+.cf-dl.cf-gap {
+  font-family: var(--font-reading);
+  font-size: var(--size-fine);
+  line-height: 2;
+}
+
+.cf-dl.cf-gap > .cf-dt {
+  color: var(--text-3);
+}
+
+.cf-longer {
+  margin: 6px 2px 0;
+  color: var(--text-3);
+}
+
+/* ---- A machine's folders ---- */
+
+.ft-tree {
+  padding: 2px 6px 24px;
+  font-variant-numeric: tabular-nums;
+  outline: none;
+}
+
+.ft-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+  padding: 0 8px 0 calc(6px + var(--depth, 0) * 16px);
+  border-radius: 8px;
+  color: var(--text);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color var(--hover) var(--ease);
+}
+
+.ft-row:hover {
+  background: var(--fill);
+}
+
+.ft-row:active {
+  background: var(--fill-strong);
+}
+
+.ft-row.chosen {
+  background: var(--accent-wash);
+}
+
+.ft-row:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+
+.ft-twist {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 16px;
+  color: var(--text-3);
+  --turn: -90deg;
+  rotate: var(--turn);
+  transition: --turn var(--fold) var(--fold-easing);
+}
+
+.ft-folder.open > .ft-twist {
+  --turn: 0deg;
+}
+
+.ft-icon {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 16px;
+  color: var(--text-2);
+}
+
+.ft-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ft-folder > .ft-name {
+  color: var(--text);
+}
+
+.ft-added > .ft-name {
+  color: var(--add-fg);
+}
+
+.ft-removed > .ft-name {
+  color: var(--del-fg);
+  text-decoration: line-through;
+  text-decoration-color: color-mix(in srgb, var(--del-fg) 60%, transparent);
+}
+
+.ft-changed > .ft-name {
+  color: var(--text-strong);
+}
+
+.ft-dim > .ft-name,
+.ft-dim > .ft-icon {
+  opacity: 0.55;
+}
+
+.ft-row > .cf-figures {
+  gap: 6px;
+  font-size: var(--size-fine);
+}
+
+/* A folder holding a changed file. */
+.ft-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  margin-right: 2px;
+  border-radius: 50%;
+  background: var(--caution);
+  opacity: 0.85;
+}
+
+.ft-note {
+  margin: 0;
+  padding: 4px 8px 4px calc(6px + var(--depth, 0) * 16px + 18px);
+  color: var(--text-3);
+}
+
+/* What a folder holds comes in as it opens. */
+.ft-in {
+  opacity: var(--shown);
+  translate: 0 var(--lift);
+  animation: ft-in var(--enter) var(--fold-easing) both;
+}
+
+@keyframes ft-in {
+  from {
+    --shown: 0;
+    --lift: -4px;
+  }
+}
+
+/* ---- A file opened ---- */
+
+/* Set as the plan's page is: where it is, quiet, on the first line; its
+   name on a ruled line, the switch between what it holds and its changes
+   standing on the same line; then the file, which alone scrolls. */
+.fx-view {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+}
+
+.fx-head {
+  flex: none;
+  margin: 0 0 var(--space-3);
+}
+
+/* Where it is: the machine, then its folders, which give way from the
+   front so the end of the path stays. Pressed, it is shown among them. */
+.fx-where {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 28px;
+  color: var(--text-3);
+  font-size: var(--size-fine);
+}
+
+.fx-place {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  color: inherit;
+  text-decoration: none;
+  transition: color var(--hover) var(--ease);
+}
+
+a.fx-place:hover {
+  color: var(--text-2);
+}
+
+.fx-place > .glyph,
+.fx-machine {
+  flex: none;
+}
+
+.fx-folder {
+  flex: 0 1 auto;
+  min-width: 0;
+  margin-left: var(--space-1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  direction: rtl;
+}
+
+.fx-folder > bdi {
+  direction: ltr;
+}
+
+.fx-out {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  margin-right: -6px;
+  color: var(--text-3);
+}
+
+.fx-out:hover {
+  color: var(--text);
+}
+
+.fx-title {
+  position: relative;
+  display: flex;
+  align-items: flex-end;
+  gap: 0 12px;
+  min-height: 38px;
+}
+
+/* The line under the name, ruled across the page. */
+.fx-title::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 8px;
+  background: var(--pen-rule);
+  -webkit-mask: var(--pen-rule-1) 0 50% / 100% 100% no-repeat;
+  mask: var(--pen-rule-1) 0 50% / 100% 100% no-repeat;
+  pointer-events: none;
+}
+
+/* The name and its lines on one baseline. */
+/* On a tab that says its name, the head is this line alone: where it is,
+   what was done to it, and the switch. */
+.fx-brief {
+  align-items: center;
+  gap: 0 var(--space-2);
+  padding-bottom: 6px;
+  color: var(--text-3);
+  font-size: var(--size-fine);
+}
+
+.fx-brief > .fx-tabs {
+  font-size: var(--size-text);
+}
+
+/* In a narrow side the machine is its mark alone, its name on the pointer:
+   the room goes to the folders. */
+.fx-head {
+  container-type: inline-size;
+}
+
+@container (max-width: 460px) {
+  .fx-brief .fx-machine {
+    display: none;
+  }
+}
+
+.fx-brief > .fx-out {
+  margin-left: -4px;
+}
+
+.fx-named {
+  flex: 0 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  padding-bottom: 9px;
+}
+
+.fx-name {
+  flex: 0 1 auto;
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-emphasis);
+  font-weight: 400;
+  font-size: var(--size-h3);
+  line-height: 1.3;
+  color: var(--text-strong);
+}
+
+.fx-sum {
+  flex: none;
+}
+
+.fx-tabs {
+  flex: none;
+  margin-left: auto;
+}
+
+.fx-tabs[hidden] {
+  display: none;
+}
+
+.fx-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.fx-content,
+.fx-changes {
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+}
+
+.fx-content[hidden],
+.fx-changes[hidden] {
+  display: none;
+}
+
+.fx-content {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.fx-note,
+.fx-status {
+  margin: 0;
+  color: var(--text-3);
+}
+
+.fx-status {
+  margin-bottom: var(--space-2);
+}
+
+.fx-status[hidden] {
+  display: none;
+}
+
+/* The prose scrolls in its own place, the head standing over it. */
+.fx-scroll {
+  grid-row: 2;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.fx-prose {
+  max-width: calc(var(--body-size) * 46);
+  padding-bottom: var(--space-8);
+}
+
+.fx-prose img[data-file-path] {
+  cursor: zoom-in;
+}
+
+/* The lines fill what is left, on the code's own surface. */
+.fx-content > .fx-lines {
+  grid-row: 1 / -1;
+  height: 100%;
+  padding: var(--space-2) 0;
+  box-sizing: border-box;
+  border-radius: var(--radius-m);
+}
+
+.fx-lines .lv-line {
+  padding-left: var(--space-2);
+}
+
+.fx-lines .lv-number {
+  padding-right: 1.6ch;
+  opacity: 0.7;
+}
+
+.fx-picture {
+  grid-row: 1 / -1;
+  display: grid;
+  place-items: center;
+  min-height: 0;
+  margin: 0;
+  padding: var(--space-4);
+  overflow: auto;
+  border-radius: var(--radius-m);
+  background: var(--bg-sunken);
+}
+
+.fx-picture img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  border-radius: var(--radius-s);
+}
+
+.fx-outside {
+  grid-row: 1 / -1;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: var(--space-3);
+  color: var(--text-3);
+  text-align: center;
+}
+
+.fx-outside p {
+  margin: 0;
+}
+
+/* Its changes, the latest first: who and when in a line of quiet words, as
+   a stretch's heading is; its lines under, opened and shut by the line. */
+.fx-changes {
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding-bottom: var(--space-8);
+}
+
+.fx-change + .fx-change {
+  margin-top: var(--space-3);
+}
+
+.fx-change.bare + .fx-change.bare {
+  margin-top: 0;
+}
+
+.fx-change-head,
+.fx-change-line {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 30px;
+  color: var(--text-2);
+  white-space: nowrap;
+}
+
+.fx-change-head {
+  cursor: pointer;
+  transition: color var(--hover) var(--ease);
+}
+
+.fx-change-head:hover {
+  color: var(--text);
+}
+
+.fx-change-head > .glyph {
+  flex: none;
+  margin-left: -4px;
+  color: var(--text-3);
+  --turn: -90deg;
+  rotate: var(--turn);
+  transition: --turn var(--expand) var(--expand-easing);
+}
+
+.fx-change.open > .fx-change-head > .glyph {
+  --turn: 0deg;
+}
+
+:is(.fx-change-head, .fx-change-line) > time {
+  flex: none;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+:is(.fx-change-head, .fx-change-line) > .cf-who {
+  flex: 0 1 auto;
+  max-width: none;
+}
+
+.fx-change-fold {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows var(--expand) var(--expand-easing);
+}
+
+.fx-change.open > .fx-change-fold {
+  grid-template-rows: 1fr;
+}
+
+.fx-change-body {
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.fx-change:not(.open) > .fx-change-fold > .fx-change-body {
+  visibility: hidden;
+  transition: visibility 0s var(--expand);
+}
+
+.fx-change-body > .fx-note {
+  padding: 0 0 8px;
+}
+
+/* ---- The page: a tree and a file side by side ---- */
+
+.fb-page {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.fb-body {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(260px, 30%) minmax(0, 1fr);
+  padding: 0 var(--gutter-wide) 0 calc(var(--gutter-wide) - 8px);
+}
+
+.fb-side {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  padding-right: var(--space-3);
+  border-right: 1px solid var(--divider);
+}
+
+.fb-bar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 10px;
+  padding: 2px 0 var(--space-3) 6px;
+}
+
+.fb-machine {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.fb-pick {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+  height: 34px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--radius-m);
+  background: none;
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+  scale: var(--press, 1);
+  transition: background-color var(--hover) var(--ease);
+}
+
+.fb-pick:hover,
+.fb-pick[aria-expanded="true"] {
+  background: var(--fill);
+}
+
+.fb-pick b {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-emphasis);
+  font-weight: 400;
+  color: var(--text-strong);
+}
+
+.fb-pick small,
+.fb-option small {
+  font-size: var(--size-fine);
+  color: var(--text-3);
+}
+
+.fb-pick > .glyph:last-child {
+  color: var(--text-3);
+}
+
+.fb-menu {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 4px);
+  left: 0;
+  width: max(100%, 240px);
+  max-width: 340px;
+  padding: 6px;
+  border-radius: var(--radius-l);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-pop, 0 12px 32px rgba(0, 0, 0, 0.28));
+  opacity: var(--shown);
+  translate: 0 var(--lift);
+  animation: fb-menu var(--enter) var(--fold-easing) both;
+}
+
+@keyframes fb-menu {
+  from {
+    --shown: 0;
+    --lift: -6px;
+  }
+}
+
+.fb-find {
+  width: 100%;
+  height: 34px;
+  margin-bottom: 6px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--radius-m);
+  background: var(--field);
+  color: var(--text);
+  font: inherit;
+  box-sizing: border-box;
+}
+
+.fb-menu-list {
+  max-height: min(52vh, 420px);
+  overflow: auto;
+}
+
+.fb-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 36px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.fb-option:hover {
+  background: var(--fill);
+}
+
+.fb-option.chosen {
+  background: var(--accent-wash);
+}
+
+.fb-option.away > span,
+.fb-option.away > .glyph {
+  opacity: 0.6;
+}
+
+.fb-option > span {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fb-modes .segment small {
+  margin-left: 6px;
+  font-size: var(--size-fine);
+  color: var(--text-3);
+}
+
+.fb-modes .segment[disabled] {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/* Where the tree starts: the machine's places, then the folders down to
+   the one shown, each a step up. */
+.fb-crumbs {
+  flex: none;
+  padding: 0 0 var(--space-2) 6px;
+  color: var(--text-3);
+}
+
+.fb-crumbs[hidden] {
+  display: none;
+}
+
+.fb-places {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.fb-place {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--radius-full);
+  background: var(--fill);
+  color: var(--text-2);
+  font: inherit;
+  cursor: pointer;
+  scale: var(--press, 1);
+}
+
+.fb-place:hover {
+  color: var(--text-strong);
+}
+
+.fb-place.chosen {
+  background: var(--accent-wash);
+  color: var(--text-strong);
+}
+
+.fb-tree {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.fb-main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  padding: 0 0 var(--space-4) var(--space-5);
+}
+
+.fb-main > .fx-view {
+  flex: 1;
+}
+
+.fb-back {
+  display: none;
+}
+
+.fb-empty {
+  flex: 1;
+  display: grid;
+  place-items: center;
+  color: var(--text-3);
+}
+
+.fb-lately {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 2px 0 var(--space-8);
+}
+
+.fb-lately-head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin: 6px 4px var(--space-3);
+  color: var(--text-2);
+}
+
+.fb-lately-head b {
+  font-family: var(--font-emphasis);
+  font-weight: 400;
+  color: var(--text-strong);
+}
+
+.fb-lately-head small {
+  font-size: inherit;
+  color: var(--text-3);
+}
+
+.fb-lately-head .cf-figures {
+  margin-left: auto;
+}
+
+/* A narrow window: the tree and the file take the page in turn; in a list
+   the squares go, and whose a file is moves under its path. */
+@media (max-width: 760px) {
+  .cf-row {
+    gap: 10px;
+    padding: 0 12px;
+  }
+
+  .cf-squares {
+    display: none;
+  }
+
+  .cf-row > .cf-figures {
+    min-width: 0;
+  }
+
+  .cf-row > .cf-who,
+  .cf-row > .cf-where {
+    display: none;
+  }
+
+  .fb-body {
+    grid-template-columns: minmax(0, 1fr);
+    padding: 0 var(--gutter);
+  }
+
+  .fb-side {
+    padding-right: 0;
+    border-right: 0;
+  }
+
+  .fb-main {
+    display: none;
+    padding: 0 0 var(--space-3);
+  }
+
+  .fb-reading .fb-side {
+    display: none;
+  }
+
+  .fb-reading .fb-main {
+    display: flex;
+  }
+
+  .fb-reading .fb-back {
+    display: inline-flex;
+    align-self: flex-start;
+    margin: 0 0 var(--space-1) -6px;
+  }
+
+}

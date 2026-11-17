@@ -1,11 +1,15 @@
 //! One document's text journal and attachment metadata. Text is moved with its
 //! owning composer while changing; failed writes discard it and reload authority.
 
-use super::failure;
+mod aliases;
+mod editing;
+mod journaling;
+use super::{failure, limits};
+use aliases::Aliases;
 use fastctx_types::composer::{Character, CharacterId, Draft};
 use fastctx_types::ipc::Failure;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::HashSet;
 
 #[derive(Serialize, Deserialize)]
 pub(super) struct Document {
@@ -14,8 +18,20 @@ pub(super) struct Document {
     pub epoch: u64,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     atoms: Vec<Atom>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(
+        default,
+        serialize_with = "journaling::serialize_aliases",
+        deserialize_with = "journaling::deserialize_aliases"
+    )]
     aliases: Vec<Alias>,
+    #[serde(skip)]
+    aliases_persisted: bool,
+    #[serde(skip)]
+    pub checkpoint_migration: Option<Vec<u8>>,
+    #[serde(skip)]
+    indexed: Aliases,
+    #[serde(skip)]
+    pub aliases_changed: bool,
     pub attachments: Vec<fastctx_types::attachments::Attachment>,
     pub uploads: Vec<fastctx_types::composer::Uploading>,
     #[serde(default)]
@@ -54,6 +70,10 @@ impl Default for Document {
             epoch: 0,
             atoms: Vec::new(),
             aliases: Vec::new(),
+            aliases_persisted: true,
+            checkpoint_migration: None,
+            indexed: Aliases::default(),
+            aliases_changed: false,
             attachments: Vec::new(),
             uploads: Vec::new(),
             files_on: None,
@@ -82,6 +102,7 @@ impl Document {
             live.apply(&update).map_err(failure)?;
         }
         if !self.atoms.is_empty() {
+            self.aliases_persisted = false;
             if self.revision != 0 {
                 return Err(failure("the legacy draft and its text journal both contain data"));
             }
@@ -108,7 +129,15 @@ impl Document {
             }
         }
         self.live = Some(live);
+        self.reindex_aliases();
+        self.prune_aliases();
         Ok(())
+    }
+    pub fn vector(&self) -> Result<Vec<u8>, Failure> {
+        Ok(self.text().state_vector())
+    }
+    pub fn alias_bytes(&self) -> usize {
+        self.indexed.bytes + self.aliases.len().saturating_sub(1)
     }
     fn text(&self) -> &fastctx_draft::Document {
         self.live.as_ref().expect("hydrated draft")
@@ -117,26 +146,18 @@ impl Document {
         self.live.as_mut().expect("hydrated draft")
     }
     pub fn view(&self) -> Draft {
-        let aliases: HashMap<_, _> =
-            self.aliases.iter().map(|alias| ((alias.client, alias.clock), &alias.old)).collect();
-        let characters: Vec<_> = self
-            .text()
-            .characters()
-            .into_iter()
-            .map(|character| {
-                let id = aliases
-                    .get(&(character.id.client, character.id.clock))
-                    .map(|id| (*id).clone())
-                    .unwrap_or_else(|| CharacterId {
-                        operation: format!("yjs:{}:{}", character.id.client, character.id.clock),
-                        index: 0,
-                    });
-                Character { id, text: character.text }
-            })
-            .collect();
+        let mut characters = Vec::with_capacity(self.text().character_count());
+        let mut text = String::new();
+        self.text().visit_characters(|native, character| {
+            let id = self.indexed.index(native).map(|index| self.aliases[index].old.clone()).unwrap_or_else(|| {
+                CharacterId { operation: format!("yjs:{}:{}", native.client, native.clock), index: 0 }
+            });
+            text.push(character);
+            characters.push(Character { id, text: character.to_string() });
+        });
         Draft {
             epoch: self.epoch,
-            text: characters.iter().map(|c| c.text.as_str()).collect(),
+            text,
             characters,
             attachments: self.attachments.clone(),
             uploads: self.uploads.clone(),
@@ -144,43 +165,18 @@ impl Document {
         }
     }
     fn identity(&self, id: &CharacterId) -> Result<fastctx_draft::Id, Failure> {
-        if let Some(alias) = self.aliases.iter().find(|alias| &alias.old == id) {
-            return Ok(fastctx_draft::Id { client: alias.client, clock: alias.clock });
+        if let Some(native) = self.indexed.resolve(id) {
+            return Ok(native);
         }
         let (client, clock) = id
             .operation
             .strip_prefix("yjs:")
             .and_then(|value| value.split_once(':'))
             .filter(|_| id.index == 0)
-            .ok_or_else(|| failure("the character is not in this draft"))?;
+            .ok_or_else(|| Failure::new("the character is not in this draft"))?;
         let client = client.parse().map_err(failure)?;
         let clock = clock.parse().map_err(failure)?;
         Ok(fastctx_draft::Id { client, clock })
-    }
-    pub fn edit(
-        &mut self,
-        operation: &str,
-        after: &Option<CharacterId>,
-        delete: &[CharacterId],
-        insert: &str,
-    ) -> Result<(), Failure> {
-        // An edit that inserted is known by its characters: sent again once
-        // its receipt has gone (`keeping`), it is not done twice.
-        if self.aliases.iter().any(|alias| alias.old.operation == operation) {
-            return Ok(());
-        }
-        let after = after.as_ref().map(|id| self.identity(id)).transpose()?;
-        let delete = delete.iter().map(|id| self.identity(id)).collect::<Result<Vec<_>, _>>()?;
-        let edited = self.text_mut().edit(after, &delete, insert).map_err(failure)?;
-        self.pending.push(edited.update);
-        for (index, character) in edited.inserted.into_iter().enumerate() {
-            self.aliases.push(Alias {
-                old: CharacterId { operation: operation.into(), index },
-                client: character.id.client,
-                clock: character.id.clock,
-            });
-        }
-        Ok(())
     }
     pub fn metadata(&self) -> fastctx_types::composer::sync::Document {
         fastctx_types::composer::sync::Document {
@@ -195,15 +191,25 @@ impl Document {
     pub fn update_for(&self, vector: Option<&[u8]>) -> Result<Vec<u8>, Failure> {
         self.text().update_for(vector).map_err(failure)
     }
-    pub fn merge(&mut self, update: &[u8]) -> Result<(), Failure> {
-        self.text_mut().apply(update).map_err(failure)?;
-        self.pending.push(update.to_vec());
+
+    pub fn merge_decoded(&mut self, update: fastctx_draft::DecodedUpdate, bytes: &[u8]) -> Result<(), Failure> {
+        let before = self.text().character_count();
+        self.text_mut().apply_decoded(update).map_err(failure)?;
+        // Causal integration can unlock older pending updates, so exact scalar
+        // growth is checked here. The caller owns this tentative state: an error
+        // drops it with the cell empty, and reloads committed authority next time.
+        limits::growth(before, self.text().character_count())?;
+        self.pending.push(bytes.to_vec());
         Ok(())
     }
 
     /// Capture uses the sender's replica, so authority learned meanwhile remains
-    /// in the original document. Unselected uploads keep their original epoch.
-    pub fn take_snapshot(&mut self, snapshot: &[u8], attachments: &[fastctx_types::NoticeId]) -> Result<Self, Failure> {
+    /// in the original document. Surviving upload identities cross the seal.
+    pub fn take_snapshot(
+        &mut self,
+        captured: super::capture::Prepared,
+        attachments: &[fastctx_types::NoticeId],
+    ) -> Result<Self, Failure> {
         let selected: std::collections::HashSet<_> = attachments.iter().collect();
         if selected.len() != attachments.len() {
             return Err(failure("the send repeats an attachment identity"));
@@ -218,19 +224,17 @@ impl Document {
                     .ok_or_else(|| failure("an attachment selected for sending is no longer on this draft"))
             })
             .collect::<Result<Vec<_>, _>>()?;
-        let mut frozen = fastctx_draft::Document::restore(snapshot).map_err(failure)?;
-        let text = frozen.text();
+        let super::capture::Prepared { text, deletion, bytes } = captured;
         if text.trim().is_empty() && files.is_empty() {
             return Err(failure("the captured draft is empty"));
         }
-        let missing = frozen.update_for(Some(&self.text().state_vector())).map_err(failure)?;
-        let taken = frozen.take();
+        self.text().validate_capture(&deletion, &text).map_err(failure)?;
         let mut queued = Self { attachments: files, files_on: self.files_on.clone(), ..Self::default() };
         let update = queued.text_mut().splice(0, 0, &text).map_err(failure)?;
         queued.pending.push(update);
-        self.merge(&missing)?;
-        self.merge(&taken.update)?;
+        self.merge_decoded(deletion, &bytes)?;
         self.attachments.retain(|file| !selected.contains(&file.id));
+        self.epoch = self.epoch.checked_add(1).ok_or_else(|| failure("the draft epoch overflowed"))?;
         if self.attachments.is_empty() && self.uploads.is_empty() && self.text().is_empty() {
             self.files_on = None;
         }
@@ -242,6 +246,7 @@ impl Document {
     }
 
     pub fn from_view(view: Draft) -> Result<Self, Failure> {
+        limits::insertion(&view.text)?;
         let mut document = Self {
             epoch: view.epoch,
             attachments: view.attachments,
@@ -252,22 +257,59 @@ impl Document {
         let update = document.text_mut().splice(0, 0, &view.text).map_err(failure)?;
         document.pending.push(update);
         for (old, character) in view.characters.into_iter().zip(document.text().characters()) {
-            document.aliases.push(Alias { old: old.id, client: character.id.client, clock: character.id.clock });
+            document.add_alias(Alias { old: old.id, client: character.id.client, clock: character.id.clock });
         }
         Ok(document)
     }
     /// The edits that inserted into this epoch of the document, by their
     /// operations: what sending it takes (`keeping`, review 2.1).
     pub fn inserting(&self) -> Vec<String> {
-        let mut operations: Vec<String> = Vec::new();
-        for alias in &self.aliases {
-            if !operations.contains(&alias.old.operation) {
-                operations.push(alias.old.operation.clone());
+        self.indexed.operations()
+    }
+    fn add_alias(&mut self, alias: Alias) {
+        self.indexed.insert(&alias, self.aliases.len());
+        self.aliases.push(alias);
+        self.aliases_changed = true;
+    }
+    fn reindex_aliases(&mut self) {
+        self.indexed = Aliases::default();
+        for (index, alias) in self.aliases.iter().enumerate() {
+            self.indexed.insert(alias, index);
+        }
+    }
+    fn delete_aliases(&mut self, deleted: impl IntoIterator<Item = fastctx_draft::Id>) {
+        for id in deleted {
+            if let Some(index) = self.indexed.index(id) {
+                let alias = self.aliases.swap_remove(index);
+                self.indexed.remove(&alias);
+                if let Some(moved) = self.aliases.get(index) {
+                    self.indexed.moved(moved, index);
+                }
+                self.aliases_changed = true;
             }
         }
-        operations
+        self.indexed.retain_operations();
     }
+    fn prune_aliases(&mut self) {
+        if !self.aliases.is_empty() {
+            let mut visible = HashSet::with_capacity(self.text().character_count());
+            self.text().visit_characters(|id, _| {
+                visible.insert(id);
+            });
+            let deleted: Vec<_> = self
+                .aliases
+                .iter()
+                .map(|alias| fastctx_draft::Id { client: alias.client, clock: alias.clock })
+                .filter(|id| !visible.contains(id))
+                .collect();
+            self.delete_aliases(deleted);
+        }
+    }
+
     pub fn take(&mut self) -> Result<Self, Failure> {
+        if self.text().character_count() > fastctx_types::composer::MAX_DOCUMENT_CHARACTERS {
+            return Err(Failure::new(fastctx_types::composer::DOCUMENT_TOO_LONG));
+        }
         let view = self.view();
         let queued = Self::from_view(view)?;
         let taken = self.text_mut().take();
@@ -275,9 +317,17 @@ impl Document {
         self.attachments.clear();
         self.uploads.clear();
         self.files_on = None;
+        self.aliases_changed |= !self.aliases.is_empty();
         self.aliases.clear();
+        self.indexed = Aliases::default();
         self.epoch = self.epoch.checked_add(1).ok_or_else(|| failure("draft epoch overflow"))?;
         Ok(queued)
+    }
+    pub fn can_take_back(&self, words: &Document) -> Result<(), Failure> {
+        let before = self.text().character_count();
+        let newline = !self.text().is_empty() && !words.text().text().ends_with('\n');
+        let after = before.saturating_add(words.text().character_count()).saturating_add(usize::from(newline));
+        limits::growth(before, after)
     }
     pub fn take_back(&mut self, words: Document, _line: &str) -> Result<(), Failure> {
         let words = words.view();
@@ -285,6 +335,8 @@ impl Document {
         if !self.text().is_empty() && !value.ends_with('\n') {
             value.push('\n');
         }
+        let before = self.text().character_count();
+        limits::growth(before, before.saturating_add(value.chars().count()))?;
         let update = self.text_mut().splice(0, 0, &value).map_err(failure)?;
         self.pending.push(update);
         for attachment in words.attachments {

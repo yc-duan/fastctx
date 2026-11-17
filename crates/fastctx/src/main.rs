@@ -30,7 +30,6 @@ mod mcp_child;
 mod mcp_relay;
 mod on;
 mod output;
-mod page;
 mod paths;
 mod plan;
 mod profile;
@@ -58,6 +57,9 @@ mod update;
 mod view;
 mod w;
 mod wait;
+mod wake_guard;
+mod weeks;
+mod work;
 mod world;
 mod writers;
 
@@ -297,14 +299,10 @@ enum Command {
     /// A fastctx project is not a folder or a repository: it is a named
     /// piece of the user's work that can span several machines. Its record
     /// says what it is for, which machines it spans, and where its code and
-    /// data are on each; its pages show live facts to the user.
+    /// data are on each.
     #[command(subcommand)]
     Project(project::ProjectCommand),
 
-    /// A project's pages: HTML the user opens in the World app, showing
-    /// live facts of the machines and sessions. Publish, read or list them.
-    #[command(subcommand, after_long_help = page::PAGE_HELP)]
-    Page(page::PageCommand),
     /// Log this computer in to an account on a hub: with the hub's address
     /// and the account's password, asked for here, or with a token another
     /// device made. It stays logged in until it logs out or is removed.
@@ -327,6 +325,12 @@ enum Command {
     /// account: that login works for it, the machine is not given. Or end
     /// the assistance.
     Assist(world::AssistArgs),
+    /// The agents' logins on one machine or on every machine you may use,
+    /// with the week each is reckoned of.
+    Logins(weeks::LoginsArgs),
+    /// Set the week of one login in US dollars of quota: what an
+    /// assistance's share of it comes to. Or the default again.
+    Week(weeks::WeekArgs),
     /// The agents on a machine of another account, which this account used,
     /// no longer reach this account's machines.
     Disallow(world::DisallowArgs),
@@ -376,6 +380,9 @@ enum Command {
 }
 
 fn main() -> ExitCode {
+    if std::env::args_os().nth(1).is_some_and(|argument| argument == "work") {
+        return finish(work::run().map(|()| ExitCode::SUCCESS));
+    }
     // Image workers must set their memory limit before starting a runtime or
     // entering the World; failures remain isolated from the serving node.
     if std::env::args_os().nth(1).is_some_and(|argument| argument == "thumbnail-worker") {
@@ -571,7 +578,6 @@ fn main() -> ExitCode {
         Command::Attach(args) => attach::run(args),
         Command::Project(command) => project::run(command),
 
-        Command::Page(command) => page::run(command),
         Command::Login(args) => world::login(args),
         Command::Logout(args) => world::logout(args),
         Command::Token(command) => world::token(command),
@@ -580,6 +586,8 @@ fn main() -> ExitCode {
         Command::Update(args) => self_update::run(args),
         Command::Share(args) => world::share(args),
         Command::Assist(args) => world::assist(args),
+        Command::Logins(args) => weeks::logins(args),
+        Command::Week(args) => weeks::week(args),
         Command::Disallow(args) => world::disallow(args),
         Command::Remove(args) => world::remove(args),
         Command::Dissolve(args) => world::dissolve(args),
@@ -607,7 +615,7 @@ fn print_licenses() -> ExitCode {
 
 /// The commands a person runs on a machine: its node, joining and managing
 /// the World, talking to residents, the TUI.
-const PEOPLE_ONLY: [&str; 24] = [
+const PEOPLE_ONLY: [&str; 26] = [
     "ui",
     "data",
     "node",
@@ -623,6 +631,8 @@ const PEOPLE_ONLY: [&str; 24] = [
     "accounts",
     "share",
     "assist",
+    "logins",
+    "week",
     "disallow",
     "remove",
     "rename",

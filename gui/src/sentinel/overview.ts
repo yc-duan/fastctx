@@ -5,6 +5,7 @@
 // the page; one's own is a hover away, and a line opens that watcher's
 // page. Only the list scrolls.
 
+import { followState } from "../world/topics";
 import type { Page } from "../app/shell";
 import { glyph, type GlyphName } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
@@ -13,6 +14,7 @@ import type { SentinelOverview, SentinelWake, SentinelWatched } from "../world/s
 import type { Words } from "../words";
 import type { SentinelWords } from "./words";
 import "./overview.css";
+import { sayWaiting } from "../app/waiting";
 
 export interface OverviewOptions {
   words: SentinelWords;
@@ -52,7 +54,7 @@ export class SentinelOverviewPage implements Page {
   private overview: SentinelOverview | null = null;
   private span: Span = spanKept();
   private width = 0;
-  private timer = 0;
+  private readonly stopReading: () => void;
   private left = false;
 
   constructor(private readonly options: OverviewOptions) {
@@ -71,7 +73,7 @@ export class SentinelOverviewPage implements Page {
     this.totals = this.element.querySelector<HTMLElement>(".so-totals")!;
     this.axis = this.element.querySelector<HTMLElement>(".so-axis")!;
     this.note = this.element.querySelector<HTMLElement>(".so-note")!;
-    this.say(words.reading);
+    this.say(words.reading, "", true);
     this.resize = new ResizeObserver(() => {
       const width = Math.round(this.list.getBoundingClientRect().width);
       if (width && width !== this.width) {
@@ -87,28 +89,33 @@ export class SentinelOverviewPage implements Page {
       keepSpan(this.span);
       this.draw();
     });
-    void this.read();
+    this.stopReading = followState(null, () => this.read(), EVERY_MS);
   }
 
   leave(): void {
     this.left = true;
-    clearTimeout(this.timer);
+    this.stopReading();
     this.resize.disconnect();
   }
 
   private async read(): Promise<void> {
     try {
-      this.overview = await this.options.read();
+      const overview = await this.options.read();
+      if (this.left) return;
+      this.overview = overview;
       this.draw();
     } catch (error) {
       if (!this.overview) this.say(this.options.words.unreadable, this.options.detail(error));
+      throw error;
     }
-    if (!this.left) this.timer = window.setTimeout(() => void this.read(), EVERY_MS);
+
   }
 
-  private say(text: string | null, why = ""): void {
+  /** `waits`: what is said is awaited (`sayWaiting`). */
+  private say(text: string | null, why = "", waits = false): void {
     this.note.hidden = !text;
-    this.note.textContent = text ?? "";
+    if (waits && text) sayWaiting(this.note, text);
+    else this.note.textContent = text ?? "";
     this.note.title = why;
   }
 

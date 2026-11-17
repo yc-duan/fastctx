@@ -1,7 +1,8 @@
 //! Machine changes are read by the machines page and account members.
 //! They share the directory's atomic disk commit, so a completed change
-//! and its record survive together. The hub deletes each record after
-//! 90 days, including when nobody reads or changes anything.
+//! and its record survive together. The hub keeps every record for good
+//! (design §14); each account's scope holds those it reads
+//! (`assets::told`).
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::io;
@@ -11,61 +12,17 @@ use fastctx_net::sign::PublicKey;
 use fastctx_net::wire::{Change, Down, Told};
 use fastctx_types::machine_log::{Action, Actor, Outcome, Page, Record};
 use fastctx_types::{AccountName, MachineName};
-use jiff::{SignedDuration, Timestamp};
+use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 
 use crate::store::{Book, Store};
 
-pub(crate) const RETENTION: SignedDuration = SignedDuration::from_hours(90 * 24);
+/// How many of the newest records a view carries notices of. A device
+/// calls about the notices it has not seen before, so only the newest
+/// matter to it; the whole log stays readable a page at a time.
+pub(crate) const NOTICES: usize = 256;
+
 pub(crate) use crate::store::log_store::Row;
-
-pub(crate) async fn expire(hub: &std::sync::Arc<crate::Hub>) -> io::Result<()> {
-    let database = hub.store().shelf.0.clone();
-    loop {
-        hub.moving.unfrozen().await;
-        let notified = hub.machine_log_changed.notified();
-        let Some(active) = crate::moving::Moving::enter(hub) else { continue };
-        let pass = async {
-            let cutoff = Timestamp::now().checked_sub(RETENTION).map_err(io::Error::other)?;
-            // Deletion holds no store lock. The move waits for its commit even if
-            // the caller stops waiting after the write has entered the queue.
-            database
-                .write_then(
-                    0,
-                    move |connection| crate::store::log_store::expire(connection, cutoff),
-                    move |_| drop(active),
-                )
-                .await
-                .map_err(io::Error::other)?;
-            let database = database.clone();
-            hub.blocking(move |_| crate::store::log_store::expires(&database)).await
-        };
-        match pass.await {
-            Ok(Some(expires)) => {
-                let wait = expires.duration_since(Timestamp::now()).as_secs_f64().max(0.0);
-                tokio::select! {
-                    () = tokio::time::sleep(std::time::Duration::from_secs_f64(wait)) => {},
-                    () = notified => {},
-                }
-            }
-            Ok(None) => notified.await,
-            // A log kept a while longer does no harm; a hub that stopped
-            // for it would: the pass is tried again in a minute.
-            Err(error) => {
-                crate::hold_back::log(
-                    hub,
-                    &EXPIRING,
-                    format_args!("expiring the machine log: {error}; trying again in a minute"),
-                );
-                tokio::time::sleep(std::time::Duration::from_secs(60)).await;
-            }
-        }
-    }
-}
-
-/// When a failure to expire the log was last told, so a lasting one is told
-/// once a minute.
-static EXPIRING: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub(crate) struct History {
@@ -75,8 +32,6 @@ pub(crate) struct History {
     records: Vec<Kept>,
     #[serde(skip)]
     database: Option<fastctx_storage::Database>,
-    #[serde(skip)]
-    expired: Option<Timestamp>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -97,7 +52,6 @@ impl History {
             next: shelf.meta("machine_log.next")?.unwrap_or(0),
             records: Vec::new(),
             database: Some(shelf.0.clone()),
-            expired: None,
         })
     }
 
@@ -105,13 +59,11 @@ impl History {
         for kept in &self.records {
             changes.log.push(Row::from_bytes(serde_json::to_vec(kept)?).map_err(io::Error::other)?);
         }
-        changes.expired = self.expired;
         Ok(())
     }
 
     pub(crate) fn committed(&mut self) {
         self.records.clear();
-        self.expired = None;
     }
     /// Whether a record says the machine with `key` was updated from `from`
     /// to `to`.
@@ -119,32 +71,10 @@ impl History {
         if let Some(database) = &self.database {
             return crate::store::log_store::updated(database, key, from, to);
         }
-        let now = Timestamp::now();
         Ok(self.records.iter().any(|kept| {
-            kept.record.at.checked_add(RETENTION).expect("timestamp in range") > now
-                && kept.members.contains(key)
+            kept.members.contains(key)
                 && matches!(&kept.record.action, Action::Updated { from: was, to: now, .. } if was == from && now == to)
         }))
-    }
-
-    pub(crate) fn expire(&mut self, now: Timestamp) -> io::Result<bool> {
-        if self.database.is_some() {
-            let expired = self.expires()?.is_some_and(|at| at <= now);
-            if expired {
-                self.expired = Some(now.checked_sub(RETENTION).expect("timestamp in range"));
-            }
-            return Ok(expired);
-        }
-        let before = self.records.len();
-        self.records.retain(|kept| kept.record.at.checked_add(RETENTION).expect("timestamp in range") > now);
-        Ok(before != self.records.len())
-    }
-
-    pub(crate) fn expires(&self) -> io::Result<Option<Timestamp>> {
-        if let Some(database) = &self.database {
-            return crate::store::log_store::expires(database);
-        }
-        Ok(self.records.iter().map(|kept| kept.record.at.checked_add(RETENTION).expect("timestamp in range")).min())
     }
 
     pub(crate) fn push(
@@ -292,7 +222,7 @@ impl History {
             Action::Logout => {
                 names.extend(actor.member.iter().cloned());
             }
-            Action::Settings { .. } | Action::Updates { .. } | Action::Dissolve { .. } => {
+            Action::Settings { .. } | Action::AssetSeal { .. } | Action::OpenAssets | Action::Updates { .. } | Action::Dissolve { .. } => {
                 accounts.extend(directory.accounts.iter().map(|account| account.name.clone()));
             }
             Action::History { .. }
@@ -341,11 +271,10 @@ impl History {
             members.insert(member.key);
             accounts.extend(member.home.iter().cloned());
         }
-        self.next = self.next.checked_add(1).ok_or_else(|| io::Error::other("machine log numbering exhausted"))?;
+        // Above all the hub numbered before it was last put back (§29, 2.2).
+        let floor = self.database.as_ref().and_then(|database| crate::assets::restores::count(database).ok()).map_or(0, crate::assets::restores::floor);
+        self.next = self.next.max(floor).checked_add(1).ok_or_else(|| io::Error::other("machine log numbering exhausted"))?;
         let at = Timestamp::now();
-        if self.database.is_none() {
-            self.expire(at)?;
-        }
         let accounts = accounts
             .into_iter()
             .filter_map(|name| {
@@ -372,20 +301,24 @@ impl History {
         me: &MachineName,
     ) -> io::Result<Vec<fastctx_types::sharing::Notice>> {
         let Some(member) = directory.member(me) else { return Ok(Vec::new()) };
-        let now = Timestamp::now();
         if let Some(database) = &self.database {
             let accounts: Vec<_> = member
                 .logins
                 .iter()
                 .filter_map(|name| directory.account(name).filter(|a| !a.locked).map(|a| (name.clone(), a.opened)))
                 .collect();
-            return crate::store::log_store::notices(database, &accounts, now);
+            return crate::store::log_store::notices(database, &accounts);
         }
         let mut notices = Vec::new();
-        for kept in &self.records {
-            if kept.record.at.checked_add(RETENTION).expect("timestamp in range") <= now {
-                continue;
-            }
+        let newest: Vec<&Kept> = self.records.iter().rev().filter(|kept| {
+            notification(&kept.record.actor, &kept.record.action).is_some()
+                && member.logins.iter().any(|account| {
+                    directory
+                        .account(account)
+                        .is_some_and(|found| !found.locked && kept.notified.get(account) == Some(&found.opened))
+                })
+        }).take(NOTICES).collect();
+        for kept in newest.into_iter().rev() {
             let Some((machine, by, action)) = notification(&kept.record.actor, &kept.record.action) else { continue };
             for account in &member.logins {
                 if !directory
@@ -426,7 +359,6 @@ impl History {
         let member = directory.member(me).ok_or_else(|| format!("there is no member {me}"))?;
         let whole = directory.logged_in(me, account) && directory.is_super(account);
         let opened = directory.account(account).map(|account| account.opened);
-        let now = Timestamp::now();
         if let Some(database) = &self.database {
             let mut readers = vec![format!("member:{}", member.key)];
             if let Some(opened) = opened {
@@ -435,7 +367,7 @@ impl History {
             if whole {
                 readers.push("whole".into());
             }
-            return crate::store::log_store::read(database, &readers, before, reads, now);
+            return crate::store::log_store::read(database, &readers, before, reads);
         }
         let mut page = Page { records: Vec::new(), next_before: None };
         let envelope = Down::Told {
@@ -451,7 +383,6 @@ impl History {
                 let private = kept.record.action.of_conversation() || kept.record.action.of_project();
                 before.is_none_or(|before| kept.record.id < before)
                     && reads.covers(kept.record.action.needs())
-                    && kept.record.at.checked_add(RETENTION).expect("timestamp in range") > now
                     && ((whole && !private)
                         || kept.accounts.get(account).copied().is_some_and(|kept| Some(kept) == opened)
                         || kept.members.contains(&member.key))
@@ -521,7 +452,7 @@ pub(crate) fn action(change: &Change, book: &Book, policy: &fastctx_types::updat
         Change::Share { machine, to, shared, jobs } => {
             Action::Share { machine: machine.clone(), to: to.clone(), shared: *shared, jobs: jobs.filter(|_| *shared) }
         }
-        Change::Assist { machine, to, agent, home, assisting, until, weekly, daily, five_hour, turns } => {
+        Change::Assist { machine, to, agent, home, assisting, until, weekly, daily, five_hour, turns, .. } => {
             Action::Assist {
                 machine: machine.clone(),
                 to: to.clone(),
@@ -535,7 +466,7 @@ pub(crate) fn action(change: &Change, book: &Book, policy: &fastctx_types::updat
                 turns: turns.filter(|_| *assisting),
             }
         }
-        Change::Plan { machine, agent, home, plan } => {
+        Change::Plan { machine, agent, home, plan, .. } => {
             Action::Plan { machine: machine.clone(), agent: agent.clone(), home: home.clone(), plan: *plan }
         }
         Change::StopActing { machine } => Action::StopActing { machine: machine.clone() },
@@ -600,6 +531,8 @@ pub(crate) fn action(change: &Change, book: &Book, policy: &fastctx_types::updat
             Action::UpdateDue { machine: machine.clone(), version: version.clone() }
         }
         Change::Dissolve { name } => Action::Dissolve { name: name.clone() },
+        Change::AssetSeal { at_start } => Action::AssetSeal { at_start: *at_start },
+        Change::OpenAssets => Action::OpenAssets,
         Change::OpenProject { town, name, .. } => Action::OpenProject { town: town.clone(), name: name.clone() },
         Change::ShareProject { town, with, shared } => {
             Action::ShareProject { town: town.clone(), name: project_name(town), with: with.clone(), shared: *shared }

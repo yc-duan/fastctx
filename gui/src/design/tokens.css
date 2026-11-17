@@ -16,8 +16,9 @@
 
 :root {
   /* Type. The whole layout is reckoned in the body size, so a reader who
-     sets a larger size keeps the same words to a line. */
-  --body-size: 15px;
+     sets a larger size keeps the same words to a line. 16 by default
+     (用户 2026-11-15: 「字号确实之后要默认都改成你做的这样，舒服不少」). */
+  --body-size: 16px;
   --font-reading: "Reading", "IBM Plex Serif", "Noto Sans SC", "Microsoft YaHei UI", serif;
   --font-emphasis: "Emphasis", var(--font-reading);
   /* Titles of 20px and more: a page's name, a conversation's. */
@@ -196,8 +197,8 @@
   --safe-bottom: env(safe-area-inset-bottom, 0px);
 }
 
-/* On a phone the body is a size larger: the same words are read at arm's
-   length, and a smaller one makes browsers zoom into the composer. */
+/* On a phone the body stays at 16: a smaller one makes browsers zoom into
+   the composer. */
 @media (max-width: 600px) {
   :root {
     --body-size: 16px;
@@ -261,6 +262,9 @@
   /* The turn's line: the pencil trace the pen writes over, and the light
      that passes over its word; each must show on this paper. */
   --pen-trace: rgba(154, 151, 141, 0.38);
+  /* The track of a bar (`pen/bar.ts`): a grey a step deeper than a filled
+     box, so it reads on the paper and on a card alike. */
+  --bar-track: rgba(245, 242, 232, 0.13);
   --glint: var(--pen-clay);
   --pen-sky: #7fa8cf;
   --pen-sage: #9cb07e;
@@ -318,6 +322,9 @@
   --pen-graphite: #8f9092;
   --pen-clay: #c2c4c7;
   --pen-trace: rgba(143, 144, 146, 0.42);
+  /* The track of a bar (`pen/bar.ts`): a grey a step deeper than a filled
+     box, so it reads on the paper and on a card alike. */
+  --bar-track: rgba(255, 255, 255, 0.14);
   --glint: var(--text-strong);
   --pen-sky: #8fa9c4;
   --pen-sage: #9fae8f;
@@ -374,6 +381,9 @@
   --pen-graphite: #87867f;
   --pen-clay: #c96442;
   --pen-trace: rgba(135, 134, 127, 0.55);
+  /* The track of a bar (`pen/bar.ts`): a grey a step deeper than a filled
+     box, so it reads on the paper and on a card alike. */
+  --bar-track: rgba(60, 55, 40, 0.12);
   --glint: var(--pen-clay);
   --pen-sky: #6a9bcc;
   --pen-sage: #788c5d;

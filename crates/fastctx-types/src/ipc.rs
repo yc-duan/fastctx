@@ -59,12 +59,6 @@ pub struct Hello {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "kind")]
 pub enum Peer {
-    /// A command within an approved page job; it never speaks as the user.
-    Page {
-        page: Box<crate::pages::PageSource>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        job: Option<JobId>,
-    },
     /// A command such as `fastctx w`, typed by a person or run by a
     /// resident; `resident` is set when a resident's `run` started it, and
     /// `session` when an agent's own shell did.
@@ -101,6 +95,9 @@ pub enum Welcome {
         /// Several conversation subscriptions share a dedicated IPC connection.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         watch_many: bool,
+        /// Native composer input and output share a WatchMany subscription.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        composer_documents: bool,
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         goal_commands: bool,
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -109,6 +106,19 @@ pub enum Welcome {
         account_records: bool,
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         conversation_plans: bool,
+        /// Reads timeline pages, waits for revisions and reads named objects.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        timeline_reads: bool,
+        /// Supports Watch.live_only with a post-registration Resumed barrier.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        watch_live: bool,
+        /// Tells when a topic of its state changed (`Call::Topics`).
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        topics: bool,
+        /// Waits on another machine's topics for a page here
+        /// (`Call::RemoteTopics`).
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        remote_topics: bool,
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         scratch_locations: bool,
         /// Follows a conversation's collaboration on a watch
@@ -118,6 +128,13 @@ pub enum Welcome {
         /// An older node says nothing of sentinels, and keeps none.
         #[serde(default)]
         sentinels: bool,
+        /// Bounded timer pages and short handles for oversized legacy rows.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        timer_pages: bool,
+        /// Answers the files a conversation changed
+        /// (`TimelineAsk::Files`); an older node is never asked.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        file_changes: bool,
         machine: MachineName,
         version: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -136,8 +153,17 @@ pub enum Welcome {
 // Calls retain their existing allocation-free representation on ordinary connections.
 #[allow(clippy::large_enum_variant)]
 pub enum ClientFrame {
-    McpLine { line: usize },
-    Call { id: u64, call: crate::Call },
+    McpLine {
+        line: usize,
+    },
+    Call {
+        id: u64,
+        call: crate::Call,
+        /// The name the client gives the call when it submits work
+        /// (`crate::submission`).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        submission: Option<crate::submission::Submission>,
+    },
 }
 
 /// A frame from the node after the welcome.
@@ -237,6 +263,8 @@ pub enum CapacityReason {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FailureCode {
+    /// The advertised capability required by this request is unavailable.
+    Unsupported,
     OriginalGone,
     /// The job is absent; this does not distinguish expiry from earlier collection.
     OutputNotRetained,
@@ -264,12 +292,21 @@ pub enum FailureCode {
     ControlUncertain,
     /// The requested action has not entered the host; the node retains it for retry.
     HostUnavailable,
+    /// The work a named call asked for is recorded and not done yet
+    /// (`crate::submission`): asked again under the same name, the call is
+    /// answered with how the work stands. Only a call that carried a name
+    /// is answered so.
+    Accepted,
     /// A code of a newer version, which this one does not know.
     #[serde(other)]
     Unknown,
 }
 
 impl Failure {
+    pub fn unsupported(message: impl Into<String>) -> Self {
+        Self { code: Some(FailureCode::Unsupported), not_run: true, ..Self::new(message) }
+    }
+
     pub fn capacity(mut self, reason: CapacityReason) -> Self {
         self.capacity = Some(reason);
         self
@@ -305,6 +342,23 @@ impl Failure {
 
     pub fn not_run(message: impl Into<String>) -> Self {
         Self { capacity: None, denial: None, message: message.into(), not_run: true, code: None }
+    }
+
+    /// The work was accepted and is being done; this is not its outcome.
+    pub fn accepted(message: impl Into<String>) -> Self {
+        Self {
+            capacity: None,
+            denial: None,
+            message: message.into(),
+            not_run: false,
+            code: Some(FailureCode::Accepted),
+        }
+    }
+
+    /// Whether the work asked for is accepted and not done yet: asking
+    /// again under the same name says how it stands.
+    pub fn is_accepted(&self) -> bool {
+        self.code == Some(FailureCode::Accepted)
     }
 
     pub fn original_gone() -> Self {

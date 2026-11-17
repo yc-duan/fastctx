@@ -66,7 +66,13 @@ export interface FindRendering {
  * rows, disclosure state or line viewers. */
 export class FindContent {
   private proseParts = new Map<string, string>();
+  private proseBytes = 0;
   constructor(private readonly rendering: FindRendering) {}
+
+  clear(): void {
+    this.proseParts.clear();
+    this.proseBytes = 0;
+  }
 
   prose(text: string, writing: boolean): string {
     return proseBlocks(text, writing).map((block) => {
@@ -76,10 +82,15 @@ export class FindContent {
       let shown = this.proseParts.get(block.source);
       if (shown === undefined) {
         shown = htmlText(block.html());
-        this.proseParts.set(block.source, shown);
+        const bytes = block.source.length + shown.length;
+        if (this.proseBytes + bytes > 4 * 1024 * 1024) this.clear();
+        if (bytes <= 4 * 1024 * 1024) {
+          this.proseParts.set(block.source, shown);
+          this.proseBytes += bytes;
+        }
       }
       return shown;
-    }).join("");
+    }).reduce((shown, next) => !shown ? next : !next ? shown : `${shown}${shown.endsWith("\n") || next.startsWith("\n") ? "" : "\n"}${next}`, "");
   }
 
   *parts(block: Block): Iterable<FindPart> {
@@ -108,7 +119,7 @@ export class FindContent {
       return;
     }
     const said = stretchSays(block, words, this.rendering.attachment, this.rendering.tokens, this.rendering.agents, this.rendering.cards ? (tool) => this.rendering.cards!(tool) : undefined);
-    yield part("heading", `${stamp}|${block.members.length}|${said.time}`, { selector: ".group-head" }, () =>
+    yield part("heading", `${stamp}|${block.partialBefore ? 1 : 0}${block.partialAfter ? 1 : 0}|${block.members.length}|${said.time}`, { selector: ".group-head" }, () =>
       `${said.title}${said.added || said.removed ? `\n+${said.added} −${said.removed}` : ""}${said.time ? `\n${said.time}` : ""}`);
     // A stretch that is only thinking holds its words where its rows would be.
     if (thoughtOnly(block)) {

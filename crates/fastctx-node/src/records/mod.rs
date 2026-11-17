@@ -49,6 +49,7 @@ CREATE INDEX IF NOT EXISTS conversation_records_action ON conversation_records(c
 CREATE INDEX IF NOT EXISTS conversation_records_message ON conversation_records(conversation,json_extract(body,'$.kind'),json_extract(body,'$.turn')) WHERE family='messages';
 CREATE UNIQUE INDEX IF NOT EXISTS conversation_timer_id ON conversation_records(identity) WHERE family='timers';
 CREATE INDEX IF NOT EXISTS conversation_timers_due ON conversation_records(arrival,identity) WHERE family='timers';
+CREATE INDEX IF NOT EXISTS conversation_timers_owner ON conversation_records(category,identity) WHERE family='timers';
 CREATE UNIQUE INDEX IF NOT EXISTS conversation_control_request_id ON conversation_records(identity) WHERE family='control-requests';
 CREATE INDEX IF NOT EXISTS conversation_records_expiry ON conversation_records(expires) WHERE expires IS NOT NULL;
 CREATE TABLE IF NOT EXISTS conversation_record_links (
@@ -142,6 +143,38 @@ pub(crate) fn write_then_at<T: Send + 'static>(
             committed,
         )
         .map_err(io::Error::other)
+}
+
+/// Commits as `write_at` does without waiting for the disk, as what the
+/// interactive path writes does (`system-architecture`, 11-11): seen at once
+/// and kept when the process stops, but a machine that loses its power may
+/// lose it with the last moments' other relaxed commits. The database's next
+/// durable commit, or `settle`, takes it to the disk with every relaxed
+/// commit before it; whoever is about to do what only these records would
+/// undo, such as handing words to a host or letting go of a host's report,
+/// settles first.
+#[track_caller]
+pub(crate) fn write_relaxed_at<T: Send + 'static>(
+    directory: &ConversationDir,
+    priority: Priority,
+    bytes: usize,
+    action: impl FnOnce(&Rows<'_>) -> Result<T> + Send + 'static,
+) -> io::Result<T> {
+    let (database, conversation) = locate(directory)?;
+    if let Some(error) = database.fault() {
+        return Err(io::Error::other(error.clone()));
+    }
+    database
+        .write_relaxed_now_at(priority, bytes, move |connection| action(&Rows { connection, conversation: &conversation }))
+        .map_err(io::Error::other)
+}
+
+/// Takes every relaxed commit of the conversation's database to the disk
+/// (`write_relaxed_at`); at once when none waits for it.
+#[track_caller]
+pub(crate) fn settle(directory: &ConversationDir) -> io::Result<()> {
+    let (database, _) = locate(directory)?;
+    database.settle_now(Priority::Interactive).map_err(io::Error::other)
 }
 
 impl<'a> Rows<'a> {
@@ -418,7 +451,7 @@ impl Rows<'_> {
         crate::session_record::append_in(self.connection, self.conversation, key.as_str(), event)
     }
 
-    fn changed(&self, family: &str) -> Result<()> {
+    pub(crate) fn changed(&self, family: &str) -> Result<()> {
         self.connection.execute(
             "INSERT INTO conversation_record_versions(conversation,family,version) VALUES(?1,?2,1)
             ON CONFLICT(conversation,family) DO UPDATE SET version=version+1",

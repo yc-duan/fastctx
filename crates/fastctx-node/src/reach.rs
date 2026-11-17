@@ -400,6 +400,13 @@ enum Settled {
     Every,
 }
 
+/// Waits until each of `links` can judge for its hub now, or will not soon:
+/// for what judges by a hub's view outside a call to a machine, as work
+/// accepted earlier that begins as the node starts.
+pub(crate) async fn settled_each(links: &[Arc<Link>]) {
+    settle(links, Settled::Every).await;
+}
+
 /// Waits while `links` may soon judge for their hubs: a link connected
 /// whose view of this connection has not come yet, a minute at most, and
 /// one connecting again, a few seconds. A stopped link is not waited for.

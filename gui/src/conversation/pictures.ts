@@ -4,10 +4,11 @@
 // zoomed with Ctrl and the wheel or two fingers, and the conversation's
 // other pictures are a key or a swipe away. A picture is named by what its
 // element carries: a file the user sent (`data-attachment`), a file on a
-// machine (`data-path`), or bytes already in the page (`src`). A whole
-// picture read for a closer look is let go of when the viewer moves on; one
-// read to be saved goes on through breaks while the page is open, its bar
-// saying how it comes.
+// machine (`data-path`), or bytes already in the page (`src`). A picture
+// the user sent waits in a frame of its own size until it has come
+// (`picture-frame.ts`). A whole picture read for a closer look is let go of
+// when the viewer moves on; one read to be saved goes on through breaks
+// while the page is open, its bar saying how it comes.
 
 import { onShade, watchShade } from "../app/shade-press";
 import { layerOpened } from "../app/back";
@@ -16,6 +17,7 @@ import type { MachineName } from "../world/events";
 import type { AttachmentSource } from "../world/files";
 import { HeldReads, LetGo, shareOf, type HeldRead, type ReadProgress } from "../world/reads";
 import { glyph } from "./glyphs";
+import { frameCame, frameFailed, pictureCame } from "./picture-frame";
 import { escape, naturalPath } from "./prose";
 
 /** The longer side of the small copy a conversation keeps of a picture
@@ -113,6 +115,10 @@ const isGone = (error: unknown, message: string): boolean =>
 
 export class Pictures {
   private readonly made = new Map<string, Promise<string>>();
+  /** Those of them that have come, as they are put in a picture's element:
+   *  a picture drawn again is put in at once, with no frame of waiting
+   *  between. */
+  private readonly ready = new Map<string, string>();
   private readonly watching: IntersectionObserver;
   private readonly arriving: MutationObserver;
   private viewer: PictureViewer | null = null;
@@ -136,12 +142,28 @@ export class Pictures {
       { root: null, rootMargin: "400px 0px" },
     );
     const look = (within: ParentNode) => {
-      for (const image of within.querySelectorAll<HTMLImageElement>("img[data-picture]:not([src])")) this.watching.observe(image);
+      for (const frame of within.querySelectorAll<HTMLElement>(".bubble-picture.waiting:not([data-since])")) frameCame(frame);
+      for (const image of within.querySelectorAll<HTMLImageElement>("img[data-picture]:not([src])")) {
+        const key = this.keyOf(this.pictureOf(image), SMALL);
+        const ready = key ? this.ready.get(key) : undefined;
+        if (ready) image.src = ready;
+        else this.watching.observe(image);
+      }
+      // One whose bytes the page already held may have come before this looked.
+      for (const image of within.querySelectorAll<HTMLImageElement>(".bubble-picture.waiting > img[src]")) if (image.complete) pictureCame(image);
     };
     this.arriving = new MutationObserver((changes) => {
       for (const change of changes) for (const node of change.addedNodes) if (node instanceof Element) look(node.parentElement ?? node);
     });
     this.arriving.observe(root, { childList: true, subtree: true });
+    // A picture's coming is heard on the way down: it does not rise.
+    root.addEventListener(
+      "load",
+      (event) => {
+        if (event.target instanceof HTMLImageElement && event.target.matches("img[data-picture]")) pictureCame(event.target);
+      },
+      true,
+    );
     look(root);
     root.addEventListener("click", (event) => {
       const image = (event.target as Element).closest<HTMLImageElement>("img[data-picture]");
@@ -163,9 +185,15 @@ export class Pictures {
     };
   }
 
+  /** What a picture of `max` pixels is kept by; none for one the page
+   *  itself holds. */
+  private keyOf(picture: Picture, max: number): string | null {
+    return picture.attachment ? `a:${JSON.stringify(picture.attachment)}:${max}` : picture.path ? `f:${picture.machine}:${picture.path}:${max}` : null;
+  }
+
   /** A picture of `max` pixels, asked of the machine holding it once. */
   sized(picture: Picture, max: number): Promise<string> | null {
-    const key = picture.attachment ? `a:${JSON.stringify(picture.attachment)}:${max}` : picture.path ? `f:${picture.machine}:${picture.path}:${max}` : null;
+    const key = this.keyOf(picture, max);
     if (!key) return null;
     const kept = this.made.get(key);
     if (kept) {
@@ -178,13 +206,19 @@ export class Pictures {
       ? this.options.seams.attachmentThumbnail(picture.attachment, max)
       : this.options.seams.thumbnail(picture.machine, picture.path!, max);
     // A failure is not kept: the next look asks again.
-    made.catch(() => {
-      if (this.made.get(key) === made) this.made.delete(key);
-    });
+    made.then(
+      (source) => {
+        if (this.made.get(key) === made) this.ready.set(key, source);
+      },
+      () => {
+        if (this.made.get(key) === made) this.made.delete(key);
+      },
+    );
     this.made.set(key, made);
     for (const oldest of this.made.keys()) {
       if (this.made.size <= KEPT) break;
       this.made.delete(oldest);
+      this.ready.delete(oldest);
     }
     return made;
   }
@@ -204,6 +238,7 @@ export class Pictures {
         place = document.createElement("span");
         image.replaceWith(place);
       }
+      if (place.classList.contains("bubble-picture")) frameFailed(place);
       place.classList.add("picture-missing");
       place.title = message;
       place.innerHTML = `${glyph("image", 16)}<span>${escape(picture.name)}</span><span class="picture-why">${escape(isGone(error, message) ? this.options.words.gone : this.options.words.failed(message))}</span>`;
@@ -219,6 +254,7 @@ export class Pictures {
     this.watching.disconnect();
     this.arriving.disconnect();
     this.made.clear();
+    this.ready.clear();
   }
 
   /** Opens the viewer on a picture the conversation names by its path, as

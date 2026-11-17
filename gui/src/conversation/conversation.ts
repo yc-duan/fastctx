@@ -1,3 +1,6 @@
+import { sameEvent } from "./event-identity";
+import { grown, placeEvent } from "./timeline-events";
+import { canReviseItem } from "./timeline-fold";
 // A conversation as its page holds it (`world-gui.md`, 对话: 很长的对话). The
 // shell keeps every event of it (`src-tauri/src/transcript.rs`); the page
 // holds its latest turns, read as they go on, and whatever earlier parts its
@@ -12,14 +15,16 @@
 // Each question goes to the part that holds its answer; what is live (the
 // turn under way, words being sent, requests waiting) is in the latest.
 
-import type { AskState } from "./ask-state";
+import { askKey, type AskState } from "./ask-state";
 import { inOrder, type ModelRequest } from "./requests";
 import type { SessionEvent, TurnEnd } from "../world/events";
 import type { MachineName } from "../world/events";
-import { Fold, sayOf, type Block, type Entry, type Gap, type KeptWords, type SendState, type Settler, type ShownAttachment } from "./model";
+import { Fold, sayOf, type Block, type Entry, type Gap, type KeptWords, type SendState, type Settler, type ShownAttachment, type StartShown } from "./model";
 import type { AgentRun } from "./agents";
 import { machineNamed } from "./acted-on";
 import type { PendingControl } from "../world/control";
+
+export interface TimelinePosition { order: string; item: string }
 
 /** The part a page opens on, in place of all it held. */
 export interface Window {
@@ -30,6 +35,17 @@ export interface Window {
   events: SessionEvent[];
   /** What its turns read of what came before them. */
   carry: SessionEvent[];
+  /** Opaque timeline paging has no full-history ordinal or turn count. */
+  pages?: { older: boolean; newer: boolean; preparing?: boolean; partial_older?: boolean; partial_newer?: boolean; keys?: string[]; places?: (TimelinePosition | null)[]; live_keys?: string[]; pending?: SessionEvent[]; objects: { at: number; bytes: number; object: string }[] };
+}
+
+export interface TimelineDelta {
+  generation: number;
+  events: { key: string; event: SessionEvent; place?: TimelinePosition | null }[];
+  pending?: SessionEvent[];
+  removed: string[];
+  placed: { key: string; after: string | null }[];
+  pages: NonNullable<Window["pages"]>;
 }
 
 /** A part read from the shell. */
@@ -42,9 +58,14 @@ export interface PartRead {
   events: SessionEvent[];
   /** Facts its runs told after it. */
   late: SessionEvent[];
+  /** A bounded replacement, when the shell reads directly from the node. */
+  window?: Window;
 }
 
 export type Edge =
+  | { edge: "latest" }
+  | { edge: "position"; place: TimelinePosition }
+  | { edge: "turn"; turn: string }
   | { edge: "before"; at: number; floor: number }
   | { edge: "after"; at: number; ceiling: number }
   | { edge: "around"; at: number; floor: number; ceiling: number };
@@ -73,8 +94,20 @@ export interface Found {
 }
 
 /** Where the parts a page does not hold are read from. */
+export interface ScanCursor { revision: string; after: TimelinePosition; until: TimelinePosition; through: string | null; seeking?: boolean; restarts?: number }
+export interface ExpandedEvent { object: string; event: SessionEvent }
+export interface Scanned { events: SessionEvent[]; truncated?: { at: number; bytes: number }[]; restart?: boolean; next: ScanCursor | null }
+export type ExportReading = readonly Entry[] | { previewBytes: number } | { restart: true };
+
 export interface PartSource {
+  identity?(): string;
+  search?(request: import("./timeline-find").SearchRequest): Promise<import("./timeline-find").SearchReply>;
+  scan?(cursor: ScanCursor | null): Promise<Scanned>;
   part(generation: number, edge: Edge): Promise<PartRead | null>;
+  object?(generation: number, object: string): Promise<ExpandedEvent>;
+  follow?(revision: number, following: boolean): Promise<void>;
+  /** The files it changed as the machine it lives on keeps them. */
+  files?(after: string): Promise<import("../world/bridge").FileChangesTold>;
   /** Where a turn first appears. */
   locate(generation: number, turn: string): Promise<number | null>;
   cut(generation: number, events: number): Promise<Cut | null>;
@@ -99,9 +132,26 @@ type ToolEntry = Extract<Entry, { kind: "tool" }>;
 /** How long after one bubble the next has its moment said above it. */
 const CHAT_GAP_MS = 5 * 60_000;
 export class Conversation {
+  searchVersion = 0;
+  private searchSource = 0;
+  get searchIdentity(): string { return this.source?.identity?.() ?? String(this.searchSource); }
+  search(request: import("./timeline-find").SearchRequest): Promise<import("./timeline-find").SearchReply> {
+    if (!this.source?.search) return Promise.reject(new Error("this source cannot search the complete history"));
+    return this.source.search(request);
+  }
+  /** The files it changed as the machine it lives on keeps them, after a
+   *  place an earlier reading gave; none where its source keeps none. */
+  files(after: string): Promise<import("../world/bridge").FileChangesTold> | null {
+    return this.source?.files?.(after) ?? null;
+  }
   /** The parts held, in order; the last is the latest, and live. */
   private parts: Held[];
   private generation = 0;
+  private pageWindow: Window | null = null;
+  private expanded = new Map<string, SessionEvent>();
+  private terminalBodies = new Map<string, string>();
+  private followRevision = 0;
+  private follows: boolean | null = null;
   private source: PartSource | null = null;
   /** Moves when parts come and go. */
   private structure = 0;
@@ -110,6 +160,12 @@ export class Conversation {
   private chatCache: { version: string; blocks: Block[] } | null = null;
   /** Gaps being read, by key. */
   private reading = new Set<string>();
+  private readingFailure: string | null = null;
+  takeReadingFailure(): string | null {
+    const failure = this.readingFailure;
+    this.readingFailure = null;
+    return failure;
+  }
   /** Folds read aside, as finding reads what the page does not hold:
    *  asked as the others are while they are read. */
   private aside: Fold[] = [];
@@ -187,6 +243,8 @@ export class Conversation {
   }
 
   /** Whether parts of it are read from a shell. */
+  get preparing(): boolean { return this.pageWindow?.pages?.preparing === true; }
+
   get windowed(): boolean {
     return this.source !== null;
   }
@@ -195,10 +253,22 @@ export class Conversation {
 
   /** The part the page opens on, in place of all it held. */
   open(window: Window, source: PartSource | null): void {
+    this.searchVersion += 1;
+    if (source !== this.source) this.searchSource += 1;
     this.generation = window.generation;
+    this.pageWindow = window.pages ? window : null;
+    this.follows = null;
+    this.terminalBodies.clear();
+    const objects = new Set(window.pages?.objects.map((object) => object.object));
+    for (const object of this.expanded.keys()) if (!objects.has(object)) this.expanded.delete(object);
     this.source = source;
     const tail = this.live;
-    tail.history(window.events, window.carry);
+    const events = [...window.events];
+    for (const object of window.pages?.objects ?? []) {
+      const expanded = this.expanded.get(object.object);
+      if (expanded) events[object.at] = expanded;
+    }
+    tail.history(events, window.carry, window.pages?.keys, !window.pages, window.pages?.pending);
     this.parts = [{ start: window.start, end: window.start + window.events.length, turnsBefore: window.turns_before, turns: 0, fold: tail }];
     this.reading.clear();
     this.structure += 1;
@@ -219,8 +289,177 @@ export class Conversation {
     if (at !== this.tail.end) return false;
     this.route(event);
     this.live.event(event);
+    this.pageWindow?.events.push(event);
     this.tail.end += 1;
     return true;
+  }
+
+  /** Applies only the realtime change, retaining no raw chunk journal. */
+  liveEvent(event: SessionEvent, key: string, evicted: readonly string[] = [], placement?: { after: string | null }, older?: boolean, object?: string, body?: SessionEvent): boolean {
+    if (event.event === "changed" && (event.change.kind === "request" || event.change.kind === "resolved")) {
+      this.live.livePending(event);
+      const pages = this.pageWindow?.pages;
+      if (pages) {
+        const id = askKey(event.change.id);
+        const pending = (pages.pending ?? []).filter((event) => event.event !== "changed" || event.change.kind !== "request" || askKey(event.change.id) !== id);
+        if (event.change.kind === "request") pending.push(event);
+        pages.pending = pending;
+      }
+      return true;
+    }
+    const held = this.pageWindow;
+    const oldPlaces = new Map(held?.pages?.keys?.map((key, at) => [key, held.pages?.places?.[at] ?? null]));
+    if (held?.pages?.keys) {
+      if (older !== undefined && held.pages.older !== older) { held.pages.older = older; this.structure += 1; }
+      const at = held.pages.keys.indexOf(key);
+      const snapshot = grown(at < 0 ? undefined : held.events[at], event);
+      if (!snapshot) return false;
+      if (at < 0) { held.pages.keys.push(key); held.events.push(snapshot); held.pages.places?.push(null); }
+      else { held.events[at] = snapshot; held.pages.objects = held.pages.objects.filter((object) => object.at !== at); }
+    }
+    const cached = new Set(this.expanded.keys());
+    if (object && body) { this.terminalBodies.set(object, key); this.rememberBody(object, body); }
+    this.route(event);
+    this.live.event(body ?? event, key);
+    if (held?.pages?.keys && [...cached].some((object) => !this.expanded.has(object))) {
+      const bodies = new Map([...this.terminalBodies].map(([object, key]) => [key, this.expanded.get(object)!]));
+      for (const object of held.pages.objects) { const full = this.expanded.get(object.object); if (full) bodies.set(held.pages.keys[object.at]!, full); }
+      const shown = held.events.map((event, at) => bodies.get(held.pages!.keys![at]!) ?? event);
+      const fold = this.live.revised(held.events, held.pages.keys, shown, held.pages.keys, held.pages.pending ?? []);
+      this.parts = [{ ...this.tail, fold }];
+    }
+    const removed = new Set(evicted);
+    this.live.evictPlaces([...removed]);
+    if (removed.size) {
+      const window = this.pageWindow;
+      if (window?.pages?.keys) {
+        const positions = new Map<number, number>();
+        const keys: string[] = [];
+        window.events = window.events.filter((_, at) => {
+          if (removed.has(window.pages!.keys![at]!)) return false;
+          positions.set(at, keys.length); keys.push(window.pages!.keys![at]!); return true;
+        });
+        window.pages.keys = keys;
+        window.pages.places = keys.map((current) => oldPlaces.get(current) ?? (current === key ? evicted.map((old) => oldPlaces.get(old)).find((place) => !!place) : null) ?? null);
+        window.pages.objects = window.pages.objects.flatMap((object) => { const at = positions.get(object.at); return at === undefined ? [] : [{ ...object, at }]; });
+
+        this.tail.end = window.events.length;
+      }
+      this.parts = [...this.parts]; this.structure += 1;
+    }
+    if (placement && this.pageWindow && !placeEvent(this.pageWindow, key, placement.after)) return false;
+    return true;
+  }
+
+  /** Materialization reuses unchanged events and preserves the navigation. */
+  timeline(delta: TimelineDelta): boolean {
+    this.searchVersion += 1;
+    const held = this.pageWindow;
+    if (!held?.pages?.keys || held.generation !== delta.generation) return false;
+    const events = new Map(held.pages.keys.map((key, at) => [key, held.events[at]!]));
+    const places = new Map(held.pages.keys.map((key, at) => [key, held.pages?.places?.[at] ?? null]));
+    for (const changed of delta.events) { events.set(changed.key, changed.event); places.set(changed.key, changed.place ?? places.get(changed.key) ?? null); }
+    const removed = new Set(delta.removed);
+    const keys = held.pages.keys.filter((key) => !removed.has(key));
+    for (const place of delta.placed) {
+      const old = keys.indexOf(place.key);
+      if (old >= 0) keys.splice(old, 1);
+      const at = place.after === null ? -1 : keys.indexOf(place.after);
+      if (place.after !== null && at < 0) return false;
+      keys.splice(at + 1, 0, place.key);
+    }
+    const ordered = keys.map((key) => events.get(key));
+    if (ordered.some((event) => event === undefined)) return false;
+    const window = { ...held, events: ordered as SessionEvent[], pages: { ...delta.pages, keys, places: keys.map((key) => places.get(key) ?? null), pending: delta.pending ?? held.pages.pending ?? [] } };
+    const objects = new Set(window.pages.objects.map((object) => object.object));
+    for (const [object, key] of this.terminalBodies) if (objects.has(object) || !keys.includes(key)) this.terminalBodies.delete(object);
+    for (const object of this.expanded.keys()) if (!objects.has(object) && !this.terminalBodies.has(object)) this.expanded.delete(object);
+    const shown = [...window.events];
+    for (const object of window.pages.objects) { const full = this.expanded.get(object.object); if (full) shown[object.at] = full; }
+    const previous = new Map(held.pages.keys.map((key, at) => [key, held.events[at]]));
+    const hasUsage = shown.some((event) => event.event === "changed" && (event.change.kind === "usage" || event.change.kind === "message_usage"));
+    const itemOnly = delta.pending === undefined && delta.removed.length === 0
+      && delta.events.every(({ key, event }) => canReviseItem(previous.get(key), event, hasUsage));
+    let fold = this.live;
+    if (itemOnly) fold.reviseItems(shown, keys, delta.events.map(({ key }) => key), delta.removed);
+    else fold = fold.revised(held.events, held.pages.keys, shown, keys, window.pages.pending);
+    this.pageWindow = window;
+    this.parts = [{ ...this.tail, fold, end: window.start + window.events.length }];
+    this.structure += 1;
+    return true;
+  }
+
+  /** Fetches only after the reader explicitly opens a deferred event. */
+  async readFull(key: string): Promise<void> {
+    const entry = this.get(key);
+    const window = this.pageWindow;
+    const source = this.source;
+    const object = entry && this.objectOf(entry);
+    if (!object || !source?.object || !window) return;
+    const generation = this.generation;
+    const expected = window.events[object.at];
+    const expanded = await source.object(generation, object.object);
+    if (expanded.object !== object.object) throw new Error("the expanded object did not match the selected content");
+    const event = expanded.event;
+    if (expected && !sameEvent(expected, event)) throw new Error("the expanded event did not match the selected entry");
+    if (source !== this.source || !this.pageWindow) return;
+    const current = this.pageWindow.pages?.objects.find((held) => held.object === object.object);
+    if (!current) return;
+    // Expanded bodies are budgeted separately within the held window. Bodies
+    // evicted by paging are fetched again after the reader returns.
+    this.rememberBody(current.object, event);
+    const held = this.pageWindow;
+    const keys = held.pages?.keys;
+    if (!keys) return;
+    const shown = [...held.events];
+    for (const object of held.pages?.objects ?? []) {
+      const full = this.expanded.get(object.object);
+      if (full) shown[object.at] = full;
+    }
+    const fold = this.live.revised(held.events, keys, shown, keys, held.pages?.pending ?? []);
+    this.parts = [{ ...this.tail, fold }];
+    this.structure += 1;
+    this.changed();
+  }
+
+  private rememberBody(object: string, event: SessionEvent): void {
+    this.expanded.set(object, event);
+    let bytes = [...this.expanded.values()].reduce((sum, e) => sum + JSON.stringify(e).length * 2, 0);
+    while (bytes > 8 * 1024 * 1024 && this.expanded.size > 1) {
+      const first = this.expanded.keys().next().value!;
+      bytes -= JSON.stringify(this.expanded.get(first)).length * 2;
+      this.expanded.delete(first);
+    }
+    for (const object of this.terminalBodies.keys()) if (!this.expanded.has(object)) this.terminalBodies.delete(object);
+  }
+
+  deferred(key: string): boolean {
+    const entry = this.get(key);
+    const object = entry && this.objectOf(entry);
+    return !!object && !this.expanded.has(object.object);
+  }
+
+  private objectOf(entry: Entry): NonNullable<Window["pages"]>["objects"][number] | undefined {
+    const window = this.pageWindow;
+    return window?.pages?.objects.find((object) => {
+      const event = window.events[object.at];
+      if (event && (event.event === "finished" || event.event === "began" || event.event === "updated") && "item" in entry && "turn" in entry) {
+        return event.turn === entry.turn && (event.item.id === entry.item || event.item.draft === entry.item);
+      }
+      return object.at === entry.at;
+    });
+  }
+
+  get paged(): boolean { return this.pageWindow !== null; }
+
+  follow(following: boolean): void {
+    if (!this.pageWindow || this.follows === following) return;
+    this.follows = following;
+    void this.source?.follow?.(++this.followRevision, following).catch((error: unknown) => console.warn("the reader's position could not be sent", error));
+  }
+
+  async newest(): Promise<void> {
+    if (this.pageWindow?.pages?.newer) await this.source?.part(this.generation, { edge: "latest" });
   }
 
   /** Facts a run's job told about a run an earlier part holds go to it as
@@ -261,6 +500,7 @@ export class Conversation {
    *  next to the part after it, when the reader comes from below; from its
    *  start otherwise. */
   async fill(gap: Gap, side: "end" | "start"): Promise<void> {
+    if (this.pageWindow) side = gap.first ? "end" : "start";
     const edge: Edge = side === "end" ? { edge: "before", at: gap.end, floor: gap.start } : { edge: "after", at: gap.start, ceiling: gap.end };
     await this.read(gap, edge);
   }
@@ -273,12 +513,42 @@ export class Conversation {
     return this.read(gap, { edge: "around", at, floor: gap.start, ceiling: gap.end });
   }
 
+  positionOf(key: string): TimelinePosition | null {
+    const block = this.blocks().find((block) => block.key === key);
+    const entry = block?.kind === "activity-group" ? block.members[0]?.key : block?.key ?? key;
+    const place = entry ? this.live.placeOf(entry) : null;
+    const at = place ? this.pageWindow?.pages?.keys?.indexOf(place) : -1;
+    return at !== undefined && at >= 0 ? this.pageWindow?.pages?.places?.[at] ?? null : null;
+  }
+
+  entriesAtPosition(place: TimelinePosition): Entry[] {
+    const at = this.pageWindow?.pages?.places?.findIndex((current) => current?.item === place.item) ?? -1;
+    const key = this.pageWindow?.pages?.keys?.[at];
+    return key ? this.live.entries.filter((entry) => this.live.placeOf(entry.key) === key) : [];
+  }
+
+  async expandPosition(place: TimelinePosition): Promise<void> {
+    const at = this.pageWindow?.pages?.places?.findIndex((current) => current?.item === place.item) ?? -1;
+    const object = this.pageWindow?.pages?.objects.find((object) => object.at === at);
+    if (object && object.bytes <= 8 * 1024 * 1024) await this.readFull(this.entriesAtPosition(place)[0]?.key ?? "");
+  }
+
+  async reachPosition(place: TimelinePosition): Promise<boolean> {
+    if (!this.source || !this.pageWindow) return false;
+    await this.source.part(this.generation, { edge: "position", place });
+    return this.pageWindow.pages?.places?.some((current) => current?.item === place.item) === true;
+  }
+
   /** Reads the turns where `turn` first appears, wherever they are; true
    *  once they are held. */
   async reachTurn(turn: string): Promise<boolean> {
     if (this.foldOf(turn)) return true;
     const source = this.source;
     if (!source) return false;
+    if (this.pageWindow) {
+      await source.part(this.generation, { edge: "turn", turn });
+      return this.foldOf(turn) !== null;
+    }
     const at = await source.locate(this.generation, turn).catch(() => null);
     return at !== null && this.reach(at);
   }
@@ -303,7 +573,7 @@ export class Conversation {
       this.parts.splice(at < 0 ? this.parts.length - 1 : at, 0, { start: part.start, end: part.end, turnsBefore: part.turns_before, turns: part.turns, fold });
       return true;
     } catch (error) {
-      console.warn("a part of the conversation could not be read", error);
+      this.readingFailure = String(error);
       return false;
     } finally {
       this.reading.delete(gap.key);
@@ -340,9 +610,31 @@ export class Conversation {
   /** Every entry of the conversation in order, a part at a time: what is
    *  held as it is, the rest read from the shell and let go once passed;
    *  ends early if the conversation is read again meanwhile. */
-  async *everything(): AsyncGenerator<readonly Entry[]> {
+  async *everything(): AsyncGenerator<ExportReading> {
     const source = this.source;
     const generation = this.generation;
+    if (this.pageWindow) {
+      if (!source?.scan) throw new Error("this source cannot export the complete conversation");
+      let cursor: ScanCursor | null = null;
+      do {
+        const scanned = await source.scan(cursor);
+        if (scanned.restart) yield { restart: true };
+        const fold = new Fold("export");
+        fold.thoughtWords = this.thoughts;
+        fold.history(scanned.events);
+        let start = 0;
+        for (const preview of scanned.truncated ?? []) {
+          const after = fold.entries.findIndex((entry) => entry.at > preview.at);
+          const end = after < 0 ? fold.entries.length : after;
+          yield fold.entries.slice(start, end);
+          yield { previewBytes: preview.bytes };
+          start = end;
+        }
+        yield fold.entries.slice(start);
+        cursor = scanned.next;
+      } while (cursor);
+      return;
+    }
     let at = 0;
     for (const part of [...this.parts]) {
       while (source && at < part.start) {
@@ -372,6 +664,23 @@ export class Conversation {
     const version = `${this.structure}|${this.parts.map((part) => part.fold.clock).join(",")}`;
     if (this.cache?.version === version) return this.cache.blocks;
     const blocks: Block[] = [];
+    if (this.pageWindow?.pages) {
+      const pages = this.pageWindow.pages;
+      const end = this.tail.end;
+      const before = `timeline:${this.generation}:before`;
+      const after = `timeline:${this.generation}:after`;
+      if (pages.older) blocks.push({ kind: "gap", key: before, stamp: this.reading.has(before) ? 1 : 0, start: 0, end: 0, turns: 0, first: true, loading: this.reading.has(before), paged: true });
+      const current = this.live.blocks().map((block, at, all) => block.kind === "activity-group" ? {
+        ...block, partialBefore: at === 0 && pages.partial_older === true,
+        partialAfter: at === all.length - 1 && pages.partial_newer === true,
+      } : block);
+      const pending = pages.newer ? current.filter((block) => block.kind === "ask") : [];
+      blocks.push(...current.filter((block) => !pages.newer || block.kind !== "ask"));
+      if (pages.newer) blocks.push({ kind: "gap", key: after, stamp: this.reading.has(after) ? 1 : 0, start: end, end, turns: 0, first: false, loading: this.reading.has(after), later: true, paged: true });
+      blocks.push(...pending);
+      this.cache = { version, blocks };
+      return blocks;
+    }
     let end = 0;
     let turns = 0;
     const forkAt = this.parts.findIndex((part) => part.fold.holdsFork);
@@ -401,6 +710,11 @@ export class Conversation {
    *  words once it has ended, whoever began it; a colleague's turn that
    *  spoke to the user through `message_user` shows what it said instead,
    *  and its last words too only when it worked on after saying it. */
+  /** Whether a turn's end has something to show in the conversation's own
+   *  view too, though the turn ended as it should: the files it changed
+   *  (`page.ts`). */
+  endKept: ((turn: string) => boolean) | null = null;
+
   chatBlocks(): Block[] {
     const blocks = this.blocks();
     const version = this.cache!.version;
@@ -420,7 +734,7 @@ export class Conversation {
         case "prose":
           return block.prose === "message" && (!this.spokeIn(block.turn) || this.answersAfterSaying(block.turn)) && this.turnEnded(block.turn) && this.lastMessageOf(block.turn) === block.key;
         case "ended":
-          return block.end.how === "failed";
+          return block.end.how === "failed" || !!this.endKept?.(block.turn);
         default:
           return false;
       }
@@ -625,6 +939,14 @@ export class Conversation {
     return this.foldOf(turn)?.lastMessageOf(turn) ?? null;
   }
 
+  /** The calls of `turn`, in the order they came; with no turn named, of
+   *  every turn the page holds, the earliest part first. */
+  toolsOf(turn: string | null): Extract<Entry, { kind: "tool" }>[] {
+    const tools = (entries: readonly Entry[]) => entries.filter((entry): entry is Extract<Entry, { kind: "tool" }> => entry.kind === "tool");
+    if (turn !== null) return tools(this.foldOf(turn)?.turnEntries(turn) ?? []);
+    return this.parts.flatMap((part) => tools(part.fold.entries));
+  }
+
   /** Where a fork from `turn`, or from where the conversation is now, would
    *  begin: the user's words that asked, the answer to them, and the key of
    *  the block the answer is drawn in. */
@@ -703,6 +1025,26 @@ export class Conversation {
   turning(): boolean {
     return this.live.turning();
   }
+  /** The start the first words kept wait on, as its machine tells it. */
+  starting(): StartShown | null {
+    return this.live.starting();
+  }
+  /** The turn shown under way, the latest to begin; null when none is. */
+  runningTurn(): string | null {
+    return this.live.runningTurn();
+  }
+  /** The words on their way a stop pressed now is for (`Fold.coming`). */
+  coming(keys?: readonly string[]): { keys: string[]; words: string[]; unnamed: number } {
+    return this.live.coming(keys);
+  }
+  /** The ids of the words a stop waits for, and how many have none yet
+   *  (`Fold.haltedIds`, `Fold.haltedUnnamed`). */
+  haltedIds(): string[] {
+    return this.live.haltedIds();
+  }
+  haltedUnnamed(): number {
+    return this.live.haltedUnnamed();
+  }
   turnBegan(): number | null {
     return this.live.turnBegan();
   }
@@ -745,8 +1087,8 @@ export class Conversation {
     this.live.named(key, delivery);
   }
   /** What its machine holds of it now (`Fold.now`). */
-  now(busy: boolean, turn: string | null, kept: KeptWords[]): void {
-    this.live.now(busy, turn, kept);
+  now(busy: boolean, turn: string | null, kept: KeptWords[], halted: string | null = null): void {
+    this.live.now(busy, turn, kept, halted);
   }
   unsend(key: string): void {
     this.live.unsend(key);
@@ -789,6 +1131,7 @@ export class Conversation {
 
   event(event: SessionEvent): void {
     this.live.event(event);
+    this.pageWindow?.events.push(event);
     this.tail.end += 1;
   }
 }

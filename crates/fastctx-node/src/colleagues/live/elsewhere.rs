@@ -36,6 +36,7 @@ pub(super) async fn keep(
         documents: None,
         held: None,
         now: false,
+        live_only: false,
         goal: false,
         collaboration: Some(follow),
     };

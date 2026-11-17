@@ -20,6 +20,8 @@ mod composer;
 mod composer_sync;
 #[path = "gui_wire_fixtures/control.rs"]
 mod control;
+#[path = "gui_wire_fixtures/data.rs"]
+mod data;
 #[path = "gui_wire_fixtures/file_read.rs"]
 mod file_read;
 #[path = "gui_wire_fixtures/file_search.rs"]
@@ -30,8 +32,6 @@ mod focus;
 mod logins;
 #[path = "gui_wire_fixtures/machine_log.rs"]
 mod machine_log;
-#[path = "gui_wire_fixtures/pages.rs"]
-mod pages;
 #[path = "gui_wire_fixtures/profile.rs"]
 mod profile;
 #[path = "gui_wire_fixtures/renewal.rs"]
@@ -59,12 +59,12 @@ mod run_facts;
 
 #[derive(Serialize)]
 struct Fixtures {
+    data: Vec<fastctx_types::data::DataReply>,
     updates: updates::Fixtures,
     profile: profile::Fixtures,
     machine_log: Vec<fastctx_types::machine_log::Page>,
     run_facts: run_facts::Fixtures,
     accounts: accounts::Fixtures,
-    pages: pages::Fixtures,
     session: session::Fixtures,
     world: world::Fixtures,
     since: since::Fixtures,
@@ -88,12 +88,12 @@ struct Fixtures {
 
 fn main() {
     let fixtures = Fixtures {
+        data: data::fixtures(),
         updates: updates::fixtures(),
         profile: profile::fixtures(),
         machine_log: machine_log::fixtures(),
         run_facts: run_facts::fixtures(),
         accounts: accounts::fixtures(),
-        pages: pages::fixtures(),
         session: session::fixtures(),
         world: world::fixtures(),
         since: since::fixtures(),

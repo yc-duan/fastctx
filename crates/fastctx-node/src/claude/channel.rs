@@ -1,0 +1,694 @@
+//! The loopback channel between a Claude session's mod and this node
+//! (`dev-notes/skel/mod-channel-v1.md`): the mod hands its reports over in
+//! memory, as they come, and waits on a request the node answers the moment
+//! it leaves the session something (words, a stop, a control), instead of
+//! files a helper process watches and the node scans. The files stay: a mod
+//! that cannot reach this, or one loaded before it, goes on with them.
+//!
+//! The node listens on `127.0.0.1` at a port of the system's choosing (a
+//! named pipe, the other way on Windows, is refused by Claude Code), and
+//! tells each session where in its directory's `channel.json`, with a token
+//! for that session alone: a process that can read the session's directory
+//! could write its files as well, and no other user's process gets in.
+
+use std::collections::{HashMap, HashSet};
+use std::convert::Infallible;
+use std::io;
+use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+
+use bytes::Bytes;
+use http_body_util::{BodyExt, Full, Limited};
+use hyper::body::Incoming;
+use hyper::{Method, Request, Response, StatusCode};
+use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
+
+use crate::Node;
+
+/// How long a wait is held before it is answered with nothing new.
+const WAIT: Duration = Duration::from_secs(25);
+/// The most one handing over of reports may hold.
+const BODY_MOST: usize = 64 * 1024 * 1024;
+/// The most reports, and bytes of them, a session may have handed over and
+/// not yet dealt with; past either, the channel answers that it is busy and
+/// the mod turns to files.
+const QUEUED_MOST: usize = 1024;
+const QUEUED_BYTES: usize = 64 * 1024 * 1024;
+/// What the channel says of itself in `channel.json`: 2 since reports are
+/// let go of by the receipts the node gives them; a mod that knows only 1
+/// reports through files.
+const VERSION: u32 = 2;
+
+pub struct Channel {
+    port: u16,
+    /// Made anew each time the node starts: a session's token changes with
+    /// it, and its mod reads `channel.json` again when a request is refused.
+    key: [u8; 32],
+    /// A session's wake stays while a wait holds it or its queue is there;
+    /// the count of waits holding it says when it may go.
+    wakes: Mutex<HashMap<String, Held>>,
+    /// How many times any session was woken: each wake takes the next count,
+    /// and a new wake starts at the count now, so a mod that saw one let go
+    /// is never told "nothing new" by its successor, and the counts stay
+    /// well inside what the mod's JSON numbers hold exactly.
+    ticks: AtomicU64,
+    /// Receipts given for reports handed over, channel-wide: each report the
+    /// node takes gets the next, which its mod lets it go of by, and a queue
+    /// made anew never gives one an earlier queue gave.
+    receipts: AtomicU64,
+    /// Queues made, channel-wide: each answers with its own number, and a
+    /// receipt counts only within the queue that gave it.
+    queues_made: AtomicU64,
+    /// The sessions told where the channel is since the node started.
+    told: Mutex<HashSet<String>>,
+    queues: Mutex<HashMap<String, Arc<Queue>>>,
+}
+
+/// One session's reports handed over and not yet applied, in the order they
+/// came: they are taken at once, so what the mod does next waits for no
+/// report to be applied, and applied in this order by one task of their own.
+struct Queue {
+    /// Which queue this is: a session's reports a refused queue dropped
+    /// were never dealt with by the one made after it, whatever receipts it
+    /// goes on to give.
+    number: u64,
+    sender: tokio::sync::mpsc::UnboundedSender<Batch>,
+    state: Mutex<QueueState>,
+}
+
+#[derive(Default)]
+struct QueueState {
+    /// The receipt of the last report dealt with: every report this queue
+    /// took up to it was applied, or written back to the session's files to
+    /// be applied there. Its mod keeps every report after it, to hand again
+    /// or write to files itself.
+    dealt: u64,
+    /// A report could neither be applied nor written to the files: the queue
+    /// takes nothing more, so nothing after it is applied before it, and the
+    /// mod writes what it kept to files.
+    refused: bool,
+    queued: usize,
+    bytes: usize,
+    /// Let go after a long while with nothing handed (`IDLE`): a report
+    /// that finds it takes the session's next queue instead.
+    retired: bool,
+}
+
+/// How long a session's queue, and the task applying it, wait with nothing
+/// handed before they go; the next report starts them again.
+const IDLE: std::time::Duration = std::time::Duration::from_secs(10 * 60);
+
+struct Batch {
+    reports: Vec<HandedReport>,
+    bytes: usize,
+}
+
+struct Held {
+    wake: Arc<Wake>,
+    /// Changed only with `wakes` locked.
+    waits: usize,
+}
+
+/// How many times the node has left a session something since it started,
+/// and those waiting to hear of the next time.
+struct Wake {
+    count: AtomicU64,
+    changed: tokio::sync::Notify,
+}
+
+impl Channel {
+    fn token(&self, session: &str) -> String {
+        let mut hash = Sha256::new();
+        hash.update(self.key);
+        hash.update(b":");
+        hash.update(session.as_bytes());
+        hash.finalize().iter().map(|byte| format!("{byte:02x}")).collect()
+    }
+
+    /// The session's wake, held by one more wait.
+    fn hold_wake(&self, session: &str) -> Arc<Wake> {
+        let mut wakes = self.wakes.lock().expect("never poisoned");
+        let held = wakes.entry(session.to_string()).or_insert_with(|| {
+            // A new wake starts where the channel's count stands: past
+            // every count an earlier one of this session told.
+            let now = self.ticks.load(Ordering::Acquire);
+            Held { wake: Arc::new(Wake { count: AtomicU64::new(now), changed: tokio::sync::Notify::new() }), waits: 0 }
+        });
+        held.waits += 1;
+        held.wake.clone()
+    }
+
+    /// Answers once the session has been left something since `seen`, or
+    /// after `WAIT` with nothing new: how many times it has been.
+    async fn wait(&self, session: &str, seen: u64) -> u64 {
+        // However this wait ends (answered, timed out, or its request
+        // dropped), the wake goes with it when nothing else holds it.
+        struct Waiting<'a> {
+            channel: &'a Channel,
+            session: &'a str,
+            wake: Arc<Wake>,
+        }
+        impl Drop for Waiting<'_> {
+            fn drop(&mut self) {
+                self.channel.forget_wake(self.session, &self.wake);
+            }
+        }
+        let waiting = Waiting { channel: self, session, wake: self.hold_wake(session) };
+        let wake = &waiting.wake;
+        let deadline = tokio::time::Instant::now() + WAIT;
+        loop {
+            let changed = wake.changed.notified();
+            tokio::pin!(changed);
+            changed.as_mut().enable();
+            let count = wake.count.load(Ordering::Acquire);
+            if count != seen {
+                break count;
+            }
+            if tokio::time::timeout_at(deadline, changed).await.is_err() {
+                break wake.count.load(Ordering::Acquire);
+            }
+        }
+    }
+
+    /// A wait let its session's wake go. With no wait left, it goes once its
+    /// queue went too; a queue that goes after this looks takes it then
+    /// (`unheld_wake`), as the wait is no longer counted.
+    fn forget_wake(&self, session: &str, wake: &Arc<Wake>) {
+        let last = {
+            let mut wakes = self.wakes.lock().expect("never poisoned");
+            match wakes.get_mut(session) {
+                Some(held) if Arc::ptr_eq(&held.wake, wake) => {
+                    held.waits -= 1;
+                    held.waits == 0
+                }
+                _ => false,
+            }
+        };
+        if last && !self.queues.lock().expect("never poisoned").contains_key(session) {
+            self.unheld_wake(session);
+        }
+    }
+
+    /// Lets the session's wake go when no wait holds it: a mod that waits
+    /// again gets a new one, and at worst looks once more than it needed.
+    fn unheld_wake(&self, session: &str) {
+        let mut wakes = self.wakes.lock().expect("never poisoned");
+        if wakes.get(session).is_some_and(|held| held.waits == 0) {
+            wakes.remove(session);
+        }
+    }
+}
+
+/// Starts listening, before any session is looked at.
+pub(super) fn start(node: &Arc<Node>) -> io::Result<()> {
+    let listener = std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))?;
+    listener.set_nonblocking(true)?;
+    let port = listener.local_addr()?.port();
+    let mut key = [0u8; 32];
+    getrandom::fill(&mut key).map_err(io::Error::other)?;
+    let channel =
+        Arc::new(Channel {
+            port,
+            key,
+            wakes: Mutex::default(),
+            ticks: AtomicU64::new(0),
+            receipts: AtomicU64::new(0),
+            queues_made: AtomicU64::new(0),
+            told: Mutex::default(),
+            queues: Mutex::default(),
+        });
+    if node.claude.channel.set(channel).is_err() {
+        return Ok(());
+    }
+    let node = node.clone();
+    fastctx_platform::task::spawn(async move {
+        let listener = match tokio::net::TcpListener::from_std(listener) {
+            Ok(listener) => listener,
+            Err(error) => {
+                node.log.line(format_args!("the Claude sessions' loopback channel did not start: {error}"));
+                return;
+            }
+        };
+        loop {
+            match listener.accept().await {
+                Ok((stream, _)) => {
+                    let _ = stream.set_nodelay(true);
+                    fastctx_platform::task::spawn(serve(node.clone(), stream));
+                }
+                Err(error) => {
+                    node.log.line(format_args!("accepting on the Claude sessions' loopback channel: {error}"));
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                }
+            }
+        }
+    });
+    Ok(())
+}
+
+/// Tells the session in `directory` where the channel is, once each time the
+/// node starts (and again whenever its mod reserves the directory).
+pub(crate) fn tell(node: &Node, directory: &Path, session: &str, again: bool) {
+    let Some(channel) = node.claude.channel.get() else { return };
+    if !again && channel.told.lock().expect("never poisoned").contains(session) {
+        return;
+    }
+    let said = json!({"version": VERSION, "port": channel.port, "token": channel.token(session)});
+    let path = directory.join("channel.json");
+    let bytes = serde_json::to_vec(&said).expect("JSON serializes");
+    let same = fastctx_platform::disk::read(&path).is_ok_and(|current| current == bytes);
+    // Where the channel is changes with the node: a lost power takes nothing
+    // that the node's next start does not write again.
+    let written = same || fastctx_platform::publish_unsynced(&path, &bytes, fastctx_platform::Permissions::Private).is_ok();
+    if written {
+        channel.told.lock().expect("never poisoned").insert(session.to_string());
+    }
+}
+
+/// The node left the session something its mod takes when it looks (words,
+/// a stop, a control): a mod waiting on the channel hears of it now.
+pub(crate) fn wake(node: &Node, session: &str) {
+    if let Some(channel) = node.claude.channel.get() {
+        channel.wake(session);
+    }
+}
+
+impl Channel {
+    fn wake(&self, session: &str) {
+        // Counted on the channel, not the wake: counts stay small enough for
+        // the mod's JSON numbers, and a wake made anew never tells a count
+        // an earlier one told. Counted first: a wake made after this starts
+        // past it, so a session with none yet loses nothing.
+        let tick = self.ticks.fetch_add(1, Ordering::AcqRel) + 1;
+        let wakes = self.wakes.lock().expect("never poisoned");
+        if let Some(held) = wakes.get(session) {
+            held.wake.count.fetch_max(tick, Ordering::AcqRel);
+            held.wake.changed.notify_waiters();
+        }
+    }
+}
+
+async fn serve(node: Arc<Node>, stream: tokio::net::TcpStream) {
+    let service = hyper::service::service_fn(move |request| {
+        let node = node.clone();
+        async move { Ok::<_, Infallible>(respond(&node, request).await) }
+    });
+    let _ = hyper::server::conn::http1::Builder::new()
+        .serve_connection(hyper_util::rt::TokioIo::new(stream), service)
+        .await;
+}
+
+async fn respond(node: &Arc<Node>, request: Request<Incoming>) -> Response<Full<Bytes>> {
+    match route(node, request).await {
+        Ok(answer) => reply(StatusCode::OK, &answer),
+        Err((status, why)) => reply(status, &json!({ "error": why })),
+    }
+}
+
+fn reply(status: StatusCode, body: &Value) -> Response<Full<Bytes>> {
+    let mut response = Response::new(Full::new(Bytes::from(serde_json::to_vec(body).expect("JSON serializes"))));
+    *response.status_mut() = status;
+    response
+        .headers_mut()
+        .insert(hyper::header::CONTENT_TYPE, hyper::header::HeaderValue::from_static("application/json"));
+    response
+}
+
+type Refusal = (StatusCode, String);
+
+async fn route(node: &Arc<Node>, request: Request<Incoming>) -> Result<Value, Refusal> {
+    let channel = node.claude.channel.get().ok_or((StatusCode::SERVICE_UNAVAILABLE, "starting".to_string()))?;
+    let path = request.uri().path().to_string();
+    let parts: Vec<&str> = path.trim_start_matches('/').split('/').collect();
+    let [version, "claude", session, what] = parts[..] else {
+        return Err((StatusCode::NOT_FOUND, format!("no such place: {path}")));
+    };
+    if version != "v1" {
+        return Err((StatusCode::NOT_FOUND, format!("no channel version {version}")));
+    }
+    if session.is_empty() || !session.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+        return Err((StatusCode::BAD_REQUEST, "not a session's name".to_string()));
+    }
+    let expected = format!("Bearer {}", channel.token(session));
+    let given = request.headers().get(hyper::header::AUTHORIZATION).map(|value| value.as_bytes()).unwrap_or_default();
+    if !same_bytes(given, expected.as_bytes()) {
+        return Err((StatusCode::UNAUTHORIZED, "not this session's token".to_string()));
+    }
+    match (request.method().clone(), what) {
+        (Method::GET, "wake") => {
+            let seen = request
+                .uri()
+                .query()
+                .and_then(|query| query.split('&').find_map(|pair| pair.strip_prefix("seen=")))
+                .and_then(|seen| seen.parse().ok())
+                .unwrap_or(0);
+            let wake = channel.wait(session, seen).await;
+            let refused = channel
+                .queues
+                .lock()
+                .expect("never poisoned")
+                .get(session)
+                .is_some_and(|queue| queue.state.lock().expect("never poisoned").refused);
+            Ok(if refused { json!({ "wake": wake, "reports": "refused" }) } else { json!({ "wake": wake }) })
+        }
+        (Method::POST, "reports") => {
+            let body = Limited::new(request.into_body(), BODY_MOST)
+                .collect()
+                .await
+                .map_err(|error| (StatusCode::BAD_REQUEST, format!("reading the reports: {error}")))?
+                .to_bytes();
+            let mut handed: Handed = serde_json::from_slice(&body)
+                .map_err(|error| (StatusCode::BAD_REQUEST, format!("reading the reports: {error}")))?;
+            let names: Vec<String> = handed.reports.iter().map(|report| report.name.clone()).collect();
+            if let Some(name) = names.iter().find(|name| !name.strip_suffix(".json").is_some_and(watermark)) {
+                return Err((StatusCode::BAD_REQUEST, format!("{name} is not a report's name")));
+            }
+            let mut queue = queue(node, channel, session);
+            let (number, dealt, receipts) = {
+                let mut state = queue.state.lock().expect("never poisoned");
+                if state.retired {
+                    drop(state);
+                    queue = self::queue(node, channel, session);
+                    state = queue.state.lock().expect("never poisoned");
+                }
+                if state.refused {
+                    return Err((StatusCode::SERVICE_UNAVAILABLE, "the session's reports go to its files".to_string()));
+                }
+                if state.queued + names.len() > QUEUED_MOST || state.bytes + body.len() > QUEUED_BYTES {
+                    return Err((StatusCode::SERVICE_UNAVAILABLE, "too many of the session's reports wait".to_string()));
+                }
+                // Numbered in the order taken, which is the order they are
+                // dealt with: a mod lets go of exactly those dealt with, not
+                // of every report with a smaller name (one handed again after
+                // a later one may wait here still).
+                let receipts: Vec<u64> = handed
+                    .reports
+                    .iter_mut()
+                    .map(|report| {
+                        report.receipt = channel.receipts.fetch_add(1, Ordering::AcqRel) + 1;
+                        report.receipt
+                    })
+                    .collect();
+                queue.sender.send(Batch { reports: handed.reports, bytes: body.len() }).map_err(|_| {
+                    (StatusCode::SERVICE_UNAVAILABLE, "the session's reports are not taken now".to_string())
+                })?;
+                state.queued += names.len();
+                state.bytes += body.len();
+                (queue.number, state.dealt, receipts)
+            };
+            Ok(json!({ "received": names, "queue": number, "receipts": receipts, "dealt": dealt }))
+        }
+        (Method::GET, "subagents") => {
+            let configuration = crate::profile::subagents::for_session(node, session)
+                .await
+                .map_err(|failure| (StatusCode::CONFLICT, failure.message))?;
+            Ok(json!({ "configuration": configuration }))
+        }
+        (method, what) => Err((StatusCode::NOT_FOUND, format!("no {method} {what}"))),
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct Handed {
+    reports: Vec<HandedReport>,
+}
+
+/// The session's queue, with the task that applies it started the first time.
+fn queue(node: &Arc<Node>, channel: &Channel, session: &str) -> Arc<Queue> {
+    let mut queues = channel.queues.lock().expect("never poisoned");
+    if let Some(queue) = queues.get(session) {
+        return queue.clone();
+    }
+    let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
+    let number = channel.queues_made.fetch_add(1, Ordering::AcqRel) + 1;
+    let queue = Arc::new(Queue { number, sender, state: Mutex::default() });
+    queues.insert(session.to_string(), queue.clone());
+    fastctx_platform::task::spawn(apply_in_order(node.clone(), session.to_string(), queue.clone(), receiver));
+    queue
+}
+
+/// Applies a session's handed reports in the order they came, those that
+/// came meanwhile together. What cannot be applied (a session not known
+/// yet, a report that failed) is written to the session's files, as its mod
+/// would have written it, and applied by the next look as files are. A report
+/// that can be neither stops the queue: nothing after it is applied ahead of
+/// it, and the mod, told so, writes what it kept to the files itself.
+async fn apply_in_order(
+    node: Arc<Node>,
+    session: String,
+    queue: Arc<Queue>,
+    mut receiver: tokio::sync::mpsc::UnboundedReceiver<Batch>,
+) {
+    let directory = fastctx_hosts::claude::exchange::sessions(node.world.path()).join(&session);
+    loop {
+        let first = match tokio::time::timeout(IDLE, receiver.recv()).await {
+            Ok(Some(first)) => first,
+            Ok(None) => return,
+            // Nothing handed for a long while: the queue and its task go,
+            // unless something came meanwhile.
+            Err(_) => {
+                if retire(&node, &session, &queue) {
+                    return;
+                }
+                continue;
+            }
+        };
+        let mut taken = first.bytes;
+        let mut batch = first.reports;
+        while let Ok(more) = receiver.try_recv() {
+            taken += more.bytes;
+            batch.extend(more.reports);
+        }
+        let count = batch.len();
+        let reports = batch.iter().map(|report| (report.name.clone(), report.report.clone())).collect();
+        let applied = match super::receive(&node, &session, reports).await {
+            Ok(applied) => applied,
+            Err(error) => {
+                node.log.line(format_args!("applying what {session} handed over; to its files instead: {error}"));
+                Vec::new()
+            }
+        };
+        // A batch's last fragment is named after its file's name: the mod
+        // reads where its names stand from these markers when it starts again
+        // (`startSession`), as from the files it wrote.
+        for report in &batch {
+            let Some(sequence) = report.sequence.as_deref() else { continue };
+            if applied.contains(&report.name) && watermark(sequence) {
+                let marker = directory.join("applied").join(format!("{sequence}.sequence"));
+                match fastctx_platform::publish_new_unsynced(&marker, b"", fastctx_platform::Permissions::Private) {
+                    Err(error) if error.kind() != io::ErrorKind::AlreadyExists => {
+                        node.log.line(format_args!("keeping where {session}'s report names stand: {error}"));
+                    }
+                    _ => {}
+                }
+            }
+        }
+        let rest: Vec<(String, Value)> = batch
+            .iter()
+            .filter(|report| !applied.contains(&report.name))
+            .map(|report| (report.name.clone(), report.report.clone()))
+            .collect();
+        let written = if rest.is_empty() {
+            0
+        } else {
+            let (writing, wanted) = (directory.clone(), rest.len());
+            match fastctx_platform::task::spawn_blocking(move || to_files(&writing, &rest)).await {
+                Ok((written, None)) => written,
+                Ok((written, Some(error))) => {
+                    node.log.line(format_args!(
+                        "writing {session}'s handed reports to its files stopped after {written} of {wanted}: {error}"
+                    ));
+                    written
+                }
+                Err(_) => 0,
+            }
+        };
+        let (through, receipt, whole) = dealt(&batch, &applied, written);
+        {
+            let mut state = queue.state.lock().expect("never poisoned");
+            state.queued = state.queued.saturating_sub(count);
+            state.bytes = state.bytes.saturating_sub(taken);
+            if through.is_some() {
+                state.dealt = state.dealt.max(receipt);
+            }
+            state.refused |= !whole;
+        }
+        if !whole {
+            node.log.line(format_args!("{session}'s reports go to its files from now: one could not be kept"));
+            // What waits behind the one not kept is the mod's to write now.
+            receiver.close();
+            while receiver.try_recv().is_ok() {}
+            wake(&node, &session);
+            // The refusal stands while its mod turns to files; then it goes.
+            tokio::time::sleep(IDLE).await;
+            if let Some(channel) = node.claude.channel.get() {
+                let mut queues = channel.queues.lock().expect("never poisoned");
+                if queues.get(&session).is_some_and(|held| Arc::ptr_eq(held, &queue)) {
+                    queues.remove(&session);
+                }
+                drop(queues);
+                channel.told.lock().expect("never poisoned").remove(&session);
+                channel.unheld_wake(&session);
+            }
+            return;
+        }
+    }
+}
+
+/// Lets a session's idle queue go, with its wake when nobody waits on it.
+/// Says whether it went: not when a report is queued or the queue refused.
+fn retire(node: &Node, session: &str, queue: &Arc<Queue>) -> bool {
+    let Some(channel) = node.claude.channel.get() else { return false };
+    let mut queues = channel.queues.lock().expect("never poisoned");
+    let mut state = queue.state.lock().expect("never poisoned");
+    if state.queued > 0 || state.refused || !queues.get(session).is_some_and(|held| Arc::ptr_eq(held, queue)) {
+        return false;
+    }
+    state.retired = true;
+    queues.remove(session);
+    drop((state, queues));
+    // Told again, should it hand anything again: a `channel.json` written
+    // anew, as it is.
+    channel.told.lock().expect("never poisoned").remove(session);
+    channel.unheld_wake(session);
+    true
+}
+
+/// How far a batch was dealt with, in order: the last report applied or
+/// written to the files with every one before it, its receipt, and whether
+/// all were. `written` counts the reports not applied, in order, that
+/// reached the files.
+fn dealt(batch: &[HandedReport], applied: &[String], written: usize) -> (Option<String>, u64, bool) {
+    let (mut through, mut receipt, mut unapplied) = (None, 0, 0);
+    for report in batch {
+        if !applied.contains(&report.name) {
+            if unapplied == written {
+                return (through, receipt, false);
+            }
+            unapplied += 1;
+        }
+        through = Some(report.name.clone());
+        receipt = report.receipt;
+    }
+    (through, receipt, true)
+}
+
+/// Writes reports to the session's files as its mod writes them: the report,
+/// then its marker that it is whole. How many it wrote, and why it stopped
+/// short if it did.
+fn to_files(directory: &Path, reports: &[(String, Value)]) -> (usize, Option<io::Error>) {
+    let events = directory.join("events");
+    if let Err(error) = fastctx_platform::ensure_private_dir(&events) {
+        return (0, Some(error));
+    }
+    for (index, (name, report)) in reports.iter().enumerate() {
+        let path = events.join(name);
+        let written = serde_json::to_vec(report).map_err(io::Error::other).and_then(|bytes| {
+            fastctx_platform::publish(&path, &bytes, fastctx_platform::Permissions::Private)?;
+            fastctx_platform::publish(&path.with_extension("done"), b"", fastctx_platform::Permissions::Private)
+        });
+        if let Err(error) = written {
+            return (index, Some(error));
+        }
+    }
+    (reports.len(), None)
+}
+
+#[derive(serde::Deserialize)]
+struct HandedReport {
+    name: String,
+    /// The name taken when a batch of streamed observations was sealed.
+    #[serde(default)]
+    sequence: Option<String>,
+    report: Value,
+    /// Given when the node takes it.
+    #[serde(skip)]
+    receipt: u64,
+}
+
+/// Whether `name` is a mod's report name: its clock and a count, at the
+/// widths it writes them.
+fn watermark(name: &str) -> bool {
+    let bytes = name.as_bytes();
+    bytes.len() == 22 && bytes[..15].iter().all(u8::is_ascii_digit) && bytes[15] == b'-' && bytes[16..].iter().all(u8::is_ascii_digit)
+}
+
+/// Whether two byte strings are equal, taking as long whichever byte differs.
+fn same_bytes(left: &[u8], right: &[u8]) -> bool {
+    left.len() == right.len() && left.iter().zip(right).fold(0u8, |differ, (a, b)| differ | (a ^ b)) == 0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn channel() -> Arc<Channel> {
+        Arc::new(Channel {
+            port: 0,
+            key: [0; 32],
+            wakes: Mutex::default(),
+            ticks: AtomicU64::new(0),
+            receipts: AtomicU64::new(0),
+            queues_made: AtomicU64::new(0),
+            told: Mutex::default(),
+            queues: Mutex::default(),
+        })
+    }
+
+    fn wakes(channel: &Channel) -> usize {
+        channel.wakes.lock().unwrap().len()
+    }
+
+    #[tokio::test]
+    async fn waits_ending_together_leave_no_wake() {
+        let channel = channel();
+        let waits: Vec<_> = (0..8)
+            .map(|_| {
+                let channel = channel.clone();
+                fastctx_platform::task::spawn(async move { channel.wait("s", 0).await })
+            })
+            .collect();
+        while channel.wakes.lock().unwrap().get("s").is_none_or(|held| held.waits < 8) {
+            tokio::task::yield_now().await;
+        }
+        channel.wake("s");
+        for wait in waits {
+            assert_eq!(wait.await.unwrap(), 1);
+        }
+        assert_eq!(wakes(&channel), 0);
+    }
+
+    #[tokio::test]
+    async fn a_dropped_wait_leaves_no_wake() {
+        let channel = channel();
+        let held = channel.clone();
+        let wait = fastctx_platform::task::spawn(async move { held.wait("s", 0).await });
+        while wakes(&channel) == 0 {
+            tokio::task::yield_now().await;
+        }
+        wait.abort();
+        let _ = wait.await;
+        assert_eq!(wakes(&channel), 0);
+    }
+
+    #[tokio::test]
+    async fn a_wake_stays_with_its_queue_and_goes_with_it() {
+        let channel = channel();
+        let (sender, _receiver) = tokio::sync::mpsc::unbounded_channel();
+        let queue = Arc::new(Queue { number: 1, sender, state: Mutex::default() });
+        channel.queues.lock().unwrap().insert("s".into(), queue);
+        channel.wake("s");
+        assert_eq!(wakes(&channel), 0, "a wake nobody waits on is not made");
+        // A new wake starts past every count told: a mod that saw none
+        // looks at once.
+        assert_eq!(channel.wait("s", 0).await, 1);
+        assert_eq!(wakes(&channel), 1, "kept while the session's queue is there");
+        let seen = channel.wait("s", 0).await;
+        assert_eq!(seen, 1);
+        channel.queues.lock().unwrap().remove("s");
+        channel.unheld_wake("s");
+        assert_eq!(wakes(&channel), 0);
+    }
+}

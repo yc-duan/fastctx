@@ -26,6 +26,33 @@ mod transport;
 use crate::outq::Outq;
 use crate::{Hub, Out, Session, Socket, refuse, storage_failure};
 
+/// How many questions one member may have the hub working on at once. A
+/// question read is handed to work of its own and the room its frame took
+/// is free again, so without this a member could have the hub start work
+/// without end; a machine in its right mind has a few dozen at most. The
+/// questions whose work keeps its own bounds are not counted for as long as
+/// it lasts: packages (a few waiters each, one coming in at a time) and the
+/// project ledger's reads (their own readers and pending limits).
+const ASKING_EACH: usize = 1024;
+
+/// How many questions every member together may have the hub working on at
+/// once, by the hub's memory, from 16,384 to 262,144.
+fn asking_all() -> &'static Arc<tokio::sync::Semaphore> {
+    static ALL: std::sync::OnceLock<Arc<tokio::sync::Semaphore>> = std::sync::OnceLock::new();
+    ALL.get_or_init(|| {
+        let physical = fastctx_platform::memory::physical().unwrap_or(1 << 30);
+        Arc::new(tokio::sync::Semaphore::new((physical / (64 << 10)).clamp(16_384, 262_144) as usize))
+    })
+}
+
+/// What a question holds while the hub works on it: the room its parts
+/// took, where it came in parts, and its places among what its member and
+/// every member have the hub working on. Each goes when the work does.
+pub(crate) struct Asking {
+    _parts: Option<fastctx_net::reassembly::Reservation>,
+    _places: Option<(tokio::sync::OwnedSemaphorePermit, tokio::sync::OwnedSemaphorePermit)>,
+}
+
 /// What a member says of itself when its session opens.
 pub(crate) struct Said {
     pub replicated_records: bool,
@@ -80,6 +107,8 @@ pub(crate) struct Said {
     pub parts: bool,
     /// Whether it reads what changed in its view (`Down::View`).
     pub view_deltas: bool,
+    /// Whether it reads the records of the hub's assets sealed and opened.
+    pub asset_seals: bool,
 }
 
 /// What a call or a data connection was allowed under: `from` saying it to
@@ -130,6 +159,8 @@ impl Standing {
     }
 }
 
+#[cfg(feature = "change-drill")]
+pub(crate) mod change_probe;
 mod in_flight;
 
 pub(crate) use in_flight::InFlight;
@@ -139,7 +170,13 @@ pub(crate) use in_flight::InFlight;
 /// gone wrong fills only its own share, and the others are forwarded as
 /// before (`world-concurrency.md`, 别的机器来的调用按来者公平地分).
 fn crowded(calls: &InFlight, pending: &Pending) -> Option<String> {
-    let (member_share, account_share) = in_flight::shares();
+    let (member_share, account_share, every_share) = in_flight::shares();
+    if calls.len() >= every_share {
+        return Some(format!(
+            "the hub has {} calls on their way already, the most it carries at once; one has to end first",
+            calls.len()
+        ));
+    }
     let member = calls.of_member(&pending.caller);
     if member >= member_share {
         return Some(format!(
@@ -295,6 +332,7 @@ pub(crate) async fn session(
 
     // Whether the writer still has a refusal to deliver before closing.
     let mut uploads = crate::question_parts::Uploads::default();
+    let asking = Arc::new(tokio::sync::Semaphore::new(ASKING_EACH));
     let mut upload_clock = tokio::time::interval(HEARTBEAT);
     let mut heard = crate::strain::Heard::default();
     let (ended, refusing) = loop {
@@ -361,7 +399,9 @@ pub(crate) async fn session(
                 };
                 uploads = returned;
                 match complete {
-                    Ok(Some(complete)) => (Up::Ask { id, question: complete.question }, Some(complete.reservation)),
+                    Ok(Some(complete)) => {
+                        (Up::Ask { id, question: complete.question, submission: None }, Some(complete.reservation))
+                    }
                     Ok(None) => continue,
                     Err(why) => {
                         let _ = out.send(Out::Frame(Down::Told { id, answer: Err(why) }));
@@ -374,6 +414,31 @@ pub(crate) async fn session(
                 continue;
             }
             frame => (frame, None),
+        };
+        let reservation = match &frame {
+            Up::Ask { id, .. } => {
+                let places = asking
+                    .clone()
+                    .try_acquire_owned()
+                    .map_err(|_| {
+                        format!("{ASKING_EACH} questions of this machine are being worked on; ask again once some are answered")
+                    })
+                    .and_then(|member| {
+                        asking_all()
+                            .clone()
+                            .try_acquire_owned()
+                            .map(|all| (member, all))
+                            .map_err(|_| "the hub is working on as many questions as it takes; ask again shortly".to_string())
+                    });
+                match places {
+                    Ok(places) => Asking { _parts: reservation, _places: Some(places) },
+                    Err(why) => {
+                        let _ = out.send(Out::Frame(Down::Told { id: *id, answer: Err(why) }));
+                        continue;
+                    }
+                }
+            }
+            _ => Asking { _parts: reservation, _places: None },
         };
         let (handling, member_name, queue) = (hub.clone(), name.clone(), out.clone());
         let handled = fastctx_platform::task::spawn_blocking(move || {
@@ -631,18 +696,18 @@ pub(crate) fn close(hub: &Hub, name: &MachineName, generation: u64) {
     let removed = {
         let mut sessions = hub.sessions();
         if sessions.get(name).is_some_and(|session| session.generation == generation) {
-            sessions.remove(name);
-            true
+            sessions.remove(name).map(|session| session.key)
         } else {
-            false
+            None
         }
     };
-    if removed {
+    if removed.is_some() {
         hub.forget_view(name, generation);
     }
     if let Some(member) = hub.store().letters.member(name) {
         member.later(crate::post::Command::Close { generation });
     }
+
     // Data connections it registered and nobody paired wait no longer; a
     // session that replaced this one keeps its own.
     crate::data::member_left(hub, name, generation);
@@ -682,6 +747,19 @@ fn over(hub: &Hub, key: u64, pending: &Pending) {
     }
 }
 
+/// Why nothing goes between machines now, the hub's assets sealed.
+pub(crate) fn sealed(hub: &Hub) -> Option<String> {
+    hub.assets.sealed().map(|why| format!("{}{why}", fastctx_types::assets::SEALED_RELAY))
+}
+
+/// Why `standing` holds no more: lapsed in the directory, or the hub sealed
+/// meanwhile — a watch begun before goes on giving what comes after, so
+/// every call but an answer to work ends as a right taken back does
+/// (design §28.41).
+pub(crate) fn lapsed(hub: &Hub, store: &crate::store::Snapshot, standing: &Standing) -> Option<String> {
+    standing.lapsed_in(hub, store).or_else(|| if standing.purpose == Purpose::Echo { None } else { sealed(hub) })
+}
+
 /// Ends every call in flight whose standing lapsed, telling its caller.
 pub(crate) fn cut_calls(hub: &Hub) {
     // No lock is held while another is taken: the calls are copied out,
@@ -698,7 +776,7 @@ pub(crate) fn cut_calls(hub: &Hub) {
         let store = hub.store();
         standings
             .into_iter()
-            .filter_map(|(key, standing)| standing.lapsed_in(hub, &store).map(|why| (key, why)))
+            .filter_map(|(key, standing)| lapsed(hub, &store, &standing).map(|why| (key, why)))
             .collect()
     };
     let lapsed: Vec<(u64, Pending, String)> = {
@@ -713,6 +791,43 @@ pub(crate) fn cut_calls(hub: &Hub) {
     }
 }
 
+/// The questions that read or write an account's records, its projects'
+/// ledgers and histories outside the asset service.
+fn of_records(question: &Question) -> bool {
+    matches!(
+        question,
+        Question::AccountRecords { .. }
+            | Question::OwnedRecords { .. }
+            | Question::PlanCopies { .. }
+            | Question::SkillFiles { .. }
+            | Question::RecordWatching { .. }
+            | Question::RecordFollowing { .. }
+            | Question::HistoryCatalog { .. }
+            | Question::HistoryRead { .. }
+            | Question::HistorySubmitted { .. }
+            | Question::HistoryWrite { .. }
+            | Question::MemoryRead { .. }
+            | Question::MemoryWrite { .. }
+            | Question::ProjectIndex { .. }
+            | Question::LedgerRead { .. }
+            | Question::LedgerWrite { .. }
+            | Question::LedgerProjection { .. }
+            | Question::LedgerTowns
+            | Question::LedgerCatalog
+    )
+}
+
+/// The questions besides the records' a hub sealed refuses (design
+/// §28.41): deleting a conversation on another machine, which a login taken
+/// back after the copy could ask again, and moving the hub, which hands out
+/// its keys.
+fn sealed_refuses(question: &Question) -> bool {
+    matches!(
+        question,
+        Question::Forget { .. } | Question::HubMove { .. } | Question::HubArrival { .. }
+    )
+}
+
 /// Does what the member's frame asks; `took`, how many bytes of this
 /// connection the hub took from it, goes back with its heartbeat.
 #[allow(clippy::too_many_arguments)]
@@ -723,7 +838,7 @@ fn handle(
     generation: u64,
     out: &Outq,
     frame: Up,
-    reservation: Option<fastctx_net::reassembly::Reservation>,
+    reservation: Asking,
 ) -> Result<(), Refusal> {
     if !hub.sessions().get(name).is_some_and(|session| session.generation == generation && session.key == key)
         || hub.store().indexed().by_key(&key).is_none_or(|member| member.name.as_str() != name.as_str())
@@ -734,6 +849,16 @@ fn handle(
     let reply = |frame: Down| {
         let _ = out.send(Out::Frame(frame));
     };
+    // While the hub's assets are sealed, no account's records are read or
+    // written by any way, the requests from before the asset service among
+    // them (design §17; the user, 2026-11-12).
+    if let Up::Ask { id, question, .. } = &frame
+        && (of_records(question) || sealed_refuses(question))
+        && let Some(why) = hub.assets.sealed()
+    {
+        reply(Down::Told { id: *id, answer: Err(format!("the hub's assets are sealed: {why}")) });
+        return Ok(());
+    }
     match frame {
         Up::Ping { paths, held, .. } => {
             crate::assists::heard(hub);
@@ -744,11 +869,36 @@ fn handle(
                 lines(hub, name, generation, paths);
             }
         }
-        Up::Ask { id, question: Question::Manage { account, change: Change::Direct { machine, at } } } => {
+        // A node that names its question may be told the hub accepted it and
+        // ask again under that name. One that names none, an older node,
+        // waits on its asking connection for the whole answer, as before
+        // questions had names: its arm follows each of these.
+        Up::Ask {
+            id,
+            question: Question::Manage { account, change: Change::Direct { machine, at } },
+            submission: Some(submission),
+        } => {
+            let named = match crate::submitted::named(name, &submission) {
+                Ok(named) => named,
+                Err(why) => {
+                    reply(Down::Told { id, answer: Err(why) });
+                    return Ok(());
+                }
+            };
             let (hub, out) = (hub.clone(), out.clone());
             let held = crate::moving::Moving::hold(&hub);
             fastctx_platform::task::spawn(async move {
                 let _held = held;
+                let _reservation = reservation;
+                let answer = crate::direct::submission::change(&hub, origin, account, machine, at, Some(&named)).await;
+                let _ = out.send(Out::Frame(Down::Told { id, answer }));
+            });
+        }
+        Up::Ask { id, question: Question::Manage { account, change: Change::Direct { machine, at } }, .. } => {
+            let (hub, out) = (hub.clone(), out.clone());
+            let held = crate::moving::Moving::hold(&hub);
+            fastctx_platform::task::spawn(async move {
+                let (_held, _reservation) = (held, reservation);
                 let answer = crate::direct::change(hub, origin, account, machine, at).await;
                 let _ = out.send(Out::Frame(Down::Told { id, answer }));
             });
@@ -765,23 +915,42 @@ fn handle(
         Up::Unfetched { id, why } => crate::updates::unfetched(hub, name, id, why),
         Up::FetchProgress { id, progress } => crate::updates::progress(hub, name, generation, id, progress),
         Up::PackageDone { id } => crate::updates::done(hub, name, generation, id),
-        Up::Ask { id, question: Question::Package { version, target, progress } } => {
+        Up::Ask { id, question: Question::Package { version, target, progress }, .. } => {
             crate::updates::ask(hub, name, generation, id, version, target, progress, out.clone());
         }
-        Up::Ask { id, question: Question::NetworkUpdates { account, request } } => {
+        Up::Ask { id, question: Question::NetworkUpdates { account, request }, submission: Some(submission) }
+            if crate::updates::submission::handles(&request) =>
+        {
+            let named = match crate::submitted::named(name, &submission) {
+                Ok(named) => named,
+                Err(why) => {
+                    reply(Down::Told { id, answer: Err(why) });
+                    return Ok(());
+                }
+            };
             let held = crate::moving::Moving::hold(hub);
             let (hub, out) = (hub.clone(), out.clone());
             fastctx_platform::task::spawn(async move {
                 let _held = held;
+                let _reservation = reservation;
+                let answer = crate::updates::submission::request(&hub, origin, account, request, Some(&named)).await;
+                let _ = out.send(Out::Frame(Down::Told { id, answer }));
+            });
+        }
+        Up::Ask { id, question: Question::NetworkUpdates { account, request }, .. } => {
+            let held = crate::moving::Moving::hold(hub);
+            let (hub, out) = (hub.clone(), out.clone());
+            fastctx_platform::task::spawn(async move {
+                let (_held, _reservation) = (held, reservation);
                 let answer = crate::updates::view_request(&hub, &origin, &account, request).await;
                 let _ = out.send(Out::Frame(Down::Told { id, answer }));
             });
         }
-        Up::Ask { id, question: Question::PrepareUpdate { machine, version } } => {
+        Up::Ask { id, question: Question::PrepareUpdate { machine, version }, .. } => {
             let held = crate::moving::Moving::hold(hub);
             let (hub, out) = (hub.clone(), out.clone());
             fastctx_platform::task::spawn(async move {
-                let _held = held;
+                let (_held, _reservation) = (held, reservation);
                 let answer = crate::updates::prepare_update(&hub, &machine, &version).await.map(|()| Told::Done);
                 let _ = out.send(Out::Frame(Down::Told { id, answer }));
             });
@@ -792,6 +961,7 @@ fn handle(
                 question @ (Question::HistoryCatalog { .. }
                 | Question::HistoryRead { .. }
                 | Question::HistorySubmitted { .. }),
+            ..
         } => {
             let (hub, out) = (hub.clone(), out.clone());
             fastctx_platform::task::spawn(async move {
@@ -820,12 +990,13 @@ fn handle(
                 let _ = out.send(Out::Frame(Down::Told { id, answer }));
             });
         }
-        Up::Ask { id, question: question @ (Question::ProjectIndex { .. } | Question::MemoryRead { .. }) } => {
+        Up::Ask { id, question: question @ (Question::ProjectIndex { .. } | Question::MemoryRead { .. }), .. } => {
             crate::ledger::requests::ask(hub, &origin, out, id, question);
         }
         Up::Ask {
             id,
             question: Question::MemoryWrite { town, account, entry } | Question::HistoryWrite { town, account, entry },
+            ..
         } => {
             let (hub, writer, out) = (hub.clone(), name.clone(), out.clone());
             let held = crate::moving::Moving::hold(&hub);
@@ -835,14 +1006,14 @@ fn handle(
                 let _ = out.send(Out::Frame(Down::Told { id, answer }));
             });
         }
-        Up::Ask { id, question: Question::LedgerProjection { town, after } } => {
+        Up::Ask { id, question: Question::LedgerProjection { town, after }, .. } => {
             crate::ledger::projection(hub, &origin, out, id, town, after);
         }
-        Up::Ask { id, question: Question::LedgerRead { town, after } } => {
+        Up::Ask { id, question: Question::LedgerRead { town, after }, .. } => {
             crate::ledger::ask(hub, &origin, out, id, town, after);
         }
         // Written off the store's lock, one entry of a project at a time.
-        Up::Ask { id, question: Question::LedgerWrite { town, entry } } => {
+        Up::Ask { id, question: Question::LedgerWrite { town, entry }, .. } => {
             let (hub, writer, out) = (hub.clone(), name.clone(), out.clone());
             let held = crate::moving::Moving::hold(&hub);
             fastctx_platform::task::spawn(async move {
@@ -871,7 +1042,14 @@ fn handle(
         // The answer goes out before any session the change ends, the
         // asker's own among them: a machine that renamed or removed itself
         // hears that it did.
-        Up::Ask { id, question: Question::OwnedRecords { account, request } } => {
+        Up::Ask { id, question: Question::OwnedRecords { account, request }, submission } => {
+            let named = match submission.map(|submission| crate::submitted::named(name, &submission)).transpose() {
+                Ok(named) => named,
+                Err(why) => {
+                    reply(Down::Told { id, answer: Err(why) });
+                    return Ok(());
+                }
+            };
             let (hub, from, out) = (hub.clone(), name.clone(), out.clone());
             let held = crate::moving::Moving::hold(&hub);
             fastctx_platform::task::spawn(async move {
@@ -889,7 +1067,7 @@ fn handle(
                 } else {
                     None
                 };
-                let work = crate::owned_records::ask(&hub, from, key, account, request);
+                let work = crate::owned_records::asked(&hub, from, key, account, request, named);
                 let answer = match reader {
                     Some(reader) => crate::readers::run(reader, &out, deadline, work).await,
                     None => work.await,
@@ -897,9 +1075,16 @@ fn handle(
                 let _ = out.send(Out::Frame(Down::Told { id, answer }));
             });
         }
-        Up::Ask { id, question: Question::AccountRecords { account, request } } => {
+        Up::Ask { id, question: Question::AccountRecords { account, request }, submission } => {
             let opened = match crate::account_records::begin(hub, name, &key, &account, &request) {
                 Ok(opened) => opened,
+                Err(why) => {
+                    reply(Down::Told { id, answer: Err(why) });
+                    return Ok(());
+                }
+            };
+            let named = match submission.map(|submission| crate::submitted::named(name, &submission)).transpose() {
+                Ok(named) => named,
                 Err(why) => {
                     reply(Down::Told { id, answer: Err(why) });
                     return Ok(());
@@ -926,7 +1111,7 @@ fn handle(
                 } else {
                     None
                 };
-                let work = crate::account_records::ask(&hub, from, key, account, opened, request);
+                let work = crate::account_records::asked(&hub, from, key, account, opened, request, named);
                 let answer = match reader {
                     Some(reader) => crate::readers::run(reader, &out, deadline, work).await,
                     None => work.await,
@@ -934,7 +1119,68 @@ fn handle(
                 let _ = out.send(Out::Frame(Down::Told { id, answer }));
             });
         }
-        Up::Ask { id, question: Question::PlanCopies { account, request } } => {
+        Up::Ask { id, question: Question::Assets { request }, .. } => {
+            let (hub, from, out) = (hub.clone(), name.clone(), out.clone());
+            let held = crate::moving::Moving::hold(&hub);
+            fastctx_platform::task::spawn(async move {
+                let (_held, _reservation) = (held, reservation);
+                let (answer, pushes) = hub
+                    .blocking(move |hub| {
+                        // A machine's word that it cleared changes the
+                        // directory: it is taken under the directory's lock.
+                        if let fastctx_types::assets::Request::Cleared { revision, proof } = &request {
+                            let answer = origin
+                                .check(&hub.store().book.directory)
+                                .and_then(|()| crate::shares::cleared(&hub, &from, &origin.key, *revision, &proof.0));
+                            // Shares put in force are told like any change.
+                            if matches!(answer, Ok(fastctx_types::assets::Reply::Cleared { activated }) if activated > 0) {
+                                hub.changed();
+                            }
+                            return (answer, Vec::new());
+                        }
+                        // How an account's machines stand is reckoned beside
+                        // the sessions, where who is online is known.
+                        if let fastctx_types::assets::Request::SyncStatus { account, hours, machine } = &request {
+                            let answer = origin
+                                .check(&hub.store().book.directory)
+                                .and_then(|()| crate::assets::standing::status(&hub, &from, account, *hours, machine.as_ref()));
+                            return (answer, Vec::new());
+                        }
+                        let scope = crate::assets::serve::scope_of(&request).map(str::to_string);
+                        let stream = crate::assets::serve::stream_of(&request).map(str::to_string);
+                        let store = hub.store();
+                        let answer = origin
+                            .check(&store.book.directory)
+                            .and_then(|()| {
+                                let basis = || store.basis().to_string();
+                                crate::assets::serve::ask(&hub.assets, &store.indexed(), &basis, &from, &origin.key, request)
+                            });
+                        drop(store);
+                        // Judged again, and told only, by the directory as it
+                        // stands now, read after what is to be told was taken.
+                        let drained = hub.assets.drain_pushes();
+                        let now = hub.store();
+                        let answer = match (answer, scope) {
+                            (Ok(reply), Some(key)) => {
+                                crate::assets::serve::recheck(&hub.assets, &now.indexed(), &from, &key, stream.as_deref(), reply)
+                            }
+                            (Ok(reply @ fastctx_types::assets::Reply::Holdings { .. }), None) => {
+                                crate::assets::serve::recheck_holdings(&hub.assets, &now.indexed(), now.basis(), &from, reply)
+                            }
+                            (answer, _) => answer,
+                        };
+                        let pushes = hub.assets.take_pushes(drained, &now.indexed());
+                        (answer, pushes)
+                    })
+                    .await;
+                let answer = answer.map(|reply| Told::Assets { reply });
+                let _ = out.send(Out::Frame(Down::Told { id, answer }));
+                for (machine, push) in pushes {
+                    hub.tell(&machine, Down::Assets { push });
+                }
+            });
+        }
+        Up::Ask { id, question: Question::PlanCopies { account, request }, .. } => {
             let opened = request.validate().and_then(|()| {
                 crate::account_records::begin(
                     hub,
@@ -957,12 +1203,12 @@ fn handle(
             let (hub, from, out) = (hub.clone(), name.clone(), out.clone());
             let held = crate::moving::Moving::hold(&hub);
             fastctx_platform::task::spawn(async move {
-                let _held = held;
+                let (_held, _reservation) = (held, reservation);
                 let answer = crate::plan_copies::ask(&hub, from, key, account, opened, request).await;
                 let _ = out.send(Out::Frame(Down::Told { id, answer }));
             });
         }
-        Up::Ask { id, question: Question::SkillFiles { account, request } } => {
+        Up::Ask { id, question: Question::SkillFiles { account, request }, .. } => {
             let opened = request.validate().and_then(|()| {
                 crate::account_records::begin(
                     hub,
@@ -991,7 +1237,54 @@ fn handle(
                 let _ = out.send(Out::Frame(Down::Told { id, answer }));
             });
         }
-        Up::Ask { id, question: Question::Manage { account, change } } => {
+        Up::Ask { id, question: Question::Manage { account, change }, submission: Some(submission) }
+            if crate::manage::submission::handles(&change) =>
+        {
+            let named = match crate::submitted::named(name, &submission) {
+                Ok(named) => named,
+                Err(why) => {
+                    reply(Down::Told { id, answer: Err(why) });
+                    return Ok(());
+                }
+            };
+            let (hub, out) = (hub.clone(), out.clone());
+            let held = crate::moving::Moving::hold(&hub);
+            let (recorded, recording) = tokio::sync::oneshot::channel();
+            let mut doing = Box::pin(async move {
+                let _held = held;
+                let _reservation = reservation;
+                let (answer, ended) =
+                    crate::manage::submission::change(&hub, origin, account, change, Some(&named), move || {
+                        let _ = recorded.send(());
+                    })
+                    .await;
+                let _ = out.send(Out::Frame(Down::Told { id, answer }));
+                if let Some(ended) = ended {
+                    hub.blocking(move |hub| {
+                        crate::manage::end(&hub, ended);
+                        crate::updates::prefetch(&hub);
+                        crate::updates::tell(&hub, None);
+                        crate::updates::prune(&hub);
+                    })
+                    .await;
+                }
+            });
+            // 2026-11-11: Until acceptance, dispatch stays serial so a new
+            // self-removal queues its answer before a Ping can reject its identity.
+            tokio::runtime::Handle::current().block_on(async move {
+                tokio::select! {
+                    began = recording => {
+                        if began.is_ok() {
+                            fastctx_platform::task::spawn(doing);
+                        } else {
+                            doing.await;
+                        }
+                    }
+                    () = &mut doing => {}
+                }
+            });
+        }
+        Up::Ask { id, question: Question::Manage { account, change }, .. } => {
             let (answer, ended) = crate::manage::change(hub, &origin, &account, change);
             reply(Down::Told { id, answer });
             crate::manage::end(hub, ended);
@@ -1001,11 +1294,12 @@ fn handle(
             crate::updates::tell(hub, None);
             crate::updates::prune(hub);
         }
-        Up::Ask { id, question: Question::KernelRelease { version, allow_partial, wanted } } => {
+        Up::Ask { id, question: Question::KernelRelease { version, allow_partial, wanted }, .. } => {
             let releases = hub.releases.clone();
             let out = out.clone();
             let hub = hub.clone();
             fastctx_platform::task::spawn(async move {
+                let _reservation = reservation;
                 let read = releases.clone();
                 let answer =
                     match fastctx_platform::task::spawn_blocking(move || read.ready(&version, allow_partial)).await {
@@ -1031,7 +1325,24 @@ fn handle(
                 let _ = out.send(Out::Frame(Down::Told { id, answer }));
             });
         }
-        Up::Ask { id, question } => {
+        Up::Ask { id, question: Question::Forget { account, conversation }, submission: Some(submission) } => {
+            let named = match crate::submitted::named(name, &submission) {
+                Ok(named) => named,
+                Err(why) => {
+                    reply(Down::Told { id, answer: Err(why) });
+                    return Ok(());
+                }
+            };
+            let (hub, out) = (hub.clone(), out.clone());
+            let held = crate::moving::Moving::hold(&hub);
+            fastctx_platform::task::spawn(async move {
+                let _held = held;
+                let _reservation = reservation;
+                let answer = crate::forget::submission::ask(&hub, origin, account, conversation, Some(&named)).await;
+                let _ = out.send(Out::Frame(Down::Told { id, answer }));
+            });
+        }
+        Up::Ask { id, question, .. } => {
             let view = matches!(question, Question::Directory);
             let answer = ask(hub, name, key, generation, question);
             let told = view && answer.is_ok();
@@ -1082,6 +1393,16 @@ fn canonical_address(hub: &Hub, address: fastctx_types::Address) -> fastctx_type
 /// the machines as they are named now.
 fn standing(hub: &Hub, store: &crate::store::Snapshot, message: &Envelope) -> Result<Standing, String> {
     let (account, purpose) = message.standing()?;
+    // Its assets sealed, the hub gives no account's content by any way
+    // until they are opened (design §17, §28.41): a share or a login taken
+    // back after the copy it was put back from is in its directory again,
+    // so it carries no new call or letter between machines meanwhile. What
+    // answers work taken before goes back, a result or a part of one.
+    if purpose != Purpose::Echo
+        && let Some(why) = sealed(hub)
+    {
+        return Err(why);
+    }
     let directory = store.indexed();
     let from = directory.member(&message.from).ok_or("the sender is not a member of the hub")?;
     let to = directory.member(&message.to).ok_or("the receiver is not a member of the hub")?;
@@ -1210,7 +1531,7 @@ fn call_details(
 ) -> Result<(fastctx_net::call_details::CallDetails, Option<diagnostics::Kind>), String> {
     use fastctx_net::{call_details::CallDetails, message::Body};
     match message.body::<Body>().map_err(|error| error.to_string())? {
-        Body::Call { call } | Body::StreamCall { call } => {
+        Body::Call { call, .. } | Body::StreamCall { call } => {
             Ok((CallDetails::of(&message.from, &call), Some(diagnostics::Kind::of(&call))))
         }
         Body::LargeCall { details, .. } => {
@@ -1299,7 +1620,7 @@ fn note_updates(hub: &Hub, message: &Envelope, standing: &Standing) {
 /// The call a message carries, when it carries one.
 fn carried_call(message: &Envelope) -> Option<fastctx_types::remote::RemoteCall> {
     match message.body::<fastctx_net::message::Body>().ok()? {
-        fastctx_net::message::Body::Call { call } | fastctx_net::message::Body::StreamCall { call } => Some(call),
+        fastctx_net::message::Body::Call { call, .. } | fastctx_net::message::Body::StreamCall { call } => Some(call),
         _ => None,
     }
 }
@@ -1364,6 +1685,8 @@ fn use_agent(
             false
         } else {
             let before = store.book.clone();
+            // A use kept from an ended assistance gives way to this one.
+            store.book.directory.acting.retain(|kept| !(kept.account == *account && kept.machine == *to));
             store.book.directory.acting.push(std::sync::Arc::new(fastctx_net::directory::ActsFor {
                 machine: to.clone(),
                 account: account.clone(),
@@ -1437,11 +1760,6 @@ fn call(
         return CallStatus::Refused { reason };
     }
     note_updates(hub, &message, &standing);
-    if let Some(resident) = details.resident.map(|resident| canonical_address(hub, resident))
-        && let Err(error) = hub.store().worked.note(&to, resident)
-    {
-        hub.log.line(format_args!("noting that {to} works for a resident: {error}"));
-    }
     if standing.project_entry.is_some() && hub.sessions().get(&to).is_some_and(|session| !session.project_entry) {
         return CallStatus::Refused {
             reason: format!(
@@ -1450,8 +1768,10 @@ fn call(
         };
     }
     let key = hub.next();
-    if let Some(ticket) = &message.stream {
-        crate::data::register(hub, ticket, &standing, name, generation);
+    if let Some(ticket) = &message.stream
+        && let Err(reason) = crate::data::register(hub, ticket, &standing, name, generation)
+    {
+        return CallStatus::Refused { reason };
     }
     let stream = message.stream.as_ref().map(|ticket| ticket.stream);
     let pending = Pending {
@@ -1493,6 +1813,12 @@ fn call(
         }
         calls.insert(key, pending);
     }
+    // Noted once the call is taken: a refused one worked for nobody.
+    if let Some(resident) = details.resident.map(|resident| canonical_address(hub, resident))
+        && let Err(error) = hub.store().worked.note(&to, resident)
+    {
+        hub.log.line(format_args!("noting that {to} works for a resident: {error}"));
+    }
     if target.send(Out::Frame(Down::Incoming { call: key, message })).is_err() {
         hub.calls.lock().expect("never poisoned").remove(&key);
         if let Some(stream) = stream {
@@ -1529,8 +1855,12 @@ fn answer(hub: &Hub, name: &MachineName, generation: u64, call: u64, message: En
         hub.tell(&pending.caller, Down::Status { id: pending.id, status: CallStatus::Lost });
         return;
     }
-    if let Some(ticket) = &message.stream {
-        crate::data::register(hub, ticket, &pending.standing, name, generation);
+    if let Some(ticket) = &message.stream
+        && let Err(reason) = crate::data::register(hub, ticket, &pending.standing, name, generation)
+    {
+        hub.log.line(format_args!("{name} answered call {call}, but its data connection was refused: {reason}"));
+        hub.tell(&pending.caller, Down::Status { id: pending.id, status: CallStatus::Lost });
+        return;
     }
     let stream = message.stream.as_ref().map(|ticket| ticket.stream);
     let queued = {
@@ -1585,6 +1915,7 @@ fn ask(
         | Question::AccountRecords { .. }
         | Question::PlanCopies { .. }
         | Question::SkillFiles { .. } => Err("account records are dispatched asynchronously".into()),
+        Question::Assets { .. } => Err("asset requests are dispatched asynchronously".into()),
         Question::NetworkUpdates { .. } => Err("update management is dispatched asynchronously".into()),
         Question::MachineLog { account, before } => {
             let store = hub.store();
@@ -1599,6 +1930,7 @@ fn ask(
                     profiles: letters.profiles,
                     machine_updates: letters.machine_updates,
                     history_switch: letters.history_switch,
+                    asset_seals: letters.asset_seals,
                 });
             store
                 .book

@@ -1291,7 +1291,7 @@ checksum = "c6e8948ce679d00a02a94739ea185595dca7118ed04feb991127e443bd3d761f"
 
 [[package]]
 name = "fastctx"
-version = "1.0.1-beta.17"
+version = "1.0.1-beta.18"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -1320,7 +1320,7 @@ dependencies = [
 
 [[package]]
 name = "fastctx-agent"
-version = "1.0.1-beta.17"
+version = "1.0.1-beta.18"
 dependencies = [
  "fastctx-net",
  "fastctx-platform",
@@ -1332,10 +1332,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "fastctx-bench"
+version = "1.0.1-beta.18"
+dependencies = [
+ "fastctx-content",
+ "fastctx-hosts",
+ "fastctx-net",
+ "fastctx-node",
+ "fastctx-platform",
+ "fastctx-types",
+ "jiff",
+ "serde_json",
+ "tokio",
+ "tokio-tungstenite",
+ "uds_windows",
+]
+
+[[package]]
 name = "fastctx-client"
-version = "1.0.1-beta.17"
+version = "1.0.1-beta.18"
 dependencies = [
  "base64 0.22.1",
+ "fastctx-content",
  "fastctx-net",
  "fastctx-platform",
  "fastctx-types",
@@ -1350,15 +1368,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "fastctx-content"
+version = "1.0.1-beta.18"
+dependencies = [
+ "fastctx-platform",
+ "fastctx-storage",
+ "serde_json",
+ "sha2 0.10.9",
+ "tokio",
+ "zstd",
+]
+
+[[package]]
 name = "fastctx-draft"
-version = "1.0.1-beta.17"
+version = "1.0.1-beta.18"
 dependencies = [
  "yrs",
 ]
 
 [[package]]
 name = "fastctx-file-search"
-version = "1.0.1-beta.17"
+version = "1.0.1-beta.18"
 dependencies = [
  "fastctx-platform",
  "fastctx-types",
@@ -1371,7 +1401,7 @@ dependencies = [
 
 [[package]]
 name = "fastctx-hands"
-version = "1.0.1-beta.17"
+version = "1.0.1-beta.18"
 dependencies = [
  "aho-corasick",
  "base64 0.22.1",
@@ -1400,7 +1430,7 @@ dependencies = [
 
 [[package]]
 name = "fastctx-hosts"
-version = "1.0.1-beta.17"
+version = "1.0.1-beta.18"
 dependencies = [
  "base64 0.22.1",
  "fastctx-platform",
@@ -1419,22 +1449,26 @@ dependencies = [
  "tokio-tungstenite",
  "toml",
  "unicode-normalization",
+ "xxhash-rust",
 ]
 
 [[package]]
 name = "fastctx-hub"
-version = "1.0.1-beta.17"
+version = "1.0.1-beta.18"
 dependencies = [
  "anyhow",
  "arc-swap",
  "bytes",
  "fastctx-client",
+ "fastctx-content",
  "fastctx-hosts",
  "fastctx-install",
+ "fastctx-jobs",
  "fastctx-net",
  "fastctx-platform",
  "fastctx-ripgrep",
  "fastctx-storage",
+ "fastctx-sync",
  "fastctx-types",
  "fastctx-update",
  "flate2",
@@ -1458,7 +1492,7 @@ dependencies = [
 
 [[package]]
 name = "fastctx-install"
-version = "1.0.1-beta.17"
+version = "1.0.1-beta.18"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -1495,8 +1529,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "fastctx-jobs"
+version = "1.0.1-beta.18"
+dependencies = [
+ "fastctx-platform",
+ "fastctx-storage",
+ "fastctx-types",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tokio",
+]
+
+[[package]]
 name = "fastctx-net"
-version = "1.0.1-beta.17"
+version = "1.0.1-beta.18"
 dependencies = [
  "argon2",
  "base64 0.22.1",
@@ -1504,6 +1551,7 @@ dependencies = [
  "ed25519-dalek",
  "fastctx-platform",
  "fastctx-storage",
+ "fastctx-sync",
  "fastctx-types",
  "futures-util",
  "getrandom 0.3.4",
@@ -1512,7 +1560,6 @@ dependencies = [
  "http-body-util",
  "hyper",
  "hyper-util",
- "imara-diff",
  "jiff",
  "libc",
  "opaque-ke",
@@ -1536,28 +1583,36 @@ dependencies = [
 
 [[package]]
 name = "fastctx-node"
-version = "1.0.1-beta.17"
+version = "1.0.1-beta.18"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
+ "bytes",
  "fastctx-agent",
  "fastctx-client",
+ "fastctx-content",
  "fastctx-draft",
  "fastctx-file-search",
  "fastctx-hands",
  "fastctx-hosts",
  "fastctx-hub",
  "fastctx-install",
+ "fastctx-jobs",
  "fastctx-net",
  "fastctx-platform",
  "fastctx-ripgrep",
  "fastctx-sentinel",
  "fastctx-storage",
+ "fastctx-sync",
+ "fastctx-timeline-core",
  "fastctx-types",
  "fastctx-uninstall",
  "fastctx-update",
  "fastctx-watch",
  "getrandom 0.3.4",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
  "image",
  "jiff",
  "notify",
@@ -1571,7 +1626,7 @@ dependencies = [
 
 [[package]]
 name = "fastctx-office"
-version = "1.0.1-beta.17"
+version = "1.0.1-beta.18"
 dependencies = [
  "anyhow",
  "num-bigint",
@@ -1584,7 +1639,7 @@ dependencies = [
 
 [[package]]
 name = "fastctx-pdf"
-version = "1.0.1-beta.17"
+version = "1.0.1-beta.18"
 dependencies = [
  "fontdb",
  "hayro",
@@ -1601,7 +1656,7 @@ dependencies = [
 
 [[package]]
 name = "fastctx-platform"
-version = "1.0.1-beta.17"
+version = "1.0.1-beta.18"
 dependencies = [
  "async-io",
  "fastctx-types",
@@ -1615,7 +1670,7 @@ dependencies = [
 
 [[package]]
 name = "fastctx-ripgrep"
-version = "1.0.1-beta.17"
+version = "1.0.1-beta.18"
 dependencies = [
  "fastctx-platform",
  "flate2",
@@ -1626,7 +1681,7 @@ dependencies = [
 
 [[package]]
 name = "fastctx-sentinel"
-version = "1.0.1-beta.17"
+version = "1.0.1-beta.18"
 dependencies = [
  "fastctx-agent",
  "fastctx-net",
@@ -1642,7 +1697,7 @@ dependencies = [
 
 [[package]]
 name = "fastctx-serve"
-version = "1.0.1-beta.17"
+version = "1.0.1-beta.18"
 dependencies = [
  "anyhow",
  "fastctx-client",
@@ -1656,7 +1711,7 @@ dependencies = [
 
 [[package]]
 name = "fastctx-storage"
-version = "1.0.1-beta.17"
+version = "1.0.1-beta.18"
 dependencies = [
  "fastctx-platform",
  "rusqlite",
@@ -1664,8 +1719,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "fastctx-sync"
+version = "1.0.1-beta.18"
+dependencies = [
+ "fastctx-platform",
+ "fastctx-storage",
+ "fastctx-types",
+ "serde_json",
+ "sha2 0.10.9",
+]
+
+[[package]]
+name = "fastctx-timeline-core"
+version = "1.0.1-beta.18"
+dependencies = [
+ "fastctx-content",
+ "fastctx-hosts",
+ "fastctx-platform",
+ "fastctx-storage",
+ "fastctx-types",
+ "getrandom 0.3.4",
+ "jiff",
+ "serde_json",
+ "sha2 0.10.9",
+]
+
+[[package]]
 name = "fastctx-tui"
-version = "1.0.1-beta.17"
+version = "1.0.1-beta.18"
 dependencies = [
  "anyhow",
  "crossterm",
@@ -1693,12 +1774,13 @@ dependencies = [
 
 [[package]]
 name = "fastctx-types"
-version = "1.0.1-beta.17"
+version = "1.0.1-beta.18"
 dependencies = [
  "base64 0.22.1",
  "icu_casemap",
  "icu_normalizer",
  "icu_properties",
+ "imara-diff",
  "jiff",
  "semver",
  "serde",
@@ -1706,11 +1788,12 @@ dependencies = [
  "serde_yaml_ng",
  "sha2 0.10.9",
  "thiserror",
+ "url",
 ]
 
 [[package]]
 name = "fastctx-uninstall"
-version = "1.0.1-beta.17"
+version = "1.0.1-beta.18"
 dependencies = [
  "anyhow",
  "fastctx-client",
@@ -1731,7 +1814,7 @@ dependencies = [
 
 [[package]]
 name = "fastctx-update"
-version = "1.0.1-beta.17"
+version = "1.0.1-beta.18"
 dependencies = [
  "base64 0.22.1",
  "fastctx-net",
@@ -1750,7 +1833,7 @@ dependencies = [
 
 [[package]]
 name = "fastctx-watch"
-version = "1.0.1-beta.17"
+version = "1.0.1-beta.18"
 dependencies = [
  "inotify",
  "notify",
@@ -5512,6 +5595,12 @@ dependencies = [
  "libc",
  "rustix",
 ]
+
+[[package]]
+name = "xxhash-rust"
+version = "0.8.19"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "550a2b930b62486a393c52d5c3b84bff264b28aa437ed64694d31e93b1757af7"
 
 [[package]]
 name = "yasna"

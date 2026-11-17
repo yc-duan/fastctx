@@ -5,7 +5,7 @@
 
 import type { OnStep, RunStep } from "../../world/run-facts";
 import { wordsOf } from "./script";
-import type { CopyDeed, Deed, JobDeed, OnSaid, PageDeed, PictureDeed, PlainDeed, ProjectDeed, StopDeed, WorldDeed } from "./types";
+import type { CopyDeed, Deed, JobDeed, OnSaid, PictureDeed, PlainDeed, ProjectDeed, StopDeed, WorldDeed } from "./types";
 
 type Kind = RunStep["kind"];
 
@@ -184,8 +184,10 @@ export function deedsOfStep(step: RunStep, command: string | null, steps: RunSte
       const deed: StopDeed = { kind: "stop", command, what: step.what, machine: step.on ?? null, how: step.how, stopped: step.how !== "not_cleanly" && step.how !== "still_running" };
       return [deed];
     }
+    // A page published by a release before pages were removed (beta.18):
+    // told as the command it was.
     case "page": {
-      const deed: PageDeed = { kind: "page", command, name: step.name, title: step.title, machine: step.machine, version: step.version };
+      const deed: PlainDeed = { kind: "plain", command: command ?? `fastctx page ${step.name}`, machine: step.machine };
       return [deed];
     }
     case "project": {

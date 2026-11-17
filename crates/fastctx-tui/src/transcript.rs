@@ -45,6 +45,9 @@ enum Item {
         from: Option<Speaker>,
         text: String,
         turn: Option<String>,
+        /// The words' delivery: the history's, or, of words sent from here,
+        /// the one the World gave them once it answered.
+        delivery: Option<fastctx_types::NoticeId>,
         sending: Option<Sending>,
     },
     Prose {
@@ -161,6 +164,15 @@ enum Use {
     Unknown,
 }
 
+/// Whether words sent as `said` under `sent` are those heard as `text`
+/// under `heard`: by delivery where both tell one, else by the words.
+fn same(said: &str, sent: Option<&fastctx_types::NoticeId>, text: &str, heard: Option<&fastctx_types::NoticeId>) -> bool {
+    match (sent, heard) {
+        (Some(sent), Some(heard)) => sent == heard,
+        _ => said == text,
+    }
+}
+
 impl Transcript {
     pub fn new(here: Option<MachineName>) -> Self {
         Self {
@@ -218,8 +230,8 @@ impl Transcript {
             self.event(event);
         }
         for item in sending {
-            if let Item::Heard { text, .. } = &item
-                && self.heard_already(text)
+            if let Item::Heard { text, delivery, .. } = &item
+                && self.heard_already(text, delivery.as_ref())
             {
                 continue;
             }
@@ -227,8 +239,13 @@ impl Transcript {
         }
     }
 
-    fn heard_already(&self, said: &str) -> bool {
-        self.items.iter().any(|item| matches!(item, Item::Heard { text, sending: None, .. } if text == said))
+    /// Whether words sent from here are heard already: by their delivery
+    /// where both tell one, else by the words.
+    fn heard_already(&self, said: &str, sent: Option<&fastctx_types::NoticeId>) -> bool {
+        self.items.iter().any(|item| match item {
+            Item::Heard { text, delivery, sending: None, .. } => same(said, sent, text, delivery.as_ref()),
+            _ => false,
+        })
     }
 
     pub fn event(&mut self, event: SessionEvent) {
@@ -236,24 +253,36 @@ impl Transcript {
         let at = event.at;
         match event.happened {
             Happened::TurnStarted { .. } | Happened::Realtime { .. } | Happened::RealtimeGrew { .. } => {}
-            Happened::Heard { turn, from, text, .. } => {
+            Happened::Heard { turn, from, text, delivery, .. } => {
                 // Words sent from here are now heard: they keep their place.
                 if matches!(from, Some(Speaker::User { .. }))
-                    && let Some(Item::Heard { sending, turn: heard_turn, from: heard_from, .. }) = self
-                        .items
-                        .iter_mut()
-                        .find(|item| matches!(item, Item::Heard { text: said, sending: Some(_), .. } if *said == text))
+                    && let Some(Item::Heard { sending, turn: heard_turn, from: heard_from, delivery: sent, .. }) =
+                        self.items.iter_mut().find(|item| match item {
+                            Item::Heard { text: said, delivery: sent, sending: Some(_), .. } => {
+                                same(said, sent.as_ref(), &text, delivery.as_ref())
+                            }
+                            _ => false,
+                        })
                 {
                     *sending = None;
                     *heard_turn = turn;
                     *heard_from = from;
+                    if delivery.is_some() {
+                        *sent = delivery;
+                    }
                     return;
                 }
-                let known = self.items.iter().any(|item| {
-                    matches!(item, Item::Heard { text: said, turn: heard, .. } if *said == text && turn.is_some() && *heard == turn)
+                // Told already: the same delivery, or, where either tells
+                // none, the same words in the same turn.
+                let known = self.items.iter().any(|item| match item {
+                    Item::Heard { text: said, turn: heard, delivery: told, .. } => match (told, &delivery) {
+                        (Some(told), Some(delivery)) => told == delivery,
+                        _ => *said == text && turn.is_some() && *heard == turn,
+                    },
+                    _ => false,
                 });
                 if !known {
-                    self.items.push(Item::Heard { from, text, turn, sending: None });
+                    self.items.push(Item::Heard { from, text, turn, delivery, sending: None });
                 }
             }
             Happened::Began { turn, item } | Happened::Updated { turn, item } => self.item(turn, item, at, false),
@@ -465,6 +494,7 @@ impl Transcript {
             from,
             text,
             turn: None,
+            delivery: None,
             sending: Some(Sending { local, state: SendState::Going }),
         });
         local
@@ -475,6 +505,36 @@ impl Transcript {
         self.changed();
         if let Some(sending) = self.sending_mut(local) {
             sending.state = SendState::Landed(landed, machine);
+        }
+    }
+
+    /// The words sent from here as `local` went as `said` — the line beside
+    /// their attachment, where they went as one — under `delivery`, where
+    /// the World told it.
+    pub fn resaid(&mut self, local: u64, said: String, delivery: Option<fastctx_types::NoticeId>) {
+        let Some(at) = self.items.iter().position(|item| matches!(item, Item::Heard { sending: Some(sending), .. } if sending.local == local))
+        else {
+            return;
+        };
+        // Heard already as it went: under its delivery, wherever the history
+        // placed it; told none, the same words come in after these were
+        // shown sending, not earlier ones alike.
+        let heard = match &delivery {
+            Some(sent) => {
+                self.items.iter().any(|item| matches!(item, Item::Heard { delivery: Some(heard), sending: None, .. } if heard == sent))
+            }
+            None => self.items[at + 1..].iter().any(|item| matches!(item, Item::Heard { text, sending: None, .. } if *text == said)),
+        };
+        self.changed();
+        if heard {
+            self.items.remove(at);
+            return;
+        }
+        if let Item::Heard { text, delivery: sent, .. } = &mut self.items[at] {
+            *text = said;
+            if delivery.is_some() {
+                *sent = delivery;
+            }
         }
     }
 
@@ -1037,4 +1097,77 @@ fn ended(ctx: &Ctx, end: &TurnEnd, width: usize) -> Option<Line<'static>> {
         TurnHow::Other(how) => (words.turn_ended_as(how), Role::Muted),
     };
     Some(paint::fit_line(&Line::from(Span::styled(said, ctx.look.text(role))), width))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn heard(delivery: &str, text: &str) -> SessionEvent {
+        SessionEvent {
+            at: Timestamp::from_second(1_800_000_000).unwrap(),
+            happened: Happened::Heard {
+                delivery: Some(delivery.parse().unwrap()),
+                turn: Some("t1".into()),
+                from: Some(Speaker::User { machine: "desk".parse().unwrap() }),
+                text: text.into(),
+                message: None,
+                notice: None,
+            },
+        }
+    }
+
+    /// The words shown, each with whether it is still being sent.
+    fn shown(transcript: &Transcript) -> Vec<(String, bool)> {
+        transcript
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                Item::Heard { text, sending, .. } => Some((text.clone(), sending.is_some())),
+                _ => None,
+            })
+            .collect()
+    }
+
+    const LINE: &str = "(the words are in the attached file)";
+
+    /// The history brings the words as they went before the World answers:
+    /// told their delivery, the words sent are those, wherever they stand.
+    #[test]
+    fn words_heard_before_the_answer_are_shown_once() {
+        let mut transcript = Transcript::new(None);
+        let local = transcript.sending("a long paste".into(), None);
+        transcript.history(vec![heard("desk-j-000001", LINE)]);
+        transcript.resaid(local, LINE.into(), Some("desk-j-000001".parse().unwrap()));
+        assert_eq!(shown(&transcript), vec![(LINE.to_string(), false)]);
+    }
+
+    /// Two long pastes go as the same line: the first heard is not taken
+    /// for the second, still being sent.
+    #[test]
+    fn alike_words_of_another_send_are_not_these() {
+        let mut transcript = Transcript::new(None);
+        let first = transcript.sending("first long paste".into(), None);
+        let second = transcript.sending("second long paste".into(), None);
+        transcript.event(heard("desk-j-000001", LINE));
+        transcript.resaid(second, LINE.into(), Some("desk-j-000002".parse().unwrap()));
+        transcript.resaid(first, LINE.into(), Some("desk-j-000001".parse().unwrap()));
+        assert_eq!(shown(&transcript), vec![(LINE.to_string(), true), (LINE.to_string(), false)]);
+        transcript.event(heard("desk-j-000002", LINE));
+        assert_eq!(shown(&transcript), vec![(LINE.to_string(), false), (LINE.to_string(), false)]);
+    }
+
+    /// Both heard before either is answered: alike words in one turn under
+    /// two deliveries are two.
+    #[test]
+    fn alike_words_under_two_deliveries_are_two() {
+        let mut transcript = Transcript::new(None);
+        let first = transcript.sending("first long paste".into(), None);
+        let second = transcript.sending("second long paste".into(), None);
+        transcript.event(heard("desk-j-000001", LINE));
+        transcript.event(heard("desk-j-000002", LINE));
+        transcript.resaid(first, LINE.into(), Some("desk-j-000001".parse().unwrap()));
+        transcript.resaid(second, LINE.into(), Some("desk-j-000002".parse().unwrap()));
+        assert_eq!(shown(&transcript), vec![(LINE.to_string(), false), (LINE.to_string(), false)]);
+    }
 }

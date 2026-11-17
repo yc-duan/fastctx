@@ -58,18 +58,6 @@ fn cursor(db: &Connection, deed: &str) -> fastctx_storage::Result<Cursor> {
     body.map(|body| crate::records::decode(&body)).transpose().map(|row| row.unwrap_or_default())
 }
 
-/// How far into a job's step journal the book has read, below which the
-/// journal may let segments go. A damaged book reads nothing until it is
-/// mended, so it holds none back: a long job's steps would otherwise fill
-/// their budget and stop being kept, and the book shows the gap once it
-/// reads again. Collecting the whole job still waits for it (`consumed`).
-pub(crate) fn segment(node: &Node, record: &JobRecord) -> io::Result<u64> {
-    if node.book_database.fault().is_some() {
-        return Ok(u64::MAX);
-    }
-    node.book_database.read_now(|db| Ok(cursor(db, &deed(record))?.steps_segment)).map_err(io::Error::other)
-}
-
 /// Whole-job collection obeys the same independent consumer as segment retention.
 /// A failed database is never evidence that its source has been consumed.
 pub(crate) fn consumed(node: &Node, record: &JobRecord) -> io::Result<bool> {
@@ -135,10 +123,15 @@ fn read(node: &Node, path: &Path, record: &JobRecord) -> io::Result<()> {
     }
     let row = super::row(node, record, &[], &[]);
     node.book_database
-        .write_now_at(Priority::Background, row.script.len() + 512, move |db| {
-            db.execute("DELETE FROM book_complete WHERE deed=?1", [&row.deed])?;
-            super::keep(db, &row)
-        })
+        .write_now_then_at(
+            Priority::Background,
+            row.script.len() + 512,
+            move |db| {
+                db.execute("DELETE FROM book_complete WHERE deed=?1", [&row.deed])?;
+                super::keep(db, &row)
+            },
+            super::changes::committed(&node.topics),
+        )
         .map_err(io::Error::other)?;
     let mut position = node.book_database.read_now(|db| cursor(db, &key)).map_err(io::Error::other)?;
     if !position.initialized || !position.sql_writes {
@@ -177,7 +170,7 @@ fn read(node: &Node, path: &Path, record: &JobRecord) -> io::Result<()> {
             let bytes = serde_json::to_vec(&(&writes, &steps))?.len();
             let (key, machine) = (key.clone(), node.machine());
             let final_cursor = (index + 1 == count).then(|| position.clone());
-            node.book_database.write_now_at(Priority::Background,bytes,move |db| {
+            node.book_database.write_now_then_at(Priority::Background,bytes,move |db| {
                 if super::frozen(db,&key)? || !super::kept(db,&key)? {return Ok(());}
                 let mut current=cursor(db,&key)?;
                 for step in &steps {contribute(db,&key,&machine,step,&mut current)?;}
@@ -195,7 +188,7 @@ fn read(node: &Node, path: &Path, record: &JobRecord) -> io::Result<()> {
                 db.execute("INSERT INTO book_cursors(deed,body) VALUES(?1,?2) ON CONFLICT(deed) DO UPDATE SET body=excluded.body",params![key,crate::records::encode(&current)?])?;
                 db.execute("UPDATE book_deeds SET looked=max(looked,?2),copied=max(copied,?3) WHERE deed=?1",params![key,current.looked,current.copied])?;
                 Ok(())
-            }).map_err(io::Error::other)?;
+            }, super::changes::committed(&node.topics)).map_err(io::Error::other)?;
         }
     }
 }

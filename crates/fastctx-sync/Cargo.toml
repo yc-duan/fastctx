@@ -1,0 +1,19 @@
+[package]
+name = "fastctx-sync"
+description = "The registry of persistent data, its storage guard and the transitional preservation carrier"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+fastctx-types = { path = "../fastctx-types" }
+fastctx-storage = { path = "../fastctx-storage" }
+fastctx-platform = { path = "../fastctx-platform" }
+sha2 = "0.10"
+serde_json.workspace = true
+
+[lints]
+workspace = true

@@ -20,10 +20,12 @@ pub fn recover_readable(directory: &Path) -> io::Result<usize> {
             continue;
         }
         let name = path.file_name().expect("directory entry");
+        // A report set aside is judged by its own marker alone, which stays
+        // for as long as the report does (`applied`).
         if directory.join("applied").join(name).try_exists()? {
             continue;
         }
-        let body = read_report(&path)?;
+        let (body, _) = read_report(&path)?;
         if serde_json::from_slice::<ModEvent>(&body).is_err() {
             continue;
         }

@@ -22,6 +22,11 @@ impl Effects {
     }
 }
 impl Runtime for Effects {
+    fn changed(&self) {
+        if let Some(node) = self.0.upgrade() {
+            node.topics.changed(fastctx_types::topics::SENTINELS);
+        }
+    }
     fn now(&self) -> i64 {
         jiff::Timestamp::now().as_millisecond()
     }

@@ -47,6 +47,7 @@ pub(crate) async fn sentinel_overview(shell: tauri::State<'_, Shell>) -> Result<
 /// What a sentinel did, read from its home; `held` names the version the
 /// window already shows.
 #[fastctx_gui_command::command]
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn sentinel_record(
     shell: tauri::State<'_, Shell>,
     hub: Option<String>,
@@ -55,11 +56,12 @@ pub(crate) async fn sentinel_record(
     home: MachineName,
     generation: u64,
     held: Option<String>,
+    before: Option<u64>,
 ) -> Result<Reply, String> {
     let (hub, account) = crate::sentinels::names(hub, account)?;
     match shell
         .world()
-        .sentinel(hub, account, Request::Record { id, home, generation, held })
+        .sentinel(hub, account, Request::Record { id, home, generation, held, before })
         .await
         .map_err(|e| e.to_string())?
     {

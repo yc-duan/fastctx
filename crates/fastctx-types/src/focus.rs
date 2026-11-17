@@ -42,6 +42,11 @@ pub struct Folders {
     /// The user's home there, which a choice usually starts from.
     pub home: String,
     pub folders: Vec<Folder>,
+    /// Continue this disposable enumeration within two minutes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_cursor: Option<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub truncated: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -60,4 +65,8 @@ pub struct Folder {
 pub struct Outlined {
     pub path: String,
     pub outline: Result<String, String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_cursor: Option<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub truncated: bool,
 }

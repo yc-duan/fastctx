@@ -44,21 +44,32 @@ impl Via {
         }
     }
 
-    fn send_call(&self, id: u64, message: Envelope) -> Result<(), ()> {
+    /// Sends the call; one a person waits on (`soon`) goes ahead of letters
+    /// and large answers. Whether it went that way.
+    fn send_call(&self, id: u64, message: Envelope, soon: bool) -> Result<bool, ()> {
         match self {
-            Via::Hub(connection) => connection.up.send(Up::Call { id, message }),
-            Via::Peer(conn) => conn.send(crate::peer::Frame::Call { id, message }),
+            Via::Hub(connection) if soon => connection.up.send_soon(Up::Call { id, message }),
+            Via::Hub(connection) => connection.up.send(Up::Call { id, message }).map(|()| false),
+            Via::Peer(conn) if soon => conn.send_soon(crate::peer::Frame::Call { id, message }),
+            Via::Peer(conn) => conn.send(crate::peer::Frame::Call { id, message }).map(|()| false),
         }
     }
 
     /// Tells the machine answering the call `id` that its caller gave it
     /// up: through the hub, which tells it in turn, or over the direct link
     /// when the other machine reads that. An answer nobody waits for is
-    /// dropped where it arrives.
-    fn cancel(&self, id: u64) {
+    /// dropped where it arrives. It goes the way the call went (`soon`), so
+    /// it never arrives before the call.
+    fn cancel(&self, id: u64, soon: bool) {
         match self {
+            Via::Hub(connection) if soon => {
+                let _ = connection.up.send_soon(Up::Cancel { id });
+            }
             Via::Hub(connection) => {
                 let _ = connection.up.send(Up::Cancel { id });
+            }
+            Via::Peer(conn) if conn.cancels && soon => {
+                let _ = conn.send_soon(crate::peer::Frame::Cancel { id });
             }
             Via::Peer(conn) if conn.cancels => {
                 let _ = conn.send(crate::peer::Frame::Cancel { id });
@@ -157,6 +168,7 @@ impl Inner {
         // A phone links directly with a machine only while it has calls to
         // it; the first goes through the hub while the link comes up.
         let _demand = self.demand(to);
+        let soon = waited_on(&call);
         let n = self.number(to)?;
         let ticket = || -> Result<Ticket, CallFailure> {
             let stream = crate::sign::random::<8>().map(u64::from_le_bytes).map_err(|error| {
@@ -176,7 +188,11 @@ impl Inner {
             stream,
             body: serde_json::to_value(body).expect("bodies serialize"),
         };
-        let plain = envelope(&Body::Call { call: call.clone() }, None);
+        // The name of what the calling task answers goes with the call, so
+        // asking that again asks this again under the same name. A stream
+        // is not submitted work and carries none.
+        let submission = crate::submission::current();
+        let plain = envelope(&Body::Call { call: call.clone(), submission: submission.clone() }, None);
         let large = feed.is_none()
             && wire::encode(&Up::Call { id: u64::MAX, message: plain.clone() }).len() > wire::MAX_CONTROL_FRAME;
         if large && !self.view().call_details {
@@ -241,7 +257,7 @@ impl Inner {
                 sha256: crate::sign::Digest(crate::sign::sha256(&bytes)),
             };
             let details = Some(crate::call_details::CallDetails::of(&self.me(), &call));
-            let message = envelope(&Body::LargeCall { carried, details }, Some(ticket.clone()));
+            let message = envelope(&Body::LargeCall { carried, details, submission }, Some(ticket.clone()));
             if wire::encode(&Up::Call { id: u64::MAX, message: message.clone() }).len() > wire::MAX_CONTROL_FRAME {
                 return Err(CallFailure::NotAllowed {
                     name: to.clone(),
@@ -258,7 +274,7 @@ impl Inner {
         };
         // The answer, a large one fetched too, within the one time the call
         // is waited for.
-        let reply = self.route(&via, to, n, message, side, &mut feed).await?;
+        let reply = self.route(&via, to, n, message, side, &mut feed, soon).await?;
         self.answer_of(&via, to, reply).await
     }
 
@@ -303,6 +319,7 @@ impl Inner {
 
     /// Sends a call `message`, numbered `n`, to `to` and waits for the
     /// envelope that answers it.
+    #[allow(clippy::too_many_arguments)]
     async fn route(
         self: &Arc<Self>,
         via: &Via,
@@ -311,6 +328,7 @@ impl Inner {
         message: Envelope,
         side: Side,
         feed: &mut Option<Feed>,
+        soon: bool,
     ) -> Result<Envelope, CallFailure> {
         let id = self.next_id();
         let (events, mut received) = mpsc::unbounded_channel();
@@ -321,9 +339,9 @@ impl Inner {
             Side::Opening(task, opened) => (Some(task), Some(opened)),
         };
         let mut waiting =
-            Waiting { inner: self.clone(), id, via: via.clone(), answered: false, sending, feeding: None };
+            Waiting { inner: self.clone(), id, via: via.clone(), answered: false, soon: false, sending, feeding: None };
         let result = async {
-            if via.send_call(id, message).is_err() {
+            let Ok(went_soon) = via.send_call(id, message, soon) else {
                 return Err(match via {
                     Via::Hub(_) => {
                         CallFailure::NotConnected { reason: "the connection to the hub just ended".to_string() }
@@ -333,7 +351,8 @@ impl Inner {
                         reason: "the direct link with it just ended".to_string(),
                     },
                 });
-            }
+            };
+            waiting.soon = went_soon;
             // Once queued to the connection, the call may have reached its
             // target even if the hub's Delivered status never reached us.
             let lost = |reason: String| CallFailure::Unknown { name: to.clone(), reason };
@@ -580,6 +599,8 @@ struct Waiting {
     id: u64,
     via: Via,
     answered: bool,
+    /// Whether the call went the way kept for what a person waits on.
+    soon: bool,
     sending: Option<tokio::task::JoinHandle<()>>,
     feeding: Option<tokio::task::JoinHandle<()>>,
 }
@@ -591,7 +612,16 @@ impl Drop for Waiting {
         }
         self.inner.calls.lock().expect("never poisoned").remove(&self.id);
         if !self.answered {
-            self.via.cancel(self.id);
+            self.via.cancel(self.id, self.soon);
         }
     }
+}
+
+/// Whether a person waits on the call: a stop, words for a conversation, a
+/// control of it, its shared input. It goes the way kept for that.
+fn waited_on(call: &RemoteCall) -> bool {
+    matches!(
+        call,
+        RemoteCall::Stop { .. } | RemoteCall::Talk { .. } | RemoteCall::Control { .. } | RemoteCall::Composer { .. }
+    )
 }

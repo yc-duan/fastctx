@@ -87,6 +87,7 @@ pub async fn let_go(node: &Arc<Node>, link: &Arc<Link>) {
         }
         if !used {
             super::metadata::forget(&node.world, &town);
+            node.topics.changed(&format!("{}{town}", fastctx_types::topics::MAP_PREFIX));
         }
         let removed = if used || stuck { remove_copy(node, &town).await } else { remove(node, &town).await };
         match removed {
@@ -122,7 +123,18 @@ pub(crate) async fn leave_kept(
 }
 
 /// What `remove_copy` takes of a project kept here, beside its signed entries.
-const COPY: [&str; 7] = ["ledger", "attachments", "journals", "specs", "pages", "tampering", "history"];
+const COPY: [&str; 10] = [
+    "projected",
+    "ledger",
+    super::projected::NEXT.0,
+    super::projected::NEXT.1,
+    "attachments",
+    "journals",
+    "specs",
+    "pages",
+    "tampering",
+    "history",
+];
 
 /// Whether this computer still keeps any of what `remove_copy` takes of `town`.
 fn holds_copy(node: &Node, town: &TownName) -> bool {
@@ -138,14 +150,19 @@ fn holds_copy(node: &Node, town: &TownName) -> bool {
 pub(super) async fn remove_copy(node: &Arc<Node>, town: &TownName) -> io::Result<()> {
     let _syncing = node.syncing.lock().await;
     let directory = node.world.town(town);
+    let changed = node.topics.clone();
+    let topic = format!("{}{town}", fastctx_types::topics::MAP_PREFIX);
     fastctx_platform::task::spawn_blocking(move || {
+        let _map_changed = changed.writing(topic);
         super::remove(&directory.signed())?;
         for folder in COPY {
             super::remove(&directory.path().join(folder))?;
         }
-        match fastctx_platform::disk::remove_file(directory.path().join("refused.json")) {
-            Err(error) if error.kind() != io::ErrorKind::NotFound => return Err(error),
-            _ => {}
+        for file in ["refused.json", super::projected::FROM, super::projected::FOR] {
+            match fastctx_platform::disk::remove_file(directory.path().join(file)) {
+                Err(error) if error.kind() != io::ErrorKind::NotFound => return Err(error),
+                _ => {}
+            }
         }
         Ok(())
     })
@@ -156,16 +173,30 @@ pub(super) async fn remove_copy(node: &Arc<Node>, town: &TownName) -> io::Result
 pub(super) async fn remove(node: &Arc<Node>, town: &TownName) -> io::Result<()> {
     let _syncing = node.syncing.lock().await;
     let directory = node.world.town(town);
+    let changed = node.topics.clone();
+    let topic = format!("{}{town}", fastctx_types::topics::MAP_PREFIX);
     fastctx_platform::task::spawn_blocking(move || {
+        let _map_changed = changed.writing(topic);
         // The signed entries go first: without them the folder is no
         // project any more, and the guard puts nothing back.
         super::remove(&directory.signed())?;
+        super::remove(&directory.projected())?;
         super::remove(&directory.ledger())?;
+        super::remove(&directory.path().join(super::projected::NEXT.0))?;
+        super::remove(&directory.path().join(super::projected::NEXT.1))?;
         super::remove(&directory.attachments())?;
         for folder in ["journals", "specs", "pages", "tampering", "history"] {
             super::remove(&directory.path().join(folder))?;
         }
-        for file in ["project.json", "refused.json", "index.json", "projection-through.json", "ledger-import.json"] {
+        for file in [
+            "project.json",
+            "refused.json",
+            "index.json",
+            "projection-through.json",
+            "ledger-import.json",
+            super::projected::FROM,
+            super::projected::FOR,
+        ] {
             match fastctx_platform::disk::remove_file(directory.path().join(file)) {
                 Err(error) if error.kind() != io::ErrorKind::NotFound => return Err(error),
                 _ => {}

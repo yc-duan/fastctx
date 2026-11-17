@@ -35,6 +35,16 @@ pub fn run(root: &std::path::Path, family: Option<&str>) -> Result<(), Box<dyn s
     Ok(())
 }
 
+/// Changes the schema of the database in `file` on a connection of the
+/// drill's own: the node's connections refuse any change of schema while
+/// they run, and the faults the drills inject are triggers.
+pub(crate) fn outside(file: &std::path::Path, sql: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let raw = fastctx_storage::rusqlite::Connection::open(file)?;
+    raw.busy_timeout(std::time::Duration::from_secs(10))?;
+    raw.execute_batch(sql)?;
+    Ok(())
+}
+
 /// Runs only migration admission, source verification and event-order checks.
 pub fn migration(root: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
     if !root.is_absolute() || fastctx_platform::disk::is_there(root) {

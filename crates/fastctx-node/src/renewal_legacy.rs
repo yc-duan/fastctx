@@ -3,7 +3,6 @@
 //! It can discover the mismatch and renew through the maintenance envelope.
 
 use fastctx_types::ipc::Peer;
-use fastctx_types::pages::PageCall;
 use fastctx_types::residents::{Notice, WorldFact};
 use fastctx_types::run::{LegacyLines, OutputWindow, RunReply};
 use fastctx_types::session::control::Controlled;
@@ -39,7 +38,7 @@ pub(crate) fn call(protocol: u32, peer: &Peer, call: &Call) -> bool {
     if protocol == 10 && matches!(peer, Peer::Command { .. }) {
         return true;
     }
-    if protocol == 5 && matches!(call, Call::Machines { .. } | Call::Page(_)) {
+    if protocol == 5 && matches!(call, Call::Machines { .. }) {
         return false;
     }
     if let Peer::Supervisor { job: owned } = peer {
@@ -62,7 +61,6 @@ pub(crate) fn call(protocol: u32, peer: &Peer, call: &Call) -> bool {
             | Call::Journal(_)
             | Call::Nodes
             | Call::Machines { .. }
-            | Call::Page(PageCall::Publish { .. } | PageCall::Read { .. } | PageCall::List { .. })
     )
 }
 

@@ -2,10 +2,11 @@
 pub(crate) mod accounts;
 mod allowance;
 mod calls;
+mod checkpoint;
+pub(crate) mod copied;
 pub(crate) use calls::calls;
 mod claude;
 mod codex;
-mod compact;
 mod health;
 mod history;
 mod hold;
@@ -16,11 +17,11 @@ mod readings;
 mod recent;
 mod report;
 mod resets;
+mod tail;
 pub(crate) mod terminal_record;
 
 use crate::Node;
-pub(crate) use allowance::{after_reading, used_up};
-pub(crate) use compact::collect;
+pub(crate) use allowance::{after_reading, fable_line, used_up};
 use fastctx_types::ResidentId;
 use fastctx_types::access::{Acting, HubAccount};
 use fastctx_types::agents::AgentLimits;
@@ -67,6 +68,33 @@ fn follows_clearings(path: &Path) -> bool {
     fastctx_platform::disk::exists(path.join(FOLLOW_CLEARINGS)).unwrap_or(false)
 }
 
+/// Where a login's week, as its owner set it, is kept: its dollars, in
+/// millionths, beside its ledger.
+const WEEK: &str = "week";
+
+/// A login's week in quota dollars as its owner set it; none is the World's
+/// default.
+pub(crate) fn week(node: &Node, agent: &str, dir: &Path) -> Option<fastctx_types::usage::Usd> {
+    let kept = fastctx_platform::disk::read(ledger(node, agent, dir).join(WEEK)).ok()?;
+    String::from_utf8(kept).ok()?.trim().parse::<u64>().ok().filter(|week| *week > 0).map(fastctx_types::usage::Usd)
+}
+
+/// Keeps a login's week, or forgets it for the World's default.
+pub(crate) fn set_week(node: &Node, agent: &str, dir: &Path, week: Option<fastctx_types::usage::Usd>) -> io::Result<()> {
+    let path = ledger(node, agent, dir);
+    let kept = path.join(WEEK);
+    match week {
+        Some(week) => {
+            fastctx_platform::disk::create_dir_all(&path)?;
+            fastctx_platform::disk::write(&kept, week.0.to_string().as_bytes())
+        }
+        None => match fastctx_platform::disk::remove_file(&kept) {
+            Err(error) if error.kind() != io::ErrorKind::NotFound => Err(error),
+            _ => Ok(()),
+        },
+    }
+}
+
 /// Whether future early weekly resets are detected for this login.
 /// Previously confirmed boundaries do not depend on this setting.
 pub(crate) fn resets_in_place(node: &Node, agent: &str, dir: &Path) -> bool {
@@ -97,7 +125,11 @@ pub(crate) fn set_resets_in_place(node: &Node, agent: &str, dir: &Path, on: bool
 fn with_book<T>(node: &Node, path: &Path, f: impl FnOnce(&mut Book) -> io::Result<T>) -> io::Result<T> {
     let book = node.usage.books.lock().expect("never poisoned").entry(path.to_path_buf()).or_default().clone();
     let mut book = book.lock().expect("never poisoned");
-    let result = book.load(path).and_then(|()| f(&mut book));
+    let result = book.load(path).and_then(|()| {
+        // What a write is marked as made under (7965 P08).
+        book.sharing = Some(crate::timeline::born_shared::now(node));
+        f(&mut book)
+    });
     let mut failures = node.usage.failures.lock().expect("never poisoned");
     match &result {
         Ok(_) => {
@@ -224,7 +256,7 @@ pub(crate) fn record_terminal(
 }
 
 fn apply_terminal(book: &mut Book, path: &Path, record: &terminal_record::Record) -> io::Result<()> {
-    if book.keys.contains(&record.key) {
+    if book.keys.contains_key(&record.key) {
         return Ok(());
     }
     if record.session.as_ref().is_some_and(|session| book.modern.contains(session)) {
@@ -324,12 +356,27 @@ fn login_of(node: &Node, id: &ResidentId, about: &About) -> Option<PathBuf> {
     }
 }
 
-/// Claude Code's default login: the one the user's environment names.
+/// Claude Code's default login: the one the user's environment names. Read
+/// at most every `DEFAULT_READ_EVERY`: each turn's events ask for it, and
+/// the user's environment is read from several files.
 pub(crate) fn claude_default() -> Option<PathBuf> {
+    static READ: std::sync::Mutex<Option<(std::time::Instant, Option<PathBuf>)>> = std::sync::Mutex::new(None);
+    if let Some((at, default)) = READ.lock().expect("never poisoned").as_ref()
+        && at.elapsed() < DEFAULT_READ_EVERY
+    {
+        return default.clone();
+    }
+    // Kept only when read: a reading that failed is tried again by the next
+    // report, which would otherwise be taken as having no login to count.
     let env = crate::claude::environment().ok()?;
     let home = fastctx_platform::user_home().ok()?;
-    Some(crate::homes::claude_default(&env, &home))
+    let default = Some(crate::homes::claude_default(&env, &home));
+    *READ.lock().expect("never poisoned") = Some((std::time::Instant::now(), default.clone()));
+    default
 }
+
+/// How long the default Claude login, once read, is taken as it was.
+const DEFAULT_READ_EVERY: std::time::Duration = std::time::Duration::from_secs(30);
 
 /// The limits of `agent`'s login `dir` as they were last read, which its
 /// ledger keeps past the sessions that read them and their conversations

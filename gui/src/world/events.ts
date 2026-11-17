@@ -3,7 +3,7 @@
 // stream; this is its shape, and nothing here interprets it.
 
 import type { Attachment, AttachmentSource } from "./attachments";
-import type { PageSource } from "./pages";
+import type { PageSource } from "./world";
 import type { Focus } from "./focus";
 import type { RunFacts } from "./run-facts";
 import type { EndedHow, ExitStatus } from "./since";
@@ -19,7 +19,7 @@ export type Speaker =
   | { kind: "user"; machine: MachineName }
   | { kind: "resident"; address: Address }
   | { kind: "world" }
-  /** An open page, saying what the user agreed it may (`pages.ts`). */
+  /** A page of a release before pages were removed (beta.18). */
   | { kind: "page"; page: PageSource };
 
 export type ToolStatus = "running" | "done" | "failed" | "declined" | "cut" | "unknown";

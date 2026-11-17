@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>智能体</title>
+    <!-- A specimen: the agents' ledger, drawn from made-up logins and requests.
+         ?view=calls|quota  ?theme=warm-black|ink-black|warm-white  ?open  -->
+    <script>
+      document.documentElement.dataset.theme = new URLSearchParams(location.search).get("theme") ?? "warm-black";
+    </script>
+    <script type="module" src="/src/ledger/specimen.ts"></script>
+  </head>
+  <body>
+    <div id="app"></div>
+  </body>
+</html>

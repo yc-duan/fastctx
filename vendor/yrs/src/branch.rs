@@ -206,6 +206,9 @@ pub struct Branch {
 
     pub content_len: u32,
 
+    /// Visible Unicode scalar values contributed by string items in this sequence.
+    pub(crate) text_scalar_len: u32,
+
     /// An identifier of an underlying complex data type (eg. is it an Array or a Map).
     pub(crate) type_ref: TypeRef,
 
@@ -249,6 +252,7 @@ impl Branch {
             map: HashMap::default(),
             block_len: 0,
             content_len: 0,
+            text_scalar_len: 0,
             item: None,
             name: None,
             type_ref,

@@ -15,6 +15,12 @@ use crate::town::caller::Caller;
 use crate::town::{map, read};
 
 pub async fn call(node: &Arc<Node>, caller: &Caller, call: ProjectCall) -> Result<Reply, Failure> {
+    selected(node, caller, call, None).await
+}
+
+pub(crate) async fn selected(
+    node: &Arc<Node>, caller: &Caller, call: ProjectCall, owner: Option<Option<HubAccount>>,
+) -> Result<Reply, Failure> {
     if matches!(&call, ProjectCall::New { fields, .. } | ProjectCall::Edit { fields, .. } if fields.canon.is_some()) {
         return Err(Failure::not_run(fastctx_types::memory::LEGACY));
     }
@@ -22,7 +28,7 @@ pub async fn call(node: &Arc<Node>, caller: &Caller, call: ProjectCall) -> Resul
         crate::history::identity::author(node, caller).await?;
     }
     match call {
-        ProjectCall::New { town, fields, account, hub } => new(node, caller, town, fields, account, hub).await,
+        ProjectCall::New { town, fields, account, hub } => new(node, caller, town, fields, account, hub, owner).await,
         ProjectCall::Edit { town, fields } => {
             let town = caller.town_or(node, town)?;
             edit(node, caller, town, fields).await
@@ -79,8 +85,21 @@ async fn new(
     fields: RecordFields,
     account: Option<AccountName>,
     hub: Option<HubName>,
+    selected: Option<Option<HubAccount>>,
 ) -> Result<Reply, Failure> {
-    let owner = owner(node, caller, account, hub)?;
+    let owner = match selected {
+        Some(owner) => {
+            if let Some(owner) = &owner {
+                let link = node.link_of(&owner.hub).ok_or_else(|| Failure::refused("the selected project's network is unavailable"))?;
+                let acting = crate::around::acting_of(node, caller);
+                if !node.accounts_on(&link, &acting).contains(&owner.account) {
+                    return Err(Failure::refused("the caller no longer serves the selected project's account"));
+                }
+            }
+            owner
+        }
+        None => owner(node, caller, account, hub)?,
+    };
     crate::ledger::query(node, Some(&town)).await.map_err(Failure::new)?;
     if blocking(node, &town, read::latest).await?.is_some() {
         return Err(Failure::new(format!(
@@ -248,7 +267,7 @@ async fn machines(node: &Arc<Node>, acting: &fastctx_types::access::Acting, hub:
 /// of the hub named, when whoever asks works for it, or the one account they
 /// work for. None on a computer that is on no hub, which keeps its projects
 /// itself.
-fn owner(
+pub(crate) fn owner(
     node: &Node,
     caller: &Caller,
     named: Option<AccountName>,
@@ -290,7 +309,7 @@ fn owner(
 
 /// A path as the World writes it: absolute, and on Windows with forward
 /// slashes. A path is a machine's own; nothing else is done to it.
-fn absolute(path: &str) -> Result<String, String> {
+pub(crate) fn absolute(path: &str) -> Result<String, String> {
     let bytes = path.as_bytes();
     let drive =
         bytes.len() >= 3 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' && matches!(bytes[2], b'/' | b'\\');

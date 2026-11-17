@@ -17,11 +17,16 @@ pub struct Args {
     seconds: u64,
     #[arg(long, hide = true)]
     execute: bool,
+    #[arg(long, hide = true)]
+    launcher: bool,
     #[arg(required = true, trailing_var_arg = true, allow_hyphen_values = true)]
     command: Vec<OsString>,
 }
 
 pub fn run(args: Args) -> anyhow::Result<()> {
+    if args.launcher {
+        return crate::wake_guard::run(args.seconds, args.command);
+    }
     if args.execute {
         let mut command = std::process::Command::new(&args.command[0]);
         command.args(&args.command[1..]).stdin(Stdio::null()).stdout(Stdio::inherit()).stderr(Stdio::inherit());

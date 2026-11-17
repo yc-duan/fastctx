@@ -27,7 +27,9 @@ pub fn seal(member: &Member) -> Option<String> {
 
 /// A registered, logged-in computer keeps the records of its own account.
 /// A shared computer keeps only records belonging to its own holders, never
-/// one sharer's private records. Managed machines and phones keep no files.
+/// one sharer's private records; a share still waiting for the machine to
+/// clear counts already, so the machine clears before it is in force. Managed
+/// machines and phones keep no files.
 pub fn keeps(directory: &Directory, member: &Member, openers: &[AccountName], shared_on: Option<&MachineName>) -> bool {
     !member.managed
         && member.is_machine()
@@ -38,6 +40,13 @@ pub fn keeps(directory: &Directory, member: &Member, openers: &[AccountName], sh
         && directory
             .shares
             .iter()
-            .filter(|share| share.machine == member.name && directory.holds(&share.account, &member.name))
-            .all(|share| allows(directory, &share.account, openers, shared_on))
+            .filter(|share| {
+                share.machine == member.name && (share.pending.is_some() || directory.holds(&share.account, &member.name))
+            })
+            .all(|share| {
+                // A waiting share is judged as it will be: a birth on this
+                // machine is its holders' already.
+                allows(directory, &share.account, openers, shared_on)
+                    || (share.pending.is_some() && shared_on.is_some_and(|on| directory.same(on, &member.name)))
+            })
 }

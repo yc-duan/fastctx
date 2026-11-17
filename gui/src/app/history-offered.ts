@@ -7,7 +7,7 @@ import type { Acting } from "../world/accounts";
 import type { WorldNow } from "../world/bridge";
 import { specimenHistory } from "../world/history-switch";
 import { HISTORY } from "./preview";
-import { inNoNetwork } from "./reach";
+import { coOwnersOf, inNoNetwork } from "./reach";
 
 /** For a conversation working as `acting`. */
 export function historyForTalk(world: WorldNow | null, acting: Acting | null, live: boolean): boolean {
@@ -29,6 +29,9 @@ export function historyForProject(world: WorldNow | null, town: string, live: bo
   if (inNoNetwork(world)) return world.accounts.history === true;
   return world.accounts.hubs.some((hub) => {
     const project = hub.projects.find((one) => one.name === town);
-    return !!project && (hub.history ?? []).some((account) => account === project.owner || project.granted.includes(account));
+    if (!project) return false;
+    // Its owner, one it is granted to, or a co-owner (§28.47).
+    const coOwners = coOwnersOf(world, hub, project).map((login) => login.account);
+    return (hub.history ?? []).some((account) => account === project.owner || project.granted.includes(account) || coOwners.includes(account));
   });
 }

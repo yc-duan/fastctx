@@ -9,6 +9,9 @@ pub enum ErrorKind {
     Full,
     Unavailable,
     OutcomeUnknown,
+    /// What a conditional write expected changed before it could commit: it
+    /// left nothing, and is done again over what is there now.
+    Changed,
     Invalid,
     Other,
 }

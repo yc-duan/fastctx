@@ -37,10 +37,8 @@ export interface QueueWords {
   paused: string;
   /** Closing a queued one being changed: its changes are already kept. */
   done: string;
-  /** Beside one the node is sending now. */
+  /** Beside one sent from here the node has not taken in a while. */
   sending: string;
-  /** Why one cannot be sent at once while another is on its way. */
-  stillGoing: string;
   /** Beside one another device is changing. */
   editingElsewhere: string;
 }

@@ -50,7 +50,7 @@ pub(super) fn field(name: &str, value: &Value) -> Result<()> {
         "hub.name" => decode::<fastctx_types::HubName>(value),
         "hub.public" => decode::<Vec<std::net::SocketAddr>>(value),
         "hub.listen" => decode::<std::net::SocketAddr>(value),
-        "hub.self_registration" => decode::<bool>(value),
+        "hub.self_registration" | "hub.asset_seal_at_start" => decode::<bool>(value),
         "hub.updates" => decode::<fastctx_types::update::Policy>(value),
         "hub.dissolved" => decode::<Option<super::Dissolved>>(value),
         "machine_log.next" | "forgetting.last" => decode::<u64>(value),

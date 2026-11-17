@@ -1,7 +1,7 @@
 /* A history document read (`history-page.ts`): a document in a column of its
    own that scrolls, its name in the display face over a ruled stroke, its
-   Markdown in the reading type. Its versions are the page sheet's
-   (`../pages/pages.css`). */
+   Markdown in the reading type. Its versions in a sheet, and a project's
+   histories as a list of links, kept here since pages went (beta.18). */
 
 .hd-page {
   container-type: inline-size;
@@ -114,4 +114,101 @@
 
 .hd-wrong {
   color: var(--caution);
+}
+
+/* Versions, the latest first; the one shown is marked. */
+.page-versions-list {
+  list-style: none;
+  margin: var(--space-2) 0 0;
+  padding: 0;
+}
+
+.page-version {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 2px var(--space-3);
+  padding: var(--space-3) var(--space-2);
+  border-radius: var(--radius-m);
+}
+
+.page-version.shown {
+  background: var(--bg-sunken);
+}
+
+.page-version-line {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  color: var(--text-strong);
+  font-size: var(--size-text);
+}
+
+.page-version-by {
+  grid-column: 1;
+  font-size: var(--size-text);
+  color: var(--text-3);
+}
+
+.page-version-go {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.page-version-go .text-button,
+.page-sheet .sheet-foot .text-button {
+  color: var(--accent);
+}
+
+.page-sheet .text-button.danger {
+  color: var(--wrong);
+}
+
+/* A project's histories: each a line with what it holds. */
+.page-links li + li {
+  border-top: 1px solid var(--hairline);
+}
+
+.page-link {
+  display: flex;
+  gap: var(--space-3);
+  padding: var(--space-3) 0;
+  color: inherit;
+  text-decoration: none;
+}
+
+.page-link-glyph {
+  flex: none;
+  color: var(--text-3);
+  padding-top: 2px;
+  transition: color var(--hover) var(--ease);
+}
+
+.page-link:hover .page-link-glyph,
+.page-link:hover .page-link-title {
+  color: var(--accent-bright);
+}
+
+.page-link-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.page-link-title {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  color: var(--text-strong);
+  font-size: var(--size-text);
+  transition: color var(--hover) var(--ease);
+}
+
+.page-link-about {
+  font-size: var(--size-text);
+  color: var(--text-2);
+  line-height: var(--leading-prose);
 }

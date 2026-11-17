@@ -19,6 +19,10 @@ pub struct Conversation {
     /// Previous runtime addresses remain aliases after a manual conversation move.
     #[serde(default)]
     pub previous: Vec<MachineName>,
+    /// The canonical conversation, mapped once by the hub from the birth facts
+    /// its host reported. Absent for a conversation registered without them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub identity: Option<Box<crate::sync::identity::ObjectId>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -30,6 +34,10 @@ pub enum Request {
         shared: bool,
         #[serde(default)]
         previous: Option<MachineName>,
+        /// The original birth time from the host's resident record, from which
+        /// the hub maps the canonical conversation. Older hosts omit it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        born_at: Option<jiff::Timestamp>,
     },
     Delete {
         resident: ResidentId,

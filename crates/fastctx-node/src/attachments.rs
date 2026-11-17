@@ -5,10 +5,11 @@ pub(crate) mod destinations;
 pub(crate) mod follow;
 pub(crate) mod forwarded;
 pub(crate) mod index;
+pub(crate) mod kept_here;
 pub(crate) mod lifetime;
 mod references;
 pub(crate) mod sent;
-pub(crate) use references::{inherit, inherit_texts, preview};
+pub(crate) use references::{hand_previews, inherit, inherit_texts, preview};
 
 use std::io::{Read as _, Write as _};
 use std::path::{Path, PathBuf};
@@ -36,14 +37,12 @@ pub fn delivery(
     from: &MachineName,
     text: String,
     attachments: Vec<Attachment>,
-    id: Option<&str>,
+    id: Option<fastctx_types::NoticeId>,
 ) -> fastctx_types::residents::Delivery {
     use fastctx_types::residents::{Delivery, Notice};
     use fastctx_types::session::{Speaker, attachments::AttachedMessage};
-    let id = match id {
-        Some(id) => crate::speech::fixed_id("talk", &[from.as_str(), id]),
-        None => crate::speech::new_id("talk"),
-    };
+    // Named by the sender's own id (`speech::talk_id`), or anew.
+    let id = id.unwrap_or_else(|| crate::speech::new_id("talk"));
     let notice = if attachments.is_empty() {
         Notice::Words {
             from: Speaker::User { machine: from.clone() },
@@ -90,6 +89,25 @@ pub async fn upload(
     composer: Option<fastctx_types::composer::UploadScope>,
     mut source: FrameReader,
 ) -> Result<Uploaded, Failure> {
+    // A file for a conversation on another machine, that machine unnamed:
+    // found as a talk finds it, and kept on this computer as a file for a
+    // named one is (`Sent`), under an operation of the conversation and the
+    // file's bytes — the same file again takes what the first made.
+    if machine.is_none()
+        && composer.is_none()
+        && let UploadTarget::Resident { resident } = &target
+        && node.residents.about(resident).is_none()
+    {
+        let found = crate::colleagues::find_for(node, &Acting::Here, resident).await?;
+        if !node.is_here(&found) {
+            // The file as it is described, not its bytes alone: the same
+            // bytes under another name are another upload.
+            let described = serde_json::to_vec(&file).map_err(failure)?;
+            let operation = format!("upload-{resident}-{}", crate::speech::fixed_id("upload", &[&String::from_utf8_lossy(&described)]));
+            let sent = UploadTarget::Sent { machine: found, target: Box::new(target), operation, account: None, files_on: None };
+            return Box::pin(upload(node, sent, None, file, composer, source)).await;
+        }
+    }
     if let UploadTarget::Sent { machine, target, operation, account, files_on } = target {
         let uploader = destinations::sender(node, &machine, &target, account.as_ref())?;
         node.settled_for(&uploader).await;
@@ -312,12 +330,15 @@ async fn arrival(
         Prior::Again(attachment, mut guard) => {
             let directory = Path::new(&attachment.path).parent().map(Path::to_path_buf);
             let arriving = match directory {
-                Some(directory) => {
-                    fastctx_platform::task::spawn_blocking(move || arriving_in(&directory, *attachment, resume))
-                        .await
-                        .map_err(failure)
-                        .and_then(|arriving| arriving)
-                }
+                // Its directory may have gone with its part as the node
+                // started (`unpublished`): it arrives again from nothing.
+                Some(directory) => fastctx_platform::task::spawn_blocking(move || {
+                    fastctx_platform::disk::create_dir_all(&directory).map_err(failure)?;
+                    arriving_in(&directory, *attachment, resume)
+                })
+                .await
+                .map_err(failure)
+                .and_then(|arriving| arriving),
                 None => Err(failure("the upload's receipt names no directory")),
             };
             match arriving {
@@ -516,7 +537,10 @@ pub async fn receive(
             return Err(failure("the uploader did not end the file"));
         }
         let uploaded = finish(arriving, guard.as_mut(), Some(stream.receipt_work())).await?;
-        stream.done().await.map_err(failure)?;
+        // The file is attached by now: a receipt that could not be said is a
+        // broken connection, and the same operation asked again answers with
+        // it, rather than an upload that failed.
+        stream.done().await.map_err(broke)?;
         Ok(uploaded)
     }
     .await;
@@ -1133,6 +1157,9 @@ pub async fn place(
             }
         });
     }
+    // Into the asset library with the conversation's other attachments
+    // (design §28.16).
+    crate::timeline::attached(node, resident);
     Ok(given)
 }
 

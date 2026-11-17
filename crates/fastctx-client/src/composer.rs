@@ -1,5 +1,6 @@
 //! Shared input uses the ordinary user call and resident watch transports.
 
+pub mod documents;
 use fastctx_net::watch_queue;
 use fastctx_types::access::Written;
 use fastctx_types::composer::{Composer, Mutation, Request, Updated};

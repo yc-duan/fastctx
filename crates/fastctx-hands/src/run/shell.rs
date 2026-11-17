@@ -66,14 +66,10 @@ pub fn prepare(script: &Path, context: &Context<'_>) -> io::Result<Prepared> {
 pub fn environment_from(mut env: Vec<(OsString, OsString)>, context: &Context<'_>) -> Vec<(OsString, OsString)> {
     set(&mut env, "FASTCTX_MACHINE", context.machine.as_str());
     match context.owner {
-        fastctx_types::run::JobOwner::Resident(address) => {
-            set(&mut env, "FASTCTX_RESIDENT", address.tag());
-            unset(&mut env, "FASTCTX_PAGE");
-        }
-        fastctx_types::run::JobOwner::Page { page } => {
-            unset(&mut env, "FASTCTX_RESIDENT");
-            set(&mut env, "FASTCTX_PAGE", serde_json::to_string(page).expect("page identity serializes"));
-        }
+        fastctx_types::run::JobOwner::Resident(address) => set(&mut env, "FASTCTX_RESIDENT", address.tag()),
+        // A page's job, of a release before pages were removed (beta.18):
+        // none starts any more.
+        fastctx_types::run::JobOwner::Page { .. } => unset(&mut env, "FASTCTX_RESIDENT"),
     }
     match context.town {
         Some(town) => set(&mut env, "FASTCTX_TOWN", town.as_str()),

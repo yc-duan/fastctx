@@ -103,7 +103,7 @@ impl Timers for SentinelTimers {
             let owner = Owner::Sentinel { id: owner.into() };
             Ok(self
                 .store()?
-                .list(Some(&owner))
+                .list(&owner)
                 .await
                 .map_err(|e| e.to_string())?
                 .iter()

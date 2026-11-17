@@ -14,7 +14,12 @@ use std::time::Duration;
 pub async fn register(link: &Link, account: &AccountName, resident: &ResidentId) -> anyhow::Result<()> {
     link.owned_records(
         account,
-        fastctx_types::owned_records::Request::Register { resident: resident.clone(), shared: true, previous: None },
+        fastctx_types::owned_records::Request::Register {
+            resident: resident.clone(),
+            shared: true,
+            previous: None,
+            born_at: None,
+        },
     )
     .await
     .map_err(anyhow::Error::msg)?;

@@ -21,6 +21,7 @@ pub mod admission;
 mod afoot;
 mod answering;
 mod answers;
+mod assets;
 mod calls;
 mod changes;
 mod clock;
@@ -84,6 +85,7 @@ use crate::message::LetterId;
 use crate::sign::{Domain, PublicKey, SecretKey, Signed};
 use crate::wire::{CallStatus, Change, Question, Told};
 pub use afoot::Elsewhere;
+pub use assets::{Incoming, Outgoing};
 pub use direct::DataWay;
 pub use ledger::{Page, PageItem};
 use state::{Counter, LettersFile};
@@ -173,6 +175,8 @@ pub trait Node: Send + Sync + 'static {
     fn history_changed(&self, town: TownId, _name: String, _version: u64) {
         self.ledger_changed(Some(town));
     }
+    /// The hub's asset sync told this machine something unasked.
+    fn assets_pushed(&self, _push: fastctx_types::assets::Push) {}
     fn replicas_changed(&self) {
         self.ledger_changed(None);
     }
@@ -715,6 +719,23 @@ impl Link {
 
     pub fn status(&self) -> Status {
         self.inner.status.borrow().clone()
+    }
+
+    /// Waits until the link is online, at most `within`: whether it is. A
+    /// link stopped is not waited for.
+    pub async fn online_within(&self, within: std::time::Duration) -> bool {
+        let mut status = self.inner.status.subscribe();
+        let deadline = tokio::time::Instant::now() + within;
+        loop {
+            match &*status.borrow_and_update() {
+                Status::Online { .. } => return true,
+                Status::Stopped { .. } => return false,
+                Status::Connecting { .. } => {}
+            }
+            if !matches!(tokio::time::timeout_at(deadline, status.changed()).await, Ok(Ok(()))) {
+                return matches!(&*status.borrow(), Status::Online { .. });
+            }
+        }
     }
 
     /// Whether the essential connection task ended unexpectedly. A removal
@@ -1306,10 +1327,22 @@ impl Inner {
     }
 
     async fn ask(&self, question: Question) -> Result<Told, String> {
-        fastctx_platform::doing::outside("the hub's answer, including its first connection", within(&question), async {
+        let within = within(&question);
+        if self.names(&question) {
+            // Its time is each asking's, not all of them together.
+            let connection = fastctx_platform::doing::outside("the hub's first connection", within, self.connected())
+                .await
+                .map_err(|late| late.to_string())?
+                .ok_or_else(|| format!("not connected to the hub: {}", self.not_connected()))?;
+            return self
+                .ask_on(connection, question)
+                .await?
+                .ok_or_else(|| "the connection to the hub ended before it answered".to_string());
+        }
+        fastctx_platform::doing::outside("the hub's answer, including its first connection", within, async {
             let connection =
                 self.connected().await.ok_or_else(|| format!("not connected to the hub: {}", self.not_connected()))?;
-            self.ask_on(connection, question)
+            self.asked_on(connection, question, None)
                 .await?
                 .ok_or_else(|| "the connection to the hub ended before it answered".to_string())
         })
@@ -1317,13 +1350,50 @@ impl Inner {
         .map_err(|late| late.to_string())?
     }
 
-    /// None means that the connection ended, distinct from a hub refusal. A
-    /// hub that does not answer in time is said to (`within`): a caller may
-    /// hold a lock over many conversations while it asks.
+    /// Whether `question` goes to the hub under a name: it asks for work,
+    /// and the hub takes names.
+    fn names(&self, question: &Question) -> bool {
+        self.view().named_asks && submits(question)
+    }
+
+    /// Asks the hub on `connection`. A question that asks it for work goes
+    /// under a name where the hub takes one, the name of the work this is
+    /// part of or one of its own, and is asked again under it while the hub
+    /// only says it accepted the work, for an hour at most. None means that
+    /// the connection ended, distinct from a hub refusal.
     async fn ask_on(&self, connection: Connection, question: Question) -> Result<Option<Told>, String> {
+        if !self.names(&question) {
+            return self.asked_on(connection, question, None).await;
+        }
+        let named = match crate::submission::current() {
+            Some(named) => named,
+            None => crate::submission::fresh().map_err(|error| format!("naming the question: {error}"))?,
+        };
+        let began = tokio::time::Instant::now();
+        loop {
+            match self.asked_on(connection.clone(), question.clone(), Some(named.clone())).await? {
+                Some(Told::Accepted) if began.elapsed() < ASKS_FOR => tokio::time::sleep(ASKS_AGAIN).await,
+                Some(Told::Accepted) => {
+                    return Err("the hub accepted this an hour ago and has not said what came of it; \
+                                whether it takes effect is not known"
+                        .into());
+                }
+                told => return Ok(told),
+            }
+        }
+    }
+
+    /// One asking. A hub that does not answer in time is said to (`within`):
+    /// a caller may hold a lock over many conversations while it asks.
+    async fn asked_on(
+        &self,
+        connection: Connection,
+        question: Question,
+        submission: Option<fastctx_types::submission::Submission>,
+    ) -> Result<Option<Told>, String> {
         let within = within(&question);
         let id = self.next_id();
-        let frames = crate::question_parts::frames(id, question, self.view().ledger_parts)?;
+        let frames = crate::question_parts::frames(id, question, submission, self.view().ledger_parts)?;
         let multipart = frames.len() > 1;
         let (answer, answered) = oneshot::channel();
         self.asks.insert(id, connection.generation, answer, None);
@@ -1365,3 +1435,41 @@ pub(crate) fn within(question: &Question) -> std::time::Duration {
         _ => 60,
     })
 }
+
+/// Whether `question` asks the hub for work, which it may answer as accepted:
+/// such a question goes under a name.
+fn submits(question: &Question) -> bool {
+    use fastctx_types::{account_records, owned_records};
+    // A record that keeps its versions: deleting it erases them all.
+    let versioned = |request: &account_records::Request| {
+        matches!(request, account_records::Request::Delete { kind, .. }
+            if matches!(kind.as_str(), fastctx_types::plan::KIND | fastctx_types::history::RECORD_KIND))
+    };
+    match question {
+        Question::Manage {
+            change:
+                crate::wire::Change::DeleteAccount { .. }
+                | crate::wire::Change::DeleteProject { .. }
+                | crate::wire::Change::RenameGroup { .. }
+                | crate::wire::Change::SetRole { .. }
+                | crate::wire::Change::Direct { .. },
+            ..
+        } | Question::Forget { .. }
+        | Question::NetworkUpdates {
+            request:
+                fastctx_types::update::ViewCall::Schedule { .. }
+                | fastctx_types::update::ViewCall::Repair { .. }
+                | fastctx_types::update::ViewCall::CancelRepair { .. },
+            ..
+        } => true,
+        Question::OwnedRecords { request: owned_records::Request::Delete { .. }, .. } => true,
+        Question::OwnedRecords { request: owned_records::Request::Record { request, .. }, .. }
+        | Question::AccountRecords { request, .. } => versioned(request),
+        _ => false,
+    }
+}
+
+/// How soon a question the hub accepted the work of is asked again, and for
+/// how long: as a call between machines is.
+const ASKS_AGAIN: std::time::Duration = std::time::Duration::from_secs(1);
+const ASKS_FOR: std::time::Duration = std::time::Duration::from_secs(60 * 60);

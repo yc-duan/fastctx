@@ -3,11 +3,13 @@
 //! its original bytes commit. A checkpoint includes unresolved causal updates,
 //! so a restart never discards an edit whose predecessor has not arrived yet.
 
+mod capture;
+pub use capture::DecodedUpdate;
 mod identities;
 pub use identities::{Character, Edited, Id};
 
 use yrs::updates::{decoder::Decode, encoder::Encode};
-use yrs::{Doc, GetString, OffsetKind, Options, ReadTxn, StateVector, Text, TextRef, Transact, Update};
+use yrs::{Doc, GetString, OffsetKind, Options, ReadTxn, StateVector, Text, TextRef, Transact};
 
 /// Combines v1 updates without constructing a replica or discarding pending data.
 pub fn merge(updates: impl IntoIterator<Item = impl AsRef<[u8]>>) -> Result<Vec<u8>> {
@@ -34,6 +36,7 @@ fn error(what: impl std::fmt::Display) -> Error {
 pub struct Document {
     doc: Doc,
     text: TextRef,
+    scalar_len: usize,
 }
 impl Default for Document {
     fn default() -> Self {
@@ -44,7 +47,7 @@ impl Document {
     pub fn new() -> Self {
         let doc = Doc::with_options(Options { offset_kind: OffsetKind::Utf16, ..Options::default() });
         let text = doc.get_or_insert_text(TEXT);
-        Self { doc, text }
+        Self { doc, text, scalar_len: 0 }
     }
 
     pub fn restore(checkpoint: &[u8]) -> Result<Self> {
@@ -57,8 +60,15 @@ impl Document {
     /// fails, the owner reconstructs this document from its durable updates before
     /// accepting more work; decoding errors do not enter a transaction.
     pub fn apply(&mut self, bytes: &[u8]) -> Result<()> {
-        let update = Update::decode_v1(bytes).map_err(error)?;
-        self.doc.transact_mut().apply_update(update).map_err(error)
+        self.apply_decoded(DecodedUpdate::decode(bytes)?)
+    }
+
+    /// Integrates an update already decoded outside the owning editor's lock.
+    pub fn apply_decoded(&mut self, update: DecodedUpdate) -> Result<()> {
+        let mut transaction = self.doc.transact_mut();
+        transaction.apply_update(update.0).map_err(error)?;
+        self.scalar_len = self.text.scalar_len(&transaction) as usize;
+        Ok(())
     }
 
     pub fn text(&self) -> String {
@@ -66,6 +76,10 @@ impl Document {
     }
     pub fn len(&self) -> u32 {
         self.text.len(&self.doc.transact())
+    }
+    /// Number of visible Unicode scalars, independent of UTF-16 positions.
+    pub fn character_count(&self) -> usize {
+        self.scalar_len
     }
     pub fn is_empty(&self) -> bool {
         self.len() == 0
@@ -95,6 +109,8 @@ impl Document {
         if start > end || !boundary(&text, start) || !boundary(&text, end) {
             return Err(error("the draft edit is outside its text or splits a UTF-16 character"));
         }
+        let removed = scalar_boundary(&text, end).expect("validated end")
+            - scalar_boundary(&text, start).expect("validated start");
         let mut transaction = self.doc.transact_mut();
         if start != end {
             self.text.remove_range(&mut transaction, start, end - start);
@@ -102,6 +118,7 @@ impl Document {
         if !insert.is_empty() {
             self.text.insert(&mut transaction, start, insert);
         }
+        self.scalar_len = self.scalar_len - removed + insert.chars().count();
         Ok(transaction.encode_update_v1())
     }
 
@@ -114,6 +131,7 @@ impl Document {
         if length != 0 {
             self.text.remove_range(&mut transaction, 0, length);
         }
+        self.scalar_len = 0;
         Taken { text, update: transaction.encode_update_v1() }
     }
 }
@@ -124,15 +142,19 @@ pub struct Taken {
 }
 
 fn boundary(text: &str, at: u32) -> bool {
+    scalar_boundary(text, at).is_some()
+}
+
+fn scalar_boundary(text: &str, at: u32) -> Option<usize> {
     let mut offset = 0u32;
-    for character in text.chars() {
+    for (count, character) in text.chars().enumerate() {
         if offset == at {
-            return true;
+            return Some(count);
         }
         offset += character.len_utf16() as u32;
         if offset > at {
-            return false;
+            return None;
         }
     }
-    offset == at
+    (offset == at).then(|| text.chars().count())
 }

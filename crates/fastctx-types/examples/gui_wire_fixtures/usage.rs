@@ -78,9 +78,9 @@ pub fn fixtures() -> Fixtures {
             },
         ],
         hours: vec![
-            UsageHour { at: at("2026-10-12T09:00:00Z"), person: 0, sum: sum(1_840_000, Some(2_910_000)) },
-            UsageHour { at: at("2026-10-12T09:00:00Z"), person: 1, sum: sum(220_000, Some(310_000)) },
-            UsageHour { at: at("2026-10-12T14:00:00Z"), person: 0, sum: sum(960_000, Some(1_480_000)) },
+            UsageHour { at: at("2026-10-12T09:00:00Z"), person: 0, sum: sum(1_840_000, Some(2_910_000)), fable: Some(Usd(1_200_000)) },
+            UsageHour { at: at("2026-10-12T09:00:00Z"), person: 1, sum: sum(220_000, Some(310_000)), fable: Some(Usd::ZERO) },
+            UsageHour { at: at("2026-10-12T14:00:00Z"), person: 0, sum: sum(960_000, Some(1_480_000)), fable: Some(Usd(400_000)) },
         ],
         week: UsageWeek {
             start: Some(at("2026-10-08T18:00:00Z")),
@@ -148,7 +148,7 @@ pub fn fixtures() -> Fixtures {
     let codex = UsageReport {
         resets: None,
         people: vec![UsagePerson { account: None, week: sum(17_000_000, None), day: None, fable: None, went: None }],
-        hours: vec![UsageHour { at: at("2026-10-12T10:00:00Z"), person: 0, sum: sum(2_400_000, None) }],
+        hours: vec![UsageHour { at: at("2026-10-12T10:00:00Z"), person: 0, sum: sum(2_400_000, None), fable: None }],
         week: UsageWeek {
             start: Some(at("2026-10-05T14:00:00Z")),
             end: Some(at("2026-10-12T14:00:00Z")),

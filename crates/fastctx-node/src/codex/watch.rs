@@ -10,6 +10,12 @@ use fastctx_types::session::{Happened, SessionChange, SessionEvent};
 
 pub fn recorded(recorded: Vec<SessionEvent>, hosted: &[SessionEvent]) -> Vec<SessionEvent> {
     let turns: HashSet<_> = hosted.iter().filter_map(|event| crate::talk::turn_of(&event.happened)).collect();
+    recorded_beside(recorded, &|turn| turns.contains(turn))
+}
+
+/// As `recorded`, the host's events known only by whether they have a turn
+/// (`hosted`): for a reading kept on disk (design §28.51).
+pub fn recorded_beside(recorded: Vec<SessionEvent>, hosted: &dyn Fn(&str) -> bool) -> Vec<SessionEvent> {
     // Absence from host storage is not itself a rewind: a failed startup or
     // an in-flight turn can exist only in the World's record. Retire absent
     // turns only across an explicit host history-replacement checkpoint.
@@ -20,7 +26,7 @@ pub fn recorded(recorded: Vec<SessionEvent>, hosted: &[SessionEvent]) -> Vec<Ses
         .into_iter()
         .flat_map(|index| recorded[..index].iter())
         .filter_map(|event| crate::talk::turn_of(&event.happened))
-        .filter(|turn| !turns.contains(turn))
+        .filter(|turn| !hosted(turn))
         .map(str::to_string)
         .collect();
     recorded

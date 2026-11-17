@@ -177,8 +177,11 @@ export interface Words {
   sendPlaceholder(agent: string): string;
   send: string;
   stop: string;
-  /** The stop button while the turn it stops has not ended. */
-  stopping: string;
+  /** The stop button for a turn whose host has not ended it in time. */
+  stopAgain: string;
+  /** How a conversation stands while a turn asked to stop has not ended in
+   *  time: until then it shows ended. */
+  notStoppedYet: string;
   /** A stop that could not be asked for. */
   turnNotStopped(why: string): string;
   uncertain(why: string): string;
@@ -197,12 +200,12 @@ export interface Words {
   /** The user archived it: kept to read, not to speak to. */
   removed: string;
   removedNote: string;
-  /** Its machine out of reach for good: an assistance that ended, or a
-   *  machine no longer reachable; what is kept here is still read. */
+  /** The current directory explicitly grants no access; retained content can still be read. */
   assistEnded: string;
   assistEndedNote: string;
   departed: string;
   departedNote: string;
+  notConnected: string;
   waitingForYou: string;
   on(machine: string): string;
   /** Under the title of a conversation with an agent assisting the user. */
@@ -344,6 +347,9 @@ export interface Words {
   /** Words on their way whose agent has not started for a minute and is
    *  being started again; the agent by the name it goes by. */
   hostRetrying(agent: string | undefined): string;
+  /** The turn's line while the agent's host is being started again after
+   *  `failures` starts failed. */
+  startRetrying(failures: number): string;
   /** Why it did not start, for the pointer to rest on: in plain words where
    *  the interface knows them, else as its machine said it. */
   hostRetryWhy(reason: string): string;
@@ -450,10 +456,10 @@ export const zh: Words = {
   queue: {
     waiting: (count) => `排队 ${count} 条`,
     held: "已暂停，本轮停止",
-    notTaken: "已暂停，上一条没送出",
-    unsure: "不知是否送到",
+    notTaken: "已暂停，上一条未发送",
+    unsure: "送达状态未知",
     sendNow: "引导",
-    sendNowTitle: "不等本轮结束，立即发送",
+    sendNowTitle: "立即发送，不等本轮结束",
     edit: "编辑",
     save: "保存",
     cancel: "取消",
@@ -465,7 +471,6 @@ export const zh: Words = {
     paused: "已暂停",
     done: "完成",
     sending: "发送中",
-    stillGoing: "上一条还在路上",
     editingElsewhere: "别处正在改",
   },
   act: (act, tense) => zhActs[act][index(tense)],
@@ -505,7 +510,7 @@ export const zh: Words = {
   chatMomentFull: (at) => `${at.getFullYear()}年${at.getMonth() + 1}月${at.getDate()}日 星期${zhWeekdays[at.getDay()]} ${hhmm(at)}:${String(at.getSeconds()).padStart(2, "0")}`,
   bubbleLess: "收起",
   copyCode: "复制代码",
-  rewind: "改了重发",
+  rewind: "编辑并重发",
   fork: "从这里分叉",
   backTo: (name) => `回到「${name}」`,
   find: {
@@ -523,11 +528,11 @@ export const zh: Words = {
   compacted: "上下文已压缩",
   commandRunning: (name) =>
     ({ compact: "正在压缩…", review: "正在审查…", fork: "正在分叉…", rewind: "正在回退…", rename: "正在改名…", model: "正在换模型…" })[name] ?? `正在运行 /${name}…`,
-  commandFailed: (name) => `/${name} 没成`,
-  commandUnsure: (name) => `/${name} 不确定做成了没有`,
+  commandFailed: (name) => `/${name} 未成功`,
+  commandUnsure: (name) => `/${name} 结果未知`,
   commandRan: (name) => `/${name} 已执行`,
-  rewound: (files) => (files ? "已回到这一轮之前" : "已回到这一轮之前，改过的文件没有还原"),
-  forkPartial: "已分叉，部分内容没带过去",
+  rewound: (files) => (files ? "已回退到本轮之前" : "已回退到本轮之前，改动的文件未还原"),
+  forkPartial: "已分叉，部分内容未带入",
   turnsEarlier: (turns) => (turns > 0 ? `更早的 ${turns} 轮` : "更早的记录"),
   sayUrgent: "要紧",
   viewSaid: "只看对话",
@@ -537,7 +542,7 @@ export const zh: Words = {
   stepsEarlier: (steps) => `更早的 ${steps} 步`,
   turn: (how, reason) => {
     if (how === "completed") return null;
-    const said = how === "failed" ? "本轮失败" : how === "interrupted" ? "本轮已停止" : `本轮结束：${how}`;
+    const said = how === "failed" ? "本轮失败" : how === "interrupted" ? "已中断" : `本轮结束：${how}`;
     return reason ? `${said}：${reason}` : said;
   },
   wentOnAs: (job) => `转入后台 ${job}`,
@@ -554,8 +559,9 @@ export const zh: Words = {
   sendPlaceholder: (agent) => `发消息给 ${agent}…`,
   send: "发送",
   stop: "停止",
-  stopping: "正在停",
-  turnNotStopped: () => "没能停下",
+  stopAgain: "再次停止",
+  notStoppedYet: "本轮尚未停止",
+  turnNotStopped: () => "停止失败",
   uncertain: () => "送达状态未知",
   sending: "发送中",
   context: (percent) => `上下文 ${percent}%`,
@@ -569,7 +575,8 @@ export const zh: Words = {
   assistEnded: "协助已结束",
   assistEndedNote: "协助已结束，对话仅供查看",
   departed: "已无法访问",
-  departedNote: "它所在的机器已无法访问，对话仅供查看",
+  departedNote: "所在机器已无法访问，对话仅供查看",
+  notConnected: "未连接",
   waitingForYou: "等待回复",
   on: (machine) => machine,
   assistFrom: (owner) => `来自 ${owner}`,
@@ -592,7 +599,7 @@ export const zh: Words = {
     commandsRun: (n) => `${n} 条命令`,
     moreCommands: (n) => `等 ${n} 条`,
     looks: { machines: "机器", working: "在做的事", projects: "项目", plan: "计划", goal: "目标", accounts: "账号", usage: (of) => `${of} 的用法` },
-    world: { wait: "等待", stop: "停止", publish: "发布", enter: "进入", plan: "更新", sense: "盯着", look: "查看" },
+    world: { wait: "等待", stop: "停止", enter: "进入", plan: "更新", sense: "盯着", look: "查看" },
     thePlan: "计划",
     goal: {
       complete: { verb: "完成", object: "目标", said: "目标完成了" },
@@ -607,8 +614,8 @@ export const zh: Words = {
       return hours < 24 ? `${hours} 小时前` : `${Math.floor(hours / 24)} 天前`;
     },
     ended: (end) =>
-      end.kind === "exited" ? (end.code === 0 ? "跑完了" : `退出 ${end.code}`) : end.kind === "stopped" ? "已停止" : end.kind === "not_run" ? "没有跑起来" : "没有跑完",
-    stopped: (how) => ({ stopped: "已停止", already_stopped: "早已停下", had_ended: "早已结束", not_cleanly: "没能停干净", still_running: "还在跑" })[how],
+      end.kind === "exited" ? (end.code === 0 ? "已完成" : `退出 ${end.code}`) : end.kind === "stopped" ? "已停止" : end.kind === "not_run" ? "未能运行" : "未完成",
+    stopped: (how) => ({ stopped: "已停止", already_stopped: "此前已停止", had_ended: "此前已结束", not_cleanly: "未完全停止", still_running: "仍在运行" })[how],
     machines: (n) => `${n} 台`,
     troubled: (n) => `${n} 台出错`,
     lastLines: "最后几行",
@@ -616,11 +623,11 @@ export const zh: Words = {
     version: (n) => `第 ${n} 版`,
     page: (n) => `第 ${n} 页`,
     copied: (files, size) => `${files} 个文件　${size}`,
-    same: (n) => `${n} 个已经一样`,
-    notCopied: (n) => `${n} 个没复制`,
+    same: (n) => `${n} 个相同`,
+    notCopied: (n) => `${n} 个未复制`,
     inBackground: "在后台继续",
-    entered: "从现在起在这个项目里工作",
-    watching: "一有动静就叫醒",
+    entered: "已进入此项目",
+    watching: "有变化时唤醒",
     looked: (n) => `查看 ${n} 次`,
     errors: (n) => `${n} 个错误`,
     warnings: (n) => `${n} 个警告`,
@@ -648,10 +655,10 @@ export const zh: Words = {
     linesLeftOut: (n) => `⋯ 省略 ${n.toLocaleString("zh-CN")} 行`,
     charsLeftOut: (n) => `⋯ 省略 ${n.toLocaleString("zh-CN")} 个字符`,
     unreadable: "此行无法显示",
-    modelCopy: "模型拿到的",
+    modelCopy: "模型收到的",
     whole: "完整输出",
-    wholeGone: "完整输出已不在那台机器上",
-    diffGone: "改动的细节已不在那台机器上",
+    wholeGone: "完整输出已不在该机器上",
+    diffGone: "改动详情已不在该机器上",
     reading: "读取中…",
     readFailed: "读取失败",
     fileMissing: "找不到这个文件",
@@ -688,36 +695,36 @@ export const zh: Words = {
   colleagueSaid: (label) => `${label} 说`,
   colleagueAsked: "同事有一个问题",
   goalReported: (label, status, took) =>
-    status === "blocked" ? `${label} 受阻` : status === "paused" ? `${label} 暂停了` : `${label} 完成　${took}`,
+    status === "blocked" ? `${label} 受阻` : status === "paused" ? `${label} 已暂停` : `${label} 完成　${took}`,
   watchEnded: () => "已停止同步",
-  watchRefused: "你的账号看不了这段对话",
+  watchRefused: "当前账号无权查看此对话",
   watchInterrupted: () => "连接中断，正在重连…",
   brokenFor: (took, why) => (why ? `已断开 ${took}：${why}` : `已断开 ${took}`),
   notSent: (why) => known(why, zhProblems) ?? "发送失败",
-  notDone: (why) => known(why, zhProblems) ?? "没有做成",
+  notDone: (why) => known(why, zhProblems) ?? "未完成",
   waitingToSend: "等待发送",
-  notConfirmed: "不知是否送到",
+  notConfirmed: "送达状态未知",
   sendAgain: "重发",
   takeAway: "移除",
   health: {
     reconnecting: "连接中断，正在重试",
-    safety: "OpenAI 正在对这一轮的输出做额外的安全审查",
-    rerouted: "OpenAI 把这一轮换到了另一个模型",
-    tools_missing: "Fastctx 的工具没有接上",
-    tool_server: "有一组工具没能启动",
+    safety: "OpenAI 正在对本轮输出进行额外安全审查",
+    rerouted: "OpenAI 已将本轮切换到其他模型",
+    tools_missing: "Fastctx 工具未连接",
+    tool_server: "部分工具未能启动",
     warning: "有一条提醒",
-    error: "这一轮出错了",
+    error: "本轮出错",
   },
   allowanceUsed: zhProblems.allowanceUsed,
-  pluginUnloaded: "Claude Code 卸下了 Fastctx 的插件，会话会重新打开",
+  pluginUnloaded: "Claude Code 已卸载 Fastctx 插件，会话将重新打开",
   files: {
     reveal: "在文件夹中显示",
     copyPath: "复制路径",
     copied: "已复制路径",
     on: (machine, path) => `${machine} 上的 ${path}`,
-    openFailed: (why) => known(why, zhProblems) ?? "打不开这个文件",
+    openFailed: (why) => known(why, zhProblems) ?? "无法打开此文件",
     gone: "原件已不在",
-    fetching: (name, share) => (share === null ? `正在取 ${name}` : `正在取 ${name}　${share}%`),
+    fetching: (name, share) => (share === null ? `正在获取 ${name}` : `正在获取 ${name}　${share}%`),
     fetchInterrupted: (name) => `${name}：连接中断，正在重连…`,
   },
   pictures: {
@@ -731,29 +738,29 @@ export const zh: Words = {
     copied: "已复制",
     saved: "已保存",
     gone: "原件已不在",
-    failed: (why) => known(why, zhProblems) ?? "没能取到",
+    failed: (why) => known(why, zhProblems) ?? "获取失败",
     counter: (at, of) => `${at} / ${of}`,
-    fetching: (share) => (share === null ? "正在取…" : `正在取… ${share}%`),
+    fetching: (share) => (share === null ? "正在获取…" : `正在获取… ${share}%`),
     interrupted: "连接中断，正在重连…",
   },
   openColleague: "查看",
   agents: {
     failed: "失败",
     stopped: "已停止",
-    waiting: "在等",
+    waiting: "等待中",
     more: "展开",
     less: "收起",
     reading: "正在读取…",
-    unreadable: "读不到它的记录",
-    nothing: "还没开始",
+    unreadable: "无法读取记录",
+    nothing: "尚未开始",
     done: (task) => (task ? `子代理已完成：${task}` : "子代理已完成"),
     failedTold: (task) => (task ? `子代理失败：${task}` : "子代理失败"),
     stoppedTold: (task) => (task ? `子代理已停止：${task}` : "子代理已停止"),
     tools: (n) => `${n} 次工具调用`,
     unknownAgents: (n) => `${n} 个子代理`,
   },
-  stillRunning: "还在跑的",
-  stopJobAsk: "停下这条命令？会告诉智能体是你停的。",
+  stillRunning: "运行中",
+  stopJobAsk: "停止此命令？智能体将收到手动停止的通知。",
   withdrawSentinel: "撤销",
   withdrawSentinelAsk: "撤销这项观测？",
   sentinelPhase: (phase) =>
@@ -769,11 +776,11 @@ export const zh: Words = {
       review: "目标已停，复核一次",
     })[why.kind],
   sentinelWakes: (times) => `定时唤醒对话：${times.join("、")}`,
-  notStopped: "没能停下",
+  notStopped: "停止失败",
   cancel: "取消",
   jobOutput: (command) => `${command} 的输出`,
   jobOutputLoading: "正在读取…",
-  jobOutputFailed: (why) => known(why, zhProblems) ?? "读不到输出",
+  jobOutputFailed: (why) => known(why, zhProblems) ?? "无法读取输出",
   jobOver: "已结束",
   jobRunning: (job, machine, lasted) => `${job}　${machine}　${lasted}`,
   minutes: (n) => (n < 1 ? "不到 1 分钟" : `${n} 分钟`),
@@ -785,31 +792,32 @@ export const zh: Words = {
       : how === "sent"
       ? `已发往 ${machine}`
       : how === "uncertain"
-        ? "不确定是否送到"
+        ? "送达状态未知"
         : how === "kept"
-          ? "排着，等这一轮结束"
-          : "等它下次用世界的工具时送到",
+          ? "排队中，本轮结束后送达"
+          : "下次调用 Fastctx 工具时送达",
   hostRetrying: (agent) => (agent ? `${agent} 未能启动，正在重试` : "未能启动，正在重试"),
+  startRetrying: (failures) => `未能启动　第 ${failures} 次重试`,
   hostRetryWhy: (reason) => known(reason, zhProblems) ?? reason,
-  queuedTurn: (ahead) => (ahead ? `排队中，前面还有 ${ahead} 个` : "排队中，下一个就轮到它"),
-  queuedTurnWhy: "这个智能体登录同时开着的轮已到上限；主人的先开，受协助的人按账号轮流",
-  queuedCalleeWhy: "它的被调用方同时干活的同事已到上限，前面有一个干完就轮到它",
-  queuedMemory: (ahead) => (ahead ? `等内存，前面还有 ${ahead} 个` : "等内存"),
-  queuedMemoryWhy: "这台机器的可用内存低于给智能体留出的余量；有一轮做完或内存腾出后开始",
+  queuedTurn: (ahead) => (ahead ? `排队中，前面 ${ahead} 个` : "排队中，下一个执行"),
+  queuedTurnWhy: "此登录同时运行的轮数已达上限；主人优先，受协助的账号依次轮流",
+  queuedCalleeWhy: "被调用方的并发协作已达上限，其中一项完成后开始",
+  queuedMemory: (ahead) => (ahead ? `等待内存，前面 ${ahead} 个` : "等待内存"),
+  queuedMemoryWhy: "该机器可用内存低于为智能体保留的余量；有一轮结束或内存释放后开始",
   jobEnded: (_job, machine) => `后台命令在 ${machine} 上结束`,
   movedTo: (town) => `已移到项目 ${town}`,
   movedOut: "已移出项目",
   focusChanged: (items) => `机器与文件夹：${items}`,
   focusCleared: "机器与文件夹：未选",
   briefHanded: "项目说明",
-  deskFree: (who) => `${who} 这一轮结束，屏幕空出来了`,
-  deskTaken: (who) => `${who} 正在操作屏幕，结束后会通知`,
-  deskOutside: "屏幕被 Fastctx 之外的会话占着",
-  endUndelivered: (machine) => `${machine} 上那条后台命令的结果送不到了`,
-  stopUndelivered: (machine) => `停止没能送到 ${machine}`,
-  undelivered: "有一件事没能送到",
-  goneFromNetwork: (machine) => `${machine} 已不在这个账号的网络里`,
-  networksLeft: "它所属的网络都已退出",
+  deskFree: (who) => `${who} 本轮结束，屏幕已空闲`,
+  deskTaken: (who) => `${who} 正在使用屏幕，结束后通知`,
+  deskOutside: "屏幕正被 Fastctx 之外的会话占用",
+  endUndelivered: (machine) => `${machine} 上后台命令的结果无法送达`,
+  stopUndelivered: (machine) => `停止指令未能送达 ${machine}`,
+  undelivered: "有内容未能送达",
+  goneFromNetwork: (machine) => `${machine} 已不在此账号的网络中`,
+  networksLeft: "所属网络均已退出",
   ended: (how) =>
     endedIn(how, {
       exited: (code) => `退出 ${code}`,
@@ -818,7 +826,7 @@ export const zh: Words = {
       finished: "已完成",
       interrupted: "中断",
       failed: "出错",
-      couldNotRun: "没能运行",
+      couldNotRun: "未能运行",
       other: "已结束",
       turn: (how, reason) =>
         (how === "completed" ? "本轮完成" : how === "failed" ? "本轮失败" : how === "interrupted" ? "本轮中断" : `本轮 ${how}`) +
@@ -847,7 +855,6 @@ export const en: Words = {
     paused: "Paused",
     done: "Done",
     sending: "Sending",
-    stillGoing: "The last one is still on its way",
     editingElsewhere: "Being edited elsewhere",
   },
   act: (act, tense) => enActs[act][index(tense)],
@@ -907,7 +914,7 @@ export const en: Words = {
   compacted: "Context compacted",
   commandRunning: (name) =>
     ({ compact: "Compacting…", review: "Reviewing…", fork: "Forking…", rewind: "Rewinding…", rename: "Renaming…", model: "Changing model…" })[name] ?? `Running /${name}…`,
-  commandFailed: (name) => `/${name} didn't go through`,
+  commandFailed: (name) => `/${name} did not go through`,
   commandUnsure: (name) => `Not sure whether /${name} went through`,
   commandRan: (name) => `/${name} ran`,
   rewound: (files) => (files ? "Back to before this turn" : "Back to before this turn; changed files were not restored"),
@@ -921,7 +928,7 @@ export const en: Words = {
   stepsEarlier: (steps) => (steps === 1 ? "1 earlier step" : `${steps} earlier steps`),
   turn: (how, reason) => {
     if (how === "completed") return null;
-    const said = how === "failed" ? "Turn failed" : how === "interrupted" ? "Turn stopped" : `Turn ended: ${how}`;
+    const said = how === "failed" ? "Turn failed" : how === "interrupted" ? "Interrupted" : `Turn ended: ${how}`;
     return reason ? `${said}: ${reason}` : said;
   },
   wentOnAs: (job) => `went on as ${job}`,
@@ -938,14 +945,15 @@ export const en: Words = {
   sendPlaceholder: (agent) => `Message ${agent}…`,
   send: "Send",
   stop: "Stop",
-  stopping: "Stopping",
-  turnNotStopped: () => "Couldn't stop",
+  stopAgain: "Stop again",
+  notStoppedYet: "Not stopped yet",
+  turnNotStopped: () => "Could not stop",
   uncertain: () => "Delivery unknown",
   sending: "Sending",
   context: (percent) => `Context ${percent}%`,
   working: "Working",
   starting: "Starting",
-  startFailed: "Couldn't start",
+  startFailed: "Could not start",
   startWhy: (why) => known(why, enProblems),
   idle: "Idle",
   removed: "Archived",
@@ -954,6 +962,7 @@ export const en: Words = {
   assistEndedNote: "Assistance ended; the conversation is read-only",
   departed: "No longer reachable",
   departedNote: "Its machine is no longer reachable; the conversation is read-only",
+  notConnected: "not connected",
   waitingForYou: "Waiting for your reply",
   on: (machine) => machine,
   assistFrom: (owner) => `from ${owner}`,
@@ -976,7 +985,7 @@ export const en: Words = {
     commandsRun: (n) => `${n} command${n === 1 ? "" : "s"}`,
     moreCommands: (n) => `and ${n} more`,
     looks: { machines: "the machines", working: "what is working", projects: "the projects", plan: "the plan", goal: "the goal", accounts: "the accounts", usage: (of) => `how to use ${of}` },
-    world: { wait: "Waited for", stop: "Stopped", publish: "Published", enter: "Entered", plan: "Updated", sense: "Watching", look: "Looked at" },
+    world: { wait: "Waited for", stop: "Stopped", enter: "Entered", plan: "Updated", sense: "Watching", look: "Looked at" },
     thePlan: "the plan",
     goal: {
       complete: { verb: "Completed", object: "the goal", said: "The goal is complete" },
@@ -993,7 +1002,7 @@ export const en: Words = {
       return `${days} day${days === 1 ? "" : "s"} ago`;
     },
     ended: (end) =>
-      end.kind === "exited" ? (end.code === 0 ? "finished" : `exit ${end.code}`) : end.kind === "stopped" ? "stopped" : end.kind === "not_run" ? "didn't start" : "didn't finish",
+      end.kind === "exited" ? (end.code === 0 ? "finished" : `exit ${end.code}`) : end.kind === "stopped" ? "stopped" : end.kind === "not_run" ? "did not start" : "did not finish",
     stopped: (how) => ({ stopped: "stopped", already_stopped: "already stopped", had_ended: "had already ended", not_cleanly: "not stopped cleanly", still_running: "still running" })[how],
     machines: (n) => `${n} machine${n === 1 ? "" : "s"}`,
     troubled: (n) => `${n} failed`,
@@ -1033,13 +1042,13 @@ export const en: Words = {
     nothing: "Nothing printed",
     linesLeftOut: (n) => `⋯ ${n.toLocaleString("en")} line${n === 1 ? "" : "s"} left out`,
     charsLeftOut: (n) => `⋯ ${n.toLocaleString("en")} character${n === 1 ? "" : "s"} left out`,
-    unreadable: "This line can't be shown",
+    unreadable: "This line cannot be shown",
     modelCopy: "What the model got",
     whole: "Full output",
     wholeGone: "The full output is no longer on that machine",
     diffGone: "This change's details are no longer on that machine",
     reading: "Reading…",
-    readFailed: "Couldn't read it",
+    readFailed: "Could not read it",
     fileMissing: "File not found",
   },
   turnInfo: {
@@ -1076,11 +1085,11 @@ export const en: Words = {
   goalReported: (label, status, took) =>
     status === "blocked" ? `${label} is blocked` : status === "paused" ? `${label} paused` : `${label} done after ${took}`,
   watchEnded: () => "Sync stopped",
-  watchRefused: "Your account can't see this conversation",
+  watchRefused: "Your account cannot see this conversation",
   watchInterrupted: () => "Disconnected, reconnecting…",
   brokenFor: (took, why) => (why ? `Disconnected for ${took}: ${why}` : `Disconnected for ${took}`),
-  notSent: (why) => known(why, enProblems) ?? "Couldn't send",
-  notDone: (why) => known(why, enProblems) ?? "Couldn't do that",
+  notSent: (why) => known(why, enProblems) ?? "Could not send",
+  notDone: (why) => known(why, enProblems) ?? "Could not complete",
   waitingToSend: "Waiting to send",
   notConfirmed: "Delivery unknown",
   sendAgain: "Resend",
@@ -1101,7 +1110,7 @@ export const en: Words = {
     copyPath: "Copy path",
     copied: "Path copied",
     on: (machine, path) => `${path} on ${machine}`,
-    openFailed: (why) => known(why, enProblems) ?? "Couldn't open the file",
+    openFailed: (why) => known(why, enProblems) ?? "Could not open the file",
     gone: "The original is gone",
     fetching: (name, share) => (share === null ? `Fetching ${name}` : `Fetching ${name}, ${share}%`),
     fetchInterrupted: (name) => `${name}: disconnected, reconnecting…`,
@@ -1117,7 +1126,7 @@ export const en: Words = {
     copied: "Copied",
     saved: "Saved",
     gone: "The original is gone",
-    failed: (why) => known(why, enProblems) ?? "Couldn't get it",
+    failed: (why) => known(why, enProblems) ?? "Could not get it",
     counter: (at, of) => `${at} / ${of}`,
     fetching: (share) => (share === null ? "Fetching…" : `Fetching… ${share}%`),
     interrupted: "Disconnected, reconnecting…",
@@ -1130,7 +1139,7 @@ export const en: Words = {
     more: "Show all",
     less: "Show less",
     reading: "Reading…",
-    unreadable: "Its record can't be read",
+    unreadable: "Its record cannot be read",
     nothing: "Not started yet",
     done: (task) => (task ? `Agent finished: ${task}` : "Agent finished"),
     failedTold: (task) => (task ? `Agent failed: ${task}` : "Agent failed"),
@@ -1155,11 +1164,11 @@ export const en: Words = {
       review: "The goal stopped; a review",
     })[why.kind],
   sentinelWakes: (times) => `Wakes the conversation at ${times.join(", ")}`,
-  notStopped: "Couldn't stop it",
+  notStopped: "Could not stop it",
   cancel: "Cancel",
   jobOutput: (command) => `Output of ${command}`,
   jobOutputLoading: "Reading…",
-  jobOutputFailed: (why) => known(why, enProblems) ?? "Couldn't read the output",
+  jobOutputFailed: (why) => known(why, enProblems) ?? "Could not read the output",
   jobOver: "Ended",
   jobRunning: (job, machine, lasted) => `${job} on ${machine}, ${lasted}`,
   minutes: (n) => (n < 1 ? "under a minute" : `${n} min`),
@@ -1174,7 +1183,8 @@ export const en: Words = {
         : how === "kept"
           ? "Queued until this turn ends"
           : "Arrives when it next uses a Fastctx tool",
-  hostRetrying: (agent) => (agent ? `${agent} couldn't start; retrying` : "Couldn't start; retrying"),
+  hostRetrying: (agent) => (agent ? `${agent} could not start; retrying` : "Could not start; retrying"),
+  startRetrying: (failures) => `Could not start; retry ${failures}`,
   hostRetryWhy: (reason) => known(reason, enProblems) ?? reason,
   queuedTurn: (ahead) => (ahead ? `Queued, ${ahead} ahead` : "Queued, next up"),
   queuedTurnWhy: "This agent login runs as many turns at once as it may; the owner's go first, then the assisted accounts' in turn",
@@ -1190,9 +1200,9 @@ export const en: Words = {
   deskFree: (who) => `${who}'s turn ended; the screen is free`,
   deskTaken: (who) => `${who} is using the screen; you'll be told when it's free`,
   deskOutside: "Computer Use is held by a session outside Fastctx",
-  endUndelivered: (machine) => `The background command on ${machine} can't report back`,
-  stopUndelivered: (machine) => `The stop didn't reach ${machine}`,
-  undelivered: "Something couldn't be delivered",
+  endUndelivered: (machine) => `The background command on ${machine} cannot report back`,
+  stopUndelivered: (machine) => `The stop did not reach ${machine}`,
+  undelivered: "Something could not be delivered",
   goneFromNetwork: (machine) => `${machine} is no longer in this account's network`,
   networksLeft: "Every network it belongs to was left",
   ended: (how) =>

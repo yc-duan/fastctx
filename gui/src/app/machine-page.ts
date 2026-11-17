@@ -51,6 +51,7 @@ import { newestKnown, type UpdateCall, type UpdateState } from "../world/updates
 import type { UpdateViewWords } from "./update-view-words";
 import type { UpdateWords } from "./update-words";
 import { jobsOf, residentsOf, type Store } from "./store";
+import { sayWaiting } from "./waiting";
 
 export interface MachinePageOptions {
   store: Store;
@@ -599,6 +600,7 @@ export class MachinePage implements Page {
         managed || !this.options.workbench.peek() ? "" : button("talk", "plus", machines.talk),
         managed ? "" : `<a class="text-button quiet-button mp-act" href="${link({ kind: "agents", machine: machine.written })}" title="${escape(machines.hosts)}">${glyph("agents", 15)}<span>${escape(machines.hosts)}</span></a>`,
         giver ? button("share", "colleague", machines.share) : "",
+        managed ? "" : `<a class="text-button quiet-button mp-act" href="${link({ kind: "files", machine: machine.here ? machine.name : machine.written, path: null, tab: null })}" title="${escape(words.files)}">${glyph("folder", 15)}<span>${escape(words.files)}</span></a>`,
         `<a class="icon-button mp-act-map" href="${link({ kind: "machines", focus: machine.written })}" aria-label="${escape(words.onMap)}" title="${escape(words.onMap)}">${glyph("machine", 17)}</a>`,
       ].join(""),
     );
@@ -660,7 +662,10 @@ export class MachinePage implements Page {
     } else if (!stats) text = words.reading;
     if (text && stats) text = `${text} ${words.lastRead(this.options.ago(Date.now() - heard))}`;
     this.note.hidden = !text;
-    set(this.note, text);
+    // Read for the first time: awaited, not a line that reads like a fault.
+    if (!stats && text === words.reading) sayWaiting(this.note, text);
+    else if (this.note.firstElementChild) this.note.textContent = text;
+    else set(this.note, text);
     this.note.title = title;
     this.board.classList.toggle("stale", !!text && !!stats);
   }
@@ -1266,8 +1271,8 @@ export class MachinePage implements Page {
     this.sharingBox.hidden = !owner;
     if (!owner) return;
     const now = this.options.store.clock.peek();
-    const chip = (label: string, take: string, said = machines.takeBack(label)) =>
-      `<span class="chip">${escape(label)}<button class="chip-x" type="button" ${take} aria-label="${escape(said)}" title="${escape(said)}">${glyph("close", 12)}</button></span>`;
+    const chip = (label: string, take: string, said = machines.takeBack(label), waits = "") =>
+      `<span class="chip"${waits ? ` title="${escape(waits)}"` : ""}>${escape(label)}${waits ? `<span class="chip-wait">${glyph("history", 12)}</span>` : ""}<button class="chip-x" type="button" ${take} aria-label="${escape(said)}" title="${escape(said)}">${glyph("close", 12)}</button></span>`;
     // Its holders see every share, each taken back; a visitor's own share is
     // the only one it gives back, as it gives none.
     const giver = this.giver(machine, world);
@@ -1278,8 +1283,10 @@ export class MachinePage implements Page {
             .filter((one) => giver || one === owner.account)
             .map((one) => {
               if (one === owner.account) return chip(one, `data-act="leave"`, machines.leave);
-              const jobs = shareOf(world, owner, machine.name, one)?.jobs;
-              return chip(one, `data-act="unshare" data-to="${escape(one)}"${jobs ? ` data-jobs="${jobs}"` : ""}`);
+              const share = shareOf(world, owner, machine.name, one);
+              const jobs = share?.jobs;
+              const waits = share?.pending !== undefined ? machines.shareWaits(machine.name) : "";
+              return chip(one, `data-act="unshare" data-to="${escape(one)}"${jobs ? ` data-jobs="${jobs}"` : ""}`, undefined, waits);
             })
             .join("")}${giver ? `<button class="text-button quiet-button" type="button" data-act="share">${glyph("plus", 13)}<span>${escape(machines.share)}</span></button>` : ""}</div>`
         : "";

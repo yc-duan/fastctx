@@ -11,6 +11,7 @@ pub mod atomic;
 pub mod awake;
 pub mod bounded;
 pub mod call_readings;
+pub mod call_timing;
 #[cfg(any(target_os = "linux", target_os = "macos", windows))]
 pub mod child;
 pub mod conduct;
@@ -24,6 +25,7 @@ pub mod disk;
 pub mod disk_usage;
 pub mod disks;
 pub mod doing;
+pub mod durable_file;
 pub mod elevation;
 pub mod environment;
 pub mod event_queue;
@@ -38,11 +40,15 @@ pub mod identity;
 pub mod image_usage;
 pub mod ipc;
 pub mod job_membership;
+pub mod lab;
 pub mod legacy_text;
 pub mod limits;
 pub mod local_path;
 pub mod lock;
+pub mod log_tail;
 pub mod log_writer;
+pub mod materialize_directory;
+pub mod materialize_file;
 pub mod memory;
 #[cfg(target_os = "linux")]
 pub mod mountinfo;
@@ -63,8 +69,10 @@ pub mod protected_directory;
 pub mod readings;
 #[cfg(windows)]
 pub mod registry;
+pub mod read_budget;
 pub mod roles;
 pub mod rolling_log;
+pub mod rooted_path;
 pub mod scene;
 pub mod service_channel;
 #[cfg(windows)]
@@ -96,8 +104,13 @@ mod windows_job;
 mod windows_process;
 #[cfg(windows)]
 mod windows_user;
+#[cfg(any(target_os = "linux", target_os = "macos", windows))]
+pub mod worker;
 
-pub use atomic::{Permissions, PublishFailure, Staged, publish, publish_changed, publish_checked, publish_new};
+pub use atomic::{
+    Permissions, PublishFailure, Staged, mark_new, publish, publish_changed, publish_checked, publish_new, publish_new_unsynced,
+    publish_unsynced,
+};
 #[cfg(any(target_os = "linux", target_os = "macos", windows))]
 pub use child::Child;
 pub use detach::{DetachedProcess, spawn_detached};

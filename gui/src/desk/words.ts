@@ -12,7 +12,7 @@ export interface DeskWords {
 export const zhDesk: DeskWords = {
   close: "关闭",
   forking: "正在分叉…",
-  forkWaits: "这一轮结束后分叉",
+  forkWaits: "本轮结束后分叉",
   backTo: (name) => `回到「${name}」`,
 };
 

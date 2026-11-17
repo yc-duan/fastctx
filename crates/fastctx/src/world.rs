@@ -171,6 +171,12 @@ pub struct AssistArgs {
     /// not given.
     #[arg(long, conflicts_with = "off", value_parser = clap::value_parser!(u16).range(1..))]
     turns: Option<u16>,
+    /// What the account may spend of a Claude Code login in a week, as a
+    /// share of the login's week (`fastctx week`), in percent from 1 to 100.
+    /// Given with `--weekly`, the same share in dollars, which a node or hub
+    /// of an earlier release holds to instead.
+    #[arg(long, conflicts_with = "off", requires = "weekly", value_parser = clap::value_parser!(u8).range(1..=100))]
+    share: Option<u8>,
     #[arg(long = "as")]
     owner: Option<AccountName>,
     #[arg(long)]
@@ -178,7 +184,7 @@ pub struct AssistArgs {
 }
 
 /// An amount of US dollars as typed, such as 50 or 12.5.
-fn dollars(text: &str) -> Result<fastctx_types::usage::Usd, String> {
+pub(crate) fn dollars(text: &str) -> Result<fastctx_types::usage::Usd, String> {
     let amount: f64 =
         text.trim().trim_start_matches('$').parse().map_err(|_| format!("{text} is not an amount of dollars"))?;
     fastctx_types::usage::Usd::from_dollars(amount)
@@ -347,6 +353,35 @@ pub enum HubCommand {
         /// The account the machines go into.
         #[arg(long)]
         admin: AccountName,
+        #[arg(long, value_parser = crate::paths::parser())]
+        dir: Option<std::path::PathBuf>,
+    },
+    /// Copy the hub kept in --dir to --to, marked as a backup: a hub started
+    /// from it keeps every asset sealed until its administrator reopens it.
+    /// The hub must not be running.
+    Backup {
+        /// Where the backup goes: a directory that holds nothing yet.
+        #[arg(long, value_parser = crate::paths::parser())]
+        to: std::path::PathBuf,
+        #[arg(long, value_parser = crate::paths::parser())]
+        dir: Option<std::path::PathBuf>,
+    },
+    /// Rotate the hub's service key: the next key is made, signed by the one
+    /// in use, and the keyring with it is exported to --export; once you
+    /// confirm the export is kept safe, the next key is put in use. The hub
+    /// must not be running.
+    RotateKey {
+        /// Where the keyring goes: a directory that holds nothing yet.
+        #[arg(long, value_parser = crate::paths::parser())]
+        export: std::path::PathBuf,
+        #[arg(long, value_parser = crate::paths::parser())]
+        dir: Option<std::path::PathBuf>,
+    },
+    /// Reopen a hub that keeps every asset sealed because it was put back
+    /// from a backup or an older copy: what is known of it is shown, and once
+    /// you confirm, the history it was put back from is set aside and its
+    /// assets open. The hub must not be running.
+    Reopen {
         #[arg(long, value_parser = crate::paths::parser())]
         dir: Option<std::path::PathBuf>,
     },
@@ -603,6 +638,10 @@ pub fn share(args: ShareArgs) -> anyhow::Result<()> {
 }
 
 pub fn assist(args: AssistArgs) -> anyhow::Result<()> {
+    // Only a Claude Code login is held to a share of its week.
+    if args.share.is_some() && args.agent.to_string() != "claude" {
+        anyhow::bail!("a share of the week limits a Claude Code login's assistance only");
+    }
     let owner = account_or_owner(args.hub.as_ref(), args.owner, Some(&args.machine))?;
     let login = args.home.as_ref().map(|home| home.display().to_string()).unwrap_or_else(|| "default".to_string());
     let change = AccountChange::Assist {
@@ -616,6 +655,7 @@ pub fn assist(args: AssistArgs) -> anyhow::Result<()> {
         daily: args.daily,
         five_hour: args.five_hour,
         turns: args.turns,
+        share: args.share,
     };
     self::change(args.hub, owner, change)?;
     if args.off {
@@ -898,6 +938,47 @@ pub fn hub(command: HubCommand) -> anyhow::Result<()> {
                 "The third version's files are in {}. Start the hub again; each machine reconnects once it runs the fourth version.",
                 third.display()
             );
+        }
+        HubCommand::Backup { to, dir: chosen } => {
+            let marker = fastctx_hub::recovery::backup(&dir(chosen), &to)?;
+            println!("the hub {} is backed up to {}, at its history {}", marker.hub, to.display(), marker.seq);
+        }
+        HubCommand::RotateKey { export, dir: chosen } => {
+            let dir = dir(chosen);
+            if fastctx_hub::recovery::rotation_unfinished(&dir)? {
+                let (old, new) = fastctx_hub::recovery::rotate_finish(&dir)?;
+                println!("the rotation cut short is finished: {new} is in use, {old} retired");
+                return Ok(());
+            }
+            let next = fastctx_hub::recovery::rotate_prepare(&dir, &export)?;
+            println!("the next service key {next} is made; the keyring with it is exported to {}", export.display());
+            if !crate::world::confirm("Keep that export somewhere safe, then type yes to put the next key in use: ")? {
+                anyhow::bail!("the next key is not in use; run this again to put it in use");
+            }
+            let (old, new) = fastctx_hub::recovery::rotate_finish(&dir)?;
+            println!("the service key {new} is in use; {old} is retired and still counts for what it signed");
+        }
+        HubCommand::Reopen { dir: chosen } => {
+            let dir = dir(chosen);
+            let reopened = fastctx_hub::recovery::reopen_confirmed(&dir, |lines| {
+                for line in lines {
+                    println!("{line}");
+                }
+                crate::world::confirm("Reopen the hub's assets as they are now? Type yes to set the history above aside: ")
+            })?;
+            match reopened {
+                None => println!("the hub's assets are not sealed: there is nothing to reopen"),
+                Some((_, None)) => anyhow::bail!("the hub stays sealed"),
+                Some((_, Some(reopened))) => {
+                    for line in &reopened.taken_back {
+                        println!("{line}");
+                    }
+                    println!(
+                        "the hub's assets are open again, the libraries taken as they are ({} records of them set aside); start the hub",
+                        reopened.forgotten
+                    );
+                }
+            }
         }
         HubCommand::Show { dir: chosen } => {
             let (hub, pin) = fastctx_hub::describe(&dir(chosen))?;
@@ -1378,8 +1459,25 @@ fn render_accounts(reply: &AccountsReply, now: Timestamp) -> String {
             let login =
                 assist.home.as_ref().map(|home| home.display().to_string()).unwrap_or_else(|| "default".to_string());
             let until = assist.until.map(|until| format!(" until {}", local(until))).unwrap_or_default();
+            let mut limits = Vec::new();
+            if let Some(share) = assist.share {
+                limits.push(format!("{share}% of its week"));
+            }
+            if let Some(weekly) = assist.weekly {
+                limits.push(format!("${:.2} a week", weekly.0 as f64 / 1_000_000.0));
+            }
+            if let Some(daily) = assist.daily {
+                limits.push(format!("${:.2} a day", daily.0 as f64 / 1_000_000.0));
+            }
+            if let Some(five_hour) = assist.five_hour {
+                limits.push(format!("{five_hour}% of its five hours"));
+            }
+            if let Some(turns) = assist.turns {
+                limits.push(format!("{turns} turns at once"));
+            }
+            let limits = if limits.is_empty() { String::new() } else { format!(", up to {}", limits.join(", ")) };
             text.push_str(&format!(
-                "the {} login {login} on {} assists {}{until}\n",
+                "the {} login {login} on {} assists {}{until}{limits}\n",
                 assist.agent, assist.machine, assist.account
             ));
         }
@@ -1413,4 +1511,14 @@ fn render_accounts(reply: &AccountsReply, now: Timestamp) -> String {
 /// World keep different clocks and zones, and a reader may know none of them.
 fn age(at: Timestamp, now: Timestamp) -> String {
     fastctx_hands::told::duration(now.as_second().saturating_sub(at.as_second()).max(0) as u64)
+}
+
+/// Asks `question` on the terminal; whether the answer was yes.
+pub fn confirm(question: &str) -> anyhow::Result<bool> {
+    use std::io::Write as _;
+    print!("{question}");
+    std::io::stdout().flush()?;
+    let mut answer = String::new();
+    std::io::stdin().read_line(&mut answer)?;
+    Ok(answer.trim().eq_ignore_ascii_case("yes"))
 }

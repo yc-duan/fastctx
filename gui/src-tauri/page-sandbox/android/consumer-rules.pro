@@ -1,1 +1,0 @@
--keep class dev.fastctx.pages.** { *; }

@@ -2,6 +2,8 @@
 // and the colleagues it asked, followed as they change, and what the user
 // does to them. Each `watch` returns how to stop following.
 
+import type { Listing } from "../files/tree";
+import type { FilesWords } from "../files/words";
 import type { PageSeams, PlanShown } from "../plan/panel";
 import type { HistoryWords } from "../project/history-words";
 import type { HistoryCatalog } from "../world/history";
@@ -13,7 +15,7 @@ import type { SideWords } from "./words";
 /** The colleagues followed: stopped, or asked for more or less of them. */
 export interface Following {
   stop(): void;
-  /** Whether a page shows the colleagues' goals and agents now. */
+  /** Whether a page shows the colleagues' goals now. */
   detail(shown: boolean): void;
 }
 
@@ -44,14 +46,23 @@ export interface SideSeams {
     clear(seen?: number): Promise<boolean>;
   };
   /** The colleagues the conversation asked: who each is and how it
-   *  stands, as the World is pushed; with `detail`, each one's goal and the
-   *  host's agents it sent too, read only while a page shows them. */
-  colleagues(show: (nodes: CollabNode[], reading?: boolean) => void): Following;
+   *  stands, as the World is pushed; with `detail`, each one's goal too,
+   *  read only while a page shows them. */
+  colleagues(show: (nodes: CollabNode[]) => void): Following;
   /** Where it works, followed as the World changes. */
   where(show: (where: WhereShown | null) => void): () => void;
   /** Shows a folder of this computer in the system's own window, where this
    *  is a computer. */
   reveal?: (path: string) => void;
+  /** The files the conversation changed and the folders it works in
+   *  (`files-page.ts`): their words, and how a machine's folders are read. */
+  files?: {
+    words: FilesWords;
+    list: ((machine: string, path: string) => Promise<Listing>) | null;
+    home(machine: string): Promise<string | null>;
+    /** Goes to a machine's own page of files, at one of its folders. */
+    browse?(machine: string, folder: string | null): void;
+  };
   /** The history its model works with (`world-history.md`): its project's,
    *  or, in no project, its own. */
   history?: HistorySeam & {

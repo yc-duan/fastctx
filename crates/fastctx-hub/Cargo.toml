@@ -28,12 +28,31 @@ name = "soak_drill"
 path = "tests/soak_drill/main.rs"
 harness = false
 
+[features]
+change-drill = []
+submission-drill = []
+# The asset drills among the hub's own tests commit records unjudged, as the
+# content library lets its drills alone (`cargo test -p fastctx-hub --lib
+# --features content-drill`). A feature of its own, not a dev-dependency's:
+# one would give the content library another set of features whenever any
+# test of the hub is built, and with it every crate above it, so that the
+# release tests could not be built of the kernel's own units
+# (scripts/kernel.mjs --tests).
+content-drill = ["fastctx-content/drill"]
+
+[[example]]
+name = "change_drill"
+required-features = ["change-drill"]
+
 [dependencies]
 arc-swap = "1"
 anyhow.workspace = true
+fastctx-content = { path = "../fastctx-content" }
+fastctx-jobs = { path = "../fastctx-jobs" }
 fastctx-net = { path = "../fastctx-net" }
 fastctx-platform = { path = "../fastctx-platform" }
 fastctx-storage = { path = "../fastctx-storage" }
+fastctx-sync = { path = "../fastctx-sync" }
 fastctx-types = { path = "../fastctx-types" }
 fastctx-update = { path = "../fastctx-update" }
 futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }

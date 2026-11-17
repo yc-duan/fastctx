@@ -11,6 +11,7 @@ import { makeGrip } from "./grip";
 import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
 import type { Place } from "./places";
+import { arrive, tabSide, wayBetween } from "./arrive";
 import { Sidebar, type ProjectMenuOptions } from "./sidebar";
 import type { Store } from "./store";
 import type { TalkActs } from "./talk-acts";
@@ -212,23 +213,21 @@ export class Shell {
       this.sidebar.draw();
       return;
     }
+    const from = before ? this.place : null;
     this.page?.leave?.();
     this.page?.element.remove();
     this.page = page;
     this.place = place;
-    // Gone to another place, the page there comes in over a moment rather
-    // than at a blink; the first page, a page shown again where it was, and
-    // a tab of the same row of tabs (`data-tab-group`), its head standing as
-    // it stood, are simply there.
-    if (before && before !== page && !sameTabs(before.element, page.element)) {
-      page.element.classList.remove("page-arriving");
-      void page.element.offsetWidth;
-      page.element.classList.add("page-arriving");
-      page.element.addEventListener("animationend", (event) => {
-        if (event.target === page.element) page.element.classList.remove("page-arriving");
-      });
-    }
     this.main.append(page.element);
+    // The page comes from where the reader went (`arrive.ts`): down into a
+    // place from the right, back up from the left, fresh from a little
+    // below. Between two tabs of one row (`data-tab-group`) the head stands
+    // as it stood and only what is under it comes, from the side the row
+    // moved to.
+    const side = before ? tabSide(before.element, page.element) : null;
+    if (side) {
+      for (const part of page.element.children) if (part instanceof HTMLElement && !part.classList.contains("page-head")) arrive(part, side);
+    } else if (!before || !sameTabs(before.element, page.element)) arrive(page.element, wayBetween(from, place));
     // Where the page is the desk, the window's buttons stand on its paper
     // (`side.css`): said once here rather than asked of the whole document.
     document.documentElement.classList.toggle("on-desk", page.element.classList.contains("sp-host"));

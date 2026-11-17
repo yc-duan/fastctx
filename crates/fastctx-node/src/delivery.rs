@@ -153,7 +153,8 @@ pub fn terminals(directory: &ConversationDir) -> io::Result<Vec<Finished>> {
 
 pub fn remember_session(directory: &ConversationDir, turn: &str, session: &str) -> io::Result<()> {
     let (key, session) = (crate::speech::fixed_id("turn", &[turn]), session.to_string());
-    change(directory, session.len(), move |rows| {
+    // Told again by every report of the turn's session (`storage::change_relaxed`).
+    storage::change_relaxed(directory, session.len(), move |rows| {
         if rows.get::<String>("turn-sessions", key.as_str())?.is_some_and(|prior| prior != session) {
             return Err(fastctx_storage::Error::new("turn belongs to a different conversation"));
         }

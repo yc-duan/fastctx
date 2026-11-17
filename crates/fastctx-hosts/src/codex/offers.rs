@@ -239,10 +239,13 @@ impl CodexHost {
         // credits/USD-micros contract instead of calling it a final cost.
         usage.raw = json!({"tokenUsage":entry.usage});
         Ok(Offers {
+            gathering: false,
             pending_controls: Vec::new(),
+            pending_newer: Vec::new(),
             control_queue: false,
             controls_told: false,
             control_reply_envelope: false,
+            control_goal: false,
             checkpoints: None,
             history_limits: None,
             automatic_model: None,

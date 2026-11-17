@@ -103,6 +103,7 @@ pub async fn wake(
         look,
         web,
         directory: store.directory().to_path_buf(),
+        store,
         observations,
         missing_wake: false,
         obstacle_recorded: false,
@@ -160,6 +161,7 @@ pub(crate) fn retry_reflex(now: i64) -> Reflex {
     }
 }
 struct Sentinel<'a> {
+    store: &'a Store,
     state: State,
     now: i64,
     machines: &'a [Machine],
@@ -172,6 +174,9 @@ struct Sentinel<'a> {
     invalid_reports: u8,
 }
 impl Application for Sentinel<'_> {
+    fn checkpointed(&self) {
+        self.store.changed();
+    }
     fn tools(&self) -> Vec<Tool> {
         tools::tools(self.state.definition.kind, self.machines)
     }

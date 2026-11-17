@@ -26,22 +26,22 @@ export interface PlanWords extends BlockWords {
 }
 
 export const zhPlan: PlanWords = {
-  empty: "还没有计划",
+  empty: "暂无计划",
   edit: "编辑",
   save: "保存",
   cancel: "取消",
   version: (version) => `第 ${version} 版`,
-  conflict: "这份计划在别处改过了，再保存一次就以你的为准",
-  unsaved: "没存上，再保存一次",
+  conflict: "计划已在别处修改，再次保存将以此版为准",
+  unsaved: "保存失败，请重试",
   reply: (question, option) => `${question}：${option}`,
   live: {
-    working: (took) => `在干活，${took}`,
-    resting: "歇着",
-    running: (took) => `在跑，${took}`,
-    failed: "出了问题",
+    working: (took) => `工作中，${took}`,
+    resting: "空闲",
+    running: (took) => `运行中，${took}`,
+    failed: "出错",
     sense: (phase) => ({ starting: "启动中", watching: "观测中", satisfied: "已成立", unable: "无法观测", withdrawn: "已撤销", unavailable: "暂不可达" })[phase],
   },
-  decide: "要你定",
+  decide: "待决定",
   suggested: "建议",
   answered: (option) => `已选：${option}`,
 };

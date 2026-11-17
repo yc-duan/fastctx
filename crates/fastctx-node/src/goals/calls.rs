@@ -24,6 +24,23 @@ pub(crate) async fn user(
         None if node.residents.knows(&resident) || node.residents.deleted(&resident).is_some() => node.machine().into(),
         None => crate::colleagues::find_for(node, &Acting::Here, &resident).await?,
     };
+    match asked(node, resident.clone(), machine.clone(), account.clone(), request.clone()).await {
+        // A read the machine or the hub did not answer, not reached: as the
+        // copy here holds it (plan 3-5); a refusal stands.
+        Err(failure) if !failure.is_refused() && failure.denial.is_none() => {
+            super::copied::answer(node, &resident, &machine, account.as_ref(), &request).await.ok_or(failure)
+        }
+        answered => answered,
+    }
+}
+
+async fn asked(
+    node: &Arc<Node>,
+    resident: ResidentId,
+    machine: Written,
+    account: Option<HubAccount>,
+    request: Request,
+) -> Result<Updated, Failure> {
     if node.is_here(&machine) {
         let account = scope::user(node, &resident, account.as_ref()).await?;
         return user_here(node, resident, account, node.machine(), request).await;
@@ -73,6 +90,32 @@ pub(crate) async fn user(
 }
 
 pub(crate) async fn user_here(
+    node: &Arc<Node>,
+    resident: ResidentId,
+    account: HubAccount,
+    machine: fastctx_types::MachineName,
+    request: Request,
+) -> Result<Updated, Failure> {
+    if matches!(request, Request::Mark { .. }) {
+        return Err(Failure::refused(words::MAIN_ONLY));
+    }
+    require(node, &request)?;
+    if let Request::Change { operation, change, .. } = &request {
+        node.residents.active(&resident)?;
+        if matches!(change, fastctx_types::goals::UserChange::Open { .. } | fastctx_types::goals::UserChange::Resume)
+            && node.residents.about(&resident).is_some_and(|(about, _)| !about.world_managed())
+        {
+            return Err(Failure::refused(words::NATIVE_CODEX));
+        }
+        if operation.is_empty() {
+            return Err(Failure::not_run(fastctx_types::goals::words::NO_OPERATION));
+        }
+        return super::submission::user(node, resident, account, machine, request).await;
+    }
+    user_work(node, resident, account, machine, request).await
+}
+
+pub(super) async fn user_work(
     node: &Arc<Node>,
     resident: ResidentId,
     account: HubAccount,

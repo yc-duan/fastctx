@@ -6,22 +6,18 @@
 use std::sync::Arc;
 
 use fastctx_net::link::Link;
+use fastctx_types::AccountName;
 use fastctx_types::access::Purpose;
 use fastctx_types::hub_move::{HubMoveReply, HubMoveRequest, MoveTarget};
 use fastctx_types::ipc::Failure;
 use fastctx_types::remote::{RemoteCall, RemoteReply};
 use fastctx_types::world::Form;
-use fastctx_types::{AccountName, HubName};
-
-use crate::Node;
 
 pub async fn request(
-    node: &Arc<Node>,
-    hub: Option<&HubName>,
+    link: &Arc<Link>,
     account: &AccountName,
     request: HubMoveRequest,
 ) -> Result<HubMoveReply, Failure> {
-    let link = crate::world::hub_link(node, hub)?;
     let targets = matches!(request, HubMoveRequest::Targets);
     let reply = link.hub_move(account, request).await.map_err(Failure::new)?;
     match reply {

@@ -17,6 +17,7 @@ import type { Place } from "./places";
 import type { PresenceWords } from "./presence";
 import type { TroubleWords } from "./trouble-words";
 import type { SettingsWords } from "./words";
+import { Sheet } from "./confirm";
 
 export const onPhone = (): boolean => inShell() && /Android/i.test(navigator.userAgent);
 
@@ -126,10 +127,85 @@ export interface PhoneStatus {
   model: string;
   /** What the phone is called in its own settings, or its maker and model. */
   deviceName: string;
-  background: { vendor: "honor" | "xiaomi" | "other"; backgroundRestricted: boolean | null };
+  /** Whether the background connection runs now, and why it could not start. */
+  serviceRunning: boolean;
+  serviceError: string | null;
+  /** The World the phone is in, by its name; none before it joins one. */
+  connection: { name: string | null };
+  background: {
+    vendor: "honor" | "huawei" | "xiaomi" | "other";
+    backgroundRestricted: boolean | null;
+    /** Whether the maker has a page where an app is let start by itself. */
+    hasAutostart: boolean;
+    /** How the app's last run ended, where Android keeps it. */
+    lastExit: { reason: number; at: number; byUser: boolean } | null;
+  };
 }
 
-export type Destination = "application" | "battery" | "notifications";
+export type Destination = "application" | "battery" | "notifications" | "autostart" | "vendorBattery";
+
+/** What this phone remembers the user said: kept in the page's own storage,
+ *  which a private window or a cleared phone may not keep. */
+const remembered = (key: string): boolean => {
+  try {
+    return localStorage.getItem(key) === "1";
+  } catch {
+    return false;
+  }
+};
+const remember = (key: string): void => {
+  try {
+    localStorage.setItem(key, "1");
+  } catch {
+    // Not kept: asked again next time.
+  }
+};
+
+/** The user said the maker's switches, which no app can read, are set. */
+const VENDOR_SET = "phone-vendor-set";
+/** The guide to the background was shown once. */
+const GUIDE_SEEN = "phone-guide-seen";
+
+/** Whether the system ended the app's last run in the background while it
+ *  was meant to keep its connection: not the user, nor a crash of its own
+ *  (`ApplicationExitInfo`: crash 4, native crash 5, not responding 6). */
+export function killedInBackground(status: PhoneStatus): boolean {
+  const exit = status.background.lastExit;
+  return exit !== null && !exit.byUser && ![4, 5, 6].includes(exit.reason);
+}
+
+/** Whether anything the World needs to stay online in the background is
+ *  not set, as far as it can tell. */
+function unset(status: PhoneStatus): boolean {
+  return (
+    !status.notificationsAllowed ||
+    !status.batteryOptimizationExempt ||
+    !status.serviceRunning ||
+    (status.background.hasAutostart && !remembered(VENDOR_SET))
+  );
+}
+
+/** Once the phone is in a World, a sheet that walks the user through what
+ *  keeps it online in the background — the system's own dialogs where the
+ *  system has them, straight to the maker's page where it does not — shown
+ *  once, and again when the system ended it in the background with
+ *  something still unset. */
+export function guideBackground(words: SettingsWords, phone: PhoneSeam): void {
+  phone.status().then(
+    (status) => {
+      if (status.connection.name === null || !unset(status)) return;
+      if (remembered(GUIDE_SEEN) && !killedInBackground(status)) return;
+      remember(GUIDE_SEEN);
+      const sheet = new Sheet("phone-guide");
+      sheet.body.innerHTML = `${sheet.head(words.phoneGuideTitle, words.phoneGuideLater)}<p class="phone-guide-why">${escape(
+        killedInBackground(status) ? words.phoneKilled : words.phoneGuideWhy,
+      )}</p><dl class="facts settings-phone"></dl><footer class="sheet-foot"><span></span><button class="sheet-go sheet-close" type="button">${escape(words.phoneGuideDone)}</button></footer>`;
+      new PhoneRow(sheet.body.querySelector<HTMLElement>(".settings-phone")!, words, phone);
+      sheet.show();
+    },
+    (error: unknown) => console.error("reading what the phone lets the World do", error),
+  );
+}
 
 /** What the settings ask of the phone. */
 export interface PhoneSeam {
@@ -164,6 +240,11 @@ export class PhoneRow {
       const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-phone]");
       if (!button) return;
       const what = button.dataset.phone!;
+      if (what === "vendorDone") {
+        remember(VENDOR_SET);
+        this.draw();
+        return;
+      }
       const done = what === "ask" ? this.phone.allow() : this.phone.open(what as Destination);
       void done.then(
         () => this.ask(),
@@ -201,6 +282,12 @@ export class PhoneRow {
     const button = (what: string, label: string) => `<button class="text-button quiet-button" type="button" data-phone="${what}">${escape(label)}</button>`;
     const rows: [string, string][] = [];
     if (status) {
+      rows.push([
+        words.phoneKeep,
+        `<span>${escape(status.serviceRunning ? words.phoneKeepOn : words.phoneKeepOff)}</span>${
+          killedInBackground(status) ? `<p class="settings-said">${escape(words.phoneKilled)}</p>` : ""
+        }`,
+      ]);
       const allowed = status.notificationsAllowed && status.alertChannelAllowed;
       rows.push([
         words.phoneNotices,
@@ -214,9 +301,16 @@ export class PhoneRow {
       ]);
       const steps = words.phoneVendor[status.background.vendor];
       if (steps.length) {
+        // The maker's own switches no app can read: straight to their page,
+        // and the user's word that they are set.
+        const set = remembered(VENDOR_SET);
         rows.push([
           words.phoneMaker(status.manufacturer),
-          `<ol class="settings-steps">${steps.map((step) => `<li>${escape(step)}</li>`).join("")}</ol>${button("application", words.phoneOpenApp)}`,
+          `<ol class="settings-steps">${steps.map((step) => `<li>${escape(step)}</li>`).join("")}</ol>${
+            status.background.hasAutostart ? button("autostart", words.phoneAutostart) : ""
+          }${status.background.vendor === "xiaomi" ? button("vendorBattery", words.phoneVendorBattery) : ""}${button("application", words.phoneOpenApp)}${
+            set ? `<span>${escape(words.phoneVendorSet)}</span>` : button("vendorDone", words.phoneVendorDone)
+          }`,
         ]);
       }
     }

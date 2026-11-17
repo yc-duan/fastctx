@@ -79,6 +79,16 @@ export function shownOutput(spans: readonly OutputSpan[], writes: readonly Write
     if (piece.kind !== "part_of_line") endPart();
     switch (piece.kind) {
       case "text": {
+        if (piece.first_line === 0) {
+          flush();
+          for (const segment of piece.text.split(/(?<=\n)/)) {
+            if (!segment) continue;
+            shown.lines.push(segment.endsWith("\n") ? segment.slice(0, -1) : segment);
+            shown.numbers.push(null);
+          }
+          shown.cut = true;
+          break;
+        }
         // A stretch on a line already begun goes on with it; one on
         // another line ends it (its line's end was in a write's note).
         let line = piece.first_line;
@@ -112,7 +122,7 @@ export function shownOutput(spans: readonly OutputSpan[], writes: readonly Write
         flush();
         shown.titles.set(shown.lines.length, piece.reason);
         shown.lines.push(words.unreadable);
-        shown.numbers.push(piece.line);
+        shown.numbers.push(piece.line || null);
         shown.cut = true;
         break;
       case "image":

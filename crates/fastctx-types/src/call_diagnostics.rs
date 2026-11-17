@@ -32,7 +32,8 @@ impl crate::remote::RemoteCall {
     pub fn diagnostic_class(&self) -> Class {
         use crate::{file_search::FileSearchRequest, lines::Request as Lines, remote::RemoteCall};
         match self {
-            RemoteCall::Watch { .. }
+            RemoteCall::Timeline { request: crate::timeline_pages::TimelineAsk::Moved { .. } }
+            | RemoteCall::Watch { .. }
             | RemoteCall::Lines { request: Lines::Open { .. } | Lines::Changed { .. } }
             | RemoteCall::FindFiles { request: FileSearchRequest::Open { .. } } => Class::Subscription,
             _ if self.contract().within.is_some() => Class::Request,

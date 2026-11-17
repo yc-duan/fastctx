@@ -7,5 +7,5 @@ mod segments;
 mod slim;
 
 pub use pack::{pack, unpack};
-pub use segments::{Cut, cut, pieces, split, turn_boundaries};
+pub use segments::{Cut, Cutter, Outline, Planned, Segmenter, cut, pieces, plan, split, turn_boundaries};
 pub use slim::{Pictures, fingerprint, slim, transient};

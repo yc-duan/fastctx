@@ -91,16 +91,19 @@ pub(crate) async fn set_mcp(
     id: &ResidentId,
     off: std::collections::BTreeSet<String>,
 ) -> Result<(), Failure> {
-    let (node, id) = (node.clone(), id.clone());
+    let (working, resident) = (node.clone(), id.clone());
     fastctx_platform::task::spawn_blocking(move || {
-        let mut options = read(&node, &id)?;
+        let mut options = read(&working, &resident)?;
         options.mcp_off = off.clone();
         let bytes = encoded(&options)?;
-        node.residents.set_mcp_off(&node.world, &id, off).map_err(failed)?;
-        store(&node.world.conversation(&id), bytes, false).map_err(failed)
+        working.residents.set_mcp_off(&working.world, &resident, off).map_err(failed)?;
+        store(&working.world.conversation(&resident), bytes, false).map_err(failed)
     })
     .await
-    .map_err(failed)?
+    .map_err(failed)??;
+    // Its metadata in the asset library says them too.
+    crate::timeline::described(node, id);
+    Ok(())
 }
 
 /// Replaces the model and effort a conversation starts again with.
@@ -110,15 +113,46 @@ pub(crate) async fn set_model(
     model: String,
     effort: Option<String>,
 ) -> Result<(), Failure> {
-    let (node, id) = (node.clone(), id.clone());
+    let (working, resident) = (node.clone(), id.clone());
     fastctx_platform::task::spawn_blocking(move || {
-        let mut options = read(&node, &id)?;
+        let mut options = read(&working, &resident)?;
         options.model = Some(model);
         options.reasoning_effort = effort;
-        store(&node.world.conversation(&id), encoded(&options)?, false).map_err(failed)
+        store(&working.world.conversation(&resident), encoded(&options)?, false).map_err(failed)
     })
     .await
-    .map_err(failed)?
+    .map_err(failed)??;
+    // Its metadata in the asset library says them too.
+    crate::timeline::described(node, id);
+    Ok(())
+}
+
+/// Takes a selection as a host takes it: what is given replaces what was
+/// chosen, what is not keeps it (MM13).
+pub(crate) async fn set_choice(
+    node: &Arc<Node>,
+    id: &ResidentId,
+    model: Option<String>,
+    effort: Option<String>,
+) -> Result<(), Failure> {
+    if model.is_none() && effort.is_none() {
+        return Ok(());
+    }
+    let (working, resident) = (node.clone(), id.clone());
+    fastctx_platform::task::spawn_blocking(move || {
+        let mut options = read(&working, &resident)?;
+        if model.is_some() {
+            options.model = model;
+        }
+        if effort.is_some() {
+            options.reasoning_effort = effort;
+        }
+        store(&working.world.conversation(&resident), encoded(&options)?, false).map_err(failed)
+    })
+    .await
+    .map_err(failed)??;
+    crate::timeline::described(node, id);
+    Ok(())
 }
 
 pub fn configure(config: &mut serde_json::Value, options: SessionOptions) {

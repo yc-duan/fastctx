@@ -2,6 +2,7 @@
 //! (`crate::envelope`).
 
 use fastctx_types::remote::{Letter, RemoteCall, RemoteResult};
+use fastctx_types::submission::Submission;
 use serde::{Deserialize, Serialize};
 
 use crate::wire::Carried;
@@ -11,13 +12,21 @@ use crate::wire::Carried;
 #[serde(rename_all = "snake_case", tag = "kind")]
 pub enum Body {
     /// Asks the receiver to do something now.
-    Call { call: RemoteCall },
+    Call {
+        call: RemoteCall,
+        /// The name its caller gives the call when it submits work
+        /// (`fastctx_types::submission`).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        submission: Option<Submission>,
+    },
     /// A call too large for a message: it follows over the envelope's data
     /// connection, as the JSON of a `RemoteCall`.
     LargeCall {
         carried: Carried,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         details: Option<crate::call_details::CallDetails>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        submission: Option<Submission>,
     },
     /// A call that comes with the envelope's data connection, whose source
     /// is the caller: the two ends exchange what the call is about, such as
@@ -111,7 +120,7 @@ pub fn project_entry(
         return None;
     }
     match message.body::<Body>().ok()? {
-        Body::Call { call: RemoteCall::EnterProject { resident, town } } => Some((resident, town)),
+        Body::Call { call: RemoteCall::EnterProject { resident, town }, .. } => Some((resident, town)),
         _ => None,
     }
 }
@@ -125,7 +134,7 @@ pub fn plan_request(message: &crate::envelope::Envelope) -> Option<fastctx_types
         return None;
     }
     match message.body::<Body>().ok()? {
-        Body::Call { call: RemoteCall::Plan { resident, .. } } => Some(resident),
+        Body::Call { call: RemoteCall::Plan { resident, .. }, .. } => Some(resident),
         _ => None,
     }
 }

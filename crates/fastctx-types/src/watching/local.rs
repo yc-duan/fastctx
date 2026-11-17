@@ -14,8 +14,13 @@ pub struct Subscription {
     pub resident: ResidentId,
     pub machine: Option<Written>,
     pub composer: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub documents: Option<crate::composer::sync::Subscription>,
     pub held: Option<Held>,
     pub now: bool,
+    /// Subscribe before a timeline snapshot, without reading history.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub live_only: bool,
     pub goal: Option<HubAccount>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub collaboration: bool,
@@ -29,6 +34,7 @@ impl Subscription {
             composer: self.composer.clone(),
             held: self.held.clone(),
             now: self.now,
+            live_only: self.live_only,
             goal: self.goal.clone(),
             collaboration: self.collaboration,
         }
@@ -41,6 +47,7 @@ pub enum Command {
     Subscribe { id: u64, subscription: Box<Subscription> },
     Unsubscribe { id: u64 },
     Consumed { id: u64, number: u64 },
+    Composer { id: u64, input: Box<crate::composer::sync::Input> },
 }
 
 #[derive(Serialize, Deserialize)]

@@ -111,6 +111,9 @@ pub fn read_with_matches(
     window: &OutputWindow,
     writes: &[fastctx_types::run_facts::WriteFact],
 ) -> io::Result<(Vec<OutputSpan>, Vec<fastctx_types::run_facts::OutputNoteMatch>)> {
+    if window.sampled.is_some() {
+        return Ok((unmarked::spans(window), Vec::new()));
+    }
     let projection = CapturedNotes::read(std::path::Path::new(&window.log), window.bytes, writes)?;
     let notes = projection.matches();
     if notes.is_empty() {

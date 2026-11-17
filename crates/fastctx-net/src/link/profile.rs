@@ -57,6 +57,7 @@ impl Link {
         confirmed.version = version;
         {
             let _one = self.inner.refreshing.lock().await;
+            let _publishing = self.inner.publishing_view.lock().expect("publishing view");
             let mut view = (*self.view()).clone();
             if !view.may_act_for(account, &view.me) {
                 return Err(format!(
@@ -69,10 +70,10 @@ impl Link {
                 })?;
             if found.profile.as_ref().is_none_or(|current| current.version < version) {
                 std::sync::Arc::make_mut(found).profile = Some(confirmed);
-                super::state::write(&self.inner.dir.view(), &view).map_err(|error| {
-                    format!("the hub committed profile version {version}, but keeping its view failed: {error}")
-                })?;
+                // Put in the view held now under the view's publishing, so a
+                // change the hub told meanwhile is not lost to this copy.
                 *self.inner.view.lock().expect("never poisoned") = std::sync::Arc::new(view);
+                self.inner.keep_view();
             }
         }
         self.inner.node.directory_changed();

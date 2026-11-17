@@ -1,4 +1,7 @@
-//! Preserves unreadable committed rows before removing them from the active ledger.
+//! Preserves unreadable committed rows before blanking them in the active
+//! ledger. A row is blanked, not cut out: every byte after it stays where it
+//! was, so what reads the ledger by its offsets (its copy into the asset
+//! library, `assets::activity`) still finds whole rows where it stood.
 use super::ledger::Entry;
 use sha2::{Digest, Sha256};
 use std::io;
@@ -13,7 +16,7 @@ pub(super) fn read(path: &Path) -> io::Result<Vec<Entry>> {
     let mut damaged = false;
     for (line, raw) in bytes[..end].split_inclusive(|b| *b == b'\n').enumerate() {
         let content = &raw[..raw.len() - 1];
-        if content.is_empty() {
+        if blank(content) {
             kept.extend_from_slice(raw);
         } else {
             match serde_json::from_slice(content) {
@@ -38,6 +41,8 @@ pub(super) fn read(path: &Path) -> io::Result<Vec<Entry>> {
                             fastctx_platform::Permissions::Private,
                         )?;
                     }
+                    kept.resize(kept.len() + content.len(), b' ');
+                    kept.push(b'\n');
                     damaged = true;
                 }
             }
@@ -50,6 +55,11 @@ pub(super) fn read(path: &Path) -> io::Result<Vec<Entry>> {
         fastctx_platform::publish(path, &kept, fastctx_platform::Permissions::Private)?;
     }
     Ok(rows)
+}
+
+/// Whether a row is nothing: empty, or a row blanked here.
+pub(super) fn blank(content: &[u8]) -> bool {
+    content.iter().all(u8::is_ascii_whitespace)
 }
 
 pub(super) fn count(path: &Path) -> io::Result<usize> {

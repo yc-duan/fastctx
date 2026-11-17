@@ -1,6 +1,7 @@
 //! Local multiplexing retains the ordinary watch admission and routing for each
 //! subscription. Per-subscription workers and flow windows isolate slow readers.
 
+mod documents;
 use crate::Node;
 use fastctx_net::{
     watch_flow::Flow,
@@ -25,6 +26,7 @@ struct Worker {
     request: Subscription,
     next: Arc<AtomicU64>,
     consumed: watch::Sender<Option<u64>>,
+    input: mpsc::Sender<documents::Incoming>,
     task: tokio::task::JoinHandle<()>,
 }
 #[derive(Default)]
@@ -90,6 +92,20 @@ pub(super) async fn serve(node: Arc<Node>, peer: Peer, mut reader: FrameReader, 
                         });
                     }
                 }
+                Some(watch_ipc::ReceivedCommand { command: Command::Composer { id, input }, memory }) => {
+                    if let Some(worker) = workers.0.get(&id) {
+                        if worker.request.documents.is_none() { return Err(io::Error::other("document input requires a native subscription")); }
+                        if worker.input.try_send(documents::Incoming { input: *input, memory }).is_err() {
+                            let worker = workers.0.remove(&id).expect("full document subscription");
+                            worker.task.abort();
+                            let output = context.output.clone();
+                            retiring.spawn(async move {
+                                watch_ipc::cancel(&output, id).await?;
+                                watch_ipc::send(&output, Packet { subscription: id, number: worker.next.fetch_add(1, Ordering::Relaxed), result: Err(Failure::not_run("the document input queue is full")) }).await
+                            });
+                        }
+                    }
+                }
                 None => return Ok(()),
             },
             Some(id) = ended.recv() => { workers.0.remove(&id); }
@@ -131,10 +147,24 @@ impl Context {
         let (consumed, acknowledgements) = watch::channel(None);
         let (node, peer, output, done, sequence) =
             (self.node.clone(), self.peer.clone(), self.output.clone(), self.done.clone(), next.clone());
+        // Room for every change a client may have on its way at once (its
+        // edits go one at a time for each document, its other changes at
+        // most 128 together); each holds its own share of the node's memory
+        // for input. A client past it has its subscription ended.
+        let (input, incoming) = mpsc::channel(256);
         let task = fastctx_platform::task::spawn(async move {
-            let result =
-                crate::gate_waits::asked(run(&node, &peer, id, request, memory, &sequence, &output, acknowledgements))
-                    .await;
+            let result = crate::gate_waits::asked(run(
+                &node,
+                &peer,
+                id,
+                request,
+                memory,
+                &sequence,
+                &output,
+                acknowledgements,
+                incoming,
+            ))
+            .await;
             if result.is_err() && watch_ipc::cancel(&output, id).await.is_err() {
                 let _ = done.send(id).await;
                 return;
@@ -153,7 +183,7 @@ impl Context {
             }
             let _ = done.send(id).await;
         });
-        Worker { request: retained, next, consumed, task }
+        Worker { request: retained, next, consumed, input, task }
     }
 }
 
@@ -167,12 +197,15 @@ async fn run(
     next: &AtomicU64,
     output: &mpsc::Sender<Output>,
     mut consumed: watch::Receiver<Option<u64>>,
+    incoming: mpsc::Receiver<documents::Incoming>,
 ) -> Result<(), Failure> {
     super::users_voice(node, peer)?;
     let held = request.held.take();
     crate::admission::local::admit(node, peer, &request.call())?;
     let opening = async {
-        if request.collaboration {
+        if request.documents.is_some() {
+            documents::open(node, peer, request, incoming).await
+        } else if request.collaboration {
             crate::colleagues::live::watch(node, request.resident, request.machine).await
         } else {
             crate::talk::watch(
@@ -182,6 +215,7 @@ async fn run(
                 request.composer,
                 held,
                 request.now,
+                request.live_only,
                 request.goal,
             )
             .await

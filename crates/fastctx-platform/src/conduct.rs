@@ -23,6 +23,8 @@ use crate::roles::Role;
 enum Kind {
     Blocking,
     SlowPoll,
+    SlowAnswer,
+    SlowSubmit,
     HeldUp,
     HeldLong,
     NestedRead,
@@ -33,6 +35,8 @@ impl Kind {
         match self {
             Kind::Blocking => "blocking",
             Kind::SlowPoll => "slow-poll",
+            Kind::SlowAnswer => "slow-answer",
+            Kind::SlowSubmit => "slow-submit",
             Kind::HeldUp => "held-up",
             Kind::HeldLong => "held-long",
             Kind::NestedRead => "nested-read",
@@ -113,6 +117,16 @@ pub(crate) fn blocked(role: Role, what: &'static str, at: &Location<'_>) {
 /// A task kept its thread for `took` at once.
 pub fn slow_poll(doing: &str, took: Duration) {
     note(Kind::SlowPoll, doing.to_string(), doing.to_string(), took);
+}
+
+/// A call meant to answer from bounded work exceeded its response budget.
+pub fn slow_answer(kind: &str, took: Duration) {
+    note(Kind::SlowAnswer, kind.to_string(), kind.to_string(), took);
+}
+
+/// A submission waited too long before acknowledging the work it recorded.
+pub fn slow_submit(kind: &str, took: Duration) {
+    note(Kind::SlowSubmit, kind.to_string(), kind.to_string(), took);
 }
 
 /// The tasks of `runtime` waited `by` for a thread.

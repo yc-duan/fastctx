@@ -12,6 +12,7 @@ impl RemoteCall {
             if &address.machine == here { address.resident.to_string() } else { address.to_string() }
         };
         match self {
+            Self::Timeline { request } => Some(request.resident().to_string()),
             Self::Composer { resident, .. }
             | Self::Plan { resident, .. }
             | Self::Collaboration { resident, .. }
@@ -20,7 +21,7 @@ impl RemoteCall {
             | Self::EnterProject { resident, .. }
             | Self::Find { resident }
             | Self::Watch { resident, .. }
-            | Self::Stop { resident }
+            | Self::Stop { resident, .. }
             | Self::Control { resident, .. }
             | Self::Manage { resident, .. }
             | Self::Offers { resident }

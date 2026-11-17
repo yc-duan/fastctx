@@ -1,7 +1,7 @@
 // Said once on each computer or phone that was on networks their
-// administrators dissolved (`world-network.md`, 解散网络): a sheet names them
-// and that Fastctx and the data here stay. However it is closed, they are
-// not said again.
+// administrators dissolved (`world-network.md`, 解散网络): a sheet names them,
+// that Fastctx stays, and that what they synced here is cleared. However it
+// is closed, they are not said again.
 
 import { escape } from "../conversation/prose";
 import type { Dissolution } from "../world/accounts";

@@ -74,10 +74,38 @@ pub struct UsageCallsQuery {
     /// every row the query selects. A query without it pages by `before`.
     #[serde(default)]
     pub page: Option<u32>,
+    /// The rows a page holds, from 1 to `CALLS_MOST`; `CALLS_PAGE` where
+    /// none is asked. A node that knows no sizes pages by `CALLS_PAGE` and
+    /// says no `size` back.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size: Option<u32>,
 }
 
-/// The rows a page holds.
+/// The rows a page holds where no size is asked.
 pub const CALLS_PAGE: usize = 100;
+/// The most rows a page may hold.
+pub const CALLS_MOST: u32 = 200;
+
+impl UsageCallsQuery {
+    /// The rows a page of this query holds.
+    pub fn page_size(&self) -> usize {
+        self.size.map_or(CALLS_PAGE, |size| size.clamp(1, CALLS_MOST) as usize)
+    }
+}
+
+/// What every row a query selects adds up to, as the rows show them: the
+/// dollars of each, Fable's among them, and the tokens of those whose
+/// tokens are shown.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UsageCallsSum {
+    pub usd: Usd,
+    /// Of `usd`, what went on Fable models.
+    #[serde(default)]
+    pub fable_usd: Usd,
+    /// New input, read from the cache and written to it.
+    pub input: u64,
+    pub output: u64,
+}
 
 /// `account: null` selects use by the machine itself; no person filter selects everyone visible.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -117,4 +145,11 @@ pub struct UsageCallsPage {
     /// Every row the query selects, where it asked for a page by number.
     #[serde(default)]
     pub total: Option<u64>,
+    /// The rows a page held, as asked; a node of before says none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size: Option<u32>,
+    /// What every row the query selects adds up to, where it asked for a
+    /// page by number.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sum: Option<UsageCallsSum>,
 }

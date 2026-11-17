@@ -364,7 +364,10 @@ async fn records(
         }
     }
     crate::sentinels::deletion::note_deleted(node, id).map_err(Stop::Failed)?;
+    // Its forks keep the small pictures of what they hold of it.
+    crate::attachments::hand_previews(node, id);
     crate::conversation_store::begin(&directory).map_err(|error| Stop::Failed(error.to_string()))?;
+    crate::content_upkeep::forgetting(node);
     crate::conversation_store::purge(&node.database, id.as_str()).map_err(|error| Stop::Failed(error.to_string()))?;
     node.residents
         .forget(&node.world, id, measured.sessions.clone())
@@ -656,6 +659,7 @@ async fn remove_places(node: &Arc<Node>, measured: &Measured) -> Result<(u64, u6
             if place.parent() == Some(node.world.conversations().as_path()) {
                 let directory = fastctx_types::layout::ConversationDir::at(place);
                 crate::conversation_store::begin(&directory)?;
+                crate::content_upkeep::forgetting(&node);
                 let (_, conversation) = crate::record_database::get(&directory)?;
                 database_bytes +=
                     crate::conversation_store::purge(&node.database, &conversation).map_err(std::io::Error::other)?;

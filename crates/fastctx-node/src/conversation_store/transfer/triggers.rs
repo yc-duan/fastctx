@@ -10,14 +10,20 @@ use fastctx_storage::{
 pub(crate) struct SuspendedTriggers<'a> {
     connection: &'a Connection,
     enabled: bool,
-    _guard: fastctx_storage::guard::Suspended,
+    _guard: fastctx_storage::guard::MigrationScope,
 }
 
 impl<'a> SuspendedTriggers<'a> {
     pub(crate) fn new(connection: &'a Connection) -> Result<Self> {
         let enabled = connection.db_config(DbConfig::SQLITE_DBCONFIG_ENABLE_TRIGGER)?;
         connection.set_db_config(DbConfig::SQLITE_DBCONFIG_ENABLE_TRIGGER, false)?;
-        Ok(Self { connection, enabled, _guard: fastctx_storage::guard::suspend() })
+        Ok(Self {
+            connection,
+            enabled,
+            _guard: fastctx_storage::guard::enter_migration(
+                fastctx_storage::guard::MigrationPurpose::ConversationTransfer,
+            ),
+        })
     }
 }
 

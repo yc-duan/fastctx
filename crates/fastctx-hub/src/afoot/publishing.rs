@@ -27,6 +27,14 @@ impl Drop for Publishing {
     }
 }
 impl Publishing {
+    #[cfg(feature = "change-drill")]
+    pub(crate) fn probe_all(&self) -> bool {
+        self.pending.lock().expect("activity changes").all
+    }
+    #[cfg(feature = "change-drill")]
+    pub(crate) fn probe_take_all(&self) -> bool {
+        std::mem::take(&mut *self.pending.lock().expect("activity changes")).all
+    }
     pub(super) fn request(&self, machine: &MachineName) {
         self.pending.lock().expect("activity changes").machines.insert(machine.clone());
         self.changed.notify_one();

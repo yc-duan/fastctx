@@ -94,20 +94,30 @@ pub(crate) async fn call(node: &Arc<Node>, caller: &Caller, request: HistoryCall
         redact(&mut reply, &|machine| node.authorize_machine(&acting, &machine.into()).is_ok());
         return Ok(reply);
     }
-    let network = network(node, caller, request.scope()).await?;
+    let network = network(node, caller, request.scope()).await;
     let acting = crate::around::acting_of(node, caller);
     if !matches!(request, HistoryCall::List { .. }) {
         node.authorize_here(&acting)?;
     }
-    let mut reply = match network {
-        Some((link, account)) => {
-            let reply = link.history_call(&account, request, author).await.map_err(Failure::new)?;
-            let usable = |machine: &fastctx_types::MachineName| link.view().rights(&account, machine).hands;
-            let mut reply = reply;
-            redact(&mut reply, &usable);
-            reply
-        }
-        None => super::local::call(node, request, author).await?,
+    // The list from the copy here first, while it is as fresh as anything
+    // seen here (design §15 `switch`); a read the conversation's hub does not
+    // answer, not reached: as the copy here holds it (plan 3-5).
+    let first = match &network {
+        Ok(Some(_)) => super::copied::answer_first(node, &acting, &request).await,
+        _ => None,
+    };
+    let mut reply = match (network, first) {
+        (Ok(Some(_)), Some(reply)) => reply,
+        (Ok(Some((link, account))), None) => match link.history_call(&account, request.clone(), author).await {
+            Ok(mut reply) => {
+                let usable = |machine: &fastctx_types::MachineName| link.view().rights(&account, machine).hands;
+                redact(&mut reply, &usable);
+                reply
+            }
+            Err(error) => super::copied::answer(node, &acting, &request).await.ok_or_else(|| Failure::new(error))?,
+        },
+        (Ok(None), _) => super::local::call(node, request, author).await?,
+        (Err(failure), _) => super::copied::answer(node, &acting, &request).await.ok_or(failure)?,
     };
     // Local callers may have a narrower work scope than their computer's logins.
     redact(&mut reply, &|machine| node.authorize_machine(&acting, &machine.into()).is_ok());

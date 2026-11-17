@@ -2,8 +2,7 @@
 //! any hub lock waiting for disk. Entries are immutable and numbered in
 //! order, so the committed end is all a read needs to take under the lock.
 
-use std::io::{self, Read};
-use std::path::{Path, PathBuf};
+use std::io;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -20,7 +19,7 @@ const READ_WITHIN: Duration = Duration::from_secs(55);
 /// The committed end never advances during a page, even if new entries
 /// reach disk while it is being read.
 pub(super) struct Page {
-    pub dir: PathBuf,
+    pub library: Option<fastctx_content::v2::Library>,
     pub town: TownId,
     pub after: u64,
     pub last: u64,
@@ -135,8 +134,8 @@ impl Page {
                 through = end;
                 continue;
             }
-            let path = self.dir.join(format!("{seq:020}.json"));
-            let signed = entry(&path).map_err(|error| format!("reading entry {seq} of {}: {error}", self.town))?;
+            let at = super::EntryAt { library: self.library.clone(), town: self.town.clone(), seq };
+            let signed = entry(&at).map_err(|error| format!("reading entry {seq} of {}: {error}", self.town))?;
             let cost = wire::encode(&(seq, &signed)).len() + usize::from(!entries.is_empty());
             if size + cost > wire::PARTS_AT_MOST || (!entries.is_empty() && size + cost > wire::MAX_CONTROL_FRAME) {
                 if entries.is_empty() {
@@ -157,12 +156,7 @@ impl Page {
     }
 }
 
-/// A damaged file must not make a read allocate beyond the multipart limit.
-pub(super) fn entry(path: &Path) -> io::Result<Signed> {
-    let mut bytes = Vec::new();
-    fastctx_platform::disk::open(path)?.take(wire::PARTS_AT_MOST as u64 + 1).read_to_end(&mut bytes)?;
-    if bytes.len() > wire::PARTS_AT_MOST {
-        return Err(io::Error::new(io::ErrorKind::InvalidData, "the entry file is larger than the multipart limit"));
-    }
-    serde_json::from_slice(&bytes).map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
+/// The entry kept at `at`, as its author signed it.
+pub(crate) fn entry(at: &super::EntryAt) -> io::Result<Signed> {
+    at.read()
 }

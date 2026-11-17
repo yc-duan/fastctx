@@ -65,7 +65,8 @@ pub(crate) fn of(node: &Node, owner: &JobOwner, sent_for: Option<&HubAccount>) -
             node.residents.about(&address.resident).map(|(about, _)| about.acting)
         }
         JobOwner::Resident(_) => None,
-        JobOwner::Page { page } => crate::pages::identity::acting(node, page).ok(),
+        // A page's, of a release before pages were removed (beta.18).
+        JobOwner::Page { .. } => None,
     };
     match acting {
         Some(Acting::Accounts { accounts }) => accounts.first().cloned(),

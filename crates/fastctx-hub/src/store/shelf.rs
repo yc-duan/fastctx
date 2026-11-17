@@ -47,7 +47,7 @@ CREATE INDEX IF NOT EXISTS machine_log_updated_by_record ON machine_log_updated(
 pub(crate) struct Shelf(pub(crate) Database);
 
 impl Shelf {
-    pub(crate) fn open(dir: &Path) -> io::Result<Self> {
+    pub(crate) fn open(dir: &Path, log: Option<std::sync::Arc<crate::log::Log>>) -> io::Result<Self> {
         if !fastctx_platform::disk::exists(dir.join(FILE))? {
             for name in ["hub.json", "directory.json"] {
                 if !fastctx_platform::disk::exists(dir.join(name))? {
@@ -55,15 +55,28 @@ impl Shelf {
                 }
             }
         }
-        super::format::prepare(dir)?;
-        let database =
-            Database::open_initialized(&dir.join(FILE), SCHEMA, |connection| super::migrate::import(connection, dir))
-                .map_err(other)?;
+        let observed = super::format::prepare(dir)?;
+        let schema = format!("{SCHEMA}{}", crate::assets::schema());
+        let database = Database::open_initialized(&dir.join(FILE), &schema, |connection| {
+            fastctx_storage::versions::apply(
+                connection,
+                "hub.jobs",
+                &[fastctx_storage::versions::Migration { version: 1, sql: fastctx_jobs::SCHEMA }],
+            )?;
+            super::migrate::import(connection, dir)?;
+            crate::assets::migrate(connection)?;
+            super::format::initialize(connection, &observed)
+        })
+        .map_err(other)?;
+
         if let Some(report) = database.salvaged() {
             eprintln!("the hub's database was damaged and set aside; what could be read was salvaged:\n{report}");
         }
         let shelf = Self(database);
+        // File retirement needs exclusive startup ownership, before standby or
+        // serving can read/write hub.json. This is fixed-size name cleanup.
         super::migrate::back_up(&shelf, dir)?;
+        super::format::start(&shelf.0, log).map_err(other)?;
         Ok(shelf)
     }
 
@@ -151,10 +164,51 @@ fn apply(c: &Connection, changes: &Changes) -> fastctx_storage::Result<()> {
     for row in &changes.log {
         super::log_store::put(c, row)?;
     }
-    if let Some(before) = changes.expired {
-        super::log_store::expire(c, before)?;
+    crate::assets::bodies::apply(c, &changes.bodies)?;
+    if changes.control {
+        // A control fact takes its place in the hub's chain in the
+        // transaction that writes it (design §6.1).
+        crate::assets::chain::append(c, "directory", &digest(changes))?;
     }
     Ok(())
+}
+
+/// What `changes` write, as one digest.
+fn digest(changes: &Changes) -> [u8; 32] {
+    use sha2::{Digest as _, Sha256};
+    let mut hasher = Sha256::new();
+    let mut field = |bytes: &[u8]| {
+        hasher.update((bytes.len() as u64).to_le_bytes());
+        hasher.update(bytes);
+    };
+    for kind in &changes.cleared {
+        field(b"cleared");
+        field(kind.as_bytes());
+    }
+    for (kind, key) in &changes.deleted {
+        field(b"deleted");
+        field(kind.as_bytes());
+        field(key.as_bytes());
+    }
+    for row in &changes.put {
+        field(b"put");
+        field(row.kind.as_bytes());
+        field(row.key.as_bytes());
+        field(&row.position.to_le_bytes());
+        field(&row.body);
+    }
+    for (kind, key, position) in &changes.moved {
+        field(b"moved");
+        field(kind.as_bytes());
+        field(key.as_bytes());
+        field(&position.to_le_bytes());
+    }
+    for (name, value) in &changes.meta {
+        field(b"meta");
+        field(name.as_bytes());
+        field(value);
+    }
+    hasher.finalize().into()
 }
 
 pub(crate) fn decode<T: DeserializeOwned>(bytes: &[u8]) -> fastctx_storage::Result<T> {

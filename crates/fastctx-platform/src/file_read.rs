@@ -6,12 +6,14 @@ use std::io;
 use std::path::Path;
 use std::time::SystemTime;
 
+pub use fastctx_types::file_identity::{FileChangeStamp, FileIdentity};
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Snapshot {
     pub size: u64,
     pub modified: SystemTime,
     identity: (u64, u64),
-    changed: (i64, i64),
+    metadata_indicators: (i64, i64),
 }
 
 /// Opens for reading with concurrent writers allowed. Special files must
@@ -36,6 +38,26 @@ pub fn open(path: &Path) -> io::Result<File> {
 }
 
 impl Snapshot {
+    /// Stable coordinates of the opened file, independent of path and length.
+    /// They are meaningful only on this host and do not establish ownership.
+    pub fn identity(&self) -> FileIdentity {
+        use fastctx_types::sync::cursor::Count;
+        if cfg!(windows) {
+            FileIdentity::Windows { volume: Count(self.identity.0), index: Count(self.identity.1) }
+        } else {
+            FileIdentity::Unix { device: Count(self.identity.0), inode: Count(self.identity.1) }
+        }
+    }
+
+    /// Serializable change observations, deliberately separate from identity.
+    pub fn change_stamp(&self) -> io::Result<FileChangeStamp> {
+        Ok(FileChangeStamp {
+            size: fastctx_types::sync::cursor::ByteCount(self.size),
+            modified: jiff::Timestamp::try_from(self.modified).map_err(io::Error::other)?,
+            indicators: [self.metadata_indicators.0.to_string(), self.metadata_indicators.1.to_string()],
+        })
+    }
+
     /// Growth is meaningful only while the path still names the opened file.
     pub fn same_file(&self, other: &Self) -> bool {
         self.identity == other.identity
@@ -46,14 +68,19 @@ impl Snapshot {
         let modified = self.modified.duration_since(SystemTime::UNIX_EPOCH).map(|since| since.as_nanos()).unwrap_or(0);
         format!(
             "{}-{}-{}-{}-{}-{}",
-            self.size, modified, self.identity.0, self.identity.1, self.changed.0, self.changed.1
+            self.size,
+            modified,
+            self.identity.0,
+            self.identity.1,
+            self.metadata_indicators.0,
+            self.metadata_indicators.1
         )
     }
 }
 
 pub fn snapshot(file: &File, metadata: &Metadata) -> io::Result<Snapshot> {
-    let (identity, changed) = indicators(file, metadata)?;
-    Ok(Snapshot { size: metadata.len(), modified: metadata.modified()?, identity, changed })
+    let (identity, metadata_indicators) = indicators(file, metadata)?;
+    Ok(Snapshot { size: metadata.len(), modified: metadata.modified()?, identity, metadata_indicators })
 }
 
 #[cfg(unix)]

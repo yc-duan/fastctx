@@ -799,12 +799,8 @@
   margin-top: 4px;
 }
 
-.mp-disk-whole {
-  fill: var(--pen-trace);
-}
-
 .mp-disk-used {
-  fill: var(--pen-clay);
+  fill: var(--pen-graphite);
 }
 
 .mp-disk-bar[data-level="high"] .mp-disk-used {
