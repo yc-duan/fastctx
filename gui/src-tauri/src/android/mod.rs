@@ -7,7 +7,6 @@ pub(crate) use bridge::{joining, joining_ended};
 mod monitor;
 mod observer;
 pub(crate) mod readiness;
-pub(crate) mod timeline;
 pub(crate) mod uploading;
 pub(crate) mod watching;
 

@@ -7,8 +7,6 @@ use serde::Serialize;
 #[serde(rename_all = "snake_case", tag = "kind")]
 pub(crate) enum Piece {
     Resumed,
-    /// Renegotiate the backend after the node changed its capabilities.
-    Reopen,
     /// Events kept after all the page was given, from `start` on.
     Extended {
         start: usize,
@@ -38,26 +36,6 @@ pub(crate) enum Piece {
         generation: Option<u64>,
         at: usize,
         event: Box<serde_json::value::RawValue>,
-    },
-    /// A realtime change; no transcript journal or whole-window replacement.
-    Live {
-        generation: u64,
-        /// A bounded complete terminal event already received, before previewing.
-        #[serde(skip_serializing_if = "Option::is_none")]
-        object: Option<String>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        body: Option<Box<serde_json::value::RawValue>>,
-        event: Box<serde_json::value::RawValue>,
-        key: String,
-        older: bool,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        placement: Option<crate::timeline_delta::Placement>,
-        #[serde(skip_serializing_if = "Vec::is_empty")]
-        evicted: Vec<String>,
-    },
-    /// Changed materialized events within the same navigation generation.
-    Timeline {
-        delta: crate::timeline_delta::Delta,
     },
     /// Whether the conversation works now, and on which turn, as its
     /// machine holds it; told after every event before it. A machine too
