@@ -1124,6 +1124,19 @@ fn handle(
             let held = crate::moving::Moving::hold(&hub);
             fastctx_platform::task::spawn(async move {
                 let (_held, _reservation) = (held, reservation);
+                // It waits its turn, taking no thread meanwhile; its member
+                // gone by then, nobody hears the answer and none is made.
+                let turn = tokio::select! {
+                    turn = hub.assets.work.turn(&origin.name) => turn,
+                    () = out.closed() => return,
+                };
+                let _turn = match turn {
+                    Ok(turn) => turn,
+                    Err(why) => {
+                        let _ = out.send(Out::Frame(Down::Told { id, answer: Err(why) }));
+                        return;
+                    }
+                };
                 let (answer, pushes) = hub
                     .blocking(move |hub| {
                         crate::assets::answering::answer(&hub, &origin, request, crate::assets::serve::Room::Control)

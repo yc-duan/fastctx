@@ -302,6 +302,9 @@ async fn run(hub: &Arc<Hub>, io: &mut Io, origin: &Origin) -> Result<(), String>
         // What an exchange changes is counted with what else may change the
         // records, for a hub about to move to wait on.
         let _held = crate::moving::Moving::hold(hub);
+        // Its turn among the hub's asset work (`work`): the member waits on
+        // the line, which says something every heartbeat meanwhile.
+        let _turn = io.working(hub.assets.work.wait(&origin.name)).await?;
         match ask {
             Ask::Request { request } => {
                 let reply = answered(hub, io, origin, request, Room::Control).await?;

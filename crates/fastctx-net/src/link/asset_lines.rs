@@ -13,8 +13,10 @@ use fastctx_types::assets::{Frame, LINES, ObjectRef, Reply, Request};
 use super::Link;
 use crate::data::Stream;
 
-/// Lines one link has open at most: as many exchanges go on at once.
-pub const LINES_AT_ONCE: usize = 6;
+/// Lines one link has open at most: as many exchanges go on at once. A hub
+/// answers a few of one member's requests at a time, the rest waiting their
+/// turn there; more lines than that would only wait.
+pub const LINES_AT_ONCE: usize = 4;
 
 /// How long a line nothing uses is kept open. The hub lets an unused line
 /// go later than this, so one kept here is still open there.
