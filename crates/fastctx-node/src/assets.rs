@@ -11,6 +11,7 @@
 
 mod apart;
 mod hand_back;
+mod lines;
 pub(crate) mod activity;
 pub(crate) mod logs;
 pub(crate) mod membership;
@@ -22,7 +23,7 @@ pub(crate) mod takeover;
 pub(crate) mod upkeep;
 mod usage_marks;
 
-pub(crate) use session::{Proposal, pushed, shared_elsewhere, wake};
+pub(crate) use session::{Proposal, committed, pushed, shared_elsewhere, wake};
 
 use fastctx_content::v2::{HubVerifier, Library, Signer};
 use fastctx_net::sign::{Domain, PublicKey, SecretKey, heard_word};
@@ -149,6 +150,26 @@ pub(crate) struct Assets {
     pub(crate) taken_over: Mutex<Vec<String>>,
     /// Scopes the account that opened them adopted here (`takeover`).
     pub(crate) adopting: Mutex<std::collections::BTreeSet<String>>,
+    /// The hubs whose wanted objects are being fetched off the passes
+    /// (`objects::lane`).
+    pub(crate) fetching: Mutex<std::collections::BTreeSet<HubId>>,
+    /// Each scope's turn: one goes through a scope at a time, a pass or what
+    /// a push or a commit begins by itself (`session`).
+    turns: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
+    /// When each scope last moved on the hub or was committed to here: a
+    /// pass goes through those that did lately first.
+    lively: Mutex<HashMap<String, std::time::Instant>>,
+    /// Held to read while an object fetched off the passes is put, to write
+    /// while this machine clears what an account it is to be shared with may
+    /// not see: none is put while that goes on (`session`, `objects`).
+    pub(crate) clearing: tokio::sync::RwLock<()>,
+    /// How many times this machine began to clear so: an object asked for
+    /// before the last of them is not kept after it.
+    pub(crate) cleared_times: std::sync::atomic::AtomicU64,
+    /// The room for records going up by themselves as they are committed
+    /// (`session::committed`): a few scopes at once, the rest left to the
+    /// pass, so that what waits for a line holds no frames meanwhile.
+    pub(crate) quick: Arc<tokio::sync::Semaphore>,
 }
 
 /// How far a hub's scopes this machine may hold were listed.
@@ -166,6 +187,27 @@ pub(crate) struct Listed {
 const SPILL: &str = "spill";
 
 impl Assets {
+    /// The turn of `scope`, held by whoever goes through it.
+    pub(crate) fn turn_of(&self, scope: &str) -> Arc<tokio::sync::Mutex<()>> {
+        self.turns.lock().expect("turns").entry(scope.to_string()).or_default().clone()
+    }
+
+    /// `scope` moved on the hub, or was committed to here, now.
+    pub(crate) fn lively(&self, scope: &str) {
+        let mut lively = self.lively.lock().expect("lively");
+        let now = std::time::Instant::now();
+        // Those long quiet are forgotten once there are many.
+        if lively.len() >= 4096 {
+            lively.retain(|_, at| now.duration_since(*at) < std::time::Duration::from_secs(3600));
+        }
+        lively.insert(scope.to_string(), now);
+    }
+
+    /// When each scope was last lively.
+    pub(crate) fn lively_at(&self) -> HashMap<String, std::time::Instant> {
+        self.lively.lock().expect("lively").clone()
+    }
+
     /// Forgets how far `hub`'s scopes were listed: the next pass lists all,
     /// and a listing under way when it was forgotten is not kept (CC07).
     pub(crate) fn forget_listing(&self, hub: &HubId) {
@@ -230,6 +272,12 @@ impl Assets {
             unreleased: Mutex::new(std::collections::BTreeSet::new()),
             taken_over: Mutex::new(Vec::new()),
             adopting: Mutex::new(std::collections::BTreeSet::new()),
+            fetching: Mutex::new(std::collections::BTreeSet::new()),
+            turns: Mutex::new(HashMap::new()),
+            lively: Mutex::new(HashMap::new()),
+            clearing: tokio::sync::RwLock::new(()),
+            cleared_times: std::sync::atomic::AtomicU64::new(0),
+            quick: Arc::new(tokio::sync::Semaphore::new(2)),
         })
     }
 

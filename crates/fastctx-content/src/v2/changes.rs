@@ -81,6 +81,17 @@ fn fresh_generation() -> String {
     hasher.finalize()[..8].iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
+/// The change number the library's next move takes (`moved`).
+pub(super) fn next(db: &Connection) -> fastctx_storage::Result<i64> {
+    let latest: i64 = db
+        .prepare_cached("SELECT value FROM stamps WHERE name = ?1")?
+        .query_row([CHANGE], |row| row.get::<_, Vec<u8>>(0))
+        .optional()?
+        .and_then(|value| <[u8; 8]>::try_from(value.as_slice()).ok().map(i64::from_le_bytes))
+        .unwrap_or(0);
+    Ok(latest + 1)
+}
+
 /// `stream` of a hub's library moved by a frame of `bytes` bytes, or was
 /// indexed again (`remade`, `bytes` 0): its row takes the library's next
 /// change number, with the stream's head as it stands; indexed again, the

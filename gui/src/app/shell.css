@@ -19,13 +19,31 @@ body {
   display: grid;
   grid-template-columns: var(--sidebar) minmax(0, 1fr);
   height: 100dvh;
-  transition:
-    grid-template-columns var(--glide) var(--glide-easing),
-    --grip-ink var(--hover) var(--ease);
+  transition: --grip-ink var(--hover) var(--ease);
 }
 
+/* Folded, the page has the whole window at once, laid out once: the sidebar
+   slides away over it, and comes back into the room the page gave up, by
+   moving, nothing set again as it goes (a page set again every moment of a
+   sidebar's glide is what made it halt). */
 .shell.folded {
   grid-template-columns: 0 minmax(0, 1fr);
+}
+
+@media (min-width: 761px) {
+  .shell > .sidebar-frame {
+    z-index: 2;
+    width: var(--sidebar);
+    transition: translate var(--fold) var(--fold-easing);
+  }
+
+  .shell.folded > .sidebar-frame {
+    translate: -100% 0;
+  }
+
+  .shell.resizing > .sidebar-frame {
+    transition: none;
+  }
 }
 
 /* The line between the sidebar and the page, to drag (`grip.ts`): the
@@ -239,6 +257,7 @@ html.gripping-y * {
 .sidebar-places {
   flex: 1;
   min-height: 0;
+  overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-width: thin;

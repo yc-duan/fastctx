@@ -55,10 +55,6 @@ impl Transcripts {
         self.0.lock().expect("transcript table").get(&id).cloned()
     }
 
-    pub(crate) fn insert(&self, id: u64, transcript: Arc<Mutex<Transcript>>) {
-        self.0.lock().expect("transcript table").insert(id, transcript);
-    }
-
     pub(crate) fn close(&self, id: u64) {
         self.0.lock().expect("transcript table").remove(&id);
     }
@@ -81,8 +77,6 @@ pub(crate) struct Window {
     /// title, its context, the model that answered last and the host's
     /// agents, as they last stood before `start`.
     carry: Vec<Box<RawValue>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) pages: Option<crate::timeline_window::Edges>,
 }
 
 /// A part a page asked for.
@@ -96,8 +90,6 @@ pub(crate) struct Part {
     events: Vec<Box<RawValue>>,
     /// Facts its runs told after `end`, as their jobs went on.
     late: Vec<Box<RawValue>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    window: Option<Window>,
 }
 
 /// Which part a page asks for: the one just before or just after a part it
@@ -106,9 +98,6 @@ pub(crate) struct Part {
 #[derive(Clone, Deserialize)]
 #[serde(tag = "edge", rename_all = "snake_case")]
 pub(crate) enum Edge {
-    Latest,
-    Position { place: fastctx_types::timeline_pages::TimelinePlace },
-    Turn { turn: String },
     Before { at: usize, floor: usize },
     After { at: usize, ceiling: usize },
     Around { at: usize, floor: usize, ceiling: usize },
@@ -300,28 +289,7 @@ impl Transcript {
             turns_before: self.turns_before(start),
             events: self.events.range(start, self.events.len()),
             carry,
-            pages: None,
         }
-    }
-
-    pub(crate) fn paged(
-        &mut self,
-        history: &[SessionEvent],
-        edges: crate::timeline_window::Edges,
-    ) -> Result<Window, String> {
-        self.recovered(history)?;
-        Ok(Window {
-            generation: self.generation,
-            start: 0,
-            turns_before: 0,
-            events: self.events.range(0, self.events.len()),
-            carry: Vec::new(),
-            pages: Some(edges),
-        })
-    }
-
-    pub(crate) fn generation(&self) -> u64 {
-        self.generation
     }
 
     fn admit(&mut self, event: &SessionEvent) -> Result<(), String> {
@@ -460,7 +428,6 @@ impl Transcript {
         }
         let len = self.events.len();
         let (start, end) = match edge {
-            Edge::Latest | Edge::Position { .. } | Edge::Turn { .. } => return None,
             Edge::Before { at, floor } => {
                 let end = at.min(len);
                 (self.before(end, floor.min(end), 1), end)
@@ -483,7 +450,6 @@ impl Transcript {
             turns: self.turns_before(end) - self.turns_before(start),
             events: self.events.range(start, end),
             late: self.late(start, end),
-            window: None,
         })
     }
 
@@ -654,19 +620,4 @@ fn json(event: &SessionEvent) -> Result<(String, u64), String> {
     let mut hasher = DefaultHasher::new();
     text.hash(&mut hasher);
     Ok((text, hasher.finish()))
-}
-
-impl Part {
-    pub(crate) fn replacement(generation: u64, window: Window) -> Self {
-        Self {
-            generation,
-            start: 0,
-            end: 0,
-            turns_before: 0,
-            turns: 0,
-            events: Vec::new(),
-            late: Vec::new(),
-            window: Some(window),
-        }
-    }
 }

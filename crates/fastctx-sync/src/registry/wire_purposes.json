@@ -562,6 +562,13 @@
     "mapping": "crates/fastctx-net/src/wire.rs"
   },
   {
+    "type": "crates/fastctx-net/src/wire.rs::Intent",
+    "variant": "AssetLine",
+    "purpose": "AssetSync",
+    "capability": "asset_sync.transport",
+    "mapping": "crates/fastctx-net/src/wire.rs"
+  },
+  {
     "type": "crates/fastctx-types/src/assets.rs::Request",
     "variant": "Get",
     "purpose": "AssetSync",

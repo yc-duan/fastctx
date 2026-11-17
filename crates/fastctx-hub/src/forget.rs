@@ -198,6 +198,18 @@ fn ask_inner(
         }
     };
     hub.log.line(format_args!("{asker} asked that {} be deleted everywhere", conversation.key()));
+    // Deleted where it lived already, when its own machine asks: its scopes
+    // go now (`assets::deleted`).
+    let gone_at_home = hub
+        .store()
+        .book
+        .forgetting
+        .pending
+        .iter()
+        .any(|pending| pending.forgetting.conversation == conversation && !pending.home);
+    if gone_at_home {
+        crate::assets::deleted::conversation_gone(hub, &conversation);
+    }
     if !preparing {
         send(hub, tell);
     }
@@ -232,6 +244,8 @@ pub(crate) fn forgot(hub: &Hub, member: &MachineName, id: u64, outcome: Forgot) 
             Forgot::Done => {
                 std::sync::Arc::make_mut(&mut store.book.forgetting.pending[index]).failed.remove(&member);
                 if at_home {
+                    // Its scopes go with it (`assets::deleted`).
+                    crate::assets::deleted::conversation_gone(hub, &conversation);
                     done_at_home(&mut store, index);
                     tell = told_now(&store.book.forgetting.pending[index]);
                 } else {

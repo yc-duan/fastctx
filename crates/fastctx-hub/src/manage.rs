@@ -424,10 +424,21 @@ fn apply(
         }
         Change::Share { machine, to, shared, jobs } => {
             let directory = &mut store.book.directory;
-            let owner = held_machine(directory, account, &machine)?;
+            // What was shared with an account is its to give back, a
+            // visitor's machine too, which it does not hold.
+            let given_back = !shared
+                && to == *account
+                && directory.shares.iter().any(|share| share.account == to && directory.same(&share.machine, &machine));
+            let owner = match directory.member(&machine).and_then(|member| member.home.clone()) {
+                Some(owner) if given_back => owner,
+                _ => held_machine(directory, account, &machine)?,
+            };
             other_account(directory, &owner, &to, &machine)?;
-            if shared && (directory.is_visitor(account) || directory.is_visitor(&owner)) {
-                return Err(fastctx_types::sharing::VISITOR_GIVES_NOTHING.into());
+            // A visitor shares its own machines, with whoever it names, and
+            // none it was given; its own are not held by those it shares them
+            // with, so nobody passes them on.
+            if shared && directory.is_visitor(account) && owner != *account {
+                return Err(fastctx_types::sharing::VISITOR_SHARES_ITS_OWN.into());
             }
             let machine = directory.canonical(&machine).clone();
             if shared && crate::hub_machine::protected(hub, store, &machine) {
@@ -1072,7 +1083,7 @@ fn may_change(
 }
 
 /// Makes `name` a visitor, at once: what it shared and let assist is
-/// taken back, as a visitor gives nothing of its machines. Or offers to
+/// taken back, and it shares anew what it chooses to as a visitor. Or offers to
 /// make it a member, which it becomes once it agrees: a member's machines
 /// are the super administrator's to use, and that is not put on anyone
 /// unasked (`world-network.md`, 超级管理员管什么).
@@ -1272,7 +1283,7 @@ fn holders_of(directory: &fastctx_net::directory::Directory, name: &MachineName)
     let Some(member) = directory.member(name) else { return Vec::new() };
     let Some(owner) = member.home.as_ref() else { return Vec::new() };
     let mut holders = vec![owner.clone()];
-    // A visitor's machine is shared with none (`authorization`, Hold).
+    // A visitor's machine is held by its owner alone (`authorization`, Hold).
     if !directory.is_visitor(owner) {
         for share in directory.shares.iter().filter(|share| share.machine == member.name && share.active()) {
             if !holders.contains(&share.account) {

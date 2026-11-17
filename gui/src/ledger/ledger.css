@@ -130,6 +130,27 @@
   min-height: 96px;
   padding: 14px 12px 10px;
 }
+/* The agents' own page stands under the head every page has (`shell.css`):
+   its name as any page's, what can be done here beside it. */
+.lg-head.page-head {
+  gap: var(--space-2);
+  min-height: 52px;
+  padding: var(--safe-top) var(--space-4) 0;
+}
+.lg-head.page-head .page-head-actions {
+  gap: var(--space-3);
+}
+/* That head reaches the room's edges as on every page; what is under it
+   keeps the page's measure. */
+.lg-main:has(> .lg-page > .page-head) {
+  padding-inline: 0;
+}
+.lg-page:has(> .page-head) {
+  max-width: none;
+}
+.lg-page:has(> .page-head) > :not(.page-head) {
+  margin-inline: max(var(--gutter-wide), (100% - var(--lg-measure)) / 2);
+}
 .lg-title {
   margin: 0;
   font-family: var(--font-display);
@@ -228,13 +249,13 @@
   display: inline-flex;
   gap: 2px;
   padding: 3px;
-  border-radius: var(--radius-full);
+  border-radius: var(--radius-m);
   background: var(--fill);
 }
 .lg .segment {
-  min-height: 32px;
-  padding: 4px 18px;
-  border-radius: var(--radius-full);
+  min-height: 30px;
+  padding: 3px 14px;
+  border-radius: 8px;
   color: var(--text-2);
   white-space: nowrap;
   transition: color var(--hover) var(--ease), background-color var(--hover) var(--ease);
@@ -244,7 +265,7 @@
 }
 .lg .segment.chosen {
   color: var(--text-strong);
-  background: var(--accent-wash);
+  background: var(--fill-strong);
 }
 :is(.lg, .lg-app) .ledger-switch {
   display: inline-flex;
@@ -1805,12 +1826,26 @@
    under who it is; what stood side by side stands one under another; a
    list too wide for the screen is swiped across under its heads. */
 @media (max-width: 760px) {
+  /* Under the screen's own bar where the page reaches the top of it. */
   :is(.lg, .lg-app) .lg-head {
     flex-wrap: wrap;
     row-gap: 10px;
     gap: var(--space-4);
     min-height: 0;
-    padding: 12px 4px 12px;
+    padding: calc(var(--safe-top) + 12px) 4px 12px;
+  }
+  :is(.lg, .lg-app) .lg-head.page-head {
+    row-gap: 4px;
+    gap: var(--space-2);
+    min-height: 52px;
+    padding: var(--safe-top) var(--space-4) 8px;
+  }
+  :is(.lg, .lg-app) .lg-head.page-head > .page-head-actions {
+    flex: 1 0 100%;
+    justify-content: flex-start;
+    gap: 8px;
+    overflow-x: auto;
+    scrollbar-width: none;
   }
   :is(.lg, .lg-app) .lg-head .segment {
     white-space: nowrap;

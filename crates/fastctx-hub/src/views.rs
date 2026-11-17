@@ -15,9 +15,10 @@
 //! (`crate::moving`), as the machine the hub moves to sees its move. Once
 //! the hub was moved, every member is told where it reaches the hub now.
 //!
-//! A visitor's machines are its alone (`world-network.md`, 一个中枢，几个账号):
+//! A visitor's machines are its own (`world-network.md`, 一个中枢，几个账号):
 //! the super administrator's view names them and whether they are online,
-//! nothing of how they connect; nobody else's view has them. A member whose
+//! nothing of how they connect; an account one is shared with sees it as any
+//! machine shared with it; nobody else's view has them. A member whose
 //! release does not read visitors is sent them as members. Each member is
 //! also told the tokens its accounts made that still let devices in, and
 //! the super administrator's devices those of every account.
@@ -25,6 +26,7 @@
 use std::collections::{BTreeSet, HashMap};
 
 use fastctx_net::directory::{Directory, Level, Member, Paths, Reach, View};
+use fastctx_net::authorization::Lookup;
 use fastctx_net::directory_index::{Index, Indexed, ordered};
 use fastctx_types::{AccountName, MachineName};
 use jiff::Timestamp;
@@ -110,8 +112,7 @@ pub(crate) fn view_for_in(
     // the machines are to come to the hub sealed.
     let sealed = hub.assets.sealed().is_some();
     for member in &mut directory.members {
-        let others = member.name != *me
-            && member.home.as_ref().is_some_and(|owner| x.is_visitor(owner) && !mine.contains(owner));
+        let others = member.name != *me && visitors_alone(x, &mine, member);
         // Where a machine may be reached is the super administrator's to
         // choose from, and the machine's own to know; a visitor's is its own.
         let reach = (whole && !others) || member.name == *me;
@@ -174,7 +175,7 @@ pub(crate) fn view_for_in(
         .map(|at| &all.members[at])
         .filter(|member| member.name != *me)
         // A visitor's machine is nobody else's to know of, nor to go through.
-        .filter(|member| !member.home.as_ref().is_some_and(|owner| x.is_visitor(owner) && !mine.contains(owner)))
+        .filter(|member| !visitors_alone(x, &mine, member))
         .filter_map(|member| {
             let relays = member.home.as_ref().is_some_and(|owner| mine.contains(owner)) && !member.relay.is_empty();
             let at = if !member.direct.is_empty() {
@@ -270,8 +271,7 @@ pub(crate) fn presence_for(
     if !whole && !sees_in(x, reader, &mine, &users_in(x, reader), member) {
         return None;
     }
-    let others = member.name != *reader
-        && member.home.as_ref().is_some_and(|owner| x.is_visitor(owner) && !mine.contains(owner));
+    let others = member.name != *reader && visitors_alone(x, &mine, member);
     let reach = (whole && !others) || member.name == *reader;
     let own = member.home.as_ref().is_some_and(|owner| mine.contains(owner));
     let mut member = Member::clone(member);
@@ -281,6 +281,14 @@ pub(crate) fn presence_for(
         member.paths = None;
     }
     Some(fastctx_net::directory::Presence::of(&member))
+}
+
+/// Whether `member` is a visitor's machine that none of `mine` owns or is
+/// shared: how it connects is told to no one acting for them.
+fn visitors_alone(x: &Indexed<'_>, mine: &BTreeSet<AccountName>, member: &Member) -> bool {
+    member.home.as_ref().is_some_and(|owner| {
+        x.is_visitor(owner) && !mine.contains(owner) && !mine.iter().any(|account| x.is_shared(account, &member.name))
+    })
 }
 
 /// The accounts that may use `me` or are logged in on it.

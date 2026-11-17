@@ -63,11 +63,13 @@ ASSET_OPENERS = {
     "crates/fastctx-client/src/device/replica/mod.rs",
     # The hub's asset drills, in tests only: a conversation adopted after its
     # device was lost (design §28.10), the libraries sealed and reopened, an
-    # image found out by its receipts (§17), sentinel runs, the serving.
+    # image found out by its receipts (§17), sentinel runs, the serving, a
+    # scope deleted with its conversation.
     "crates/fastctx-hub/src/assets/drills/adopt.rs",
     "crates/fastctx-hub/src/assets/drills/assets.rs",
     "crates/fastctx-hub/src/assets/drills/identify.rs",
     "crates/fastctx-hub/src/assets/drills/runs.rs",
+    "crates/fastctx-hub/src/assets/drills/deleted.rs",
     "crates/fastctx-hub/src/assets/drills/serve.rs",
     # The bench of design §18's storage-core rows; it ships in no program.
     "crates/fastctx-bench/src/storage.rs",

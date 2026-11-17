@@ -54,7 +54,7 @@ import { foundIn, MachineFind } from "./machine-find";
 import { mapOf, phonesOf } from "./map-of";
 import { deviceKey, type MapNode } from "./map-nodes";
 import { link } from "./places";
-import { runsHub, holds, assistantsOf, isComputer, isSuper, isVisitor, machinesOf, owns, type Machine } from "./reach";
+import { runsHub, holds, assistantsOf, isComputer, isSuper, machinesOf, owns, type Machine, gives, isVisitor } from "./reach";
 import type { Page } from "./shell";
 import { effect, type Signal } from "./signals";
 import type { BatchWords } from "./machine-batch-words";
@@ -1097,7 +1097,7 @@ export class MachinesPage implements Page {
   private share(login: Login, machine: string): void {
     const { access } = this.options;
     this.giving.open(
-      { title: access.shareTitle(machine), what: access.shareWhat, sees: access.shareSees, given: access.sharedTo, go: access.shareGo },
+      { title: access.shareTitle(machine), what: access.shareWhat, sees: access.shareSees, given: access.sharedTo, go: access.shareGo, ...(isVisitor(this.options.store.world.peek(), login) ? { after: access.shareByName } : {}) },
       this.sharedWith(login, machine),
       async (to, shared) => {
         await this.options.change(login, { change: "share", machine, to, shared });
@@ -1600,7 +1600,8 @@ export class MachinesPage implements Page {
     // And they group it.
     const group: Act[] = groupingOf(spot.machine, world) ? [{ act: "group", label: words.groups.group, icon: "folder" }] : [];
     // A managed machine has no agents of anyone's on it; a visitor shares
-    // nothing it holds, and the machine the hub runs on is shared with no one.
+    // its own machines only, and the machine the hub runs on is shared with
+    // no one.
     const managed = isManaged(world, spot.machine.name);
     const shares = !!this.giverOf(spot.machine, world);
     return [
@@ -1626,10 +1627,10 @@ export class MachinesPage implements Page {
     return [...logins.filter((login) => owns(machine, login)), ...logins.filter((login) => !owns(machine, login) && holds(machine, login, world))];
   }
 
-  /** The login that shares `machine` on: one holding it that is no visitor,
-   *  where it does not run the hub. */
+  /** The login that shares `machine` on: its owner, or one holding it that
+   *  is no visitor, where it does not run the hub. */
   private giverOf(machine: Machine, world: WorldNow): Login | undefined {
-    return this.holdersOf(machine, world).find((login) => !isVisitor(world, login) && !runsHub(machine, login, world));
+    return this.holdersOf(machine, world).find((login) => gives(machine, login, world) && !runsHub(machine, login, world));
   }
 
   /** Does an action pressed on a spot's bar or card, or in its menu. */

@@ -99,10 +99,7 @@ export class ActivityPage implements Page {
   private span: Span = kept(KEPT_SPAN, SPANS, "week");
   private grouping: Grouping = kept(KEPT_GROUPING, GROUPINGS, "talk");
   private changes: FileChange[] = [];
-  /** Machines asked that did not answer, and whether some machine left
-   *  runs out past the limit. */
-  private away: string[] = [];
-  private more = false;
+
   /** The files opened, each its group and its own key; the groups whose
    *  files are all listed; whether every group is. */
   private readonly opened = new Set<string>();
@@ -137,7 +134,7 @@ export class ActivityPage implements Page {
     this.title = words.title;
     this.element.className = "page ay-page";
     this.element.innerHTML = `${options.head(
-      escape(words.title),
+      `<h1 class="page-title">${escape(words.title)}</h1>`,
       `<div class="segmented ay-groupings" role="radiogroup" aria-label="${escape(words.groupingLabel)}"></div><div class="segmented ay-spans" role="radiogroup" aria-label="${escape(words.spanLabel)}"></div>`,
     )}<div class="ay-body scroller"></div>`;
     this.body = this.element.querySelector<HTMLElement>(".ay-body")!;
@@ -218,7 +215,7 @@ export class ActivityPage implements Page {
     this.reading.add(group);
     const span = this.span;
     try {
-      const { answers, away } = await this.askAll({ ask: "deeds", from: new Date(this.from()).toISOString(), to: new Date(this.now() + 60_000).toISOString(), limit: LIMIT }, group);
+      const { answers } = await this.askAll({ ask: "deeds", from: new Date(this.from()).toISOString(), to: new Date(this.now() + 60_000).toISOString(), limit: LIMIT }, group);
       if (this.left) return;
       if (span !== this.span) {
         this.again.add(group);
@@ -226,10 +223,8 @@ export class ActivityPage implements Page {
       }
       const changes: FileChange[] = [];
       const from = this.from();
-      let more = false;
       for (const answer of answers) {
         if (answer.kind !== "deeds") continue;
-        more ||= answer.more;
         changes.push(...bookChanges(answer, from, this.options.rows));
         // The Codex sessions of this computer's own the World holds not:
         // each a press from being brought in.
@@ -238,8 +233,6 @@ export class ActivityPage implements Page {
           for (const deed of answer.deeds) if (!deed.held && deed.agent === "codex" && deed.session?.endsWith(`@${here}`)) this.unheld.add(deed.session);
       }
       this.changes = changes;
-      this.away = away;
-      this.more = more;
       this.draw();
     } finally {
       this.reading.delete(group);
@@ -269,13 +262,12 @@ export class ActivityPage implements Page {
       }
     }
     const sum = tally(filesOf(this.changes));
-    const notes = [this.more ? words.truncated(LIMIT) : "", this.away.length ? words.unanswered(this.away.join("、")) : ""].filter(Boolean);
-    const foot = notes.length ? `<p class="ay-notes">${notes.map((note) => `<span>${escape(note)}</span>`).join("")}</p>` : "";
+
     const shown = this.allGroups ? groups : groups.slice(0, GROUPS);
     const rest = groups.length > shown.length ? `<button type="button" class="text-button ay-rest" data-groups>${escape(words.moreGroups(groups.length - shown.length))}</button>` : "";
     const html = sum.files
-      ? `<div class="ay-sheet"><p class="ay-summary"><b>${escape(files.changed(sum.files))}</b>${figures(sum.added, sum.removed)}</p>${shown.map((group) => this.group(group)).join("")}${rest}${foot}</div>`
-      : `<div class="ay-sheet ay-quiet"><p>${escape(words.quiet)}</p>${foot}</div>`;
+      ? `<div class="ay-sheet"><p class="ay-summary"><b>${escape(files.changed(sum.files))}</b>${figures(sum.added, sum.removed)}</p>${shown.map((group) => this.group(group)).join("")}${rest}</div>`
+      : `<div class="ay-sheet ay-quiet"><p>${escape(words.quiet)}</p></div>`;
     if (html === this.written && !anew) return;
     this.written = html;
     const kept = this.body.scrollTop;

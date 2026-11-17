@@ -1120,57 +1120,26 @@ fn handle(
             });
         }
         Up::Ask { id, question: Question::Assets { request }, .. } => {
-            let (hub, from, out) = (hub.clone(), name.clone(), out.clone());
+            let (hub, out) = (hub.clone(), out.clone());
             let held = crate::moving::Moving::hold(&hub);
             fastctx_platform::task::spawn(async move {
                 let (_held, _reservation) = (held, reservation);
+                // It waits its turn, taking no thread meanwhile; its member
+                // gone by then, nobody hears the answer and none is made.
+                let turn = tokio::select! {
+                    turn = hub.assets.work.turn(&origin.name) => turn,
+                    () = out.closed() => return,
+                };
+                let _turn = match turn {
+                    Ok(turn) => turn,
+                    Err(why) => {
+                        let _ = out.send(Out::Frame(Down::Told { id, answer: Err(why) }));
+                        return;
+                    }
+                };
                 let (answer, pushes) = hub
                     .blocking(move |hub| {
-                        // A machine's word that it cleared changes the
-                        // directory: it is taken under the directory's lock.
-                        if let fastctx_types::assets::Request::Cleared { revision, proof } = &request {
-                            let answer = origin
-                                .check(&hub.store().book.directory)
-                                .and_then(|()| crate::shares::cleared(&hub, &from, &origin.key, *revision, &proof.0));
-                            // Shares put in force are told like any change.
-                            if matches!(answer, Ok(fastctx_types::assets::Reply::Cleared { activated }) if activated > 0) {
-                                hub.changed();
-                            }
-                            return (answer, Vec::new());
-                        }
-                        // How an account's machines stand is reckoned beside
-                        // the sessions, where who is online is known.
-                        if let fastctx_types::assets::Request::SyncStatus { account, hours, machine } = &request {
-                            let answer = origin
-                                .check(&hub.store().book.directory)
-                                .and_then(|()| crate::assets::standing::status(&hub, &from, account, *hours, machine.as_ref()));
-                            return (answer, Vec::new());
-                        }
-                        let scope = crate::assets::serve::scope_of(&request).map(str::to_string);
-                        let stream = crate::assets::serve::stream_of(&request).map(str::to_string);
-                        let store = hub.store();
-                        let answer = origin
-                            .check(&store.book.directory)
-                            .and_then(|()| {
-                                let basis = || store.basis().to_string();
-                                crate::assets::serve::ask(&hub.assets, &store.indexed(), &basis, &from, &origin.key, request)
-                            });
-                        drop(store);
-                        // Judged again, and told only, by the directory as it
-                        // stands now, read after what is to be told was taken.
-                        let drained = hub.assets.drain_pushes();
-                        let now = hub.store();
-                        let answer = match (answer, scope) {
-                            (Ok(reply), Some(key)) => {
-                                crate::assets::serve::recheck(&hub.assets, &now.indexed(), &from, &key, stream.as_deref(), reply)
-                            }
-                            (Ok(reply @ fastctx_types::assets::Reply::Holdings { .. }), None) => {
-                                crate::assets::serve::recheck_holdings(&hub.assets, &now.indexed(), now.basis(), &from, reply)
-                            }
-                            (answer, _) => answer,
-                        };
-                        let pushes = hub.assets.take_pushes(drained, &now.indexed());
-                        (answer, pushes)
+                        crate::assets::answering::answer(&hub, &origin, request, crate::assets::serve::Room::Control)
                     })
                     .await;
                 let answer = answer.map(|reply| Told::Assets { reply });

@@ -23,17 +23,13 @@ mod resume;
 #[path = "../../../../gui/src-tauri/src/transcript/core.rs"]
 #[allow(dead_code)]
 mod transcript;
-/// The shell's paged window types, which the shell's pieces and transcript
-/// name and the drill never makes: the window itself needs the whole shell.
-mod timeline_delta {
+/// The shell's parts and records of a timeline, which the shell's pieces
+/// name and the drill never makes: reading one needs the whole shell.
+mod replica {
     #[derive(Clone, serde::Serialize)]
-    pub(crate) struct Placement;
+    pub(crate) struct Part;
     #[derive(Clone, serde::Serialize)]
-    pub(crate) struct Delta;
-}
-mod timeline_window {
-    #[derive(Clone, serde::Serialize)]
-    pub(crate) struct Edges;
+    pub(crate) struct Record;
 }
 use conversation_piece::Piece;
 fn epoch_ms(at: std::time::SystemTime) -> u64 {
@@ -44,6 +40,7 @@ mod shared_controls;
 mod sharing;
 mod skills;
 mod submissions;
+mod visitors;
 use anyhow::{Context, Result};
 use fastctx_client::World;
 use fastctx_net::{
@@ -836,6 +833,7 @@ async fn main() -> Result<()> {
     history::exercise(&wa, &host, &alice_two, &sa.to.resident, &writer.to).await?;
     submissions::exercise(&base, &wo, &host, &home).await?;
     sharing::exercise(&base, &host, &owner_pc, &wo, &wb, &so.to.resident, &sb.to, &home).await?;
+    visitors::exercise(&wo, &wa, &wb).await?;
     submissions::exercise_management(&base, &wo).await?;
     host_node.kill()?;
     host_node.wait()?;

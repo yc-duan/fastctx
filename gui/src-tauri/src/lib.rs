@@ -111,23 +111,12 @@ mod titlebar;
 #[cfg(all(unix, desktop))]
 mod unix_instance;
 
+mod conversation_files;
 mod conversation_watch;
-mod timeline_anonymous;
-mod timeline_body;
-mod timeline_changes;
-mod timeline_delta;
-mod timeline_fuller;
-mod timeline_groups;
-mod timeline_objects;
-mod timeline_overlay;
-mod timeline_preview;
-mod timeline_running;
-mod timeline_scan;
-mod timeline_search;
-mod timeline_search_index;
-mod timeline_walk;
-mod timeline_watch;
-mod timeline_window;
+mod replica;
+mod replica_reads;
+mod replica_search;
+mod replica_search_index;
 mod watch_delivery;
 
 struct Shell {
@@ -135,7 +124,10 @@ struct Shell {
     watches: Arc<Mutex<HashMap<u64, JoinHandle<()>>>>,
     /// What each watched conversation holds for its page.
     transcripts: Arc<transcript::Transcripts>,
-    timeline_readers: timeline_watch::Readers,
+    /// Whom each watched conversation is, for what its page asks of its machine.
+    watched: conversation_files::Watched,
+    /// What reads each conversation shown from its timeline (`replica`).
+    readers: replica::Readers,
     deliveries: watch_delivery::Deliveries,
     composer_inputs: composer_documents::Inputs,
     next: AtomicU64,
@@ -160,7 +152,8 @@ impl Shell {
             watch.abort();
         }
         self.transcripts.close_all();
-        self.timeline_readers.clear();
+        self.watched.clear();
+        self.readers.clear();
         self.deliveries.close_all();
         self.composer_inputs.clear();
     }
@@ -300,10 +293,16 @@ pub(crate) fn epoch_ms(at: std::time::SystemTime) -> u64 {
     at.duration_since(std::time::UNIX_EPOCH).map(|since| since.as_millis() as u64).unwrap_or_default()
 }
 
+/// A conversation opened for a page: the latest part of its timeline
+/// (`replica`), or, from a machine of an earlier release, the window of its
+/// whole history.
 #[derive(Serialize)]
 struct Watch {
     id: u64,
-    window: transcript::Window,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    window: Option<transcript::Window>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    replica: Option<replica::Part>,
 }
 
 #[derive(Serialize)]
@@ -335,9 +334,8 @@ fn machine(name: Option<String>) -> Result<Option<fastctx_types::access::Written
     name.map(|name| name.parse::<fastctx_types::access::Written>().map_err(|error| error.to_string())).transpose()
 }
 
-/// Opens the latest timeline page after registering realtime events. Older
-/// nodes retain the whole-history Watch path. Both feed the same page window
-/// and send what follows down `pieces` until the page lets go.
+/// Opens a conversation for a page: its history as its machine keeps it, the
+/// latest part first, then what follows down `pieces` until the page lets go.
 #[fastctx_gui_command::command]
 async fn watch(
     shell: tauri::State<'_, Shell>,
@@ -350,40 +348,39 @@ async fn watch(
     let resident = resident(resident_id)?;
     let machine = machine(machine_name)?;
     #[cfg(not(target_os = "android"))]
-    let opened = timeline_watch::open(&world, resident.clone(), machine.clone()).await?;
+    let opened = replica::open(&world, resident.clone(), machine.clone()).await?;
     #[cfg(target_os = "android")]
-    let opened = android::timeline::open(&world, resident.clone(), machine.clone()).await?;
+    let opened = android::replica::open(&world, resident.clone(), machine.clone()).await?;
     if let Some(opened) = opened {
         let id = shell.next.fetch_add(1, Ordering::Relaxed);
-        let reader = opened.reader;
-        let transcript = reader.lock().await.transcript.clone();
-        shell.transcripts.insert(id, transcript);
-        shell.timeline_readers.insert(id, reader.clone());
-        let mut initial = opened.watching;
-        let readers = shell.timeline_readers.clone();
+        let part = opened.part.clone();
+        shell.readers.insert(id, opened.reader.clone());
+        shell.watched.open(id, world.clone(), resident.clone(), machine.clone());
+        let opened = Arc::new(opened);
         if let Err(error) = shell.follow_delivery(
             page,
             id,
             pieces,
             |piece| match piece {
                 Piece::Now { .. } => Some("now".into()),
+                Piece::Preparing { .. } => Some("preparing".into()),
                 _ => None,
             },
-            move |pieces, _| {
-                let (reader, watching, readers) = (reader.clone(), initial.take(), readers.clone());
+            move |pieces, again| {
+                let opened = opened.clone();
                 async move {
                     #[cfg(not(target_os = "android"))]
-                    readers.run(id, reader, watching, &pieces).await;
+                    replica::follow(&opened, again, &pieces).await;
                     #[cfg(target_os = "android")]
-                    android::timeline::run(readers, id, reader, watching, pieces).await;
+                    android::replica::follow(&opened, again, &pieces).await;
                 }
             },
         ) {
-            shell.transcripts.close(id);
-            shell.timeline_readers.close(id);
+            shell.readers.close(id);
+            shell.watched.close(id);
             return Err(error.into());
         }
-        return Ok(Watch { id, window: opened.window });
+        return Ok(Watch { id, window: None, replica: Some(part) });
     }
     #[cfg(not(target_os = "android"))]
     let (conversation, history) = match &machine {
@@ -396,6 +393,7 @@ async fn watch(
     let (transcript, window) = transcript::Transcript::new(&history)?;
     drop(history);
     let transcript = shell.transcripts.open(id, transcript);
+    shell.watched.open(id, world.clone(), resident.clone(), machine.clone());
     let mut initial = Some(conversation);
     if let Err(error) = shell.follow_delivery(
         page,
@@ -417,9 +415,10 @@ async fn watch(
         },
     ) {
         shell.transcripts.close(id);
+        shell.watched.close(id);
         return Err(error.into());
     }
-    Ok(Watch { id, window })
+    Ok(Watch { id, window: Some(window), replica: None })
 }
 
 #[tauri::command]
@@ -428,7 +427,8 @@ fn unwatch(shell: tauri::State<'_, Shell>, id: u64) {
         task.abort();
     }
     shell.transcripts.close(id);
-    shell.timeline_readers.close(id);
+    shell.watched.close(id);
+    shell.readers.close(id);
     shell.deliveries.close(id);
     shell.composer_inputs.close(id);
 }
@@ -1344,11 +1344,10 @@ pub fn run() {
             watch_delivery::watch_delivery_ack,
             watch_delivery::watch_delivery_resend,
             transcript::conversation_part,
-            transcript::conversation_follow,
-            timeline_objects::conversation_object,
-            timeline_objects::conversation_files,
-            timeline_scan::conversation_scan,
-            timeline_search::conversation_search,
+            conversation_files::conversation_files,
+            replica_reads::conversation_page,
+            replica_reads::conversation_object,
+            replica_search::conversation_search,
             transcript::conversation_cut,
             transcript::conversation_locate,
             transcript::conversation_index,

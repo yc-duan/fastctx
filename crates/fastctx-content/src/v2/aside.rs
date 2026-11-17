@@ -41,9 +41,18 @@ impl Library {
                 .query_row(params![scope_id, stream], |row| Ok((row.get(0)?, row.get(1)?)))
                 .optional()?
                 .ok_or_else(|| invalid("no such stream"))?;
+            // A frame holds no more than `FRAME_RECORDS` records: the one
+            // holding `from` begins no further before it than that.
             let cut: Option<i64> = db
-                .prepare_cached("SELECT MIN(first) FROM frames WHERE stream = ?1 AND holding = ?2 AND first + count > ?3")?
-                .query_row(params![stream_id, holding, from as i64], |row| row.get(0))?;
+                .prepare_cached(
+                    "SELECT first FROM frames INDEXED BY frame_keys
+                     WHERE stream = ?1 AND holding = ?2 AND first >= ?4 AND first + count > ?3 ORDER BY first LIMIT 1",
+                )?
+                .query_row(
+                    params![stream_id, holding, from as i64, (from as i64).saturating_sub(crate::record::FRAME_RECORDS as i64 - 1)],
+                    |row| row.get(0),
+                )
+                .optional()?;
             let Some(cut) = cut else { return Ok(next as u64) };
             let mut after = cut - 1;
             loop {

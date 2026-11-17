@@ -55,6 +55,23 @@ pub fn submit_after(db: &Connection, job: &Job, after: std::time::Duration) -> R
     Ok(())
 }
 
+/// Submits `job` as `submit` does, due `after` from now at the latest: a
+/// job already waiting for sooner keeps its own time, and one waiting for
+/// later is brought on to then, so asking again cuts short a long wait for
+/// nothing in particular and never a pause shorter than `after`.
+pub fn submit_within(db: &Connection, job: &Job, after: std::time::Duration) -> Result<()> {
+    let waiting: Option<i64> = db
+        .prepare_cached("SELECT due FROM jobs WHERE kind = ?1 AND key = ?2 AND state = ?3")?
+        .query_row(params![job.kind, job.key, WAITING], |row| row.get(0))
+        .optional()?;
+    submit(db, job)?;
+    let soonest = now() + after.as_millis() as i64;
+    let due = waiting.map_or(soonest, |due| due.min(soonest));
+    db.prepare_cached("UPDATE jobs SET due = ?3 WHERE kind = ?1 AND key = ?2 AND state <> ?4")?
+        .execute(params![job.kind, job.key, due, RUNNING])?;
+    Ok(())
+}
+
 /// Submits `job` due `after` from now, unless one of its kind and key waits
 /// already: that one keeps its own due time and payload, so asking again —
 /// as each start of a service asks — never puts it off. One that runs is

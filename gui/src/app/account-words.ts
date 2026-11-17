@@ -1519,6 +1519,8 @@ export interface AccessWords {
   shareTitle(machine: string): string;
   shareWhat: string;
   shareSees: string;
+  /** Said to a visitor sharing a machine: whom it goes to is named in full. */
+  shareByName: string;
   sharedTo: string;
   /** A share given but not yet in force: the machine clears first. */
   shareWaits(machine: string): string;
@@ -1604,6 +1606,7 @@ export const zhAccess: AccessWords = {
   shareTitle: (machine) => `共享 ${machine}`,
   shareWhat: "对方可使用此机器及其上的所有智能体。",
   shareSees: "对方可以此机器的系统用户身份执行任何操作，包括读取文件与智能体登录凭据。请仅共享给信任的人。",
+  shareByName: "请输入对方的完整账号名；该账号在此网络中存在即可共享。",
   sharedTo: "已共享给",
   shareWaits: (machine) => `待 ${machine} 上线并清除对方无权查看的内容后生效`,
   shareGo: "共享",
@@ -1673,6 +1676,7 @@ export const enAccess: AccessWords = {
   shareTitle: (machine) => `Share ${machine}`,
   shareWhat: "They can use this machine and every agent on it.",
   shareSees: "They can do anything this machine's system user can, its files and its agents' login credentials included. Share only with people you trust.",
+  shareByName: "Type their whole account name: the machine is shared when this network has that account.",
   sharedTo: "Shared with",
   shareWaits: (machine) => `In force once ${machine} is online and has cleared what they may not see`,
   shareGo: "Share",

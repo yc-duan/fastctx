@@ -28,7 +28,19 @@ const pens: Record<string, Pen> = {
 
 export type PenName = keyof typeof pens;
 
+/**
+ * Whether the pens draw plain here. WebKitGTK renders these filters on the
+ * processor, anew at every paint of what they are on, and where it has no
+ * graphics acceleration that holds the whole interface still; a shape keeps
+ * its outline there and loses only its grain.
+ */
+const plain = (): boolean => {
+  const agent = typeof navigator === "undefined" ? "" : navigator.userAgent;
+  return /Linux/i.test(agent) && !/Android/i.test(agent) && !/Chrom(?:e|ium)\//.test(agent);
+};
+
 function filter(id: string, pen: Pen): string {
+  if (plain()) return `<filter id="${id}"><feMerge><feMergeNode in="SourceGraphic"/></feMerge></filter>`;
   const { grain, waver } = pen;
   const inked = `<feTurbulence type="fractalNoise" baseFrequency="${grain.frequency}" numOctaves="2" seed="${grain.seed}" result="grain"/><feColorMatrix in="grain" type="luminanceToAlpha" result="grainAlpha"/><feComposite in="SourceGraphic" in2="grainAlpha" operator="arithmetic" k1="0" k2="1" k3="${-grain.amount}" k4="0" result="inked"/>`;
   const wavered = waver

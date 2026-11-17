@@ -494,12 +494,23 @@ export class ComposerSession {
   private async lasting(operation: Operation, outcome?: Outcome): Promise<ComposerUpdated | ComposerAttachmentAdded> {
     // Words on their way hear when they are late, and stop when taken back.
     const wait = <T>(waiting: Promise<T>): Promise<T> => (outcome ? this.meanwhile(waiting, outcome, true) : waiting);
+    const forgotten = () => this.operations.get(operation.id) !== operation;
     for (let tries = 1; ; tries += 1) {
       try {
+        if (!this.connected && !operation.flight && operation.status !== "completed") {
+          // Asked for while the shared input is away, as when a phone comes
+          // back from choosing a picture: it stands as one that broke with
+          // the connection, and goes once the connection is back.
+          operation.status = "failed";
+          operation.broken = true;
+          operation.error = new Error("the composer is disconnected");
+          this.emit();
+          await wait(this.untilConnected());
+          if (forgotten()) throw operation.error;
+        }
         return await wait(this.run(operation));
       } catch (error) {
         if (error instanceof Withdrawn) throw error;
-        const forgotten = () => this.operations.get(operation.id) !== operation;
         if (!operation.broken || this.closed || this.closing || forgotten()) throw error;
         if (this.connected) await wait(new Promise<void>((resolve) => after(tries + 1, resolve, this.machine)));
         await wait(this.untilConnected());
@@ -951,7 +962,7 @@ export class ComposerSession {
    * the draft are on their way starts once the node has them, in the draft
    * after them. Its scope, once it starts, is kept for every retry. */
   private upload(document: ComposerDocument, run: (scope: { operation: string; target: ComposerTarget; epoch: number }) => Promise<ComposerAttachmentAdded>): Promise<ComposerAttachmentAdded> {
-    this.assertConnected();
+    this.assertOpen();
     this.owned(document);
     const { target } = document.view.state;
     const before = target.kind === "draft" ? document.unsealed() : null;

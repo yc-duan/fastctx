@@ -1,19 +1,18 @@
-//! A conversation page on Android reads its timeline as a desktop page
-//! does, a page at a time, never the whole history (`timeline_watch`). What
-//! differs is the phone's: a hidden page lets its live stream go, and shown
-//! again it is given the window it holds and caught up from there; and an
-//! opening that failed while the connection was being replaced, as on a
-//! foreground resume, is tried again on the new one.
+//! A conversation page on Android reads its timeline as a desktop page does
+//! (`crate::replica`). What differs is the phone's: an opening that failed
+//! while the connection was being replaced, as on a foreground resume, is
+//! tried again on the new one; and a hidden page lets its live watch go,
+//! and shown again reads anew from what the timeline is then.
 
 use std::time::Duration;
 
-use fastctx_client::{Watching, World};
+use fastctx_client::World;
 use fastctx_net::link::Status;
 use fastctx_types::ResidentId;
 use fastctx_types::access::Written;
 use tokio::sync::watch;
 
-use crate::timeline_watch::{self, Opened, Readers, Shared};
+use crate::replica::{self, Opened};
 use crate::watch_delivery::Sender;
 use crate::{NotWatched, Piece};
 
@@ -23,9 +22,13 @@ const TRIES: u32 = 3;
 /// connection to settle before it is tried again.
 const SETTLE: Duration = Duration::from_secs(15);
 
-/// Opens the timeline as `timeline_watch::open` does; `None` for an older
-/// node, read the whole-history way (`super::watching`).
-pub(crate) async fn open(world: &World, resident: ResidentId, machine: Option<Written>) -> Result<Option<Opened>, NotWatched> {
+/// Opens the timeline as `replica::open` does; `None` for an older node,
+/// read the whole-history way (`super::watching`).
+pub(crate) async fn open(
+    world: &World,
+    resident: ResidentId,
+    machine: Option<Written>,
+) -> Result<Option<Opened>, NotWatched> {
     let (_, mut connection) =
         world.device().expect("Android device").machine_changes(machine.as_ref()).map_err(|error| error.to_string())?;
     let mut tries = 0;
@@ -34,7 +37,7 @@ pub(crate) async fn open(world: &World, resident: ResidentId, machine: Option<Wr
         if let Status::Stopped { reason } = state {
             return Err(reason.into());
         }
-        let opened = timeline_watch::open(world, resident.clone(), machine.clone()).await;
+        let opened = replica::open(world, resident.clone(), machine.clone()).await;
         let passing = matches!(&opened, Err(error) if !error.deleted && !error.refused);
         if !passing || tries >= TRIES {
             return opened;
@@ -69,35 +72,28 @@ async fn hidden(visible: &mut watch::Receiver<bool>) {
     }
 }
 
-/// Follows the reader as `Readers::run` does while the page is shown; a
-/// hidden page holds no live stream, and nothing more is queued for it than
-/// was before it was hidden.
-pub(crate) async fn run(readers: Readers, id: u64, reader: Shared, mut initial: Option<Watching>, pieces: Sender<Piece>) {
+/// Follows the conversation as `replica::follow` does while the page is
+/// shown; a hidden page holds no watch, and shown again it reads anew.
+pub(crate) async fn follow(opened: &Opened, again: bool, pieces: &Sender<Piece>) {
     let mut visible = super::visibility();
+    let mut again = again;
     loop {
         if !*visible.borrow_and_update() {
-            drop(initial.take());
             if pieces.send(paused()).is_err() {
                 return;
             }
             loop {
-                tokio::select! {
-                    () = reader.closed() => return,
-                    changed = visible.changed() => {
-                        if changed.is_err() {
-                            return;
-                        }
-                        if *visible.borrow_and_update() {
-                            break;
-                        }
-                    }
+                if visible.changed().await.is_err() {
+                    return;
+                }
+                if *visible.borrow_and_update() {
+                    break;
                 }
             }
+            again = true;
         }
-        // Shown again, with no watch in hand, the page is given the window
-        // the reader holds and the watch catches up from where it read.
         tokio::select! {
-            () = readers.run(id, reader.clone(), initial.take(), &pieces) => return,
+            () = replica::follow(opened, again, pieces) => return,
             () = hidden(&mut visible) => {}
         }
     }

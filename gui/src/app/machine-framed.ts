@@ -24,7 +24,7 @@ import type { ManageWords } from "./machine-manage-words";
 import type { RemoveMachineSheet } from "./machine-remove";
 import { removeMachines } from "./machine-removing";
 import type { WaysSheet } from "./machine-ways";
-import { isVisitor, runsHub, sameLogin, type Machine } from "./reach";
+import { runsHub, sameLogin, type Machine, gives } from "./reach";
 import type { Signal } from "./signals";
 import { runningOf } from "./update-marks";
 import type { UpdateViewWords } from "./update-view-words";
@@ -243,15 +243,15 @@ export class ChosenBar {
 }
 
 /** The most of `machines` one login of this device holds and may share:
- *  a visitor shares none, and no one the machine the hub runs on. */
+ *  a visitor shares its own only, and no one the machine the hub runs on. */
 function sharable(machines: Machine[], world: WorldNow): { login: Login; machines: Machine[] } | null {
   let best: { login: Login; machines: Machine[] } | null = null;
   for (const machine of machines) {
     const login = holderLoginOf(machine, world);
-    if (!login || isVisitor(world, login) || (best && sameLogin(best.login, login))) continue;
+    if (!login || !gives(machine, login, world) || (best && sameLogin(best.login, login))) continue;
     const mine = machines.filter((one) => {
       const holder = holderLoginOf(one, world);
-      return !!holder && sameLogin(holder, login) && !runsHub(one, login, world);
+      return !!holder && sameLogin(holder, login) && gives(one, login, world) && !runsHub(one, login, world);
     });
     if (!best || mine.length > best.machines.length) best = { login, machines: mine };
   }

@@ -4,10 +4,12 @@
 //! and the seal it keeps over every asset when it finds, on opening, that
 //! it was put back from an older copy.
 
+pub(crate) mod answering;
 pub(crate) mod apart;
 pub(crate) mod bodies;
 pub(crate) mod brought;
 pub(crate) mod chain;
+pub(crate) mod deleted;
 #[cfg(test)]
 pub(crate) mod drill_kinds;
 // They commit records unjudged: the `content-drill` feature (Cargo.toml).
@@ -19,8 +21,10 @@ mod holdings;
 mod keys;
 pub(crate) mod mirror;
 pub(crate) mod told;
+pub(crate) mod work;
 pub(crate) mod hub_log;
 pub(crate) mod ledger_views;
+pub(crate) mod line;
 pub(crate) mod restores;
 pub mod recovery;
 pub(crate) mod objects;
@@ -185,6 +189,12 @@ pub(crate) struct Assets {
     /// The tickets for objects' data connections, and the proofs of
     /// holding that stand (design §6.5, §7.3).
     pub(crate) objects: objects::Objects,
+    /// The asset lines open, by member (`line`).
+    pub(crate) lines: line::Lines,
+    /// The turns asset requests take (`work`).
+    pub(crate) work: work::Work,
+    /// The scopes deleted with their conversations (`deleted`).
+    deleted: deleted::Deleted,
     /// What several accounts own together, and who they are (design §6.2).
     pub(crate) bodies: Arc<bodies::Bodies>,
     /// Where machines stand in syncing (design §28.9).
@@ -229,6 +239,9 @@ impl Assets {
             receipted: Mutex::new(BTreeMap::new()),
             pushes: Mutex::new(Vec::new()),
             objects: objects::Objects::default(),
+            lines: line::Lines::default(),
+            work: work::Work::default(),
+            deleted: deleted::Deleted::default(),
             bodies: Arc::new(bodies::Bodies::new(control.clone())),
             standing: standing::Standing::default(),
             restores: std::sync::atomic::AtomicU64::new(restored),
@@ -655,6 +668,9 @@ impl Assets {
     /// than a checkpoint the hub's database holds of it, or lacks an epoch
     /// the hub opened in it.
     fn behind(&self, owner: &Owner, library: &fastctx_content::v2::Library) -> io::Result<Option<String>> {
+        // What a scope deleted before the hub stopped left in it goes on
+        // going (`deleted`).
+        self.library_opened(owner, library);
         let key = owner.key();
         for head in self.checkpointed(owner)?.values() {
             if !library.holds(head).map_err(|error| io::Error::other(error.to_string()))? {
@@ -1247,7 +1263,8 @@ impl Assets {
         for (owner, scopes) in batch {
             let heads = (|| {
                 let library = self.library(owner)?;
-                let wanted: Vec<String> = scopes.iter().cloned().collect();
+                // One deleted since it changed has no head to keep.
+                let wanted: Vec<String> = scopes.iter().filter(|scope| !self.was_deleted(scope)).cloned().collect();
                 let heads = library.heads(&wanted).map_err(|error| io::Error::other(error.to_string()))?;
                 // A scope still where its latest checkpoint has it, or where
                 // nothing is, needs none.
@@ -1403,7 +1420,9 @@ pub(crate) async fn checkpoints(hub: Weak<crate::Hub>) {
         drop(hub);
         let done = fastctx_platform::task::spawn_blocking(move || {
             assets.owners.sweep();
-            assets.checkpoint()
+            let checkpointed = assets.checkpoint();
+            assets.let_go();
+            checkpointed
         })
         .await;
         if let Some(hub) = assets_hub.upgrade() {

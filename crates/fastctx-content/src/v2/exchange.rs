@@ -80,6 +80,12 @@ impl Library {
     /// Up to `frames` of the current period's frames of `stream`, from the
     /// one holding sequence `from`, as kept.
     pub fn export(&self, scope: &str, stream: &str, from: u64, frames: usize) -> Result<Vec<RawFrame>> {
+        self.export_within(scope, stream, from, frames, usize::MAX)
+    }
+
+    /// As `export`, of no more frames than come to `bytes` together, one
+    /// at least: no frame past that is read at all.
+    pub fn export_within(&self, scope: &str, stream: &str, from: u64, frames: usize, bytes: usize) -> Result<Vec<RawFrame>> {
         let (scope, stream) = (scope.to_string(), stream.to_string());
         Ok(self.database().read_now(move |db| {
             let Some((scope, _, Some(holding))) = held(db, &scope)? else { return Ok(Vec::new()) };
@@ -90,16 +96,37 @@ impl Library {
             else {
                 return Ok(Vec::new());
             };
-            let mut statement = db.prepare_cached(
-                "SELECT epoch, first, header, signature, body FROM frames
-                 WHERE stream = ?1 AND holding = ?2 AND first + count > ?3 ORDER BY first LIMIT ?4",
-            )?;
-            let rows = statement.query_map(params![stream, holding, from as i64, frames as i64], |row| {
-                Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?, row.get(2)?, row.get(3)?, row.get(4)?))
-            })?;
+            // Which frames, by their keys alone: a frame holds no more than
+            // `FRAME_RECORDS` records, so the one holding `from` begins no
+            // further before it than that. Then each frame itself, by its
+            // whole key, its body read for no frame but those given.
+            let keys: Vec<(i64, i64)> = db
+                .prepare_cached(
+                    "SELECT epoch, first FROM frames INDEXED BY frame_keys
+                     WHERE stream = ?1 AND holding = ?2 AND first >= ?5 AND first + count > ?3 ORDER BY first LIMIT ?4",
+                )?
+                .query_map(
+                    params![
+                        stream,
+                        holding,
+                        from as i64,
+                        frames as i64,
+                        (from as i64).saturating_sub(crate::record::FRAME_RECORDS as i64 - 1)
+                    ],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )?
+                .collect::<std::result::Result<_, _>>()?;
             let mut exported = Vec::new();
-            for row in rows {
-                let (epoch, first, header, signature, body) = row?;
+            let mut read = 0usize;
+            for (epoch, first) in keys {
+                if !exported.is_empty() && read >= bytes {
+                    break;
+                }
+                let (header, signature, body) = db
+                    .prepare_cached(
+                        "SELECT header, signature, body FROM frames WHERE stream = ?1 AND epoch = ?2 AND first = ?3 AND holding = ?4",
+                    )?
+                    .query_row(params![stream, epoch, first, holding], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
                 let mut hashes = db.prepare_cached(
                     "SELECT hash FROM frame_objects WHERE stream = ?1 AND epoch = ?2 AND first = ?3 AND holding = ?4 ORDER BY hash",
                 )?;
@@ -107,7 +134,9 @@ impl Library {
                     .query_map(params![stream, epoch, first, holding], |row| row.get::<_, Vec<u8>>(0))?
                     .map(|hash| hash.map(|hash| hash.try_into().unwrap_or([0; 32])))
                     .collect::<std::result::Result<Vec<_>, _>>()?;
-                exported.push(RawFrame { header, signature, body, objects });
+                let frame = RawFrame { header, signature, body, objects };
+                read += frame.header.len() + frame.signature.len() + frame.body.len();
+                exported.push(frame);
             }
             Ok(exported)
         })?)

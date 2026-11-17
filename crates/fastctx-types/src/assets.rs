@@ -20,8 +20,9 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error};
 /// reader class, holder class, receipt or message comes with: a hub sends a
 /// device nothing its version does not know (sync v2 freeze spec, 1). The
 /// second brings proofs of holding by challenge (design §28.45); the third,
-/// frames of a stream taken several at a time (`MANY`).
-pub const VERSION: u32 = 3;
+/// frames of a stream taken several at a time (`MANY`); the fourth, asset
+/// lines (`LINES`).
+pub const VERSION: u32 = 4;
 
 /// The oldest version a side still speaks.
 pub const OLDEST: u32 = 1;
@@ -34,6 +35,11 @@ pub const CHALLENGES: u32 = 2;
 /// in one request (`Request::TakeMany`), which the hub writes with one disk
 /// synchronization (§18 E2).
 pub const MANY: u32 = 3;
+
+/// The version from which a device keeps asset lines open to its hub
+/// (`crate::asset_lines`): frames and objects go on them one after another,
+/// with no ticket and no connection of their own.
+pub const LINES: u32 = 4;
 
 /// The most frames one `TakeMany` carries.
 pub const FRAMES_A_TAKE: usize = 16;

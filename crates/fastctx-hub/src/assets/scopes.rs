@@ -337,7 +337,7 @@ fn holders_read_known(directory: &Indexed<'_>, machine: &MachineName, scope: &Sc
 
 /// The machine `machine` is now, as a scope it describes keeps it: its key
 /// and its owner as opened (`identity`).
-fn machine_now(directory: &Indexed<'_>, machine: &MachineName) -> Option<String> {
+pub(super) fn machine_now(directory: &Indexed<'_>, machine: &MachineName) -> Option<String> {
     identity(directory, &format!("machine:{}", directory.canonical(machine)))
 }
 
@@ -437,6 +437,11 @@ fn keeps_ledger(_directory: &Indexed<'_>, _machine: &MachineName, scope: &Scope)
 
 /// The scope `key`, if the hub described it.
 pub(crate) fn scope(assets: &Assets, key: &str) -> Result<Option<Scope>, String> {
+    // One deleted with its conversation is no scope, whatever row a write
+    // that crossed its deletion left (`deleted`).
+    if assets.was_deleted(key) {
+        return Ok(None);
+    }
     let key = key.to_string();
     let found: Option<Row> = assets
         .control
@@ -471,10 +476,20 @@ pub(crate) fn scope(assets: &Assets, key: &str) -> Result<Option<Scope>, String>
 /// The owner library of `scope`, with the scope installed in it: a scope
 /// described just before a stop is installed at its first use.
 pub(crate) fn library(assets: &Assets, scope: &Scope) -> Result<Library, String> {
-    let library = assets.library(&scope.owner).map_err(|error| error.to_string())?;
     let key = &scope.descriptor.scope;
+    // One deleted since it was read is installed in no library again.
+    if assets.was_deleted(key) {
+        return Err(format!("the scope {key} was deleted with its conversation"));
+    }
+    let library = assets.library(&scope.owner).map_err(|error| error.to_string())?;
     if library.holding(key).map_err(|error| error.to_string())?.is_none() {
         library.install(key, scope.fact.fact.0.clone(), scope.descriptor.seq as i64).map_err(|error| error.to_string())?;
+        // Deleted while it was installed: the deletion let go of it before
+        // this put it back, so it is let go of again.
+        if assets.was_deleted(key) {
+            library.revoke(key).map_err(|error| error.to_string())?;
+            return Err(format!("the scope {key} was deleted with its conversation"));
+        }
     }
     Ok(library)
 }
@@ -638,9 +653,15 @@ pub(crate) fn describe(
         _ => None,
     };
     let keeping = into_body.clone();
+    let (deleted, stamp) = (assets.deleted_scopes().map_err(|error| error.to_string())?, super::deleted::stamp(key));
     let (seq, head) = assets
         .control
         .write_now(256 + bytes.len(), move |c| {
+            // Never one deleted with its conversation, the deletion begun
+            // since this was asked (`deleted`).
+            if deleted.lock().expect("deleted scopes").contains(&stamp) {
+                return Ok(None);
+            }
             // Never into a library being deleted (design §6.2).
             let added = c
                 .prepare_cached(

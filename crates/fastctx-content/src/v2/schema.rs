@@ -130,6 +130,12 @@ CREATE TABLE IF NOT EXISTS frames (
     feed INTEGER,
     PRIMARY KEY (stream, epoch, first, holding)
 ) WITHOUT ROWID;
+-- A frame's row carries its body, and finding one by where it ends or
+-- stepping through a stream's by where they begin would read the bodies on
+-- the way: these two say where each frame begins and ends, and its chain
+-- value, without them. Derived from `frames`, made again by making them.
+CREATE INDEX IF NOT EXISTS frame_ends ON frames (stream, holding, first + count - 1, head, count);
+CREATE INDEX IF NOT EXISTS frame_keys ON frames (stream, holding, first, count);
 CREATE TABLE IF NOT EXISTS frame_objects (
     stream INTEGER NOT NULL,
     epoch INTEGER NOT NULL,

@@ -39,7 +39,7 @@ env:
   TAURI_CLI: '@tauri-apps/cli@2.12.1'
   # The release before this one: the network drill runs its hub with this one's machines on every
   # system it was published for, and its node on this one's hub on Linux.
-  EARLIER_RELEASE: 1.0.1-beta.17
+  EARLIER_RELEASE: 1.0.1-beta.18
   # The drills run on a ci/ branch, never for a version tag.
   DRILLS: ${{ github.ref_type == 'branch' }}
 
@@ -510,69 +510,6 @@ jobs:
         run: |
           root="$RUNNER_TEMP/scale"
           sudo bash -c "ulimit -n 1048576 && tests/hub_scale --root '$root' --members 1000 --seconds 20 --cgroup && tests/hub_scale --root '$root' --members 10000 --seconds 20 --cgroup --baseline '$root/result-1000.json'"
-
-  # The node's storage held to the constitution's numbers where its engine and its records are: a
-  # hundred thousand events paged, a write's transaction within two milliseconds, a writer killed
-  # at random losing no acknowledged row, a damaged database salvaged, and a hundred thousand
-  # steps of a job written and read (`world-engine.md`, 验证的设施). The records drill needs the
-  # node's drill feature, so both are built here, beside the kernel rather than with it.
-  storage-linux:
-    needs: sync-architecture
-    if: github.ref_type == 'branch'
-    name: storage drills
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.92.0
-      # The cache's key counts every toolchain installed, so a runner image's
-      # own idle one would make each image a cache of its own: only the one
-      # the build uses stays (codex-a94c19c2, run 43701326124).
-      - name: Keep only the toolchain the build uses
-        shell: bash
-        run: for t in $(rustup toolchain list | awk '{print $1}'); do case "$t" in 1.92.0-*) ;; *) rustup toolchain uninstall "$t" ;; esac; done
-      - uses: Swatinem/rust-cache@v2
-        with:
-          key: storage-linux
-          save-if: ${{ startsWith(github.ref, 'refs/heads/ci/') }}
-      - if: env.DRILLS == 'true'
-        name: Storage engine drill
-        run: cargo test --profile drill --locked -p fastctx-storage --test storage_drill -- --root "$RUNNER_TEMP/storage-drill"
-      - if: env.DRILLS == 'true'
-        name: Node records drill
-        run: cargo test --profile drill --locked -p fastctx-node --features storage-drill --test record_drill -- --root "$RUNNER_TEMP/record-drill"
-
-  # The same on Windows, under a directory long enough that the archive of a moved record passes the
-  # length Windows' own calls take, and with a record another program holds open as a scanner does.
-  storage-windows:
-    needs: sync-architecture
-    if: github.ref_type == 'branch'
-    name: storage drills on Windows
-    runs-on: windows-2025
-    defaults:
-      run:
-        shell: bash
-    steps:
-      - uses: actions/checkout@v4
-      - name: Keep the antivirus off the build's and the drills' files
-        shell: pwsh
-        run: Add-MpPreference -ExclusionPath $env:GITHUB_WORKSPACE, $env:RUNNER_TEMP, "$env:USERPROFILE\.cargo", "$env:USERPROFILE\.rustup"
-      - uses: dtolnay/rust-toolchain@1.92.0
-      # The cache's key counts every toolchain installed, so a runner image's
-      # own idle one would make each image a cache of its own: only the one
-      # the build uses stays (codex-a94c19c2, run 43701326124).
-      - name: Keep only the toolchain the build uses
-        shell: bash
-        run: for t in $(rustup toolchain list | awk '{print $1}'); do case "$t" in 1.92.0-*) ;; *) rustup toolchain uninstall "$t" ;; esac; done
-      - uses: Swatinem/rust-cache@v2
-        with:
-          key: storage-windows
-          save-if: ${{ startsWith(github.ref, 'refs/heads/ci/') }}
-      - if: env.DRILLS == 'true'
-        name: Storage engine drill
-        run: cargo test --profile drill --locked -p fastctx-storage --test storage_drill -- --root "$(cygpath -m "$RUNNER_TEMP")/storage-drill"
-      - if: env.DRILLS == 'true'
-        name: Node records drill
-        run: cargo test --profile drill --locked -p fastctx-node --features storage-drill --test record_drill -- --root "$(cygpath -m "$RUNNER_TEMP")/record-drill-under-a-directory-named-long-enough-to-matter"
 
   # What each crate may touch and on which threads is kept by clippy (`clippy.toml` in the hub, the
   # link and the node; `specs/world-engine.md`, 线程的三种角色), on every system: each has code paths

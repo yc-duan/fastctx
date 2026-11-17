@@ -10,8 +10,8 @@
   display: flex;
   gap: 2px;
   margin-right: var(--space-3);
-  padding: 2px;
-  border-radius: var(--radius-full);
+  padding: 3px;
+  border-radius: var(--radius-m);
   background: var(--fill);
 }
 
@@ -23,10 +23,10 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  min-height: 28px;
+  min-height: 30px;
   padding: 0 12px 0 10px;
   border: 0;
-  border-radius: var(--radius-full);
+  border-radius: 8px;
   background: none;
   color: var(--text-3);
   font: inherit;
@@ -39,8 +39,8 @@
 }
 
 .ml-view.chosen {
-  background: var(--accent-wash);
-  color: var(--text);
+  background: var(--fill-strong);
+  color: var(--text-strong);
 }
 
 .ml-view .glyph {

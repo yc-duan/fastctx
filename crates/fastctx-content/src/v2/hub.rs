@@ -457,10 +457,23 @@ fn known(
         }
         return Ok(Some(refusal(header, &why, from as u64, signer)));
     }
-    let applied: Option<(Vec<u8>, Option<i64>)> = db
-        .prepare_cached("SELECT header, change FROM frames WHERE stream = ?1 AND epoch = ?2 AND first = ?3 AND holding = ?4")?
-        .query_row(params![stream, epoch, first, holding], |row| Ok((row.get(0)?, row.get(1)?)))
-        .optional()?;
+    // Whether one is applied there is asked of the frames' keys, which a
+    // frame coming for the first time, as nearly all do, is not among: its
+    // row, with its body, is read only where there is one.
+    let there = db
+        .prepare_cached(
+            "SELECT 1 FROM frames INDEXED BY frame_keys WHERE stream = ?1 AND holding = ?4 AND first = ?3 AND epoch = ?2",
+        )?
+        .query_row(params![stream, epoch, first, holding], |_| Ok(()))
+        .optional()?
+        .is_some();
+    let applied: Option<(Vec<u8>, Option<i64>)> = if there {
+        db.prepare_cached("SELECT header, change FROM frames WHERE stream = ?1 AND epoch = ?2 AND first = ?3 AND holding = ?4")?
+            .query_row(params![stream, epoch, first, holding], |row| Ok((row.get(0)?, row.get(1)?)))
+            .optional()?
+    } else {
+        None
+    };
     if let Some((kept, change)) = applied {
         if kept != bytes {
             return Err(invalid("another frame is applied at that position"));
@@ -559,9 +572,21 @@ fn apply_frame(
         earlier.insert(item, after(record, header.first + offset as u64));
     }
     let head = header.chain();
+    // The scope's next change and the library's next place in the feed are
+    // known before the frame is written: its row, which carries its body, is
+    // written once, not written and then written again twice.
+    let last: Option<(i64, Vec<u8>)> = db
+        .prepare_cached("SELECT change, prefix FROM change_log WHERE scope = ?1 ORDER BY change DESC LIMIT 1")?
+        .query_row([scope], |row| Ok((row.get(0)?, row.get(1)?)))
+        .optional()?;
+    let (change, previous) = match last {
+        Some((change, prefix)) => (change as u64 + 1, prefix),
+        None => (1, vec![0; 32]),
+    };
+    let fed = super::changes::next(db)?;
     db.prepare_cached(
-        "INSERT INTO frames (stream, epoch, first, holding, count, head, header, signature, body, change)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, NULL)",
+        "INSERT INTO frames (stream, epoch, first, holding, count, head, header, signature, body, change, feed)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
     )?
     .execute(params![
         at.stream,
@@ -572,7 +597,9 @@ fn apply_frame(
         &head[..],
         frame.header,
         frame.signature,
-        frame.body
+        frame.body,
+        change as i64,
+        fed
     ])?;
     let mut referring =
         db.prepare_cached("INSERT OR IGNORE INTO frame_objects (stream, epoch, first, holding, hash) VALUES (?1, ?2, ?3, ?4, ?5)")?;
@@ -609,14 +636,6 @@ fn apply_frame(
     }
     inserts.flush(db)?;
     numbers.finish(db)?;
-    let last: Option<(i64, Vec<u8>)> = db
-        .prepare_cached("SELECT change, prefix FROM change_log WHERE scope = ?1 ORDER BY change DESC LIMIT 1")?
-        .query_row([scope], |row| Ok((row.get(0)?, row.get(1)?)))
-        .optional()?;
-    let (change, previous) = match last {
-        Some((change, prefix)) => (change as u64 + 1, prefix),
-        None => (1, vec![0; 32]),
-    };
     let mut hasher = Sha256::new();
     hasher.update(b"fastctx-change-prefix/1");
     hasher.update(&previous);
@@ -627,8 +646,6 @@ fn apply_frame(
     let prefix: [u8; 32] = hasher.finalize().into();
     db.prepare_cached("INSERT INTO change_log (scope, change, stream, epoch, first, prefix) VALUES (?1, ?2, ?3, ?4, ?5, ?6)")?
         .execute(params![scope, change as i64, at.stream, header.epoch as i64, header.first as i64, &prefix[..]])?;
-    db.prepare_cached("UPDATE frames SET change = ?5 WHERE stream = ?1 AND epoch = ?2 AND first = ?3 AND holding = ?4")?
-        .execute(params![at.stream, header.epoch as i64, header.first as i64, holding, change as i64])?;
     let end = header.first + u64::from(header.count);
     db.prepare_cached(
         "INSERT INTO cursors (stream, holding, sequence, head) VALUES (?1, ?2, ?3, ?4)
@@ -642,8 +659,12 @@ fn apply_frame(
     let feed = super::changes::moved(db, at.stream, bytes as u64, false)?;
     // The frame is applied at that change of the library: what a device has
     // yet to take after where it stands is found by it (design §28.9, H07).
-    db.prepare_cached("UPDATE frames SET feed = ?5 WHERE stream = ?1 AND epoch = ?2 AND first = ?3 AND holding = ?4")?
-        .execute(params![at.stream, header.epoch as i64, header.first as i64, holding, feed])?;
+    // Its row was written with the place the feed was to give; one written
+    // with another is set right.
+    if feed != fed {
+        db.prepare_cached("UPDATE frames SET feed = ?5 WHERE stream = ?1 AND epoch = ?2 AND first = ?3 AND holding = ?4")?
+            .execute(params![at.stream, header.epoch as i64, header.first as i64, holding, feed])?;
+    }
     at.next = end;
     at.head = head;
     super::handover::advance(db, at)?;

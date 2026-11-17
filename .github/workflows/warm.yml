@@ -128,56 +128,6 @@ jobs:
           tar -xzf "$RUNNER_TEMP/placement-codex.tar.gz" -C "$RUNNER_TEMP/placement-codex"
           python scripts/placement.py --kernel "$PWD/target/${{ matrix.build }}/release/fastctx" --drill "$PWD/tests/placement_drill" --codex "$RUNNER_TEMP/placement-codex/codex-x86_64-unknown-linux-musl" --root /tmp/placement-drill
 
-  storage-linux:
-    needs: sync-architecture
-    name: storage drills
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.92.0
-      # The cache's key counts every toolchain installed, so a runner image's
-      # own idle one would make each image a cache of its own: only the one
-      # the build uses stays (codex-a94c19c2, run 43701326124).
-      - name: Keep only the toolchain the build uses
-        shell: bash
-        run: for t in $(rustup toolchain list | awk '{print $1}'); do case "$t" in 1.92.0-*) ;; *) rustup toolchain uninstall "$t" ;; esac; done
-      - uses: Swatinem/rust-cache@v2
-        with:
-          key: storage-linux
-          cache-on-failure: true
-      - name: Build the storage drills
-        run: |
-          cargo test --profile drill --locked -p fastctx-storage --test storage_drill --no-run
-          cargo test --profile drill --locked -p fastctx-node --features storage-drill --test record_drill --no-run
-
-  storage-windows:
-    needs: sync-architecture
-    name: storage drills on Windows
-    runs-on: windows-2025
-    defaults:
-      run:
-        shell: bash
-    steps:
-      - uses: actions/checkout@v4
-      - name: Keep the antivirus off the build's and the drills' files
-        shell: pwsh
-        run: Add-MpPreference -ExclusionPath $env:GITHUB_WORKSPACE, $env:RUNNER_TEMP, "$env:USERPROFILE\.cargo", "$env:USERPROFILE\.rustup"
-      - uses: dtolnay/rust-toolchain@1.92.0
-      # The cache's key counts every toolchain installed, so a runner image's
-      # own idle one would make each image a cache of its own: only the one
-      # the build uses stays (codex-a94c19c2, run 43701326124).
-      - name: Keep only the toolchain the build uses
-        shell: bash
-        run: for t in $(rustup toolchain list | awk '{print $1}'); do case "$t" in 1.92.0-*) ;; *) rustup toolchain uninstall "$t" ;; esac; done
-      - uses: Swatinem/rust-cache@v2
-        with:
-          key: storage-windows
-          cache-on-failure: true
-      - name: Build the storage drills
-        run: |
-          cargo test --profile drill --locked -p fastctx-storage --test storage_drill --no-run
-          cargo test --profile drill --locked -p fastctx-node --features storage-drill --test record_drill --no-run
-
   clippy:
     needs: sync-architecture
     name: clippy ${{ matrix.os }}

@@ -212,6 +212,7 @@ import { specimenComposer, type SpecimenComposer } from "./specimen/composer";
 import { ClaudeConsent } from "./app/claude-consent";
 import { Conversation } from "./conversation/conversation";
 import { LocalTranscript } from "./specimen/transcript";
+import { LocalTimeline, timelineLines } from "./specimen/timeline";
 import { ConversationPage, type Sent, type Someone } from "./conversation/page";
 import { gone } from "./conversation/view";
 import { KeptPages } from "./conversation/kept";
@@ -2035,6 +2036,27 @@ function specimenTalk(address: Address): DeskTalk {
       setTimeout(next, event.event === "heard" ? 900 : 420);
     };
     next();
+  } else if (params.has("timeline")) {
+    // `?timeline=<address>`: a conversation's timeline, one event a line,
+    // read as a shell reads one from the copy its computer holds; `hold`
+    // keeps so many of its last events back, to come every `rate` ms as
+    // the records a timeline gains, and with `fresh` as happening then.
+    void fetch(params.get("timeline")!)
+      .then((answer) => answer.text())
+      .then((text) => {
+        const read = new LocalTimeline(timelineLines(text), Number(params.get("partDelay") ?? 2), Number(params.get("hold") ?? 0), params.has("fresh"));
+        if (left) return;
+        conversation.openReplica(read.latest(), read);
+        page.update({ read: true });
+        const gain = () => {
+          const record = left ? null : read.next();
+          if (!record) return;
+          conversation.records(read.generation, [record]);
+          page.update();
+          setTimeout(gain, Number(params.get("rate") ?? 400));
+        };
+        if (params.has("hold")) setTimeout(gain, Number(params.get("rate") ?? 400));
+      });
   } else if (params.has("events")) {
     // `?events=<address>`: a conversation's events, one a line, read whole
     // as a shell would keep them, for looking at a real one.
@@ -2423,10 +2445,23 @@ function liveTalk(address: Address): DeskTalk {
       conversation.rebased(generation, offset, turnsAdded);
       page.update({ read: true });
     },
-    timeline: (delta) => page.reopened(() => { if (!conversation.timeline(delta)) reading.again(); }),
-    live: (event, key, evicted, placement, older, object, body) => {
+    replica: (part, parts) => page.reopened(() => conversation.openReplica(part, parts)),
+    records: (generation, records) => {
       heardAt = Date.now();
-      if (!conversation.liveEvent(event, key, evicted, placement, older, object, body)) reading.again();
+      conversation.records(generation, records);
+      page.update();
+    },
+    preparing: (preparing) => {
+      conversation.prepares(preparing);
+      page.update();
+    },
+    waiting: (events) => {
+      conversation.waits(events);
+      page.update();
+    },
+    asked: (event) => {
+      heardAt = Date.now();
+      conversation.asked(event);
       page.update();
     },
     happened: (at, event) => {

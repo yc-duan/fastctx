@@ -24,6 +24,15 @@ pub(super) async fn take(
     proven: &[Bytes],
     staged: &mut u64,
 ) -> Result<Reply, String> {
+    // With a hub that keeps asset lines, the frame goes on one, whole
+    // however long its body: nothing is staged.
+    if link.keeps_asset_lines() {
+        let mut received = super::lines::take(assets, link, scope, std::slice::from_ref(frame)).await?;
+        if received.len() != 1 {
+            return Err("the hub's word on the frame is not one".into());
+        }
+        return Ok(Reply::Received { received: received.remove(0) });
+    }
     if !frame.too_large() {
         let request = Request::Take { scope: scope.to_string(), frame: frame.clone(), proven: proven.to_vec(), staged: 0 };
         return ask(assets, link, request).await;

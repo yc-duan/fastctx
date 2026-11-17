@@ -1,9 +1,11 @@
-//! A cancellable full-history search streams one bounded batch to its renderer.
+//! A cancellable search of a whole conversation shown from its timeline
+//! (`replica`): its events are read a page after another, none of them held
+//! by the page, and streamed one bounded batch at a time to the page, which
+//! counts what each holds of the words sought.
 
 use crate::{
-    timeline_search_index::{self as index, Count, Index},
-    timeline_walk as walk,
-    timeline_watch::Shared,
+    replica::Shared,
+    replica_search_index::{self as index, Count, Index},
 };
 use fastctx_types::timeline_pages::{
     PAGE_BYTES, PAGE_EVENTS, TimelineAsk, TimelineChange, TimelineEvent, TimelineFrom, TimelinePlace, TimelineShown,
@@ -17,6 +19,41 @@ use std::{
         atomic::{AtomicBool, AtomicU64, Ordering},
     },
 };
+
+/// A page of the timeline as a search reads it.
+struct Page {
+    revision: Option<u64>,
+    initializing: Option<bool>,
+    through: Option<u64>,
+    events: Vec<TimelineEvent>,
+    older: bool,
+}
+
+async fn page(reader: &Shared, from: TimelineFrom) -> Result<Page, String> {
+    let asked = TimelineAsk::Page { resident: reader.resident.clone(), from, max_events: PAGE_EVENTS, max_bytes: PAGE_BYTES };
+    match reader.ask(asked).await.map_err(|error| error.to_string())? {
+        TimelineTold::Page { revision, initializing, through, events, older, .. } => {
+            Ok(Page { revision, initializing, through, events, older: older.is_some() })
+        }
+        _ => Err("the timeline did not answer a page".into()),
+    }
+}
+
+/// The event `event` shows, whole: one kept as an object is read through,
+/// and one too long to open stands as it is shown, its length said.
+async fn full(reader: &Shared, event: &TimelineEvent) -> Result<(fastctx_types::session::SessionEvent, Option<u64>), String> {
+    match &event.shown {
+        TimelineShown::Event { event } => Ok((serde_json::from_value(event.clone()).map_err(|error| error.to_string())?, None)),
+        TimelineShown::Oversized { bytes, .. } if *bytes > crate::replica_reads::EXPANDED_BYTES => {
+            let (preview, _) = crate::replica::decoded(event).ok_or("the oversized event has no readable preview")?;
+            Ok((preview, Some(*bytes)))
+        }
+        TimelineShown::Oversized { bytes, object, .. } => {
+            let raw = crate::replica_reads::whole(reader, object, *bytes).await?;
+            Ok((serde_json::from_str(raw.get()).map_err(|error| error.to_string())?, None))
+        }
+    }
+}
 
 #[derive(Default)]
 pub(crate) struct Searches {
@@ -209,7 +246,7 @@ impl Search {
         self.check()?;
         if state.queued.is_empty() {
             if let Some(from) = state.from.clone() {
-                let page = walk::page(&reader, from).await?;
+                let page = page(&reader, from).await?;
                 if page.initializing == Some(true) || page.revision.is_none() {
                     return Err("the history is still being prepared".into());
                 }
@@ -224,13 +261,12 @@ impl Search {
                 state.queued.extend(page.events);
                 state.complete = false;
             } else {
-                let resident = reader.lock().await.resident.clone();
+                let resident = reader.resident.clone();
                 let after = state.through.ok_or("this timeline cannot resume a full-history search")?;
-                match walk::ask(
-                    &reader,
-                    TimelineAsk::Changes { resident, after, max_events: PAGE_EVENTS, max_bytes: PAGE_BYTES },
-                )
-                .await?
+                match reader
+                    .ask(TimelineAsk::Changes { resident, after, max_events: PAGE_EVENTS, max_bytes: PAGE_BYTES })
+                    .await
+                    .map_err(|error| error.to_string())?
                 {
                     TimelineTold::Changes { changes, through, more, .. } => {
                         let mut gone = Vec::new();
@@ -263,12 +299,12 @@ impl Search {
             if self.known.contains(&(event.place.item.clone(), event.sequence)) {
                 // Its text is the page's already: told by place, as it would
                 // be counted from a preview or a whole body alike.
-                let preview = matches!(&event.shown, TimelineShown::Oversized { bytes, .. } if *bytes > crate::timeline_body::EXPANDED_BYTES);
+                let preview = matches!(&event.shown, TimelineShown::Oversized { bytes, .. } if *bytes > crate::replica_reads::EXPANDED_BYTES);
                 bytes += event.place.item.len() + event.place.order.len() + 64;
                 pending.push((event.place.clone(), event.sequence, preview));
                 events.push(Event { place: event.place, sequence, event: None });
             } else {
-                let (body, preview) = crate::timeline_scan::full(&reader, &event).await?;
+                let (body, preview) = full(&reader, &event).await?;
                 bytes += serde_json::to_vec(&body).map_or(0, |bytes| bytes.len());
                 pending.push((event.place.clone(), event.sequence, preview.is_some()));
                 events.push(Event { place: event.place, sequence, event: Some(body) });
@@ -297,6 +333,6 @@ pub(crate) async fn conversation_search(
     id: u64,
     request: Request,
 ) -> Result<Reply, String> {
-    let reader = shell.timeline_readers.get(id).ok_or("the conversation is no longer watched")?;
+    let reader = shell.readers.get(id).ok_or("the conversation is no longer watched")?;
     reader.searches.request(reader.clone(), request).await
 }

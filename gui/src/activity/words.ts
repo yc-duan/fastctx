@@ -20,10 +20,7 @@ export interface ActivityWords {
   folders: string;
   openFile: string;
   allChanges: string;
-  /** Machines that did not answer. */
-  unanswered(machines: string): string;
-  /** More went on in the span than a machine's answer holds. */
-  truncated(limit: number): string;
+
   /** A Codex session the user opened on their own on this computer, made a
    *  conversation of Fastctx's (`world-layers.md`, 接进来); and why. */
   bringIn: string;
@@ -41,8 +38,7 @@ export const zhActivity: ActivityWords = {
   folders: "查看这台电脑的目录",
   openFile: "打开文件",
   allChanges: "全部改动",
-  unanswered: (machines) => `无应答：${machines}`,
-  truncated: (limit) => `活动较多，每台电脑仅统计最近 ${limit.toLocaleString("en-US")} 条`,
+
   bringIn: "接进来",
   bringInWhy: "把这个 Codex 会话接成这里的对话，历史保留",
 };
@@ -58,8 +54,7 @@ export const enActivity: ActivityWords = {
   folders: "This computer's folders",
   openFile: "Open the file",
   allChanges: "All its changes",
-  unanswered: (machines) => `No answer from ${machines}`,
-  truncated: (limit) => `Much went on: only the last ${limit.toLocaleString("en-US")} runs of each computer are counted`,
+
   bringIn: "Bring in",
   bringInWhy: "Make this Codex session a conversation here, its history kept",
 };

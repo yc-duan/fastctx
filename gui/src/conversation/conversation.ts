@@ -1,19 +1,23 @@
 import { sameEvent } from "./event-identity";
-import { grown, placeEvent } from "./timeline-events";
-import { canReviseItem } from "./timeline-fold";
 // A conversation as its page holds it (`world-gui.md`, 对话: 很长的对话). The
-// shell keeps every event of it (`src-tauri/src/transcript.rs`); the page
-// holds its latest turns, read as they go on, and whatever earlier parts its
-// reader came to, each folded on its own (`model.ts`). Turns not held stand
-// as gaps, before everything held or between two parts, read from the shell
-// when the reader comes to them and let go again when the reader is far
-// away. So however long a conversation grows, the page holds and draws a few
-// thousand events of it at most, and an event costs it the same.
+// page holds its latest part, kept current, and whatever earlier parts its
+// reader came to, each folded on its own (`model.ts`). What is not held
+// stands as a gap, before everything held or between two parts, as tall as
+// it would be drawn, read when the reader comes to it and let go again when
+// the reader is far away. So however long a conversation grows, the page
+// holds and draws a few thousand events of it at most, and its reader goes
+// anywhere in it as in one page.
+//
+// A conversation is shown from its timeline (`replica.ts`): parts read from
+// the copy this computer holds, each event at its place, changed in place
+// as the timeline's records say. One on a machine of an earlier release is
+// watched whole instead, its events numbered from its first, the shell
+// keeping all of them (`src-tauri/src/transcript.rs`).
 //
 // Everything a page asks of a conversation is asked here, as of one: what
 // it lays out, an entry by its key, what a turn said, whether it is busy.
-// Each question goes to the part that holds its answer; what is live (the
-// turn under way, words being sent, requests waiting) is in the latest.
+// Each question goes to the part that holds its answer; what is live (words
+// being sent, requests waiting, whether it works now) is in the latest.
 
 import { askKey, type AskState } from "./ask-state";
 import { inOrder, type ModelRequest } from "./requests";
@@ -23,10 +27,12 @@ import { Fold, sayOf, type Block, type Entry, type Gap, type KeptWords, type Sen
 import type { AgentRun } from "./agents";
 import { machineNamed } from "./acted-on";
 import type { PendingControl } from "../world/control";
+import { Measured, before, begins, insert, member, ordinal, placeAt, removeAt, spanOf, type Place, type ReadFrom, type ReplicaPart, type ReplicaRecord, type Span } from "./replica";
 
-export interface TimelinePosition { order: string; item: string }
+export type TimelinePosition = Place;
 
-/** The part a page opens on, in place of all it held. */
+/** The part a page opens on, in place of all it held, of a conversation
+ *  watched whole. */
 export interface Window {
   generation: number;
   /** Where its events begin, among all the conversation's. */
@@ -35,17 +41,6 @@ export interface Window {
   events: SessionEvent[];
   /** What its turns read of what came before them. */
   carry: SessionEvent[];
-  /** Opaque timeline paging has no full-history ordinal or turn count. */
-  pages?: { older: boolean; newer: boolean; preparing?: boolean; partial_older?: boolean; partial_newer?: boolean; keys?: string[]; places?: (TimelinePosition | null)[]; live_keys?: string[]; pending?: SessionEvent[]; objects: { at: number; bytes: number; object: string }[] };
-}
-
-export interface TimelineDelta {
-  generation: number;
-  events: { key: string; event: SessionEvent; place?: TimelinePosition | null }[];
-  pending?: SessionEvent[];
-  removed: string[];
-  placed: { key: string; after: string | null }[];
-  pages: NonNullable<Window["pages"]>;
 }
 
 /** A part read from the shell. */
@@ -58,14 +53,9 @@ export interface PartRead {
   events: SessionEvent[];
   /** Facts its runs told after it. */
   late: SessionEvent[];
-  /** A bounded replacement, when the shell reads directly from the node. */
-  window?: Window;
 }
 
 export type Edge =
-  | { edge: "latest" }
-  | { edge: "position"; place: TimelinePosition }
-  | { edge: "turn"; turn: string }
   | { edge: "before"; at: number; floor: number }
   | { edge: "after"; at: number; ceiling: number }
   | { edge: "around"; at: number; floor: number; ceiling: number };
@@ -93,19 +83,20 @@ export interface Found {
   unindexed: [number, number][];
 }
 
-/** Where the parts a page does not hold are read from. */
-export interface ScanCursor { revision: string; after: TimelinePosition; until: TimelinePosition; through: string | null; seeking?: boolean; restarts?: number }
 export interface ExpandedEvent { object: string; event: SessionEvent }
-export interface Scanned { events: SessionEvent[]; truncated?: { at: number; bytes: number }[]; restart?: boolean; next: ScanCursor | null }
 export type ExportReading = readonly Entry[] | { previewBytes: number } | { restart: true };
 
+/** Where the parts a page does not hold are read from. */
 export interface PartSource {
   identity?(): string;
   search?(request: import("./timeline-find").SearchRequest): Promise<import("./timeline-find").SearchReply>;
-  scan?(cursor: ScanCursor | null): Promise<Scanned>;
+  /** A part of a conversation watched whole. */
   part(generation: number, edge: Edge): Promise<PartRead | null>;
-  object?(generation: number, object: string): Promise<ExpandedEvent>;
-  follow?(revision: number, following: boolean): Promise<void>;
+  /** A part of a conversation shown from its timeline; none when the
+   *  timeline was made anew since. */
+  page?(generation: number, from: ReadFrom): Promise<ReplicaPart | null>;
+  /** An event kept whole as an object. */
+  object?(object: string, bytes: number): Promise<ExpandedEvent>;
   /** The files it changed as the machine it lives on keeps them. */
   files?(after: string): Promise<import("../world/bridge").FileChangesTold>;
   /** Where a turn first appears. */
@@ -115,7 +106,10 @@ export interface PartSource {
   find(generation: number, query: string, held: [number, number][]): Promise<Found | null>;
 }
 
-/** A part held: the events `start..end` of the conversation, folded. */
+/** A part held, folded. Of a conversation watched whole it is the events
+ *  `start..end`, counted from its first; of one shown from its timeline,
+ *  the stretch of it between those places, counted as `replica.ts` counts
+ *  them. */
 export interface Held {
   start: number;
   end: number;
@@ -124,10 +118,32 @@ export interface Held {
   fold: Fold;
 }
 
+/** Where the reader stands in a gap the view came into: how far down it,
+ *  how much of it is above the view, and how tall it is drawn. */
+export interface Into {
+  fraction: number;
+  above: number;
+  height: number;
+}
+
 type Heard = Extract<Entry, { kind: "heard" }>;
 type ProseEntry = Extract<Entry, { kind: "prose" }>;
 type ToolEntry = Extract<Entry, { kind: "tool" }>;
 
+/** The most bytes of events opened whole a page keeps. */
+const EXPANDED_BYTES = 8 * 1024 * 1024;
+
+/** A message the timeline just gained is shown as it would be written, a
+ *  little at a time: how long that takes at most and at least, how often a
+ *  little more is shown, how lately the message must have been written,
+ *  how short it may be, and how many records may wait behind it before it
+ *  is shown whole at once. */
+const TYPED_MOST_MS = 2400;
+const TYPED_LEAST_MS = 400;
+const TYPED_EVERY_MS = 32;
+const TYPED_WITHIN_MS = 120_000;
+const TYPED_LEAST_CHARS = 24;
+const TYPED_WAITING_MOST = 64;
 
 /** How long after one bubble the next has its moment said above it. */
 const CHAT_GAP_MS = 5 * 60_000;
@@ -147,11 +163,29 @@ export class Conversation {
   /** The parts held, in order; the last is the latest, and live. */
   private parts: Held[];
   private generation = 0;
-  private pageWindow: Window | null = null;
+  /** What each part read from the timeline holds besides its fold; none
+   *  of a conversation watched whole. */
+  private spans = new Map<Held, Span>();
+  /** Whether it is shown from its timeline. */
+  private replica = false;
+  /** Whether its timeline is still being made from the history. */
+  private making = false;
+  /** The requests that wait for the user, as its machine tells them. */
+  private asks: SessionEvent[] = [];
+  /** How tall stretches no longer held were. */
+  private measured = new Measured();
+  /** The records that came while a page was being read, for each reading
+   *  under way: a page read before them is set right by them once it comes. */
+  private meanwhile = new Set<ReplicaRecord[]>();
+  /** What its machine last told it holds now (`now`), told again to a
+   *  latest part folded anew, which has only its records to go by. */
+  private nowTold: { busy: boolean; turn: string | null; kept: KeptWords[]; halted: string | null } | null = null;
+  /** Events opened whole, by the object each is kept as. */
   private expanded = new Map<string, SessionEvent>();
-  private terminalBodies = new Map<string, string>();
-  private followRevision = 0;
-  private follows: boolean | null = null;
+  /** The message being shown as it would be written, and the records that
+   *  came after it and wait for it. */
+  private typing: { shown: import("./replica").Shown; timer: ReturnType<typeof setTimeout> } | null = null;
+  private behind: ReplicaRecord[] = [];
   private source: PartSource | null = null;
   /** Moves when parts come and go. */
   private structure = 0;
@@ -242,33 +276,32 @@ export class Conversation {
     return this.parts.map((part) => [part.start, part.end]);
   }
 
-  /** Whether parts of it are read from a shell. */
-  get preparing(): boolean { return this.pageWindow?.pages?.preparing === true; }
+  /** Whether its timeline is still being made from the history. */
+  get preparing(): boolean { return this.replica && this.making; }
 
+  /** Whether parts of it are read from a shell. */
   get windowed(): boolean {
     return this.source !== null;
   }
 
-  // Reading it from the shell.
+  /** Whether it is shown from its timeline, each event at a place. */
+  get paged(): boolean { return this.replica; }
+
+  // Watched whole: reading it from the shell.
 
   /** The part the page opens on, in place of all it held. */
   open(window: Window, source: PartSource | null): void {
     this.searchVersion += 1;
     if (source !== this.source) this.searchSource += 1;
     this.generation = window.generation;
-    this.pageWindow = window.pages ? window : null;
-    this.follows = null;
-    this.terminalBodies.clear();
-    const objects = new Set(window.pages?.objects.map((object) => object.object));
-    for (const object of this.expanded.keys()) if (!objects.has(object)) this.expanded.delete(object);
+    this.replica = false;
+    this.making = false;
+    this.spans.clear();
+    this.measured.clear();
+    this.expanded.clear();
     this.source = source;
     const tail = this.live;
-    const events = [...window.events];
-    for (const object of window.pages?.objects ?? []) {
-      const expanded = this.expanded.get(object.object);
-      if (expanded) events[object.at] = expanded;
-    }
-    tail.history(events, window.carry, window.pages?.keys, !window.pages, window.pages?.pending);
+    tail.history([...window.events], window.carry);
     this.parts = [{ start: window.start, end: window.start + window.events.length, turnsBefore: window.turns_before, turns: 0, fold: tail }];
     this.reading.clear();
     this.structure += 1;
@@ -277,7 +310,7 @@ export class Conversation {
   /** Events kept after all that was given; false when they do not follow
    *  what is held, and it must be read again. */
   extended(start: number, events: SessionEvent[]): boolean {
-    if (start !== this.tail.end) return false;
+    if (this.replica || start !== this.tail.end) return false;
     this.live.extend(events);
     this.tail.end += events.length;
     return true;
@@ -286,180 +319,329 @@ export class Conversation {
   /** One thing as it happened, the `at`th event; false when it does not
    *  follow what is held. */
   happened(at: number, event: SessionEvent): boolean {
-    if (at !== this.tail.end) return false;
+    if (this.replica || at !== this.tail.end) return false;
     this.route(event);
     this.live.event(event);
-    this.pageWindow?.events.push(event);
     this.tail.end += 1;
     return true;
   }
 
-  /** Applies only the realtime change, retaining no raw chunk journal. */
-  liveEvent(event: SessionEvent, key: string, evicted: readonly string[] = [], placement?: { after: string | null }, older?: boolean, object?: string, body?: SessionEvent): boolean {
-    if (event.event === "changed" && (event.change.kind === "request" || event.change.kind === "resolved")) {
-      this.live.livePending(event);
-      const pages = this.pageWindow?.pages;
-      if (pages) {
-        const id = askKey(event.change.id);
-        const pending = (pages.pending ?? []).filter((event) => event.event !== "changed" || event.change.kind !== "request" || askKey(event.change.id) !== id);
-        if (event.change.kind === "request") pending.push(event);
-        pages.pending = pending;
-      }
-      return true;
-    }
-    const held = this.pageWindow;
-    const oldPlaces = new Map(held?.pages?.keys?.map((key, at) => [key, held.pages?.places?.[at] ?? null]));
-    if (held?.pages?.keys) {
-      if (older !== undefined && held.pages.older !== older) { held.pages.older = older; this.structure += 1; }
-      const at = held.pages.keys.indexOf(key);
-      const snapshot = grown(at < 0 ? undefined : held.events[at], event);
-      if (!snapshot) return false;
-      if (at < 0) { held.pages.keys.push(key); held.events.push(snapshot); held.pages.places?.push(null); }
-      else { held.events[at] = snapshot; held.pages.objects = held.pages.objects.filter((object) => object.at !== at); }
-    }
-    const cached = new Set(this.expanded.keys());
-    if (object && body) { this.terminalBodies.set(object, key); this.rememberBody(object, body); }
-    this.route(event);
-    this.live.event(body ?? event, key);
-    if (held?.pages?.keys && [...cached].some((object) => !this.expanded.has(object))) {
-      const bodies = new Map([...this.terminalBodies].map(([object, key]) => [key, this.expanded.get(object)!]));
-      for (const object of held.pages.objects) { const full = this.expanded.get(object.object); if (full) bodies.set(held.pages.keys[object.at]!, full); }
-      const shown = held.events.map((event, at) => bodies.get(held.pages!.keys![at]!) ?? event);
-      const fold = this.live.revised(held.events, held.pages.keys, shown, held.pages.keys, held.pages.pending ?? []);
-      this.parts = [{ ...this.tail, fold }];
-    }
-    const removed = new Set(evicted);
-    this.live.evictPlaces([...removed]);
-    if (removed.size) {
-      const window = this.pageWindow;
-      if (window?.pages?.keys) {
-        const positions = new Map<number, number>();
-        const keys: string[] = [];
-        window.events = window.events.filter((_, at) => {
-          if (removed.has(window.pages!.keys![at]!)) return false;
-          positions.set(at, keys.length); keys.push(window.pages!.keys![at]!); return true;
-        });
-        window.pages.keys = keys;
-        window.pages.places = keys.map((current) => oldPlaces.get(current) ?? (current === key ? evicted.map((old) => oldPlaces.get(old)).find((place) => !!place) : null) ?? null);
-        window.pages.objects = window.pages.objects.flatMap((object) => { const at = positions.get(object.at); return at === undefined ? [] : [{ ...object, at }]; });
+  // Shown from its timeline.
 
-        this.tail.end = window.events.length;
-      }
-      this.parts = [...this.parts]; this.structure += 1;
-    }
-    if (placement && this.pageWindow && !placeEvent(this.pageWindow, key, placement.after)) return false;
-    return true;
-  }
-
-  /** Materialization reuses unchanged events and preserves the navigation. */
-  timeline(delta: TimelineDelta): boolean {
+  /** The latest part of its timeline, in place of all the page held:
+   *  opened, or its timeline made anew. */
+  openReplica(part: ReplicaPart, source: PartSource | null): void {
+    this.typed(false);
     this.searchVersion += 1;
-    const held = this.pageWindow;
-    if (!held?.pages?.keys || held.generation !== delta.generation) return false;
-    const events = new Map(held.pages.keys.map((key, at) => [key, held.events[at]!]));
-    const places = new Map(held.pages.keys.map((key, at) => [key, held.pages?.places?.[at] ?? null]));
-    for (const changed of delta.events) { events.set(changed.key, changed.event); places.set(changed.key, changed.place ?? places.get(changed.key) ?? null); }
-    const removed = new Set(delta.removed);
-    const keys = held.pages.keys.filter((key) => !removed.has(key));
-    for (const place of delta.placed) {
-      const old = keys.indexOf(place.key);
-      if (old >= 0) keys.splice(old, 1);
-      const at = place.after === null ? -1 : keys.indexOf(place.after);
-      if (place.after !== null && at < 0) return false;
-      keys.splice(at + 1, 0, place.key);
-    }
-    const ordered = keys.map((key) => events.get(key));
-    if (ordered.some((event) => event === undefined)) return false;
-    const window = { ...held, events: ordered as SessionEvent[], pages: { ...delta.pages, keys, places: keys.map((key) => places.get(key) ?? null), pending: delta.pending ?? held.pages.pending ?? [] } };
-    const objects = new Set(window.pages.objects.map((object) => object.object));
-    for (const [object, key] of this.terminalBodies) if (objects.has(object) || !keys.includes(key)) this.terminalBodies.delete(object);
-    for (const object of this.expanded.keys()) if (!objects.has(object) && !this.terminalBodies.has(object)) this.expanded.delete(object);
-    const shown = [...window.events];
-    for (const object of window.pages.objects) { const full = this.expanded.get(object.object); if (full) shown[object.at] = full; }
-    const previous = new Map(held.pages.keys.map((key, at) => [key, held.events[at]]));
-    const hasUsage = shown.some((event) => event.event === "changed" && (event.change.kind === "usage" || event.change.kind === "message_usage"));
-    const itemOnly = delta.pending === undefined && delta.removed.length === 0
-      && delta.events.every(({ key, event }) => canReviseItem(previous.get(key), event, hasUsage));
-    let fold = this.live;
-    if (itemOnly) fold.reviseItems(shown, keys, delta.events.map(({ key }) => key), delta.removed);
-    else fold = fold.revised(held.events, held.pages.keys, shown, keys, window.pages.pending);
-    this.pageWindow = window;
-    this.parts = [{ ...this.tail, fold, end: window.start + window.events.length }];
+    if (source !== this.source) this.searchSource += 1;
+    this.generation = part.generation;
+    this.replica = true;
+    this.making = part.preparing;
+    this.source = source;
+    this.measured.clear();
+    this.expanded.clear();
+    const span = spanOf(part);
+    span.last = true;
+    const tail = this.live;
+    tail.history([...span.events], [], span.keys, false, this.asks);
+    const held = this.placed({ start: 0, end: 0, turnsBefore: 0, turns: 0, fold: tail }, span);
+    this.spans = new Map([[held, span]]);
+    this.parts = [held];
+    this.reading.clear();
     this.structure += 1;
-    return true;
   }
 
-  /** Fetches only after the reader explicitly opens a deferred event. */
-  async readFull(key: string): Promise<void> {
-    const entry = this.get(key);
-    const window = this.pageWindow;
-    const source = this.source;
-    const object = entry && this.objectOf(entry);
-    if (!object || !source?.object || !window) return;
-    const generation = this.generation;
-    const expected = window.events[object.at];
-    const expanded = await source.object(generation, object.object);
-    if (expanded.object !== object.object) throw new Error("the expanded object did not match the selected content");
-    const event = expanded.event;
-    if (expected && !sameEvent(expected, event)) throw new Error("the expanded event did not match the selected entry");
-    if (source !== this.source || !this.pageWindow) return;
-    const current = this.pageWindow.pages?.objects.find((held) => held.object === object.object);
-    if (!current) return;
-    // Expanded bodies are budgeted separately within the held window. Bodies
-    // evicted by paging are fetched again after the reader returns.
-    this.rememberBody(current.object, event);
-    const held = this.pageWindow;
-    const keys = held.pages?.keys;
-    if (!keys) return;
-    const shown = [...held.events];
-    for (const object of held.pages?.objects ?? []) {
-      const full = this.expanded.get(object.object);
-      if (full) shown[object.at] = full;
+  /** Whether its timeline is still being made, as its machine says now. */
+  prepares(making: boolean): void {
+    if (this.making === making) return;
+    this.making = making;
+    this.structure += 1;
+  }
+
+  /** Where `part` stands, by the first and last of what `span` holds. */
+  private placed(part: Held, span: Span): Held {
+    const first = span.places[0];
+    const last = span.places[span.places.length - 1];
+    part.start = first ? ordinal(first) : span.older ? ordinal(span.older) : 0;
+    part.end = last ? ordinal(last) + 1 : part.start;
+    return part;
+  }
+
+  /** The events of `span` as the page shows them: one opened whole in the
+   *  place of what it was cut short to. */
+  private shown(span: Span): SessionEvent[] {
+    if (this.expanded.size === 0 || span.deferred.size === 0) return [...span.events];
+    return span.events.map((event, at) => {
+      const deferred = span.deferred.get(span.keys[at]!);
+      return (deferred && this.expanded.get(deferred.object)) ?? event;
+    });
+  }
+
+  /** The part that holds what stands at `place`, or takes what comes to
+   *  stand there: the one it lies within; the one before it when the next
+   *  begins where that one ends; the latest when it is past everything; the
+   *  first when the timeline begins with it. None when it lies in a gap. */
+  private partAt(place: Place): Held | null {
+    for (const [index, part] of this.parts.entries()) {
+      const span = this.spans.get(part);
+      if (!span) continue;
+      const first = span.places[0];
+      const last = span.places[span.places.length - 1];
+      if (!first || !last) {
+        if (span.last) return part;
+        continue;
+      }
+      if (before(place, first)) {
+        // Before it: its own only where nothing of the timeline is before it.
+        if (index === 0 && span.older === null) return part;
+        const earlier = this.parts[index - 1];
+        if (earlier && this.spans.get(earlier)?.joined) return earlier;
+        return null;
+      }
+      if (!before(last, place) || span.last) return part;
     }
-    const fold = this.live.revised(held.events, keys, shown, keys, held.pages?.pending ?? []);
-    this.parts = [{ ...this.tail, fold }];
+    return null;
+  }
+
+  /** Records its timeline gained, in the order they were written: each
+   *  event stands as told from now on, where it is told to stand, and one
+   *  gone is gone. What lies in a gap is read when the reader comes to it. */
+  records(generation: number, records: readonly ReplicaRecord[]): void {
+    if (!this.replica || generation !== this.generation) return;
+    // Behind a message being written out, they wait their turn; too many
+    // of them, and it is shown whole at once.
+    if (this.typing) {
+      this.behind.push(...records);
+      if (this.behind.length > TYPED_WAITING_MOST) this.typed(true);
+      return;
+    }
+    // A message just written, come by itself or with little else, is shown
+    // as it would be written: what came before it is taken first, what came
+    // after it waits.
+    const at = records.length <= 8 ? records.findIndex((record) => this.writes(record)) : -1;
+    if (at < 0) {
+      this.take(records);
+      return;
+    }
+    this.take(records.slice(0, at));
+    this.behind.push(...records.slice(at + 1));
+    this.write((records[at] as Extract<ReplicaRecord, { record: "is" }>).shown);
+  }
+
+  /** Whether `record` is a message the timeline just gained at its end,
+   *  written lately: one to show as it would be written. */
+  private writes(record: ReplicaRecord): boolean {
+    if (record.record !== "is" || typeof document === "undefined" || document.visibilityState !== "visible") return false;
+    const event = record.shown.event;
+    if (event.event !== "finished" || event.item.kind !== "message" || event.item.text.length < TYPED_LEAST_CHARS) return false;
+    if (Math.abs(Date.now() - Date.parse(event.at)) > TYPED_WITHIN_MS) return false;
+    const span = this.spans.get(this.tail);
+    if (!span || this.parts.some((part) => this.spans.get(part)?.keys.includes(record.shown.key))) return false;
+    const last = span.places[span.places.length - 1];
+    return !last || before(last, record.shown.place);
+  }
+
+  /** Shows the message `shown` as it would be written: begun empty, a
+   *  little more of its words every moment, then as the timeline holds it. */
+  private write(shown: import("./replica").Shown): void {
+    const event = shown.event;
+    if (event.event !== "finished" || event.item.kind !== "message") return;
+    const text = event.item.text;
+    const fold = this.tail.fold;
+    fold.event({ ...event, event: "began", item: { ...event.item, text: "" } }, shown.key);
+    const total = Math.min(TYPED_MOST_MS, Math.max(TYPED_LEAST_MS, text.length * 5));
+    const each = Math.max(2, Math.ceil(text.length / (total / TYPED_EVERY_MS)));
+    let at = 0;
+    const more = () => {
+      if (this.typing?.shown !== shown) return;
+      let end = Math.min(text.length, at + each);
+      // Never between the two halves of one character.
+      const code = text.charCodeAt(end - 1);
+      if (end < text.length && code >= 0xd800 && code <= 0xdbff) end += 1;
+      this.tail.fold.event({ at: event.at, event: "grew", turn: event.turn, item: event.item.id, part: "text", text: text.slice(at, end) }, shown.key);
+      at = end;
+      if (at >= text.length) this.typed(true);
+      else {
+        this.typing.timer = setTimeout(more, TYPED_EVERY_MS);
+        this.changed();
+      }
+    };
+    this.typing = { shown, timer: setTimeout(more, TYPED_EVERY_MS) };
+  }
+
+  /** The message being written out stands whole, as the timeline holds it,
+   *  and what waited behind it is taken; `drawn` when the page is to draw
+   *  again for it. */
+  private typed(drawn: boolean): void {
+    const typing = this.typing;
+    if (!typing) return;
+    clearTimeout(typing.timer);
+    this.typing = null;
+    const behind = this.behind;
+    this.behind = [];
+    this.take([{ record: "is", shown: typing.shown }, ...behind]);
+    if (drawn) this.changed();
+  }
+
+  /** Takes `records` in as they stand; `again` when they were taken before
+   *  and are taken once more over a page read meanwhile. */
+  private take(records: readonly ReplicaRecord[], again = false): void {
+    if (records.length === 0) return;
+    if (!again) for (const since of this.meanwhile) since.push(...records);
+    this.searchVersion += 1;
+    const touched = new Map<Held, { events: SessionEvent[]; keys: string[] }>();
+    const touch = (part: Held, span: Span) => {
+      if (!touched.has(part)) touched.set(part, { events: this.shown(span), keys: [...span.keys] });
+    };
+    for (const record of records) {
+      const key = record.record === "is" ? record.shown.key : record.key;
+      // The part that held it: where it stands on as it is told anew, should
+      // the place it is told at be no part's by itself, as the first of a
+      // part with a gap before it is not.
+      let home: Held | null = null;
+      for (const part of this.parts) {
+        const span = this.spans.get(part);
+        const at = span ? span.keys.indexOf(key) : -1;
+        if (!span || at < 0) continue;
+        touch(part, span);
+        removeAt(span, at);
+        home ??= part;
+      }
+      if (record.record !== "is") continue;
+      const part = this.partAt(record.shown.place) ?? home;
+      const span = part && this.spans.get(part);
+      if (!part || !span) continue;
+      // What a job or an agent told of a run an earlier part holds.
+      this.route(record.shown.event);
+      const last = span.places[span.places.length - 1];
+      // Added at the end of the latest part, nothing else of it changed: it
+      // is read as it comes, the part's other entries left as they are.
+      if (part === this.tail && !touched.has(part) && (!last || before(last, record.shown.place))) {
+        insert(span, record.shown);
+        part.fold.event(record.shown.event, record.shown.key);
+        this.placed(part, span);
+        continue;
+      }
+      touch(part, span);
+      insert(span, record.shown);
+    }
+    for (const [part, previous] of touched) this.refold(part, previous);
+    if (touched.size) {
+      this.parts = [...this.parts];
+      this.structure += 1;
+    }
+  }
+
+  /** Folds `part` again after its events changed, what did not change
+   *  kept as it was drawn. */
+  private refold(part: Held, previous: { events: readonly SessionEvent[]; keys: readonly string[] }): void {
+    const span = this.spans.get(part);
+    if (!span) return;
+    part.fold = part.fold.revised(previous.events, previous.keys, this.shown(span), span.keys, part === this.tail ? this.asks : []);
+    this.placed(part, span);
+    this.relate(part);
+    // Folded anew from its records alone, the latest part is told again
+    // what its machine holds of it now.
+    const now = this.nowTold;
+    if (part === this.tail && now) part.fold.now(now.busy, now.turn, now.kept, now.halted);
+  }
+
+  /** Tells `part` what the parts after it hold of its runs and agents: a
+   *  job goes on after its turn, and an agent for as long as it likes, so
+   *  what became of them is written later than they are. */
+  private relate(part: Held): void {
+    const at = this.parts.indexOf(part);
+    if (at < 0) return;
+    for (const later of this.parts.slice(at + 1)) {
+      for (const event of this.spans.get(later)?.events ?? []) {
+        if (event.event !== "changed") continue;
+        const change = event.change;
+        if (change.kind === "run_facts_updated") {
+          if (part.fold.holdsCall(change.update.call_id)) part.fold.late(event);
+          continue;
+        }
+        const agent =
+          change.kind === "agent_started" ? change.agent.id : change.kind === "agent_event" || change.kind === "agent_ended" ? change.agent_id : null;
+        if (agent === null) continue;
+        const call = change.kind === "agent_started" ? change.agent.call : undefined;
+        if (part.fold.agents.get(agent) || (call && part.fold.holdsCall(call))) part.fold.late(event);
+      }
+    }
+  }
+
+  /** The requests that wait for the user now, all of them, as its machine
+   *  tells them when the page begins to hear it. */
+  waits(events: readonly SessionEvent[]): void {
+    this.typed(false);
+    this.asks = [...events];
+    const span = this.spans.get(this.tail);
+    if (!this.replica || !span) return;
+    const events_now = this.shown(span);
+    this.tail.fold = this.tail.fold.revised(events_now, span.keys, events_now, span.keys, this.asks);
+    this.parts = [...this.parts];
+    this.structure += 1;
+  }
+
+  /** A request that waits for the user, or the end of one, as it happens. */
+  asked(event: SessionEvent): void {
+    if (event.event !== "changed" || (event.change.kind !== "request" && event.change.kind !== "resolved")) return;
+    const id = askKey(event.change.id);
+    this.asks = this.asks.filter((held) => held.event !== "changed" || held.change.kind !== "request" || askKey(held.change.id) !== id);
+    if (event.change.kind === "request") this.asks.push(event);
+    this.live.livePending(event);
+  }
+
+  /** Where a held entry or block stands in the timeline. */
+  private placeOfKey(key: string): { part: Held; span: Span; at: number } | null {
+    for (const part of this.parts) {
+      const span = this.spans.get(part);
+      if (!span) continue;
+      const placed = part.fold.placeOf(key);
+      const at = placed === null ? -1 : span.keys.indexOf(placed);
+      if (at >= 0) return { part, span, at };
+    }
+    return null;
+  }
+
+  /** Opens whole an event the page holds cut short, when its reader asks. */
+  async readFull(key: string): Promise<void> {
+    const found = this.placeOfKey(key);
+    const source = this.source;
+    const deferred = found && found.span.deferred.get(found.span.keys[found.at]!);
+    if (!found || !deferred || !source?.object) return;
+    const generation = this.generation;
+    const expected = found.span.events[found.at];
+    const expanded = await source.object(deferred.object, deferred.bytes);
+    if (expanded.object !== deferred.object) throw new Error("the expanded object did not match the selected content");
+    if (expected && !sameEvent(expected, expanded.event)) throw new Error("the expanded event did not match the selected entry");
+    if (source !== this.source || generation !== this.generation) return;
+    const span = this.spans.get(found.part);
+    if (!span || !this.parts.includes(found.part)) return;
+    const previous = { events: this.shown(span), keys: [...span.keys] };
+    this.remember(deferred.object, expanded.event);
+    this.refold(found.part, previous);
+    this.parts = [...this.parts];
     this.structure += 1;
     this.changed();
   }
 
-  private rememberBody(object: string, event: SessionEvent): void {
+  /** Keeps an event opened whole, the earliest opened let go past the
+   *  page's room for them. */
+  private remember(object: string, event: SessionEvent): void {
     this.expanded.set(object, event);
-    let bytes = [...this.expanded.values()].reduce((sum, e) => sum + JSON.stringify(e).length * 2, 0);
-    while (bytes > 8 * 1024 * 1024 && this.expanded.size > 1) {
+    let bytes = [...this.expanded.values()].reduce((sum, held) => sum + JSON.stringify(held).length * 2, 0);
+    while (bytes > EXPANDED_BYTES && this.expanded.size > 1) {
       const first = this.expanded.keys().next().value!;
       bytes -= JSON.stringify(this.expanded.get(first)).length * 2;
       this.expanded.delete(first);
     }
-    for (const object of this.terminalBodies.keys()) if (!this.expanded.has(object)) this.terminalBodies.delete(object);
   }
 
+  /** Whether the entry `key` is shown cut short, its whole not opened. */
   deferred(key: string): boolean {
-    const entry = this.get(key);
-    const object = entry && this.objectOf(entry);
-    return !!object && !this.expanded.has(object.object);
-  }
-
-  private objectOf(entry: Entry): NonNullable<Window["pages"]>["objects"][number] | undefined {
-    const window = this.pageWindow;
-    return window?.pages?.objects.find((object) => {
-      const event = window.events[object.at];
-      if (event && (event.event === "finished" || event.event === "began" || event.event === "updated") && "item" in entry && "turn" in entry) {
-        return event.turn === entry.turn && (event.item.id === entry.item || event.item.draft === entry.item);
-      }
-      return object.at === entry.at;
-    });
-  }
-
-  get paged(): boolean { return this.pageWindow !== null; }
-
-  follow(following: boolean): void {
-    if (!this.pageWindow || this.follows === following) return;
-    this.follows = following;
-    void this.source?.follow?.(++this.followRevision, following).catch((error: unknown) => console.warn("the reader's position could not be sent", error));
-  }
-
-  async newest(): Promise<void> {
-    if (this.pageWindow?.pages?.newer) await this.source?.part(this.generation, { edge: "latest" });
+    const found = this.placeOfKey(key);
+    const deferred = found && found.span.deferred.get(found.span.keys[found.at]!);
+    return !!deferred && !this.expanded.has(deferred.object);
   }
 
   /** Facts a run's job told about a run an earlier part holds go to it as
@@ -487,6 +669,7 @@ export class Conversation {
 
   /** What came before arrived: everything held moves along. */
   rebased(generation: number, offset: number, turnsAdded: number): void {
+    if (this.replica) return;
     this.generation = generation;
     for (const part of this.parts) {
       part.start += offset;
@@ -496,11 +679,15 @@ export class Conversation {
     this.structure += 1;
   }
 
-  /** Reads into a gap from the side the reader comes from: from its end,
-   *  next to the part after it, when the reader comes from below; from its
-   *  start otherwise. */
-  async fill(gap: Gap, side: "end" | "start"): Promise<void> {
-    if (this.pageWindow) side = gap.first ? "end" : "start";
+  /** Reads into a gap the reader came to: from its end, next to the part
+   *  after it, when the reader comes from below; from its start otherwise;
+   *  and where the reader stands in it, when the view came into the middle
+   *  of one it holds neither end of (`into`). */
+  async fill(gap: Gap, side: "end" | "start", into?: Into): Promise<void> {
+    if (this.replica) {
+      await this.fillPlaces(gap, side, into);
+      return;
+    }
     const edge: Edge = side === "end" ? { edge: "before", at: gap.end, floor: gap.start } : { edge: "after", at: gap.start, ceiling: gap.end };
     await this.read(gap, edge);
   }
@@ -510,45 +697,57 @@ export class Conversation {
   async reach(at: number): Promise<boolean> {
     const gap = this.gaps().find((one) => one.start <= at && at < one.end);
     if (!gap) return this.parts.some((part) => part.start <= at && at < part.end);
+    if (this.replica) {
+      const height = 0;
+      await this.fillPlaces(gap, "start", { fraction: (at - gap.start) / Math.max(1e-9, gap.end - gap.start), above: -1, height });
+      return this.parts.some((part) => part.start <= at && at < part.end);
+    }
     return this.read(gap, { edge: "around", at, floor: gap.start, ceiling: gap.end });
   }
 
+  /** Where the block or entry `key` stands in the timeline. */
   positionOf(key: string): TimelinePosition | null {
     const block = this.blocks().find((block) => block.key === key);
     const entry = block?.kind === "activity-group" ? block.members[0]?.key : block?.key ?? key;
-    const place = entry ? this.live.placeOf(entry) : null;
-    const at = place ? this.pageWindow?.pages?.keys?.indexOf(place) : -1;
-    return at !== undefined && at >= 0 ? this.pageWindow?.pages?.places?.[at] ?? null : null;
+    const found = entry ? this.placeOfKey(entry) : null;
+    return found ? found.span.places[found.at] ?? null : null;
   }
 
+  /** The entries the event at `place` is shown as. */
   entriesAtPosition(place: TimelinePosition): Entry[] {
-    const at = this.pageWindow?.pages?.places?.findIndex((current) => current?.item === place.item) ?? -1;
-    const key = this.pageWindow?.pages?.keys?.[at];
-    return key ? this.live.entries.filter((entry) => this.live.placeOf(entry.key) === key) : [];
+    for (const part of this.parts) {
+      const span = this.spans.get(part);
+      if (!span || !span.keys.includes(place.item)) continue;
+      return part.fold.entries.filter((entry) => part.fold.placeOf(entry.key) === place.item);
+    }
+    return [];
   }
 
+  /** Opens whole the event at `place`, where it is held cut short. */
   async expandPosition(place: TimelinePosition): Promise<void> {
-    const at = this.pageWindow?.pages?.places?.findIndex((current) => current?.item === place.item) ?? -1;
-    const object = this.pageWindow?.pages?.objects.find((object) => object.at === at);
-    if (object && object.bytes <= 8 * 1024 * 1024) await this.readFull(this.entriesAtPosition(place)[0]?.key ?? "");
+    const key = this.entriesAtPosition(place)[0]?.key;
+    if (key && this.deferred(key)) await this.readFull(key);
   }
 
+  /** Reads the part that holds `place`, wherever it is; true once held. */
   async reachPosition(place: TimelinePosition): Promise<boolean> {
-    if (!this.source || !this.pageWindow) return false;
-    await this.source.part(this.generation, { edge: "position", place });
-    return this.pageWindow.pages?.places?.some((current) => current?.item === place.item) === true;
+    if (!this.replica) return false;
+    const held = () => this.parts.some((part) => this.spans.get(part)?.keys.includes(place.item));
+    if (held()) return true;
+    const at = ordinal(place);
+    const gap = this.gaps().find((one) => one.start <= at && at < one.end) ?? this.gaps().find((one) => at < one.end);
+    if (!gap) return false;
+    await this.fillPlaces(gap, "start", { fraction: 0, above: -1, height: 0 }, { order: place.order, item: "00" });
+    return held();
   }
 
   /** Reads the turns where `turn` first appears, wherever they are; true
-   *  once they are held. */
+   *  once they are held. Of a conversation shown from its timeline, only
+   *  what is held answers: a turn is found there by searching it. */
   async reachTurn(turn: string): Promise<boolean> {
     if (this.foldOf(turn)) return true;
     const source = this.source;
-    if (!source) return false;
-    if (this.pageWindow) {
-      await source.part(this.generation, { edge: "turn", turn });
-      return this.foldOf(turn) !== null;
-    }
+    if (!source || this.replica) return false;
     const at = await source.locate(this.generation, turn).catch(() => null);
     return at !== null && this.reach(at);
   }
@@ -582,22 +781,196 @@ export class Conversation {
     }
   }
 
-  /** Lets go of an earlier part, which becomes a gap again. */
-  release(part: Held): void {
+  /** The parts either side of a gap of a conversation shown from its
+   *  timeline: the one after it, and the one before it, none where nothing
+   *  is held before it. */
+  private around(gap: Gap): { earlier: Held | null; later: Held } | null {
+    const at = this.parts.findIndex((part) => this.gapKey(this.parts[this.parts.indexOf(part) - 1] ?? null, part) === gap.key);
+    if (at < 0) return null;
+    return { earlier: this.parts[at - 1] ?? null, later: this.parts[at]! };
+  }
+
+  /** Reads a part of the timeline into `gap`. */
+  private async fillPlaces(gap: Gap, side: "end" | "start", into?: Into, exact?: Place): Promise<void> {
+    const source = this.source;
+    const sides = this.around(gap);
+    if (!source?.page || !sides || this.reading.has(gap.key)) return;
+    const { earlier, later } = sides;
+    const laterSpan = this.spans.get(later);
+    const earlierSpan = earlier ? this.spans.get(earlier) : null;
+    if (!laterSpan) return;
+    // Where the page read begins: where the reader stands in the gap, when
+    // that is away from both its ends; else at the end it came from.
+    const span = gap.end - gap.start;
+    const lands = exact ?? (into && into.fraction > 0.02 && into.fraction < 0.98 && span > 8 ? placeAt(gap.start + into.fraction * span) : null);
+    const earlierLast = earlierSpan?.places[earlierSpan.places.length - 1] ?? null;
+    let from: ReadFrom;
+    let how: "end" | "start" | "into";
+    if (lands) {
+      from = { from: "after", place: lands };
+      how = "into";
+    } else if (side === "start" && earlierLast) {
+      from = { from: "after", place: earlierLast };
+      how = "start";
+    } else {
+      const edge = laterSpan.places[0] ?? laterSpan.older;
+      if (!edge) return;
+      from = { from: "before", place: edge };
+      how = "end";
+    }
+    this.reading.add(gap.key);
+    this.structure += 1;
+    this.changed();
+    const generation = this.generation;
+    const since: ReplicaRecord[] = [];
+    this.meanwhile.add(since);
+    try {
+      const read = await source.page(generation, from);
+      if (!read || read.generation !== this.generation || generation !== this.generation) return;
+      if (!this.parts.includes(later) || (earlier && !this.parts.includes(earlier))) return;
+      // What another reading, or the timeline's records, brought meanwhile
+      // is held already; what stands at or past the part after it is that
+      // part's.
+      const held = new Set(this.parts.flatMap((part) => this.spans.get(part)?.keys ?? []));
+      const laterFirst = laterSpan.places[0] ?? null;
+      const earlierEnd = earlierSpan?.places[earlierSpan.places.length - 1] ?? null;
+      let reachedLater = false;
+      let reachedEarlier = false;
+      const events = read.events.filter((shown) => {
+        if (held.has(shown.key)) {
+          if (laterSpan.keys.includes(shown.key)) reachedLater = true;
+          if (earlierSpan?.keys.includes(shown.key)) reachedEarlier = true;
+          return false;
+        }
+        if (laterFirst && !before(shown.place, laterFirst)) { reachedLater = true; return false; }
+        if (earlierEnd && !before(earlierEnd, shown.place)) { reachedEarlier = true; return false; }
+        return true;
+      });
+      if (events.length === 0) {
+        // Nothing lies there: the parts either side meet, or the timeline
+        // begins at the part after it.
+        if (how === "into") {
+          await this.fromEnd(gap);
+          return;
+        }
+        if (earlierSpan) earlierSpan.joined = true;
+        else if (read.older === null || how === "end") laterSpan.older = null;
+        return;
+      }
+      const part: ReplicaPart = { ...read, events };
+      const fresh = spanOf(part);
+      fresh.last = false;
+      // It meets the part after it when it was read back from there, or read
+      // on into it; the part before it, read on from there or back into it.
+      fresh.joined = how === "end" || reachedLater;
+      if (earlierSpan && (how === "start" || reachedEarlier)) earlierSpan.joined = true;
+      if (!earlierSpan && how !== "into" && read.older === null) fresh.older = null;
+      const fold = new Fold(`p${++this.folds}`);
+      fold.thoughtWords = this.thoughts;
+      fold.history([...fresh.events], [], fresh.keys, false, []);
+      const made = this.placed({ start: 0, end: 0, turnsBefore: 0, turns: 0, fold }, fresh);
+      this.spans.set(made, fresh);
+      this.parts.splice(this.parts.indexOf(later), 0, made);
+      this.parts = [...this.parts];
+      // What the parts after it hold of its runs is told to it, and what it
+      // holds of earlier parts' runs to them.
+      this.relate(made);
+      for (const event of fresh.events) this.route(event);
+      // The page was read as the timeline stood when it was asked for:
+      // records that came since stand over what it brought.
+      if (since.length) this.take(since, true);
+      // Read where the reader stood in the gap, it begins where the view
+      // does: what is above it is as tall as it was drawn, what is below it
+      // as tall as the rest of the gap was. Read from an end, only what it
+      // stands in place of is measured no more.
+      if (how === "into" && into && into.above >= 0 && into.height > 0) {
+        const taken = Math.max(1, made.end - made.start);
+        const each = into.height / Math.max(1, span);
+        this.measured.forget(gap.start, gap.end);
+        if (made.start > gap.start) this.measured.set(gap.start, made.start, into.above);
+        if (gap.end > made.end) this.measured.set(made.end, gap.end, Math.max(0, into.height - into.above - each * taken));
+      } else this.measured.forget(made.start, made.end);
+    } catch (error) {
+      this.readingFailure = String(error);
+    } finally {
+      this.meanwhile.delete(since);
+      this.reading.delete(gap.key);
+      this.structure += 1;
+      this.changed();
+    }
+  }
+
+  /** Nothing was read where the reader stood in `gap`: it is read from its
+   *  end instead, as one the reader came to from below. */
+  private async fromEnd(gap: Gap): Promise<void> {
+    this.reading.delete(gap.key);
+    await this.fillPlaces(gap, "end");
+  }
+
+  /** Lets go of an earlier part, which becomes a gap again, as tall as
+   *  `height` when the page measured it. */
+  release(part: Held, height?: number): void {
     const at = this.parts.indexOf(part);
     if (at < 0 || at === this.parts.length - 1) return;
+    const span = this.spans.get(part);
+    if (span) {
+      const earlier = this.parts[at - 1];
+      const earlierSpan = earlier && this.spans.get(earlier);
+      if (earlierSpan) earlierSpan.joined = false;
+      // What lay before it is before the part after it now.
+      const later = this.parts[at + 1];
+      const laterSpan = later && this.spans.get(later);
+      if (laterSpan && span.joined && laterSpan.older === null && span.places.length) laterSpan.older = laterSpan.places[0] ?? null;
+      if (height !== undefined) this.measured.set(part.start, part.end, height);
+      this.spans.delete(part);
+    }
     this.parts.splice(at, 1);
+    this.parts = [...this.parts];
     this.structure += 1;
   }
 
   /** Lets go of what the latest part holds before its latest `events`
-   *  events, where the shell can cut there. */
+   *  events, where it can be cut there. */
   async trim(events: number): Promise<void> {
+    this.typed(false);
+    const tail = this.tail;
+    const span = this.spans.get(tail);
+    if (span) {
+      // Cut where a stretch begins, so what stays shows whole: the first
+      // such place after the one asked for, else the last before it; and
+      // where the part holds no such place and twice what it may, where it
+      // was asked, since a stretch that long is cut somewhere.
+      const asked = span.events.length - events;
+      if (asked <= 0) return;
+      let cut = asked;
+      while (cut < span.events.length && !begins(span.events[cut])) cut += 1;
+      if (cut >= span.events.length) {
+        cut = asked;
+        while (cut > 0 && !begins(span.events[cut])) cut -= 1;
+      }
+      if (cut <= 0) {
+        if (span.events.length < events * 2) return;
+        cut = asked;
+      }
+      const gone = span.keys.slice(0, cut);
+      for (let at = 0; at < cut; at += 1) span.deferred.delete(span.keys[at]!);
+      span.events.splice(0, cut);
+      span.keys.splice(0, cut);
+      span.places.splice(0, cut);
+      span.older = span.places[0] ?? null;
+      const earlier = this.parts[this.parts.length - 2];
+      const earlierSpan = earlier && this.spans.get(earlier);
+      if (earlierSpan) earlierSpan.joined = false;
+      tail.fold.evictPlaces(gone);
+      this.placed(tail, span);
+      this.parts = [...this.parts];
+      this.structure += 1;
+      return;
+    }
     const source = this.source;
     if (!source) return;
     const generation = this.generation;
     const cut = await source.cut(generation, events).catch(() => null);
-    const tail = this.tail;
     if (!cut || generation !== this.generation || cut.at <= tail.start || cut.at > tail.end) return;
     tail.fold.forget(cut.at - tail.start);
     tail.start = cut.at;
@@ -613,27 +986,24 @@ export class Conversation {
   async *everything(): AsyncGenerator<ExportReading> {
     const source = this.source;
     const generation = this.generation;
-    if (this.pageWindow) {
-      if (!source?.scan) throw new Error("this source cannot export the complete conversation");
-      let cursor: ScanCursor | null = null;
-      do {
-        const scanned = await source.scan(cursor);
-        if (scanned.restart) yield { restart: true };
+    if (this.replica) {
+      if (!source?.page) throw new Error("this source cannot export the complete conversation");
+      // From its first event on, a page after another, none of it held.
+      let from: ReadFrom = { from: "after", place: { order: "", item: "00" } };
+      for (;;) {
+        const read = await source.page(generation, from);
+        if (!read) {
+          yield { restart: true };
+          return;
+        }
         const fold = new Fold("export");
         fold.thoughtWords = this.thoughts;
-        fold.history(scanned.events);
-        let start = 0;
-        for (const preview of scanned.truncated ?? []) {
-          const after = fold.entries.findIndex((entry) => entry.at > preview.at);
-          const end = after < 0 ? fold.entries.length : after;
-          yield fold.entries.slice(start, end);
-          yield { previewBytes: preview.bytes };
-          start = end;
-        }
-        yield fold.entries.slice(start);
-        cursor = scanned.next;
-      } while (cursor);
-      return;
+        fold.history(read.events.map((shown) => shown.event), [], read.events.map((shown) => shown.key), false, []);
+        yield fold.entries;
+        for (const shown of read.events) if (shown.deferred) yield { previewBytes: shown.deferred.bytes };
+        if (!read.newer || read.events.length === 0) return;
+        from = { from: "after", place: read.newer };
+      }
     }
     let at = 0;
     for (const part of [...this.parts]) {
@@ -657,6 +1027,17 @@ export class Conversation {
     return this.blocks().filter((block): block is Gap => block.kind === "gap");
   }
 
+  /** What names the gap between two parts of a conversation shown from
+   *  its timeline: `earlier` none where nothing is held before `later`. */
+  private gapKey(earlier: Held | null, later: Held): string {
+    const edge = (part: Held | null, last: boolean): string => {
+      const span = part && this.spans.get(part);
+      if (!span) return "^";
+      return (last ? span.keys[span.keys.length - 1] : span.keys[0]) ?? "-";
+    };
+    return `gap:${edge(earlier, true)}:${edge(later, false)}`;
+  }
+
   /** What is laid out: each part's blocks, gaps where turns are not held.
    *  A fork's record begins with what it carried over: from the part that
    *  holds the point it was made at, the card there stands for all before. */
@@ -664,20 +1045,37 @@ export class Conversation {
     const version = `${this.structure}|${this.parts.map((part) => part.fold.clock).join(",")}`;
     if (this.cache?.version === version) return this.cache.blocks;
     const blocks: Block[] = [];
-    if (this.pageWindow?.pages) {
-      const pages = this.pageWindow.pages;
-      const end = this.tail.end;
-      const before = `timeline:${this.generation}:before`;
-      const after = `timeline:${this.generation}:after`;
-      if (pages.older) blocks.push({ kind: "gap", key: before, stamp: this.reading.has(before) ? 1 : 0, start: 0, end: 0, turns: 0, first: true, loading: this.reading.has(before), paged: true });
-      const current = this.live.blocks().map((block, at, all) => block.kind === "activity-group" ? {
-        ...block, partialBefore: at === 0 && pages.partial_older === true,
-        partialAfter: at === all.length - 1 && pages.partial_newer === true,
-      } : block);
-      const pending = pages.newer ? current.filter((block) => block.kind === "ask") : [];
-      blocks.push(...current.filter((block) => !pages.newer || block.kind !== "ask"));
-      if (pages.newer) blocks.push({ kind: "gap", key: after, stamp: this.reading.has(after) ? 1 : 0, start: end, end, turns: 0, first: false, loading: this.reading.has(after), later: true, paged: true });
-      blocks.push(...pending);
+    if (this.replica) {
+      let earlier: Held | null = null;
+      for (const part of this.parts) {
+        const span = this.spans.get(part);
+        if (!span) continue;
+        const earlierSpan = earlier ? this.spans.get(earlier) ?? null : null;
+        const open = earlierSpan ? !earlierSpan.joined : span.older !== null;
+        if (open) {
+          const key = this.gapKey(earlier, part);
+          const start = earlier ? earlier.end : 0;
+          const end = Math.max(start, part.start);
+          const loading = this.reading.has(key);
+          const measured = this.measured.of(start, end);
+          blocks.push({
+            kind: "gap", key, stamp: Math.round(measured.px) * 4 + Math.round(measured.rest) * 2 + (loading ? 1 : 0),
+            start, end, turns: 0, first: earlier === null, loading, paged: true, measured: measured.px, unmeasured: measured.rest,
+          });
+        }
+        const own = part.fold.blocks();
+        // A group the part begins or ends within says so: the rest of it is
+        // in what is not held beside it.
+        const within = open && !begins(span.events[0]);
+        const later = this.parts[this.parts.indexOf(part) + 1];
+        const cut = !span.last && !span.joined && !!later && member(span.events[span.events.length - 1]);
+        for (const [at, block] of own.entries()) {
+          if (block.kind === "activity-group" && ((within && at === 0) || (cut && at === own.length - 1))) {
+            blocks.push({ ...block, partialBefore: within && at === 0, partialAfter: cut && at === own.length - 1 });
+          } else blocks.push(block);
+        }
+        earlier = part;
+      }
       this.cache = { version, blocks };
       return blocks;
     }
@@ -943,7 +1341,8 @@ export class Conversation {
    *  every turn the page holds, the earliest part first. */
   toolsOf(turn: string | null): Extract<Entry, { kind: "tool" }>[] {
     const tools = (entries: readonly Entry[]) => entries.filter((entry): entry is Extract<Entry, { kind: "tool" }> => entry.kind === "tool");
-    if (turn !== null) return tools(this.foldOf(turn)?.turnEntries(turn) ?? []);
+    // A turn may lie across parts: its calls are all of theirs, in order.
+    if (turn !== null) return this.parts.flatMap((part) => (part.fold.holds(turn) ? tools(part.fold.turnEntries(turn)) : []));
     return this.parts.flatMap((part) => tools(part.fold.entries));
   }
 
@@ -977,8 +1376,13 @@ export class Conversation {
 
   /** The user's own words a turn began with, where they are held. */
   turnWords(turn: string): Heard | null {
-    const fold = this.foldOf(turn);
-    return (fold?.entries.find((entry): entry is Heard => entry.kind === "heard" && entry.turn === turn && (!entry.from || entry.from.kind === "user")) ?? null);
+    // The part a turn begins in is not the one it ends in where it lies
+    // across parts: its words are looked for in each.
+    for (const part of this.parts) {
+      const words = part.fold.entries.find((entry): entry is Heard => entry.kind === "heard" && entry.turn === turn && (!entry.from || entry.from.kind === "user"));
+      if (words) return words;
+    }
+    return null;
   }
 
   /** All a turn said, as it was written. */
@@ -1088,6 +1492,7 @@ export class Conversation {
   }
   /** What its machine holds of it now (`Fold.now`). */
   now(busy: boolean, turn: string | null, kept: KeptWords[], halted: string | null = null): void {
+    this.nowTold = { busy, turn, kept, halted };
     this.live.now(busy, turn, kept, halted);
   }
   unsend(key: string): void {
@@ -1131,7 +1536,6 @@ export class Conversation {
 
   event(event: SessionEvent): void {
     this.live.event(event);
-    this.pageWindow?.events.push(event);
     this.tail.end += 1;
   }
 }

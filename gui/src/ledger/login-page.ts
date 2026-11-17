@@ -269,6 +269,7 @@ const outcomeNames: Record<Outcome, string> = { done: "完成", failed: "出错"
 /** The ranges ready to choose; the ledger keeps a request's row 30 days. */
 const presets = ["全部", "今天", "昨天", "最近 7 天", "最近 30 天"];
 const DAY = 86400000;
+const HOUR = 3600000;
 
 /** The time the list is set to, as a range of instants. */
 function rangeOf(): { from: Date | null; until: Date | null } {
@@ -276,8 +277,12 @@ function rangeOf(): { from: Date | null; until: Date | null } {
   const midnight = new Date(NOW.getFullYear(), NOW.getMonth(), NOW.getDate());
   if (state.time === "今天") return { from: midnight, until: null };
   if (state.time === "昨天") return { from: new Date(midnight.getTime() - DAY), until: midnight };
-  if (state.time === "最近 7 天") return { from: new Date(NOW.getTime() - 7 * DAY), until: null };
-  if (state.time === "最近 30 天") return { from: new Date(NOW.getTime() - 30 * DAY), until: null };
+  // A span that rolls with the clock begins on the hour: asked for by the
+  // minute it would be another list each time the page is drawn, never the
+  // one already read.
+  const hour = NOW.getTime() - (NOW.getTime() % HOUR);
+  if (state.time === "最近 7 天") return { from: new Date(hour - 7 * DAY), until: null };
+  if (state.time === "最近 30 天") return { from: new Date(hour - 30 * DAY), until: null };
   return { from: null, until: null };
 }
 
@@ -285,6 +290,9 @@ const queryOf = (): CallsQuery => ({ page: state.page, size: state.size, ...(sta
 
 /** The rows last drawn, for a press on one of them. */
 let drawnRows: Call[] = [];
+/** The list last read, and what it was the list of: while the same list is
+ *  asked for again (its span moved on with the clock), it stays drawn. */
+let lastCalls: { of: string; page: CallsPage } | null = null;
 /** The models and people last seen in the login's ledger, to filter by. */
 let seen: { models: string[]; people: string[] } = { models: [], people: [] };
 
@@ -297,7 +305,10 @@ function callsView(login: Login): string {
   // Codex tells no prices: its requests are counted in tokens.
   const priced = login.family !== "codex";
   const fetched = callsOf(login, queryOf());
-  const page: CallsPage | null = usable(fetched);
+  const of = JSON.stringify({ login: login.id, ...queryOf(), from: null, until: null, time: state.time, range: state.range });
+  const read: CallsPage | null = usable(fetched);
+  if (read) lastCalls = { of, page: read };
+  const page: CallsPage | null = read ?? (fetched === null && lastCalls?.of === of ? lastCalls.page : null);
   if (page) seen = { models: page.models, people: page.people };
   const rows = page?.rows ?? [];
   drawnRows = rows;

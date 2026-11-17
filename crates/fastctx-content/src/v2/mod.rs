@@ -163,13 +163,14 @@ impl Library {
     }
 
     /// Opens an owner library of a hub (§6.2): the same library with the
-    /// hub's own tables besides, caching at most 2 MiB of pages across its
-    /// two databases' writers and readers, as up to 64 are open at once
-    /// (R27).
+    /// hub's own tables besides, caching a few MiB of pages across its two
+    /// databases' writers and readers, as up to 64 are open at once (R27):
+    /// a writer the pages its trees are descended by, 64 of them, where
+    /// with 32 every lookup read its way down from the file again.
     pub fn open_hub(directory: &Path) -> Result<(Self, Started)> {
         let shape = fastctx_storage::Shape {
-            cache_bytes: Some(512 << 10),
-            reader_cache_bytes: Some(32 << 10),
+            cache_bytes: Some(1 << 20),
+            reader_cache_bytes: Some(64 << 10),
             page_bytes: Some(PAGE_BYTES),
             ..Default::default()
         };

@@ -38,8 +38,13 @@ pub fn run(kind: Kind, action: &str, directory: &Path, executable: &Path) -> Res
     }
 }
 
+/// How long the service's process may take to own the IPC endpoint.
+const NODE_SERVES_WITHIN: std::time::Duration = std::time::Duration::from_secs(60);
+
 /// Waits for the service's process to own the IPC endpoint after the old
 /// node hands over. No World call is sent while the serving identity changes.
+/// A handover that has not happened within `NODE_SERVES_WITHIN` is an error
+/// the interface shows, not a wait it never leaves.
 pub fn wait_for_node(root: &Path, executable: &Path) -> Result<(), String> {
     use fastctx_install::service::Service;
     use fastctx_platform::ipc::{self, Endpoint};
@@ -48,7 +53,11 @@ pub fn wait_for_node(root: &Path, executable: &Path) -> Result<(), String> {
     let runtime =
         tokio::runtime::Builder::new_current_thread().enable_all().build().map_err(|error| error.to_string())?;
     let world = WorldDir::under(root);
+    let begun = std::time::Instant::now();
     loop {
+        if begun.elapsed() >= NODE_SERVES_WITHIN {
+            return Err("the node service did not take over this machine's node in time".to_string());
+        }
         let status = service.status().map_err(|error| error.to_string())?;
         if !status.installed || !status.enabled || status.state != "active/running" {
             return Err(format!("the node service is {}", status.state));

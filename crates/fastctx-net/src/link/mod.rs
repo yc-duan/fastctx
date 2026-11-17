@@ -21,6 +21,7 @@ pub mod admission;
 mod afoot;
 mod answering;
 mod answers;
+mod asset_lines;
 mod assets;
 mod calls;
 mod changes;
@@ -85,6 +86,7 @@ use crate::message::LetterId;
 use crate::sign::{Domain, PublicKey, SecretKey, Signed};
 use crate::wire::{CallStatus, Change, Question, Told};
 pub use afoot::Elsewhere;
+pub use asset_lines::{AssetLine, Given, LINES_AT_ONCE, PutAsked};
 pub use assets::{Incoming, Outgoing};
 pub use direct::DataWay;
 pub use ledger::{Page, PageItem};
@@ -392,6 +394,8 @@ pub(crate) struct Inner {
     connection: Mutex<Option<Connection>>,
     calls: Mutex<HashMap<u64, Waiter>>,
     watching: watching::Pools,
+    /// The asset lines open to the hub (`asset_lines`).
+    lines: Arc<asset_lines::Lines>,
     /// The calls of other machines this one is answering (`answers`).
     answers: answers::Answers,
     asks: questions::Questions,
@@ -581,6 +585,7 @@ impl Link {
             connection: Mutex::new(None),
             calls: Mutex::new(HashMap::new()),
             watching: Mutex::new(HashMap::new()),
+            lines: Arc::default(),
             answers: answers::Answers::default(),
             asks: questions::Questions::default(),
             next_id: AtomicU64::new(0),
