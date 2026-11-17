@@ -27,6 +27,7 @@ const KIND: &str = "scope-deleted";
 /// writer serves requests meanwhile, and a frame's body goes with its row.
 const PASSES_AT_ONCE: usize = 64;
 const ROWS_A_PASS: i64 = 16;
+const SCOPES_A_PASS: i64 = 2;
 const PACE: std::time::Duration = std::time::Duration::from_millis(20);
 /// The longest a turn of all the libraries together takes.
 const TURN: std::time::Duration = std::time::Duration::from_secs(2);
@@ -41,6 +42,9 @@ pub(crate) struct Deleted {
     /// Those whose owner library could not be reached as they were deleted:
     /// tried again at each turn (`let_go`).
     unreached: Mutex<Vec<(Owner, String)>>,
+    /// The owner libraries that could not be looked through as they opened
+    /// for scopes deleted and still in them: looked through at a turn.
+    unlooked: Mutex<BTreeSet<Owner>>,
 }
 
 /// The scopes deleted, as a write to the control database looks them up
@@ -102,21 +106,27 @@ impl Assets {
     /// left in it goes on going, and one deleted whose library was not
     /// reached then is let go of now.
     pub(super) fn library_opened(&self, owner: &Owner, library: &fastctx_content::v2::Library) {
-        if library.purging().unwrap_or(false) {
+        if self.look_through(owner, library).is_err() {
+            self.deleted.unlooked.lock().expect("libraries to look through").insert(owner.clone());
+        }
+    }
+
+    /// Lets the library of `owner` go of each scope deleted that it still
+    /// holds, and notes it has something to let go of.
+    fn look_through(&self, owner: &Owner, library: &fastctx_content::v2::Library) -> io::Result<()> {
+        if library.purging().map_err(other)? {
             self.lets_go(owner);
         }
-        if !self.deleted_keys().is_ok_and(|keys| !keys.lock().expect("deleted scopes").is_empty()) {
-            return;
+        if self.deleted_keys()?.lock().expect("deleted scopes").is_empty() {
+            return Ok(());
         }
-        let Ok(keys) = library.keys_ending("") else { return };
-        for key in keys {
-            if self.was_deleted(&key)
-                && library.holding(&key).ok().flatten().is_some()
-                && library.revoke(&key).is_ok()
-            {
+        for key in library.keys_ending("").map_err(other)? {
+            if self.was_deleted(&key) && library.holding(&key).map_err(other)?.is_some() {
+                library.revoke(&key).map_err(other)?;
                 self.lets_go(owner);
             }
         }
+        Ok(())
     }
 
     /// Deletes the scope `key`; whether there was one. Its machines are
@@ -190,6 +200,14 @@ impl Assets {
     /// from them: some passes each, the rest at the next turn. Call on a
     /// thread that may block.
     pub(crate) fn let_go(&self) {
+        let begun = std::time::Instant::now();
+        let unlooked = std::mem::take(&mut *self.deleted.unlooked.lock().expect("libraries to look through"));
+        for owner in unlooked {
+            let looked = self.library(&owner).and_then(|library| self.look_through(&owner, &library));
+            if looked.is_err() && !self.deleting(&owner).unwrap_or(false) {
+                self.deleted.unlooked.lock().expect("libraries to look through").insert(owner);
+            }
+        }
         let unreached = std::mem::take(&mut *self.deleted.unreached.lock().expect("scopes unreached"));
         for (owner, key) in unreached {
             match self.library(&owner).and_then(|library| library.revoke(&key).map_err(other)) {
@@ -200,7 +218,6 @@ impl Assets {
             }
         }
         let owners: Vec<Owner> = self.deleted.purging.lock().expect("libraries letting go").iter().cloned().collect();
-        let begun = std::time::Instant::now();
         for owner in owners {
             if begun.elapsed() >= TURN {
                 break;
@@ -214,7 +231,7 @@ impl Assets {
                     if begun.elapsed() >= TURN {
                         return Ok(false);
                     }
-                    library.purge_at_most(ROWS_A_PASS).map_err(other)?;
+                    library.purge_at_most(ROWS_A_PASS, SCOPES_A_PASS).map_err(other)?;
                     std::thread::sleep(PACE);
                 }
                 library.purging().map(|purging| !purging).map_err(other)
@@ -289,7 +306,10 @@ pub(super) fn of_conversation(
 pub(crate) fn conversation_gone(hub: &crate::Hub, conversation: &Address) {
     let Some(hub) = hub.this.get().and_then(std::sync::Weak::upgrade) else { return };
     let conversation = conversation.clone();
+    // It changes the records: a hub moving waits for it (`moving`).
+    let held = crate::moving::Moving::hold(&hub);
     fastctx_platform::task::spawn_blocking(move || {
+        let _held = held;
         let keys = {
             let store = hub.store();
             of_conversation(&hub.assets, &store.indexed(), &conversation)

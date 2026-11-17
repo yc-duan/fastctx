@@ -56,6 +56,10 @@ struct Ask {
     conversation: Address,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     after: Option<ResidentId>,
+    /// The day an asking for what a deletion left behind is of (`leftover`):
+    /// asked again another day, it is another asking.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    round: Option<i64>,
 }
 
 impl Ask {
@@ -117,6 +121,7 @@ async fn ask_here(node: &Arc<Node>, resident: ResidentId) -> Result<How, Failure
                 account,
                 conversation: Address { machine: node.machine(), resident: resident.clone() },
                 after: Some(resident.clone()),
+                round: None,
             })
             .collect(),
         None => Vec::new(),
@@ -151,7 +156,7 @@ async fn ask_elsewhere(
     match link.forget(&account, &conversation).await {
         Ok(true) => Ok(How::Asked),
         Ok(false) => {
-            let ask = Ask { hub: link.membership().id.clone(), account, conversation, after: None };
+            let ask = Ask { hub: link.membership().id.clone(), account, conversation, after: None, round: None };
             keep(node, vec![ask])
                 .await
                 .map_err(|error| Failure::new(format!("keeping what to ask the hub: {error}")))?;
@@ -174,7 +179,7 @@ pub(crate) async fn release_attachments(node: &Arc<Node>, id: &ResidentId) -> Re
     let mut asks = Vec::new();
     for conversation in &owners {
         for (hub, account) in pairs(node, &about.acting) {
-            asks.push(Ask { hub, account, conversation: conversation.clone(), after: Some(id.clone()) });
+            asks.push(Ask { hub, account, conversation: conversation.clone(), after: Some(id.clone()), round: None });
         }
     }
     if !asks.is_empty() {
@@ -208,6 +213,7 @@ pub(crate) async fn project(
                 account,
                 conversation: Address { machine: node.machine(), resident: id.clone() },
                 after: Some(id.clone()),
+                round: None,
             })
             .collect(),
     )
@@ -255,6 +261,7 @@ pub(crate) async fn told(node: &Arc<Node>, hub: &HubId, forgetting: Forgetting) 
             account,
             conversation: Address { machine: node.machine(), resident: id.clone() },
             after: None,
+            round: None,
         })
         .collect();
     if !others.is_empty() {

@@ -109,18 +109,19 @@ impl Library {
     /// cursors go; its index rows go too, or become revision floors while
     /// the scope has a newer period.
     pub fn purge(&self) -> Result<Purged> {
-        self.purge_at_most(PURGE_PASS)
+        self.purge_at_most(PURGE_PASS, i64::MAX)
     }
 
-    /// A pass as `purge` makes one, of at most `rows` rows of each kind: a
-    /// library that answers others meanwhile gives its writer up sooner,
-    /// frames' bodies going with their rows.
-    pub fn purge_at_most(&self, rows: i64) -> Result<Purged> {
-        let pass = rows.clamp(1, PURGE_PASS);
+    /// A pass as `purge` makes one, of at most `periods` ended periods and
+    /// `rows` rows of each kind of each: a library that answers others
+    /// meanwhile gives its writer up sooner, frames' bodies going with
+    /// their rows. The periods left are the next passes'.
+    pub fn purge_at_most(&self, rows: i64, periods: i64) -> Result<Purged> {
+        let (pass, periods) = (rows.clamp(1, PURGE_PASS), periods.max(1));
         Ok(self.database().write_now_at(Priority::Background, 4096, move |db| {
             let purges: Vec<(i64, i64)> = {
-                let mut statement = db.prepare_cached("SELECT scope, holding FROM purges")?;
-                let rows = statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
+                let mut statement = db.prepare_cached("SELECT scope, holding FROM purges ORDER BY scope, holding LIMIT ?1")?;
+                let rows = statement.query_map([periods], |row| Ok((row.get(0)?, row.get(1)?)))?;
                 rows.collect::<std::result::Result<_, _>>()?
             };
             let mut purged = Purged::default();

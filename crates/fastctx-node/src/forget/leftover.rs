@@ -4,10 +4,12 @@
 //! the hub describing them, and every machine that held them holding them.
 //! Each such conversation — known by its tombstone, and by a scope of it
 //! this library still holds — is asked of its hub once more: the hub deletes
-//! the scopes and tells the machines holding them, this one among them. An
-//! asking the hub took is not made again (`obligations`).
+//! the scopes and tells the machines holding them, this one among them.
+//! While a scope is still held the asking is made again each day, as an
+//! asking of that day: a hub that took one and deleted nothing — one of an
+//! earlier version, or one that stopped before it did — is asked again.
 
-use super::{Ask, keep};
+use super::{Ask, kept_file, read, write};
 use crate::Node;
 use fastctx_types::access::HubId;
 use fastctx_types::assets::{Descriptor, Readers};
@@ -44,6 +46,7 @@ pub(super) async fn look(node: &Arc<Node>) {
         }
     };
     let machine = node.machine();
+    let today = jiff::Timestamp::now().as_second().div_euclid(24 * 60 * 60);
     let mut asks = Vec::new();
     for scope in held {
         let Some(id) = scope.key.rsplit('/').next().and_then(|id| id.parse::<ResidentId>().ok()) else { continue };
@@ -65,16 +68,39 @@ pub(super) async fn look(node: &Arc<Node>) {
             _ => None,
         };
         let (Some(account), Ok(hub)) = (account, HubId::try_from(described.hub.clone())) else { continue };
-        asks.push(Ask { hub, account, conversation: Address { machine: machine.clone(), resident: id }, after: None });
+        let conversation = Address { machine: machine.clone(), resident: id };
+        asks.push(Ask { hub, account, conversation, after: None, round: Some(today) });
     }
     if asks.is_empty() {
         return;
     }
     let found = asks.len();
-    match keep(node, asks).await {
+    match keep_latest(node, asks).await {
         Ok(()) => node.log.line(format_args!(
             "{found} scope(s) of conversations deleted here are still held; their hubs are asked to delete them"
         )),
         Err(error) => node.log.line(format_args!("keeping what to ask the hubs of deleted conversations' scopes: {error}")),
     }
+}
+
+/// Keeps `asks` to be asked of their hubs, each in place of an asking of an
+/// earlier day for the same conversation still kept.
+async fn keep_latest(node: &Arc<Node>, asks: Vec<Ask>) -> std::io::Result<()> {
+    let _file = node.forget_asks.file.lock().await;
+    let path = kept_file(node);
+    fastctx_platform::task::spawn_blocking(move || {
+        let mut kept = read(&path)?;
+        for ask in asks {
+            kept.retain(|other| {
+                other.round.is_none()
+                    || other.hub != ask.hub
+                    || other.account != ask.account
+                    || other.conversation != ask.conversation
+            });
+            kept.push(ask);
+        }
+        write(&path, &kept)
+    })
+    .await
+    .map_err(std::io::Error::other)?
 }

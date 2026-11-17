@@ -112,11 +112,14 @@ fn gone(node: &Node, host: &Host, session_directory: &Path) -> std::io::Result<b
         && super::control::session_present(node, session_directory)?)
 }
 
-/// Whether the session of `host` is in a turn now.
+/// Whether the session of `host` is in a turn now, or at work with the
+/// turn it began not told yet.
 fn in_turn(node: &Node, host: &Host) -> bool {
-    node.residents
-        .resident_of_thread(host.session.as_str())
-        .is_some_and(|resident| node.residents.now(&resident).is_some_and(|now| now.turn.is_some()))
+    node.residents.resident_of_thread(host.session.as_str()).is_some_and(|resident| {
+        node.residents
+            .now(&resident)
+            .is_some_and(|now| now.turn.is_some() || now.activity == fastctx_types::residents::Activity::Busy)
+    })
 }
 
 /// Stops the session the plugin is gone from, and says so unless the node's
