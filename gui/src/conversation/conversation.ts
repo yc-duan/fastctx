@@ -174,6 +174,12 @@ export class Conversation {
   private asks: SessionEvent[] = [];
   /** How tall stretches no longer held were. */
   private measured = new Measured();
+  /** The records that came while a page was being read, for each reading
+   *  under way: a page read before them is set right by them once it comes. */
+  private meanwhile = new Set<ReplicaRecord[]>();
+  /** What its machine last told it holds now (`now`), told again to a
+   *  latest part folded anew, which has only its records to go by. */
+  private nowTold: { busy: boolean; turn: string | null; kept: KeptWords[]; halted: string | null } | null = null;
   /** Events opened whole, by the object each is kept as. */
   private expanded = new Map<string, SessionEvent>();
   /** The message being shown as it would be written, and the records that
@@ -477,9 +483,11 @@ export class Conversation {
     if (drawn) this.changed();
   }
 
-  /** Takes `records` in as they stand. */
-  private take(records: readonly ReplicaRecord[]): void {
+  /** Takes `records` in as they stand; `again` when they were taken before
+   *  and are taken once more over a page read meanwhile. */
+  private take(records: readonly ReplicaRecord[], again = false): void {
     if (records.length === 0) return;
+    if (!again) for (const since of this.meanwhile) since.push(...records);
     this.searchVersion += 1;
     const touched = new Map<Held, { events: SessionEvent[]; keys: string[] }>();
     const touch = (part: Held, span: Span) => {
@@ -487,17 +495,24 @@ export class Conversation {
     };
     for (const record of records) {
       const key = record.record === "is" ? record.shown.key : record.key;
+      // The part that held it: where it stands on as it is told anew, should
+      // the place it is told at be no part's by itself, as the first of a
+      // part with a gap before it is not.
+      let home: Held | null = null;
       for (const part of this.parts) {
         const span = this.spans.get(part);
         const at = span ? span.keys.indexOf(key) : -1;
         if (!span || at < 0) continue;
         touch(part, span);
         removeAt(span, at);
+        home ??= part;
       }
       if (record.record !== "is") continue;
-      const part = this.partAt(record.shown.place);
+      const part = this.partAt(record.shown.place) ?? home;
       const span = part && this.spans.get(part);
       if (!part || !span) continue;
+      // What a job or an agent told of a run an earlier part holds.
+      this.route(record.shown.event);
       const last = span.places[span.places.length - 1];
       // Added at the end of the latest part, nothing else of it changed: it
       // is read as it comes, the part's other entries left as they are.
@@ -524,6 +539,34 @@ export class Conversation {
     if (!span) return;
     part.fold = part.fold.revised(previous.events, previous.keys, this.shown(span), span.keys, part === this.tail ? this.asks : []);
     this.placed(part, span);
+    this.relate(part);
+    // Folded anew from its records alone, the latest part is told again
+    // what its machine holds of it now.
+    const now = this.nowTold;
+    if (part === this.tail && now) part.fold.now(now.busy, now.turn, now.kept, now.halted);
+  }
+
+  /** Tells `part` what the parts after it hold of its runs and agents: a
+   *  job goes on after its turn, and an agent for as long as it likes, so
+   *  what became of them is written later than they are. */
+  private relate(part: Held): void {
+    const at = this.parts.indexOf(part);
+    if (at < 0) return;
+    for (const later of this.parts.slice(at + 1)) {
+      for (const event of this.spans.get(later)?.events ?? []) {
+        if (event.event !== "changed") continue;
+        const change = event.change;
+        if (change.kind === "run_facts_updated") {
+          if (part.fold.holdsCall(change.update.call_id)) part.fold.late(event);
+          continue;
+        }
+        const agent =
+          change.kind === "agent_started" ? change.agent.id : change.kind === "agent_event" || change.kind === "agent_ended" ? change.agent_id : null;
+        if (agent === null) continue;
+        const call = change.kind === "agent_started" ? change.agent.call : undefined;
+        if (part.fold.agents.get(agent) || (call && part.fold.holdsCall(call))) part.fold.late(event);
+      }
+    }
   }
 
   /** The requests that wait for the user now, all of them, as its machine
@@ -779,6 +822,8 @@ export class Conversation {
     this.structure += 1;
     this.changed();
     const generation = this.generation;
+    const since: ReplicaRecord[] = [];
+    this.meanwhile.add(since);
     try {
       const read = await source.page(generation, from);
       if (!read || read.generation !== this.generation || generation !== this.generation) return;
@@ -827,6 +872,13 @@ export class Conversation {
       this.spans.set(made, fresh);
       this.parts.splice(this.parts.indexOf(later), 0, made);
       this.parts = [...this.parts];
+      // What the parts after it hold of its runs is told to it, and what it
+      // holds of earlier parts' runs to them.
+      this.relate(made);
+      for (const event of fresh.events) this.route(event);
+      // The page was read as the timeline stood when it was asked for:
+      // records that came since stand over what it brought.
+      if (since.length) this.take(since, true);
       // Read where the reader stood in the gap, it begins where the view
       // does: what is above it is as tall as it was drawn, what is below it
       // as tall as the rest of the gap was. Read from an end, only what it
@@ -841,6 +893,7 @@ export class Conversation {
     } catch (error) {
       this.readingFailure = String(error);
     } finally {
+      this.meanwhile.delete(since);
       this.reading.delete(gap.key);
       this.structure += 1;
       this.changed();
@@ -883,10 +936,22 @@ export class Conversation {
     const tail = this.tail;
     const span = this.spans.get(tail);
     if (span) {
-      // Cut where a stretch begins, so what stays shows whole.
-      let cut = span.events.length - events;
-      while (cut > 0 && cut < span.events.length && !begins(span.events[cut])) cut += 1;
-      if (cut <= 0 || cut >= span.events.length) return;
+      // Cut where a stretch begins, so what stays shows whole: the first
+      // such place after the one asked for, else the last before it; and
+      // where the part holds no such place and twice what it may, where it
+      // was asked, since a stretch that long is cut somewhere.
+      const asked = span.events.length - events;
+      if (asked <= 0) return;
+      let cut = asked;
+      while (cut < span.events.length && !begins(span.events[cut])) cut += 1;
+      if (cut >= span.events.length) {
+        cut = asked;
+        while (cut > 0 && !begins(span.events[cut])) cut -= 1;
+      }
+      if (cut <= 0) {
+        if (span.events.length < events * 2) return;
+        cut = asked;
+      }
       const gone = span.keys.slice(0, cut);
       for (let at = 0; at < cut; at += 1) span.deferred.delete(span.keys[at]!);
       span.events.splice(0, cut);
@@ -1276,7 +1341,8 @@ export class Conversation {
    *  every turn the page holds, the earliest part first. */
   toolsOf(turn: string | null): Extract<Entry, { kind: "tool" }>[] {
     const tools = (entries: readonly Entry[]) => entries.filter((entry): entry is Extract<Entry, { kind: "tool" }> => entry.kind === "tool");
-    if (turn !== null) return tools(this.foldOf(turn)?.turnEntries(turn) ?? []);
+    // A turn may lie across parts: its calls are all of theirs, in order.
+    if (turn !== null) return this.parts.flatMap((part) => (part.fold.holds(turn) ? tools(part.fold.turnEntries(turn)) : []));
     return this.parts.flatMap((part) => tools(part.fold.entries));
   }
 
@@ -1310,8 +1376,13 @@ export class Conversation {
 
   /** The user's own words a turn began with, where they are held. */
   turnWords(turn: string): Heard | null {
-    const fold = this.foldOf(turn);
-    return (fold?.entries.find((entry): entry is Heard => entry.kind === "heard" && entry.turn === turn && (!entry.from || entry.from.kind === "user")) ?? null);
+    // The part a turn begins in is not the one it ends in where it lies
+    // across parts: its words are looked for in each.
+    for (const part of this.parts) {
+      const words = part.fold.entries.find((entry): entry is Heard => entry.kind === "heard" && entry.turn === turn && (!entry.from || entry.from.kind === "user"));
+      if (words) return words;
+    }
+    return null;
   }
 
   /** All a turn said, as it was written. */
@@ -1421,6 +1492,7 @@ export class Conversation {
   }
   /** What its machine holds of it now (`Fold.now`). */
   now(busy: boolean, turn: string | null, kept: KeptWords[], halted: string | null = null): void {
+    this.nowTold = { busy, turn, kept, halted };
     this.live.now(busy, turn, kept, halted);
   }
   unsend(key: string): void {

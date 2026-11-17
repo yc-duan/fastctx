@@ -957,7 +957,12 @@ export class ConversationPage {
     // it is asked again only once that much more has come.
     if (latest.end < this.trimmedAt) this.trimmedAt = 0;
     const nearNewest = this.room.offsetTop - this.scroller.scrollTop - this.scroller.clientHeight < this.scroller.clientHeight;
-    if ((this.following || nearNewest) && latest.end - latest.start > LATEST_MOST && !this.trimming && latest.end - this.trimmedAt > LATEST_KEPT) {
+    // A reader in an earlier part sees nothing of the latest one: it is cut
+    // as it grows all the same, or it would grow without end while they read.
+    const reader = this.view.readerKey();
+    const at = reader === null ? null : conversation.partOf(reader);
+    const elsewhere = at !== null && at !== latest;
+    if ((this.following || nearNewest || elsewhere) && latest.end - latest.start > LATEST_MOST && !this.trimming && latest.end - this.trimmedAt > LATEST_KEPT) {
       this.trimming = true;
       this.trimmedAt = latest.end;
       void conversation.trim(LATEST_KEPT).finally(() => {

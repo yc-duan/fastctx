@@ -305,6 +305,9 @@ export class SideFrame implements PartsFrame {
       this.placed = placed;
       this.pane.over(placed === "over");
       this.host.classList.toggle("sp-over", placed === "over");
+      // Open already as the room narrowed, it lies over the page from now:
+      // the system back shuts it as it shuts one opened so.
+      if (placed === "over" && !ALONE && this.pane.open) layerOpened(this.layer);
       const shown = placed === "over" ? this.dock : placed;
       this.split.dataset.dock = shown;
       this.pane.setDock(shown);

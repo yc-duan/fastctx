@@ -1314,6 +1314,9 @@ export class ConversationView {
     const box = row.getBoundingClientRect();
     const top = box.top - scroller.getBoundingClientRect().top;
     scroller.scrollTop += top - Math.max(0, (scroller.clientHeight - box.height) / 2);
+    // The row was put by where it stands on the page: the heights drawn are
+    // taken now, so the sizes' report of them moves it no second time.
+    this.measureMounted();
     row.classList.remove("row-found");
     void row.offsetWidth;
     row.classList.add("row-found");

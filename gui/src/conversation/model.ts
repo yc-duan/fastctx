@@ -689,8 +689,17 @@ export class Fold {
     next.preferredKeys = null;
     next.stale = false;
     next.endings = this.endings; next.lastEnding = this.lastEnding;
+    // Words on their way stay until the record of them is there: the one
+    // with their own delivery, or, while neither names one, words alike
+    // that the records gained just now. Words said before in the same words
+    // are not theirs.
     for (const sent of this.entries.filter((entry): entry is Heard => entry.kind === "heard" && entry.sending !== undefined)) {
-      if (!next.entries.some((entry) => entry.kind === "heard" && entry.sending === undefined && entry.text.trim() === sent.text.trim())) next.add(sent);
+      const arrived = next.entries.some((entry) => {
+        if (entry.kind !== "heard" || entry.sending !== undefined) return false;
+        if (typeof sent.delivery === "string" && typeof entry.delivery === "string") return entry.delivery === sent.delivery;
+        return entry.text.trim() === sent.text.trim() && !this.byKey.has(entry.key);
+      });
+      if (!arrived) next.add(sent);
     }
     next.entries = next.entries.map((entry) => {
       const prior = this.byKey.get(entry.key);

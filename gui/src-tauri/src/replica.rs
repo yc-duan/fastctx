@@ -138,10 +138,16 @@ impl Readers {
     }
 }
 
+/// How many pages in a row with nothing this build can show are read past
+/// for one part.
+const UNREAD_PAGES: usize = 8;
+
 /// Whether `error` says the machine asked is of a release that reads no
-/// timeline by pages.
+/// timeline by pages: it says so as unsupported where it knows the request,
+/// and as not run, with no more said, where it does not.
 fn older(error: &Error) -> bool {
-    matches!(error, Error::Call(CallError::Failed(failure)) if failure.not_run && failure.code == Some(fastctx_types::ipc::FailureCode::Unsupported))
+    matches!(error, Error::Call(CallError::Failed(failure))
+        if failure.not_run && matches!(failure.code, None | Some(fastctx_types::ipc::FailureCode::Unsupported)))
 }
 
 /// Whether a stretch of the conversation begins at `event`: a turn, the
@@ -250,7 +256,23 @@ impl Reader {
     /// The part of the timeline read from `from`: a page of it, begun where
     /// a stretch begins and ended where one ends when it holds such a place.
     pub async fn read(&self, from: From) -> Result<Read, Error> {
-        let (asked, cut_left, cut_right) = match &from {
+        // A page none of whose events this build reads, written by a later
+        // one, is read past: the part is the first page that shows something,
+        // or the last one where the timeline ends that way.
+        let mut from = from;
+        for _ in 0..UNREAD_PAGES {
+            match self.read_page(&from).await? {
+                (read, None) => return Ok(read),
+                (_, Some(next)) => from = next,
+            }
+        }
+        Ok(self.read_page(&from).await?.0)
+    }
+
+    /// One page read from `from`; and where to read on from, when none of
+    /// what it holds can be shown and the timeline goes on that way.
+    async fn read_page(&self, from: &From) -> Result<(Read, Option<From>), Error> {
+        let (asked, cut_left, cut_right) = match from {
             From::Latest => (TimelineFrom::Latest, true, false),
             From::Before { place } => (TimelineFrom::Before { place: place.clone() }, true, false),
             From::After { place } => (TimelineFrom::After { place: place.clone() }, false, true),
@@ -266,11 +288,23 @@ impl Reader {
         let TimelineTold::Page { revision, initializing, events, older, newer, through } = told else {
             return Err(Error::Unexpected("the timeline did not answer a page".into()));
         };
+        let ends = (events.first().map(|raw| raw.place.clone()), events.last().map(|raw| raw.place.clone()));
         let mut read: Vec<(TimelineEvent, SessionEvent, Option<Deferred>)> = events
             .into_iter()
             .filter_map(|raw| decoded(&raw).map(|(event, deferred)| (raw, event, deferred)))
             .collect();
         let (mut older, mut newer) = (older, newer);
+        // Nothing of the page can be shown: read on the way it was asked,
+        // past what it held.
+        let onward = if read.is_empty() {
+            match (cut_right, &ends) {
+                (false, (Some(first), _)) if older.is_some() => Some(From::Before { place: first.clone() }),
+                (true, (_, Some(last))) if newer.is_some() => Some(From::After { place: last.clone() }),
+                _ => None,
+            }
+        } else {
+            None
+        };
         // More of the timeline before it: it begins where a stretch does,
         // what came before that left to the part before.
         if cut_left
@@ -291,17 +325,17 @@ impl Reader {
         }
         // Where the next part either way is read from: just past this one.
         if older.is_some() {
-            older = read.first().map(|(raw, _, _)| raw.place.clone());
+            older = read.first().map(|(raw, _, _)| raw.place.clone()).or(ends.0);
         }
         if newer.is_some() {
-            newer = read.last().map(|(raw, _, _)| raw.place.clone());
+            newer = read.last().map(|(raw, _, _)| raw.place.clone()).or(ends.1);
         }
         let mut events = Vec::with_capacity(read.len());
         for (raw, event, deferred) in read {
             events.push(shown(raw, &event, deferred).map_err(Error::Other)?);
         }
         let preparing = initializing.unwrap_or(revision.is_none());
-        Ok(Read { part: Part { generation: self.generation(), events, older, newer, preparing }, revision, through })
+        Ok((Read { part: Part { generation: self.generation(), events, older, newer, preparing }, revision, through }, onward))
     }
 }
 
