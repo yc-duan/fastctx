@@ -65,6 +65,7 @@ pub(crate) async fn watch_delivery_ack(shell: tauri::State<'_, crate::Shell>, id
         shell.deliveries.close(id);
         shell.transcripts.close(id);
         shell.watched.close(id);
+        shell.readers.close(id);
     }
     Ok(())
 }

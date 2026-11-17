@@ -1,12 +1,6 @@
 import type { Entry } from "./model";
 import type { SessionEvent } from "../world/events";
 
-export function canReviseItem(previous: SessionEvent | undefined, event: SessionEvent, hasUsage: boolean): boolean {
-  if (event.event !== "finished" || event.item.detail != null) return false;
-  if (previous && (previous.event !== "finished" || previous.turn !== event.turn || previous.item.id !== event.item.id)) return false;
-  return event.item.kind !== "thinking" || !hasUsage;
-}
-
 /** Cache the event's own contribution, before later turn or usage facts. */
 export function eventBase(event: SessionEvent, entry: Entry): Entry {
   const base = { ...entry };

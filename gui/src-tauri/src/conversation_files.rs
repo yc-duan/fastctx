@@ -13,9 +13,13 @@ use fastctx_types::timeline_pages::{FILES_ITEMS, FileChangeTold, TimelineAsk, Ti
 /// How long one reading may take before the page is told to ask again.
 const WITHIN: Duration = Duration::from_secs(30);
 
+/// Whom a watch is of: the World it is read in, the conversation, and the
+/// machine it was asked of.
+type Whom = (World, ResidentId, Option<Written>);
+
 /// Whom each watch is of, by the watch's id.
 #[derive(Default)]
-pub(crate) struct Watched(Mutex<HashMap<u64, (World, ResidentId, Option<Written>)>>);
+pub(crate) struct Watched(Mutex<HashMap<u64, Whom>>);
 
 impl Watched {
     pub(crate) fn open(&self, id: u64, world: World, resident: ResidentId, machine: Option<Written>) {
@@ -30,7 +34,7 @@ impl Watched {
         self.0.lock().expect("watched conversations").clear();
     }
 
-    fn of(&self, id: u64) -> Option<(World, ResidentId, Option<Written>)> {
+    fn of(&self, id: u64) -> Option<Whom> {
         self.0.lock().expect("watched conversations").get(&id).cloned()
     }
 }

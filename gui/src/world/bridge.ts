@@ -65,13 +65,21 @@ export interface WorldNow {
  *  reader, the shell the rest (`src-tauri/src/transcript.rs`). */
 export type Piece =
   | { kind: "resumed" }
-  | { kind: "reopen" }
   /** Events after all that was given, from `start` on. */
   | { kind: "extended"; start: number; events: SessionEvent[] }
   /** One thing as it happened, the `at`th event of the conversation. */
   | { kind: "event"; generation?: number; at: number; event: SessionEvent }
-  | { kind: "live"; object?: string; body?: SessionEvent; generation: number; event: SessionEvent; key: string; older: boolean; evicted?: string[]; placement?: { key: string; after: string | null } }
-  | { kind: "timeline"; delta: import("../conversation/conversation").TimelineDelta }
+  /** The part the page holds in place of all it held, read from the
+   *  conversation's timeline: opened anew, or its timeline made anew. */
+  | { kind: "replica"; part: import("../conversation/replica").ReplicaPart }
+  /** Records the timeline gained, in the order they were written. */
+  | { kind: "records"; generation: number; records: import("../conversation/replica").ReplicaRecord[] }
+  /** Whether the timeline is still being made from the history. */
+  | { kind: "preparing"; preparing: boolean }
+  /** The requests that wait for the user now, all of them. */
+  | { kind: "waiting"; events: SessionEvent[] }
+  /** A request that waits for the user, or the end of one. */
+  | { kind: "asked"; event: SessionEvent }
   | { kind: "ended"; error: string | null }
   /** The conversation was deleted: nothing more of it comes. */
   | { kind: "deleted"; error: string }
@@ -119,8 +127,22 @@ export function watchWorld(onPiece: (piece: WorldPiece) => void, known: string[]
 export async function watch(
   who: Address,
   onPiece: (piece: Piece) => void,
-): Promise<{ id: number; window: Window }> {
-  return observe<Piece, { id: number; window: Window }>("watch", { residentId: who.resident, machineName: who.machine }, onPiece);
+): Promise<Watched> {
+  return observe<Piece, Watched>("watch", { residentId: who.resident, machineName: who.machine }, onPiece);
+}
+
+/** A conversation opened: the latest part of its timeline, or, from a
+ *  machine of an earlier release, the window of its whole history. */
+export interface Watched {
+  id: number;
+  window?: Window;
+  replica?: import("../conversation/replica").ReplicaPart;
+}
+
+/** A part of the timeline of a conversation shown from it; null when its
+ *  timeline was made anew since the page asked. */
+export function conversationPage(id: number, generation: number, from: import("../conversation/replica").ReadFrom): Promise<import("../conversation/replica").ReplicaPart | null> {
+  return invoke("conversation_page", { id, generation, from });
 }
 
 export function unwatch(id: number): Promise<void> {
@@ -130,17 +152,13 @@ export function unwatch(id: number): Promise<void> {
 
 /** A part of a watched conversation the page does not hold; null when the
  *  page asked about an earlier reading or there is nothing there. */
-export function conversationPart(id: number, generation: number, edge: Edge, request?: number): Promise<PartRead | null> {
-  return invoke("conversation_part", { id, generation, edge, request });
+export function conversationPart(id: number, generation: number, edge: Edge): Promise<PartRead | null> {
+  return invoke("conversation_part", { id, generation, edge });
 }
 
-/** Where a turn of a watched conversation first appears. */
-export function conversationFollow(id: number, revision: number, following: boolean): Promise<void> {
-  return invoke("conversation_follow", { id, revision, following });
-}
-
-export function conversationObject(id: number, generation: number, object: string): Promise<import("../conversation/conversation").ExpandedEvent> {
-  return invoke("conversation_object", { id, generation, object });
+/** An event of a watched conversation kept whole as an object. */
+export function conversationObject(id: number, object: string, bytes: number): Promise<import("../conversation/conversation").ExpandedEvent> {
+  return invoke("conversation_object", { id, object, bytes });
 }
 
 /** One file change as the machine a conversation lives on keeps it
@@ -825,11 +843,6 @@ export function arriveHub(): Promise<void> {
 
 export function remoteClose(session: number): Promise<void> {
   return invoke("remote_close", { session });
-}
-
-/** Reads an export page without replacing the visible window. */
-export function conversationScan(id: number, cursor: import("../conversation/conversation").ScanCursor | null): Promise<import("../conversation/conversation").Scanned> {
-  return invoke("conversation_scan", { id, cursor });
 }
 
 export function conversationSearch(id: number, request: import("../conversation/timeline-find").SearchRequest): Promise<import("../conversation/timeline-find").SearchReply> {

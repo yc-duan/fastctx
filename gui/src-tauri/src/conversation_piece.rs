@@ -48,6 +48,30 @@ pub(crate) enum Piece {
         #[serde(skip_serializing_if = "Option::is_none")]
         halted: Option<String>,
     },
+    /// The part the page holds in place of all it held, read from the
+    /// conversation's timeline (`replica`): opened anew, or its timeline
+    /// made anew.
+    Replica {
+        part: crate::replica::Part,
+    },
+    /// Records the timeline gained, in the order they were written.
+    Records {
+        generation: u64,
+        records: Vec<crate::replica::Record>,
+    },
+    /// Whether the timeline is still being made from the history.
+    Preparing {
+        preparing: bool,
+    },
+    /// The requests that wait for the user now, all of them, as a live
+    /// watch begins.
+    Waiting {
+        events: Vec<Box<serde_json::value::RawValue>>,
+    },
+    /// A request that waits for the user, or the end of one, as it happens.
+    Asked {
+        event: Box<serde_json::value::RawValue>,
+    },
     /// The watch is over: the node ended it, or the connection broke.
     Ended {
         error: Option<String>,

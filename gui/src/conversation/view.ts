@@ -55,7 +55,7 @@ import { effortLabel } from "./effort-slider";
 import { isThinking, runsOf, startsAgent, type Activity, type Block, type Entry, type Gap, type Say, type SendState, type ShownAttachment } from "./model";
 import { AgentBox } from "./agent-box";
 import { toldSaid, type AgentRun } from "./agents";
-import { Conversation } from "./conversation";
+import { Conversation, type Into } from "./conversation";
 import { eventParts, searchText } from "./event-find";
 import type { KnownText, SearchEvent, SearchHit } from "./timeline-find";
 import { pictureFrame } from "./picture-frame";
@@ -138,8 +138,10 @@ export interface Context {
    *  drawn. Always, where none says. */
   following?: (() => boolean) | undefined;
   /** A gap came near the reader: its turns are read, from its end when the
-   *  reader is below it, from its start when above. */
-  near?: ((gap: Gap, side: "end" | "start", explicit?: boolean) => void) | undefined;
+   *  reader is below it, from its start when above; and, of a conversation
+   *  shown from its timeline, where the reader stands in it (`into`) when
+   *  the view came into the middle of one, far from both its ends. */
+  near?: ((gap: Gap, side: "end" | "start", explicit?: boolean, into?: Into) => void) | undefined;
   /** Where words being sent leave from (`flight.ts`). */
   departure?: (() => Departure | null) | undefined;
   /** Words just sent are on the page, laid out: the newest of them. */
@@ -539,6 +541,18 @@ export class ConversationView {
     if (same) return;
     const present = new Set<string>();
     for (const block of blocks) present.add(block.key);
+    // What goes may be as tall as most of the conversation (a gap): until
+    // what comes in its place is laid out, the space below stands in for
+    // it, so the page is never shorter than where its reader is, and the
+    // browser does not move the reader to its end meanwhile.
+    if (old.some((block) => block.kind === "gap" && block.paged && !present.has(block.key))) {
+      // Where the reader is, said before anything goes: once the gap is
+      // gone, what is drawn stands elsewhere until it is laid out again.
+      if (!(this.context.following?.() ?? true)) this.pin ??= this.anchorNow();
+      const room = Math.ceil(this.heights.total() + (this.context.scroller.clientHeight || innerHeight));
+      this.below.style.height = `${room}px`;
+      this.spaceBelow = -1;
+    }
     for (const [key, slot] of this.slots) {
       if (present.has(key)) continue;
       this.hide(slot);
@@ -651,10 +665,25 @@ export class ConversationView {
     for (const slot of wanted) {
       const block = slot.block;
       if (block.kind !== "gap" || block.loading || this.asked.has(block.key)) continue;
-      this.asked.add(block.key);
       const index = this.heights.index(block.key) ?? 0;
+      if (block.paged) {
+        // As tall as what it stands for: read only once the view is in it
+        // or beside it, from the end the view is nearer; where the view is
+        // more than a screen from both ends, where the reader stands in it.
+        const start = this.heights.top(index);
+        const end = start + this.heights.height(index);
+        if (following || end < top - view || start > top + view * 2) continue;
+        this.asked.add(block.key);
+        const deep = start < top - view && end > top + view * 2;
+        const into = deep ? { fraction: (top - start) / Math.max(1, end - start), above: top - start, height: end - start } : undefined;
+        const middle = top + view / 2;
+        this.context.near?.(block, Math.abs(end - middle) <= Math.abs(start - middle) ? "end" : "start", false, into);
+        continue;
+      }
+      this.asked.add(block.key);
       this.context.near?.(block, index <= reader ? "end" : "start");
     }
+    this.weigh();
     return drawn;
   }
 
@@ -973,9 +1002,12 @@ export class ConversationView {
   private guess(block: Block, index: number): number {
     const { line, chars } = this.metrics();
     const known = this.guesses.get(block.key);
-    if (known && known.stamp === block.stamp && known.width === chars) return known.height;
+    // A gap's height goes by how tall an event is taken to be: laid out
+    // again when that is taken otherwise by a fifth or more.
+    const stamp = block.kind === "gap" && block.paged ? block.stamp * 64 + this.eachStep : block.stamp;
+    if (known && known.stamp === stamp && known.width === chars) return known.height;
     let height: number;
-    if (block.kind === "gap") height = this.room().gap;
+    if (block.kind === "gap") height = block.paged ? this.gapHeight(block) : this.room().gap;
     else if (block.kind === "ended" && !this.context.words.turn(block.end.how, block.end.reason) && !this.changedSign(block.turn)) height = 0;
     else {
       const conversation = this.conversation;
@@ -993,8 +1025,60 @@ export class ConversationView {
       height = estimate(block, line, chars, acts) + (index === 0 ? 0 : start ? room.turn : room.block);
       if (block.kind === "ended") height += this.changedRoom(block.turn);
     }
-    this.guesses.set(block.key, { stamp: block.stamp, width: chars, height });
+    this.guesses.set(block.key, { stamp, width: chars, height });
     return height;
+  }
+
+  /** How tall a gap of a conversation shown from its timeline stands: what
+   *  the page measured of it when it held it, and for the rest as tall as
+   *  so many events are in what is laid out now. */
+  private gapHeight(gap: Gap): number {
+    return Math.max(this.room().gap, Math.round((gap.measured ?? 0) + (gap.unmeasured ?? 0) * this.eachEvent));
+  }
+
+  /** How tall an event is, taken over all that is laid out: the height of
+   *  the blocks held over the events they are of. */
+  private eachEvent = 12;
+  /** Which fifth of a doubling `eachEvent` is in: a gap is laid out again
+   *  only when it moves to another. */
+  private eachStep = 0;
+  private weigh(): void {
+    let events = 0;
+    for (const part of this.conversation.held()) events += Math.max(0, part.end - part.start);
+    if (events < 32) return;
+    let px = 0;
+    let gaps = false;
+    for (let index = 0; index < this.blocks.length; index += 1) {
+      if (this.blocks[index]!.kind === "gap") gaps = true;
+      else px += this.heights.height(index);
+    }
+    if (px <= 0) return;
+    this.eachEvent = Math.min(400, Math.max(1, px / events));
+    const step = Math.round(Math.log2(this.eachEvent) * 4) & 63;
+    if (step === this.eachStep) return;
+    this.eachStep = step;
+    if (!gaps) return;
+    // What is not held is as tall as so many events are now taken to be.
+    for (let index = 0; index < this.blocks.length; index += 1) {
+      const block = this.blocks[index]!;
+      if (block.kind !== "gap" || !block.paged) continue;
+      this.measured.delete(block.key);
+      const slot = this.slots.get(block.key);
+      if (slot) slot.signature = null;
+      this.heights.set(index, this.guess(block, index));
+    }
+    // Laid out again with them so, the reader kept where they are.
+    this.readerLayout = true;
+    this.scrolled();
+  }
+
+  /** How tall the blocks from `first` to `last` stand together, as they
+   *  are laid out now. */
+  heightBetween(first: string, last: string): number | null {
+    const from = this.heights.index(first);
+    const to = this.heights.index(last);
+    if (from === undefined || to === undefined || to < from) return null;
+    return this.heights.top(to + 1) - this.heights.top(from);
   }
 
   /** The body's line height and how many of its characters a line of the
@@ -1103,7 +1187,7 @@ export class ConversationView {
     this.searchTextsFresh();
     const read = events.filter((event): event is SearchEvent & { event: NonNullable<SearchEvent["event"]> } => event.event !== undefined);
     const conversation = new Conversation();
-    conversation.open({ generation: 0, start: 0, turns_before: 0, carry: [], events: read.map((event) => event.event), pages: { older: false, newer: false, keys: read.map((event) => event.place.item), objects: [], pending: [] } }, null);
+    conversation.openReplica({ generation: 0, events: read.map((event) => ({ key: event.place.item, place: event.place, event: event.event })), older: null, newer: null, preparing: false }, null);
     const projection = new ConversationView(document.createElement("div"), conversation, { ...this.context, scroller: document.createElement("div") }, true);
     projection.blocks = conversation.blocks();
     const counts: number[] = [];
@@ -1516,6 +1600,14 @@ export class ConversationView {
         return;
       }
       if (block.kind === "gap") {
+        if (block.paged) {
+          // What is not held stands as tall as it would be drawn, empty
+          // until the reader comes to it.
+          element.style.boxSizing = "border-box";
+          element.style.height = `${this.guess(block, this.heights.index(block.key) ?? 0)}px`;
+          element.innerHTML = `<div class="gap-span${block.loading ? " loading" : ""}" aria-hidden="true"></div>`;
+          return;
+        }
         element.innerHTML = this.gapRow(block);
         return;
       }
@@ -1561,7 +1653,7 @@ export class ConversationView {
    *  they are read, a mark that moves. */
   private gapRow(gap: Gap): string {
     const { words } = this.context;
-    const said = gap.paged ? (gap.later ? (this.context.english ? "Later events" : "后续内容") : (this.context.english ? "Earlier events" : "更早的内容")) : gap.first ? words.turnsEarlier(gap.turns) : words.turnsBetween(gap.turns);
+    const said = gap.first ? words.turnsEarlier(gap.turns) : words.turnsBetween(gap.turns);
     return `<button class="gap-row${gap.loading ? " loading" : ""}" type="button" data-gap="${escape(gap.key)}"><span class="gap-line" aria-hidden="true"></span><span class="gap-said">${escape(said)}</span><span class="gap-line" aria-hidden="true"></span></button>`;
   }
 

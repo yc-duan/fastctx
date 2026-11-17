@@ -106,6 +106,19 @@
   height: var(--gap-row);
 }
 
+/* What is not held of a conversation shown from its timeline stands as tall
+   as it would be drawn, empty; while it is read, a faint breath. */
+.gap-span {
+  width: 100%;
+  height: 100%;
+}
+
+.gap-span.loading {
+  background: linear-gradient(to bottom, transparent, var(--fill) 50%, transparent);
+  opacity: var(--breath-alpha);
+  animation: gap-draw var(--linger) var(--fold-easing) infinite alternate;
+}
+
 .gap-line {
   flex: 1;
   height: 1px;

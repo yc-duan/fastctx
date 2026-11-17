@@ -55,10 +55,6 @@ impl Transcripts {
         self.0.lock().expect("transcript table").get(&id).cloned()
     }
 
-    pub(crate) fn insert(&self, id: u64, transcript: Arc<Mutex<Transcript>>) {
-        self.0.lock().expect("transcript table").insert(id, transcript);
-    }
-
     pub(crate) fn close(&self, id: u64) {
         self.0.lock().expect("transcript table").remove(&id);
     }
@@ -294,10 +290,6 @@ impl Transcript {
             events: self.events.range(start, self.events.len()),
             carry,
         }
-    }
-
-    pub(crate) fn generation(&self) -> u64 {
-        self.generation
     }
 
     fn admit(&mut self, event: &SessionEvent) -> Result<(), String> {

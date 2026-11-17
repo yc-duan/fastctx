@@ -113,6 +113,10 @@ mod unix_instance;
 
 mod conversation_files;
 mod conversation_watch;
+mod replica;
+mod replica_reads;
+mod replica_search;
+mod replica_search_index;
 mod watch_delivery;
 
 struct Shell {
@@ -122,6 +126,8 @@ struct Shell {
     transcripts: Arc<transcript::Transcripts>,
     /// Whom each watched conversation is, for what its page asks of its machine.
     watched: conversation_files::Watched,
+    /// What reads each conversation shown from its timeline (`replica`).
+    readers: replica::Readers,
     deliveries: watch_delivery::Deliveries,
     composer_inputs: composer_documents::Inputs,
     next: AtomicU64,
@@ -147,6 +153,7 @@ impl Shell {
         }
         self.transcripts.close_all();
         self.watched.clear();
+        self.readers.clear();
         self.deliveries.close_all();
         self.composer_inputs.clear();
     }
@@ -286,10 +293,16 @@ pub(crate) fn epoch_ms(at: std::time::SystemTime) -> u64 {
     at.duration_since(std::time::UNIX_EPOCH).map(|since| since.as_millis() as u64).unwrap_or_default()
 }
 
+/// A conversation opened for a page: the latest part of its timeline
+/// (`replica`), or, from a machine of an earlier release, the window of its
+/// whole history.
 #[derive(Serialize)]
 struct Watch {
     id: u64,
-    window: transcript::Window,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    window: Option<transcript::Window>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    replica: Option<replica::Part>,
 }
 
 #[derive(Serialize)]
@@ -335,6 +348,41 @@ async fn watch(
     let resident = resident(resident_id)?;
     let machine = machine(machine_name)?;
     #[cfg(not(target_os = "android"))]
+    let opened = replica::open(&world, resident.clone(), machine.clone()).await?;
+    #[cfg(target_os = "android")]
+    let opened = android::replica::open(&world, resident.clone(), machine.clone()).await?;
+    if let Some(opened) = opened {
+        let id = shell.next.fetch_add(1, Ordering::Relaxed);
+        let part = opened.part.clone();
+        shell.readers.insert(id, opened.reader.clone());
+        shell.watched.open(id, world.clone(), resident.clone(), machine.clone());
+        let opened = Arc::new(opened);
+        if let Err(error) = shell.follow_delivery(
+            page,
+            id,
+            pieces,
+            |piece| match piece {
+                Piece::Now { .. } => Some("now".into()),
+                Piece::Preparing { .. } => Some("preparing".into()),
+                _ => None,
+            },
+            move |pieces, again| {
+                let opened = opened.clone();
+                async move {
+                    #[cfg(not(target_os = "android"))]
+                    replica::follow(&opened, again, &pieces).await;
+                    #[cfg(target_os = "android")]
+                    android::replica::follow(&opened, again, &pieces).await;
+                }
+            },
+        ) {
+            shell.readers.close(id);
+            shell.watched.close(id);
+            return Err(error.into());
+        }
+        return Ok(Watch { id, window: None, replica: Some(part) });
+    }
+    #[cfg(not(target_os = "android"))]
     let (conversation, history) = match &machine {
         Some(machine) => Conversation::open(&world, resident.clone(), machine.clone()).await,
         None => Conversation::watch(&world, resident.clone(), None).await,
@@ -370,7 +418,7 @@ async fn watch(
         shell.watched.close(id);
         return Err(error.into());
     }
-    Ok(Watch { id, window })
+    Ok(Watch { id, window: Some(window), replica: None })
 }
 
 #[tauri::command]
@@ -380,6 +428,7 @@ fn unwatch(shell: tauri::State<'_, Shell>, id: u64) {
     }
     shell.transcripts.close(id);
     shell.watched.close(id);
+    shell.readers.close(id);
     shell.deliveries.close(id);
     shell.composer_inputs.close(id);
 }
@@ -1296,6 +1345,9 @@ pub fn run() {
             watch_delivery::watch_delivery_resend,
             transcript::conversation_part,
             conversation_files::conversation_files,
+            replica_reads::conversation_page,
+            replica_reads::conversation_object,
+            replica_search::conversation_search,
             transcript::conversation_cut,
             transcript::conversation_locate,
             transcript::conversation_index,

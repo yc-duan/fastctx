@@ -1,11 +1,15 @@
-// A reading owns its live subscription and bounded page window. Part replies
-// may replace that window; generation numbers keep crossed replies from
-// changing a newer reading. Older nodes keep the original Watch path.
+// A reading of a conversation: what the shell opens it on, and what follows.
+// One shown from its timeline opens on its latest part, is told the records
+// the timeline gains, and reads the parts its reader comes to; one on a
+// machine of an earlier release is watched whole, its window first, then
+// every event as it happens. Each reading is a watch of its own, and what
+// it reads is read from its own.
 
 import type { Address, SessionEvent } from "../world/events";
 import { after, whyOf } from "../world/again";
-import { conversationSearch, conversationScan, conversationCut, conversationFiles, conversationFind, conversationIndex, conversationLocate, conversationFollow, conversationObject, conversationPart, unwatch, watch, type Piece } from "../world/bridge";
+import { conversationSearch, conversationCut, conversationFiles, conversationFind, conversationIndex, conversationLocate, conversationObject, conversationPage, conversationPart, unwatch, watch, type Piece } from "../world/bridge";
 import type { PartSource, Window } from "./conversation";
+import type { ReplicaPart, ReplicaRecord } from "./replica";
 
 export interface ConversationFeed {
   /** The part shown, in place of all held; `parts` reads the rest. */
@@ -16,8 +20,17 @@ export interface ConversationFeed {
   rebased(generation: number, offset: number, turnsAdded: number): void;
   /** One thing as it happens, the `at`th event. */
   happened(at: number, event: SessionEvent): void;
-  live(event: SessionEvent, key: string, evicted?: string[], placement?: { after: string | null }, older?: boolean, object?: string, body?: SessionEvent): void;
-  timeline(delta: import("./conversation").TimelineDelta): void;
+  /** The latest part of its timeline, in place of all held; `parts` reads
+   *  the rest. */
+  replica(part: ReplicaPart, parts: PartSource): void;
+  /** Records its timeline gained. */
+  records(generation: number, records: ReplicaRecord[]): void;
+  /** Whether its timeline is still being made from the history. */
+  preparing(preparing: boolean): void;
+  /** The requests that wait for the user now, all of them. */
+  waiting(events: SessionEvent[]): void;
+  /** A request that waits for the user, or the end of one. */
+  asked(event: SessionEvent): void;
   /** The live part broke and is being read again: why, and since when. */
   interrupted(why: string | null, since: Date): void;
   /** It came back. */
@@ -46,9 +59,8 @@ export interface ConversationSource {
   open(address: Address, feed: ConversationFeed): Reading;
 }
 
-/** The World's watch: the part it opens on, then live; pieces that come
- *  before it wait for it. Each reading is a watch of its own, and the parts
- *  it reads are read from its own. */
+/** The World's watch: the part it opens on, then what follows; pieces that
+ *  come before it wait for it. */
 export const watched: ConversationSource = {
   open(address, feed) {
     let id: number | null = null;
@@ -60,54 +72,27 @@ export const watched: ConversationSource = {
       if (id === null) throw new Error("the conversation is not watched now");
       return id;
     };
-    let generation: number | null = null;
-    let navigation = 0;
-    let pending: Extract<Piece, { kind: "event" | "live" | "timeline" }>[] = [];
-    let pendingBytes = 0;
-    const buffered = (piece: Extract<Piece, { kind: "event" | "live" | "timeline" }>) => {
-      pendingBytes += new TextEncoder().encode(JSON.stringify(piece)).byteLength;
-      if (pending.length >= 800 || pendingBytes > 4 * 1024 * 1024) { restart(); return; }
-      pending.push(piece);
-    };
-    const install = (window: Window) => {
-      if (window.pages && generation !== null && window.generation < generation) return;
-      generation = window.pages ? window.generation : null;
-      feed.window(window, parts);
-      const events = pending;
-      pending = [];
-      pendingBytes = 0;
-      for (const event of events) {
-        const at = event.kind === "timeline" ? event.delta.generation : event.generation;
-        if (at === generation) {
-          if (event.kind === "timeline") feed.timeline(event.delta);
-          else if (event.kind === "live") feed.live(event.event, event.key, event.evicted, event.placement, event.older, event.object, event.body);
-          else feed.happened(event.at, event.event);
-        } else if (at! > (generation ?? -1)) buffered(event);
-      }
-    };
     const parts: PartSource = {
       identity: () => id === null ? `waiting:${reading}` : String(id),
       search: async (request) => { const owner = current(); const result = await conversationSearch(owner, request); if (closed || owner !== id) throw new Error("the conversation closed during search"); return result; },
-      scan: async (cursor) => { const owner = current(); const scanned = await conversationScan(owner, cursor); if (closed || id !== owner) throw new Error("the conversation closed during export"); return scanned; },
       part: async (generation, edge) => {
         const owner = current();
-        const request = ++navigation;
-        const part = await conversationPart(owner, generation, edge, request);
+        const part = await conversationPart(owner, generation, edge);
         if (id !== owner || closed) return null;
-        // A committed native generation must be installed even if a later
-        // gesture superseded this request. Only a newer installed window can
-        // supersede it; the later request may legitimately return no window.
-        if (part?.window) { install(part.window); return null; }
-        if (request !== navigation) return null;
         return part;
       },
-      object: async (generation, object) => {
+      page: async (generation, from) => {
         const owner = current();
-        const expanded = await conversationObject(owner, generation, object);
+        const part = await conversationPage(owner, generation, from);
+        if (id !== owner || closed) return null;
+        return part;
+      },
+      object: async (object, bytes) => {
+        const owner = current();
+        const expanded = await conversationObject(owner, object, bytes);
         if (closed || refused || id !== owner) throw new Error("the conversation closed while its content was opening");
         return expanded;
       },
-      follow: async (revision, following) => conversationFollow(current(), revision, following),
       files: async (after) => {
         const owner = current();
         const told = await conversationFiles(owner, after);
@@ -127,28 +112,29 @@ export const watched: ConversationSource = {
     };
     const take = (piece: Piece, attempted: string | null) => {
       switch (piece.kind) {
-        case "reopen":
-          restart();
-          return;
         case "resumed":
           feed.resumed();
           return;
-        case "timeline":
-          if (piece.delta.generation === generation) feed.timeline(piece.delta);
-          else if (piece.delta.generation > (generation ?? -1)) buffered(piece);
+        case "replica":
+          feed.replica(piece.part, parts);
           return;
-        case "live":
+        case "records":
+          feed.records(piece.generation, piece.records);
+          return;
+        case "preparing":
+          feed.preparing(piece.preparing);
+          return;
+        case "waiting":
+          feed.waiting(piece.events);
+          return;
+        case "asked":
+          feed.asked(piece.event);
+          return;
         case "event":
-          if (piece.generation !== undefined && piece.generation !== generation) {
-            if (piece.generation > (generation ?? -1)) {
-              buffered(piece);
-            }
-            return;
-          }
-          if (piece.kind === "live") feed.live(piece.event, piece.key, piece.evicted, piece.placement, piece.older, piece.object, piece.body); else feed.happened(piece.at, piece.event);
+          feed.happened(piece.at, piece.event);
           return;
         case "window":
-          install(piece.window);
+          feed.window(piece.window, parts);
           return;
         case "extended":
           feed.extended(piece.start, piece.events);
@@ -203,10 +189,8 @@ export const watched: ConversationSource = {
           id = started.id;
           tries = 0;
           since = null;
-          generation = null;
-          pending = [];
-          pendingBytes = 0;
-          install(started.window);
+          if (started.replica) feed.replica(started.replica, parts);
+          else if (started.window) feed.window(started.window, parts);
           for (const piece of early) {
             if (closed || refused || mine !== reading) break;
             take(piece, attempted);
@@ -244,10 +228,6 @@ export const watched: ConversationSource = {
       waiting = null;
       if (id !== null) void unwatch(id);
       id = null;
-      generation = null;
-      navigation += 1;
-      pending = [];
-      pendingBytes = 0;
       refused = false;
       read();
     }

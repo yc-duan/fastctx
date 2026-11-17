@@ -23,6 +23,14 @@ mod resume;
 #[path = "../../../../gui/src-tauri/src/transcript/core.rs"]
 #[allow(dead_code)]
 mod transcript;
+/// The shell's parts and records of a timeline, which the shell's pieces
+/// name and the drill never makes: reading one needs the whole shell.
+mod replica {
+    #[derive(Clone, serde::Serialize)]
+    pub(crate) struct Part;
+    #[derive(Clone, serde::Serialize)]
+    pub(crate) struct Record;
+}
 use conversation_piece::Piece;
 fn epoch_ms(at: std::time::SystemTime) -> u64 {
     at.duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() as u64

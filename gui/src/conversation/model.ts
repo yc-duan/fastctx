@@ -238,7 +238,14 @@ export interface Gap {
   /** Its turns are being read. */
   loading: boolean;
   later?: boolean;
+  /** Of a conversation shown from its timeline: what it stands for is
+   *  counted as `replica.ts` counts it, and it is drawn as tall as that
+   *  would be. */
   paged?: boolean;
+  /** The pixels the page measured of what it stands for, when it held it. */
+  measured?: number;
+  /** How many events' worth of it was never measured. */
+  unmeasured?: number;
 }
 
 /** What the agent said to the user through the World's `message_user`
