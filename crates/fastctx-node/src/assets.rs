@@ -159,6 +159,17 @@ pub(crate) struct Assets {
     /// When each scope last moved on the hub or was committed to here: a
     /// pass goes through those that did lately first.
     lively: Mutex<HashMap<String, std::time::Instant>>,
+    /// Held to read while an object fetched off the passes is put, to write
+    /// while this machine clears what an account it is to be shared with may
+    /// not see: none is put while that goes on (`session`, `objects`).
+    pub(crate) clearing: tokio::sync::RwLock<()>,
+    /// How many times this machine began to clear so: an object asked for
+    /// before the last of them is not kept after it.
+    pub(crate) cleared_times: std::sync::atomic::AtomicU64,
+    /// The room for records going up by themselves as they are committed
+    /// (`session::committed`): a few scopes at once, the rest left to the
+    /// pass, so that what waits for a line holds no frames meanwhile.
+    pub(crate) quick: Arc<tokio::sync::Semaphore>,
 }
 
 /// How far a hub's scopes this machine may hold were listed.
@@ -264,6 +275,9 @@ impl Assets {
             fetching: Mutex::new(std::collections::BTreeSet::new()),
             turns: Mutex::new(HashMap::new()),
             lively: Mutex::new(HashMap::new()),
+            clearing: tokio::sync::RwLock::new(()),
+            cleared_times: std::sync::atomic::AtomicU64::new(0),
+            quick: Arc::new(tokio::sync::Semaphore::new(2)),
         })
     }
 

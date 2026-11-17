@@ -224,7 +224,10 @@ pub(crate) fn committed(node: &Arc<Node>, hub: &HubId, scope: &str) {
     fastctx_platform::task::spawn(async move {
         if let Some(assets) = node.assets.as_ref() {
             let turning = assets.turn_of(&scope);
-            if let Ok(_turn) = turning.try_lock() {
+            // A few scopes at once: one more than that is left to the pass.
+            if let Ok(_room) = assets.quick.clone().try_acquire_owned()
+                && let Ok(_turn) = turning.try_lock()
+            {
                 // What does not go up now is left to the pass, which says why.
                 let _ = upload(assets, &hub, &link, &key, session, &scope).await;
             }
@@ -781,6 +784,11 @@ async fn cleared(
         return Ok(());
     }
     crate::replicas::publication::prune(node).await?;
+    // No object fetched off the passes is put from here until this ends, and
+    // none asked for before it is kept after it (`objects::asked`): what
+    // was cleared does not come back behind the word that it is.
+    let _clearing = assets.clearing.write().await;
+    assets.cleared_times.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     // What ended is purged whole, and the objects only it held go now, not
     // after the grace: the new holder finds none of it on the disk.
     let library = &assets.library;
@@ -1443,9 +1451,11 @@ async fn upload(
             let mut gone = 0usize;
             loop {
                 let (scope_text, stream_text) = (scope.to_string(), stream.clone());
-                let frames =
-                    blocking(library, move |library| library.export(&scope_text, &stream_text, from, page))
-                        .await?;
+                // No more of them than a couple of runs' worth is read at once.
+                let frames = blocking(library, move |library| {
+                    library.export_within(&scope_text, &stream_text, from, page, run_bytes * 2)
+                })
+                .await?;
                 if frames.is_empty() {
                     break;
                 }

@@ -310,6 +310,8 @@ pub(super) async fn fetch(assets: &Assets, hub: &HubId, link: &Arc<Link>) -> Vec
 /// gave it.
 async fn fetch_alone(assets: &Assets, hub: &HubId, link: &Arc<Link>, scope: &str, object: ObjectRef) -> Result<(), String> {
     let library = &assets.library;
+    // Kept as it comes: this machine clears nothing until it is all here.
+    let _keeping = assets.clearing.read().await;
     match fetch_one(library, link, scope, object).await {
         Ok(()) => {
             reached(assets, hub, &object);
@@ -417,6 +419,9 @@ async fn asked(assets: &Assets, hub: &HubId, link: &Arc<Link>, scope: &str, obje
     let named: Vec<wire::ObjectRef> = objects.iter().map(|object| wire::ObjectRef { hash: object.hash.into(), size: object.size }).collect();
     let _coming = fastctx_platform::doing::waiting_outside(format!("{} objects of {scope} coming from the hub on an asset line", objects.len()), SENT_WITHIN);
     let (mut fetched, mut failed) = (0, Vec::new());
+    // What is asked for now is kept only while this machine has not begun
+    // since to clear what another account may not see.
+    let cleared = assets.cleared_times.load(std::sync::atomic::Ordering::SeqCst);
     let mut line = match link.asset_line().await {
         Ok(line) => line,
         Err(why) => return (0, vec![format!("an asset line for the objects of {scope}: {why}")]),
@@ -434,6 +439,11 @@ async fn asked(assets: &Assets, hub: &HubId, link: &Arc<Link>, scope: &str, obje
         };
         match given {
             Given::Bytes(bytes) => {
+                let _keeping = assets.clearing.read().await;
+                if assets.cleared_times.load(std::sync::atomic::Ordering::SeqCst) != cleared {
+                    failed.push(format!("the objects of {scope} were asked for before this machine cleared what it held"));
+                    break;
+                }
                 let (holder, wanted) = (format!("fetch:{scope}"), *object);
                 // Kept under a lease only until it is seen to be the object:
                 // the records that want it hold it from then on.

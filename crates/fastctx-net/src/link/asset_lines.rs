@@ -26,11 +26,44 @@ const KEPT_FOR: Duration = Duration::from_secs(45);
 pub(crate) struct Lines {
     unused: Mutex<Vec<(Stream, Instant)>>,
     room: Arc<tokio::sync::Semaphore>,
+    /// Whether what closes the lines left unused is at work.
+    closing: std::sync::atomic::AtomicBool,
 }
 
 impl Default for Lines {
     fn default() -> Self {
-        Self { unused: Mutex::new(Vec::new()), room: Arc::new(tokio::sync::Semaphore::new(LINES_AT_ONCE)) }
+        Self {
+            unused: Mutex::new(Vec::new()),
+            room: Arc::new(tokio::sync::Semaphore::new(LINES_AT_ONCE)),
+            closing: std::sync::atomic::AtomicBool::new(false),
+        }
+    }
+}
+
+impl Lines {
+    /// Closes the lines nothing used for `KEPT_FOR`, for as long as any is
+    /// kept unused: one task at a time, begun as a line is put back.
+    fn close_unused(self: &Arc<Self>) {
+        use std::sync::atomic::Ordering;
+        if self.closing.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+            self.closing.store(false, Ordering::SeqCst);
+            return;
+        };
+        let lines = self.clone();
+        runtime.spawn(async move {
+            loop {
+                tokio::time::sleep(KEPT_FOR / 3).await;
+                let mut unused = lines.unused.lock().expect("never poisoned");
+                unused.retain(|(stream, since)| since.elapsed() < KEPT_FOR && !stream.ended_already());
+                if unused.is_empty() {
+                    lines.closing.store(false, Ordering::SeqCst);
+                    return;
+                }
+            }
+        });
     }
 }
 
@@ -109,6 +142,7 @@ impl Drop for AssetLine {
             && !stream.ended_already()
         {
             self.lines.unused.lock().expect("never poisoned").push((stream, Instant::now()));
+            self.lines.close_unused();
         }
     }
 }

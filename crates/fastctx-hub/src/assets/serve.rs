@@ -798,7 +798,10 @@ pub(crate) fn ask_in(
                 Room::Control => (FRAMES_AT_ONCE as usize, FRAME_BYTES_AT_ONCE),
                 Room::Line => (fastctx_types::asset_lines::FRAMES, fastctx_types::asset_lines::FRAME_BYTES),
             };
-            let exported = library.export(&scope, &stream, from, (limit as usize).min(most)).map_err(|error| error.to_string())?;
+            // No more frames are read than the answer carries.
+            let exported = library
+                .export_within(&scope, &stream, from, (limit as usize).min(most), most_bytes)
+                .map_err(|error| error.to_string())?;
             let (mut frames, mut bytes, mut apart) = (Vec::new(), 0usize, Vec::new());
             for frame in exported {
                 bytes += frame.header.len() + frame.signature.len() + frame.body.len();
