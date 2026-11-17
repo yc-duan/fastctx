@@ -97,11 +97,19 @@ fn ask(hub: &Arc<crate::Hub>, town: Option<TownId>) {
     let hub = hub.clone();
     fastctx_platform::task::spawn_blocking(move || {
         AGAIN.store(true, Ordering::SeqCst);
-        let Ok(_looking) = LOOKING.try_lock() else { return };
-        while AGAIN.swap(false, Ordering::SeqCst) {
-            let only = ASKED.lock().expect("asked").replace(BTreeSet::new());
-            if let Err(error) = look_now(&hub, only.as_ref()) {
-                hub.log.line(format_args!("writing the projects' ledgers into their readers' records: {error}"));
+        loop {
+            let Ok(looking) = LOOKING.try_lock() else { return };
+            while AGAIN.swap(false, Ordering::SeqCst) {
+                let only = ASKED.lock().expect("asked").replace(BTreeSet::new());
+                if let Err(error) = look_now(&hub, only.as_ref()) {
+                    hub.log.line(format_args!("writing the projects' ledgers into their readers' records: {error}"));
+                }
+            }
+            drop(looking);
+            // One that asked between the last look and the letting go found
+            // a look going on and left: it is looked at here still.
+            if !AGAIN.load(Ordering::SeqCst) {
+                return;
             }
         }
     });
