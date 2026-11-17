@@ -53,7 +53,7 @@ impl Lines {
             return;
         };
         let lines = self.clone();
-        runtime.spawn(async move {
+        fastctx_platform::task::spawn_on(&runtime, async move {
             loop {
                 tokio::time::sleep(KEPT_FOR / 3).await;
                 let mut unused = lines.unused.lock().expect("never poisoned");
