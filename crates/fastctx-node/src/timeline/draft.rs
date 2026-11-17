@@ -42,6 +42,13 @@ pub(super) async fn produce(
     resident: &ResidentId,
     producing: &super::serial::Serial,
 ) -> Result<usize, Failure> {
+    // A resident removed from the World keeps no draft to bring: its
+    // composer refuses it, and asking again every few seconds would refuse
+    // it for good.
+    if node.residents.removed(resident).is_some() {
+        CHANGED.lock().expect("changed drafts").remove(resident);
+        return Ok(0);
+    }
     let changed = CHANGED.lock().expect("changed drafts").remove(resident);
     let again = || {
         if changed {
