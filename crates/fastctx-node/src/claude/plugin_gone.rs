@@ -8,10 +8,15 @@
 //! activation followed and this one was not closed, the session is stopped,
 //! for whatever is for it next to start it again, plugin and all, and the
 //! people who look at it are told.
+//!
+//! A node that has just started brings the plugin to its own version, which
+//! ends the helpers of the sessions running just the same. A helper that
+//! ends then is laid to that: the session is stopped only once the turn it
+//! is in has ended, and nobody is told Claude Code unloaded anything.
 
 use std::path::Path;
-use std::sync::Arc;
-use std::time::Duration;
+use std::sync::{Arc, LazyLock};
+use std::time::{Duration, Instant};
 
 use fastctx_hosts::claude::control::{self as files, Host};
 use fastctx_hosts::claude::exchange;
@@ -22,6 +27,21 @@ use crate::Node;
 /// How long an ended helper is given to be followed: a plugin updated or
 /// reloaded ends its helper before the next one names itself.
 const FOLLOWED_WITHIN: Duration = Duration::from_secs(60);
+
+/// When this node began: it brings the plugin to its version then.
+static BEGAN: LazyLock<Instant> = LazyLock::new(Instant::now);
+/// How long after the node began an ended helper is laid to the node's own
+/// update of the plugin.
+const UPDATED_WITHIN: Duration = Duration::from_secs(15 * 60);
+/// How long a turn under way is waited out before a session whose helper
+/// that update ended is stopped, looked at this often.
+const TURN_WITHIN: Duration = Duration::from_secs(30 * 60);
+const TURN_AGAIN: Duration = Duration::from_secs(15);
+
+/// Notes when the node began, as its sessions begin to be heard.
+pub(super) fn began() {
+    LazyLock::force(&BEGAN);
+}
 
 /// Where a session the plugin was gone from tells Claude Code's own account
 /// of itself the next time it is woken, and what says it is to: so that, if
@@ -53,9 +73,18 @@ pub(super) async fn check(node: &Arc<Node>, host: &Host, session_directory: &Pat
     if !node.claude.bridge.gone.lock().expect("never poisoned").insert(key.clone()) {
         return;
     }
+    let updated = BEGAN.elapsed() < UPDATED_WITHIN;
     tokio::time::sleep(FOLLOWED_WITHIN).await;
+    if updated {
+        // The node's own update ended the helper: the turn the session is
+        // in is not cut short for it.
+        let waited = Instant::now();
+        while in_turn(node, host) && waited.elapsed() < TURN_WITHIN {
+            tokio::time::sleep(TURN_AGAIN).await;
+        }
+    }
     let restarted = match gone(node, host, session_directory) {
-        Ok(true) => restart(node, host, session_directory).await,
+        Ok(true) => restart(node, host, session_directory, updated).await,
         // Followed or closed after all: a later end is looked into again.
         Ok(false) => false,
         Err(error) => {
@@ -83,8 +112,16 @@ fn gone(node: &Node, host: &Host, session_directory: &Path) -> std::io::Result<b
         && super::control::session_present(node, session_directory)?)
 }
 
-/// Stops the session the plugin is gone from, and says so; whether it did.
-async fn restart(node: &Arc<Node>, host: &Host, session_directory: &Path) -> bool {
+/// Whether the session of `host` is in a turn now.
+fn in_turn(node: &Node, host: &Host) -> bool {
+    node.residents
+        .resident_of_thread(host.session.as_str())
+        .is_some_and(|resident| node.residents.now(&resident).is_some_and(|now| now.turn.is_some()))
+}
+
+/// Stops the session the plugin is gone from, and says so unless the node's
+/// own update of the plugin ended it (`updated`); whether it did.
+async fn restart(node: &Arc<Node>, host: &Host, session_directory: &Path, updated: bool) -> bool {
     let session = host.session.as_str();
     let Some(resident) = node.residents.resident_of_thread(session) else { return false };
     let Some((about, _)) = node.residents.about(&resident) else { return false };
@@ -92,16 +129,22 @@ async fn restart(node: &Arc<Node>, host: &Host, session_directory: &Path) -> boo
     if !about.world_managed() || about.session.as_deref() != Some(session) {
         return false;
     }
-    node.log.line(format_args!(
-        "the World's plugin is gone from Claude session {session} of {resident}, whose Claude Code runs on; it is stopped, to start again with the plugin"
-    ));
-    if let Err(error) = fastctx_platform::disk::write(session_directory.join(DEBUG_NEXT), b"") {
-        node.log.line(format_args!("asking that {session} be woken with Claude Code's account kept: {error}"));
-    }
-    let turn = node.residents.now(&resident).and_then(|now| now.turn);
-    let health = Health { kind: HealthKind::ToolsMissing, text: UNLOADED.to_string() };
-    if let Err(error) = crate::turns::health(node, &resident, turn, health) {
-        node.log.line(format_args!("telling {resident} its plugin is gone: {error}"));
+    if updated {
+        node.log.line(format_args!(
+            "the World's plugin, brought to this node's version, ended in Claude session {session} of {resident}; it is stopped, to start again with the plugin"
+        ));
+    } else {
+        node.log.line(format_args!(
+            "the World's plugin is gone from Claude session {session} of {resident}, whose Claude Code runs on; it is stopped, to start again with the plugin"
+        ));
+        if let Err(error) = fastctx_platform::disk::write(session_directory.join(DEBUG_NEXT), b"") {
+            node.log.line(format_args!("asking that {session} be woken with Claude Code's account kept: {error}"));
+        }
+        let turn = node.residents.now(&resident).and_then(|now| now.turn);
+        let health = Health { kind: HealthKind::ToolsMissing, text: UNLOADED.to_string() };
+        if let Err(error) = crate::turns::health(node, &resident, turn, health) {
+            node.log.line(format_args!("telling {resident} its plugin is gone: {error}"));
+        }
     }
     match super::management::stop(node, about.home.as_deref(), &resident, session, false).await {
         Ok(()) => true,

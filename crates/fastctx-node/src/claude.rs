@@ -217,6 +217,7 @@ pub fn start(node: &Arc<Node>) -> std::io::Result<()> {
     calls::sweep(node);
     let plugin = claude::write_plugin(node.world.path())?;
     let checking = node.clone();
+    plugin_gone::began();
     fastctx_platform::task::spawn_blocking(move || plugin_check::run(&checking, &plugin));
     let sessions = exchange::sessions(node.world.path());
     fastctx_platform::ensure_private_dir(&sessions)?;
