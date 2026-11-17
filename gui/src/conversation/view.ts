@@ -628,6 +628,8 @@ export class ConversationView {
     const keep = new Set(wanted);
     for (const slot of this.shown) if (!keep.has(slot)) this.hide(slot);
     const drawn: HTMLElement[] = [];
+    // What this layout drew, new on the page or drawn again.
+    const fresh: Slot[] = [];
     let previous: Element = this.above;
     for (let at = 0; at < wanted.length; at += 1) {
       const slot = wanted[at]!;
@@ -637,10 +639,12 @@ export class ConversationView {
       previous = slot.element;
       if (slot.signature === null) {
         this.draw(slot, read);
+        fresh.push(slot);
         // Its whole box: the room above it, its padding, is its height too.
         this.sizes.observe(slot.element, { box: "border-box" });
       } else if (slot.signature !== this.signature(slot.block)) {
         this.draw(slot, read);
+        fresh.push(slot);
         drawn.push(slot.element);
       }
     }
@@ -659,6 +663,10 @@ export class ConversationView {
     if (anchor) {
       const moved = anchor.slot.element.isConnected ? anchor.slot.element.getBoundingClientRect().top - anchor.top : 0;
       if (moved) this.keepStill(moved);
+      // The reader's block was kept by where it stands on the page, with
+      // what was drawn above it as tall as it is: those heights are taken
+      // now, so the sizes' own report of them moves the view no second time.
+      this.measure(fresh);
     }
     // A gap near the reader is read, from the side the reader comes from.
     const reader = following ? n : this.heights.find(Math.max(0, top));
@@ -1485,7 +1493,12 @@ export class ConversationView {
   }
 
   private measureMounted(): void {
-    for (const shown of this.shown) {
+    this.measure(this.shown);
+  }
+
+  /** Takes the heights `slots` have on the page now. */
+  private measure(slots: readonly Slot[]): void {
+    for (const shown of slots) {
       const at = this.heights.index(shown.key);
       if (at === undefined || !shown.element.isConnected) continue;
       const height = shown.element.getBoundingClientRect().height;
