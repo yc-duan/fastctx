@@ -261,6 +261,14 @@ pub(super) async fn fetch(assets: &Assets, hub: &fastctx_types::access::HubId, l
     failed
 }
 
+/// Tells the hub every chunk of an object came. The hub lets the line go as
+/// it hears it, so the line may be seen to end before the telling is: what
+/// came stands whatever that says, proved by its hash as it is kept, and is
+/// never thrown away and asked for again only after a wait.
+async fn said_done(incoming: fastctx_net::link::Incoming) {
+    let _ = incoming.done().await;
+}
+
 async fn fetch_one(library: &Library, link: &Arc<Link>, scope: &str, object: ObjectRef) -> Result<(), String> {
     let holder = format!("fetch:{scope}");
     let wire_object = wire::ObjectRef { hash: object.hash.into(), size: object.size };
@@ -271,7 +279,7 @@ async fn fetch_one(library: &Library, link: &Arc<Link>, scope: &str, object: Obj
         };
         let mut incoming = link.get_object(ticket).await?;
         let (_, bytes) = incoming.chunk().await?;
-        incoming.done().await?;
+        said_done(incoming).await;
         let lease = blocking(library, move |library| library.put(&mut bytes.as_slice(), &holder, LEASE)).await?;
         if lease.object != object {
             return Err("the bytes given do not hash to the object".into());
@@ -290,7 +298,10 @@ async fn fetch_one(library: &Library, link: &Arc<Link>, scope: &str, object: Obj
     let digests = incoming.manifest(chunks(object.size)).await?;
     let resumed = transfer.is_some();
     let started = blocking(library, move |library| library.receive(object, digests, Some("hub".into()))).await?;
-    let Some(started) = started else { return incoming.done().await };
+    let Some(started) = started else {
+        said_done(incoming).await;
+        return Ok(());
+    };
     if resumed && from > 0 && started.missing().first().copied().unwrap_or(0) < from {
         // The hub's digests are not those the fetch began under: what came
         // counts for nothing, and the chunks come again from the first.
@@ -320,7 +331,7 @@ async fn fetch_one(library: &Library, link: &Arc<Link>, scope: &str, object: Obj
     }
     // Every byte is here and written: the hub hears so before the whole is
     // read through again here, however long that takes.
-    incoming.done().await?;
+    said_done(incoming).await;
     let finishing = transfer.take().expect("a transfer");
     let lease = fastctx_platform::task::spawn_blocking(move || finishing.finish(&holder, LEASE))
         .await
