@@ -134,7 +134,7 @@ export class ActivityPage implements Page {
     this.title = words.title;
     this.element.className = "page ay-page";
     this.element.innerHTML = `${options.head(
-      escape(words.title),
+      `<h1 class="page-title">${escape(words.title)}</h1>`,
       `<div class="segmented ay-groupings" role="radiogroup" aria-label="${escape(words.groupingLabel)}"></div><div class="segmented ay-spans" role="radiogroup" aria-label="${escape(words.spanLabel)}"></div>`,
     )}<div class="ay-body scroller"></div>`;
     this.body = this.element.querySelector<HTMLElement>(".ay-body")!;

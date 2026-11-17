@@ -43,8 +43,8 @@ export function homePage(): string {
       </span>`
       : "";
   return `<div class="lg-page">
-    <header class="lg-head"><h1 class="lg-title">智能体</h1>
-      <div class="segmented"><button type="button" class="segment${attach ? "" : " chosen"}" data-go="${linkOf({ kind: "quota" })}">额度</button><button type="button" class="segment${attach ? " chosen" : ""}" data-go="${linkOf({ kind: "attach", machine: machine?.id ?? state.machine })}">接入</button></div>${end}
+    <header class="page-head lg-head"><div class="page-head-title"><h1 class="page-title">智能体</h1></div>
+      <div class="page-head-actions"><div class="segmented"><button type="button" class="segment${attach ? "" : " chosen"}" data-go="${linkOf({ kind: "quota" })}">额度</button><button type="button" class="segment${attach ? " chosen" : ""}" data-go="${linkOf({ kind: "attach", machine: machine?.id ?? state.machine })}">接入</button></div>${end}</div>
     </header>
     ${attach ? (machine ? attachBody(machine) : `<div class="lg-body lg-empty"><p>暂无机器</p></div>`) : quotaBody()}
   </div>`;
