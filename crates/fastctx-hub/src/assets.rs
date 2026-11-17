@@ -20,6 +20,7 @@ mod holdings;
 mod keys;
 pub(crate) mod mirror;
 pub(crate) mod told;
+pub(crate) mod work;
 pub(crate) mod hub_log;
 pub(crate) mod ledger_views;
 pub(crate) mod line;
@@ -189,6 +190,8 @@ pub(crate) struct Assets {
     pub(crate) objects: objects::Objects,
     /// The asset lines open, by member (`line`).
     pub(crate) lines: line::Lines,
+    /// The turns asset requests take (`work`).
+    pub(crate) work: work::Work,
     /// What several accounts own together, and who they are (design §6.2).
     pub(crate) bodies: Arc<bodies::Bodies>,
     /// Where machines stand in syncing (design §28.9).
@@ -234,6 +237,7 @@ impl Assets {
             pushes: Mutex::new(Vec::new()),
             objects: objects::Objects::default(),
             lines: line::Lines::default(),
+            work: work::Work::default(),
             bodies: Arc::new(bodies::Bodies::new(control.clone())),
             standing: standing::Standing::default(),
             restores: std::sync::atomic::AtomicU64::new(restored),
