@@ -670,9 +670,7 @@ impl Assets {
     fn behind(&self, owner: &Owner, library: &fastctx_content::v2::Library) -> io::Result<Option<String>> {
         // What a scope deleted before the hub stopped left in it goes on
         // going (`deleted`).
-        if library.purging().unwrap_or(false) {
-            self.lets_go(owner);
-        }
+        self.library_opened(owner, library);
         let key = owner.key();
         for head in self.checkpointed(owner)?.values() {
             if !library.holds(head).map_err(|error| io::Error::other(error.to_string()))? {
@@ -1422,8 +1420,9 @@ pub(crate) async fn checkpoints(hub: Weak<crate::Hub>) {
         drop(hub);
         let done = fastctx_platform::task::spawn_blocking(move || {
             assets.owners.sweep();
+            let checkpointed = assets.checkpoint();
             assets.let_go();
-            assets.checkpoint()
+            checkpointed
         })
         .await;
         if let Some(hub) = assets_hub.upgrade() {

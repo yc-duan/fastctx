@@ -127,7 +127,9 @@ fn a_scope_goes_with_its_conversation() {
     let Reply::Holdings { scopes: listed, .. } = ask(&assets, &store, &m2, &k2, Request::Holdings { after: None }).unwrap() else { panic!("holdings") };
     assert!(!listed.iter().any(|held| held.scope == conv1), "listed to none");
     // The owner library lets go of what it kept of it.
-    assets.let_go();
+    for _ in 0..8 {
+        assets.let_go();
+    }
     let library = assets.library(&owner).unwrap();
     assert!(!library.purging().unwrap(), "all of it let go");
     assert!(library.holding(&conv1).unwrap().is_none());

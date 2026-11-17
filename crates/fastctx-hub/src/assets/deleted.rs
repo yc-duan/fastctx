@@ -23,9 +23,13 @@ use std::sync::{Mutex, OnceLock};
 /// What the chain calls a scope's deletion.
 const KIND: &str = "scope-deleted";
 /// The passes an owner library is given at a time to let go of what it
-/// kept, and the pause between two: its writer serves requests meanwhile.
+/// kept, the rows of each kind a pass takes, and the pause between two: its
+/// writer serves requests meanwhile, and a frame's body goes with its row.
 const PASSES_AT_ONCE: usize = 64;
+const ROWS_A_PASS: i64 = 16;
 const PACE: std::time::Duration = std::time::Duration::from_millis(20);
+/// The longest a turn of all the libraries together takes.
+const TURN: std::time::Duration = std::time::Duration::from_secs(2);
 
 /// The scopes deleted with their conversations, and the owner libraries
 /// still letting go of them.
@@ -34,6 +38,9 @@ pub(crate) struct Deleted {
     /// What the chain keeps of each, read from it once.
     keys: OnceLock<Mutex<HashSet<[u8; 32]>>>,
     purging: Mutex<BTreeSet<Owner>>,
+    /// Those whose owner library could not be reached as they were deleted:
+    /// tried again at each turn (`let_go`).
+    unreached: Mutex<Vec<(Owner, String)>>,
 }
 
 /// What the chain keeps of the deletion of the scope `key`.
@@ -73,10 +80,31 @@ impl Assets {
         })
     }
 
-    /// An owner library opened with something of an ended period still in
+    /// The owner library of `owner` has something of an ended period in
     /// it: it lets go of that at the next turn (`let_go`).
-    pub(super) fn lets_go(&self, owner: &Owner) {
+    fn lets_go(&self, owner: &Owner) {
         self.deleted.purging.lock().expect("libraries letting go").insert(owner.clone());
+    }
+
+    /// An owner library opens: what a scope deleted before the hub stopped
+    /// left in it goes on going, and one deleted whose library was not
+    /// reached then is let go of now.
+    pub(super) fn library_opened(&self, owner: &Owner, library: &fastctx_content::v2::Library) {
+        if library.purging().unwrap_or(false) {
+            self.lets_go(owner);
+        }
+        if !self.deleted_keys().is_ok_and(|keys| !keys.lock().expect("deleted scopes").is_empty()) {
+            return;
+        }
+        let Ok(keys) = library.keys_ending("") else { return };
+        for key in keys {
+            if self.was_deleted(&key)
+                && library.holding(&key).ok().flatten().is_some()
+                && library.revoke(&key).is_ok()
+            {
+                self.lets_go(owner);
+            }
+        }
     }
 
     /// Deletes the scope `key`; whether there was one. Its machines are
@@ -124,10 +152,12 @@ impl Assets {
             .lock()
             .expect("pushes")
             .extend(held.into_iter().map(|machine| (machine, Push::Revoked { scope: key.to_string() })));
-        // The owner library holds it no more, and lets go of it in turns.
-        let library = self.library(&scope.owner)?;
-        library.revoke(key).map_err(other)?;
-        self.lets_go(&scope.owner);
+        // The owner library holds it no more, and lets go of it in turns;
+        // one not reached now is reached at a later turn.
+        match self.library(&scope.owner).and_then(|library| library.revoke(key).map_err(other)) {
+            Ok(()) => self.lets_go(&scope.owner),
+            Err(_) => self.deleted.unreached.lock().expect("scopes unreached").push((scope.owner.clone(), key.to_string())),
+        }
         witnessed?;
         Ok(true)
     }
@@ -136,15 +166,31 @@ impl Assets {
     /// from them: some passes each, the rest at the next turn. Call on a
     /// thread that may block.
     pub(crate) fn let_go(&self) {
+        let unreached = std::mem::take(&mut *self.deleted.unreached.lock().expect("scopes unreached"));
+        for (owner, key) in unreached {
+            match self.library(&owner).and_then(|library| library.revoke(&key).map_err(other)) {
+                Ok(()) => self.lets_go(&owner),
+                // A library being deleted goes whole.
+                Err(_) if self.deleting(&owner).unwrap_or(false) => {}
+                Err(_) => self.deleted.unreached.lock().expect("scopes unreached").push((owner, key)),
+            }
+        }
         let owners: Vec<Owner> = self.deleted.purging.lock().expect("libraries letting go").iter().cloned().collect();
+        let begun = std::time::Instant::now();
         for owner in owners {
+            if begun.elapsed() >= TURN {
+                break;
+            }
             let done = (|| -> io::Result<bool> {
                 let library = self.library(&owner)?;
                 for _ in 0..PASSES_AT_ONCE {
                     if !library.purging().map_err(other)? {
                         return Ok(true);
                     }
-                    library.purge().map_err(other)?;
+                    if begun.elapsed() >= TURN {
+                        return Ok(false);
+                    }
+                    library.purge_at_most(ROWS_A_PASS).map_err(other)?;
                     std::thread::sleep(PACE);
                 }
                 library.purging().map(|purging| !purging).map_err(other)

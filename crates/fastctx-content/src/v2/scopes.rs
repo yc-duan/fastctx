@@ -109,6 +109,14 @@ impl Library {
     /// cursors go; its index rows go too, or become revision floors while
     /// the scope has a newer period.
     pub fn purge(&self) -> Result<Purged> {
+        self.purge_at_most(PURGE_PASS)
+    }
+
+    /// A pass as `purge` makes one, of at most `rows` rows of each kind: a
+    /// library that answers others meanwhile gives its writer up sooner,
+    /// frames' bodies going with their rows.
+    pub fn purge_at_most(&self, rows: i64) -> Result<Purged> {
+        let pass = rows.clamp(1, PURGE_PASS);
         Ok(self.database().write_now_at(Priority::Background, 4096, move |db| {
             let purges: Vec<(i64, i64)> = {
                 let mut statement = db.prepare_cached("SELECT scope, holding FROM purges")?;
@@ -129,7 +137,7 @@ impl Library {
                          WHERE stream IN (SELECT id FROM streams WHERE scope = ?1) AND holding = ?2
                          ORDER BY stream, epoch, first, holding, hash LIMIT ?3)"
                     ))?
-                    .execute(params![scope, holding, PURGE_PASS, now()])?;
+                    .execute(params![scope, holding, pass, now()])?;
                 }
                 // So does what only evidence of the period held; its holds go
                 // before it does.
@@ -141,10 +149,10 @@ impl Library {
                     "UPDATE objects SET unreferenced = ?4 WHERE state = 1 AND hash IN
                      (SELECT hash FROM object_holds WHERE kind = 'evidence' AND holder IN ({evidence}))"
                 ))?
-                .execute(params![scope, holding, PURGE_PASS, now()])?;
+                .execute(params![scope, holding, pass, now()])?;
                 done += db
                     .prepare_cached(&format!("DELETE FROM object_holds WHERE kind = 'evidence' AND holder IN ({evidence})"))?
-                    .execute(params![scope, holding, PURGE_PASS])?;
+                    .execute(params![scope, holding, pass])?;
                 for (table, key) in [
                     ("frame_objects", "stream, epoch, first, holding, hash"),
                     ("frames", "stream, epoch, first, holding"),
@@ -163,7 +171,7 @@ impl Library {
                             "DELETE FROM {table} WHERE ({key}) IN (SELECT {key} FROM {table}
                              WHERE stream IN (SELECT id FROM streams WHERE scope = ?1) AND holding = ?2 ORDER BY {key} LIMIT ?3)"
                         ))?
-                        .execute(params![scope, holding, PURGE_PASS])?;
+                        .execute(params![scope, holding, pass])?;
                 }
                 // Index rows: floors where a newer period fills in, else gone.
                 // Their references go with the period's below.
@@ -173,14 +181,14 @@ impl Library {
                          (SELECT stream, place, item FROM items
                           WHERE stream IN (SELECT id FROM streams WHERE scope = ?1) AND holding = ?2 AND state != 2 LIMIT ?3)",
                     )?
-                    .execute(params![scope, holding, PURGE_PASS])?
+                    .execute(params![scope, holding, pass])?
                 } else {
                     db.prepare_cached(
                         "DELETE FROM items WHERE (stream, place, item) IN
                          (SELECT stream, place, item FROM items
                           WHERE stream IN (SELECT id FROM streams WHERE scope = ?1) AND holding = ?2 LIMIT ?3)",
                     )?
-                    .execute(params![scope, holding, PURGE_PASS])?
+                    .execute(params![scope, holding, pass])?
                 };
                 if current.is_some() {
                     purged.floors += floors;
