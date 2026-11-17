@@ -45,6 +45,8 @@ pub(crate) struct Deleted {
     /// The owner libraries that could not be looked through as they opened
     /// for scopes deleted and still in them: looked through at a turn.
     unlooked: Mutex<BTreeSet<Owner>>,
+    /// Held by the one turn under way.
+    turn: Mutex<()>,
 }
 
 /// The scopes deleted, as a write to the control database looks them up
@@ -197,9 +199,11 @@ impl Assets {
     }
 
     /// A turn of the owner libraries at letting go of the scopes deleted
-    /// from them: some passes each, the rest at the next turn. Call on a
-    /// thread that may block.
+    /// from them: some passes each, the rest at the next turn; one turn at
+    /// a time, so many conversations deleted together make one line of
+    /// passes, not one each. Call on a thread that may block.
     pub(crate) fn let_go(&self) {
+        let Ok(_turn) = self.deleted.turn.try_lock() else { return };
         let begun = std::time::Instant::now();
         let unlooked = std::mem::take(&mut *self.deleted.unlooked.lock().expect("libraries to look through"));
         for owner in unlooked {

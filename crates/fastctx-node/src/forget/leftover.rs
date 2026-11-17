@@ -14,40 +14,51 @@ use crate::Node;
 use fastctx_types::access::HubId;
 use fastctx_types::assets::{Descriptor, Readers};
 use fastctx_types::{Address, ResidentId};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-/// How often the library is looked through at most.
+/// How often the library is looked through at most, and the askings one
+/// look keeps: a machine with many such conversations asks of them a few
+/// at a time, each asking being work for its hub and every machine of the
+/// account.
 const EVERY: Duration = Duration::from_secs(10 * 60);
+const AT_ONCE: usize = 16;
 static LOOKED: Mutex<Option<Instant>> = Mutex::new(None);
+/// The scopes asked of, and the day each was: one asked of today waits for
+/// tomorrow.
+static ASKED: Mutex<BTreeMap<String, i64>> = Mutex::new(BTreeMap::new());
+/// Whether the last look left some for a later one.
+static MORE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// Keeps a deletion to ask of its hub for each conversation deleted here
-/// lately of which the library still holds a scope.
-pub(super) async fn look(node: &Arc<Node>) {
-    let Some(assets) = node.assets.as_ref() else { return };
+/// lately of which the library still holds a scope; whether more are left
+/// for a later look.
+pub(super) async fn look(node: &Arc<Node>) -> bool {
+    let Some(assets) = node.assets.as_ref() else { return false };
     {
         let mut looked = LOOKED.lock().expect("never poisoned");
         if looked.is_some_and(|at| at.elapsed() < EVERY) {
-            return;
+            return MORE.load(std::sync::atomic::Ordering::Relaxed);
         }
         *looked = Some(Instant::now());
     }
+    MORE.store(false, std::sync::atomic::Ordering::Relaxed);
     let deleted: BTreeSet<ResidentId> = node.residents.tombstones().into_iter().map(|(id, _)| id).collect();
     if deleted.is_empty() {
-        return;
+        return false;
     }
     let library = assets.library.clone();
     let held = match fastctx_platform::task::blocking(move || library.held_scopes()).await {
         Ok(held) => held,
         Err(error) => {
             node.log.line(format_args!("looking for what deleted conversations left in the asset library: {error}"));
-            return;
+            return false;
         }
     };
     let machine = node.machine();
     let today = jiff::Timestamp::now().as_second().div_euclid(24 * 60 * 60);
-    let mut asks = Vec::new();
+    let (mut asks, mut more) = (Vec::new(), false);
     for scope in held {
         let Some(id) = scope.key.rsplit('/').next().and_then(|id| id.parse::<ResidentId>().ok()) else { continue };
         if !deleted.contains(&id) || node.residents.about(&id).is_some() {
@@ -68,11 +79,23 @@ pub(super) async fn look(node: &Arc<Node>) {
             _ => None,
         };
         let (Some(account), Ok(hub)) = (account, HubId::try_from(described.hub.clone())) else { continue };
+        {
+            let mut asked = ASKED.lock().expect("never poisoned");
+            if asked.get(&scope.key) == Some(&today) {
+                continue;
+            }
+            if asks.len() >= AT_ONCE {
+                more = true;
+                MORE.store(true, std::sync::atomic::Ordering::Relaxed);
+                break;
+            }
+            asked.insert(scope.key.clone(), today);
+        }
         let conversation = Address { machine: machine.clone(), resident: id };
         asks.push(Ask { hub, account, conversation, after: None, round: Some(today) });
     }
     if asks.is_empty() {
-        return;
+        return false;
     }
     let found = asks.len();
     match keep_latest(node, asks).await {
@@ -81,6 +104,7 @@ pub(super) async fn look(node: &Arc<Node>) {
         )),
         Err(error) => node.log.line(format_args!("keeping what to ask the hubs of deleted conversations' scopes: {error}")),
     }
+    more
 }
 
 /// Keeps `asks` to be asked of their hubs, each in place of an asking of an

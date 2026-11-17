@@ -280,8 +280,8 @@ pub(crate) fn start(node: &Arc<Node>) {
     use crate::passes::Left;
     submission::register(node);
     crate::passes::register(node, ASKING, |node: Arc<Node>| async move {
-        leftover::look(&node).await;
-        if send_kept(&node).await { Left::Nothing } else { Left::Work }
+        let more = leftover::look(&node).await;
+        if send_kept(&node).await && !more { Left::Nothing } else { Left::Work }
     });
     crate::passes::follow(node, ASKING.name, node.views.subscribe(), VIEWS_SETTLE);
 }
