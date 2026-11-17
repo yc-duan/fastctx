@@ -53,9 +53,12 @@ impl Error {
     }
 
     /// Whether the machine refused this account: a watch that was refused
-    /// is not opened again on a timer.
+    /// is not opened again on a timer. A machine whose hub has not given it
+    /// its view of the accounts yet judged nothing: that is no refusal, and
+    /// is asked again as anything unanswered is.
     pub fn is_refused(&self) -> bool {
-        matches!(self, Error::Call(CallError::Failed(failure)) if failure.is_refused())
+        matches!(self, Error::Call(CallError::Failed(failure))
+            if failure.is_refused() && failure.denial != Some(fastctx_types::authorization::DenialReason::ViewUnavailable))
     }
 
     /// Whether it is an answer that holds wherever it is asked — refused,

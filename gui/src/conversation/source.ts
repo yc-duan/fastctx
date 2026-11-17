@@ -59,6 +59,10 @@ export interface ConversationSource {
   open(address: Address, feed: ConversationFeed): Reading;
 }
 
+/** The try a refused watch is paced as when it is asked again: within a
+ *  minute (`again.ts`, `backoff`). */
+const REFUSED_AGAIN = 8;
+
 /** The World's watch: the part it opens on, then what follows; pieces that
  *  come before it wait for it. */
 export const watched: ConversationSource = {
@@ -108,7 +112,20 @@ export const watched: ConversationSource = {
       refused = true;
       feed.refused(why);
       // A reply from before a new grant must not close the newly usable conversation.
-      if (authority !== null && authority !== attempted) restart();
+      if (authority !== null && authority !== attempted) return restart();
+      // A machine refuses too while its own word from the hub is not current,
+      // as when the hub has just started again, and nothing granted changes
+      // afterwards: it is asked again now and then, and at once when a way
+      // to it opens.
+      waiting?.();
+      waiting = after(
+        REFUSED_AGAIN,
+        () => {
+          waiting = null;
+          if (refused && !closed) restart();
+        },
+        address.machine,
+      );
     };
     const take = (piece: Piece, attempted: string | null) => {
       switch (piece.kind) {
