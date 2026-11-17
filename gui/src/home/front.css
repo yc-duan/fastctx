@@ -269,7 +269,6 @@
   height: 12px;
   color: var(--text-3);
   opacity: 0.55;
-  filter: url(#pen-rule-lite);
 }
 
 .front-mark {
@@ -284,10 +283,6 @@
   color: var(--text-2);
   scale: var(--grow);
   transition: color var(--hover) var(--ease), --grow var(--hover) var(--ease);
-}
-
-.front-mark svg {
-  filter: url(#pen-marker-lite);
 }
 
 .front-mark.failed {
