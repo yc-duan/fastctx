@@ -408,6 +408,12 @@ pub fn snapshot(waits: Duration, holds: Duration) -> Snapshot {
         if since < waits {
             continue;
         }
+        // Waiting behind work that moves is waiting one's turn: it is stuck
+        // only when whoever holds the lock has not moved for as long, or no
+        // one holds it.
+        if state.held.values().any(|held| held.lock == wait.lock && now.duration_since(held.progress) < waits) {
+            continue;
+        }
         let holders: Vec<String> = state
             .held
             .values()
