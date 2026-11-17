@@ -1,21 +1,34 @@
 //! Objects between this machine and a hub (design §6.5, §7.3): those a
 //! frame it uploads refers to, put when the hub has them not or wants them
 //! proved by their bytes, and those the records it took refer to and it has
-//! not, fetched. Each travels in chunks over a data connection under a
-//! ticket the hub gives on the control connection; a fetch broken off takes
-//! up where its chunks stopped.
+//! not, fetched. With a hub that keeps asset lines they go on those, many
+//! asked for at once and several lines at a time, off the passes
+//! (`lane`); a longer one, and every one with a hub that keeps none,
+//! travels in chunks over a data connection under a ticket the hub gives on
+//! the control connection, a fetch broken off taking up where its chunks
+//! stopped.
 
 use super::Assets;
 use super::session::blocking;
+use crate::Node;
 use fastctx_content::ObjectRef;
 use fastctx_content::v2::{CHUNK_BYTES, LEASE, Library, ROW_BYTES};
-use fastctx_net::link::Link;
+use fastctx_net::link::{Given, Link, PutAsked};
+use fastctx_types::access::HubId;
+use fastctx_types::asset_lines::{OBJECT_BYTES, OBJECTS};
 use fastctx_types::assets::{self as wire, Bytes, Reply, Request};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-/// Objects fetched in one pass.
+/// Objects fetched in one pass, under tickets.
 const FETCHED_AT_ONCE: usize = 64;
+/// Objects asked for in one round on lines.
+const FETCHED_A_ROUND: usize = 384;
+/// Lines objects come on at once: the others are left to frames.
+const LINES_FETCHING: usize = 3;
+/// The most bytes of objects one ask on a line names, so that no exchange
+/// keeps a line long.
+const ASKED_BYTES: u64 = 16 << 20;
 /// How long an object a hub did not give waits before it is asked of that
 /// hub again.
 const ASK_AGAIN: Duration = Duration::from_secs(60);
@@ -78,6 +91,11 @@ pub(super) async fn put(library: &Library, link: &Arc<Link>, scope: &str, object
             Some(Answered::Again(why)) => return Err(format!("the frame goes again, the hub to say what it wants: {why}")),
             Some(Answered::Send) | None => {}
         }
+        if link.keeps_asset_lines() && object.size <= OBJECT_BYTES {
+            put_on_line(library, link, scope, object, prove).await?;
+            proven.push(Bytes::from(hash));
+            continue;
+        }
         let large = object.size as usize > ROW_BYTES;
         let request = Request::Put {
             scope: scope.to_string(),
@@ -119,6 +137,32 @@ pub(super) async fn put(library: &Library, link: &Arc<Link>, scope: &str, object
         proven.push(Bytes::from(hash));
     }
     Ok(proven)
+}
+
+/// Puts `object` of `scope` on an asset line, every byte of it when the
+/// hub wants it or `prove`.
+async fn put_on_line(library: &Library, link: &Arc<Link>, scope: &str, object: ObjectRef, prove: bool) -> Result<(), String> {
+    let _sending = fastctx_platform::doing::waiting_outside(format!("an object going to the hub on an asset line ({} bytes)", object.size), SENT_WITHIN);
+    let mut line = link.asset_line().await?;
+    let named = wire::ObjectRef { hash: object.hash.into(), size: object.size };
+    match line.put(scope, &named, prove).await? {
+        PutAsked::Held => Ok(()),
+        PutAsked::Reply(_) => Err("the hub did not say what of the object it wants".into()),
+        PutAsked::Send => {
+            let hash = object.hash;
+            let mut offset = 0;
+            while offset < object.size {
+                let length = fastctx_types::asset_lines::RUN_BYTES.min(object.size - offset) as u32;
+                let run = blocking(library, move |library| library.read(&hash, offset, length)).await?;
+                if run.is_empty() {
+                    return Err("the object ended before its length".into());
+                }
+                line.put_run(&run).await?;
+                offset += run.len() as u64;
+            }
+            line.put_done().await
+        }
+    }
 }
 
 /// How often a proof being worked out by the hub is asked after.
@@ -214,14 +258,11 @@ fn answer_of(library: &Library, hash: &[u8; 32], size: u64, nonce: &[u8; 32]) ->
     Ok(digest.finalize().into())
 }
 
-/// Fetches what the records taken refer to and this machine has not; what
-/// did not come, and why.
-pub(super) async fn fetch(assets: &Assets, hub: &fastctx_types::access::HubId, link: &Arc<Link>) -> Vec<String> {
-    let library = &assets.library;
-    // One a hub did not give waits before it is asked again, longer each
-    // time it was not: those that keep failing come round seldom, and never
-    // fill the place of those not yet asked.
-    let waiting: std::collections::HashSet<[u8; 32]> = {
+/// The objects of `hub`'s scopes wanted now, at most `limit`: those the
+/// hub did not give lately wait, longer each time it did not, and never
+/// fill the place of those not yet asked.
+async fn wanted(assets: &Assets, hub: &HubId, limit: usize) -> Result<Vec<(String, ObjectRef)>, String> {
+    let waiting: Vec<[u8; 32]> = {
         let unreached = assets.unreached.lock().expect("unreached");
         unreached
             .iter()
@@ -229,36 +270,216 @@ pub(super) async fn fetch(assets: &Assets, hub: &fastctx_types::access::HubId, l
             .map(|((_, hash), _)| *hash)
             .collect()
     };
-    // Those asked of the hub lately and not given are passed over before
-    // any are counted: they never fill the place of those not yet asked.
     // What this hub's network's scopes want alone is asked of it, in one
     // look however many scopes it has.
-    let skipped: Vec<[u8; 32]> = waiting.iter().copied().collect();
     let theirs = hub.as_str().to_string();
-    let wanted = match blocking(library, move |library| library.wanted_of_hub(&theirs, FETCHED_AT_ONCE, &skipped)).await {
+    blocking(&assets.library, move |library| library.wanted_of_hub(&theirs, limit, &waiting)).await
+}
+
+/// The hub gave `object`.
+fn reached(assets: &Assets, hub: &HubId, object: &ObjectRef) {
+    assets.unreached.lock().expect("unreached").remove(&(hub.clone(), object.hash));
+}
+
+/// The hub did not give `object`: it waits before it is asked for again.
+fn unreached(assets: &Assets, hub: &HubId, object: &ObjectRef) {
+    let mut unreached = assets.unreached.lock().expect("unreached");
+    let times = unreached.get(&(hub.clone(), object.hash)).map_or(0, |(_, times)| times + 1);
+    unreached.insert((hub.clone(), object.hash), (Instant::now(), times));
+}
+
+/// Fetches what the records taken refer to and this machine has not, under
+/// tickets, one at a time; what did not come, and why.
+pub(super) async fn fetch(assets: &Assets, hub: &HubId, link: &Arc<Link>) -> Vec<String> {
+    let library = &assets.library;
+    let wanted = match wanted(assets, hub, FETCHED_AT_ONCE).await {
         Ok(wanted) => wanted,
         Err(why) => return vec![format!("listing the objects wanted: {why}")],
     };
     let mut failed = Vec::new();
     for (scope, object) in wanted {
-        match fetch_one(library, link, &scope, object).await {
-            Ok(()) => {
-                assets.unreached.lock().expect("unreached").remove(&(hub.clone(), object.hash));
-                let hash = object.hash;
-                if let Err(why) = blocking(library, move |library| library.unwant(&hash)).await {
-                    failed.push(format!("the object {}: {why}", hex(&object.hash)));
+        if let Err(why) = fetch_alone(assets, hub, link, &scope, object).await {
+            failed.push(why);
+        }
+    }
+    let _ = library;
+    failed
+}
+
+/// Fetches `object` of `scope` under a ticket, and keeps whether the hub
+/// gave it.
+async fn fetch_alone(assets: &Assets, hub: &HubId, link: &Arc<Link>, scope: &str, object: ObjectRef) -> Result<(), String> {
+    let library = &assets.library;
+    match fetch_one(library, link, scope, object).await {
+        Ok(()) => {
+            reached(assets, hub, &object);
+            let hash = object.hash;
+            blocking(library, move |library| library.unwant(&hash)).await.map_err(|why| format!("the object {}: {why}", hex(&object.hash)))
+        }
+        Err(why) => {
+            unreached(assets, hub, &object);
+            Err(format!("fetching the object {} of {scope}: {why}", hex(&object.hash)))
+        }
+    }
+}
+
+/// Fetches the objects `hub`'s scopes want off the passes, a round after
+/// another until none it gives is left, where none is fetched so already:
+/// the frames of the streams go on meanwhile, and a pass waits for no
+/// object. Where this machine stands is told the hub again once some came.
+pub(super) fn lane(node: &Arc<Node>, hub: &HubId) {
+    let Some(assets) = node.assets.as_ref() else { return };
+    if !assets.fetching.lock().expect("fetching").insert(hub.clone()) {
+        return;
+    }
+    let (weak, hub) = (Arc::downgrade(node), hub.clone());
+    fastctx_platform::task::spawn(async move {
+        let _doing = fastctx_platform::doing::doing(format!("fetching objects from {hub}"));
+        let mut came = false;
+        loop {
+            let Some(node) = weak.upgrade() else { return };
+            let Some(link) = node.link_of(&hub).filter(|link| link.keeps_asset_lines()) else { break };
+            let (fetched, failed) = round(&node, &hub, &link).await;
+            for failed in failed {
+                node.log.line(format_args!("assets with {hub}: {failed}; asked again later"));
+            }
+            came |= fetched > 0;
+            if fetched == 0 {
+                break;
+            }
+        }
+        let Some(node) = weak.upgrade() else { return };
+        if let Some(assets) = node.assets.as_ref() {
+            assets.fetching.lock().expect("fetching").remove(&hub);
+        }
+        if came {
+            super::wake(&node, &hub);
+        }
+    });
+}
+
+/// One round of fetching on lines: the objects wanted asked for scope by
+/// scope, as many to an ask as a line carries, several lines at once; how
+/// many came, and what did not and why.
+async fn round(node: &Arc<Node>, hub: &HubId, link: &Arc<Link>) -> (usize, Vec<String>) {
+    let Some(assets) = node.assets.as_ref() else { return (0, Vec::new()) };
+    let wanted = match wanted(assets, hub, FETCHED_A_ROUND).await {
+        Ok(wanted) => wanted,
+        Err(why) => return (0, vec![format!("listing the objects wanted: {why}")]),
+    };
+    // Those of one scope go in one ask, up to what an ask carries; one too
+    // long for a line goes alone, under a ticket.
+    let mut asks: Vec<(String, Vec<ObjectRef>)> = Vec::new();
+    let mut alone = Vec::new();
+    for (scope, object) in wanted {
+        if object.size > OBJECT_BYTES {
+            alone.push((scope, object));
+            continue;
+        }
+        match asks.iter_mut().rev().find(|(of, objects)| {
+            *of == scope && objects.len() < OBJECTS && objects.iter().map(|object| object.size).sum::<u64>() + object.size <= ASKED_BYTES
+        }) {
+            Some((_, objects)) => objects.push(object),
+            None => asks.push((scope, vec![object])),
+        }
+    }
+    let room = Arc::new(tokio::sync::Semaphore::new(LINES_FETCHING));
+    let mut fetching = Vec::with_capacity(asks.len());
+    for (scope, objects) in asks {
+        let (node, hub, link, room) = (node.clone(), hub.clone(), link.clone(), room.clone());
+        fetching.push(fastctx_platform::task::spawn(async move {
+            let _room = room.acquire_owned().await;
+            let Some(assets) = node.assets.as_ref() else { return (0, Vec::new()) };
+            asked(assets, &hub, &link, &scope, objects).await
+        }));
+    }
+    let (mut fetched, mut failed) = (0, Vec::new());
+    for (scope, object) in alone {
+        match fetch_alone(assets, hub, link, &scope, object).await {
+            Ok(()) => fetched += 1,
+            Err(why) => failed.push(why),
+        }
+    }
+    for fetching in fetching {
+        if let Ok((came, why)) = fetching.await {
+            fetched += came;
+            failed.extend(why);
+        }
+    }
+    (fetched, failed)
+}
+
+/// Asks for `objects` of `scope` on one line and keeps each as it comes;
+/// how many came, and what did not and why. A line that breaks leaves the
+/// rest to be asked for again at once, as none of them was refused.
+async fn asked(assets: &Assets, hub: &HubId, link: &Arc<Link>, scope: &str, objects: Vec<ObjectRef>) -> (usize, Vec<String>) {
+    let library = &assets.library;
+    let named: Vec<wire::ObjectRef> = objects.iter().map(|object| wire::ObjectRef { hash: object.hash.into(), size: object.size }).collect();
+    let _coming = fastctx_platform::doing::waiting_outside(format!("{} objects of {scope} coming from the hub on an asset line", objects.len()), SENT_WITHIN);
+    let (mut fetched, mut failed) = (0, Vec::new());
+    let mut line = match link.asset_line().await {
+        Ok(line) => line,
+        Err(why) => return (0, vec![format!("an asset line for the objects of {scope}: {why}")]),
+    };
+    if let Err(why) = line.ask_objects(scope, &named).await {
+        return (0, vec![format!("asking for the objects of {scope}: {why}")]);
+    }
+    for (index, object) in objects.iter().enumerate() {
+        let given = match line.object(&named[index], index, index + 1 == objects.len()).await {
+            Ok(given) => given,
+            Err(why) => {
+                failed.push(format!("fetching the objects of {scope}: {why}"));
+                break;
+            }
+        };
+        match given {
+            Given::Bytes(bytes) => {
+                let (holder, wanted) = (format!("fetch:{scope}"), *object);
+                // Kept under a lease only until it is seen to be the object:
+                // the records that want it hold it from then on.
+                let kept = blocking(library, move |library| {
+                    let lease = library.put(&mut bytes.as_slice(), &holder, LEASE)?;
+                    if lease.object != wanted {
+                        return Err(fastctx_content::Error::Invalid("the bytes given do not hash to the object".into()));
+                    }
+                    library.release(lease)?;
+                    library.unwant(&wanted.hash)
+                })
+                .await;
+                match kept {
+                    Ok(()) => {
+                        reached(assets, hub, object);
+                        fetched += 1;
+                    }
+                    Err(why) => {
+                        unreached(assets, hub, object);
+                        failed.push(format!("keeping the object {} of {scope}: {why}", hex(&object.hash)));
+                    }
                 }
             }
-            Err(why) => {
-                let mut unreached = assets.unreached.lock().expect("unreached");
-                let times = unreached.get(&(hub.clone(), object.hash)).map_or(0, |(_, times)| times + 1);
-                unreached.insert((hub.clone(), object.hash), (Instant::now(), times));
-                drop(unreached);
+            Given::Withheld(why) => {
+                unreached(assets, hub, object);
                 failed.push(format!("fetching the object {} of {scope}: {why}", hex(&object.hash)));
+            }
+            Given::Refused(answer) => {
+                drop(line);
+                // A scope revoked ends its holding here, as any answer of it does.
+                let why = match answer {
+                    Ok(reply) => match super::session::heard(assets, link, reply).await {
+                        Ok(_) => "the hub gave none of them".to_string(),
+                        Err(why) => why,
+                    },
+                    Err(why) => why,
+                };
+                for object in &objects {
+                    unreached(assets, hub, object);
+                }
+                failed.push(format!("fetching the objects of {scope}: {why}"));
+                return (fetched, failed);
             }
         }
     }
-    failed
+    (fetched, failed)
 }
 
 /// Tells the hub every chunk of an object came. The hub lets the line go as

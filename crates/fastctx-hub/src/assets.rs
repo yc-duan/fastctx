@@ -4,6 +4,7 @@
 //! and the seal it keeps over every asset when it finds, on opening, that
 //! it was put back from an older copy.
 
+pub(crate) mod answering;
 pub(crate) mod apart;
 pub(crate) mod bodies;
 pub(crate) mod brought;
@@ -21,6 +22,7 @@ pub(crate) mod mirror;
 pub(crate) mod told;
 pub(crate) mod hub_log;
 pub(crate) mod ledger_views;
+pub(crate) mod line;
 pub(crate) mod restores;
 pub mod recovery;
 pub(crate) mod objects;
@@ -185,6 +187,8 @@ pub(crate) struct Assets {
     /// The tickets for objects' data connections, and the proofs of
     /// holding that stand (design §6.5, §7.3).
     pub(crate) objects: objects::Objects,
+    /// The asset lines open, by member (`line`).
+    pub(crate) lines: line::Lines,
     /// What several accounts own together, and who they are (design §6.2).
     pub(crate) bodies: Arc<bodies::Bodies>,
     /// Where machines stand in syncing (design §28.9).
@@ -229,6 +233,7 @@ impl Assets {
             receipted: Mutex::new(BTreeMap::new()),
             pushes: Mutex::new(Vec::new()),
             objects: objects::Objects::default(),
+            lines: line::Lines::default(),
             bodies: Arc::new(bodies::Bodies::new(control.clone())),
             standing: standing::Standing::default(),
             restores: std::sync::atomic::AtomicU64::new(restored),

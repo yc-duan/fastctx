@@ -320,6 +320,10 @@ pub enum Intent {
     /// chunk is a `ChunkHead` then its bytes, and the hub says `"done"` once
     /// it has taken an object put whole, or why it did not.
     Asset { key: PublicKey, proof: Signature, ticket: u64 },
+    /// An asset line (`fastctx_types::asset_lines`): a connection the member
+    /// keeps open for the bulk of its asset sync, one exchange after another
+    /// on it. Said only to a hub whose asset sync speaks lines.
+    AssetLine { key: PublicKey, proof: Signature },
     /// Whether the hub takes sessions now, through this address: answered
     /// `Down::Ready`, and closed. A machine on a later address of its list
     /// asks the earlier ones.
@@ -1382,7 +1386,7 @@ impl Intent {
     pub fn intent_purpose(&self) -> Option<fastctx_types::sync::transfer::Purpose> {
         use fastctx_types::sync::transfer::Purpose;
         match self {
-            Self::Asset { .. } => Some(Purpose::AssetSync),
+            Self::Asset { .. } | Self::AssetLine { .. } => Some(Purpose::AssetSync),
             Self::Data { .. }
             | Self::Deliver { .. }
             | Self::Handover { .. }

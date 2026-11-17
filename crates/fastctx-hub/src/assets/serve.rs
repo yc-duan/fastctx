@@ -249,7 +249,7 @@ fn received(received: Received) -> wire::Received {
 
 /// The scope `key`, through the read gate; the machine is told from now
 /// on when a stream of it moves.
-fn gated(assets: &Assets, directory: &Indexed<'_>, machine: &MachineName, key: &str) -> Result<Scope, String> {
+pub(super) fn gated(assets: &Assets, directory: &Indexed<'_>, machine: &MachineName, key: &str) -> Result<Scope, String> {
     let scope = scopes::scope(assets, key)?.ok_or_else(|| format!("there is no scope {key}"))?;
     if !scopes::readable(directory, machine, &scope) {
         assets.gone(key, machine);
@@ -521,8 +521,22 @@ pub(crate) fn scope_of(request: &Request) -> Option<&str> {
     }
 }
 
+/// What a request came on: how much its answer, and what it brings, may
+/// carry.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Room {
+    /// The control connection: a frame body over `INLINE_FRAME_BYTES` goes
+    /// apart, under a ticket.
+    Control,
+    /// An asset line (`fastctx_types::asset_lines`): frames come and go
+    /// whole, as many as a line's exchange carries.
+    Line,
+}
+
 /// Answers `request` from `machine`, whose key is `key`, against the
-/// directory `directory`. Call on a thread that may block.
+/// directory `directory`, as the control connection brings it. Call on a
+/// thread that may block.
+#[cfg(all(test, feature = "content-drill"))]
 pub(crate) fn ask(
     assets: &Assets,
     directory: &Indexed<'_>,
@@ -530,6 +544,19 @@ pub(crate) fn ask(
     machine: &MachineName,
     key: &PublicKey,
     request: Request,
+) -> Result<Reply, String> {
+    ask_in(assets, directory, basis, machine, key, request, Room::Control)
+}
+
+/// `ask`, of a request that came with `room`.
+pub(crate) fn ask_in(
+    assets: &Assets,
+    directory: &Indexed<'_>,
+    basis: &dyn Fn() -> String,
+    machine: &MachineName,
+    key: &PublicKey,
+    request: Request,
+    room: Room,
 ) -> Result<Reply, String> {
     if let Some(why) = assets.sealed() {
         // Sealed for a recovery, a device asks where the hub stands and hands
@@ -730,7 +757,7 @@ pub(crate) fn ask(
             }
             Ok(Reply::Received { received: received(word) })
         }
-        Request::TakeMany { scope, frames } => take_many(assets, directory, machine, key, scope, frames),
+        Request::TakeMany { scope, frames } => take_many(assets, directory, machine, key, scope, frames, room),
         Request::Cleared { .. } => Err("a machine's word that it cleared is taken with the directory".into()),
         Request::HandBack { .. } => Ok(Reply::HandedBack { kept: false, why: Some("the hub is not sealed for a recovery".into()) }),
         Request::Put { scope, object, prove, .. } => {
@@ -767,18 +794,21 @@ pub(crate) fn ask(
         Request::Frames { scope, stream, from, limit } => {
             let kept = held(assets, directory, machine, &scope, &stream)?;
             let library = scopes::library(assets, &kept)?;
-            let exported =
-                library.export(&scope, &stream, from, limit.min(FRAMES_AT_ONCE) as usize).map_err(|error| error.to_string())?;
+            let (most, most_bytes) = match room {
+                Room::Control => (FRAMES_AT_ONCE as usize, FRAME_BYTES_AT_ONCE),
+                Room::Line => (fastctx_types::asset_lines::FRAMES, fastctx_types::asset_lines::FRAME_BYTES),
+            };
+            let exported = library.export(&scope, &stream, from, (limit as usize).min(most)).map_err(|error| error.to_string())?;
             let (mut frames, mut bytes, mut apart) = (Vec::new(), 0usize, Vec::new());
             for frame in exported {
                 bytes += frame.header.len() + frame.signature.len() + frame.body.len();
-                if !frames.is_empty() && bytes > FRAME_BYTES_AT_ONCE {
+                if !frames.is_empty() && bytes > most_bytes {
                     break;
                 }
                 let mut sent = wire::Frame::whole(frame.header, frame.signature, frame.body);
                 // A body too large for the control connection follows on a
-                // data connection (§7.1).
-                if sent.too_large() {
+                // data connection (§7.1); a line carries every body.
+                if room == Room::Control && sent.too_large() {
                     sent.apart = sent.body.0.len() as u64;
                     apart.push(std::mem::take(&mut sent.body.0));
                 }
@@ -1167,16 +1197,22 @@ fn take_many(
     key: &PublicKey,
     scope: String,
     frames: Vec<wire::Frame>,
+    room: Room,
 ) -> Result<Reply, String> {
     let device_key = *key.as_bytes();
     if assets.objects.proving.version(&device_key).is_none_or(|version| version < wire::MANY) {
         return Err(format!("frames come several at a time with asset sync {}: send them one at a time", wire::MANY));
     }
-    if frames.is_empty() || frames.len() > wire::FRAMES_A_TAKE {
-        return Err(format!("a take of several frames carries 1 to {} of them", wire::FRAMES_A_TAKE));
+    // A line carries each frame whole, however long its body may be.
+    let (most, most_bytes, longest) = match room {
+        Room::Control => (wire::FRAMES_A_TAKE, wire::MANY_BYTES, wire::INLINE_FRAME_BYTES),
+        Room::Line => (fastctx_types::asset_lines::FRAMES, fastctx_types::asset_lines::FRAME_BYTES, wire::APART_FRAME_BYTES as usize),
+    };
+    if frames.is_empty() || frames.len() > most {
+        return Err(format!("a take of several frames carries 1 to {most} of them"));
     }
-    if frames.iter().map(|frame| frame.body.0.len()).sum::<usize>() > wire::MANY_BYTES {
-        return Err(format!("a take of several frames carries at most {} bytes of bodies", wire::MANY_BYTES));
+    if frames.iter().map(|frame| frame.body.0.len()).sum::<usize>() > most_bytes {
+        return Err(format!("a take of several frames carries at most {most_bytes} bytes of bodies"));
     }
     let kept = gated(assets, directory, machine, &scope)?;
     let mut stream: Option<String> = None;
@@ -1187,8 +1223,8 @@ fn take_many(
         // pass ends the take before it: those before it are taken, and the
         // device, sending it alone, hears why.
         let gate = || -> Result<Header, String> {
-            if frame.too_large() || frame.apart != 0 {
-                return Err(format!("a frame body over {} bytes travels apart, alone", wire::INLINE_FRAME_BYTES));
+            if frame.body.0.len() > longest || frame.apart != 0 {
+                return Err(format!("a frame body over {longest} bytes does not come here"));
             }
             let header = Header::decode(&frame.header.0).map_err(|error| format!("a frame's header: {error}"))?;
             if fastctx_content::v2::hub_orders(&header.stream) {

@@ -411,6 +411,75 @@ pub(super) async fn still_holding(
         .map_err(|error| error.to_string())?
 }
 
+/// The scope `key` an asset line asks objects of or puts one into, judged
+/// as any ask of it is: what the hub answers instead where the assets are
+/// sealed or `origin` reads the scope no more. Call on a thread that may
+/// block.
+pub(super) fn line_scope(hub: &Hub, origin: &crate::origin::Origin, key: &str) -> Result<Result<Scope, Reply>, String> {
+    let assets = &hub.assets;
+    if let Some(why) = assets.sealed() {
+        return Ok(Err(assets.sealed_reply(why)));
+    }
+    let store = hub.store();
+    origin.check(&store.book.directory)?;
+    let directory = store.indexed();
+    if let Some(scope) = scopes::scope(assets, key)?
+        && !scopes::readable(&directory, &origin.name, &scope)
+    {
+        assets.gone(key, &origin.name);
+        return Ok(Err(Reply::Revoked { scope: key.to_string() }));
+    }
+    super::serve::gated(assets, &directory, &origin.name, key).map(Ok)
+}
+
+/// An object an asset line gives `origin`, judged as a get's is by the
+/// directory as it stands now: the library it is read from. Call on a
+/// thread that may block.
+pub(super) fn line_object(hub: &Hub, origin: &crate::origin::Origin, scope: &Scope, object: &WireObject) -> Result<(Library, ObjectRef), String> {
+    let object = local(object)?;
+    if object.size > fastctx_types::asset_lines::OBJECT_BYTES {
+        return Err(format!("an object over {} bytes travels under a ticket", fastctx_types::asset_lines::OBJECT_BYTES));
+    }
+    allowed(hub, &origin.name, &origin.key, scope, Some(&object), None)?;
+    let library = scopes::library(&hub.assets, scope)?;
+    if library.size(&object.hash).map_err(|error| error.to_string())? != Some(object.size) {
+        return Err("the hub does not hold the object".into());
+    }
+    Ok((library, object))
+}
+
+/// A put asked on an asset line: the library the object's bytes are kept
+/// in when the hub wants them, none when it holds the object already; what
+/// the hub answers instead of a scope revoked or assets sealed. Call on a
+/// thread that may block.
+#[allow(clippy::type_complexity)]
+pub(super) fn line_put(
+    hub: &Hub,
+    origin: &crate::origin::Origin,
+    scope: &str,
+    object: &WireObject,
+    prove: bool,
+) -> Result<Result<Option<(Library, ObjectRef)>, Reply>, String> {
+    let object = local(object)?;
+    if object.size > fastctx_types::asset_lines::OBJECT_BYTES {
+        return Err(format!("an object over {} bytes travels under a ticket", fastctx_types::asset_lines::OBJECT_BYTES));
+    }
+    let kept = match line_scope(hub, origin, scope)? {
+        Ok(kept) => kept,
+        Err(reply) => return Ok(Err(reply)),
+    };
+    let library = scopes::library(&hub.assets, &kept)?;
+    let held = library.size(&object.hash).map_err(|error| error.to_string())?;
+    // A proof is of an object the hub holds at that length (AQ10).
+    if prove && held != Some(object.size) {
+        return Err("a proof is of an object the hub holds at that length".into());
+    }
+    if !prove && held == Some(object.size) {
+        return Ok(Ok(None));
+    }
+    Ok(Ok(Some((library, object))))
+}
+
 /// The hub's end of an object's data connection under `ticket`.
 pub(crate) async fn serve(hub: Arc<Hub>, mut socket: Socket, binding: [u8; 32], key: PublicKey, proof: Signature, ticket: u64) {
     let me = match hub.member(&key, &proof, &binding) {
@@ -577,7 +646,7 @@ where
 }
 
 /// Runs `work` where blocking is allowed.
-async fn blocking<T: Send + 'static>(work: impl FnOnce() -> fastctx_content::Result<T> + Send + 'static) -> Result<T, String> {
+pub(super) async fn blocking<T: Send + 'static>(work: impl FnOnce() -> fastctx_content::Result<T> + Send + 'static) -> Result<T, String> {
     fastctx_platform::task::spawn_blocking(work).await.map_err(|error| error.to_string())?.map_err(|error| error.to_string())
 }
 

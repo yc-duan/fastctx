@@ -934,6 +934,7 @@ async fn produce_with(node: &Arc<Node>, resident: &ResidentId, whole: bool, chec
         None
     };
     let (signer, hub) = (kept.signer(), placed.hub.clone());
+    let written_to = placed.scope.clone();
     let (wrote, next, unread) = match window {
         Some((window, world, open)) => {
             let (world_from, world_open, latest) = {
@@ -1250,7 +1251,7 @@ async fn produce_with(node: &Arc<Node>, resident: &ResidentId, whole: bool, chec
         .map_err(failure)?;
     }
     if wrote.written + wrote.gone > 0 {
-        crate::assets::wake(node, &hub);
+        crate::assets::committed(node, &hub, &written_to);
     }
     Ok(Produced { written: wrote.written, gone: wrote.gone, unread, long_changed, verified, handing: false })
 }

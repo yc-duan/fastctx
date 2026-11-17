@@ -67,6 +67,10 @@ const REPORTED_AT_ONCE: usize = 256;
 /// then proved where the put was not all of it.
 const OBJECT_ROUNDS: usize = 3;
 
+/// Scopes a pass goes through at once with a hub that keeps asset lines:
+/// each of them on lines of its own, one that is long holding up no other.
+const SCOPES_AT_ONCE: usize = 4;
+
 /// What a device proposes a scope it begins be described as.
 #[derive(serde::Serialize, serde::Deserialize)]
 pub(crate) struct Proposal {
@@ -101,7 +105,8 @@ pub(crate) fn wake(node: &Arc<Node>, hub: &HubId) {
 /// open session takes them off, under the pinned key.
 pub(crate) fn pushed(node: &Arc<Node>, hub: &HubId, push: wire::Push) {
     match push {
-        wire::Push::Moved { .. } | wire::Push::Fact { .. } => wake(node, hub),
+        wire::Push::Moved { scope, stream, next } => moved(node, hub, scope, stream, next),
+        wire::Push::Fact { .. } => wake(node, hub),
         wire::Push::Revoked { scope } => {
             let Some(assets) = node.assets.as_ref() else { return };
             assets.forget_listing(hub);
@@ -150,6 +155,82 @@ pub(crate) fn pushed(node: &Arc<Node>, hub: &HubId, push: wire::Push) {
             });
         }
     }
+}
+
+/// A stream of a scope moved on the hub: with a hub that keeps asset
+/// lines, a replica's frames past what is here are taken at once, by
+/// themselves, as a pass catching up what changed would take them
+/// (`catch_up`) — a pass under way with other scopes holds them up no
+/// longer. The driver comes round all the same, for all a pass sees to
+/// besides: where this machine stands in the owner's library, and whatever
+/// could not be taken here.
+fn moved(node: &Arc<Node>, hub: &HubId, scope: String, stream: String, next: u64) {
+    let Some(assets) = node.assets.as_ref() else { return };
+    assets.lively(&scope);
+    let session = assets.current.lock().expect("sessions").get(hub).copied();
+    let (Some(link), Some((_, key))) = (node.link_of(hub).filter(|link| link.keeps_asset_lines()), session) else {
+        return wake(node, hub);
+    };
+    let (node, hub) = (node.clone(), hub.clone());
+    fastctx_platform::task::spawn(async move {
+        if let Some(assets) = node.assets.as_ref()
+            && shared_elsewhere(&node, &hub).is_none()
+            && let Err(why) = taken_at_once(assets, &hub, &link, &key, &scope, &stream, next).await
+            && !why.starts_with(REVOKED)
+        {
+            // Left to the pass, which says why should it fail there too.
+            assets.relook.lock().expect("relook").insert(scope.clone());
+        }
+        wake(&node, &hub);
+    });
+}
+
+/// Takes the frames of the replica `stream` of `scope` up to `next`, where
+/// the scope is held and pulled whole here and no turn of it is under way.
+async fn taken_at_once(assets: &Assets, hub: &HubId, link: &Arc<Link>, key: &PublicKey, scope: &str, stream: &str, next: u64) -> Result<(), String> {
+    let library = &assets.library;
+    let turning = assets.turn_of(scope);
+    // Gone through now, it is brought there to where the hub stands.
+    let Ok(_turn) = turning.try_lock() else { return Ok(()) };
+    let (key_text, stream_text, device) = (scope.to_string(), stream.to_string(), assets.device());
+    let held = blocking(library, move |library| {
+        let Some(holding) = library.holding(&key_text)? else { return Ok(None) };
+        // Not pulled whole yet, a scope is pulled by itself (I01); a stream
+        // this machine orders goes up, never down; one whose epochs are not
+        // all here has them taken by the pass first.
+        if !library.is_pulled(&key_text)? || library.orderer(&key_text, &stream_text)? == Some(device) || library.known_last_epoch(&key_text, &stream_text)?.is_none() {
+            return Ok(None);
+        }
+        let at = library.streams(&key_text)?.into_iter().find(|(name, _)| *name == stream_text).map_or(0, |(_, next)| next);
+        Ok(Some((holding, at)))
+    })
+    .await?;
+    let Some((holding, at)) = held else { return Ok(()) };
+    pull_stream(assets, hub, link, key, scope, stream, holding, at, next, None).await
+}
+
+/// This machine committed records of its own to `scope`: with a hub that
+/// keeps asset lines they go up at once, by themselves, a pass under way
+/// with other scopes holding them up no longer. The driver comes round all
+/// the same.
+pub(crate) fn committed(node: &Arc<Node>, hub: &HubId, scope: &str) {
+    let Some(assets) = node.assets.as_ref() else { return };
+    assets.lively(scope);
+    let session = assets.current.lock().expect("sessions").get(hub).copied();
+    let (Some(link), Some((session, key))) = (node.link_of(hub).filter(|link| link.keeps_asset_lines()), session) else {
+        return wake(node, hub);
+    };
+    let (node, hub, scope) = (node.clone(), hub.clone(), scope.to_string());
+    fastctx_platform::task::spawn(async move {
+        if let Some(assets) = node.assets.as_ref() {
+            let turning = assets.turn_of(&scope);
+            if let Ok(_turn) = turning.try_lock() {
+                // What does not go up now is left to the pass, which says why.
+                let _ = upload(assets, &hub, &link, &key, session, &scope).await;
+            }
+        }
+        wake(&node, &hub);
+    });
 }
 
 async fn run(node: std::sync::Weak<Node>, hub: HubId, wake: Arc<tokio::sync::Notify>) {
@@ -219,7 +300,14 @@ const REVOKED: &str = "no longer read here: ";
 pub(super) async fn ask(assets: &Assets, link: &Arc<Link>, request: Request) -> Result<Reply, String> {
     // Waited for past its time, the node says which (`stuck`).
     let _waiting = fastctx_platform::doing::waiting_outside(format!("the hub's answer to {}", request.name()), ANSWERED_WITHIN);
-    match link.assets(request).await? {
+    let reply = link.assets(request).await?;
+    heard(assets, link, reply).await
+}
+
+/// What the hub answered of a scope, however it was asked: where it says
+/// this machine reads the scope no more, its holding here ends.
+pub(super) async fn heard(assets: &Assets, link: &Arc<Link>, reply: Reply) -> Result<Reply, String> {
+    match reply {
         Reply::Revoked { scope } => {
             // What may be given back after it is found by listing all again:
             // its description is older than any listing goes on from (BB13).
@@ -357,117 +445,34 @@ async fn pass(node: &Arc<Node>, hub: &HubId, link: &Arc<Link>, network: &Network
     // The owner libraries some scope of which this pass did not go through
     // whole: where they stand is not taken as reached (II01).
     let mut short: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
-    // A scope that fails holds up none after it; the pass reports the first.
-    for (scope, holding, first) in &scopes {
-        let _phase = phase(hub, &format!("going through {scope}"));
-        // Each step goes on whatever the one before met; a revoked scope
-        // goes no further.
-        let step = phase(hub, &format!("going up {scope}"));
-        let uploaded = upload(assets, hub, link, &key, session, scope).await;
-        drop(step);
-        if uploaded.is_ok() {
-            assets.uploads.lock().expect("uploads").remove(scope);
-        }
-        let step = phase(hub, &format!("coming down {scope}"));
-        let pulled = match &uploaded {
-            Err(why) if why.starts_with(REVOKED) => Err(why.clone()),
-            _ => pull(assets, hub, link, &key, session, scope, *holding, isolated.is_some()).await,
-        };
-        drop(step);
-        // What the hub lacks of this machine's own streams, found as they
-        // were pulled — the hub put back (§17) — goes up again this very
-        // pass, from where the hub is.
-        let uploaded = if uploaded.is_ok() && assets.uploads.lock().expect("uploads").contains(scope) {
-            let _step = phase(hub, &format!("going up again {scope}"));
-            let again = upload(assets, hub, link, &key, session, scope).await;
-            if again.is_ok() {
-                assets.uploads.lock().expect("uploads").remove(scope);
-            }
-            again
-        } else {
-            uploaded
-        };
-        // Isolated, what the hub lacks of what is here still goes back to it
-        // (AA04); nothing comes down.
-        if isolated.is_some() {
-            let pulled = pulled.and_then(|(_, failed)| failed.map_or(Ok(()), Err));
-            let mut whole_here = true;
-            for done in [uploaded, pulled] {
-                if let Err(why) = done
-                    && !why.starts_with(REVOKED)
-                {
-                    whole_here = false;
-                    failed.get_or_insert(format!("{scope}: {why}"));
-                }
-            }
-            // What the hub still lacks goes back next pass too (II02).
-            let mut relook = assets.relook.lock().expect("relook");
-            if whole_here {
-                relook.remove(scope);
-            } else {
-                relook.insert(scope.clone());
-            }
+    // A scope that fails holds up none beside it; the pass reports one
+    // failure. Those that moved or were committed to lately go first; with
+    // a hub that keeps asset lines several go at once.
+    let lively = assets.lively_at();
+    scopes.sort_by(|one, other| lively.get(&other.0).cmp(&lively.get(&one.0)).then_with(|| one.0.cmp(&other.0)));
+    let room = Arc::new(tokio::sync::Semaphore::new(if link.keeps_asset_lines() { SCOPES_AT_ONCE } else { 1 }));
+    let alone = isolated.is_some();
+    let mut turning = Vec::with_capacity(scopes.len());
+    for (scope, holding, first) in scopes {
+        let (node, hub, link, room) = (node.clone(), hub.clone(), link.clone(), room.clone());
+        turning.push(fastctx_platform::task::spawn(async move {
+            let _room = room.acquire_owned().await;
+            turn(&node, &hub, &link, &key, session, scope, holding, first, alone, untold).await
+        }));
+    }
+    for turned in turning {
+        let Ok(turned) = turned.await else {
+            failed.get_or_insert("a scope's turn ended before it was through".to_string());
             continue;
-        }
-        // Where each stream stands is checked whatever a stream's frames
-        // met: a frame that does not chain to what is here is what checking
-        // finds the shared place for.
-        let step = phase(hub, &format!("checking where {scope} stands"));
-        let checked = match &pulled {
-            Err(why) if why.starts_with(REVOKED) => Err(why.clone()),
-            Err(_) => Ok(false),
-            Ok((ahead, _)) => cursors(assets, link, scope, *holding, ahead).await,
         };
-        drop(step);
-        // What checking cut back comes again from the hub this very pass
-        // (HH05).
-        let (pulled, checked) = match checked {
-            Ok(true) => (pull(assets, hub, link, &key, session, scope, *holding, false).await, Ok(())),
-            Ok(false) => (pulled, Ok(())),
-            Err(why) => (pulled, Err(why)),
-        };
-        // Holding what the hub has of them, the streams to be ordered here
-        // are taken over (design §8).
-        let step = phase(hub, &format!("taking over the streams of {scope}"));
-        let checked = match (&pulled, checked) {
-            (Ok((_, None)), Ok(())) => super::takeover::run(node, assets, hub, link, &key, scope).await,
-            (_, checked) => checked,
-        };
-        drop(step);
-        // Every stream pulled and checked: the scope is pulled whole in its
-        // holding period, and the change numbers carry it from now on.
-        if *first && !untold && matches!(&pulled, Ok((_, None))) && checked.is_ok() {
-            let (scope, holding) = (scope.clone(), *holding);
-            match blocking(library, move |library| library.pulled(&scope, holding)).await {
-                // Pulled whole, its copy is read here from now: what the
-                // interface lists of conversations is made again (plan 3-5).
-                Ok(_) => assets.metadata_moved.send_modify(|count| *count = count.wrapping_add(1)),
-                Err(why) => {
-                    failed.get_or_insert(why);
-                }
-            }
+        if let Some(why) = turned.failed {
+            failed.get_or_insert(why);
         }
-        let pulled = pulled.and_then(|(_, failed)| failed.map_or(Ok(()), Err));
-        let mut whole_here = true;
-        for done in [uploaded, pulled, checked] {
-            if let Err(why) = done
-                && !why.starts_with(REVOKED)
-            {
-                whole_here = false;
-                failed.get_or_insert(format!("{scope}: {why}"));
-            }
-        }
-        // Not gone through whole, it is looked at by itself again next pass
-        // until it is (HH03, HH06), and its owner library is not taken as
-        // reached.
-        if !whole_here && let Some(owner) = owner_of.get(scope) {
+        // Not gone through whole, its owner library is not taken as reached.
+        if turned.short
+            && let Some(owner) = owner_of.get(&turned.scope)
+        {
             short.insert(owner.clone());
-        }
-        let mut relook = assets.relook.lock().expect("relook");
-        if whole_here {
-            relook.remove(scope);
-        } else {
-            relook.insert(scope.clone());
         }
     }
     if whole && !untold {
@@ -525,17 +530,165 @@ async fn pass(node: &Arc<Node>, hub: &HubId, link: &Arc<Link>, network: &Network
         }
         return failed.map_or(Ok(()), Err);
     }
-    let step = phase(hub, "fetching objects");
-    for failed in super::objects::fetch(assets, hub, link).await {
-        node.log.line(format_args!("assets with {hub}: {failed}; asked again later"));
+    // With a hub that keeps asset lines, objects are fetched off the passes
+    // (`objects::lane`): no pass waits for one.
+    if link.keeps_asset_lines() {
+        super::objects::lane(node, hub);
+    } else {
+        let _step = phase(hub, "fetching objects");
+        for failed in super::objects::fetch(assets, hub, link).await {
+            node.log.line(format_args!("assets with {hub}: {failed}; asked again later"));
+        }
     }
-    drop(step);
     // Where this machine stands goes to the hub as it changes (design §28.9).
     let _step = phase(hub, "telling where this machine stands");
     if let Err(why) = super::standing::report(assets, hub, link).await {
         node.log.line(format_args!("assets with {hub}: telling where this machine stands: {why}"));
     }
     failed.map_or(Ok(()), Err)
+}
+
+/// What a scope's turn in a pass came to.
+struct Turned {
+    scope: String,
+    /// The first of its steps that failed, and why.
+    failed: Option<String>,
+    /// Whether its owner library is not to be taken as reached: it was not
+    /// gone through whole.
+    short: bool,
+}
+
+/// One scope's turn in a pass: its own streams go up, the hub's come down,
+/// where each stands is checked, and the streams to be ordered here are
+/// taken over; `first` when it was not pulled whole in its holding period
+/// yet, `isolated` when nothing of the hub's comes down to this disk.
+#[allow(clippy::too_many_arguments)]
+async fn turn(
+    node: &Arc<Node>,
+    hub: &HubId,
+    link: &Arc<Link>,
+    key: &PublicKey,
+    session: u64,
+    scope: String,
+    holding: i64,
+    first: bool,
+    isolated: bool,
+    untold: bool,
+) -> Turned {
+    let Some(assets) = node.assets.as_ref() else {
+        return Turned { scope, failed: Some("the asset library is unavailable".into()), short: true };
+    };
+    let library = &assets.library;
+    let mut failed: Option<String> = None;
+    let turning = assets.turn_of(&scope);
+    let _turn = turning.lock().await;
+    let scope = &scope;
+    let _phase = phase(hub, &format!("going through {scope}"));
+    // Each step goes on whatever the one before met; a revoked scope goes
+    // no further.
+    let step = phase(hub, &format!("going up {scope}"));
+    let uploaded = upload(assets, hub, link, key, session, scope).await;
+    drop(step);
+    if uploaded.is_ok() {
+        assets.uploads.lock().expect("uploads").remove(scope);
+    }
+    let step = phase(hub, &format!("coming down {scope}"));
+    let pulled = match &uploaded {
+        Err(why) if why.starts_with(REVOKED) => Err(why.clone()),
+        _ => pull(assets, hub, link, key, session, scope, holding, isolated).await,
+    };
+    drop(step);
+    // What the hub lacks of this machine's own streams, found as they were
+    // pulled — the hub put back (§17) — goes up again this very pass, from
+    // where the hub is.
+    let uploaded = if uploaded.is_ok() && assets.uploads.lock().expect("uploads").contains(scope) {
+        let _step = phase(hub, &format!("going up again {scope}"));
+        let again = upload(assets, hub, link, key, session, scope).await;
+        if again.is_ok() {
+            assets.uploads.lock().expect("uploads").remove(scope);
+        }
+        again
+    } else {
+        uploaded
+    };
+    // Isolated, what the hub lacks of what is here still goes back to it
+    // (AA04); nothing comes down.
+    if isolated {
+        let pulled = pulled.and_then(|(_, failed)| failed.map_or(Ok(()), Err));
+        let mut whole_here = true;
+        for done in [uploaded, pulled] {
+            if let Err(why) = done
+                && !why.starts_with(REVOKED)
+            {
+                whole_here = false;
+                failed.get_or_insert(format!("{scope}: {why}"));
+            }
+        }
+        // What the hub still lacks goes back next pass too (II02).
+        let mut relook = assets.relook.lock().expect("relook");
+        if whole_here {
+            relook.remove(scope);
+        } else {
+            relook.insert(scope.clone());
+        }
+        return Turned { scope: scope.clone(), failed, short: false };
+    }
+    // Where each stream stands is checked whatever a stream's frames met: a
+    // frame that does not chain to what is here is what checking finds the
+    // shared place for.
+    let step = phase(hub, &format!("checking where {scope} stands"));
+    let checked = match &pulled {
+        Err(why) if why.starts_with(REVOKED) => Err(why.clone()),
+        Err(_) => Ok(false),
+        Ok((ahead, _)) => cursors(assets, link, scope, holding, ahead).await,
+    };
+    drop(step);
+    // What checking cut back comes again from the hub this very pass (HH05).
+    let (pulled, checked) = match checked {
+        Ok(true) => (pull(assets, hub, link, key, session, scope, holding, false).await, Ok(())),
+        Ok(false) => (pulled, Ok(())),
+        Err(why) => (pulled, Err(why)),
+    };
+    // Holding what the hub has of them, the streams to be ordered here are
+    // taken over (design §8).
+    let step = phase(hub, &format!("taking over the streams of {scope}"));
+    let checked = match (&pulled, checked) {
+        (Ok((_, None)), Ok(())) => super::takeover::run(node, assets, hub, link, key, scope).await,
+        (_, checked) => checked,
+    };
+    drop(step);
+    // Every stream pulled and checked: the scope is pulled whole in its
+    // holding period, and the change numbers carry it from now on.
+    if first && !untold && matches!(&pulled, Ok((_, None))) && checked.is_ok() {
+        let key_text = scope.clone();
+        match blocking(library, move |library| library.pulled(&key_text, holding)).await {
+            // Pulled whole, its copy is read here from now: what the
+            // interface lists of conversations is made again (plan 3-5).
+            Ok(_) => assets.metadata_moved.send_modify(|count| *count = count.wrapping_add(1)),
+            Err(why) => {
+                failed.get_or_insert(why);
+            }
+        }
+    }
+    let pulled = pulled.and_then(|(_, failed)| failed.map_or(Ok(()), Err));
+    let mut whole_here = true;
+    for done in [uploaded, pulled, checked] {
+        if let Err(why) = done
+            && !why.starts_with(REVOKED)
+        {
+            whole_here = false;
+            failed.get_or_insert(format!("{scope}: {why}"));
+        }
+    }
+    // Not gone through whole, it is looked at by itself again next pass
+    // until it is (HH03, HH06).
+    let mut relook = assets.relook.lock().expect("relook");
+    if whole_here {
+        relook.remove(scope);
+    } else {
+        relook.insert(scope.clone());
+    }
+    Turned { scope: scope.clone(), failed, short: !whole_here }
 }
 
 /// Another network this machine is shared whole on, a share waiting or in
@@ -883,6 +1036,10 @@ async fn catch_up(
     let mut failed = None;
     for changed in streams {
         let done: Result<(), String> = async {
+            // One goes through a scope at a time: what a push began taking
+            // by itself is through before this looks where the stream is.
+            let turning = assets.turn_of(&changed.scope);
+            let _turn = turning.lock().await;
             let scope = changed.scope.clone();
             let Some(holding) = blocking(library, move |library| library.holding(&scope)).await? else {
                 // Given to hold but not installed here yet (design §28.1).
@@ -1264,6 +1421,19 @@ async fn upload(
     }
     let device = assets.device();
     let key_text = scope.to_string();
+    // With a hub that keeps asset lines, frames go up on one, each whole and
+    // many to an exchange (`lines`).
+    let lines = link.keeps_asset_lines();
+    let (page, turn, run_frames, run_bytes) = if lines {
+        (
+            super::lines::FRAMES_UP_AT_ONCE,
+            super::lines::FRAMES_UP_A_TURN,
+            fastctx_types::asset_lines::FRAMES,
+            fastctx_types::asset_lines::FRAME_BYTES,
+        )
+    } else {
+        (FRAMES_AT_ONCE, FRAMES_UP_A_TURN, wire::FRAMES_A_TAKE, wire::MANY_BYTES)
+    };
     // A stream that fails holds up none after it; the scope reports the first.
     let mut failed: Option<String> = waiting_failed;
     for (stream, from) in blocking(library, move |library| library.uploads(&key_text, &device)).await? {
@@ -1274,12 +1444,12 @@ async fn upload(
             loop {
                 let (scope_text, stream_text) = (scope.to_string(), stream.clone());
                 let frames =
-                    blocking(library, move |library| library.export(&scope_text, &stream_text, from, FRAMES_AT_ONCE))
+                    blocking(library, move |library| library.export(&scope_text, &stream_text, from, page))
                         .await?;
                 if frames.is_empty() {
                     break;
                 }
-                if gone >= FRAMES_UP_A_TURN {
+                if gone >= turn {
                     assets.more.lock().expect("more").insert(hub.clone());
                     return Err(format!("{GOES_ON}{stream} of {scope} going up from {from}"));
                 }
@@ -1303,22 +1473,26 @@ async fn upload(
                     }
                 }
                 while let Some((header, frame, alone)) = queue.pop_front() {
-                    if many && !alone && !frame.too_large() {
+                    if many && !alone && (lines || !frame.too_large()) {
                         let mut run = vec![(header, frame)];
                         let mut bytes = run[0].1.body.0.len();
-                        while run.len() < wire::FRAMES_A_TAKE
+                        while run.len() < run_frames
                             && let Some((_, next, false)) = queue.front()
-                            && !next.too_large()
-                            && bytes + next.body.0.len() <= wire::MANY_BYTES
+                            && (lines || !next.too_large())
+                            && bytes + next.body.0.len() <= run_bytes
                         {
                             bytes += next.body.0.len();
                             let (header, frame, _) = queue.pop_front().expect("looked at");
                             run.push((header, frame));
                         }
                         if run.len() > 1 {
-                            let request =
-                                Request::TakeMany { scope: scope.to_string(), frames: run.iter().map(|(_, frame)| frame.clone()).collect() };
-                            let received = match ask(assets, link, request).await {
+                            let going: Vec<wire::Frame> = run.iter().map(|(_, frame)| frame.clone()).collect();
+                            let taken = if lines {
+                                super::lines::take(assets, link, scope, &going).await.map(|received| Reply::ReceivedMany { received })
+                            } else {
+                                ask(assets, link, Request::TakeMany { scope: scope.to_string(), frames: going }).await
+                            };
+                            let received = match taken {
                                 Ok(Reply::ReceivedMany { received }) => received,
                                 Ok(_) => return Err("the hub did not take the frames".into()),
                                 // Refused whole — its first frame did not pass:
@@ -1833,17 +2007,26 @@ async fn pull_stream(
     }
     let from = at;
     succession(assets, hub, link, key, scope, &stream).await?;
+    // With a hub that keeps asset lines, frames come on one, each whole and
+    // many to an exchange (`lines`).
+    let lines = link.keeps_asset_lines();
+    let turn = if lines { super::lines::RECORDS_A_TURN } else { RECORDS_A_TURN };
     while at < next {
-        let request = Request::Frames {
-            scope: scope.to_string(),
-            stream: stream.clone(),
-            from: at,
-            limit: FRAMES_AT_ONCE as u32,
+        let frames = if lines {
+            super::lines::frames(assets, link, scope, &stream, at).await?
+        } else {
+            let request = Request::Frames {
+                scope: scope.to_string(),
+                stream: stream.clone(),
+                from: at,
+                limit: FRAMES_AT_ONCE as u32,
+            };
+            let Reply::Frames { mut frames, ticket } = ask(assets, link, request).await? else {
+                return Err("the hub did not give frames".into());
+            };
+            super::apart::bring(link, ticket, &mut frames).await?;
+            frames
         };
-        let Reply::Frames { mut frames, ticket } = ask(assets, link, request).await? else {
-            return Err("the hub did not give frames".into());
-        };
-        super::apart::bring(link, ticket, &mut frames).await?;
         if frames.is_empty() {
             break;
         }
@@ -1892,7 +2075,7 @@ async fn pull_stream(
             return Err(format!("{stream} of {scope}: the hub's frames from {began} take it no further"));
         }
         // Its turn is over: the rest comes the next pass, at once.
-        if at < next && at.saturating_sub(from) >= RECORDS_A_TURN {
+        if at < next && at.saturating_sub(from) >= turn {
             assets.more.lock().expect("more").insert(hub.clone());
             return Err(format!("{GOES_ON}{stream} of {scope} at {at} of {next}"));
         }

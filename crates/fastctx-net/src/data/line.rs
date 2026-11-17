@@ -94,6 +94,11 @@ impl Line {
         }
     }
 
+    /// Whether the connection is over, by either direction.
+    pub(super) fn over(&self) -> bool {
+        *self.over.borrow()
+    }
+
     pub(super) fn sender(&self) -> Sender {
         Sender { outgoing: self.outgoing.clone(), over: self.over.clone(), stopped: self.stopped.clone() }
     }

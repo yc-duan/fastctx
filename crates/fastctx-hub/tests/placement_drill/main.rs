@@ -23,18 +23,6 @@ mod resume;
 #[path = "../../../../gui/src-tauri/src/transcript/core.rs"]
 #[allow(dead_code)]
 mod transcript;
-/// The shell's paged window types, which the shell's pieces and transcript
-/// name and the drill never makes: the window itself needs the whole shell.
-mod timeline_delta {
-    #[derive(Clone, serde::Serialize)]
-    pub(crate) struct Placement;
-    #[derive(Clone, serde::Serialize)]
-    pub(crate) struct Delta;
-}
-mod timeline_window {
-    #[derive(Clone, serde::Serialize)]
-    pub(crate) struct Edges;
-}
 use conversation_piece::Piece;
 fn epoch_ms(at: std::time::SystemTime) -> u64 {
     at.duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() as u64

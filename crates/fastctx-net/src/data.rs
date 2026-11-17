@@ -13,6 +13,7 @@ mod duplex;
 mod line;
 pub use duplex::{ReadHalf, WriteHalf};
 mod receipt;
+pub mod runs;
 mod writing;
 pub use receipt::{ReceiptWork, Settlement, settling_ping};
 
