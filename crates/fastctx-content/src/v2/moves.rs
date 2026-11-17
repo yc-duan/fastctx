@@ -162,8 +162,8 @@ fn chain_at(db: &Connection, stream: i64, last: &Epoch, holding: i64, next: u64)
         return Ok(Some(last.follows));
     }
     let kept: Option<Vec<u8>> = db
-        .prepare_cached("SELECT head FROM frames WHERE stream = ?1 AND epoch = ?2 AND holding = ?3 AND first + count = ?4")?
-        .query_row(params![stream, last.epoch as i64, holding, next as i64], |row| row.get(0))
+        .prepare_cached("SELECT head FROM frames WHERE stream = ?1 AND holding = ?3 AND first + count - 1 = ?4 AND epoch = ?2")?
+        .query_row(params![stream, last.epoch as i64, holding, next as i64 - 1], |row| row.get(0))
         .optional()?;
     if let Some(head) = kept {
         return Ok(head.try_into().ok());

@@ -339,9 +339,14 @@ impl Library {
             let mut ends = Vec::new();
             let mut statement = db.prepare_cached(
                 "SELECT end, head FROM (
-                    SELECT first + count - 1 AS end, head FROM frames WHERE stream = ?1 AND holding = ?2 AND first + count - 1 <= ?3
+                    SELECT * FROM (
+                        SELECT first + count - 1 AS end, head FROM frames
+                        WHERE stream = ?1 AND holding = ?2 AND first + count - 1 <= ?3
+                        ORDER BY first + count - 1 DESC LIMIT ?4)
                     UNION ALL
-                    SELECT to_sequence AS end, follows AS head FROM gaps WHERE stream = ?1 AND to_sequence <= ?3)
+                    SELECT * FROM (
+                        SELECT to_sequence AS end, follows AS head FROM gaps
+                        WHERE stream = ?1 AND to_sequence <= ?3 ORDER BY to_sequence DESC LIMIT ?4))
                  ORDER BY end DESC LIMIT ?4",
             )?;
             let rows = statement.query_map(params![stream_id, own, sequence as i64, ENDS_AT_ONCE as i64], |row| {
