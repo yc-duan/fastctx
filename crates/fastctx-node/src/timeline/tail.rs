@@ -35,7 +35,15 @@ const WITHIN: Duration = Duration::from_secs(600);
 const CHECK_ENDS_BEFORE: Duration = Duration::from_secs(30);
 const TRIES: u32 = 5;
 /// The soonest it is brought again after it was.
-const APART: Duration = Duration::from_secs(1);
+const APART: Duration = Duration::from_millis(400);
+/// A host says a block of its history ended a moment before it writes the
+/// record of it: after it says so, the record is looked for at these
+/// moments, until something is read. A page shows what is in the records,
+/// so how soon a record is read is how soon its words are seen.
+const GREW_LOOKS: [Duration; 4] =
+    [Duration::from_millis(400), Duration::from_millis(1000), Duration::from_millis(2000), Duration::from_millis(3500)];
+/// When each history was last said to have grown, nothing read of it since.
+static GREW: LazyLock<Mutex<HashMap<ResidentId, Instant>>> = LazyLock::new(Mutex::default);
 /// A reading the last record kept is not in yet is tried again this often,
 /// at most this many times in a row.
 const UNREAD_AGAIN: Duration = Duration::from_secs(5);
@@ -1560,6 +1568,7 @@ async fn run(node: &Arc<Node>, resident: &ResidentId) -> Outcome {
     {
         return Outcome::Again { after: APART - since };
     }
+    let begun = Instant::now();
     let produced = produce(node, resident, false).await;
     // Its metadata beside it, made again from its directory (plan 3-4); and
     // where the user's words to it stand, followed from its inbox (§28.14).
@@ -1650,8 +1659,9 @@ async fn run(node: &Arc<Node>, resident: &ResidentId) -> Outcome {
                 check_wanted(node, resident);
             }
             if active(node, resident) {
-                return Outcome::Again { after: ACTIVE_AGAIN };
+                return Outcome::Again { after: active_again(resident, begun, produced.written + produced.gone > 0) };
             }
+            GREW.lock().expect("grown timelines").remove(resident);
             if beside_failed {
                 return Outcome::Again { after: UNREAD_AGAIN };
             }
@@ -1681,6 +1691,37 @@ fn quiet_again(node: &Node, resident: &ResidentId) -> Option<Duration> {
     }
 }
 
+/// How soon a conversation at work is looked at again: at the next of
+/// `GREW_LOOKS` while its host said it grew and nothing was read of it
+/// since, every `ACTIVE_AGAIN` otherwise. `read` says the look begun at
+/// `begun` read something; growth told after it began is still looked for.
+fn active_again(resident: &ResidentId, begun: Instant, read: bool) -> Duration {
+    let mut grew = GREW.lock().expect("grown timelines");
+    let Some(at) = grew.get(resident).copied() else { return ACTIVE_AGAIN };
+    if read && at <= begun {
+        grew.remove(resident);
+        return ACTIVE_AGAIN;
+    }
+    let since = at.elapsed();
+    match GREW_LOOKS.iter().find(|look| **look > since) {
+        Some(look) => *look - since,
+        None => {
+            grew.remove(resident);
+            ACTIVE_AGAIN
+        }
+    }
+}
+
+/// `resident`'s host said its history grew: its timeline is brought to it
+/// now, and looked at again soon while its record is not written yet.
+pub(super) fn grew(node: &Node, resident: &ResidentId) {
+    if node.assets.is_none() {
+        return;
+    }
+    GREW.lock().expect("grown timelines").insert(resident.clone(), Instant::now());
+    wanted(node, resident);
+}
+
 /// Whether `resident` is at work, or was a moment ago.
 fn active(node: &Node, resident: &ResidentId) -> bool {
     node.residents.now(resident).is_some_and(|now| {
@@ -1691,7 +1732,9 @@ fn active(node: &Node, resident: &ResidentId) -> bool {
 }
 
 /// Asks for `resident`'s timeline in the asset library to be brought to its
-/// history; asked again while it waits or runs, it is one job.
+/// history; asked again while it waits or runs, it is one job. One waiting
+/// to look again at a conversation at work is brought on: what is asked for
+/// here changed now, and the wait was for what might change unsaid.
 pub(super) fn wanted(node: &Node, resident: &ResidentId) {
     if node.assets.is_none() {
         return;
@@ -1709,7 +1752,7 @@ pub(super) fn wanted(node: &Node, resident: &ResidentId) {
         let bytes = job.key.len() * 2 + 64;
         for tries in 1..=SUBMIT_TRIES {
             let asked = job.clone();
-            match database.write_relaxed(bytes, move |db| fastctx_jobs::submit_after(db, &asked, pause)).await {
+            match database.write_relaxed(bytes, move |db| fastctx_jobs::submit_within(db, &asked, pause)).await {
                 Ok(()) => {
                     jobs.stir(KIND);
                     return;

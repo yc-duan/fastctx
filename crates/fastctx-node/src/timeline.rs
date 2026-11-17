@@ -152,7 +152,7 @@ fn produce(node: &std::sync::Weak<crate::Node>) {
             // again for a reader that asks for it (`wanted_content`), not
             // read whole as each history grows (design §28.53).
             for resident in watched.take() {
-                tail::wanted(&node, &resident);
+                tail::grew(&node, &resident);
                 later::grew(&node, &resident);
             }
         }
