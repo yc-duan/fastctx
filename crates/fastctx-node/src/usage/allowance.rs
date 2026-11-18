@@ -256,11 +256,14 @@ fn assisted(node: &Node, about: &About, account: &HubAccount, model: Option<&str
                 reached.push(UsedUp::Fable { allowance, until });
             }
         } else if let Some(allowance) = assist.weekly {
-            if let Some(until) = weekly(&all, allowance) {
+            // Dollars an earlier release gave as a share of the week, which
+            // was of quota dollars too.
+            let used: Vec<_> = costs.iter().map(|charge| (charge.at, quota(charge))).collect();
+            if let Some(until) = weekly(&used, allowance) {
                 reached.push(UsedUp::Weekly { allowance, until });
             }
             let fable: Vec<_> =
-                costs.iter().filter(|charge| charge.fable).map(|charge| (charge.at, charge.usd)).collect();
+                costs.iter().filter(|charge| charge.fable).map(|charge| (charge.at, quota(charge))).collect();
             let allowance = Usd(allowance.0 / 2);
             if let Some(until) = weekly(&fable, allowance) {
                 reached.push(UsedUp::Fable { allowance, until });

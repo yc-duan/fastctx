@@ -24,7 +24,7 @@ import { followState, LOGINS, type Following } from "../world/topics";
 import type { Folders } from "../world/focus";
 import type { UsageReport } from "../world/usage";
 import type { UsageCallsPage, UsageCallsQuery } from "../world/usage-calls";
-import { forget, grantsOf, lines, logins as shownLogins, ME, plateOf, setHost, setNet, type Deeds, type Feed, type Login } from "./data";
+import { forget, grantsOf, lines, logins as shownLogins, ME, plateOf, setHost, setNet, SWING, type Deeds, type Feed, type Login } from "./data";
 import { homePage } from "./home";
 import { askedOf, callsFrom, daysFrom, idOf, limitOf, managesOf, netOf, partsOf, reckonedBy, type Seen } from "./live";
 import { fillCharts, loginPage, setUntils } from "./login-page";
@@ -52,7 +52,7 @@ export interface AgentsPageOptions {
   setWeek(machine: string, agent: string, dir: string, week: number | null, swing?: number): Promise<MachineLogins>;
   /** Resets the week's usage to tenths of a percent of the week's figure,
    *  or with none takes the reset `id` back. */
-  resetUsage(machine: string, agent: string, dir: string, id: string, toTenths: number | null): Promise<MachineLogins>;
+  resetUsage(machine: string, agent: string, dir: string, id: string, toTenths: number | null, weekEnd: string | null): Promise<MachineLogins>;
   changeModels(machine: string, agent: string, dir: string, change: ModelChange): Promise<MachineLogins>;
   usage(machine: string, agent: string, dir: string): Promise<UsageReport>;
   calls(machine: string, agent: string, dir: string, query: UsageCallsQuery): Promise<UsageCallsPage>;
@@ -100,7 +100,7 @@ const IDLE_MS = 30_000;
 /** Every machine's record of its logins as last read, kept from one visit
  *  of the page to the next: coming back, the page is drawn at once from
  *  what it knew, and read again behind that. */
-const kept: Seen = { records: new Map(), plates: new Map(), expects: new Map(), resets: new Map() };
+const kept: Seen = { records: new Map(), plates: new Map(), expects: new Map(), resets: new Map(), weekEnds: new Map() };
 
 export class AgentsPage implements Page {
   readonly element = document.createElement("div");
@@ -145,8 +145,8 @@ export class AgentsPage implements Page {
     setHost({ feed: this.feed(), deeds: this.deeds() });
     drawnBy((how) => this.paint(how));
     setUntils((login, person) => {
-      const { machine, agent } = this.recordOf(login);
-      const seen = options.store.world.peek()?.accounts.hubs.flatMap((hub) => hub.assists).find((one) => one.machine === machine && one.agent === agent && one.account === person);
+      const { machine, agent, home } = this.recordOf(login);
+      const seen = options.store.world.peek()?.accounts.hubs.flatMap((hub) => hub.assists).find((one) => one.machine === machine && one.agent === agent && sameHome(one.home, home) && one.account === person);
       return seen?.until ? new Date(seen.until) : null;
     });
     state.place = placeOfApp(place);
@@ -362,10 +362,13 @@ export class AgentsPage implements Page {
      *  is read again behind it. */
     const reset = async (login: Login, id: string, toTenths: number | null) => {
       const { machine, agent, dir } = this.recordOf(login);
+      // The week looked at: one that has turned since is not reset.
+      const weekEnd = this.seen.weekEnds.get(login.id) ?? null;
+      if (weekEnd === null) throw new Error("用量还没读到，稍后再试");
       // A node that reckons no week keeps no reset of one.
-      if (!this.reckoning.has(login.id)) throw new Error("该机器的 Fastctx 版本较旧，暂不支持重置用量");
+      if (!this.reckoning.has(login.id)) throw new Error("该机器离线，或其 Fastctx 版本较旧，暂不能重置用量");
       try {
-        const record = await options.resetUsage(machine, agent, dir, id, toTenths);
+        const record = await options.resetUsage(machine, agent, dir, id, toTenths, weekEnd);
         forget(login);
         this.took(record);
       } catch (error) {
@@ -475,7 +478,10 @@ export class AgentsPage implements Page {
         const { machine, agent, dir } = this.recordOf(login);
         try {
           const record = await options.setWeek(machine, agent, dir, Math.round(expect.base * 1_000_000), expect.swing);
-          // The week's figure follows what is expected: read again.
+          // A node of before keeps the week and not its reach: said so,
+          // rather than taken for kept.
+          const side = record.claude.listed.find((one) => one.dir === dir) ?? record.codex.listed.find((one) => one.dir === dir);
+          if (side && (side.swing ?? SWING) !== expect.swing) throw new Error("该机器的 Fastctx 版本较旧：预期周额度已保存，波动幅度未生效");
           this.seen.plates.delete(login.id);
           this.seen.expects.delete(login.id);
           forget(login);
@@ -484,7 +490,7 @@ export class AgentsPage implements Page {
           throw new Error(tooOld(error) ? "该机器的 Fastctx 版本较旧，暂不支持设置周额度" : error instanceof Error ? error.message : String(error));
         }
       },
-      resetUsage: (login, to) => reset(login, `r-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`, Math.round(to * 10)),
+      resetUsage: (login, to, id) => reset(login, id, Math.round(to * 10)),
       undoReset: (login) => {
         const newest = this.seen.resets.get(login.id)?.find((made) => !made.undone);
         return newest ? reset(login, newest.id, null) : Promise.reject(new Error("没有可撤回的重置"));
@@ -502,7 +508,8 @@ export class AgentsPage implements Page {
       line: async (login, line) => {
         const world = options.store.world.peek();
         for (const grant of grantsOf(login)) {
-          const seen = world?.accounts.hubs.flatMap((hub) => hub.assists).find((one) => one.account === grant.person && one.machine === login.machine);
+          const { agent, home } = this.recordOf(login);
+          const seen = world?.accounts.hubs.flatMap((hub) => hub.assists).find((one) => one.account === grant.person && one.machine === login.machine && one.agent === agent && sameHome(one.home, home));
           await options.change_(this.holder(login), assisted(login, grant.person, grant.limit, seen?.until ? new Date(seen.until) : null, grant.manages ?? false, line));
         }
         await options.store.refresh();

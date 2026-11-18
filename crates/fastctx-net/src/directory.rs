@@ -250,11 +250,13 @@ pub struct Assist {
 }
 
 impl Assist {
-    /// Whether the account manages the login with its owner. An assistance
+    /// Whether the account manages the login with its owner: only a Claude
+    /// Code login's, the one whose week is reckoned in shares. An assistance
     /// that says neither is one of before the word was kept: it managed
     /// where it had no limit, as such an account saw the login whole then.
     pub fn manages(&self) -> bool {
-        self.manages.unwrap_or(self.share.is_none() && self.weekly.is_none() && self.daily.is_none())
+        self.agent.as_str() == "claude"
+            && self.manages.unwrap_or(self.share.is_none() && self.weekly.is_none() && self.daily.is_none())
     }
 
     /// Whether this is `agent`'s login `home` there.

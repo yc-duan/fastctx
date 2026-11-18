@@ -103,12 +103,23 @@ pub(crate) fn seen(view: &fastctx_net::directory::View, asker: &Asker, mut login
         for login in &mut side.listed {
             login.programs.clear();
             login.change = None;
-            if assists(login).iter().any(|assist| !assist.manages()) {
+            // Codex keeps no shares: a Codex login that assists with no limit
+            // shows its windows as it did before there were shares.
+            let sees = |assist: &fastctx_net::directory::Assist| {
+                assist.manages() || (assist.agent.as_str() != "claude" && !limited(assist))
+            };
+            if assists(login).iter().any(|assist| !sees(assist)) {
                 login.limits = fastctx_types::agents::Fact::unavailable(OWNERS_WINDOWS);
             }
         }
     }
     logins
+}
+
+/// Whether an assistance holds the account to a part of the login: a share
+/// of its week, or dollars a week or a day.
+fn limited(assist: &fastctx_net::directory::Assist) -> bool {
+    assist.share.is_some() || assist.weekly.is_some() || assist.daily.is_some()
 }
 
 /// Whether `asker` manages `agent`'s login `dir` here with its owner: it sees
@@ -322,13 +333,16 @@ pub(crate) async fn reset_usage(
     dir: PathBuf,
     id: String,
     to_tenths: Option<u32>,
+    week_end: Option<jiff::Timestamp>,
 ) -> Result<MachineLogins, Failure> {
     if node.is_here(&machine) {
-        super::reset_usage(node, &agent, &dir, &id, to_tenths)?;
+        let asked = crate::usage::ResetAsked { id: &id, to_tenths, week_end, by: None };
+        super::reset_usage(node, &agent, &dir, asked)?;
         crate::usage::after_reading(node, agent.as_str(), &dir).await;
         return super::changed_here(node).await;
     }
-    match ask(node, &machine, Purpose::Hands, RemoteCall::ResetAgentUsage { agent, dir, id, to_tenths }).await? {
+    let call = RemoteCall::ResetAgentUsage { agent, dir, id, to_tenths, week_end };
+    match ask(node, &machine, Purpose::Hands, call).await? {
         RemoteReply::AgentLogins(logins) => Ok(*logins),
         _ => Err(other(&machine)),
     }
@@ -381,7 +395,7 @@ pub(crate) async fn usage(
     dir: PathBuf,
 ) -> Result<UsageReport, Failure> {
     if node.is_here(&machine) {
-        return here_usage(node, agent, dir, None, true).await;
+        return here_usage(node, agent, dir, crate::usage::Reader::WHOLE).await;
     }
     // The machine, which tells all of it as the asker may see it; from the
     // copies here where it is away or does not answer (§28.58): they hold
@@ -471,21 +485,19 @@ async fn here_calls(
     .map_err(|e| Failure::new(format!("reading the login's calls: {e}")))
 }
 
-/// What a login here was used for: everyone's, or `only`'s alone.
+/// What a login here was used for, as `reader` may see it.
 async fn here_usage(
     node: &Arc<Node>,
     agent: AgentName,
     dir: PathBuf,
-    only: Option<HubAccount>,
-    owner: bool,
+    reader: crate::usage::Reader,
 ) -> Result<UsageReport, Failure> {
+    crate::usage::stir(node, agent.as_str(), &dir);
     let node = node.clone();
-    fastctx_platform::task::spawn_blocking(move || {
-        crate::usage::report(&node, agent.as_str(), &dir, only.as_ref(), owner)
-    })
-    .await
-    .map_err(|error| Failure::new(error.to_string()))?
-    .map_err(|error| Failure::new(format!("reading what the login was used for: {error}")))
+    fastctx_platform::task::spawn_blocking(move || crate::usage::report(&node, agent.as_str(), &dir, &reader))
+        .await
+        .map_err(|error| Failure::new(error.to_string()))?
+        .map_err(|error| Failure::new(format!("reading what the login was used for: {error}")))
 }
 
 /// Answers another machine's call about this machine's logins, for
@@ -514,8 +526,10 @@ pub(crate) async fn answer(
             crate::usage::after_reading(node, agent.as_str(), &dir).await;
             super::changed_here(node).await.map(logins)
         }
-        RemoteCall::ResetAgentUsage { agent, dir, id, to_tenths } => {
-            super::reset_usage(node, &agent, &dir, &id, to_tenths)?;
+        RemoteCall::ResetAgentUsage { agent, dir, id, to_tenths, week_end } => {
+            // Only one who may work here asks this (`admission`).
+            let by = Some(asker.account.to_string());
+            super::reset_usage(node, &agent, &dir, crate::usage::ResetAsked { id: &id, to_tenths, week_end, by })?;
             crate::usage::after_reading(node, agent.as_str(), &dir).await;
             super::changed_here(node).await.map(logins)
         }
@@ -555,12 +569,17 @@ pub(crate) async fn answer(
                 .ok_or_else(|| {
                     Failure::not_run(format!("no {agent} login {} here is the account's to see", dir.display()))
                 })?;
-            // Everyone's use to one who may work here and to one who manages
-            // the login with its owner; their own alone to anyone else.
-            let whole = asker.hands || manages(view, asker, &agent, &login.dir, login.default);
-            let only = (!whole).then(|| HubAccount { hub: asker.hub.clone(), account: asker.account.clone() });
-            let owner = crate::placement::owned(view.member(&view.me), &asker.account);
-            here_usage(node, agent, login.dir.clone(), only, owner)
+            // Everyone's use to one who may work here; to one who manages the
+            // login with its owner, their own and what each other person used
+            // of the week (用户 2026-11-19); their own alone to anyone else.
+            let managing = !asker.hands && manages(view, asker, &agent, &login.dir, login.default);
+            let reader = crate::usage::Reader {
+                only: (!asker.hands).then(|| HubAccount { hub: asker.hub.clone(), account: asker.account.clone() }),
+                managing,
+                owner: crate::placement::owned(view.member(&view.me), &asker.account),
+                may_reset: asker.hands,
+            };
+            here_usage(node, agent, login.dir.clone(), reader)
                 .await
                 .map(|report| RemoteReply::AgentUsage(Box::new(report)))
         }

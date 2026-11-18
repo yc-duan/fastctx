@@ -264,41 +264,38 @@ pub(crate) fn set_week(
     if !AGENTS.contains(&agent.as_str()) {
         return Err(Failure::not_run("only Codex and Claude Code logins keep their usage"));
     }
-    if week.is_some_and(|week| week.0 == 0) {
-        return Err(Failure::not_run("a login's week is an amount above zero"));
-    }
-    if swing.is_some_and(|swing| swing == 0 || swing > crate::usage::WIDEST_SWING) {
+    if week.is_some_and(|week| week.0 == 0 || week > crate::usage::MOST_WEEK) {
         return Err(Failure::not_run(format!(
-            "a week's figure stands within 1 to {} percent of what the week is expected to hold",
+            "a login's week is an amount above zero and up to ${}",
+            crate::usage::MOST_WEEK.0 / 1_000_000
+        )));
+    }
+    if swing.is_some_and(|swing| swing > crate::usage::WIDEST_SWING) {
+        return Err(Failure::not_run(format!(
+            "a week's figure stands within 0 to {} percent of what the week is expected to hold",
             crate::usage::WIDEST_SWING
         )));
     }
     known(node, agent, dir)?;
-    crate::usage::set_week(node, agent.as_str(), dir, week)
+    crate::usage::set_expected(node, agent.as_str(), dir, week, swing)
         .map_err(|error| Failure::new(format!("keeping the login's week: {error}")))?;
-    if let Some(swing) = swing {
-        crate::usage::set_swing(node, agent.as_str(), dir, swing)
-            .map_err(|error| Failure::new(format!("keeping the reach of the login's week: {error}")))?;
-    }
     snapshot::ask(node);
     Ok(())
 }
 
 /// Resets what everyone has used of this week of the Claude Code login `dir`
-/// here, to `to_tenths` of the week's figure in tenths of a percent; or with
-/// none takes the reset `id` back.
+/// here, or takes such a reset back (`crate::usage::ResetAsked`).
 pub(crate) fn reset_usage(
     node: &Node,
     agent: &AgentName,
     dir: &Path,
-    id: &str,
-    to_tenths: Option<u32>,
+    asked: crate::usage::ResetAsked<'_>,
 ) -> Result<(), Failure> {
     if !AGENTS.contains(&agent.as_str()) {
         return Err(Failure::not_run("only Codex and Claude Code logins keep their usage"));
     }
     known(node, agent, dir)?;
-    crate::usage::reset_usage(node, agent.as_str(), dir, id, to_tenths)
+    crate::usage::reset_usage(node, agent.as_str(), dir, asked)
         .map_err(|error| Failure::new(format!("resetting the week's usage: {error}")))?
         .map_err(Failure::not_run)?;
     snapshot::ask(node);

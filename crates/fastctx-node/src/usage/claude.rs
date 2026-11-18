@@ -89,9 +89,13 @@ pub(super) fn measured(
         let mut changed = false;
         if let Some(windows) = windows {
             let account = book.account_at(counted.as_ref().and_then(|c| c.account_at).unwrap_or(about.born_at));
-            // Each session gives what the last answer to it carried.
-            let source = about.session.as_deref().unwrap_or(id.as_str());
-            changed |= super::readings::record(book, path, windows, at, account, source)?;
+            // When the answer that carried them came, where the mod says
+            // (`accounting.js`, `stepMeasured`); an earlier mod sent them with
+            // any sample, as of whenever its session's last answer was.
+            let answered =
+                usage.get("rateLimitsAt").and_then(Value::as_str).and_then(|at| at.parse::<Timestamp>().ok());
+            changed |=
+                super::readings::record(book, path, windows, answered.unwrap_or(at), account, answered.is_some())?;
         }
         if counted.as_ref().is_some_and(|c| c.meter) {
             let c = counted.expect("meter report");

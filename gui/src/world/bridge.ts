@@ -469,8 +469,8 @@ export function setAgentWeek(machine: MachineName, agent: string, dir: string, w
 /** Resets what everyone has used of this week of a login to `toTenths` of
  *  the week's figure, in tenths of a percent; with none, takes the reset
  *  `id` back. A reset given twice under one id is made once. */
-export function resetAgentUsage(machine: MachineName, agent: string, dir: string, id: string, toTenths: number | null): Promise<MachineLogins> {
-  return invoke("reset_agent_usage", { machineName: machine, agentName: agent, dir, id, toTenths });
+export function resetAgentUsage(machine: MachineName, agent: string, dir: string, id: string, toTenths: number | null, weekEnd: string | null): Promise<MachineLogins> {
+  return invoke("reset_agent_usage", { machineName: machine, agentName: agent, dir, id, toTenths, weekEnd });
 }
 
 /** Changes the models a Claude Code login offers, for everyone who uses it. */

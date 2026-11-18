@@ -8,7 +8,7 @@
 import { Sheet } from "../app/confirm";
 import { glyph } from "../conversation/glyphs";
 import { strip } from "./charts";
-import { byId, daysOf, deeds, expectOf, familyName, grants, grantsOf, NOW, people, pinned, plateOf, sample, usable, weeksMiddle, type Login } from "./data";
+import { byId, daysOf, deeds, expectOf, familyName, grants, grantsOf, NOW, people, pinned, plateOf, sample, usable, weeksMiddle, WIDEST, type Login } from "./data";
 import { whole } from "./format";
 import { rule } from "./marks";
 import { draw, goTo, on, say, state } from "./state";
@@ -401,7 +401,7 @@ on("models", () => {
  *  last weeks came to by the readings: the line is what is expected, the
  *  wash about it the reach, and the line can be dragged to where the dots
  *  are. Nothing chosen makes the sheet taller or shorter. */
-const SWINGS = ["3", "5", "8"];
+
 on("expect", () => {
   const login = current();
   const read = usable(daysOf(login))?.weeks ?? [];
@@ -412,13 +412,13 @@ on("expect", () => {
   sheet.body.innerHTML = `${sheet.head(`周额度　${login.who}`, "关闭")}
     <p class="cs-lead">每周开始时，按上周的读数与账本定出本周周额度，只在预期值的波动幅度内变动。</p>
     <div class="choice-row"><span class="choice-name">预期</span><div><label class="as-custom as-dollars chosen"><span>$</span><input name="base" type="text" inputmode="numeric" value="${Math.round(set.base)}" autocomplete="off"></label></div></div>
-    <div class="choice-row"><span class="choice-name">波动幅度</span><div class="ps-swing"></div></div>
+    <div class="choice-row"><span class="choice-name">波动幅度</span><div class="ps-swing"><label class="as-custom chosen"><span>±</span><input name="swing" type="text" inputmode="numeric" value="${set.swing}" autocomplete="off" aria-label="波动幅度"><span>%</span></label><span class="lg-soft">0 到 ${WIDEST}</span></div></div>
     <div class="ps-strip" title="每个点是一周：账本记下的额度，除以官方读数的涨幅。拖动竖线调整预期值。"></div>
     <p class="ps-said"></p>
     <footer class="cs-foot"><button type="button" class="sheet-go" data-do>完成</button></footer>`;
-  const input = sheet.body.querySelector<HTMLInputElement>("input")!;
+  const input = sheet.body.querySelector<HTMLInputElement>("input[name='base']")!;
+  const swingInput = sheet.body.querySelector<HTMLInputElement>("input[name='swing']")!;
   const holder = sheet.body.querySelector<HTMLElement>(".ps-strip")!;
-  const swings = sheet.body.querySelector<HTMLElement>(".ps-swing")!;
   let scale: { low: number; high: number; left: number; right: number } | null = null;
   const said = () => {
     const line = sheet.body.querySelector<HTMLElement>(".ps-said")!;
@@ -431,7 +431,6 @@ on("expect", () => {
     line.innerHTML = `近 ${read.length} 周实测居中 ${whole(middle)}${side ? `　<span class="lg-caution">近两周${side === "low" ? "低于下沿" : "高于上沿"}</span>` : ""}${off ? `　<button type="button" class="lg-word lg-accent" data-take>采用 ${whole(Math.round(middle / 10) * 10)}</button>` : ""}`;
   };
   const paint = () => {
-    swings.innerHTML = choices("swing", SWINGS.map((value): [string, string] => [value, `±${value}%`]), String(set.swing));
     const drawn = strip(login.id, weeks, set, Math.floor(holder.clientWidth) || 500);
     holder.innerHTML = drawn.svg;
     scale = drawn;
@@ -475,13 +474,20 @@ on("expect", () => {
       paint();
     }
   });
+  // Any whole percent from none to the widest; what is not one is not taken.
+  swingInput.addEventListener("input", () => {
+    const typed = swingInput.value.replace(/[^0-9]/g, "");
+    const value = typed === "" ? Number.NaN : Number(typed);
+    const fits = value >= 0 && value <= WIDEST;
+    swingInput.closest(".as-custom")!.classList.toggle("lg-wrong", !fits);
+    if (fits) {
+      set.swing = value;
+      paint();
+    }
+  });
   sheet.body.addEventListener("click", (event) => {
     const target = event.target as HTMLElement;
-    const swing = target.closest<HTMLElement>("[data-act='swing']");
-    if (swing) {
-      set.swing = Number(swing.dataset.value);
-      paint();
-    } else if (target.closest("[data-take]") && middle !== null) {
+    if (target.closest("[data-take]") && middle !== null) {
       set.base = Math.round(middle / 10) * 10;
       input.value = String(set.base);
       paint();
@@ -515,6 +521,9 @@ on("reset-usage", () => {
   const login = current();
   const days = usable(daysOf(login));
   const sheet = new Sheet("lg-reset");
+  // The reset this sheet makes, named once: pressed again after an answer
+  // that was lost, it is the same reset, made once.
+  const id = `r-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
   const plate = plateOf(login);
   const people = (days?.people ?? []).filter((one) => one.week > 0 || one.fable > 0);
   const total = (people.reduce((sum, one) => sum + one.week, 0) / plate) * 100;
@@ -572,7 +581,7 @@ on("reset-usage", () => {
       all = choice.dataset.value === "all";
       paint();
       if (!all) to.querySelector<HTMLInputElement>("input")?.focus();
-    } else if (pressed.closest("[data-do]") && !go.disabled) {
+    } else if (pressed.closest("[data-do]") && !go.disabled && !sheet.busy) {
       const at = target()!;
       const done = () => {
         sheet.busy = false;
@@ -581,7 +590,9 @@ on("reset-usage", () => {
       };
       if (deeds) {
         sheet.busy = true;
-        deeds.resetUsage(login, at).then(done, (error: unknown) => {
+        go.disabled = true;
+        deeds.resetUsage(login, at, id).then(done, (error: unknown) => {
+          go.disabled = false;
           sheet.busy = false;
           say(error instanceof Error ? error.message : "重置失败");
         });

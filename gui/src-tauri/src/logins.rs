@@ -212,10 +212,12 @@ pub(crate) async fn reset_agent_usage(
     dir: PathBuf,
     id: String,
     to_tenths: Option<u32>,
+    week_end: Option<String>,
 ) -> Result<MachineLogins, String> {
+    let week_end = week_end.map(|at| at.parse::<jiff::Timestamp>()).transpose().map_err(|error| error.to_string())?;
     shell
         .world()
-        .reset_agent_usage(machine(machine_name)?, agent(agent_name)?, dir, id, to_tenths)
+        .reset_agent_usage(machine(machine_name)?, agent(agent_name)?, dir, id, to_tenths, week_end)
         .await
         .map_err(|error| error.to_string())
 }

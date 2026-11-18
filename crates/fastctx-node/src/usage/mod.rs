@@ -35,7 +35,7 @@ use jiff::Timestamp;
 use ledger::{Book, Entry};
 pub(crate) use readings::codex_reading;
 use readings::last_reading;
-pub(crate) use report::report;
+pub(crate) use report::{Reader, report};
 use std::collections::HashMap;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -50,6 +50,9 @@ pub(crate) struct Usage {
     /// One lock for each login's check of its holds, by its ledger's name.
     enforcing: Mutex<HashMap<String, Arc<Mutex<()>>>>,
     stopping: Mutex<std::collections::HashSet<(ResidentId, String)>>,
+    /// Each Claude Code login's ledger by when what its weeks came to is
+    /// next due to be measured (`stir`).
+    measuring: Mutex<HashMap<PathBuf, Timestamp>>,
     logins: Mutex<HashMap<ResidentId, PathBuf>>,
     legacy: Mutex<Option<HashMap<String, claude::Legacy>>>,
 }
@@ -78,7 +81,7 @@ fn week_at(path: &Path) -> Option<fastctx_types::usage::Usd> {
     String::from_utf8(kept).ok()?.trim().parse::<u64>().ok().filter(|week| *week > 0).map(fastctx_types::usage::Usd)
 }
 
-pub(crate) use reckoning::WIDEST as WIDEST_SWING;
+pub(crate) use reckoning::{Asked as ResetAsked, MOST as MOST_WEEK, WIDEST as WIDEST_SWING};
 
 /// How far a week's figure may stand from what the login's owner expects,
 /// in percent either way, as they set it; none is the World's default.
@@ -86,42 +89,95 @@ pub(crate) fn swing(node: &Node, agent: &str, dir: &Path) -> Option<u8> {
     reckoning::swing(&ledger(node, agent, dir))
 }
 
-/// Keeps how far a week's figure may stand from what its owner expects.
-pub(crate) fn set_swing(node: &Node, agent: &str, dir: &Path, swing: u8) -> io::Result<()> {
-    reckoning::set_swing(&ledger(node, agent, dir), swing)
+/// Keeps what a login's week is expected to hold, or forgets it for the
+/// World's default, and, where given, how far a week's figure may stand
+/// from it: under the ledger's lock, as everything kept beside it. The week
+/// is written whole or not at all; what was kept of the two when the other
+/// failed is said.
+pub(crate) fn set_expected(
+    node: &Node,
+    agent: &str,
+    dir: &Path,
+    week: Option<fastctx_types::usage::Usd>,
+    swing: Option<u8>,
+) -> io::Result<()> {
+    let path = ledger(node, agent, dir);
+    with_book(node, &path, |_| {
+        if let Some(swing) = swing {
+            reckoning::set_swing(&path, swing)?;
+        }
+        let kept = path.join(WEEK);
+        let written = match week {
+            Some(week) => fastctx_platform::disk::create_dir_all(&path).and_then(|()| {
+                fastctx_platform::publish(&kept, week.0.to_string().as_bytes(), fastctx_platform::Permissions::Private)
+            }),
+            None => match fastctx_platform::disk::remove_file(&kept) {
+                Err(error) if error.kind() != io::ErrorKind::NotFound => Err(error),
+                _ => Ok(()),
+            },
+        };
+        written.map_err(|error| match swing {
+            Some(_) => io::Error::new(error.kind(), format!("the reach was kept, the week was not: {error}")),
+            None => error,
+        })
+    })
 }
 
-/// Resets what everyone has used of this week of a login to `to_tenths` of
-/// the week's figure, or with none takes the reset `id` back.
-/// What it refuses is told apart from a ledger that cannot be read.
+/// Resets what everyone has used of this week of a login, or takes such a
+/// reset back (`reckoning::reset`). What it refuses is told apart from a
+/// ledger that cannot be read.
 pub(crate) fn reset_usage(
     node: &Node,
     agent: &str,
     dir: &Path,
-    id: &str,
-    to_tenths: Option<u32>,
+    asked: ResetAsked<'_>,
 ) -> io::Result<Result<(), String>> {
     let path = ledger(node, agent, dir);
-    with_book(node, &path, |book| match reckoning::reset(&path, book, agent, Timestamp::now(), id, to_tenths) {
+    with_book(node, &path, |book| match reckoning::reset(&path, book, agent, Timestamp::now(), asked) {
         Err(error) if error.kind() == io::ErrorKind::InvalidInput => Ok(Err(error.to_string())),
         made => made.map(Ok),
     })
 }
 
-/// Keeps a login's week, or forgets it for the World's default.
-pub(crate) fn set_week(node: &Node, agent: &str, dir: &Path, week: Option<fastctx_types::usage::Usd>) -> io::Result<()> {
-    let path = ledger(node, agent, dir);
-    let kept = path.join(WEEK);
-    match week {
-        Some(week) => {
-            fastctx_platform::disk::create_dir_all(&path)?;
-            fastctx_platform::disk::write(&kept, week.0.to_string().as_bytes())
-        }
-        None => match fastctx_platform::disk::remove_file(&kept) {
-            Err(error) if error.kind() != io::ErrorKind::NotFound => Err(error),
-            _ => Ok(()),
-        },
+/// Measures the weeks before this one of `agent`'s login `dir` where this
+/// week has not been measured (`reckoning::measure_due`): once a week, on a
+/// thread that may block, never two at once for a login, and not looked at
+/// again before it can be due.
+pub(crate) fn stir(node: &Arc<Node>, agent: &str, dir: &Path) {
+    if agent != "claude" {
+        return;
     }
+    let path = ledger(node, agent, dir);
+    {
+        let mut due = node.usage.measuring.lock().expect("never poisoned");
+        if due.get(&path).is_some_and(|until| *until > Timestamp::now()) {
+            return;
+        }
+        // Taken while it is measured.
+        due.insert(path.clone(), Timestamp::MAX);
+    }
+    let (node, dir) = (node.clone(), dir.to_path_buf());
+    fastctx_platform::task::spawn(async move {
+        let (working, at) = (node.clone(), path.clone());
+        let measured = fastctx_platform::task::blocking(move || {
+            with_book(&working, &at, |book| reckoning::measure_due(&at, book, "claude", Timestamp::now()))
+        })
+        .await;
+        let until = match &measured {
+            Ok((until, _)) => until.unwrap_or_else(|| Timestamp::now() + jiff::SignedDuration::from_mins(10)),
+            Err(_) => Timestamp::now() + jiff::SignedDuration::from_hours(1),
+        };
+        node.usage.measuring.lock().expect("never poisoned").insert(path.clone(), until);
+        match measured {
+            // The week's figure may have moved: what holds those the login
+            // assists is looked at again.
+            Ok((_, true)) => after_reading(&node, "claude", &dir).await,
+            Ok(_) => {}
+            Err(error) => {
+                node.log.line(format_args!("measuring what the weeks of {} came to: {error}", path.display()))
+            }
+        }
+    });
 }
 
 fn with_book<T>(node: &Node, path: &Path, f: impl FnOnce(&mut Book) -> io::Result<T>) -> io::Result<T> {
@@ -161,6 +217,7 @@ pub(crate) async fn measurement(
     let path = ledger(node, about.host.agent.as_str(), &dir);
     let changed = if about.host.agent.as_str() == "claude" {
         let Happened::Changed { change: SessionChange::Usage { usage }, .. } = &event.happened else { return Ok(()) };
+        stir(node, "claude", &dir);
         match claude::measured(node, &path, id, about, usage, event.at) {
             Ok(changed) => changed,
             Err(error) => {

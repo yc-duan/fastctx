@@ -153,7 +153,14 @@ export interface UsageHandReset {
   id: string;
   at: Timestamp;
   week_end: Timestamp;
+  /** The week's figure then, and what everyone had used of the week and
+   *  what that counts as since, in millionths of a quota dollar. */
+  figure: number;
+  from: number;
+  to: number;
   from_tenths: number;
   to_tenths: number;
+  /** The account that made it; absent for the machine's own user. */
+  by?: string;
   undone?: Timestamp;
 }

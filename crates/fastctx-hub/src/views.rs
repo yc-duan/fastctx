@@ -420,13 +420,17 @@ fn cut_in(x: &Indexed<'_>, me: &MachineName, mine: &BTreeSet<AccountName>, users
     .filter(|share| concerns(&share.account, &share.machine))
     .cloned()
     .collect();
-    // Everyone a login assists, where one of its accounts manages the login
-    // with its owner: it sets their shares (`usage-assist-limits` 2026-11-19).
+    // Everyone a login assists, where an account logged in here manages the
+    // login with its owner, while it does: it sets their shares
+    // (`usage-assist-limits` 2026-11-19). A machine that merely acts for the
+    // account is told none of them.
+    let now = jiff::Timestamp::now();
     let managed: BTreeSet<usize> = mine
         .iter()
+        .filter(|account| x.logged_in(me, account))
         .flat_map(|account| x.assists_by_account(account))
         .map(|&at| &all.assists[at])
-        .filter(|own| own.manages())
+        .filter(|own| own.manages() && own.live(now))
         .flat_map(|own| {
             x.assists_by_machine(&own.machine)
                 .iter()

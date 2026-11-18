@@ -390,8 +390,9 @@ impl World {
         dir: std::path::PathBuf,
         id: String,
         to_tenths: Option<u32>,
+        week_end: Option<jiff::Timestamp>,
     ) -> Result<fastctx_types::logins::MachineLogins, Error> {
-        machine_logins(self.ask(Call::ResetAgentUsage { machine, agent, dir, id, to_tenths }).await?)
+        machine_logins(self.ask(Call::ResetAgentUsage { machine, agent, dir, id, to_tenths, week_end }).await?)
     }
 
     /// Changes the models the World offers in a Claude Code login, for

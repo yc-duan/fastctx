@@ -229,9 +229,8 @@ pub(super) struct Book {
     pub keys: HashMap<String, Option<Timestamp>>,
     pub reading: Option<Reading>,
     pub readings: HashMap<Option<String>, Reading>,
-    /// What each session last said of each account's windows
-    /// (`readings::record`); not kept from one run of the node to the next.
-    pub said: HashMap<Option<String>, super::readings::Said>,
+    /// When each account's windows were last read (`readings::Heard`).
+    pub heard: HashMap<Option<String>, super::readings::Heard>,
     pub resets: HashMap<Option<String>, Vec<UsageReset>>,
     pub accounts: Vec<(Timestamp, String)>,
     pub recent: Vec<Charge>,
@@ -355,8 +354,8 @@ impl Book {
                     if let Some(legacy) = self.readings.remove(&None) {
                         self.readings.insert(Some(account.clone()), legacy);
                     }
-                    if let Some(legacy) = self.said.remove(&None) {
-                        self.said.insert(Some(account.clone()), legacy);
+                    if let Some(legacy) = self.heard.remove(&None) {
+                        self.heard.insert(Some(account.clone()), legacy);
                     }
                     if let Some(legacy) = self.resets.remove(&None) {
                         self.resets.insert(Some(account.clone()), legacy);

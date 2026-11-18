@@ -101,8 +101,7 @@ fn kept(all: &Directory, to: &str, home: Option<&Path>) -> Assist {
 
 /// What `by` is told on giving `to` this share of the default login.
 fn set(all: &mut Directory, by: &str, to: &str, share: Option<u8>) -> Option<Result<(), String>> {
-    let weekly = share.map(|share| Usd(u64::from(share) * 30_000_000));
-    set_share(all, &name(by), (&machine("owner-pc"), &agent(), None), &name(to), true, weekly, share)
+    set_share(all, &name(by), (&machine("owner-pc"), &agent(), None), &name(to), true, share)
 }
 
 #[test]
@@ -110,7 +109,9 @@ fn one_who_manages_sets_a_share_and_nothing_else() {
     let mut all = network();
     let before = kept(&all, "bob", None);
 
-    // Another's share: only the share changes, in percent and in dollars.
+    // Another's share: only the share changes, in percent and in dollars,
+    // the dollars as the owner gave a percent of the login (bob's $900 for
+    // 30), never what the one who manages sends.
     assert_eq!(set(&mut all, "ann", "bob", Some(45)), Some(Ok(())));
     let after = kept(&all, "bob", None);
     assert_eq!((after.share, after.weekly), (Some(45), Some(Usd(1_350_000_000))));
@@ -129,15 +130,14 @@ fn one_who_manages_sets_a_share_and_nothing_else() {
     assert!(matches!(set(&mut all, "ann", "bob", Some(0)), Some(Err(_))));
     assert!(matches!(set(&mut all, "ann", "bob", Some(101)), Some(Err(_))));
     let login = (&machine("owner-pc"), &agent(), None);
-    assert!(matches!(set_share(&mut all, &name("ann"), login, &name("bob"), true, None, Some(40)), Some(Err(_))));
     // No one ended, no one added.
-    assert!(matches!(set_share(&mut all, &name("ann"), login, &name("bob"), false, None, None), Some(Err(_))));
+    assert!(matches!(set_share(&mut all, &name("ann"), login, &name("bob"), false, None), Some(Err(_))));
     assert!(matches!(set(&mut all, "ann", "dan", Some(40)), Some(Err(_))));
     assert!(matches!(set(&mut all, "ann", "owner", Some(40)), Some(Err(_))));
     // A login they do not manage is no more theirs than anyone's.
     let other = other();
     let elsewhere = (&machine("owner-pc"), &agent(), Some(other.as_path()));
-    assert_eq!(set_share(&mut all, &name("ann"), elsewhere, &name("dan"), true, Some(Usd(1)), Some(40)), None);
+    assert_eq!(set_share(&mut all, &name("ann"), elsewhere, &name("dan"), true, Some(40)), None);
     // Nor is the login anything to one held to a share of it.
     assert_eq!(set(&mut all, "bob", "ann", Some(40)), None);
     assert_eq!(set(&mut all, "bob", "bob", Some(90)), None);
@@ -155,6 +155,14 @@ fn one_who_manages_sets_a_share_and_nothing_else() {
     let ended = Timestamp::from_second(1_700_000_000).expect("a time");
     all.assists[ann] = Arc::new(Assist { until: Some(ended), ..Assist::clone(&all.assists[ann]) });
     assert_eq!(set(&mut all, "ann", "bob", Some(50)), None);
+
+    // A visitor gives nothing, though they manage a login.
+    let cat = all.accounts.iter().position(|account| account.name == name("cat")).expect("cat");
+    all.accounts[cat] = Arc::new(Account { level: Level::Visitor, ..Account::clone(&all.accounts[cat]) });
+    assert!(matches!(set(&mut all, "cat", "bob", Some(50)), Some(Err(_))));
+
+    // Codex keeps no shares: none of its assistances manages.
+    assert!(!Assist { agent: "codex".parse().expect("an agent"), ..assist("eve", None) }.manages());
 }
 
 #[test]
@@ -185,4 +193,15 @@ fn one_who_manages_sees_everyone_the_login_assists() {
     assert_eq!(seen("bob-pc"), of(&["bob"]));
     assert_eq!(seen("dan-pc"), vec![(name("dan"), Some(other()))]);
     assert_eq!(seen("owner-pc").len(), 4);
+
+    // One whose assistance has ended sees their own alone.
+    let mut all = all.clone();
+    let ann = all.assists.iter().position(|kept| kept.account == name("ann")).expect("ann");
+    let ended = Timestamp::from_second(1_700_000_000).expect("a time");
+    all.assists[ann] = Arc::new(Assist { until: Some(ended), ..Assist::clone(&all.assists[ann]) });
+    let index = Index::new(&all);
+    let x = Indexed::new(&all, &index);
+    let me = machine("ann-pc");
+    let cut = cut_in(&x, &me, &x.acts_for(&me), &users_in(&x, &me));
+    assert_eq!(cut.assists.iter().map(|assist| assist.account.clone()).collect::<Vec<_>>(), vec![name("ann")]);
 }

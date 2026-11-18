@@ -60,7 +60,7 @@ export function loginPage(): string {
   if (!login) return `<div class="lg-page"><header class="lg-head lg-head-login"><a class="lg-back" href="${linkOf({ kind: "quota" })}" aria-label="返回" title="返回智能体">${glyph("back", 18)}</a></header>${waiting("该登录不在列表中")}</div>`;
   // One who manages it with its owner sets the shares, and nothing else.
   const tabs: [Tab, string][] = login.lent
-    ? login.lent.manages && grantsOf(login).length
+    ? login.lent.manages
       ? [["usage", "用量"], ["calls", "调用"], ["assist", "协助"]]
       : [["usage", "用量"], ["calls", "调用"]]
     : [["usage", "用量"], ["calls", "调用"], ["assist", "协助"], ["settings", "设置"]];
@@ -608,7 +608,8 @@ function assist(login: Login): string {
   // Its owner gives, ends and limits, and says who manages it with them;
   // one who does sets the shares of those it assists, their own among them.
   const owner = !login.lent;
-  if (!others.length)
+  // One who manages it sets their own share, whoever else it assists.
+  if (!others.length && owner)
     return `<div class="lg-body lg-empty"><span class="lg-empty-marks">${familyMark(login, 34)}${glyph("colleague", 34)}</span><p>此登录未协助任何人</p>${owner ? `<button type="button" class="lg-go" data-act="add-grant">添加协助</button>` : ""}</div>`;
   const plate = plateOf(login);
   const hasFable = login.family === "claude";

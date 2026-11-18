@@ -1457,11 +1457,11 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
                 .await
                 .map(|logins| Reply::MachineAgentLogins(Box::new(logins)))
         }
-        Call::ResetAgentUsage { machine, agent, dir, id, to_tenths } => {
+        Call::ResetAgentUsage { machine, agent, dir, id, to_tenths, week_end } => {
             users_voice(node, peer)?;
             crate::managed::refuse(node)?;
 
-            crate::logins::remote::reset_usage(node, machine, agent, dir, id, to_tenths)
+            crate::logins::remote::reset_usage(node, machine, agent, dir, id, to_tenths, week_end)
                 .await
                 .map(|logins| Reply::MachineAgentLogins(Box::new(logins)))
         }

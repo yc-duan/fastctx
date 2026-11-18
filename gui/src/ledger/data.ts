@@ -130,7 +130,9 @@ export interface Line {
 export const PLATE = 3000;
 /** How far a week's figure may stand from what its owner expects, of a
  *  hundred either way, where they set no other. */
-export const SWING = 5;
+export const SWING = 10;
+/** The widest reach its owner may set, of a hundred either way. */
+export const WIDEST = 20;
 /** The reader themselves, where a deed takes a person: one who manages a
  *  login with its owner sets their own share by it. */
 export const ME = "@me";
@@ -271,8 +273,9 @@ export interface Deeds {
   plan(login: Login, plan: PlanLabel | null): Promise<void>;
   /** What the owner expects the login's week to hold, and its reach. */
   expect(login: Login, expect: Expect): Promise<void>;
-  /** Resets the week's usage to a part of the week, of a hundred. */
-  resetUsage(login: Login, to: number): Promise<void>;
+  /** Resets the week's usage to a part of the week, of a hundred; `id`
+   *  names the reset, the same however often it is asked. */
+  resetUsage(login: Login, to: number, id: string): Promise<void>;
   /** Takes the newest reset back. */
   undoReset(login: Login): Promise<void>;
   /** Gives, or changes, what a person may use of the login: their share,

@@ -1989,7 +1989,13 @@
   color: var(--text-3);
 }
 .ps-swing {
+  display: flex;
+  align-items: center;
+  gap: 10px;
   min-width: 0;
+}
+.ps-swing .as-custom.lg-wrong {
+  border-color: var(--wrong);
 }
 .lgc-reach {
   fill: color-mix(in srgb, var(--pen-clay) 14%, transparent);

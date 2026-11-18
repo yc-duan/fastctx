@@ -36,13 +36,14 @@ pub fn fixtures() -> Fixtures {
             used_tenths: 10,
             source: UsageResetSource::Scheduled,
         }]),
-        // The week before came to less than its owner expects, by more than
-        // the reach: this week's figure stands at the reach's lower edge. Its
-        // usage was reset once by hand, to a third of what it was.
+        // The week before came to less than its owner expects, within the
+        // reach: this week's figure is what it came to. Its usage was reset
+        // once by hand, to a third of what it was; a reset before that was
+        // taken back.
         reckoning: Some(UsageReckoning {
             base: Usd(3_000_000_000),
-            swing: 5,
-            week: Usd(2_850_000_000),
+            swing: 10,
+            week: Usd(2_753_424_657),
             weeks: vec![
                 UsageMeasured {
                     start: at("2026-09-24T18:00:00Z"),
@@ -64,16 +65,24 @@ pub fn fixtures() -> Fixtures {
                     id: "r-2".into(),
                     at: at("2026-10-11T09:00:00Z"),
                     week_end: at("2026-10-15T18:00:00Z"),
+                    figure: Usd(2_753_424_657),
+                    from: Usd(102_600_000),
+                    to: Usd(34_200_000),
                     from_tenths: 36,
                     to_tenths: 12,
+                    by: Some("ada".into()),
                     undone: None,
                 },
                 UsageHandReset {
                     id: "r-1".into(),
                     at: at("2026-10-10T09:00:00Z"),
                     week_end: at("2026-10-15T18:00:00Z"),
+                    figure: Usd(2_753_424_657),
+                    from: Usd(85_500_000),
+                    to: Usd(0),
                     from_tenths: 30,
                     to_tenths: 0,
+                    by: None,
                     undone: Some(at("2026-10-10T09:02:00Z")),
                 },
             ]),

@@ -495,7 +495,7 @@ fn apply(
                 // sets a share, and anyone else is told what a holder is.
                 Err(denied) => {
                     let login = (&machine, &agent, home.as_deref());
-                    return match set_share(directory, account, login, &to, assisting, weekly, share) {
+                    return match set_share(directory, account, login, &to, assisting, share) {
                         Some(set) => set.map(|()| Told::Done),
                         None => Err(denied),
                     };
@@ -529,6 +529,21 @@ fn apply(
             }
             if assisting && share.is_some_and(|share| share == 0 || share > 100) {
                 return Err("the share of the login's week is a percent from 1 to 100".to_string());
+            }
+            // A Claude Code login assists an account up to a share of its
+            // week, or with them managing it; one said not to manage is given
+            // a share (用户 2026-11-19: 其余的人一律有份额).
+            if assisting
+                && agent.as_str() == "claude"
+                && manages == Some(false)
+                && share.is_none()
+                && weekly.is_none()
+                && daily.is_none()
+            {
+                return Err("give the account a share of the login's week, or have it manage the login".to_string());
+            }
+            if assisting && manages == Some(true) && agent.as_str() != "claude" {
+                return Err("only a Claude Code login is managed with its owner".to_string());
             }
             // A sender that knows no shares (an earlier release) sends the
             // weekly dollars it was shown and no share: where those dollars
@@ -1226,6 +1241,9 @@ fn rename(
     Ok(())
 }
 
+/// The dollars of a percent of the World's default week, $3,000.
+const DEFAULT_WEEK_PER_PERCENT: u64 = 30_000_000;
+
 /// What one who manages a login with its owner changes of it: the share of
 /// the login's week of an account it assists already, their own among them
 /// (`usage-assist-limits` 2026-11-19: 共管只能改现有的人的份额百分比). The
@@ -1238,7 +1256,6 @@ pub(crate) fn set_share(
     (machine, agent, home): (&MachineName, &fastctx_types::AgentName, Option<&std::path::Path>),
     to: &AccountName,
     assisting: bool,
-    weekly: Option<fastctx_types::usage::Usd>,
     share: Option<u8>,
 ) -> Option<Result<(), String>> {
     let machine = directory.canonical(machine).clone();
@@ -1249,7 +1266,21 @@ pub(crate) fn set_share(
     if !directory.assists.iter().any(|own| assists(own, account) && own.live(now) && own.manages()) {
         return None;
     }
+    // A visitor gives nothing (`net-sharing-and-assist`).
+    let visitor = directory.is_visitor(account);
+    // What a node that knows no shares holds to, as the login's owner gave
+    // it: the dollars of a percent on another assistance of the login, or
+    // of the World's default week; never what the one who manages sends.
+    let per_percent = directory
+        .assists
+        .iter()
+        .filter(|kept| kept.machine == machine && kept.is(agent, home))
+        .find_map(|kept| Some(kept.weekly?.0 / u64::from(kept.share?)))
+        .unwrap_or(DEFAULT_WEEK_PER_PERCENT);
     let set = (|| {
+        if visitor {
+            return Err(fastctx_types::sharing::VISITOR_GIVES_NOTHING.to_string());
+        }
         if !assisting {
             return Err(format!("only the holder of {machine} ends an assistance of its logins"));
         }
@@ -1267,17 +1298,13 @@ pub(crate) fn set_share(
             None if to != account => {
                 return Err(format!("give {to} a share of the login's week, a percent from 1 to 100"));
             }
-            // The share in dollars, which a node that knows no shares holds to.
-            Some(_) if weekly.is_none_or(|weekly| weekly.0 == 0) => {
-                return Err("give the share in dollars a week beside it".to_string());
-            }
             _ => {}
         }
         let kept = &directory.assists[at];
         // What the account was taken for stays, whatever limit it has now.
         let assist = Assist {
             share,
-            weekly: weekly.filter(|_| share.is_some()),
+            weekly: share.map(|share| fastctx_types::usage::Usd(per_percent.saturating_mul(u64::from(share)))),
             manages: Some(kept.manages()),
             ..Assist::clone(kept)
         };

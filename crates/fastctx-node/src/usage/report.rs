@@ -29,17 +29,30 @@ const CODEX_OUTPUT: f64 = 8.0;
 /// apart from one reading to the next.
 const SAME_RESET: SignedDuration = SignedDuration::from_secs(120);
 
-/// `agent`'s login `dir` here, as `only` may see it: everyone's use, or the
-/// use of that one account alone.
-pub(crate) fn report(
-    node: &Node,
-    agent: &str,
-    dir: &Path,
-    only: Option<&HubAccount>,
-    owner: bool,
-) -> io::Result<UsageReport> {
+/// Who reads a login's report, and so what of it they are told.
+#[derive(Clone)]
+pub(crate) struct Reader {
+    /// Their own use alone, where they may not see everyone's.
+    pub only: Option<HubAccount>,
+    /// They manage the login with its owner: besides all of their own, what
+    /// each other person used of the week, without its hours or what it went
+    /// to (用户 2026-11-19), and the login's windows.
+    pub managing: bool,
+    /// They may work on the machine: the vendor's resets are theirs to see.
+    pub owner: bool,
+    /// They may reset the week's usage: the resets made are theirs to see.
+    pub may_reset: bool,
+}
+
+impl Reader {
+    /// The machine's own user.
+    pub(crate) const WHOLE: Reader = Reader { only: None, managing: false, owner: true, may_reset: true };
+}
+
+/// `agent`'s login `dir` here, as `reader` may see it.
+pub(crate) fn report(node: &Node, agent: &str, dir: &Path, reader: &Reader) -> io::Result<UsageReport> {
     let ledger = super::ledger(node, agent, dir);
-    super::with_book(node, &ledger, |book| made(agent, &ledger, book, only, owner, true))
+    super::with_book(node, &ledger, |book| made(agent, &ledger, book, reader, true))
 }
 
 /// `agent`'s ledger at `ledger`, read whole now and kept nowhere: one put
@@ -50,7 +63,8 @@ pub(super) fn report_of(agent: &str, ledger: &Path, only: Option<&HubAccount>, o
     book.load_at(ledger, Timestamp::now())?;
     // What a week is reckoned to hold is kept beside the ledger it is of,
     // not among its copies.
-    made(agent, ledger, &mut book, only, owner, false)
+    let reader = Reader { only: only.cloned(), managing: false, owner, may_reset: false };
+    made(agent, ledger, &mut book, &reader, false)
 }
 
 /// The report of the ledger at `ledger`, loaded as `book`; with what the
@@ -59,10 +73,10 @@ fn made(
     agent: &str,
     ledger: &Path,
     book: &mut super::ledger::Book,
-    only: Option<&HubAccount>,
-    owner: bool,
+    reader: &Reader,
     reckon: bool,
 ) -> io::Result<UsageReport> {
+    let (only, owner) = (reader.only.as_ref(), reader.owner);
     let now = Timestamp::now();
     let oldest = now - SignedDuration::from_hours(24 * super::KEPT_DAYS);
     let since = Timestamp::from_second(oldest.as_second().div_euclid(86400) * 86400).expect("retained day");
@@ -76,10 +90,31 @@ fn made(
         resets.sort_by_key(|reset| std::cmp::Reverse(reset.confirmed_at));
         resets
     });
+    let managing = reader.managing && only.is_some();
+    let whole = managing.then(|| entries.clone());
     let mut report = summarize(agent, only, now, book.reading.as_ref(), entries, &history, reckoned.as_ref())?;
+    if let Some(entries) = whole {
+        let whole = summarize(agent, None, now, book.reading.as_ref(), entries, &history, reckoned.as_ref())?;
+        managed(&mut report, whole, only);
+    }
     report.resets = resets;
-    report.reckoning = reckoned.map(|reckoned| reckoned.told(only.is_none(), owner));
+    report.reckoning = reckoned.map(|reckoned| reckoned.told(only.is_none() || managing, reader.may_reset));
     Ok(report)
+}
+
+/// `own`, the report of one who manages the login with its owner, with what
+/// they see of everyone else's: the login's windows, what the account used
+/// of each week, and what each other person used of this one, as sums.
+fn managed(own: &mut UsageReport, whole: UsageReport, only: Option<&HubAccount>) {
+    own.readings = whole.readings;
+    // The weeks are the same in both: they are cut from the readings alone.
+    for (span, of) in own.weeks.iter_mut().zip(&whole.weeks) {
+        if span.start == of.start {
+            span.used_tenths = of.used_tenths;
+        }
+    }
+    let others = whole.people.into_iter().filter(|person| person.account.as_ref() != only);
+    own.people.extend(others.map(|person| UsagePerson { day: None, went: None, ..person }));
 }
 
 pub(super) fn summarize(

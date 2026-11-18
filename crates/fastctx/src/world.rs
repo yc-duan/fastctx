@@ -644,9 +644,15 @@ pub fn share(args: ShareArgs) -> anyhow::Result<()> {
 }
 
 pub fn assist(args: AssistArgs) -> anyhow::Result<()> {
-    // Only a Claude Code login is held to a share of its week.
-    if args.share.is_some() && args.agent.to_string() != "claude" {
-        anyhow::bail!("a share of the week limits a Claude Code login's assistance only");
+    // Only a Claude Code login is held to a share of its week, and only it
+    // is managed with its owner; it assists an account up to a share, or
+    // with them managing it (用户 2026-11-19: 其余的人一律有份额).
+    let claude = args.agent.to_string() == "claude";
+    if !claude && (args.share.is_some() || args.manages) {
+        anyhow::bail!("a share of the week, and managing with its owner, are a Claude Code login's only");
+    }
+    if claude && !args.off && !args.manages && args.share.is_none() && args.weekly.is_none() && args.daily.is_none() {
+        anyhow::bail!("give the account --share, a percent of the login's week, or --manages");
     }
     let owner = account_or_owner(args.hub.as_ref(), args.owner, Some(&args.machine))?;
     let login = args.home.as_ref().map(|home| home.display().to_string()).unwrap_or_else(|| "default".to_string());

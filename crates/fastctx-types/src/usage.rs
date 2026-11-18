@@ -148,8 +148,8 @@ pub struct UsageMeasured {
     pub came_to: Option<Usd>,
 }
 
-/// A week's usage reset by hand, by the login's owner: everyone's use of the
-/// week until then counts as `to_tenths` over `from_tenths` of what it was,
+/// A week's usage reset by hand, by one who may manage the login: everyone's
+/// use of the week until then counts as `to` over `from` of what it was,
 /// Fable's alike (用户 2026-11-19: 用量全重置和用量重置到百分之多少). The
 /// ledger itself is unchanged.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -159,11 +159,18 @@ pub struct UsageHandReset {
     pub at: Timestamp,
     /// The end of the week it was made in.
     pub week_end: Timestamp,
-    /// What everyone had used of the week's figure until then, as it then
-    /// counted, in tenths of a percent.
+    /// The week's figure then.
+    pub figure: Usd,
+    /// What everyone had used of the week until then, as it then counted,
+    /// in quota dollars, and what that counts as from then on.
+    pub from: Usd,
+    pub to: Usd,
+    /// The same of the week's figure, in tenths of a percent.
     pub from_tenths: u32,
-    /// What that counts as from then on.
     pub to_tenths: u32,
+    /// The account that made it; none for the machine's own user.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub by: Option<String>,
     /// When it was taken back.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub undone: Option<Timestamp>,

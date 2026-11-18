@@ -672,7 +672,7 @@ function agentsPage(next: Place): Page {
       setTitle: (machine, agent, dir, on) => (live ? setAgentTitle(machine, agent, dir, on) : specimenSetTitle(machine, agent, dir, on, specimen!.now)),
       setResetInPlace: (machine, agent, dir, on) => (live ? setAgentResetInPlace(machine, agent, dir, on) : specimenSetResetInPlace(machine, agent, dir, on, specimen!.now)),
       setWeek: (machine, agent, dir, week, swing) => (live ? setAgentWeek(machine, agent, dir, week, swing) : notLive()),
-      resetUsage: (machine, agent, dir, id, toTenths) => (live ? resetAgentUsage(machine, agent, dir, id, toTenths) : notLive()),
+      resetUsage: (machine, agent, dir, id, toTenths, weekEnd) => (live ? resetAgentUsage(machine, agent, dir, id, toTenths, weekEnd) : notLive()),
       changeModels: (machine, agent, dir, change) => (live ? changeAgentModels(machine, agent, dir, change) : specimenChangeModels(machine, agent, dir, change, specimen!.now)),
       usage: (machine, agent, dir) => (live ? agentUsage(machine, agent, dir) : specimenUsage(machine, agent, dir, specimen!.now)),
       calls: (machine, agent, dir, query) => (live ? agentCalls(machine, agent, dir, query) : specimenCalls(machine, agent, dir, query, specimen!.now)),

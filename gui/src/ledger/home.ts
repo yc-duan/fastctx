@@ -102,7 +102,9 @@ export function lentSpent(login: Login): { week: number; fable: number } {
   const days = usable(daysOf(login));
   const plate = plateOf(login);
   if (!days) return { week: ((login.lent?.used ?? 0) / 100) * plate, fable: ((login.lent?.fable ?? 0) / 100) * plate };
-  const mine = days.people.some((one) => one.me) ? days.people.filter((one) => one.me) : days.people;
+  // Named so in every report that tells of them: one that names them not
+  // is one in which they used nothing.
+  const mine = days.people.filter((one) => one.me);
   return { week: mine.reduce((sum, one) => sum + one.week, 0), fable: mine.reduce((sum, one) => sum + one.fable, 0) };
 }
 

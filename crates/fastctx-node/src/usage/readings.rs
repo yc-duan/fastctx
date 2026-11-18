@@ -1,7 +1,8 @@
-//! An account's windows as they were last read: the newest reading stands,
-//! higher or lower than the one before it (用户 2026-11-19: 官方读数有什么填
-//! 什么；不设重置检测). The week's turning at its own reset is recorded; nothing
-//! else is looked for in the readings.
+//! An account's windows as they were last read: the newest reading of each
+//! window stands, higher or lower than the one before it (用户 2026-11-19:
+//! 官方读数有什么填什么；不设重置检测), the newest by when the answer that
+//! carried it came, not by when it reached the node. The week's turning at its
+//! own reset is recorded; nothing else is looked for in the readings.
 use super::Week;
 use super::ledger::{Book, Entry, Reading};
 use super::resets::WEEK_MINUTES;
@@ -14,10 +15,11 @@ use std::collections::HashMap;
 use std::io;
 use std::path::Path;
 
-/// What each session last said of an account's windows.
-pub(super) type Said = HashMap<String, Vec<LimitWindow>>;
-/// The sessions remembered so; past them all are forgotten.
-const SOURCES: usize = 4096;
+/// When each of an account's windows was last read, by its name and length:
+/// a reading of one that is older is said late. Not kept from one run of
+/// the node to the next; a window not heard of since is as old as the last
+/// reading the ledger holds.
+pub(super) type Heard = HashMap<(String, Option<u32>), Timestamp>;
 
 pub(super) fn same(a: Timestamp, b: Timestamp) -> bool {
     a.duration_since(b).abs() <= SignedDuration::from_secs(120)
@@ -25,9 +27,17 @@ pub(super) fn same(a: Timestamp, b: Timestamp) -> bool {
 
 /// Takes `windows` as read at `at` into what is `known`: each as it now
 /// stands, whether it rose or fell, but for one of a period before the one
-/// known, which was said late. A week's window that moved on to its next
+/// known, which was said late. A reading no answer is known to have carried
+/// (`answered`), as an earlier release of the mod sent with any sample of a
+/// session's figures, may be what an earlier answer carried: it raises a
+/// window and never lowers it. A week's window that moved on to its next
 /// period is told as that week's own reset.
-fn merge_live(known: &mut Vec<LimitWindow>, windows: Vec<LimitWindow>, at: Timestamp) -> Vec<UsageReset> {
+fn merge_live(
+    known: &mut Vec<LimitWindow>,
+    windows: Vec<LimitWindow>,
+    at: Timestamp,
+    answered: bool,
+) -> Vec<UsageReset> {
     let mut resets = Vec::new();
     for mut incoming in windows {
         // The host reports usage, never an accounting boundary.
@@ -37,6 +47,9 @@ fn merge_live(known: &mut Vec<LimitWindow>, windows: Vec<LimitWindow>, at: Times
             let old = &known[index];
             match (old.resets_at, incoming.resets_at) {
                 (Some(a), Some(b)) if same(a, b) => {
+                    if !answered && incoming.used_tenths < old.used_tenths {
+                        continue;
+                    }
                     // A boundary an earlier release recorded within this
                     // period stands until the period ends.
                     incoming.since = old.since;
@@ -57,6 +70,7 @@ fn merge_live(known: &mut Vec<LimitWindow>, windows: Vec<LimitWindow>, at: Times
                         });
                     }
                 }
+                (None, None) if !answered && incoming.used_tenths < old.used_tenths => continue,
                 _ => {}
             }
             known[index] = incoming;
@@ -68,42 +82,45 @@ fn merge_live(known: &mut Vec<LimitWindow>, windows: Vec<LimitWindow>, at: Times
     resets
 }
 
-/// Records what `source`, a session, read of `account`'s windows at `at`;
-/// whether anything was written. A session says what its last answer
-/// carried each time it is asked, so what it said last and says again is no
-/// reading of now: another session may have read the account since.
+/// Records what an answer at `at` carried of `account`'s windows; whether
+/// anything was written. Each window is taken where this is newer than what
+/// was last read of it (`Heard`); `answered` as `merge_live` says.
 pub(super) fn record(
     book: &mut Book,
     path: &Path,
     incoming: Vec<LimitWindow>,
     at: Timestamp,
     account: Option<String>,
-    source: &str,
+    answered: bool,
 ) -> io::Result<bool> {
+    let old = book.readings.get(&account);
+    let ledgered = old.map(|(seen, _)| *seen);
+    let heard = book.heard.entry(account.clone()).or_default();
+    let incoming: Vec<_> = incoming
+        .into_iter()
+        .filter(|window| {
+            let last = heard.get(&(window.name.clone(), window.minutes)).copied().or(ledgered);
+            last.is_none_or(|last| last <= at)
+        })
+        .collect();
     if incoming.is_empty() {
         return Ok(false);
     }
-    let old = book.readings.get(&account);
-    if old.is_some_and(|(seen, _)| *seen > at) {
-        return Ok(false);
+    for window in &incoming {
+        heard.insert((window.name.clone(), window.minutes), at);
     }
-    let said = book.said.entry(account.clone()).or_default();
-    if said.get(source).is_some_and(|last| *last == incoming) {
-        return Ok(false);
-    }
-    if said.len() >= SOURCES {
-        said.clear();
-    }
-    said.insert(source.to_string(), incoming.clone());
     let mut windows = old.map_or_else(Vec::new, |(_, windows)| windows.clone());
-    let resets = merge_live(&mut windows, incoming, at);
+    let resets = merge_live(&mut windows, incoming, at, answered);
     if resets.is_empty()
         && windows.iter().all(|window| window.resets_at.is_some())
         && old.is_some_and(|(_, old)| *old == windows)
     {
         return Ok(false);
     }
-    book.commit(path, Entry::Reading { at, windows, account, resets })?;
+    // The row is no older than the one before it: a reading of one window
+    // said late, after another's newer one, is the account's as of then.
+    let row = ledgered.map_or(at, |seen| seen.max(at));
+    book.commit(path, Entry::Reading { at: row, windows, account, resets })?;
     Ok(true)
 }
 
@@ -150,7 +167,7 @@ pub(crate) fn codex_reading(
 ) -> io::Result<bool> {
     let path = super::ledger(node, "codex", dir);
     // One app-server per login gives them, each as it hears it.
-    super::with_book(node, &path, |book| record(book, &path, windows, at, account, ""))
+    super::with_book(node, &path, |book| record(book, &path, windows, at, account, true))
 }
 
 pub(super) fn claude_windows(limits: &[Value]) -> Vec<LimitWindow> {
@@ -180,20 +197,24 @@ mod tests {
 
     const HOUR: SignedDuration = SignedDuration::from_hours(1);
 
-    fn week(end: Timestamp, tenths: u32) -> Vec<LimitWindow> {
-        vec![LimitWindow {
-            name: "seven_day".into(),
-            minutes: Some(WEEK_MINUTES),
+    fn window(name: &str, minutes: u32, end: Timestamp, tenths: u32) -> LimitWindow {
+        LimitWindow {
+            name: name.into(),
+            minutes: Some(minutes),
             used_tenths: tenths,
             resets_at: Some(end),
             since: None,
-        }]
+        }
     }
 
-    fn stands(book: &Book) -> (u32, Timestamp) {
+    fn week(end: Timestamp, tenths: u32) -> Vec<LimitWindow> {
+        vec![window("seven_day", WEEK_MINUTES, end, tenths)]
+    }
+
+    fn stands(book: &Book, minutes: u32) -> (u32, Timestamp) {
         let (_, windows) = book.reading.as_ref().expect("a reading");
-        let week = window(windows, WEEK_MINUTES).expect("the week's window");
-        (week.used_tenths, week.resets_at.expect("its reset"))
+        let found = super::window(windows, minutes).expect("the window");
+        (found.used_tenths, found.resets_at.expect("its reset"))
     }
 
     #[test]
@@ -203,29 +224,40 @@ mod tests {
         let at = Timestamp::from_second(1_800_000_000).unwrap();
         let end = at + HOUR * 72;
         let mut book = Book::default();
-        let read = |book: &mut Book, hour: i32, source: &str, end: Timestamp, tenths: u32| {
-            record(book, path, week(end, tenths), at + HOUR * hour, None, source).unwrap()
+        let read = |book: &mut Book, hour: i32, windows: Vec<LimitWindow>, answered: bool| {
+            record(book, path, windows, at + HOUR * hour, None, answered).unwrap()
         };
-        assert!(read(&mut book, 0, "a", end, 500));
-        assert!(read(&mut book, 1, "b", end, 550));
+        assert!(read(&mut book, 0, week(end, 500), true));
+        assert!(read(&mut book, 1, week(end, 550), true));
         // It fell, as the vendor says: that is how it stands.
-        assert!(read(&mut book, 2, "a", end, 300));
-        assert_eq!(stands(&book), (300, end));
-        // A session that says again what it said is no reading of now; nor
-        // is one heard out of its turn, or one of the week before.
-        assert!(!read(&mut book, 3, "b", end, 550));
-        assert!(!read(&mut book, 1, "c", end, 900));
-        assert!(!read(&mut book, 4, "c", end - HOUR * 168, 990));
-        assert_eq!(stands(&book), (300, end));
-        // Once it has something new to say, it is the newest.
-        assert!(read(&mut book, 5, "b", end, 310));
-        assert_eq!(stands(&book), (310, end));
+        assert!(read(&mut book, 2, week(end, 300), true));
+        assert_eq!(stands(&book, WEEK_MINUTES), (300, end));
+        // The same said again by another answer is a reading all the same.
+        assert!(!read(&mut book, 3, week(end, 300), true));
+        assert!(read(&mut book, 4, week(end, 550), true));
+        assert!(read(&mut book, 5, week(end, 300), true));
+        // An answer that came before the one known is said late; so is one
+        // of the week before.
+        assert!(!read(&mut book, 1, week(end, 900), true));
+        assert!(!read(&mut book, 6, week(end - HOUR * 168, 990), true));
+        assert_eq!(stands(&book, WEEK_MINUTES), (300, end));
+        // What no answer is known to have carried raises a window, never
+        // lowers it.
+        assert!(!read(&mut book, 7, week(end, 120), false));
+        assert!(read(&mut book, 8, week(end, 320), false));
+        assert_eq!(stands(&book, WEEK_MINUTES), (320, end));
+        // Each window by when it was read: a newer five hours does not make
+        // the week's reading of a little before it late.
+        let five = at + HOUR * 12;
+        assert!(read(&mut book, 10, vec![window("five_hour", 300, five, 40)], true));
+        assert!(read(&mut book, 9, week(end, 330), true));
+        assert_eq!((stands(&book, 300).0, stands(&book, WEEK_MINUTES).0), (40, 330));
         assert!(book.reset_history().is_empty());
 
         // The week turned at its own reset: recorded as that, and no other.
         let next = end + HOUR * 168;
-        assert!(read(&mut book, 73, "a", next, 4));
-        assert_eq!(stands(&book), (4, next));
+        assert!(read(&mut book, 73, week(next, 4), true));
+        assert_eq!(stands(&book, WEEK_MINUTES), (4, next));
         let history = book.reset_history();
         assert_eq!(history.len(), 1);
         assert_eq!((history[0].1.source, history[0].1.since), (UsageResetSource::Scheduled, end));
@@ -233,17 +265,8 @@ mod tests {
         // Read again from its files, the ledger stands as it was written.
         let mut again = Book::default();
         again.load_at(path, at + HOUR * 80).unwrap();
-        assert_eq!(stands(&again), (4, next));
-        let mut before = Book::default();
-        for row in super::super::ledger::days(path, Timestamp::MIN)
-            .unwrap()
-            .iter()
-            .flat_map(|file| super::super::ledger::read(file).unwrap())
-        {
-            if row.at() <= at + HOUR * 5 {
-                before.commit(root.path().join("copy").as_path(), row).unwrap();
-            }
-        }
-        assert_eq!(stands(&before), (310, end));
+        assert_eq!(stands(&again, WEEK_MINUTES), (4, next));
+        // A node started again takes no reading older than the last kept.
+        assert!(!record(&mut again, path, week(next, 90), at + HOUR * 72, None, true).unwrap());
     }
 }

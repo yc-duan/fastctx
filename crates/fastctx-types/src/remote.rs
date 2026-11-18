@@ -339,6 +339,8 @@ pub enum RemoteCall {
         id: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         to_tenths: Option<u32>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        week_end: Option<jiff::Timestamp>,
     },
     /// Change the models offered in a Claude Code login there; only for
     /// those who hold the machine.
