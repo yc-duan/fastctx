@@ -21,6 +21,10 @@ pub(super) struct Intent {
     /// this was.
     #[serde(default)]
     pub at: i64,
+    /// When it was claimed, to the millisecond; none in one kept before this
+    /// was (`wake_once::ANSWERED_QUIET`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub claimed: Option<jiff::Timestamp>,
     pub token: String,
     pub revision: i64,
     pub session: String,

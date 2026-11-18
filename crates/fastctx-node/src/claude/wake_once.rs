@@ -11,6 +11,19 @@ pub(super) const KIND: &str = "claude/reconcile-wake";
 // The CLI has a 120-second deadline. A missing receipt additionally needs a
 // continuous minute of unchanged terminal evidence after that deadline.
 const QUIET: Duration = Duration::from_secs(180);
+/// The quiet interval of a launch whose call came back accepted, whose
+/// session the daemon took up after the launch was claimed and then settled
+/// as done, the last it logged of it, every row of it listed done: counted
+/// from when that settling is first seen. The call can issue nothing more,
+/// and the daemon brings a session it settled so up again only when asked; a
+/// job waiting to be respawned is listed as failed, and one stopped may not
+/// have ended yet, which this never takes. So the next words need not wait
+/// out `QUIET`: short of memory, Claude Code 2.1.322 retires the very session
+/// it just claimed a worker for, and every retry then waited three minutes
+/// (2026-11-18). Its call can still leave a second copy of the dispatch for
+/// the daemon to read after answering, so the interval leaves the daemon time
+/// to read it; one it took up then is told apart by its own claim or spawn.
+const ANSWERED_QUIET: Duration = Duration::from_secs(30);
 const AGAIN: Duration = Duration::from_secs(3);
 /// How long a launch is waited for, whatever the records say of it. A
 /// supervisor that never says the session ended, a session that stays as it
@@ -56,6 +69,12 @@ pub(super) struct Observation {
     pub resting: bool,
     terminal: bool,
     evidence: String,
+    /// The session looked at.
+    session: String,
+    /// When the daemon last took the session up and when it then settled it
+    /// as done, where every row of it is listed done and that settling is
+    /// the last the daemon logged of it (`startup::dispatched_and_settled`).
+    settled: Option<(jiff::Timestamp, jiff::Timestamp)>,
 }
 
 /// All supervisor predicates use the same CLI answer. A starting job without
@@ -108,9 +127,24 @@ pub(super) async fn observe(node: &Arc<Node>, home: Option<&Path>, session: &str
                 || (row["state"] == "blocked" && settled_blocked))
             && row["pid"].as_u64().is_none()
     });
-    let evidence =
-        serde_json::to_string(&(named, registration, length)).map_err(|error| Failure::new(error.to_string()))?;
-    Ok(Observation { running: running || present, resting: resting && !present && terminal, terminal, evidence })
+    let settled = if terminal && !present && !named.is_empty() && named.iter().all(|row| row["state"] == "done") {
+        let command = super::command(node, home)?;
+        super::startup::dispatched_and_settled(&command, session.get(..8).unwrap_or(session))
+    } else {
+        None
+    };
+    // The settling is evidence too: the quiet interval counts from when it
+    // is first seen.
+    let evidence = serde_json::to_string(&(named, registration, length, settled.map(|(_, at)| at)))
+        .map_err(|error| Failure::new(error.to_string()))?;
+    Ok(Observation {
+        running: running || present,
+        resting: resting && !present && terminal,
+        terminal,
+        evidence,
+        session: session.to_string(),
+        settled,
+    })
 }
 
 pub(super) enum Admission {
@@ -151,8 +185,10 @@ pub(super) async fn begin(
     if hold(node, id).is_some() || !seen.resting {
         return Ok(Admission::Waiting);
     }
+    let now = jiff::Timestamp::now();
     let intent = Intent {
-        at: jiff::Timestamp::now().as_second(),
+        at: now.as_second(),
+        claimed: Some(now),
         token: crate::speech::new_id("wake").to_string(),
         revision: 0,
         session: session.to_string(),
@@ -206,14 +242,24 @@ fn reconcile(node: &Node, id: &ResidentId, mut intent: Intent, seen: &Observatio
             intent.quiet_owner = Some(owner);
         }
         intent.last_seen = Some(now);
+        let answered = intent.completed
+            && intent.accepted
+            && seen.session == intent.session
+            && intent.claimed.zip(seen.settled).is_some_and(|(claimed, (dispatched, _))| dispatched >= claimed);
+        let quiet = if answered { ANSWERED_QUIET } else { QUIET };
         if intent
             .quiet_since
-            .is_some_and(|since| now.as_second().saturating_sub(since.as_second()) >= QUIET.as_secs() as i64)
+            .is_some_and(|since| now.as_second().saturating_sub(since.as_second()) >= quiet.as_secs() as i64)
         {
             if !wake_store::settle_seen(node, id, &intent)? {
                 return Ok(false);
             }
-            node.log.line(format_args!("Claude wake {id} {} reconciled as not started: 180 seconds of unchanged terminal or absent supervisor records, no registered host process, and no transcript growth", intent.token));
+            node.log.line(format_args!(
+                "Claude wake {id} {} reconciled as not started: {} seconds of unchanged terminal or absent supervisor records{}, no registered host process, and no transcript growth",
+                intent.token,
+                quiet.as_secs(),
+                if answered { " after the daemon settled its accepted launch" } else { "" }
+            ));
             return Ok(true);
         }
     } else {
