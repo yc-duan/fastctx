@@ -23,7 +23,7 @@ import { homePage } from "./home";
 import { fillCharts, loginPage } from "./login-page";
 import "./sheets";
 import { setHost, setNet } from "./data";
-import { fakeFeed, fakeNet } from "./fake";
+import { fakeFeed, fakeNet, fakeSample } from "./fake";
 import { actOf, draw, drawnBy, placeOf, state, type How, type Place } from "./state";
 
 const params = new URLSearchParams(location.search);
@@ -49,7 +49,7 @@ function side(): string {
 }
 
 setNet(fakeNet());
-setHost({ feed: fakeFeed });
+setHost({ feed: fakeFeed, sample: fakeSample });
 installPens();
 installRules();
 installPointerHints();

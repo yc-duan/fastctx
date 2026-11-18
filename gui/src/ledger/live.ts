@@ -12,7 +12,7 @@ import type { WorldNow } from "../world/bridge";
 import type { AgentLogins, FoundProgram, Login as WorldLogin, MachineLogins, MachineLoginsHeard } from "../world/logins";
 import type { UsageReport } from "../world/usage";
 import type { CallOutcome, UsageCall, UsageCallsPage, UsageCallsQuery } from "../world/usage-calls";
-import { FABLE_TIMES, isFable, planNames, PLATE, timesOf, type Call, type CallsPage, type CallsQuery, type Days, type Grant, type Line, type Login, type Machine, type Net, type Outcome, type PlanLabel, type Series, type Split, type Unit } from "./data";
+import { FABLE_TIMES, isFable, planNames, PLATE, SWING, timesOf, type Call, type CallsPage, type CallsQuery, type Days, type Grant, type Line, type Login, type Machine, type Net, type Outcome, type PlanLabel, type Series, type Split, type Unit } from "./data";
 
 /** A login's key in the pages and their addresses. */
 export const idOf = (machine: string, agent: string, dir: string) => `${machine}|${agent}|${dir}`;
@@ -23,7 +23,6 @@ export function partsOf(id: string): { machine: string; agent: string; dir: stri
 
 const DAY = 86400000;
 const pad = (n: number) => String(n).padStart(2, "0");
-const weekdays = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
 
 /** When a window starts over, as a row says it: in hours and minutes within
  *  a day, else its weekday and time. */
@@ -35,7 +34,9 @@ export function resetsSaid(at: Date, now: Date): string {
     const hours = Math.floor(minutes / 60);
     return hours ? `${hours} 小时 ${pad(minutes % 60)} 分后` : `${minutes} 分后`;
   }
-  return `${weekdays[at.getDay()]} ${pad(at.getHours())}:${pad(at.getMinutes())}`;
+  // Further off, in days and hours: how long is left, not which weekday.
+  const hours = Math.round(left / 3600000);
+  return hours % 24 ? `${Math.floor(hours / 24)} 天 ${hours % 24} 小时后` : `${hours / 24} 天后`;
 }
 
 export function agoSaid(at: Date, now: Date): string {
@@ -133,7 +134,7 @@ export function netOf(world: WorldNow | null, seen: Seen, now: Date): Net {
     }
   }
   const people = [...new Set(hubs.flatMap((hub) => hub.accounts.map((account) => account.name)).filter((name) => !mine.some((login) => login.account === name)))].sort();
-  return { now, machines, logins, grants, lines, people, plates, admin };
+  return { now, machines, logins, grants, lines, people, plates, expects: Object.fromEntries(Object.entries(plates).map(([id, base]) => [id, { base, swing: SWING }])), admin };
 }
 
 function joined(folder: string, path: string): string {
@@ -216,7 +217,6 @@ function loginOf(world: WorldNow | null, machine: Pickable, agent: string, side:
     ...(one.change && !one.change.end ? { busy: one.change.into ? "正在接入…" : "正在移除…" } : {}),
     ...(program ? { program: programSaid(program) } : {}),
     ...(one.auto_title !== undefined ? { autoTitle: one.auto_title } : {}),
-    ...(one.reset_in_place !== undefined ? { resetInPlace: one.reset_in_place } : {}),
     ...(one.models ? { models: one.models.map((model) => model.display_name || model.model || model.id) } : {}),
     ...(one.model_edits && ((one.model_edits.added?.length ?? 0) + (one.model_edits.removed?.length ?? 0) > 0) ? { modelsChanged: true } : {}),
     ...(one.limits.kind === "known" ? { readAt: agoSaid(new Date(one.limits.value.observed_at), now) } : {}),
@@ -265,8 +265,6 @@ export function daysFrom(report: UsageReport, login: Login, plate: number, world
   const fableSaid = login.family === "claude" && report.hours.some((hour) => hour.fable !== undefined);
   const hours = Array.from({ length: 7 }, () => new Array<number>(24).fill(0));
   const since = now.getTime() - 90 * DAY;
-  const fiveWindow = login.five && !login.five.reset ? windowStart(login, now) : null;
-  let fiveSpent = fiveWindow ? 0 : null;
   for (const hour of report.hours) {
     const at = new Date(hour.at);
     const index = dayOf(at);
@@ -284,7 +282,6 @@ export function daysFrom(report: UsageReport, login: Login, plate: number, world
       byPerson.tokens[who]![index]! += hour.tokens;
     }
     if (at.getTime() >= since) hours[(at.getDay() + 6) % 7]![at.getHours()]! += login.family === "codex" ? hour.tokens : dollars;
-    if (fiveWindow && at.getTime() >= fiveWindow) fiveSpent! += dollars;
   }
   // Days from older nodes carry API dollars alone; the week's Fable is
   // known apart, so the week's figures carry its multiplier either way.
@@ -319,20 +316,8 @@ export function daysFrom(report: UsageReport, login: Login, plate: number, world
     people: [...merged.values()],
     weeks,
     resets: report.resets ? report.resets.map((reset) => ({ at: momentSaid(new Date(reset.confirmed_at)), how: how[reset.source] ?? reset.source, from: Math.round((reset.before_used_tenths ?? 0) / 10), to: Math.round(reset.used_tenths / 10) })) : null,
-    elsewhere: login.week && !login.lent ? Math.max(0, login.week.used - (ledgered / plate) * 100) : 0,
-    fiveSpent,
+    gap: login.week && !login.week.reset && (!login.lent || login.lent.limit === null) ? login.week.used - (ledgered / plate) * 100 : 0,
   };
-}
-
-/** When the five-hour window now open began, where its end is known. */
-function windowStart(login: Login, now: Date): number | null {
-  const resets = login.five?.resets;
-  if (!resets) return null;
-  const hours = /(\d+) 小时/.exec(resets);
-  const minutes = /(\d+) 分后/.exec(resets);
-  if (!hours && !minutes) return null;
-  const left = (Number(hours?.[1] ?? 0) * 60 + Number(minutes?.[1] ?? 0)) * 60000;
-  return now.getTime() + left - 5 * 3600000;
 }
 
 const outcomes: Record<CallOutcome, Outcome> = { completed: "done", failed: "failed", interrupted: "stopped", held: "held", unknown: "done" };

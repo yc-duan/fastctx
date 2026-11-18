@@ -407,24 +407,22 @@ export class AgentsPage implements Page {
         const { machine, agent, dir } = this.recordOf(login);
         return refreshed(options.setTitle(machine, agent, dir, on));
       },
-      resetInPlace: (login, on) => {
-        const { machine, agent, dir } = this.recordOf(login);
-        return refreshed(options.setResetInPlace(machine, agent, dir, on));
-      },
       plan: (login, plan) => {
         const { machine, agent, home } = this.recordOf(login);
         // Ultra goes as Max marked so: a hub or node that knows no Ultra
         // keeps it as Max (`fastctx_types::accounts::PlanSeen`).
         return accounts({ change: "plan", machine, agent, ...(home ? { home } : {}), plan: plan === "ultra" ? "max" : plan, ...(plan === "ultra" ? { ultra: true } : {}) } as AccountChange, login);
       },
-      plate: async (login, dollars) => {
+      expect: async (login, expect) => {
         const { machine, agent, dir } = this.recordOf(login);
         try {
-          this.took(await options.setWeek(machine, agent, dir, Math.round(dollars * 1_000_000)));
+          this.took(await options.setWeek(machine, agent, dir, Math.round(expect.base * 1_000_000)));
         } catch (error) {
           throw new Error(/does not know|unknown variant|older/i.test(String(error)) ? "该机器的 Fastctx 版本较旧，暂不支持设置周额度" : error instanceof Error ? error.message : String(error));
         }
       },
+      resetUsage: () => Promise.reject(new Error("该机器的 Fastctx 版本较旧，暂不支持重置用量")),
+      undoReset: () => Promise.reject(new Error("该机器的 Fastctx 版本较旧，暂不支持重置用量")),
       assist: (login, person, limit, until) => accounts(assisted(login, person, limit, until), login),
       endAssist: (login, person) => {
         const { machine, agent, home } = this.recordOf(login);

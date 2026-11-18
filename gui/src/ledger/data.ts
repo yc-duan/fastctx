@@ -93,8 +93,6 @@ export interface Login {
   program?: string;
   /** Codex: new conversations are named as the official client names them. */
   autoTitle?: boolean;
-  /** A week the vendor cleared early counts anew from then. */
-  resetInPlace?: boolean;
   /** The models a conversation in it starts on; whether they were changed. */
   models?: string[];
   modelsChanged?: boolean;
@@ -121,10 +119,32 @@ export interface Line {
   turns: number | null;
 }
 
-/** A login's week in quota dollars, which its percents are reckoned of. Its
- *  owner sets it, 3,000 where they have not (用户 2026-11-15: set by hand
- *  only, for now). */
+/** A login's week in quota dollars, which its percents are reckoned of,
+ *  where its owner expected none. */
 export const PLATE = 3000;
+/** How far a week's figure may stand from what its owner expects, of a
+ *  hundred either way, where they set no other. */
+export const SWING = 5;
+
+/** What a login's owner expects its week to hold, in quota dollars, and how
+ *  far the figure reckoned for a week may stand from it. The week's own
+ *  figure is fixed as the week begins, from what the week before came to by
+ *  the readings, held within that reach. */
+export interface Expect {
+  base: number;
+  swing: number;
+}
+
+/** A reset of the week's usage its owner made by hand: to nothing, or to a
+ *  part of the week, everyone's share of it scaled alike. */
+export interface Reset {
+  at: string;
+  how: string;
+  from: number;
+  to: number;
+  /** The owner's own and the newest: it can be taken back. */
+  undo?: boolean;
+}
 
 export type Outcome = "done" | "failed" | "stopped" | "held";
 export type Source = "main" | "agent" | "background";
@@ -176,18 +196,22 @@ export interface Days {
    *  or quota dollars where the counts are not kept. */
   hours: number[][];
   hoursAre: "requests" | "quota" | "tokens";
-  /** This week's quota dollars by person: none is the login's owner. */
-  people: { name: string | null; week: number; fable: number }[];
+  /** This week's quota dollars by person: none is the login's owner, and
+   *  `me` the reader where the login is another's. */
+  people: { name: string | null; week: number; fable: number; me?: boolean }[];
   /** What each of its last whole weeks came to by the readings, the newest
-   *  last, for the owner to see how the figure set for its week stands. */
+   *  last, for the owner to see where what they expect stands. */
   weeks: { start: Date; value: number }[];
-  /** The weekly resets on record, the newest first; the owner's alone. */
-  resets: { at: string; how: string; from: number; to: number }[] | null;
-  /** Of a hundred of the week, what the reading counts beyond the ledger. */
-  elsewhere: number;
-  /** Quota dollars the ledger counts in the five-hour window now open. */
-  fiveSpent: number | null;
+  /** The resets on record, the newest first; the owner's alone. */
+  resets: Reset[] | null;
+  /** Of a hundred of the week, how far the vendor's reading stands above
+   *  what the ledger comes to, or below it. */
+  gap: number;
 }
+
+/** Whether a gap between reading and ledger is told: past what the week's
+ *  figure and a change in how the login is used can make of themselves. */
+export const gapTold = (gap: number, read: number): boolean => Math.abs(gap) > Math.max(5, read * 0.15);
 
 /** A page of a login's requests asked for. */
 export interface CallsQuery {
@@ -235,9 +259,13 @@ export interface Deeds {
   reread(login: Login): void;
   models(login: Login): void;
   autoTitle(login: Login, on: boolean): Promise<void>;
-  resetInPlace(login: Login, on: boolean): Promise<void>;
   plan(login: Login, plan: PlanLabel | null): Promise<void>;
-  plate(login: Login, dollars: number): Promise<void>;
+  /** What the owner expects the login's week to hold, and its reach. */
+  expect(login: Login, expect: Expect): Promise<void>;
+  /** Resets the week's usage to a part of the week, of a hundred. */
+  resetUsage(login: Login, to: number): Promise<void>;
+  /** Takes the newest reset back. */
+  undoReset(login: Login): Promise<void>;
   assist(login: Login, person: string, limit: number | null, until: Date | null): Promise<void>;
   endAssist(login: Login, person: string): Promise<void>;
   line(login: Login, line: Line): Promise<void>;
@@ -252,8 +280,10 @@ export interface Net {
   lines: Record<string, Line>;
   /** The network's people, for a name typed into "assist whom". */
   people: string[];
-  /** Each login's week as its owner set it, in quota dollars. */
+  /** Each login's week as reckoned for this week, in quota dollars. */
   plates: Record<string, number>;
+  /** What each login's owner expects of its week. */
+  expects: Record<string, Expect>;
   /** The reader administers the network: a token's plan is theirs to set. */
   admin: boolean;
 }
@@ -265,10 +295,19 @@ export let grants: Grant[] = [];
 export let lines: Record<string, Line> = {};
 export let people: string[] = [];
 export let plates: Record<string, number> = {};
+export let expects: Record<string, Expect> = {};
 export let admin = false;
 export let byId = new Map<string, Login>();
 export let feed: Feed = { days: () => new Promise(() => {}), calls: () => new Promise(() => {}) };
 export let deeds: Deeds | null = null;
+/** What the specimen does of itself where the app asks the World: its
+ *  made-up network changed in place. */
+export interface Sample {
+  expect(login: Login, expect: Expect): void;
+  resetUsage(login: Login, to: number): void;
+  undoReset(login: Login): void;
+}
+export let sample: Sample | null = null;
 
 /** Takes what the host now holds; the pages are drawn from it next. */
 export function setNet(net: Net): void {
@@ -279,18 +318,25 @@ export function setNet(net: Net): void {
   lines = net.lines;
   people = net.people;
   plates = net.plates;
+  expects = net.expects;
   admin = net.admin;
   byId = new Map(logins.map((login) => [login.id, login]));
 }
 
-export function setHost(given: { feed: Feed; deeds?: Deeds | null }): void {
+export function setHost(given: { feed: Feed; deeds?: Deeds | null; sample?: Sample | null }): void {
   feed = given.feed;
   deeds = given.deeds ?? null;
+  sample = given.sample ?? null;
   kept.clear();
 }
 
 export const grantsOf = (login: Login) => grants.filter((grant) => grant.login === login.id);
-export const plateOf = (login: Login): number => plates[login.id] ?? PLATE;
+export const plateOf = (login: Login): number => plates[login.id] ?? expects[login.id]?.base ?? PLATE;
+/** What is expected of a login's week: as its owner set it, else the week's
+ *  own figure with the usual reach. */
+export const expectOf = (login: Login): Expect => expects[login.id] ?? { base: plateOf(login), swing: SWING };
+/** A week's figure held within the reach of what is expected. */
+export const within = (value: number, expect: Expect): number => Math.min(expect.base * (1 + expect.swing / 100), Math.max(expect.base * (1 - expect.swing / 100), value));
 
 /** A model's multiplier: what a dollar of its API price uses of the quota,
  *  beside a dollar of Opus 5.5's. One for every model but Fable, which uses
@@ -299,16 +345,22 @@ export const FABLE_TIMES = 2.5;
 export const isFable = (model: string) => /fable/i.test(model);
 export const timesOf = (model: string) => (isFable(model) ? FABLE_TIMES : 1);
 
-/** How a figure set for a login's week stands against its readings: the
- *  middle of what its weeks came to, and how far above or below it the
- *  figure is, of a hundred. None where no week has been read yet. */
-export function plateCheck(weeks: number[], set: number): { read: number; off: number } | null {
-  // A week that cost nothing in dollars (Codex keeps no prices) tells
-  // nothing of what a week holds.
+/** The middle of what a login's weeks came to by the readings, which is
+ *  what to expect of it: none where no week has been read yet. A week that
+ *  cost nothing in dollars (Codex keeps no prices) tells nothing. */
+export function weeksMiddle(weeks: number[]): number | null {
   const sorted = weeks.filter((week) => Number.isFinite(week) && week > 0).sort((a, b) => a - b);
   if (!sorted.length) return null;
-  const read = sorted.length % 2 ? sorted[(sorted.length - 1) / 2]! : (sorted[sorted.length / 2 - 1]! + sorted[sorted.length / 2]!) / 2;
-  return { read, off: Math.round(((set - read) / read) * 100) };
+  return sorted.length % 2 ? sorted[(sorted.length - 1) / 2]! : (sorted[sorted.length / 2 - 1]! + sorted[sorted.length / 2]!) / 2;
+}
+/** Which side of its reach the last `run` weeks all came to, where they
+ *  did: the owner is then asked to look at what they expect. */
+export function pinned(weeks: number[], expect: Expect, run = 2): "low" | "high" | null {
+  const last = weeks.slice(-run);
+  if (last.length < run) return null;
+  if (last.every((week) => week < expect.base * (1 - expect.swing / 100))) return "low";
+  if (last.every((week) => week > expect.base * (1 + expect.swing / 100))) return "high";
+  return null;
 }
 
 /** What has come of a fetch: the answer, its failure, or nothing yet. */
