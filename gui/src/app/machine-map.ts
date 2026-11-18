@@ -120,6 +120,9 @@ const RINGED = 0.2;
 /** Nearer than this, each machine says what it is under its name: its row
  *  has room for two lines. */
 const DETAILED = 0.7;
+/** The longest the drawing waits for faces loading before it is laid
+ *  again with what has come: the faces are the application's own. */
+const FACES_WAIT_MS = 10_000;
 
 /** The paper drawn round what is in view, this share of the view more on
  *  each side, so it moves without being drawn again until it is left; and
@@ -237,6 +240,16 @@ export class MachineMap {
   private measuring: CanvasRenderingContext2D | null = null;
   /** The faces are loading, and the drawing is laid again when they are in. */
   private awaitingFaces = false;
+  /** Text measured in a face not loaded yet, by the font it was measured
+   *  in: what the drawing waits for before it is laid again. */
+  private readonly unsure = new Map<string, Set<string>>();
+  /** Each font and text waited for once already, never waited for again
+   *  whatever the page's fonts say of it after. */
+  private readonly waited = new Set<string>();
+  /** Ends what the drawing waits for once it is disposed. */
+  private readonly gone = new AbortController();
+  /** The frame the drawing is laid again in once the faces are in. */
+  private facesFrame = 0;
   /** The box of the drawing the layers over and under the ink are laid
    *  over, and the scale they are drawn at. */
   private layerBox: Bounds | null = null;
@@ -407,6 +420,8 @@ export class MachineMap {
   }
 
   dispose(): void {
+    this.gone.abort();
+    cancelAnimationFrame(this.facesFrame);
     cancelAnimationFrame(this.flight);
     this.themes.disconnect();
     this.pens.dispose();
@@ -465,6 +480,8 @@ export class MachineMap {
     this.compose();
     this.place();
     this.mark();
+    // What was measured in a face not loaded yet is laid again once it is.
+    this.awaitFaces();
   }
 
   private pointOf(key: string): Point | null {
@@ -622,9 +639,15 @@ export class MachineMap {
     const key = `${size}\n${text}`;
     let width = widths.get(key);
     if (width === undefined) {
-      context.font = `${size}px ${family}`;
+      const font = `${size}px ${family}`;
+      context.font = font;
       width = context.measureText(text).width;
       widths.set(key, width);
+      if (document.fonts.status !== "loaded" && !this.waited.has(`${font}\n${text}`) && !facesIn(font, text)) {
+        let texts = this.unsure.get(font);
+        if (!texts) this.unsure.set(font, (texts = new Set()));
+        texts.add(text);
+      }
     }
     return width;
   }
@@ -656,19 +679,57 @@ export class MachineMap {
       name = Math.max(name, this.measured("--font-reading", fine, nameInGroup(node.name, node.group?.within ? node.group.label : null)));
       if (node.sub) under = Math.max(under, this.measured("--font-reading", fine, node.sub));
     }
-    // A face not yet loaded measures as another: laid again once the faces
-    // are in, and a little over meanwhile.
-    if (document.fonts.status !== "loaded" && !this.awaitingFaces) {
-      this.awaitingFaces = true;
-      void document.fonts.ready.then(() => {
+    // A little over what was measured: a face not yet loaded measures as
+    // another until the drawing is laid again (`awaitFaces`).
+    const room = (width: number) => Math.ceil(width * 1.05) + NAME_AIR + 8;
+    return { name: room(name), under: under ? room(under) : 0 };
+  }
+
+  /** Lays the drawing again, in the frame after the faces its text was
+   *  measured in are loaded: each font asked for with its own text
+   *  (`document.fonts.load`), each font and text once. Never on
+   *  `document.fonts.ready`, nor on the set's `loadingdone`: WebKit can hand
+   *  back a `ready` long settled while `status` still says "loading", and
+   *  waiting on it again from the update it brought turned into microtasks
+   *  without end, so the page never painted (beta.17–19 on macOS, the home
+   *  page's map); and Safari 26.1 sends no `loadingdone` at all
+   *  (WebKit bug 305470). */
+  private awaitFaces(): void {
+    if (this.awaitingFaces || !this.unsure.size || this.gone.signal.aborted) return;
+    if (this.waited.size > 4096) this.waited.clear();
+    const waits: Promise<unknown>[] = [...this.unsure].map(([font, texts]) => {
+      for (const text of texts) this.waited.add(`${font}\n${text}`);
+      return document.fonts.load(font, [...texts].join(" ")).catch(() => []);
+    });
+    this.unsure.clear();
+    // A font's text can take several faces, its parts of Unicode each: one
+    // failing ends `load` before the others are in, so each face loading now
+    // is waited for on its own, for a while at most.
+    document.fonts.forEach((face) => {
+      if (face.status === "loading") waits.push(face.loaded.catch(() => undefined));
+    });
+    this.awaitingFaces = true;
+    let timer = 0;
+    const longest = new Promise((done) => (timer = window.setTimeout(done, FACES_WAIT_MS)));
+    const ended = () => clearTimeout(timer);
+    this.gone.signal.addEventListener("abort", ended, { once: true });
+    void Promise.race([Promise.all(waits), longest]).then(() => {
+      clearTimeout(timer);
+      this.gone.signal.removeEventListener("abort", ended);
+      if (this.gone.signal.aborted) return;
+      this.facesFrame = requestAnimationFrame(() => {
         this.awaitingFaces = false;
+        if (this.gone.signal.aborted) return;
+        // Everything measured while the faces loaded is measured again,
+        // though `status` may not have moved on: each layout kept, and the
+        // widths kept for it.
+        this.widths.clear();
         this.preparedFrom = null;
+        this.filledFrom = null;
         this.found = null;
         if (this.scene) this.update(this.scene);
       });
-    }
-    const room = (width: number) => Math.ceil(width * 1.05) + NAME_AIR + 8;
-    return { name: room(name), under: under ? room(under) : 0 };
+    });
   }
 
   /** A phone's screen, or a page as narrow: under 600 pixels across. */
@@ -1778,4 +1839,14 @@ function ringPoints(centre: Point, radius: number, count: number): Point[] {
 /** Text for SVG and HTML, its markup characters written as entities. */
 function escapeText(text: string): string {
   return text.replace(/[&<>"]/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[character]!);
+}
+
+/** Whether the faces `font` takes for `text` are loaded, as the page's
+ *  fonts say; a font they cannot read leaves nothing to wait for. */
+function facesIn(font: string, text: string): boolean {
+  try {
+    return document.fonts.check(font, text);
+  } catch {
+    return true;
+  }
 }
