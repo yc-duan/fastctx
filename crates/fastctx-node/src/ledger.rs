@@ -108,6 +108,23 @@ pub async fn write(
     write_for(node, town, files, machines, None).await
 }
 
+/// An entry the hub accepted, and whether this machine has taken it yet:
+/// taking it comes after the entry is the hub's and can fail on its own.
+pub(crate) struct Accepted {
+    pub taken: Result<(), Failure>,
+}
+
+/// As `write`, but an entry the hub accepted is told as written whatever
+/// became of taking it here, which the ledger's sync does later.
+pub(crate) async fn write_accepted(
+    node: &Arc<Node>,
+    town: &TownName,
+    files: Vec<(String, Vec<u8>)>,
+    machines: Option<Vec<MachineName>>,
+) -> Result<Accepted, Failure> {
+    accept_for(node, town, files, machines, None).await
+}
+
 pub(crate) async fn write_memory(
     node: &Arc<Node>,
     town: &TownName,
@@ -124,6 +141,16 @@ async fn write_for(
     machines: Option<Vec<MachineName>>,
     account: Option<fastctx_types::AccountName>,
 ) -> Result<(), Failure> {
+    accept_for(node, town, files, machines, account).await?.taken
+}
+
+async fn accept_for(
+    node: &Arc<Node>,
+    town: &TownName,
+    files: Vec<(String, Vec<u8>)>,
+    machines: Option<Vec<MachineName>>,
+    account: Option<fastctx_types::AccountName>,
+) -> Result<Accepted, Failure> {
     for (path, _) in &files {
         ledger::check_path(path).map_err(Failure::new)?;
     }
@@ -147,13 +174,14 @@ async fn write_for(
                 None => link.ledger_write(&place.town, signed).await,
             }
             .map_err(Failure::new)?;
-            if link.view().member_keeps_project(&link.view().me, &place.town) {
+            let taken = if link.view().member_keeps_project(&link.view().me, &place.town) {
                 // The hub accepted the entry: its projection is on its way
                 // here, and is waited for.
                 take_latest(node, &link, town, &place.town, accepted, true).await.map_err(Failure::new)
             } else {
                 metadata::refresh(node, &link, Some(&place.town)).await.map_err(Failure::new)
-            }
+            };
+            Ok(Accepted { taken })
         }
         None if place.hub == alone(&node.world).map_err(|error| Failure::new(error.to_string()))? => {
             let (world, here, town) = (node.world.clone(), node.machine(), town.clone());
@@ -180,7 +208,7 @@ async fn write_for(
             }
             // The projects as the interfaces show them may have changed.
             node.shown_changed();
-            Ok(())
+            Ok(Accepted { taken: Ok(()) })
         }
         None => Err(Failure::new(format!(
             "the project {town} is kept on the hub {}, which this computer is not logged in to",
