@@ -43,6 +43,9 @@ export interface SubagentsPageOptions {
 type State = { kind: "none" } | { kind: "reading" } | { kind: "failed"; detail: string } | { kind: "older" } | { kind: "ready"; view: SubagentView };
 
 const SAID_MS = 2400;
+/** How many times a change is made over the version standing now before it
+ *  is given up. */
+const SAVE_TRIES = 3;
 
 export class SubagentsPage implements Page {
   readonly element: HTMLElement;
@@ -203,14 +206,6 @@ export class SubagentsPage implements Page {
       void this.saveInstructions();
       return;
     }
-    if (target.closest("[data-sa-theirs]")) {
-      const text = this.element.querySelector<HTMLTextAreaElement>(".sa-text");
-      if (text) text.value = this.saved();
-      this.note = null;
-      this.keepDraft();
-      this.drawFoot();
-      return;
-    }
     if (target.closest("[data-sa-reset]")) {
       const s = this.options.words.subagents;
       this.options.confirm.ask({
@@ -261,7 +256,22 @@ export class SubagentsPage implements Page {
     this.note = null;
     this.drawStatus();
     try {
-      const view = await this.options.call(login.hubName, login.account, operation);
+      // What the user does stands: the profile changed elsewhere since it
+      // was read, it is read again and the change made over the version
+      // standing now (the user, 2026-11-18: "我们不应该管用户在不在别处修改，
+      // 直接读现成的就行了").
+      let made = operation;
+      let view;
+      for (let tries = 1; ; tries += 1) {
+        try {
+          view = await this.options.call(login.hubName, login.account, made);
+          break;
+        } catch (error) {
+          if (made.operation === "list" || tries >= SAVE_TRIES || !/the profile changed/.test(detailOf(error))) throw error;
+          await this.reread(login);
+          made = { ...made, version: this.version() };
+        }
+      }
       this.state = { kind: "ready", view };
       // The defaults come back whole, over anything typed.
       if (operation.operation === "reset") this.forgetDraft();
@@ -362,7 +372,7 @@ export class SubagentsPage implements Page {
     button.disabled = this.saving || over || !changed;
     const note = foot.querySelector<HTMLElement>(".prompt-note")!;
     const html = this.note
-      ? `<span class="prof-warn" title="${escape(this.note.detail)}">${escape(this.note.text)}</span>${/the profile changed/.test(this.note.detail) ? `<button class="text-button" type="button" data-sa-theirs>${escape(words.loadTheirs)}</button>` : ""}`
+      ? `<span class="prof-warn" title="${escape(this.note.detail)}">${escape(this.note.text)}</span>`
       : over
         ? `<span class="prof-warn">${escape(words.prompt.tooLong)}</span>`
         : "";

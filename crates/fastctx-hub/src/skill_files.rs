@@ -113,7 +113,14 @@ pub(crate) async fn ask(
                     Request::Edit { expected, .. } | Request::Delete { expected, .. } => Some(*expected),
                     _ => unreachable!(),
                 };
-                if expected != previous.map(|metadata| metadata.version) {
+                // A deleted skill is no skill to write over: a writer that
+                // expects none may write it anew, its versions going on from
+                // the deletion's; as may one that carries the deletion's own
+                // version back from a conflict, as earlier hubs asked.
+                let live = previous.filter(|metadata| !metadata.deleted);
+                let over_deletion = matches!(mutation, Request::Write { .. })
+                    && previous.is_some_and(|metadata| metadata.deleted && expected == Some(metadata.version));
+                if expected != live.map(|metadata| metadata.version) && !over_deletion {
                     return Ok(Told::SkillFiles { reply: Reply::Conflict { current: previous.cloned() } });
                 }
                 let replacement = match mutation {

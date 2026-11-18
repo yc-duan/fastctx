@@ -58,28 +58,33 @@ export function specimenSkills(): SkillCalls {
     },
     write: async (_hub, _account, name, expected, files) => {
       await pause(300);
-      if (expected !== null || kept.some((one) => one.name === name)) return false;
-      kept.push(folder(name, 1, files));
+      const at = kept.findIndex((one) => one.name === name);
+      const standing = at < 0 ? null : kept[at]!.version;
+      if (expected !== standing) return { current: standing === null ? null : { version: standing, deleted: false } };
+      if (at < 0) kept.push(folder(name, 1, files));
+      else kept[at] = folder(name, standing! + 1, files);
       return true;
     },
     edit: async (_hub, _account, name, expected, changes) => {
       await pause(300);
       const at = kept.findIndex((one) => one.name === name);
-      if (at < 0 || kept[at]!.version !== expected) return false;
+      if (at < 0) return { current: null };
+      if (kept[at]!.version !== expected) return { current: { version: kept[at]!.version, deleted: false } };
       let files = kept[at]!.files;
       for (const change of changes) {
         files = files.filter((file) => file.path !== (change.change === "put" ? change.file.path : change.path));
         if (change.change === "put") files.push(change.file);
       }
       const made = folder(name, expected + 1, files);
-      if (made.name !== name && kept.some((one) => one.name === made.name)) return false;
+      if (made.name !== name && kept.some((one) => one.name === made.name)) throw new Error(`a skill named ${made.name} already exists`);
       kept[at] = made;
       return true;
     },
     remove: async (_hub, _account, name, expected) => {
       await pause(200);
       const at = kept.findIndex((one) => one.name === name);
-      if (at < 0 || kept[at]!.version !== expected) return false;
+      if (at < 0) return { current: null };
+      if (kept[at]!.version !== expected) return { current: { version: kept[at]!.version, deleted: false } };
       kept.splice(at, 1);
       return true;
     },

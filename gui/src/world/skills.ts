@@ -44,18 +44,27 @@ export const SKILL_WHEN_MOST = 300;
 /** The file every skill has, and is named by. */
 export const SKILL_FILE = "SKILL.md";
 
+/** A version of a skill as the hub keeps it: a deletion is one too. */
+export interface SkillVersion {
+  version: number;
+  deleted: boolean;
+}
+
+/** What became of a change: written; or it met another version than the one
+ *  it was made at, the one standing now, none where none was ever kept. */
+export type SkillWritten = true | { current: SkillVersion | null };
+
 export interface SkillCalls {
   list(hub: string, account: string): Promise<SkillListed[]>;
   /** The skill `name`, or null where there is none. */
   read(hub: string, account: string, name: string): Promise<SkillFolder | null>;
-  /** Writes a new skill's folder whole as `name`; false where one by that
-   *  name was made meanwhile. */
-  write(hub: string, account: string, name: string, expected: number | null, files: SkillFile[]): Promise<boolean>;
+  /** Writes a skill's folder whole as `name` over the version `expected`,
+   *  none for a skill there is none of. */
+  write(hub: string, account: string, name: string, expected: number | null, files: SkillFile[]): Promise<SkillWritten>;
   /** Changes the kept skill `name` at the version `expected`, a new name in
-   *  its SKILL.md renaming it at once; false where it changed meanwhile. */
-  edit(hub: string, account: string, name: string, expected: number, changes: SkillChange[]): Promise<boolean>;
-  /** False where it changed meanwhile. */
-  remove(hub: string, account: string, name: string, expected: number): Promise<boolean>;
+   *  its SKILL.md renaming it at once. */
+  edit(hub: string, account: string, name: string, expected: number, changes: SkillChange[]): Promise<SkillWritten>;
+  remove(hub: string, account: string, name: string, expected: number): Promise<SkillWritten>;
   /** Picks a folder on this device and reads it; null when the user changed
    *  their mind. Absent where this device has no folders to pick. */
   pick?: (() => Promise<PickedFolder | null>) | undefined;
@@ -65,9 +74,11 @@ type Reply =
   | { result: "listed"; skills: SkillListed[] }
   | { result: "read"; snapshot: { metadata: { version: number; deleted: boolean } | null; skill: (SkillListed & { instructions: string; files?: SkillFile[] }) | null } }
   | { result: "written" }
-  | { result: "conflict" };
+  | { result: "conflict"; current?: SkillVersion | null };
 
 const ask = (hub: string, account: string, request: Record<string, unknown>) => invoke<Reply>("skill_files", { hub, account, request });
+
+const written = (reply: Reply): SkillWritten => (reply.result === "written" ? true : { current: reply.result === "conflict" && reply.current ? { version: reply.current.version, deleted: reply.current.deleted } : null });
 
 export const skillCalls: SkillCalls = {
   list: async (hub, account) => {
@@ -81,9 +92,9 @@ export const skillCalls: SkillCalls = {
     if (!metadata || metadata.deleted || !skill) return null;
     return { name: skill.name, description: skill.description, version: metadata.version, files: skill.files ?? [textFile(SKILL_FILE, skillText(skill.name, skill.description, skill.instructions))] };
   },
-  write: async (hub, account, name, expected, files) => (await ask(hub, account, { operation: "write", name, expected, files })).result === "written",
-  edit: async (hub, account, name, expected, changes) => (await ask(hub, account, { operation: "edit", name, expected, changes })).result === "written",
-  remove: async (hub, account, name, expected) => (await ask(hub, account, { operation: "delete", name, expected })).result === "written",
+  write: async (hub, account, name, expected, files) => written(await ask(hub, account, { operation: "write", name, expected, files })),
+  edit: async (hub, account, name, expected, changes) => written(await ask(hub, account, { operation: "edit", name, expected, changes })),
+  remove: async (hub, account, name, expected) => written(await ask(hub, account, { operation: "delete", name, expected })),
   // A phone has no folder of its own to take in.
   ...(onComputer() ? { pick: () => invoke<PickedFolder | null>("skill_folder_pick") } : {}),
 };

@@ -25,8 +25,6 @@ export interface ProfileWords {
   saveFailed: string;
   /** Another device wrote it since it was read here. */
   changedElsewhere: string;
-  /** Takes what was written elsewhere in place of what is here. */
-  loadTheirs: string;
   /** When what is saved reaches the sessions, said on hover. */
   takesEffect: string;
   prompt: {
@@ -268,7 +266,6 @@ export const zhProfile: ProfileWords = {
   saved: "已保存",
   saveFailed: "保存失败",
   changedElsewhere: "已在别处修改",
-  loadTheirs: "载入该版本",
   takesEffect: "新对话立即生效；已打开的对话在下次唤醒时生效",
   prompt: {
     title: (agent) => `${agent} 的提示词`,
@@ -469,7 +466,6 @@ export const enProfile: ProfileWords = {
   saved: "Saved",
   saveFailed: "Could not save",
   changedElsewhere: "Changed elsewhere",
-  loadTheirs: "Load that version",
   takesEffect: "New conversations take it at once; open ones at their next wake",
   prompt: {
     title: (agent) => `${agent} prompt`,

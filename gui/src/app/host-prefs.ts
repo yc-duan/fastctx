@@ -77,6 +77,9 @@ interface Section {
 type State = { kind: "none" } | { kind: "reading" } | { kind: "failed"; detail: string } | { kind: "older" } | { kind: "ready"; view: ProfileView };
 
 const SAID_MS = 2400;
+/** How many times a change is made over the version standing now before it
+ *  is given up. */
+const SAVE_TRIES = 3;
 
 /** The efforts each host's settings take when no model says. */
 const EFFORTS: Record<Host, string[]> = {
@@ -502,8 +505,26 @@ export class HostPrefs {
     this.said = false;
     this.refresh();
     try {
-      const version = await this.options.calls.write(login.hubName, login.account, profile);
-      view.profile = { ...profile, version };
+      // What the user sets stands: the profile written elsewhere since it was
+      // read, it is read again and the change made on the agent's table as it
+      // stands now (the user, 2026-11-18: "我们不应该管用户在不在别处修改，
+      // 直接读现成的就行了").
+      let standing = view;
+      let written = profile;
+      for (let tries = 1; ; tries += 1) {
+        try {
+          const version = await this.options.calls.write(login.hubName, login.account, written);
+          standing.profile = { ...written, version };
+          break;
+        } catch (error) {
+          if (tries >= SAVE_TRIES) throw error;
+          const now = await this.options.calls.read(login.hubName, login.account);
+          if (now.profile.version === standing.profile.version) throw error;
+          standing = now;
+          this.state = { kind: "ready", view: now };
+          written = { ...now.profile, [agent]: change({ ...this.table() }) };
+        }
+      }
       this.said = true;
       clearTimeout(this.saidTimer);
       this.saidTimer = window.setTimeout(() => {
@@ -511,15 +532,7 @@ export class HostPrefs {
         this.drawStatus();
       }, SAID_MS);
     } catch (error) {
-      const detail = detailOf(error);
-      try {
-        const now = await this.options.calls.read(login.hubName, login.account);
-        const elsewhere = now.profile.version !== view.profile.version;
-        this.state = { kind: "ready", view: now };
-        this.note = { text: elsewhere ? this.options.words.changedElsewhere : this.options.words.saveFailed, detail };
-      } catch {
-        this.note = { text: this.options.words.saveFailed, detail };
-      }
+      this.note = { text: this.options.words.saveFailed, detail: detailOf(error) };
     } finally {
       this.saving = false;
       this.refresh();
