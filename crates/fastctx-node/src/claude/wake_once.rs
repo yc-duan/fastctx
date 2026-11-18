@@ -315,11 +315,17 @@ pub(super) fn waiting() -> Failure {
     Failure::host_unavailable(IN_FLIGHT)
 }
 
-/// Whether `failure` says a wake is already on its way: the words wait for
-/// it, which is no failure of theirs (`lifecycle::retry::unavailable`).
-pub(crate) fn in_flight(failure: &Failure) -> bool {
+/// Whether `failure` says a wake this node launched is on its way and not
+/// settled yet: the words wait for it, which is no failure of theirs
+/// (`lifecycle::retry::unavailable`). One Claude Code lists as starting with
+/// no launch of this node's behind it is waited for as a failure is.
+pub(crate) fn in_flight(node: &Node, id: &ResidentId, failure: &Failure) -> bool {
     failure.message == IN_FLIGHT
+        && (hold(node, id).is_some() || wake_store::get(node, id).is_ok_and(|intent| intent.is_some_and(|intent| !intent.settled)))
 }
+
+/// What the words that wait for a wake say while they do.
+pub(crate) const WAITING_FOR_WAKE: &str = IN_FLIGHT;
 
 /// When a launch is next to be looked at: on its pace, or as its quiet
 /// interval ends where that is sooner.
@@ -359,9 +365,9 @@ pub(crate) fn register(node: &Arc<Node>) {
             .await;
             match result {
                 Ok(true) => {
-                    // The words that waited for it go at once, however long
-                    // their last try said to wait.
-                    crate::lifecycle::retry::due_now(&node, &id).await;
+                    // The words that waited for it go at once; words put off
+                    // for a failure of their own wait out their time.
+                    crate::lifecycle::retry::due_now(&node, &id, WAITING_FOR_WAKE).await;
                     crate::lifecycle::retry::kick(&node, &id);
                     Outcome::Done
                 }

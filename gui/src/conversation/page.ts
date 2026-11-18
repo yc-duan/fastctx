@@ -459,6 +459,7 @@ export class ConversationPage {
     new ResizeObserver(() => this.nameHint()).observe(this.name);
     this.name.addEventListener("pointerenter", () => this.nameHint());
     this.name.addEventListener("focus", () => this.nameHint());
+    document.fonts.addEventListener("loadingdone", this.facesCame);
     // The title is renamed in place, where the conversation takes a name.
     this.name.addEventListener("click", () => this.rename());
     this.name.addEventListener("keydown", (event) => {
@@ -1283,6 +1284,7 @@ export class ConversationPage {
     this.finder.destroy();
     this.left = true;
     document.removeEventListener("keydown", this.findKey);
+    document.fonts.removeEventListener("loadingdone", this.facesCame);
     this.stopDrops?.();
     this.unlimit();
     this.unbindShared?.();
@@ -3007,6 +3009,8 @@ export class ConversationPage {
    *  (the observer above), not with every frame of the conversation, which
    *  read the page's layout in the middle of drawing it. */
   private hinted = "";
+  /** A face that came makes the name's box hold more or less. */
+  private readonly facesCame = () => this.nameHint();
   private nameHint(): void {
     const cut = this.name.scrollWidth > this.name.clientWidth;
     const rename = this.name.classList.contains("renamable") ? (this.options.controls?.words.commands.rename ?? "") : "";

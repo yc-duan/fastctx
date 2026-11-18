@@ -207,7 +207,7 @@ pub(crate) async fn unavailable(
 ) -> Result<Landed, Failure> {
     if error.permanent {
         super::refused::reject(node, id, input, error.failure).await
-    } else if crate::claude::wake_in_flight(&error.failure) {
+    } else if crate::claude::wake_in_flight(node, id, &error.failure) {
         // A wake already on its way is no failure of these words: they wait
         // for it, looked at again within moments and at once as it settles
         // (`due_now`), never put off longer for each look.
@@ -225,9 +225,9 @@ pub(crate) async fn unavailable(
 }
 
 /// Makes the handing over of the conversation's next waiting words due
-/// now, however long their last try said to wait: what they waited for has
-/// settled.
-pub(crate) async fn due_now(node: &Arc<Node>, id: &ResidentId) {
+/// now, where they wait for what has settled (their last try said `why`):
+/// words put off for a failure of their own wait out their time.
+pub(crate) async fn due_now(node: &Arc<Node>, id: &ResidentId, why: &'static str) {
     let (working, resident) = (node.clone(), id.clone());
     let made = fastctx_platform::task::blocking(move || {
         let (node, id) = (working, resident);
@@ -237,8 +237,8 @@ pub(crate) async fn due_now(node: &Arc<Node>, id: &ResidentId) {
         else {
             return Ok(());
         };
-        update(&node, &id, &next.delivery.id, false, |row| {
-            if !row.attempted && row.next > Timestamp::now() {
+        update(&node, &id, &next.delivery.id, false, move |row| {
+            if !row.attempted && row.reason.as_deref() == Some(why) && row.next > Timestamp::now() {
                 row.next = Timestamp::now();
             }
             Ok(())
