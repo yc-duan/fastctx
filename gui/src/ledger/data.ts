@@ -131,6 +131,9 @@ export const PLATE = 3000;
 /** How far a week's figure may stand from what its owner expects, of a
  *  hundred either way, where they set no other. */
 export const SWING = 5;
+/** The reader themselves, where a deed takes a person: one who manages a
+ *  login with its owner sets their own share by it. */
+export const ME = "@me";
 
 /** What a login's owner expects its week to hold, in quota dollars, and how
  *  far the figure reckoned for a week may stand from it. The week's own

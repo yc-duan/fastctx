@@ -68,10 +68,11 @@ pub(crate) const OWNERS_WINDOWS: &str = "the windows of the login's account are 
 
 /// What this machine's record shows another account: everything to one
 /// that may work here; to one logins assist, those listed logins alone.
-/// One given a limit sees nothing of their account's windows, which are
-/// their owner's; one given none shares the login's whole quota and sees
-/// its windows as its owner does, only to look at (用户 2026-11-15: 唯一一个
-/// 越界的例外是配置协助者，不配置用量，那么他就能看到账号的额度条).
+/// One a login assists sees nothing of its account's windows, which are
+/// their owner's, unless they manage the login with its owner: such a one
+/// sees its windows as its owner does, only to look at, whatever share they
+/// took for themselves (用户 2026-11-19: 共管，与份额分开；an assistance kept
+/// before the word manages where it has no limit, `Assist::manages`).
 pub(crate) fn seen(view: &fastctx_net::directory::View, asker: &Asker, mut logins: MachineLogins) -> MachineLogins {
     if asker.hands {
         return logins;
@@ -102,7 +103,7 @@ pub(crate) fn seen(view: &fastctx_net::directory::View, asker: &Asker, mut login
         for login in &mut side.listed {
             login.programs.clear();
             login.change = None;
-            if assists(login).iter().any(limited) {
+            if assists(login).iter().any(|assist| !assist.manages()) {
                 login.limits = fastctx_types::agents::Fact::unavailable(OWNERS_WINDOWS);
             }
         }
@@ -110,10 +111,23 @@ pub(crate) fn seen(view: &fastctx_net::directory::View, asker: &Asker, mut login
     logins
 }
 
-/// Whether an assistance holds the account to a part of the login: a share
-/// of its week, or dollars a week or a day.
-fn limited(assist: &fastctx_net::directory::Assist) -> bool {
-    assist.share.is_some() || assist.weekly.is_some() || assist.daily.is_some()
+/// Whether `asker` manages `agent`'s login `dir` here with its owner: it sees
+/// everyone's use of it and the account's windows, as its owner does.
+fn manages(
+    view: &fastctx_net::directory::View,
+    asker: &Asker,
+    agent: &AgentName,
+    dir: &std::path::Path,
+    default: bool,
+) -> bool {
+    view.assisting(&asker.account, &view.me).any(|assist| {
+        assist.agent == *agent
+            && assist.manages()
+            && match &assist.home {
+                None => default,
+                Some(home) => crate::homes::same_dir(home, dir),
+            }
+    })
 }
 
 /// What this machine's record shows a caller that works for no account of
@@ -510,7 +524,10 @@ pub(crate) async fn answer(
                 .ok_or_else(|| {
                     Failure::not_run(format!("no {agent} login {} here is the account's to see", dir.display()))
                 })?;
-            let only = (!asker.hands).then(|| HubAccount { hub: asker.hub.clone(), account: asker.account.clone() });
+            // Everyone's use to one who may work here and to one who manages
+            // the login with its owner; their own alone to anyone else.
+            let whole = asker.hands || manages(view, asker, &agent, &login.dir, login.default);
+            let only = (!whole).then(|| HubAccount { hub: asker.hub.clone(), account: asker.account.clone() });
             let owner = crate::placement::owned(view.member(&view.me), &asker.account);
             here_usage(node, agent, login.dir.clone(), only, owner)
                 .await

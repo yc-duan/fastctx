@@ -397,12 +397,15 @@ pub(crate) fn turn_limits(node: &Node, id: &ResidentId, about: &About) -> Option
 
 /// Whether the account a conversation works for sees the windows of the
 /// login it runs in: the user of this machine and an account that may work
-/// here do; one the login only assists sees its own use alone
-/// (`world-agent-logins.md`, 用量).
+/// here do, and one who manages the login with its owner; one the login
+/// only assists sees its own use alone (`world-agent-logins.md`, 用量).
 fn sees_windows(node: &Node, about: &About) -> bool {
     let Some(account) = who(about) else { return true };
     let Some(link) = node.link_of(&account.hub) else { return false };
     let view = link.view();
     let Some(here) = view.me().map(|me| me.name.clone()) else { return false };
-    view.logged_in(&here, &account.account) || view.rights(&account.account, &here).hands
+    view.logged_in(&here, &account.account)
+        || view.rights(&account.account, &here).hands
+        || crate::homes::assistance(node, &view, &account.account, &here, &about.host.agent, about.home.as_deref())
+            .is_ok_and(|assist| assist.is_some_and(|assist| assist.manages()))
 }

@@ -198,6 +198,7 @@ pub(crate) fn view_for_in(
         call_details: true,
         machine_log: true,
         layers: true,
+        managing: true,
         asset_sync: fastctx_types::assets::VERSION,
         hub: store.hub.id.clone(),
         hub_name: store.hub.name.clone(),
@@ -419,17 +420,32 @@ fn cut_in(x: &Indexed<'_>, me: &MachineName, mine: &BTreeSet<AccountName>, users
     .filter(|share| concerns(&share.account, &share.machine))
     .cloned()
     .collect();
+    // Everyone a login assists, where one of its accounts manages the login
+    // with its owner: it sets their shares (`usage-assist-limits` 2026-11-19).
+    let managed: BTreeSet<usize> = mine
+        .iter()
+        .flat_map(|account| x.assists_by_account(account))
+        .map(|&at| &all.assists[at])
+        .filter(|own| own.manages())
+        .flat_map(|own| {
+            x.assists_by_machine(&own.machine)
+                .iter()
+                .copied()
+                .filter(move |&at| all.assists[at].is(&own.agent, own.home.as_deref()))
+        })
+        .collect();
     let assists: Vec<_> = ordered(
         accounts
             .iter()
             .flat_map(|account| x.assists_by_account(account))
             .chain(x.assists_by_machine(me))
             .chain(held.iter().flat_map(|name| x.assists_by_machine(name)))
+            .chain(&managed)
             .copied(),
     )
     .into_iter()
+    .filter(|at| managed.contains(at) || concerns(&all.assists[*at].account, &all.assists[*at].machine))
     .map(|at| &all.assists[at])
-    .filter(|assist| concerns(&assist.account, &assist.machine))
     .cloned()
     .collect();
     let named: BTreeSet<&AccountName> = accounts
@@ -514,5 +530,7 @@ fn present(store: &crate::store::Snapshot, online: &impl Online, member: &mut Me
     }
 }
 
+#[cfg(test)]
+mod managing_drill;
 #[cfg(test)]
 mod scale_drill;

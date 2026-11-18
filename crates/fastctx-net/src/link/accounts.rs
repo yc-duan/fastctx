@@ -43,11 +43,36 @@ impl Link {
         self.check_account_change(&change)?;
         let wire = match change {
             AccountChange::Share { machine, to, shared, jobs } => Change::Share { machine, to, shared, jobs },
-            AccountChange::Assist { machine, to, agent, home, assisting, until, weekly, daily, five_hour, turns, share } => {
+            AccountChange::Assist {
+                machine,
+                to,
+                agent,
+                home,
+                assisting,
+                until,
+                weekly,
+                daily,
+                five_hour,
+                turns,
+                share,
+                manages,
+            } => {
                 return self
                     .assist(
                         account,
-                        Assist { machine, account: to, agent, home, until, weekly, daily, five_hour, turns, share },
+                        Assist {
+                            machine,
+                            account: to,
+                            agent,
+                            home,
+                            until,
+                            weekly,
+                            daily,
+                            five_hour,
+                            turns,
+                            share,
+                            manages,
+                        },
                         assisting,
                     )
                     .await
@@ -119,6 +144,36 @@ impl Link {
     /// stop at an allowance, must not outlive that, so it is ended at once
     /// and the owner told why.
     async fn assist(&self, account: &AccountName, mut assist: Assist, assisting: bool) -> Result<(), String> {
+        // One who manages the login with its owner names the assistance as
+        // the hub keeps it, and the hub alone says what of it they change:
+        // its machine's logins are not theirs to ask for, nor is another
+        // spelling of the login theirs to end.
+        let view = self.view();
+        if assisting && assist.manages == Some(true) && !view.managing {
+            let hub = self.hub_name();
+            return Err(format!("the hub {hub} keeps no one managing a login with its owner; upgrade it for that"));
+        }
+        if !view.holds(account, &assist.machine) {
+            if !view.managing {
+                let hub = self.hub_name();
+                return Err(format!("the hub {hub} takes a share from no one but the login's owner; upgrade it for that"));
+            }
+            let change = Change::Assist {
+                machine: assist.machine,
+                to: assist.account,
+                agent: assist.agent,
+                home: assist.home,
+                assisting,
+                until: assist.until,
+                weekly: assist.weekly,
+                daily: assist.daily,
+                five_hour: assist.five_hour,
+                turns: assist.turns,
+                share: assist.share,
+                manages: assist.manages,
+            };
+            return self.manage(account, change).await.map(|_| ());
+        }
         let homes = if !assisting && self.view().member(&assist.machine).is_some_and(|member| !member.online) {
             let view = self.view();
             let related: Vec<_> = view
@@ -164,6 +219,7 @@ impl Link {
                     five_hour: None,
                     turns: None,
                     share: None,
+                    manages: None,
                 },
             )
             .await?;
@@ -180,6 +236,7 @@ impl Link {
             five_hour: assist.five_hour.filter(|_| limited),
             turns: assist.turns.filter(|_| limited),
             share: assist.share.filter(|_| limited),
+            manages: assist.manages.filter(|_| limited),
         };
         self.manage(account, change(assisting, true)).await?;
         let limits = (assist.until, assist.weekly, assist.daily, assist.five_hour, assist.turns);
@@ -331,6 +388,7 @@ impl Link {
                     five_hour: assist.five_hour,
                     turns: assist.turns,
                     share: assist.share,
+                    manages: Some(assist.manages()),
                 })
                 .collect(),
             plans: view

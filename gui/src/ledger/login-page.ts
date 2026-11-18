@@ -23,6 +23,7 @@ import {
   gapTold,
   grantsOf,
   lines,
+  ME,
   NOW,
   pinned,
   plateOf,
@@ -600,7 +601,6 @@ function spent(login: Login): { owner: { week: number; fable: number }; me: { we
 
 /** The reader, where they are one of those a login assists: named so in
  *  what a press on their own row asks. */
-const ME = "@me";
 
 function assist(login: Login): string {
   const others = grantsOf(login);

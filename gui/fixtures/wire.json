@@ -4818,7 +4818,8 @@
                 "home": null,
                 "until": null,
                 "five_hour": 80,
-                "turns": 4
+                "turns": 4,
+                "manages": false
               },
               {
                 "machine": "gpu",
@@ -4827,7 +4828,8 @@
                 "home": "/home/bo/.claude-team",
                 "until": "2026-10-20T10:00:00Z",
                 "weekly": 42500000,
-                "daily": 8000000
+                "daily": 8000000,
+                "manages": true
               }
             ],
             "plans": [
@@ -4941,7 +4943,8 @@
         "assisting": true,
         "until": "2026-10-20T10:00:00Z",
         "five_hour": 90,
-        "turns": 3
+        "turns": 3,
+        "manages": true
       },
       {
         "change": "assist",

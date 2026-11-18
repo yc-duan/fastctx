@@ -429,6 +429,7 @@ async fn main() -> Result<()> {
                 five_hour: None,
                 turns: None,
                 share: None,
+                manages: None,
             },
         )
         .await

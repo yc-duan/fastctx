@@ -173,6 +173,12 @@ pub enum AccountChange {
         /// which the share is given beside, in dollars.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         share: Option<u8>,
+        /// Whether `to` manages the login with its owner: it sees the
+        /// account's own quota and sets the share of each account the login
+        /// assists, its own among them, and nothing else. Only the login's
+        /// owner says so; none leaves what the hub keeps.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        manages: Option<bool>,
     },
     /// The plan shown for one login of an agent on `machine`, set by the
     /// hub's super administrator on a login that names none (a Claude Code
@@ -734,6 +740,10 @@ pub struct AssistSeen {
     /// The part of the login's week the account may use, in percent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub share: Option<u8>,
+    /// Whether the account manages the login with its owner; none from a
+    /// node that knows no such word.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub manages: Option<bool>,
 }
 
 /// A plan a login names none of, as the hub's super administrator set it

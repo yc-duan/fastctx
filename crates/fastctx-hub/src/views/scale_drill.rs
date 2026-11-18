@@ -38,7 +38,13 @@ fn machine(i: usize) -> MachineName {
     format!("m{i}").parse().expect("a machine name")
 }
 
-fn member(name: MachineName, kind: Kind, logins: BTreeSet<AccountName>, home: Option<AccountName>, n: u64) -> Member {
+pub(super) fn member(
+    name: MachineName,
+    kind: Kind,
+    logins: BTreeSet<AccountName>,
+    home: Option<AccountName>,
+    n: u64,
+) -> Member {
     let mut key = [0u8; 32];
     key[..8].copy_from_slice(&(n + 1).to_le_bytes());
     Member {
@@ -124,6 +130,7 @@ fn network() -> Directory {
             five_hour: None,
             turns: None,
             share: None,
+            manages: None,
         }));
     }
     for _ in 0..1000 {

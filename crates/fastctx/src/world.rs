@@ -177,6 +177,12 @@ pub struct AssistArgs {
     /// of an earlier release holds to instead.
     #[arg(long, conflicts_with = "off", requires = "weekly", value_parser = clap::value_parser!(u8).range(1..=100))]
     share: Option<u8>,
+    /// Have the account manage the login with you: it sees the account's
+    /// own quota and what the ledger reckons of the week, and sets the share
+    /// of each account the login assists, its own among them, and nothing
+    /// else. Given again without it, the account manages no longer.
+    #[arg(long, conflicts_with = "off")]
+    manages: bool,
     #[arg(long = "as")]
     owner: Option<AccountName>,
     #[arg(long)]
@@ -656,6 +662,7 @@ pub fn assist(args: AssistArgs) -> anyhow::Result<()> {
         five_hour: args.five_hour,
         turns: args.turns,
         share: args.share,
+        manages: Some(args.manages).filter(|_| !args.off),
     };
     self::change(args.hub, owner, change)?;
     if args.off {
@@ -1476,8 +1483,9 @@ fn render_accounts(reply: &AccountsReply, now: Timestamp) -> String {
                 limits.push(format!("{turns} turns at once"));
             }
             let limits = if limits.is_empty() { String::new() } else { format!(", up to {}", limits.join(", ")) };
+            let manages = if assist.manages == Some(true) { ", who manages it with its owner" } else { "" };
             text.push_str(&format!(
-                "the {} login {login} on {} assists {}{until}{limits}\n",
+                "the {} login {login} on {} assists {}{manages}{until}{limits}\n",
                 assist.agent, assist.machine, assist.account
             ));
         }

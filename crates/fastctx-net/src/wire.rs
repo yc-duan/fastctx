@@ -974,6 +974,10 @@ pub enum Change {
         turns: Option<u16>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         share: Option<u8>,
+        /// Whether `to` manages the login with its owner; none from a sender
+        /// that knows no such word, which leaves what the hub keeps of it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        manages: Option<bool>,
     },
     /// The super administrator sets the plan shown for `agent`'s login
     /// `home` on `machine`, or takes it away.

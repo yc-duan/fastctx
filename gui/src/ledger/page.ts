@@ -17,15 +17,16 @@ import type { Page } from "../app/shell";
 import { effect } from "../app/signals";
 import type { Store } from "../app/store";
 import { glyph } from "../conversation/glyphs";
-import type { AccountChange, Login as AccountLogin } from "../world/accounts";
+import { sameHome } from "../app/reach";
+import { loginsOf, type AccountChange, type Login as AccountLogin } from "../world/accounts";
 import type { ChangePreview, FolderChange, LoginChange, MachineLogins, ModelChange, WorldLogins } from "../world/logins";
 import { followState, LOGINS, type Following } from "../world/topics";
 import type { Folders } from "../world/focus";
 import type { UsageReport } from "../world/usage";
 import type { UsageCallsPage, UsageCallsQuery } from "../world/usage-calls";
-import { forget, grantsOf, lines, logins as shownLogins, plateOf, setHost, setNet, type Deeds, type Feed, type Login } from "./data";
+import { forget, grantsOf, lines, logins as shownLogins, ME, plateOf, setHost, setNet, type Deeds, type Feed, type Login } from "./data";
 import { homePage } from "./home";
-import { askedOf, callsFrom, daysFrom, idOf, limitOf, netOf, partsOf, type Seen } from "./live";
+import { askedOf, callsFrom, daysFrom, idOf, limitOf, managesOf, netOf, partsOf, type Seen } from "./live";
 import { fillCharts, loginPage, setUntils } from "./login-page";
 import "./sheets";
 import { actOf, draw, drawnBy, setLinker, state, toast, type How, type Place } from "./state";
@@ -283,9 +284,21 @@ export class AgentsPage implements Page {
   /** The login of this device that holds the machine: its owner's, or the
    *  one it is shared with whole. */
   private holder(login: Login): AccountLogin {
-    const holder = this.recordOf(login).picked?.ownerLogin;
+    const holder = this.recordOf(login).picked?.ownerLogin ?? this.managing(login);
     if (!holder) throw new Error("无权管理该机器的登录");
     return holder;
+  }
+
+  /** The login of this device that manages `login` with its owner: the
+   *  account its assistance is given to, where the hub says it manages. */
+  private managing(login: Login): AccountLogin | null {
+    const { machine, agent, home } = this.recordOf(login);
+    const accounts = this.options.store.world.peek()?.accounts;
+    for (const mine of loginsOf(accounts)) {
+      const hub = accounts?.hubs.find((hub) => hub.hub === mine.hub);
+      if (hub?.assists.some((one) => one.account === mine.account && one.machine === machine && one.agent === agent && sameHome(one.home, home) && managesOf(one))) return mine;
+    }
+    return null;
   }
 
   private feed(): Feed {
@@ -323,11 +336,16 @@ export class AgentsPage implements Page {
     const { options } = this;
     const refreshed = async (record: Promise<MachineLogins>) => this.took(await record);
     const accounts = async (change: AccountChange, login: Login) => {
-      await options.change_(this.holder(login), change);
+      try {
+        await options.change_(this.holder(login), change);
+      } catch (error) {
+        // A hub of before keeps no one managing a login with its owner.
+        throw new Error(/upgrade it for that/.test(String(error)) ? "中枢的 Fastctx 版本较旧，暂不支持共管" : error instanceof Error ? error.message : String(error));
+      }
       await options.store.refresh();
       this.rebuild();
     };
-    const assisted = (login: Login, person: string, limit: number | null, until: Date | null, line = lines[login.id]): AccountChange => {
+    const assisted = (login: Login, person: string, limit: number | null, until: Date | null, manages?: boolean, line = lines[login.id]): AccountChange => {
       const { machine, agent, home } = this.recordOf(login);
       // The assistance as the hub keeps it: what of it is not changed now
       // goes back as it was, never worked out again from what is shown (an
@@ -354,6 +372,8 @@ export class AgentsPage implements Page {
         ...limits,
         ...(line?.fiveStop ? { five_hour: line.fiveStop } : {}),
         ...(line?.turns ? { turns: line.turns } : {}),
+        // Who manages is its owner's to say; what is not said now stays.
+        manages: manages ?? (!!kept && managesOf(kept)),
       } as AccountChange;
     };
     return {
@@ -434,7 +454,12 @@ export class AgentsPage implements Page {
       },
       resetUsage: () => Promise.reject(new Error("该机器的 Fastctx 版本较旧，暂不支持重置用量")),
       undoReset: () => Promise.reject(new Error("该机器的 Fastctx 版本较旧，暂不支持重置用量")),
-      assist: (login, person, limit, until) => accounts(assisted(login, person, limit, until), login),
+      assist: (login, person, limit, until, manages) => {
+        // The reader's own share, set by one who manages the login.
+        const to = person === ME ? this.managing(login)?.account : person;
+        if (!to) return Promise.reject(new Error("无权管理该机器的登录"));
+        return accounts(assisted(login, to, limit, until, manages), login);
+      },
       endAssist: (login, person) => {
         const { machine, agent, home } = this.recordOf(login);
         return accounts({ change: "assist", machine, to: person, agent, ...(home ? { home } : {}), assisting: false }, login);
@@ -443,7 +468,7 @@ export class AgentsPage implements Page {
         const world = options.store.world.peek();
         for (const grant of grantsOf(login)) {
           const seen = world?.accounts.hubs.flatMap((hub) => hub.assists).find((one) => one.account === grant.person && one.machine === login.machine);
-          await options.change_(this.holder(login), assisted(login, grant.person, grant.limit, seen?.until ? new Date(seen.until) : null, line));
+          await options.change_(this.holder(login), assisted(login, grant.person, grant.limit, seen?.until ? new Date(seen.until) : null, grant.manages ?? false, line));
         }
         await options.store.refresh();
         this.rebuild();

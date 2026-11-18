@@ -115,8 +115,10 @@ export function netOf(world: WorldNow | null, seen: Seen, now: Date): Net {
         const plate = one.week ? one.week / 1_000_000 : seen.plates.get(login.id);
         if (plate) plates[login.id] = plate;
         logins.push(login);
-        if (machine.hold === "assist") continue;
-        const given = assistsOn(world, machine.name, agent, one);
+        // One a login assists sees whom else it assists only where they
+        // manage it with its owner, and then all but themselves.
+        if (machine.hold === "assist" && !login.lent?.manages) continue;
+        const given = assistsOn(world, machine.name, agent, one).filter(({ hub, assist }) => machine.hold !== "assist" || !mine.some((own) => own.hub === hub && own.account === assist.account));
         for (const { assist } of given) {
           grants.push({ login: login.id, person: assist.account, limit: limitOf(assist, plate ?? PLATE), used: 0, fable: 0, until: assist.until ? momentSaid(new Date(assist.until)) : null, ...(managesOf(assist) ? { manages: true } : {}) });
         }
@@ -179,8 +181,7 @@ function assistsOn(world: WorldNow | null, machine: string, agent: string, login
  *  says, and, where it keeps no such word yet, one given no limit, who saw
  *  the account whole before there was the word. */
 export function managesOf(assist: AssistSeen): boolean {
-  const said = (assist as { manages?: boolean }).manages;
-  return said ?? (!assist.share && !assist.weekly && !assist.daily);
+  return assist.manages ?? (!assist.share && !assist.weekly && !assist.daily);
 }
 
 /** The part of the week an assistance allows, of a hundred: its share where
