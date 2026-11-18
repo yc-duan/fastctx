@@ -26,6 +26,8 @@ export class SideWhere {
   private readonly pop: HTMLElement;
   private sheet: Sheet | null = null;
   private shown: WhereShown | null = null;
+  /** Ends what it hears of the whole document, as its conversation goes. */
+  private readonly hearing = new AbortController();
 
   constructor(
     private readonly words: WhereWords,
@@ -47,16 +49,25 @@ export class SideWhere {
       this.putBack();
       this.button.focus({ preventScroll: true });
     });
-    document.addEventListener("pointerdown", (event) => {
-      if (this.pop.hidden || !this.corner.isConnected) return;
-      if (!this.corner.contains(event.target as Node)) this.putBack();
-    });
+    document.addEventListener(
+      "pointerdown",
+      (event) => {
+        if (this.pop.hidden || !this.corner.isConnected) return;
+        if (!this.corner.contains(event.target as Node)) this.putBack();
+      },
+      { signal: this.hearing.signal },
+    );
     this.line = document.createElement("button");
     this.line.type = "button";
     this.line.className = "sw-line";
     this.line.hidden = true;
     this.line.setAttribute("aria-haspopup", "dialog");
     this.line.addEventListener("click", () => this.pullSheet());
+  }
+
+  /** Its conversation is let go. */
+  dispose(): void {
+    this.hearing.abort();
   }
 
   show(where: WhereShown | null): void {

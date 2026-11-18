@@ -102,6 +102,11 @@ export class JobsPanel {
     this.steady.hold();
   }
 
+  /** Its page is let go. */
+  dispose(): void {
+    this.popover.dispose();
+  }
+
   update(jobs: Job[], now: Date): void {
     const { words } = this.options;
     const running = new Set(jobs.map((job) => job.job));

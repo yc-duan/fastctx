@@ -424,7 +424,7 @@ class PictureViewer {
     this.looks.release();
     document.removeEventListener("keydown", this.keys, true);
     this.resize.disconnect();
-    if (this.original) URL.revokeObjectURL(this.original);
+    if (this.original && this.original !== "asked") URL.revokeObjectURL(this.original);
     this.element.close();
     this.element.remove();
     this.closed();
@@ -542,7 +542,9 @@ class PictureViewer {
     this.original = "asked";
     this.looks.hold((held) => this.options.seams.original(picture, natural, held)).then(
       (blob) => {
-        if (shown !== this.shown) return;
+        // Come after the viewer closed, it is shown nowhere and made into
+        // no URL that none would let go.
+        if (shown !== this.shown || !this.element.isConnected) return;
         this.original = URL.createObjectURL(blob);
         this.place(this.original, shown);
       },

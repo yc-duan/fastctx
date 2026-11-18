@@ -136,6 +136,11 @@ export class ModelPanel {
     this.popover.hide();
   }
 
+  /** Its page is let go. */
+  dispose(): void {
+    this.popover.dispose();
+  }
+
   /** What the host offers, with what the user chose and the host has not
    *  taken yet. */
   private shown(): Offers | null {

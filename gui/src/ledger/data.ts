@@ -393,6 +393,19 @@ interface Kept {
 const kept = new Map<string, Kept>();
 /** How long a fetched answer is drawn before it is asked for again. */
 const FRESH = 60_000;
+/** The answers kept at most, the least lately wanted let go first: each
+ *  page of calls asked for is one. */
+const KEPT_MOST = 64;
+
+/** Keeps `entry` under `key` as the most lately wanted. */
+function keepAs(key: string, entry: Kept): void {
+  kept.delete(key);
+  kept.set(key, entry);
+  for (const [old, one] of kept) {
+    if (kept.size <= KEPT_MOST) break;
+    if (!one.waiting) kept.delete(old);
+  }
+}
 let arrived: (key: string) => void = () => {};
 /** What the pages do when something they asked for comes. */
 export function whenArrived(then: (key: string) => void): void {
@@ -404,18 +417,15 @@ function fetched<T>(key: string, ask: () => Promise<T>): Fetched<T> {
   const stale = !had || Date.now() - had.at > FRESH;
   if (stale && !had?.waiting) {
     const entry: Kept = { at: had?.at ?? 0, value: had?.value ?? null, waiting: true };
-    kept.set(key, entry);
-    ask().then(
-      (value) => {
-        kept.set(key, { at: Date.now(), value, waiting: false });
-        arrived(key);
-      },
-      (error: unknown) => {
-        kept.set(key, { at: Date.now(), value: error instanceof Error ? error : new Error(String(error)), waiting: false });
-        arrived(key);
-      },
-    );
-  }
+    keepAs(key, entry);
+    // An answer to what was forgotten meanwhile is let go.
+    const settle = (value: unknown) => {
+      if (kept.get(key) !== entry) return;
+      keepAs(key, { at: Date.now(), value, waiting: false });
+      arrived(key);
+    };
+    ask().then(settle, (error: unknown) => settle(error instanceof Error ? error : new Error(String(error))));
+  } else if (had) keepAs(key, had);
   return (kept.get(key)?.value as Fetched<T>) ?? null;
 }
 

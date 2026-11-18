@@ -148,7 +148,13 @@ export function link(place: Place): string {
 
 /** The place an address names; anything it does not name is the World. */
 export function placeOf(hash: string): Place {
-  const parts = hash.replace(/^#\/?/, "").split("/").map(decodeURIComponent);
+  // A part that does not decode, as a stray "%", names nothing: home.
+  let parts: string[];
+  try {
+    parts = hash.replace(/^#\/?/, "").split("/").map(decodeURIComponent);
+  } catch {
+    return { kind: "home" };
+  }
   switch (parts[0]) {
     case "talk": {
       const name = parts.slice(1).join("/");
