@@ -49,6 +49,7 @@ pub fn fixtures() -> Fixtures {
         auto_title: true,
         reset_in_place: false,
         week: None,
+        swing: None,
         launcher: Some(Launcher {
             path: "C:/app/codex.exe".into(),
             version: Some("0.162.0".into()),
@@ -106,6 +107,7 @@ pub fn fixtures() -> Fixtures {
         auto_title: false,
         reset_in_place: false,
         week: None,
+        swing: None,
         launcher: Some(Launcher { path: "/home/me/.local/bin/claude".into(), version: None, desktop_app: false }),
         models: vec![],
         model_edits: Some(fastctx_types::logins::models::ModelEdits {
@@ -136,6 +138,7 @@ pub fn fixtures() -> Fixtures {
         auto_title: false,
         reset_in_place: false,
         week: None,
+        swing: None,
         launcher: None,
         models: vec![],
         model_edits: None,
@@ -231,6 +234,7 @@ pub fn fixtures() -> Fixtures {
                     auto_title: false,
                     reset_in_place: false,
                     week: None,
+                    swing: None,
                     launcher: None,
                     models: vec![],
                     model_edits: None,

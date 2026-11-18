@@ -290,20 +290,45 @@ pub(crate) async fn set_resets_in_place(
     }
 }
 
-/// Sets a login's week in quota dollars, here or on another of the user's
-/// machines.
+/// Sets what a login's week is expected to hold, in quota dollars, and how
+/// far a week's figure may stand from it, here or on another of the user's
+/// machines; the holds of those it assists are looked at again.
 pub(crate) async fn set_week(
     node: &Arc<Node>,
     machine: Written,
     agent: AgentName,
     dir: PathBuf,
     week: Option<fastctx_types::usage::Usd>,
+    swing: Option<u8>,
 ) -> Result<MachineLogins, Failure> {
     if node.is_here(&machine) {
-        super::set_week(node, &agent, &dir, week)?;
+        super::set_week(node, &agent, &dir, week, swing)?;
+        crate::usage::after_reading(node, agent.as_str(), &dir).await;
         return super::changed_here(node).await;
     }
-    match ask(node, &machine, Purpose::Hands, RemoteCall::SetAgentWeek { agent, dir, week }).await? {
+    match ask(node, &machine, Purpose::Hands, RemoteCall::SetAgentWeek { agent, dir, week, swing }).await? {
+        RemoteReply::AgentLogins(logins) => Ok(*logins),
+        _ => Err(other(&machine)),
+    }
+}
+
+/// Resets what everyone has used of this week of a login, or takes such a
+/// reset back, here or on another of the user's machines; the holds of
+/// those it assists are looked at again.
+pub(crate) async fn reset_usage(
+    node: &Arc<Node>,
+    machine: Written,
+    agent: AgentName,
+    dir: PathBuf,
+    id: String,
+    to_tenths: Option<u32>,
+) -> Result<MachineLogins, Failure> {
+    if node.is_here(&machine) {
+        super::reset_usage(node, &agent, &dir, &id, to_tenths)?;
+        crate::usage::after_reading(node, agent.as_str(), &dir).await;
+        return super::changed_here(node).await;
+    }
+    match ask(node, &machine, Purpose::Hands, RemoteCall::ResetAgentUsage { agent, dir, id, to_tenths }).await? {
         RemoteReply::AgentLogins(logins) => Ok(*logins),
         _ => Err(other(&machine)),
     }
@@ -484,8 +509,14 @@ pub(crate) async fn answer(
         RemoteCall::SetAgentResetInPlace { agent, dir, on } => {
             super::submitted::set_resets_in_place(node, agent, dir, on).await.map(logins)
         }
-        RemoteCall::SetAgentWeek { agent, dir, week } => {
-            super::set_week(node, &agent, &dir, week)?;
+        RemoteCall::SetAgentWeek { agent, dir, week, swing } => {
+            super::set_week(node, &agent, &dir, week, swing)?;
+            crate::usage::after_reading(node, agent.as_str(), &dir).await;
+            super::changed_here(node).await.map(logins)
+        }
+        RemoteCall::ResetAgentUsage { agent, dir, id, to_tenths } => {
+            super::reset_usage(node, &agent, &dir, &id, to_tenths)?;
+            crate::usage::after_reading(node, agent.as_str(), &dir).await;
             super::changed_here(node).await.map(logins)
         }
         RemoteCall::ChangeAgentModels { agent, dir, change } => {

@@ -448,8 +448,11 @@ impl Device {
             Call::SetAgentResetInPlace { machine, agent, dir, on } => {
                 (machine, RemoteCall::SetAgentResetInPlace { agent, dir, on }, None)
             }
-            Call::SetAgentWeek { machine, agent, dir, week } => {
-                (machine, RemoteCall::SetAgentWeek { agent, dir, week }, None)
+            Call::SetAgentWeek { machine, agent, dir, week, swing } => {
+                (machine, RemoteCall::SetAgentWeek { agent, dir, week, swing }, None)
+            }
+            Call::ResetAgentUsage { machine, agent, dir, id, to_tenths } => {
+                (machine, RemoteCall::ResetAgentUsage { agent, dir, id, to_tenths }, None)
             }
             Call::ChangeAgentModels { machine, agent, dir, change } => {
                 (machine, RemoteCall::ChangeAgentModels { agent, dir, change }, None)
@@ -787,6 +790,7 @@ impl Device {
                 | RemoteCall::SetAgentTitle { .. }
                 | RemoteCall::SetAgentResetInPlace { .. }
                 | RemoteCall::SetAgentWeek { .. }
+                | RemoteCall::ResetAgentUsage { .. }
                 | RemoteCall::ChangeAgentModels { .. }
                 | RemoteCall::ReadAgentLimits { .. },
                 RemoteReply::AgentLogins(logins),

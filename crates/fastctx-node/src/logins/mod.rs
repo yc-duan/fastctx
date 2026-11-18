@@ -250,32 +250,76 @@ pub(crate) fn set_title(node: &Node, agent: &AgentName, dir: &Path, on: bool) ->
     .map_err(|error| Failure::new(format!("keeping the login's naming: {error}")))
 }
 
-/// Sets the week of the Codex or Claude Code login `dir` here, in quota
-/// dollars, as its owner chooses; none is the World's default.
-pub(crate) fn set_week(node: &Node, agent: &AgentName, dir: &Path, week: Option<fastctx_types::usage::Usd>) -> Result<(), Failure> {
+/// Sets what a week of the Codex or Claude Code login `dir` here is expected
+/// to hold, in quota dollars, as its owner chooses, none being the World's
+/// default; and, where given, how far a week's figure may stand from it, in
+/// percent either way.
+pub(crate) fn set_week(
+    node: &Node,
+    agent: &AgentName,
+    dir: &Path,
+    week: Option<fastctx_types::usage::Usd>,
+    swing: Option<u8>,
+) -> Result<(), Failure> {
     if !AGENTS.contains(&agent.as_str()) {
         return Err(Failure::not_run("only Codex and Claude Code logins keep their usage"));
     }
     if week.is_some_and(|week| week.0 == 0) {
         return Err(Failure::not_run("a login's week is an amount above zero"));
     }
+    if swing.is_some_and(|swing| swing == 0 || swing > crate::usage::WIDEST_SWING) {
+        return Err(Failure::not_run(format!(
+            "a week's figure stands within 1 to {} percent of what the week is expected to hold",
+            crate::usage::WIDEST_SWING
+        )));
+    }
     known(node, agent, dir)?;
-    crate::usage::set_week(node, agent.as_str(), dir, week).map_err(|error| Failure::new(format!("keeping the login's week: {error}")))?;
+    crate::usage::set_week(node, agent.as_str(), dir, week)
+        .map_err(|error| Failure::new(format!("keeping the login's week: {error}")))?;
+    if let Some(swing) = swing {
+        crate::usage::set_swing(node, agent.as_str(), dir, swing)
+            .map_err(|error| Failure::new(format!("keeping the reach of the login's week: {error}")))?;
+    }
     snapshot::ask(node);
     Ok(())
 }
 
-/// Turns on or off whether a week the vendor cleared before its reset counts
-/// anew in the Codex or Claude Code login `dir` here, as its owner chooses;
-/// off by default (`world-usage.md`).
+/// Resets what everyone has used of this week of the Claude Code login `dir`
+/// here, to `to_tenths` of the week's figure in tenths of a percent; or with
+/// none takes the reset `id` back.
+pub(crate) fn reset_usage(
+    node: &Node,
+    agent: &AgentName,
+    dir: &Path,
+    id: &str,
+    to_tenths: Option<u32>,
+) -> Result<(), Failure> {
+    if !AGENTS.contains(&agent.as_str()) {
+        return Err(Failure::not_run("only Codex and Claude Code logins keep their usage"));
+    }
+    known(node, agent, dir)?;
+    crate::usage::reset_usage(node, agent.as_str(), dir, id, to_tenths)
+        .map_err(|error| Failure::new(format!("resetting the week's usage: {error}")))?
+        .map_err(Failure::not_run)?;
+    snapshot::ask(node);
+    Ok(())
+}
+
+/// What an interface of before asks to turn on or off: whether a week the
+/// vendor cleared before its reset counts anew from then. No reset is looked
+/// for in the readings any more (用户 2026-11-19: 任何情况，就是不要设置重置检
+/// 测): its owner resets a week's usage by hand (`reset_usage`). Turning it
+/// off is so already; turning it on is refused and says why.
 pub(crate) fn set_resets_in_place(node: &Node, agent: &AgentName, dir: &Path, on: bool) -> Result<(), Failure> {
     if !AGENTS.contains(&agent.as_str()) {
         return Err(Failure::not_run("only Codex and Claude Code logins keep their usage"));
     }
     known(node, agent, dir)?;
-    crate::usage::set_resets_in_place(node, agent.as_str(), dir, on)
-        .map_err(|error| Failure::new(format!("keeping the login's weekly resets: {error}")))?;
-    snapshot::ask(node);
+    if on {
+        return Err(Failure::not_run(
+            "this machine no longer looks for a week's reset in the login's readings; its owner resets the week's usage by hand, from a newer Fastctx",
+        ));
+    }
     Ok(())
 }
 

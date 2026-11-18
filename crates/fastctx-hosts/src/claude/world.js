@@ -1127,8 +1127,9 @@ async function completeTurn($, context, e, next) {
     worldFailure($, 'turn.complete presentation', error)
   }
   // The session's figures as the turn ends reach the node ahead of the end
-  // itself, so its ledger and the account's windows stand as the turn left
-  // them; what the cost total rose by since the turn began is the turn's.
+  // itself, so its ledger stands as the turn left it (the account's windows
+  // came with the turn's last answered step); what the cost total rose by
+  // since the turn began is the turn's.
   const usage = await within($, stepMeasured($, context, null, true))
   const before = context.spentBefore?.turn === e.turnId ? context.spentBefore.usd : undefined
   const total = usage?.cost?.usd

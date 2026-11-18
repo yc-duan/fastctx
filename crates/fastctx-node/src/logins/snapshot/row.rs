@@ -99,25 +99,25 @@ pub(super) async fn one(
         None
     };
     let (reading, dir, kept) = (node.clone(), dir_owned.clone(), record.clone());
-    let (reset_in_place, workbench, drift, auto_title, week) = read(node, deadline, "reading login preferences", move || {
+    let (workbench, drift, auto_title, week, swing) = read(node, deadline, "reading login preferences", move || {
         Ok((
-            crate::usage::resets_in_place(&reading, agent, &dir),
             logins::workbench::is_open(&reading, &fastctx_types::access::Acting::Here, agent, Some(&dir)),
             logins::refresh::of(&reading, agent, &dir),
             agent == "codex" && !kept.codex.untitled.iter().any(|known| crate::homes::same_dir(known, &dir)),
             crate::usage::week(&reading, agent, &dir),
+            crate::usage::swing(&reading, agent, &dir),
         ))
     })
     .await
     .unwrap_or_else(|error| {
         (
             false,
-            false,
             Some(fastctx_types::logins::Drift::Changed {
                 location: dir_owned.display().to_string(),
                 reason: error.message,
             }),
             false,
+            None,
             None,
         )
     });
@@ -142,8 +142,10 @@ pub(super) async fn one(
         integration,
         unattended,
         auto_title,
-        reset_in_place,
+        // No reset is looked for in the readings any more.
+        reset_in_place: false,
         week,
+        swing,
         launcher,
         models,
         model_edits,

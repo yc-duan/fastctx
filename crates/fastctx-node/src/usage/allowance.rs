@@ -1,4 +1,5 @@
 //! Assistance limits use the committed eight-day spending index, without rereading files.
+use super::reckoning::quota;
 use crate::Node;
 use fastctx_net::directory::Assist;
 use fastctx_types::access::{Acting, HubAccount};
@@ -18,13 +19,6 @@ pub(crate) const DEFAULT_WEEK: Usd = Usd(3_000_000_000);
 /// owner too, in percent (用户 2026-11-15: 线，我们定50%): Fable's own
 /// allowance in the vendor's accounting, which no reading tells.
 const FABLE_LINE: u64 = 50;
-
-/// What a request used of the quota, in dollars: its API price, as Claude
-/// Code reckons it, and for Fable two and a half times that (用户
-/// 2026-11-15: fable是2.5倍; 其他模型严格按照api价格).
-fn quota(charge: &super::recent::Charge) -> Usd {
-    if charge.fable { Usd(charge.usd.0.saturating_mul(5) / 2) } else { charge.usd }
-}
 
 #[derive(Clone)]
 pub(crate) enum UsedUp {
@@ -144,21 +138,24 @@ fn choose(mut reached: Vec<UsedUp>, model: Option<&str>) -> Option<UsedUp> {
 }
 
 /// Whether the whole Claude Code login a conversation is in has used its Fable
-/// line this week: the Fable all who use it spent, in quota dollars, against
-/// half the week its owner set.
+/// line this week: the Fable all who use it spent, in quota dollars, as it
+/// counts after the resets made by hand, against half the week's figure.
 pub(crate) fn fable_line(node: &Node, about: &About) -> Option<UsedUp> {
     if about.host.agent.as_str() != "claude" {
         return None;
     }
     let dir = login(node, about)?;
-    let allowance = Usd(super::week(node, "claude", &dir).unwrap_or(DEFAULT_WEEK).0 / 100 * FABLE_LINE);
     let path = super::ledger(node, "claude", &dir);
     let now = Timestamp::now();
     super::with_book(node, &path, |book| {
-        let week = super::readings::week(book.reading.as_ref(), now);
+        let reckoned = super::reckoning::of(&path, book, "claude", now);
+        let (week, allowance) = (reckoned.week, Usd(reckoned.figure.0 / 100 * FABLE_LINE));
         let fable: Vec<_> = book.recent.iter().filter(|charge| charge.fable && charge.at <= now).map(|charge| (charge.at, quota(charge))).collect();
         let until = if week.window {
-            let spent = fable.iter().filter(|(at, _)| *at >= week.start).fold(Usd::ZERO, |sum, (_, usd)| sum.saturating_add(*usd));
+            let spent = fable
+                .iter()
+                .filter(|(at, _)| *at >= week.start)
+                .fold(Usd::ZERO, |sum, (at, usd)| sum.saturating_add(reckoned.counted(*at, *usd)));
             (spent >= allowance).then_some(week.end)
         } else {
             rolling(&fable, allowance, WEEK, now)
@@ -185,8 +182,6 @@ fn assisted(node: &Node, about: &About, account: &HubAccount, model: Option<&str
         return None;
     }
     let dir = login(node, about)?;
-    // A share is of the week the login's owner set, in quota dollars.
-    let share = assist.share.map(|share| Usd(super::week(node, agent, &dir).unwrap_or(DEFAULT_WEEK).0 / 100 * u64::from(share)));
     let path = super::ledger(node, agent, &dir);
     let now = Timestamp::now();
     let reached = super::with_book(node, &path, |book| {
@@ -215,7 +210,11 @@ fn assisted(node: &Node, about: &About, account: &HubAccount, model: Option<&str
         if agent != "claude" {
             return Ok(reached);
         }
-        let week = super::readings::week(book.reading.as_ref(), now);
+        // A share is of the week's figure, in quota dollars; what was used
+        // before a reset made by hand counts as the part the reset left.
+        let reckoned = super::reckoning::of(&path, book, agent, now);
+        let week = reckoned.week;
+        let share = assist.share.map(|share| Usd(reckoned.figure.0 / 100 * u64::from(share)));
         let balances: Vec<_> = book
             .balances()
             .into_iter()
@@ -239,7 +238,7 @@ fn assisted(node: &Node, about: &About, account: &HubAccount, model: Option<&str
                 let spent = costs
                     .iter()
                     .filter(|(at, _)| *at >= week.start)
-                    .fold(Usd::ZERO, |sum, (_, usd)| sum.saturating_add(*usd));
+                    .fold(Usd::ZERO, |sum, (at, usd)| sum.saturating_add(reckoned.counted(*at, *usd)));
                 (spent >= cap).then_some(week.end)
             } else {
                 rolling(costs, cap, WEEK, now)

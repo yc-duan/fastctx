@@ -229,11 +229,10 @@ pub(super) struct Book {
     pub keys: HashMap<String, Option<Timestamp>>,
     pub reading: Option<Reading>,
     pub readings: HashMap<Option<String>, Reading>,
-    /// Pending detection and source observations, separate for each account.
-    pub lowered: HashMap<Option<String>, super::readings::Lowered>,
+    /// What each session last said of each account's windows
+    /// (`readings::record`); not kept from one run of the node to the next.
+    pub said: HashMap<Option<String>, super::readings::Said>,
     pub resets: HashMap<Option<String>, Vec<UsageReset>>,
-    /// Whether future early weekly resets are detected automatically.
-    pub follow: bool,
     pub accounts: Vec<(Timestamp, String)>,
     pub recent: Vec<Charge>,
     pub history: super::history::History,
@@ -259,7 +258,7 @@ impl Book {
     /// where the one read holds less. The days' own index is made when a
     /// report reads them (`super::history`).
     pub(super) fn load_at(&mut self, path: &Path, now: Timestamp) -> io::Result<()> {
-        *self = Self { follow: super::follows_clearings(path), ..Self::default() };
+        *self = Self::default();
         let files = days(path, Timestamp::MIN)?;
         let open = super::checkpoint::first_open(path, now);
         let mut from = 0;
@@ -356,8 +355,8 @@ impl Book {
                     if let Some(legacy) = self.readings.remove(&None) {
                         self.readings.insert(Some(account.clone()), legacy);
                     }
-                    if let Some(legacy) = self.lowered.remove(&None) {
-                        self.lowered.insert(Some(account.clone()), legacy);
+                    if let Some(legacy) = self.said.remove(&None) {
+                        self.said.insert(Some(account.clone()), legacy);
                     }
                     if let Some(legacy) = self.resets.remove(&None) {
                         self.resets.insert(Some(account.clone()), legacy);

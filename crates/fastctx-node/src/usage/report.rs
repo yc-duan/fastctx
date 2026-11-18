@@ -8,12 +8,13 @@ use std::path::Path;
 
 use fastctx_types::access::HubAccount;
 use fastctx_types::usage::{
-    KindsUsd, ModelUse, Tokens, UsageHour, UsagePerson, UsageReading, UsageReport, UsageShare, UsageSpan, UsageSum,
-    UsageWeek, Usd, WeekUse,
+    KindsUsd, ModelUse, Tokens, UsageCounted, UsageHour, UsagePerson, UsageReading, UsageReport, UsageShare, UsageSpan,
+    UsageSum, UsageWeek, Usd, WeekUse,
 };
 use jiff::{SignedDuration, Timestamp};
 
 use super::ledger::{Reading, Use};
+use super::reckoning::Reckoned;
 use super::{Entry, WEEK_SECONDS, Week};
 use crate::Node;
 
@@ -38,7 +39,7 @@ pub(crate) fn report(
     owner: bool,
 ) -> io::Result<UsageReport> {
     let ledger = super::ledger(node, agent, dir);
-    super::with_book(node, &ledger, |book| made(agent, &ledger, book, only, owner))
+    super::with_book(node, &ledger, |book| made(agent, &ledger, book, only, owner, true))
 }
 
 /// `agent`'s ledger at `ledger`, read whole now and kept nowhere: one put
@@ -47,30 +48,37 @@ pub(crate) fn report(
 pub(super) fn report_of(agent: &str, ledger: &Path, only: Option<&HubAccount>, owner: bool) -> io::Result<UsageReport> {
     let mut book = super::ledger::Book::default();
     book.load_at(ledger, Timestamp::now())?;
-    made(agent, ledger, &mut book, only, owner)
+    // What a week is reckoned to hold is kept beside the ledger it is of,
+    // not among its copies.
+    made(agent, ledger, &mut book, only, owner, false)
 }
 
-/// The report of the ledger at `ledger`, loaded as `book`.
+/// The report of the ledger at `ledger`, loaded as `book`; with what the
+/// login's week is reckoned to hold where `reckon` and it is Claude Code's.
 fn made(
     agent: &str,
     ledger: &Path,
     book: &mut super::ledger::Book,
     only: Option<&HubAccount>,
     owner: bool,
+    reckon: bool,
 ) -> io::Result<UsageReport> {
     let now = Timestamp::now();
     let oldest = now - SignedDuration::from_hours(24 * super::KEPT_DAYS);
     let since = Timestamp::from_second(oldest.as_second().div_euclid(86400) * 86400).expect("retained day");
     let history = book.reset_history();
-    let mut entries = book.history.entries(ledger, since, now, book.reading.as_ref(), &history)?;
+    let reckoned = (reckon && agent == "claude").then(|| super::reckoning::of(ledger, book, agent, now));
+    let cut = reckoned.as_ref().map(Reckoned::cuts).unwrap_or_default();
+    let mut entries = book.history.entries(ledger, since, now, book.reading.as_ref(), &history, &cut)?;
     entries.extend(book.balances().into_iter().filter(|row| row.at() >= since));
     let resets = (owner && only.is_none()).then(|| {
         let mut resets: Vec<_> = history.iter().map(|(_, reset)| reset.clone()).collect();
         resets.sort_by_key(|reset| std::cmp::Reverse(reset.confirmed_at));
         resets
     });
-    let mut report = summarize(agent, only, now, book.reading.as_ref(), entries, &history)?;
+    let mut report = summarize(agent, only, now, book.reading.as_ref(), entries, &history, reckoned.as_ref())?;
     report.resets = resets;
+    report.reckoning = reckoned.map(|reckoned| reckoned.told(only.is_none(), owner));
     Ok(report)
 }
 
@@ -81,6 +89,7 @@ pub(super) fn summarize(
     reading: Option<&Reading>,
     entries: Vec<Entry>,
     resets: &[(Option<String>, fastctx_types::usage::UsageReset)],
+    reckoned: Option<&Reckoned>,
 ) -> io::Result<UsageReport> {
     let day = now - SignedDuration::from_hours(24);
     let week = super::readings::week(reading, now);
@@ -128,6 +137,7 @@ pub(super) fn summarize(
     let mut weekly: BTreeMap<u32, UsageSum> = BTreeMap::new();
     let mut fable: BTreeMap<u32, UsageSum> = BTreeMap::new();
     let mut daily: BTreeMap<u32, UsageSum> = BTreeMap::new();
+    let mut counted: BTreeMap<u32, UsageCounted> = BTreeMap::new();
     let mut went: BTreeMap<u32, Tally> = BTreeMap::new();
     let mut all = Tally::default();
     let mut readings = Vec::new();
@@ -194,6 +204,16 @@ pub(super) fn summarize(
                 if on_fable {
                     fable.entry(index).or_default().add(count, usage.usd);
                 }
+                // In quota dollars, as it counts after the resets made by hand.
+                if let (Some(reckoned), Some(usd)) = (reckoned, usage.usd) {
+                    let quota = if on_fable { super::reckoning::quota_of_fable(usd) } else { usd };
+                    let quota = reckoned.counted(at, quota);
+                    let counted = counted.entry(index).or_default();
+                    counted.week = counted.week.saturating_add(quota);
+                    if on_fable {
+                        counted.fable = counted.fable.saturating_add(quota);
+                    }
+                }
                 went.entry(index).or_default().add(&usage);
                 all.add(&usage);
             }
@@ -211,6 +231,7 @@ pub(super) fn summarize(
                     day: Some(daily.get(&index).copied().unwrap_or_default()),
                     fable: (agent == "claude").then(|| fable.get(&index).copied().unwrap_or_default()),
                     went: Some(went.remove(&index).unwrap_or_default().went()),
+                    counted: reckoned.map(|_| counted.get(&index).copied().unwrap_or_default()),
                 }
             })
             .collect(),
@@ -226,6 +247,7 @@ pub(super) fn summarize(
         week: UsageWeek { start: Some(week.start), end: Some(week.end), window: week.window, went: all.went() },
         readings,
         resets: None,
+        reckoning: None,
         weeks: spans
             .iter()
             .enumerate()

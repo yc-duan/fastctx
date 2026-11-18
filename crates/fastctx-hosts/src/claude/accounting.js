@@ -172,7 +172,13 @@ async function stepMeasured($, context, step = null, force = false) {
     }
     const usage = await sessionUsage($)
     if (usage === null) throw new Error('Claude did not provide its usage sample')
-    await accountingReport($, context, usage)
+    // The account's windows are what the model's last answer to this session
+    // carried. A step that was answered has just heard them; any other sample
+    // says them again as of whenever that was, which is no reading of now:
+    // another session may have read the account since, and it may have
+    // fallen. The node keeps the newest reading, so only an answer gives one.
+    const heard = step !== null && step.usage !== null
+    await accountingReport($, context, heard ? usage : { ...usage, rateLimits: undefined })
     if (force && usage.context?.tokens !== undefined) {
       await reports($, context).event('session', { happened: { event: 'context', used: usage.context.tokens, window: usage.context.window } })
     }

@@ -156,6 +156,9 @@ impl History {
     pub fn invalidate(&mut self, file: &Path) {
         self.days.remove(file);
     }
+    /// The ledger's rows since `since`: its readings as written, and what
+    /// was used summed by the hour, each hour cut at the weeks' boundaries
+    /// and at `cut`.
     pub fn entries(
         &mut self,
         path: &Path,
@@ -163,6 +166,7 @@ impl History {
         now: Timestamp,
         reading: Option<&Reading>,
         resets: &[(Option<String>, fastctx_types::usage::UsageReset)],
+        cut: &[Timestamp],
     ) -> io::Result<Vec<Entry>> {
         let files = ledger::days(path, since)?;
         self.days.retain(|file, _| files.contains(file));
@@ -200,6 +204,7 @@ impl History {
         let periods = super::report::boundaries(&super::report::spans(&entries, week, resets), week);
         let mut cuts = periods.clone();
         cuts.extend([now - SignedDuration::from_hours(24), week.start, week.end.max(now)]);
+        cuts.extend_from_slice(cut);
         for day in days {
             day.summaries(&cuts, &periods, &mut entries);
         }

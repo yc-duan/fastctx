@@ -79,6 +79,9 @@ export interface Login {
   /** The login's week in quota dollars as its owner set it, in millionths;
    *  absent is the World's default. A node of before keeps none. */
   week?: number;
+  /** How far a week's own figure may stand from that, in percent either
+   *  way, as its owner set it; absent is the World's default. */
+  swing?: number;
   /** The program the World starts for it. */
   launcher?: Launcher;
   /** The models a conversation in it can start on, as last read. */

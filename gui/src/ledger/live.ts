@@ -10,9 +10,9 @@ import { loginsOf } from "../world/accounts";
 import type { AgentLimits, Fact, LimitWindow } from "../world/agents";
 import type { WorldNow } from "../world/bridge";
 import type { AgentLogins, FoundProgram, Login as WorldLogin, MachineLogins, MachineLoginsHeard } from "../world/logins";
-import type { UsageReport } from "../world/usage";
+import type { UsageHandReset, UsageReport } from "../world/usage";
 import type { CallOutcome, UsageCall, UsageCallsPage, UsageCallsQuery } from "../world/usage-calls";
-import { FABLE_TIMES, isFable, planNames, PLATE, SWING, timesOf, type Call, type CallsPage, type CallsQuery, type Days, type Grant, type Line, type Login, type Machine, type Net, type Outcome, type PlanLabel, type Series, type Split, type Unit } from "./data";
+import { FABLE_TIMES, isFable, planNames, PLATE, SWING, timesOf, type Call, type CallsPage, type CallsQuery, type Days, type Expect, type Grant, type Line, type Login, type Machine, type Net, type Outcome, type PlanLabel, type Reset, type Series, type Split, type Unit } from "./data";
 
 /** A login's key in the pages and their addresses. */
 export const idOf = (machine: string, agent: string, dir: string) => `${machine}|${agent}|${dir}`;
@@ -75,8 +75,28 @@ function programSaid(program: FoundProgram): string {
 export interface Seen {
   /** Each machine's record as last heard, by name. */
   records: Map<string, MachineLoginsHeard>;
-  /** Each login's week as its node keeps it, in quota dollars. */
+  /** Each login's week as its node reckons it for this week, in quota
+   *  dollars, where its usage was read. */
   plates: Map<string, number>;
+  /** What each login's owner expects of its week, as its node told it
+   *  with its usage. */
+  expects: Map<string, Expect>;
+  /** The resets made by hand in each login the reader owns, newest first. */
+  resets: Map<string, UsageHandReset[]>;
+}
+
+/** Takes what a login's usage says its week is reckoned to hold; whether
+ *  anything the pages draw from changed. */
+export function reckonedBy(seen: Seen, login: Login, report: UsageReport): boolean {
+  const told = report.reckoning;
+  if (!told) return false;
+  const [plate, expect] = [told.week / 1_000_000, { base: told.base / 1_000_000, swing: told.swing }];
+  const had = seen.expects.get(login.id);
+  const changed = seen.plates.get(login.id) !== plate || had?.base !== expect.base || had?.swing !== expect.swing;
+  seen.plates.set(login.id, plate);
+  seen.expects.set(login.id, expect);
+  seen.resets.set(login.id, told.resets ?? []);
+  return changed;
 }
 
 /** The pages' network, from what the World holds now. */
@@ -86,6 +106,7 @@ export function netOf(world: WorldNow | null, seen: Seen, now: Date): Net {
   const grants: Grant[] = [];
   const lines: Record<string, Line> = {} as never;
   const plates: Record<string, number> = {} as never;
+  const expects: Record<string, Expect> = {} as never;
   const mine = loginsOf(world?.accounts);
   const hubs = world?.accounts.hubs ?? [];
   let admin = false;
@@ -112,8 +133,13 @@ export function netOf(world: WorldNow | null, seen: Seen, now: Date): Net {
     for (const [agent, side] of sidesOf(record)) {
       for (const [one, listed] of [...side.listed.map((one) => [one, true] as const), ...side.candidates.map((one) => [one, false] as const)]) {
         const login = loginOf(world, machine, agent, side, one, listed, now);
-        const plate = one.week ? one.week / 1_000_000 : seen.plates.get(login.id);
+        // This week's figure where the login's usage was read; until then
+        // what its owner expects, which the figure stands close to.
+        const base = one.week ? one.week / 1_000_000 : undefined;
+        const plate = seen.plates.get(login.id) ?? base;
         if (plate) plates[login.id] = plate;
+        const expect = seen.expects.get(login.id) ?? (base || one.swing ? { base: base ?? PLATE, swing: one.swing ?? SWING } : undefined);
+        if (expect) expects[login.id] = expect;
         logins.push(login);
         // One a login assists sees whom else it assists only where they
         // manage it with its owner, and then all but themselves.
@@ -136,7 +162,7 @@ export function netOf(world: WorldNow | null, seen: Seen, now: Date): Net {
     }
   }
   const people = [...new Set(hubs.flatMap((hub) => hub.accounts.map((account) => account.name)).filter((name) => !mine.some((login) => login.account === name)))].sort();
-  return { now, machines, logins, grants, lines, people, plates, expects: Object.fromEntries(Object.entries(plates).map(([id, base]) => [id, { base, swing: SWING }])), admin };
+  return { now, machines, logins, grants, lines, people, plates, expects, admin };
 }
 
 function joined(folder: string, path: string): string {
@@ -265,7 +291,10 @@ export function daysFrom(report: UsageReport, login: Login, plate: number, world
   const first = new Date(today.getTime() - (count - 1) * DAY);
   const dates = Array.from({ length: count }, (_, index) => new Date(first.getFullYear(), first.getMonth(), first.getDate() + index));
   const dayOf = (at: Date) => Math.round((new Date(at.getFullYear(), at.getMonth(), at.getDate()).getTime() - first.getTime()) / DAY);
-  const people = report.people.map((person) => personOf(person.account, world));
+  // In a login another owns, the machine's own use is its owner's and the
+  // reader's is their own; in the reader's own, both are theirs.
+  const own = (account: HubAccount | null) => !!account && personOf(account, world) === null;
+  const people = report.people.map((person) => (login.lent ? (person.account === null ? login.lent.by || "所有者" : own(person.account) ? null : person.account.account) : personOf(person.account, world)));
   const names = [...new Set(people.map((name) => name ?? "我"))];
   const zero = () => new Array<number>(count).fill(0);
   const total: Record<Unit, number[]> = { quota: zero(), tokens: zero() };
@@ -300,22 +329,47 @@ export function daysFrom(report: UsageReport, login: Login, plate: number, world
     parts.quota.person = { names, values: byPerson.quota };
     parts.tokens.person = { names, values: byPerson.tokens };
   }
+  // What each person's week counts as: as the node reckons it, after the
+  // resets made by hand, or from a node of before the week's dollars with
+  // Fable's at its multiplier.
   const week = report.people.map((person, index) => {
     const fable = (person.fable?.usd ?? 0) / 1_000_000;
-    return { name: people[index] ?? null, week: (person.week.usd ?? 0) / 1_000_000 + fable * (FABLE_TIMES - 1), fable: fable * FABLE_TIMES };
+    const counted = person.counted ? { week: person.counted.week / 1_000_000, fable: person.counted.fable / 1_000_000 } : { week: (person.week.usd ?? 0) / 1_000_000 + fable * (FABLE_TIMES - 1), fable: fable * FABLE_TIMES };
+    // The reader in another's login: named apart from its owner.
+    const me = !!login.lent && own(person.account);
+    return { name: me ? "我" : login.lent && person.account === null ? null : (people[index] ?? null), ...counted, me };
   });
-  const merged = new Map<string, { name: string | null; week: number; fable: number }>();
+  const merged = new Map<string, { name: string | null; week: number; fable: number; me?: boolean }>();
   for (const one of week) {
-    const key = one.name ?? "";
+    const key = one.me ? "\u0000me" : (one.name ?? "");
     const had = merged.get(key) ?? { name: one.name, week: 0, fable: 0 };
-    merged.set(key, { name: one.name, week: had.week + one.week, fable: had.fable + one.fable });
+    merged.set(key, { name: one.name, week: had.week + one.week, fable: had.fable + one.fable, ...(one.me ? { me: true } : {}) });
   }
   const ledgered = [...merged.values()].reduce((sum, one) => sum + one.week, 0);
-  const weeks = (login.family === "codex" ? [] : (report.weeks ?? []))
-    .filter((span) => (span.used_tenths ?? 0) >= 50)
-    .map((span) => ({ start: new Date(span.start), value: span.used.reduce((sum, one) => sum + (one.usd ?? 0), 0) / 1_000_000 / ((span.used_tenths ?? 0) / 1000) }))
-    .slice(-8);
+  // What each whole week came to: as the node measured it, or from a node
+  // of before the week's dollars over its highest reading.
+  const weeks = (
+    report.reckoning
+      ? (report.reckoning.weeks ?? []).filter((one) => one.came_to !== undefined).map((one) => ({ start: new Date(one.start), value: one.came_to! / 1_000_000 }))
+      : (login.family === "codex" ? [] : (report.weeks ?? [])).filter((span) => (span.used_tenths ?? 0) >= 50).map((span) => ({ start: new Date(span.start), value: span.used.reduce((sum, one) => sum + (one.usd ?? 0), 0) / 1_000_000 / ((span.used_tenths ?? 0) / 1000) }))
+  ).slice(-8);
   const how: Record<string, string> = { automatic: "自动检测", scheduled: "周期重置", recorded: "已记录" };
+  // The resets on record: those the vendor's week made as it turned, and
+  // those its owner made by hand, the newest of which can be taken back
+  // while its week lasts.
+  const made = report.reckoning?.resets ?? [];
+  const newest = made.find((reset) => !reset.undone);
+  const resets: (Reset & { when: number })[] = [
+    ...(report.resets ?? []).map((reset) => ({ when: new Date(reset.confirmed_at).getTime(), at: momentSaid(new Date(reset.confirmed_at)), how: how[reset.source] ?? reset.source, from: Math.round((reset.before_used_tenths ?? 0) / 10), to: Math.round(reset.used_tenths / 10) })),
+    ...made.map((reset) => ({
+      when: new Date(reset.at).getTime(),
+      at: momentSaid(new Date(reset.at)),
+      how: reset.undone ? "手动重置（已撤回）" : "手动重置",
+      from: Math.round(reset.from_tenths / 10),
+      to: Math.round(reset.to_tenths / 10),
+      ...(reset === newest && new Date(reset.week_end).getTime() > now.getTime() ? { undo: true } : {}),
+    })),
+  ].sort((a, b) => b.when - a.when);
   return {
     dates,
     total,
@@ -324,7 +378,7 @@ export function daysFrom(report: UsageReport, login: Login, plate: number, world
     hoursAre: login.family === "codex" ? "tokens" : "quota",
     people: [...merged.values()],
     weeks,
-    resets: report.resets ? report.resets.map((reset) => ({ at: momentSaid(new Date(reset.confirmed_at)), how: how[reset.source] ?? reset.source, from: Math.round((reset.before_used_tenths ?? 0) / 10), to: Math.round(reset.used_tenths / 10) })) : null,
+    resets: report.resets || report.reckoning?.resets ? resets.map(({ when: _, ...reset }) => reset) : null,
     gap: login.week && !login.week.reset && (!login.lent || login.lent.manages) ? login.week.used - (ledgered / plate) * 100 : 0,
   };
 }

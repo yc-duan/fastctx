@@ -130,6 +130,7 @@ pub(super) fn side(
             auto_title: false,
             reset_in_place: false,
             week: None,
+            swing: None,
             launcher: None,
             models: Vec::new(),
             model_edits: None,

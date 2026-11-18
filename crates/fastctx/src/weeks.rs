@@ -31,6 +31,12 @@ pub struct WeekArgs {
     /// The World's default week again.
     #[arg(long)]
     default: bool,
+    /// How far a week's own figure may stand from that, in percent either
+    /// way, from 1 to 20: each week's figure is what the week before came
+    /// to, held within this reach. Five where never set; as it is when not
+    /// given.
+    #[arg(long, value_parser = clap::value_parser!(u8).range(1..=20))]
+    swing: Option<u8>,
 }
 
 fn amount(usd: Usd) -> String {
@@ -75,7 +81,13 @@ pub fn logins(args: LoginsArgs) -> anyhow::Result<()> {
 /// Sets the week of one login, or the default again.
 pub fn week(args: WeekArgs) -> anyhow::Result<()> {
     let week = if args.default { None } else { args.dollars };
-    let call = Call::SetAgentWeek { machine: args.machine.clone().into(), agent: args.agent.clone(), dir: args.home.clone(), week };
+    let call = Call::SetAgentWeek {
+        machine: args.machine.clone().into(),
+        agent: args.agent.clone(),
+        dir: args.home.clone(),
+        week,
+        swing: args.swing,
+    };
     crate::ask::call(call)?;
     match week {
         Some(week) => println!("the {} login {} on {} has a week of {}", args.agent, args.home.display(), args.machine, amount(week)),

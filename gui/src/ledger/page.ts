@@ -26,7 +26,7 @@ import type { UsageReport } from "../world/usage";
 import type { UsageCallsPage, UsageCallsQuery } from "../world/usage-calls";
 import { forget, grantsOf, lines, logins as shownLogins, ME, plateOf, setHost, setNet, type Deeds, type Feed, type Login } from "./data";
 import { homePage } from "./home";
-import { askedOf, callsFrom, daysFrom, idOf, limitOf, managesOf, netOf, partsOf, type Seen } from "./live";
+import { askedOf, callsFrom, daysFrom, idOf, limitOf, managesOf, netOf, partsOf, reckonedBy, type Seen } from "./live";
 import { fillCharts, loginPage, setUntils } from "./login-page";
 import "./sheets";
 import { actOf, draw, drawnBy, setLinker, state, toast, type How, type Place } from "./state";
@@ -49,7 +49,10 @@ export interface AgentsPageOptions {
   limits(machine: string, agent: string, dir: string): Promise<MachineLogins>;
   setTitle(machine: string, agent: string, dir: string, on: boolean): Promise<MachineLogins>;
   setResetInPlace(machine: string, agent: string, dir: string, on: boolean): Promise<MachineLogins>;
-  setWeek(machine: string, agent: string, dir: string, week: number | null): Promise<MachineLogins>;
+  setWeek(machine: string, agent: string, dir: string, week: number | null, swing?: number): Promise<MachineLogins>;
+  /** Resets the week's usage to tenths of a percent of the week's figure,
+   *  or with none takes the reset `id` back. */
+  resetUsage(machine: string, agent: string, dir: string, id: string, toTenths: number | null): Promise<MachineLogins>;
   changeModels(machine: string, agent: string, dir: string, change: ModelChange): Promise<MachineLogins>;
   usage(machine: string, agent: string, dir: string): Promise<UsageReport>;
   calls(machine: string, agent: string, dir: string, query: UsageCallsQuery): Promise<UsageCallsPage>;
@@ -97,7 +100,7 @@ const IDLE_MS = 30_000;
 /** Every machine's record of its logins as last read, kept from one visit
  *  of the page to the next: coming back, the page is drawn at once from
  *  what it knew, and read again behind that. */
-const kept: Seen = { records: new Map(), plates: new Map() };
+const kept: Seen = { records: new Map(), plates: new Map(), expects: new Map(), resets: new Map() };
 
 export class AgentsPage implements Page {
   readonly element = document.createElement("div");
@@ -116,6 +119,8 @@ export class AgentsPage implements Page {
   private failed = false;
   /** The machines whose nodes page their ledger by 100 alone. */
   private readonly legacyCalls = new Set<string>();
+  /** The logins whose node reckons their week: it keeps a reset of one. */
+  private readonly reckoning = new Set<string>();
 
   constructor(private readonly options: AgentsPageOptions, place: AppPlace) {
     this.element.className = "page lg-app";
@@ -307,7 +312,14 @@ export class AgentsPage implements Page {
       days: async (login) => {
         const { machine, agent, dir } = this.recordOf(login);
         const report = await options.usage(machine, agent, dir);
-        return daysFrom(report, login, plateOf(login), options.store.world.peek(), options.now());
+        // What the node reckons the week to hold is what its parts are of;
+        // the pages drawn from what was known before are drawn again.
+        const changed = reckonedBy(this.seen, login, report);
+        if (report.reckoning) this.reckoning.add(login.id);
+        else this.reckoning.delete(login.id);
+        if (changed) queueMicrotask(() => this.rebuild());
+        const plate = report.reckoning ? report.reckoning.week / 1_000_000 : plateOf(login);
+        return daysFrom(report, login, plate, options.store.world.peek(), options.now());
       },
       calls: async (login, query) => {
         const { machine, agent, dir, picked } = this.recordOf(login);
@@ -344,6 +356,21 @@ export class AgentsPage implements Page {
       }
       await options.store.refresh();
       this.rebuild();
+    };
+    const tooOld = (error: unknown) => /does not know|unknown variant|older/i.test(String(error));
+    /** Resets the week's usage, or takes a reset back; what everyone used
+     *  is read again behind it. */
+    const reset = async (login: Login, id: string, toTenths: number | null) => {
+      const { machine, agent, dir } = this.recordOf(login);
+      // A node that reckons no week keeps no reset of one.
+      if (!this.reckoning.has(login.id)) throw new Error("该机器的 Fastctx 版本较旧，暂不支持重置用量");
+      try {
+        const record = await options.resetUsage(machine, agent, dir, id, toTenths);
+        forget(login);
+        this.took(record);
+      } catch (error) {
+        throw new Error(tooOld(error) ? "该机器的 Fastctx 版本较旧，暂不支持重置用量" : error instanceof Error ? error.message : String(error));
+      }
     };
     const assisted = (login: Login, person: string, limit: number | null, until: Date | null, manages?: boolean, line = lines[login.id]): AccountChange => {
       const { machine, agent, home } = this.recordOf(login);
@@ -447,13 +474,21 @@ export class AgentsPage implements Page {
       expect: async (login, expect) => {
         const { machine, agent, dir } = this.recordOf(login);
         try {
-          this.took(await options.setWeek(machine, agent, dir, Math.round(expect.base * 1_000_000)));
+          const record = await options.setWeek(machine, agent, dir, Math.round(expect.base * 1_000_000), expect.swing);
+          // The week's figure follows what is expected: read again.
+          this.seen.plates.delete(login.id);
+          this.seen.expects.delete(login.id);
+          forget(login);
+          this.took(record);
         } catch (error) {
-          throw new Error(/does not know|unknown variant|older/i.test(String(error)) ? "该机器的 Fastctx 版本较旧，暂不支持设置周额度" : error instanceof Error ? error.message : String(error));
+          throw new Error(tooOld(error) ? "该机器的 Fastctx 版本较旧，暂不支持设置周额度" : error instanceof Error ? error.message : String(error));
         }
       },
-      resetUsage: () => Promise.reject(new Error("该机器的 Fastctx 版本较旧，暂不支持重置用量")),
-      undoReset: () => Promise.reject(new Error("该机器的 Fastctx 版本较旧，暂不支持重置用量")),
+      resetUsage: (login, to) => reset(login, `r-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`, Math.round(to * 10)),
+      undoReset: (login) => {
+        const newest = this.seen.resets.get(login.id)?.find((made) => !made.undone);
+        return newest ? reset(login, newest.id, null) : Promise.reject(new Error("没有可撤回的重置"));
+      },
       assist: (login, person, limit, until, manages) => {
         // The reader's own share, set by one who manages the login.
         const to = person === ME ? this.managing(login)?.account : person;

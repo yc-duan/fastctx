@@ -101,6 +101,82 @@ pub struct UsageReport {
     /// owner. Absence means this reader is not its owner or the node is older.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resets: Option<Vec<UsageReset>>,
+    /// What a Claude Code login's week is reckoned to hold, which shares
+    /// and its Fable line are parts of. Absent for Codex, for a ledger put
+    /// together from copies, and from an older node.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reckoning: Option<UsageReckoning>,
+}
+
+/// What a login's week is reckoned to hold, in quota dollars (a request's
+/// API price, Fable's two and a half times): what its owner expects, how far
+/// a week's figure may stand from that, and this week's figure, fixed within
+/// that reach as the week began from what the week before came to (用户
+/// 2026-11-19: 波动器，只允许在极小范围波动). Everyone who uses the login is
+/// told these three.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UsageReckoning {
+    /// What its owner expects a week to hold.
+    pub base: Usd,
+    /// How far a week's figure may stand from it, in percent either way.
+    pub swing: u8,
+    /// This week's figure.
+    pub week: Usd,
+    /// The weeks measured, oldest first; to the login's owner and to one who
+    /// manages it with them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub weeks: Vec<UsageMeasured>,
+    /// The resets of a week's usage made by hand, newest first; to the
+    /// login's owner alone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resets: Option<Vec<UsageHandReset>>,
+}
+
+/// What one week of the login's own window came to: the quota dollars the
+/// ledger kept between the week's first reading and its last, over how far
+/// the window's reading rose between them.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UsageMeasured {
+    pub start: Timestamp,
+    pub end: Timestamp,
+    pub spent: Usd,
+    /// How far the reading rose, in tenths of a percent.
+    pub rise_tenths: u32,
+    /// What a whole week comes to at that rate; none where the reading rose
+    /// too little to say, and the figure before stands.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub came_to: Option<Usd>,
+}
+
+/// A week's usage reset by hand, by the login's owner: everyone's use of the
+/// week until then counts as `to_tenths` over `from_tenths` of what it was,
+/// Fable's alike (用户 2026-11-19: 用量全重置和用量重置到百分之多少). The
+/// ledger itself is unchanged.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UsageHandReset {
+    /// What its maker named it, so that one given twice is made once.
+    pub id: String,
+    pub at: Timestamp,
+    /// The end of the week it was made in.
+    pub week_end: Timestamp,
+    /// What everyone had used of the week's figure until then, as it then
+    /// counted, in tenths of a percent.
+    pub from_tenths: u32,
+    /// What that counts as from then on.
+    pub to_tenths: u32,
+    /// When it was taken back.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub undone: Option<Timestamp>,
+}
+
+/// What a person's use of the week counts as, in quota dollars, after the
+/// resets made by hand in it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UsageCounted {
+    /// All its models, Fable's at two and a half times its price.
+    pub week: Usd,
+    /// The part of that which is Fable's.
+    pub fable: Usd,
 }
 
 /// A recorded start of weekly accounting. Confirmation never deletes use;
@@ -142,6 +218,10 @@ pub struct UsagePerson {
     /// What its week went to. Older nodes do not say.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub went: Option<WeekUse>,
+    /// What its week counts as against the week's figure; where the report
+    /// has a reckoning.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub counted: Option<UsageCounted>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]

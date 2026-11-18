@@ -24910,6 +24910,10 @@
                 "cache_write": 23960000,
                 "output": 40810000
               }
+            },
+            "counted": {
+              "week": 33633333,
+              "fable": 2500000
             }
           },
           {
@@ -24943,6 +24947,10 @@
                 "cache_write": 200000,
                 "output": 60000
               }
+            },
+            "counted": {
+              "week": 1930000,
+              "fable": 0
             }
           }
         ],
@@ -25061,7 +25069,44 @@
             "used_tenths": 10,
             "source": "scheduled"
           }
-        ]
+        ],
+        "reckoning": {
+          "base": 3000000000,
+          "swing": 5,
+          "week": 2850000000,
+          "weeks": [
+            {
+              "start": "2026-09-24T18:00:00Z",
+              "end": "2026-10-01T18:00:00Z",
+              "spent": 310000000,
+              "rise_tenths": 104
+            },
+            {
+              "start": "2026-10-01T18:00:00Z",
+              "end": "2026-10-08T18:00:00Z",
+              "spent": 2010000000,
+              "rise_tenths": 730,
+              "came_to": 2753424657
+            }
+          ],
+          "resets": [
+            {
+              "id": "r-2",
+              "at": "2026-10-11T09:00:00Z",
+              "week_end": "2026-10-15T18:00:00Z",
+              "from_tenths": 36,
+              "to_tenths": 12
+            },
+            {
+              "id": "r-1",
+              "at": "2026-10-10T09:00:00Z",
+              "week_end": "2026-10-15T18:00:00Z",
+              "from_tenths": 30,
+              "to_tenths": 0,
+              "undone": "2026-10-10T09:02:00Z"
+            }
+          ]
+        }
       },
       {
         "reply": "agent_usage",
@@ -25145,6 +25190,10 @@
                 "cache_write": 23960000,
                 "output": 40810000
               }
+            },
+            "counted": {
+              "week": 33633333,
+              "fable": 2500000
             }
           },
           {
@@ -25178,6 +25227,10 @@
                 "cache_write": 200000,
                 "output": 60000
               }
+            },
+            "counted": {
+              "week": 1930000,
+              "fable": 0
             }
           }
         ],
@@ -25296,7 +25349,44 @@
             "used_tenths": 10,
             "source": "scheduled"
           }
-        ]
+        ],
+        "reckoning": {
+          "base": 3000000000,
+          "swing": 5,
+          "week": 2850000000,
+          "weeks": [
+            {
+              "start": "2026-09-24T18:00:00Z",
+              "end": "2026-10-01T18:00:00Z",
+              "spent": 310000000,
+              "rise_tenths": 104
+            },
+            {
+              "start": "2026-10-01T18:00:00Z",
+              "end": "2026-10-08T18:00:00Z",
+              "spent": 2010000000,
+              "rise_tenths": 730,
+              "came_to": 2753424657
+            }
+          ],
+          "resets": [
+            {
+              "id": "r-2",
+              "at": "2026-10-11T09:00:00Z",
+              "week_end": "2026-10-15T18:00:00Z",
+              "from_tenths": 36,
+              "to_tenths": 12
+            },
+            {
+              "id": "r-1",
+              "at": "2026-10-10T09:00:00Z",
+              "week_end": "2026-10-15T18:00:00Z",
+              "from_tenths": 30,
+              "to_tenths": 0,
+              "undone": "2026-10-10T09:02:00Z"
+            }
+          ]
+        }
       }
     ]
   },

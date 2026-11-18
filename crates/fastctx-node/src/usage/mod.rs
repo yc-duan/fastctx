@@ -15,6 +15,7 @@ mod meter;
 mod quarantine;
 mod readings;
 mod recent;
+mod reckoning;
 mod report;
 mod resets;
 mod tail;
@@ -60,23 +61,51 @@ fn ledger(node: &Node, agent: &str, dir: &Path) -> PathBuf {
     root(node).join(format!("{agent}-{}", crate::homes::key(dir)))
 }
 
-/// The owner's choice to detect future early weekly resets. Confirmed
-/// accounting boundaries remain in the ledger independently of this flag.
-const FOLLOW_CLEARINGS: &str = "follow-clearings";
-
-fn follows_clearings(path: &Path) -> bool {
-    fastctx_platform::disk::exists(path.join(FOLLOW_CLEARINGS)).unwrap_or(false)
-}
-
 /// Where a login's week, as its owner set it, is kept: its dollars, in
 /// millionths, beside its ledger.
 const WEEK: &str = "week";
 
 /// A login's week in quota dollars as its owner set it; none is the World's
-/// default.
+/// default. It is what they expect a week to hold: each week's own figure
+/// stands within a small reach of it (`reckoning`).
 pub(crate) fn week(node: &Node, agent: &str, dir: &Path) -> Option<fastctx_types::usage::Usd> {
-    let kept = fastctx_platform::disk::read(ledger(node, agent, dir).join(WEEK)).ok()?;
+    week_at(&ledger(node, agent, dir))
+}
+
+/// The same of the login whose ledger is at `path`.
+fn week_at(path: &Path) -> Option<fastctx_types::usage::Usd> {
+    let kept = fastctx_platform::disk::read(path.join(WEEK)).ok()?;
     String::from_utf8(kept).ok()?.trim().parse::<u64>().ok().filter(|week| *week > 0).map(fastctx_types::usage::Usd)
+}
+
+pub(crate) use reckoning::WIDEST as WIDEST_SWING;
+
+/// How far a week's figure may stand from what the login's owner expects,
+/// in percent either way, as they set it; none is the World's default.
+pub(crate) fn swing(node: &Node, agent: &str, dir: &Path) -> Option<u8> {
+    reckoning::swing(&ledger(node, agent, dir))
+}
+
+/// Keeps how far a week's figure may stand from what its owner expects.
+pub(crate) fn set_swing(node: &Node, agent: &str, dir: &Path, swing: u8) -> io::Result<()> {
+    reckoning::set_swing(&ledger(node, agent, dir), swing)
+}
+
+/// Resets what everyone has used of this week of a login to `to_tenths` of
+/// the week's figure, or with none takes the reset `id` back.
+/// What it refuses is told apart from a ledger that cannot be read.
+pub(crate) fn reset_usage(
+    node: &Node,
+    agent: &str,
+    dir: &Path,
+    id: &str,
+    to_tenths: Option<u32>,
+) -> io::Result<Result<(), String>> {
+    let path = ledger(node, agent, dir);
+    with_book(node, &path, |book| match reckoning::reset(&path, book, agent, Timestamp::now(), id, to_tenths) {
+        Err(error) if error.kind() == io::ErrorKind::InvalidInput => Ok(Err(error.to_string())),
+        made => made.map(Ok),
+    })
 }
 
 /// Keeps a login's week, or forgets it for the World's default.
@@ -93,33 +122,6 @@ pub(crate) fn set_week(node: &Node, agent: &str, dir: &Path, week: Option<fastct
             _ => Ok(()),
         },
     }
-}
-
-/// Whether future early weekly resets are detected for this login.
-/// Previously confirmed boundaries do not depend on this setting.
-pub(crate) fn resets_in_place(node: &Node, agent: &str, dir: &Path) -> bool {
-    follows_clearings(&ledger(node, agent, dir))
-}
-
-/// Changes future detection without reconsidering committed boundaries.
-pub(crate) fn set_resets_in_place(node: &Node, agent: &str, dir: &Path, on: bool) -> io::Result<()> {
-    let path = ledger(node, agent, dir);
-    let mark = path.join(FOLLOW_CLEARINGS);
-    with_book(node, &path, |book| {
-        if on {
-            fastctx_platform::disk::create_dir_all(&path)?;
-            fastctx_platform::disk::write(&mark, b"")?;
-        } else if let Err(error) = fastctx_platform::disk::remove_file(&mark)
-            && error.kind() != io::ErrorKind::NotFound
-        {
-            return Err(error);
-        }
-        if book.follow != on {
-            book.lowered.clear();
-        }
-        book.follow = on;
-        Ok(())
-    })
 }
 
 fn with_book<T>(node: &Node, path: &Path, f: impl FnOnce(&mut Book) -> io::Result<T>) -> io::Result<T> {

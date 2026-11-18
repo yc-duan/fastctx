@@ -1449,11 +1449,19 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
                 .await
                 .map(|logins| Reply::MachineAgentLogins(Box::new(logins)))
         }
-        Call::SetAgentWeek { machine, agent, dir, week } => {
+        Call::SetAgentWeek { machine, agent, dir, week, swing } => {
             users_voice(node, peer)?;
             crate::managed::refuse(node)?;
 
-            crate::logins::remote::set_week(node, machine, agent, dir, week)
+            crate::logins::remote::set_week(node, machine, agent, dir, week, swing)
+                .await
+                .map(|logins| Reply::MachineAgentLogins(Box::new(logins)))
+        }
+        Call::ResetAgentUsage { machine, agent, dir, id, to_tenths } => {
+            users_voice(node, peer)?;
+            crate::managed::refuse(node)?;
+
+            crate::logins::remote::reset_usage(node, machine, agent, dir, id, to_tenths)
                 .await
                 .map(|logins| Reply::MachineAgentLogins(Box::new(logins)))
         }

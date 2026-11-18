@@ -156,6 +156,11 @@ pub struct Login {
     /// the World's default.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub week: Option<crate::usage::Usd>,
+    /// How far a week's own figure may stand from that, in percent either
+    /// way, as its owner set it; none is the World's default
+    /// (`UsageReckoning`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub swing: Option<u8>,
     /// The program the World starts for this login, as it would start it
     /// now; none when there is none to start.
     #[serde(default, skip_serializing_if = "Option::is_none")]

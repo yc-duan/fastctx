@@ -36,6 +36,48 @@ pub fn fixtures() -> Fixtures {
             used_tenths: 10,
             source: UsageResetSource::Scheduled,
         }]),
+        // The week before came to less than its owner expects, by more than
+        // the reach: this week's figure stands at the reach's lower edge. Its
+        // usage was reset once by hand, to a third of what it was.
+        reckoning: Some(UsageReckoning {
+            base: Usd(3_000_000_000),
+            swing: 5,
+            week: Usd(2_850_000_000),
+            weeks: vec![
+                UsageMeasured {
+                    start: at("2026-09-24T18:00:00Z"),
+                    end: at("2026-10-01T18:00:00Z"),
+                    spent: Usd(310_000_000),
+                    rise_tenths: 104,
+                    came_to: None,
+                },
+                UsageMeasured {
+                    start: at("2026-10-01T18:00:00Z"),
+                    end: at("2026-10-08T18:00:00Z"),
+                    spent: Usd(2_010_000_000),
+                    rise_tenths: 730,
+                    came_to: Some(Usd(2_753_424_657)),
+                },
+            ],
+            resets: Some(vec![
+                UsageHandReset {
+                    id: "r-2".into(),
+                    at: at("2026-10-11T09:00:00Z"),
+                    week_end: at("2026-10-15T18:00:00Z"),
+                    from_tenths: 36,
+                    to_tenths: 12,
+                    undone: None,
+                },
+                UsageHandReset {
+                    id: "r-1".into(),
+                    at: at("2026-10-10T09:00:00Z"),
+                    week_end: at("2026-10-15T18:00:00Z"),
+                    from_tenths: 30,
+                    to_tenths: 0,
+                    undone: Some(at("2026-10-10T09:02:00Z")),
+                },
+            ]),
+        }),
         people: vec![
             UsagePerson {
                 account: None,
@@ -58,6 +100,7 @@ pub fn fixtures() -> Fixtures {
                         output: Usd(40_810_000),
                     }),
                 }),
+                counted: Some(UsageCounted { week: Usd(33_633_333), fable: Usd(2_500_000) }),
             },
             UsagePerson {
                 account: Some(ada),
@@ -75,6 +118,7 @@ pub fn fixtures() -> Fixtures {
                     },
                     kinds_usd: None,
                 }),
+                counted: Some(UsageCounted { week: Usd(1_930_000), fable: Usd(0) }),
             },
         ],
         hours: vec![
@@ -147,7 +191,15 @@ pub fn fixtures() -> Fixtures {
     // was read.
     let codex = UsageReport {
         resets: None,
-        people: vec![UsagePerson { account: None, week: sum(17_000_000, None), day: None, fable: None, went: None }],
+        reckoning: None,
+        people: vec![UsagePerson {
+            account: None,
+            week: sum(17_000_000, None),
+            day: None,
+            fable: None,
+            went: None,
+            counted: None,
+        }],
         hours: vec![UsageHour { at: at("2026-10-12T10:00:00Z"), person: 0, sum: sum(2_400_000, None), fable: None }],
         week: UsageWeek {
             start: Some(at("2026-10-05T14:00:00Z")),

@@ -366,15 +366,32 @@ impl World {
         machine_logins(self.ask(Call::SetAgentResetInPlace { machine, agent, dir, on }).await?)
     }
 
-    /// Sets a login's week in quota dollars, or the World's default again.
+    /// Sets what a login's week is expected to hold, in quota dollars, or
+    /// the World's default again; and, where given, how far a week's figure
+    /// may stand from it, in percent either way.
     pub async fn set_agent_week(
         &self,
         machine: Written,
         agent: fastctx_types::AgentName,
         dir: std::path::PathBuf,
         week: Option<fastctx_types::usage::Usd>,
+        swing: Option<u8>,
     ) -> Result<fastctx_types::logins::MachineLogins, Error> {
-        machine_logins(self.ask(Call::SetAgentWeek { machine, agent, dir, week }).await?)
+        machine_logins(self.ask(Call::SetAgentWeek { machine, agent, dir, week, swing }).await?)
+    }
+
+    /// Resets what everyone has used of this week of a login to `to_tenths`
+    /// of the week's figure, in tenths of a percent; or with none takes the
+    /// reset `id` back.
+    pub async fn reset_agent_usage(
+        &self,
+        machine: Written,
+        agent: fastctx_types::AgentName,
+        dir: std::path::PathBuf,
+        id: String,
+        to_tenths: Option<u32>,
+    ) -> Result<fastctx_types::logins::MachineLogins, Error> {
+        machine_logins(self.ask(Call::ResetAgentUsage { machine, agent, dir, id, to_tenths }).await?)
     }
 
     /// Changes the models the World offers in a Claude Code login, for

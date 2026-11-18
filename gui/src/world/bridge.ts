@@ -459,10 +459,18 @@ export function setAgentResetInPlace(machine: MachineName, agent: string, dir: s
   return invoke("set_agent_reset_in_place", { machineName: machine, agentName: agent, dir, on });
 }
 
-/** Sets a login's week in quota dollars, millionths of a dollar; none is
- *  the World's default again. */
-export function setAgentWeek(machine: MachineName, agent: string, dir: string, week: number | null): Promise<MachineLogins> {
-  return invoke("set_agent_week", { machineName: machine, agentName: agent, dir, week });
+/** Sets what a login's week is expected to hold, in millionths of a quota
+ *  dollar, none being the World's default again; and, where given, how far
+ *  a week's figure may stand from it, in percent either way. */
+export function setAgentWeek(machine: MachineName, agent: string, dir: string, week: number | null, swing?: number): Promise<MachineLogins> {
+  return invoke("set_agent_week", { machineName: machine, agentName: agent, dir, week, swing: swing ?? null });
+}
+
+/** Resets what everyone has used of this week of a login to `toTenths` of
+ *  the week's figure, in tenths of a percent; with none, takes the reset
+ *  `id` back. A reset given twice under one id is made once. */
+export function resetAgentUsage(machine: MachineName, agent: string, dir: string, id: string, toTenths: number | null): Promise<MachineLogins> {
+  return invoke("reset_agent_usage", { machineName: machine, agentName: agent, dir, id, toTenths });
 }
 
 /** Changes the models a Claude Code login offers, for everyone who uses it. */
