@@ -319,7 +319,7 @@ export function open(
   effort: string | null = null,
   attachments: Attachment[] = [],
   choices: Choices = {},
-): Promise<{ to: Address; landed: Landed }> {
+): Promise<{ to: Address; landed: Landed; delivery?: string | null }> {
   return invoke("open", { agent, town, machineName: machine, text, model, effort, attachments, choices });
 }
 

@@ -17,6 +17,9 @@ import type { Departure } from "./flight";
 export interface Seed {
   text: string;
   attached: ShownAttachment[];
+  /** The id the words were kept under where the conversation began, once
+   *  it began: its page knows their record by it, not by its text. */
+  delivery?: string | null;
 }
 
 export class Starting {

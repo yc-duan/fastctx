@@ -754,8 +754,8 @@ const makeNewTalk = (town: string | null) => new NewTalk({
   agents: (machine) => agentsOn(machine),
   folders: (machine, path, cursor) => (live ? foldersOf(machine, path, cursor) : specimenFolders(machine, path)),
   async begin({ agent, machine, town, text, model, effort, attachments, account, focus, home, filesOn, mcpOff }) {
-    if (!live) return specimenBegin(params.get("start"));
-    const { to } = await openAgent(agent, machine, town, text, model, effort, attachments, {
+    if (!live) return specimenBegin(params.get("start")).then((to) => ({ to, delivery: null }));
+    const { to, landed, delivery } = await openAgent(agent, machine, town, text, model, effort, attachments, {
       ...(account ? { account } : {}),
       ...(focus.machines.length ? { focus } : {}),
       ...(home ? { home } : {}),
@@ -763,9 +763,11 @@ const makeNewTalk = (town: string | null) => new NewTalk({
       ...(mcpOff.length ? { mcp_off: mcpOff } : {}),
     });
     void store.refresh();
-    return to;
+    return { to, delivery: delivery ?? (landed.kind === "handed" ? landed.id : null) };
   },
-  opened(address, seed) {
+  opened(address, seed, shown) {
+    // The user who went elsewhere while it began stays there; it is listed.
+    if (!shown) return;
     // The first words open with the conversation, as they were shown.
     seeds.set(talkKey(address), seed);
     replacePlace(talkLink(address));
@@ -2214,8 +2216,9 @@ function liveTalk(address: Address): DeskTalk {
   // A conversation just begun here opens with its first words on their way.
   const seed = seeds.get(talkKey(address));
   seeds.delete(talkKey(address));
-  // The World answered for them as it opened the conversation.
-  if (seed) conversation.named(conversation.sending(seed.text, here, seed.attached), null);
+  // The World answered for them as it opened the conversation, under the id
+  // their record carries; without one they are known by their words.
+  if (seed) conversation.named(conversation.sending(seed.text, here, seed.attached), seed.delivery ?? null);
   // Names of files for an `@`, on the agent's machine, in its places.
   const search = new FileSearch(address.machine, address.resident);
   const page: ConversationPage = new ConversationPage({
