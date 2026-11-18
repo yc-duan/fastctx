@@ -67,16 +67,6 @@ function tooOld(): void {
   document.getElementById("app")?.replaceWith(page);
 }
 
-/** Tells the shell every couple of seconds that the page still answers
- *  (`gui/src-tauri/src/ui_watch.rs`): a page held in a script that never
- *  yields says nothing, and the shell opens the window again. */
-function keepAnswering(): void {
-  if (!("__TAURI_INTERNALS__" in window)) return;
-  const tell = () => void import("@tauri-apps/api/core").then(({ invoke }) => invoke("ui_alive")).catch(() => {});
-  tell();
-  setInterval(tell, 2000);
-}
-
 // Inside the shell the World on this device opens after the window does:
 // the interface loads once it has (`startup/gate.ts`). The language is
 // settled next: the interface reads it as it starts.
@@ -85,12 +75,10 @@ function keepAnswering(): void {
 // nothing of the World, which the desk's window has open.
 if (!canDraw()) tooOld();
 else if (new URLSearchParams(location.search).has("board")) void import("./board/main").catch(showStartupFailure);
-else {
-  keepAnswering();
+else
   void import("./startup/gate")
     .then(({ untilStarted }) => untilStarted())
     .then(() => import("./language"))
     .then(({ settleLanguage }) => settleLanguage())
     .then(() => import("./main"))
     .catch(showStartupFailure);
-}

@@ -65,8 +65,6 @@ mod setup;
 #[cfg(desktop)]
 mod terminal;
 #[cfg(desktop)]
-mod ui_watch;
-#[cfg(desktop)]
 mod user_path;
 
 use std::collections::HashMap;
@@ -1170,10 +1168,6 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             #[cfg(desktop)]
-            app.manage(ui_watch::Watch::default());
-            #[cfg(desktop)]
-            ui_watch::start(app.handle());
-            #[cfg(desktop)]
             app.manage(removal::State::default());
             #[cfg(desktop)]
             app.manage(remote_world::Sessions::default());
@@ -1199,10 +1193,6 @@ pub fn run() {
             Ok(())
         })
         .on_page_load(|webview, payload| {
-            #[cfg(desktop)]
-            if webview.label() == "main" && payload.event() == tauri::webview::PageLoadEvent::Started {
-                ui_watch::page_started(webview.app_handle());
-            }
             if webview.label() == "main"
                 && payload.event() == tauri::webview::PageLoadEvent::Started
                 && let Some(shell) = webview.app_handle().try_state::<Shell>()
@@ -1223,8 +1213,6 @@ pub fn run() {
             startup::startup_state,
             startup::startup_frontend_failed,
             startup::startup_retry,
-            #[cfg(desktop)]
-            ui_watch::ui_alive,
             #[cfg(desktop)]
             local_repair::repair_here,
             #[cfg(desktop)]
