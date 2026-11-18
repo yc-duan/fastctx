@@ -72,8 +72,7 @@ export interface MachinePageWords {
   healthBusyWhy(ms: number): string;
   healthStuck(count: number): string;
   healthStuckWhy: string;
-  healthBroken: string;
-  healthBrokenCount(count: number): string;
+
   healthNear: string;
   healthNearUsed(bound: string, used: number): string;
   healthScenes: string;
@@ -223,8 +222,7 @@ export const zhMachinePage: MachinePageWords = {
   healthBusyWhy: (ms) => `近一分钟内，任务最长等待 ${(ms / 1000).toFixed(1)} 秒`,
   healthStuck: (count) => `卡住 ${count} 件`,
   healthStuckWhy: "超过 30 秒无进展",
-  healthBroken: "违规",
-  healthBrokenCount: (count) => `${count.toLocaleString()} 次`,
+
   healthNear: "接近上限",
   healthNearUsed: (bound, used) => `${zhBound(bound)} ${used}%`,
   healthScenes: "现场",
@@ -353,8 +351,7 @@ export const enMachinePage: MachinePageWords = {
   healthBusyWhy: (ms) => `In the last minute, work waited up to ${(ms / 1000).toFixed(1)} s for its turn`,
   healthStuck: (count) => `${count} stuck`,
   healthStuckWhy: "No progress for over 30 seconds",
-  healthBroken: "Rules broken",
-  healthBrokenCount: (count) => `${count.toLocaleString()} times`,
+
   healthNear: "Near a limit",
   healthNearUsed: (bound, used) => `${enBound(bound)} ${used}%`,
   healthScenes: "Scenes",

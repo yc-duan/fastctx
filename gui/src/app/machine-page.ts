@@ -1055,8 +1055,10 @@ export class MachinePage implements Page {
   }
 
   /** How this computer's Fastctx is doing, only where there is something to
-   *  say: held up or stuck, the rules it broke, a bound near its limit, and
-   *  the scenes it left (`fastctx doctor readings`). */
+   *  say: held up or stuck, a bound near its limit, and the scenes it left.
+   *  The rules it broke are a signal for its developers, kept in
+   *  `fastctx doctor readings` and the scenes, not shown here: a count of
+   *  them read as the person's own breach (2026-11-08, 2026-11-18). */
   private drawHealth(machine: Machine): void {
     const { words } = this.options;
     const readings = machine.here ? this.health : null;
@@ -1065,16 +1067,6 @@ export class MachinePage implements Page {
     const row = (name: string, value: string) => `<dt>${escape(name)}</dt><dd>${value}</dd>`;
     if (health?.stuck) rows.push(row(words.healthState, `<span class="mh-stuck" title="${escape(words.healthStuckWhy)}">${escape(words.healthStuck(health.stuck))}</span>`));
     else if (health?.busy) rows.push(row(words.healthState, `<span class="mh-busy" title="${escape(words.healthBusyWhy(health.held_up_ms ?? 0))}">${escape(words.healthBusy)}</span>`));
-    const broken = readings?.readings.violations_total ?? health?.violations ?? 0;
-    if (broken) {
-      // Where they were broken, the most first, for whoever looks into it.
-      const places = [...(readings?.readings.violations ?? [])]
-        .sort((a, b) => b.count - a.count)
-        .slice(0, 3)
-        .map((one) => `${one.kind} ${one.place} ×${one.count}`)
-        .join("\n");
-      rows.push(row(words.healthBroken, `<span${places ? ` title="${escape(places)}"` : ""}>${escape(words.healthBrokenCount(broken))}</span>`));
-    }
     if (health?.near) rows.push(row(words.healthNear, `<span class="mh-near">${escape(words.healthNearUsed(health.near.bound, health.near.used))}</span>`));
     const scenes = readings?.scenes ?? [];
     if (scenes.length) {
