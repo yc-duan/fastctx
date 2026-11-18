@@ -93,11 +93,16 @@ function way(from: Place, to: Place): How {
 const BUSY_MS = 1500;
 const IDLE_MS = 30_000;
 
+/** Every machine's record of its logins as last read, kept from one visit
+ *  of the page to the next: coming back, the page is drawn at once from
+ *  what it knew, and read again behind that. */
+const kept: Seen = { records: new Map(), plates: new Map() };
+
 export class AgentsPage implements Page {
   readonly element = document.createElement("div");
   readonly title = "智能体";
   private readonly main: HTMLElement;
-  private readonly seen: Seen = { records: new Map(), plates: new Map() };
+  private readonly seen: Seen = kept;
   private readonly sheet: AgentChangeSheet;
   private readonly models: LoginModelsSheet;
   private readonly choosing: FolderPicker;
@@ -106,6 +111,8 @@ export class AgentsPage implements Page {
   private readonly stop: () => void;
   private resized = 0;
   private reading = false;
+  /** The last read failed: nothing more is on its way. */
+  private failed = false;
   /** The machines whose nodes page their ledger by 100 alone. */
   private readonly legacyCalls = new Set<string>();
 
@@ -206,7 +213,7 @@ export class AgentsPage implements Page {
 
   /** Builds the pages' network again from what is now known. */
   private rebuild(): void {
-    setNet(netOf(this.options.store.world.peek(), this.seen, this.options.now()));
+    setNet({ ...netOf(this.options.store.world.peek(), this.seen, this.options.now()), unread: this.seen.records.size === 0 && !this.failed });
     draw();
   }
 
@@ -227,8 +234,12 @@ export class AgentsPage implements Page {
     try {
       const world = await this.options.read(null);
       for (const heard of world.machines) this.seen.records.set(heard.kind === "answered" ? heard.logins.machine : heard.machine, heard);
+      this.failed = false;
       this.rebuild();
     } catch (error) {
+      // What could not be read is said, and the page no longer waits for it.
+      this.failed = true;
+      this.rebuild();
       toast(error instanceof Error ? error.message : "读取失败");
     } finally {
       this.reading = false;

@@ -286,6 +286,9 @@ export interface Net {
   expects: Record<string, Expect>;
   /** The reader administers the network: a token's plan is theirs to set. */
   admin: boolean;
+  /** No machine's logins have been read yet: what is drawn is being
+   *  waited for, not found empty. */
+  unread?: boolean;
 }
 
 export let NOW = new Date();
@@ -297,6 +300,7 @@ export let people: string[] = [];
 export let plates: Record<string, number> = {};
 export let expects: Record<string, Expect> = {};
 export let admin = false;
+export let unread = false;
 export let byId = new Map<string, Login>();
 export let feed: Feed = { days: () => new Promise(() => {}), calls: () => new Promise(() => {}) };
 export let deeds: Deeds | null = null;
@@ -320,6 +324,7 @@ export function setNet(net: Net): void {
   plates = net.plates;
   expects = net.expects;
   admin = net.admin;
+  unread = net.unread ?? false;
   byId = new Map(logins.map((login) => [login.id, login]));
 }
 

@@ -8,7 +8,8 @@
 import { reachDrawing } from "../app/agents-reach";
 import type { Pickable } from "../app/agent-machines";
 import { agentGlyph, glyph } from "../conversation/glyphs";
-import { converses, daysOf, deeds, familyName, logins, machines, plateOf, usable, type Family, type Login, type Machine } from "./data";
+import { waiting } from "../app/waiting";
+import { converses, daysOf, deeds, familyName, logins, machines, plateOf, unread, usable, type Family, type Login, type Machine } from "./data";
 import { whole } from "./format";
 import { rule } from "./marks";
 import { draw, goTo, linkOf, on, say, state } from "./state";
@@ -49,9 +50,9 @@ export function homePage(): string {
       : "";
   return `<div class="lg-page">
     <header class="page-head lg-head"><div class="page-head-title"><h1 class="page-title">智能体</h1></div>
-      <div class="page-head-actions"><div class="segmented"><button type="button" class="segment${attach ? "" : " chosen"}" data-go="${linkOf({ kind: "quota" })}">额度</button><button type="button" class="segment${attach ? " chosen" : ""}" data-go="${linkOf({ kind: "attach", machine: machine?.id ?? state.machine })}">接入</button></div>${end}</div>
+      <div class="page-head-actions">${end}<div class="segmented"><button type="button" class="segment${attach ? "" : " chosen"}" data-go="${linkOf({ kind: "quota" })}">额度</button><button type="button" class="segment${attach ? " chosen" : ""}" data-go="${linkOf({ kind: "attach", machine: machine?.id ?? state.machine })}">接入</button></div></div>
     </header>
-    ${attach ? (machine ? attachBody(machine) : `<div class="lg-body lg-empty"><p>暂无机器</p></div>`) : quotaBody()}
+    ${unread ? `<div class="lg-body lg-sheet">${waiting({ label: "正在读取", shape: "rows", rows: 4 })}</div>` : attach ? (machine ? attachBody(machine) : `<div class="lg-body lg-empty"><p>暂无机器</p></div>`) : quotaBody()}
   </div>`;
 }
 
