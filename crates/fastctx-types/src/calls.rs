@@ -647,8 +647,9 @@ pub enum Call {
     /// `machine`, to `to_tenths` of the week's figure in tenths of a percent,
     /// zero for all of it; or, with none, takes the reset `id` back. The
     /// reset is named by its maker, and one given twice is made once; one
-    /// given for a week that has turned since (`week_end`) is refused. Only
-    /// by whoever may manage the login.
+    /// given for a week that has turned since (`week_end`), or once the
+    /// login is in another of the vendor's accounts (`holder`), is refused.
+    /// Only by whoever may manage the login.
     ResetAgentUsage {
         machine: Written,
         agent: AgentName,
@@ -658,6 +659,8 @@ pub enum Call {
         to_tenths: Option<u32>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         week_end: Option<jiff::Timestamp>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        holder: Option<String>,
     },
     /// Changes the models the World offers in the Claude Code login `dir` on
     /// `machine`; changed by whoever may manage the login, offered to

@@ -82,7 +82,8 @@ impl Day {
             let end = last.as_second().div_euclid(3600) * 3600 + 3600;
             let mut edges: Vec<Timestamp> =
                 (hour..=end).step_by(3600).map(|s| Timestamp::from_second(s).expect("existing day")).collect();
-            edges.extend(cuts.iter().copied().filter(|at| at.as_second() > hour && at.as_second() < end));
+            let (from, to) = (edges[0], *edges.last().expect("an hour at least"));
+            edges.extend(cuts.iter().copied().filter(|at| *at > from && *at < to));
             edges.extend(self.folded.iter().copied().filter(|at| at.as_second() >= hour && at.as_second() < end));
             for second in (hour..end).step_by(3600) {
                 let end_of_hour = Timestamp::from_second(second + 3599).expect("existing hour");

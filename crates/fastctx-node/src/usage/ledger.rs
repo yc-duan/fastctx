@@ -406,12 +406,7 @@ impl Book {
         self.meters.values().flat_map(super::meter::Meter::balances).collect()
     }
     pub fn account_at(&self, at: Timestamp) -> Option<String> {
-        self.accounts
-            .iter()
-            .rev()
-            .find(|(since, _)| *since <= at)
-            .or_else(|| self.accounts.first())
-            .map(|(_, account)| account.clone())
+        account_at(&self.accounts, at).map(str::to_string)
     }
     pub fn commit(&mut self, path: &Path, row: Entry) -> io::Result<()> {
         if let Entry::Tokens { key: Some(key), .. } = &row
@@ -527,4 +522,15 @@ pub(super) fn days(path: &Path, since: Timestamp) -> io::Result<Vec<PathBuf>> {
 
 pub(super) fn read(path: &Path) -> io::Result<Vec<Entry>> {
     super::quarantine::read(path)
+}
+
+/// The vendor's account a login was in at `at`, of the accounts it was in
+/// since when, oldest first: before the first, the first.
+pub(super) fn account_at(accounts: &[(Timestamp, String)], at: Timestamp) -> Option<&str> {
+    accounts
+        .iter()
+        .rev()
+        .find(|(since, _)| *since <= at)
+        .or_else(|| accounts.first())
+        .map(|(_, account)| account.as_str())
 }

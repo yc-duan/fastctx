@@ -383,6 +383,7 @@ impl World {
     /// Resets what everyone has used of this week of a login to `to_tenths`
     /// of the week's figure, in tenths of a percent; or with none takes the
     /// reset `id` back.
+    #[allow(clippy::too_many_arguments)]
     pub async fn reset_agent_usage(
         &self,
         machine: Written,
@@ -391,8 +392,9 @@ impl World {
         id: String,
         to_tenths: Option<u32>,
         week_end: Option<jiff::Timestamp>,
+        holder: Option<String>,
     ) -> Result<fastctx_types::logins::MachineLogins, Error> {
-        machine_logins(self.ask(Call::ResetAgentUsage { machine, agent, dir, id, to_tenths, week_end }).await?)
+        machine_logins(self.ask(Call::ResetAgentUsage { machine, agent, dir, id, to_tenths, week_end, holder }).await?)
     }
 
     /// Changes the models the World offers in a Claude Code login, for

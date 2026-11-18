@@ -397,6 +397,7 @@ export function daysFrom(report: UsageReport, login: Login, plate: number, world
     resets: report.resets || report.reckoning?.resets ? resets.map(({ when: _, ...reset }) => reset) : null,
     gap: login.week && !login.week.reset && (!login.lent || login.lent.manages) ? login.week.used - (ledgered / plate) * 100 : 0,
     weekEnd: report.week.end ?? null,
+    holder: report.reckoning?.holder ?? null,
   };
 }
 

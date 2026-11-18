@@ -124,6 +124,16 @@ fn current(book: &Book) -> Option<String> {
     book.accounts.iter().max_by_key(|(at, _)| *at).map(|(_, account)| account.clone())
 }
 
+/// A name for the vendor's account `account` that tells nothing of it.
+fn holder_of(account: &Option<String>) -> String {
+    use sha2::Digest as _;
+    let digest = sha2::Sha256::new()
+        .chain_update(b"fastctx usage holder\0")
+        .chain_update(account.as_deref().unwrap_or_default().as_bytes())
+        .finalize();
+    digest[..8].iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
 /// `part` of `whole` in tenths of a percent.
 fn tenths(part: Usd, whole: Usd) -> u32 {
     (u128::from(part.0) * 1000 / u128::from(whole.0.max(1))).min(u128::from(u32::MAX)) as u32
@@ -141,6 +151,8 @@ pub(super) struct Reckoned {
     /// force meanwhile, and none is made.
     pub trouble: Option<String>,
     account: Option<String>,
+    /// The accounts the login was in, since when, oldest first.
+    accounts: Vec<(Timestamp, String)>,
     /// Each reset of this week in force, with what the use until it counts
     /// as of what it was.
     cuts: Vec<(Timestamp, f64)>,
@@ -164,8 +176,16 @@ impl Reckoned {
         self.cuts.iter().map(|(at, _)| *at).collect()
     }
 
-    /// What `usd` used at `at` counts as.
+    /// What `usd` used at `at` counts as: of this week, nothing used while
+    /// the login was in another of the vendor's accounts, whose week it is
+    /// not.
     pub fn counted(&self, at: Timestamp, usd: Usd) -> Usd {
+        if self.week.window
+            && at >= self.week.start
+            && super::ledger::account_at(&self.accounts, at) != self.account.as_deref()
+        {
+            return Usd::ZERO;
+        }
         let scale = self.scale(at);
         if scale == 1.0 { usd } else { Usd((usd.0 as f64 * scale).round() as u64) }
     }
@@ -178,6 +198,7 @@ impl Reckoned {
             base: self.base,
             swing: self.swing,
             week: self.figure,
+            holder: (whole && may_reset).then(|| holder_of(&self.account)),
             weeks: if whole {
                 self.kept.weeks.iter().filter(|one| ours(&one.account)).map(|one| one.week.clone()).collect()
             } else {
@@ -224,7 +245,8 @@ pub(super) fn of(path: &Path, book: &Book, agent: &str, now: Timestamp) -> Recko
         .filter(|made| same(made.told.week_end, week.end) && made.told.from.0 > 0)
         .map(|made| (made.told.at, made.told.to.0 as f64 / made.told.from.0 as f64))
         .collect();
-    Reckoned { week, base, swing, figure: within(base, swing, came_to), trouble, account, cuts, kept }
+    let accounts = book.accounts.clone();
+    Reckoned { week, base, swing, figure: within(base, swing, came_to), trouble, account, accounts, cuts, kept }
 }
 
 /// Measures the weeks before this one where this week has not been measured
@@ -381,8 +403,8 @@ pub(super) fn quota(charge: &Charge) -> Usd {
 }
 
 /// What everyone has used of this week until `now` as it counts now, in
-/// quota dollars, while the login was in the account it is in: the
-/// ledger's charges and what its meters hold not yet booked.
+/// quota dollars, while the login was in the account it is in (`counted`):
+/// the ledger's charges and what its meters hold not yet booked.
 fn used(book: &Book, reckoned: &Reckoned, now: Timestamp) -> Usd {
     let booked = book.recent.iter().map(|charge| (charge.at, quota(charge)));
     let held = book.balances().into_iter().flat_map(|row| {
@@ -391,7 +413,7 @@ fn used(book: &Book, reckoned: &Reckoned, now: Timestamp) -> Usd {
     });
     booked
         .chain(held)
-        .filter(|(at, _)| *at >= reckoned.week.start && *at < now && book.account_at(*at) == reckoned.account)
+        .filter(|(at, _)| *at >= reckoned.week.start && *at < now)
         .fold(Usd::ZERO, |sum, (at, usd)| sum.saturating_add(reckoned.counted(at, usd)))
 }
 
@@ -409,6 +431,9 @@ pub(crate) struct Asked<'a> {
     /// The end of the week its maker looked at: a week that has turned
     /// since is not reset.
     pub week_end: Option<Timestamp>,
+    /// Whose week its maker looked at (`UsageReckoning::holder`): once the
+    /// login is in another of the vendor's accounts, it is not reset.
+    pub holder: Option<String>,
     /// The account that made it.
     pub by: Option<String>,
 }
@@ -433,6 +458,11 @@ pub(super) fn reset(path: &Path, book: &Book, agent: &str, now: Timestamp, asked
     }
     if asked.week_end.is_some_and(|end| !same(end, week.end)) {
         return Err(refused("the login's week has turned since it was looked at; look at it again"));
+    }
+    if asked.holder.as_ref().is_some_and(|holder| *holder != holder_of(&reckoned.account)) {
+        return Err(refused(
+            "the login is in another of the vendor's accounts since its week was looked at; look at it again",
+        ));
     }
     let mut kept = reckoned.kept.clone();
     let account = reckoned.account.clone();
@@ -564,7 +594,7 @@ mod tests {
     }
 
     fn asked(id: &str, to_tenths: Option<u32>) -> Asked<'_> {
-        Asked { id, to_tenths, week_end: None, by: Some("ann".into()) }
+        Asked { id, to_tenths, week_end: None, holder: None, by: Some("ann".into()) }
     }
 
     /// The week before rose sixty points over $1,800 of other models and
@@ -714,6 +744,11 @@ mod tests {
         let book = self::book(path, now + HOUR * 2);
         let other = of(path, &book, "claude", now + HOUR * 2);
         assert!(other.cuts().is_empty() && other.told(true, true).resets == Some(Vec::new()));
+        // Nor does what was used of the week in account a count to b's.
+        assert_eq!(other.counted(now - HOUR, Usd(100)), Usd::ZERO);
+        assert_eq!(other.counted(now + HOUR, Usd(100)), Usd(100));
+        assert_ne!(other.told(true, true).holder, reckoned.told(true, true).holder);
+        assert!(other.told(true, false).holder.is_none());
     }
 
     #[test]
@@ -731,7 +766,10 @@ mod tests {
         // Asked of a week that has turned since, it is refused.
         let stale = Asked { week_end: Some(end - DAY * 7), ..asked("r0", Some(80)) };
         assert_eq!(reset(path, &book, "claude", now, stale).unwrap_err().kind(), io::ErrorKind::InvalidInput);
-        let looked = Asked { week_end: Some(end), ..asked("r1", Some(87)) };
+        // Asked of another account's week, it is refused.
+        let elsewhere = Asked { holder: Some(holder_of(&Some("b".into()))), ..asked("r1", Some(87)) };
+        assert_eq!(reset(path, &book, "claude", now, elsewhere).unwrap_err().kind(), io::ErrorKind::InvalidInput);
+        let looked = Asked { week_end: Some(end), holder: before.told(true, true).holder, ..asked("r1", Some(87)) };
         reset(path, &book, "claude", now, looked).unwrap();
         // Given again, it is made once.
         reset(path, &book, "claude", now + HOUR, asked("r1", Some(87))).unwrap();

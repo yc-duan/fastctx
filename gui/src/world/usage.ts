@@ -129,6 +129,9 @@ export interface UsageReckoning {
   /** Percent either way. */
   swing: number;
   week: number;
+  /** Whose week it is, to one who may reset it: a name for the vendor's
+   *  account that tells nothing of it. */
+  holder?: string;
   /** The weeks measured, oldest first; to the owner and to one who manages
    *  the login with them. */
   weeks?: UsageMeasured[];

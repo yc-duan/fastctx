@@ -205,6 +205,7 @@ pub(crate) async fn set_agent_week(
 /// the week's figure, in tenths of a percent; or with none takes the reset
 /// `id` back.
 #[fastctx_gui_command::command]
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn reset_agent_usage(
     shell: tauri::State<'_, Shell>,
     machine_name: String,
@@ -213,11 +214,12 @@ pub(crate) async fn reset_agent_usage(
     id: String,
     to_tenths: Option<u32>,
     week_end: Option<String>,
+    holder: Option<String>,
 ) -> Result<MachineLogins, String> {
     let week_end = week_end.map(|at| at.parse::<jiff::Timestamp>()).transpose().map_err(|error| error.to_string())?;
     shell
         .world()
-        .reset_agent_usage(machine(machine_name)?, agent(agent_name)?, dir, id, to_tenths, week_end)
+        .reset_agent_usage(machine(machine_name)?, agent(agent_name)?, dir, id, to_tenths, week_end, holder)
         .await
         .map_err(|error| error.to_string())
 }

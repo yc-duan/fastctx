@@ -122,6 +122,11 @@ pub struct UsageReckoning {
     pub swing: u8,
     /// This week's figure.
     pub week: Usd,
+    /// Whose week it is, to one who may reset it: a name for the vendor's
+    /// account the login is in that tells nothing of it. A reset asked of
+    /// the week as it was looked at is refused once the login is in another.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub holder: Option<String>,
     /// The weeks measured, oldest first; to the login's owner and to one who
     /// manages it with them.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]

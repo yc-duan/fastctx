@@ -419,6 +419,12 @@ on("expect", () => {
   const input = sheet.body.querySelector<HTMLInputElement>("input[name='base']")!;
   const swingInput = sheet.body.querySelector<HTMLInputElement>("input[name='swing']")!;
   const holder = sheet.body.querySelector<HTMLElement>(".ps-strip")!;
+  // What is typed and not taken is never saved for what was taken before it.
+  const go = sheet.body.querySelector<HTMLButtonElement>("[data-do]")!;
+  const wrong = { base: false, swing: false };
+  const judged = () => {
+    go.disabled = wrong.base || wrong.swing;
+  };
   let scale: { low: number; high: number; left: number; right: number } | null = null;
   const said = () => {
     const line = sheet.body.querySelector<HTMLElement>(".ps-said")!;
@@ -440,6 +446,9 @@ on("expect", () => {
   const move = (value: number) => {
     set.base = Math.max(100, Math.round(value / 10) * 10);
     input.value = String(set.base);
+    wrong.base = false;
+    input.closest(".as-custom")!.classList.remove("lg-wrong");
+    judged();
     if (scale) {
       const at = scale.left + ((Math.min(scale.high, Math.max(scale.low, set.base)) - scale.low) / (scale.high - scale.low)) * (scale.right - scale.left);
       const half = ((set.base * set.swing * 2) / 100 / (scale.high - scale.low)) * (scale.right - scale.left) / 2;
@@ -469,7 +478,10 @@ on("expect", () => {
   });
   input.addEventListener("input", () => {
     const typed = Number(input.value.replace(/[^0-9]/g, ""));
-    if (typed >= 100) {
+    wrong.base = !(typed >= 100);
+    input.closest(".as-custom")!.classList.toggle("lg-wrong", wrong.base);
+    judged();
+    if (!wrong.base) {
       set.base = typed;
       paint();
     }
@@ -481,6 +493,8 @@ on("expect", () => {
     const value = /^\d{1,2}$/.test(typed) ? Number(typed) : Number.NaN;
     const fits = value >= 0 && value <= WIDEST;
     swingInput.closest(".as-custom")!.classList.toggle("lg-wrong", !fits);
+    wrong.swing = !fits;
+    judged();
     if (fits) {
       set.swing = value;
       paint();
@@ -491,8 +505,11 @@ on("expect", () => {
     if (target.closest("[data-take]") && middle !== null) {
       set.base = Math.round(middle / 10) * 10;
       input.value = String(set.base);
+      wrong.base = false;
+      input.closest(".as-custom")!.classList.remove("lg-wrong");
+      judged();
       paint();
-    } else if (target.closest("[data-do]")) {
+    } else if (target.closest("[data-do]") && !go.disabled) {
       const done = () => {
         sheet.busy = false;
         sheet.close();
@@ -526,7 +543,7 @@ on("reset-usage", () => {
   // again after an answer that was lost, it is the same reset, made once;
   // another part asked is another reset. Of the week the sheet shows.
   const named = `r-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
-  const weekEnd = days?.weekEnd ?? null;
+  const looked = { weekEnd: days?.weekEnd ?? null, holder: days?.holder ?? null };
   const plate = plateOf(login);
   const people = (days?.people ?? []).filter((one) => one.week > 0 || one.fable > 0);
   const total = (people.reduce((sum, one) => sum + one.week, 0) / plate) * 100;
@@ -594,7 +611,7 @@ on("reset-usage", () => {
       if (deeds) {
         sheet.busy = true;
         go.disabled = true;
-        deeds.resetUsage(login, at, `${named}-${Math.round(at * 10)}`, weekEnd).then(done, (error: unknown) => {
+        deeds.resetUsage(login, at, `${named}-${Math.round(at * 10)}`, looked).then(done, (error: unknown) => {
           go.disabled = false;
           sheet.busy = false;
           say(error instanceof Error ? error.message : "重置失败");

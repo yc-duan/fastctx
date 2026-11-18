@@ -209,12 +209,21 @@ pub(crate) async fn unavailable(
         super::refused::reject(node, id, input, error.failure).await
     } else if crate::claude::wake_in_flight(node, id, &error.failure) {
         // A wake already on its way is no failure of these words: they wait
-        // for it, looked at again within moments and at once as it settles
-        // (`due_now`), never put off longer for each look.
-        let (node, id, input, reason) = (node.clone(), id.clone(), input.clone(), error.failure.message);
+        // for it, and go at once as it settles (`due_now`), its one watcher
+        // looking at Claude Code on its own pace; not each look of theirs
+        // asking Claude Code again every few seconds meanwhile
+        // (codex-225f8a6d: 214 listings in three minutes against 38).
+        // Looked at again after a while all the same, should the settling
+        // not reach them.
+        let (node, id, input, said) = (node.clone(), id.clone(), input.clone(), error.failure);
         fastctx_platform::task::blocking(move || {
-            queued_now(&node, &id, &input, &reason)?;
+            wait_for_now(&node, &id, &input, &said.message, WAKE_AWAITED)?;
             crate::inbox::set_state(&node.world.conversation(&id), &input, PendingState::Waiting).map_err(failure)?;
+            // Settled before they were waiting, its settling did not find
+            // them: they go now.
+            if !crate::claude::wake_in_flight(&node, &id, &said) {
+                wait_for_now(&node, &id, &input, &said.message, Duration::ZERO)?;
+            }
             kick(&node, &id);
             Ok(Landed::Waiting { why: None, answered: true })
         })
@@ -232,8 +241,12 @@ pub(crate) async fn due_now(node: &Arc<Node>, id: &ResidentId, why: &'static str
     let made = fastctx_platform::task::blocking(move || {
         let (node, id) = (working, resident);
         let conversation = node.world.conversation(&id);
-        let Some(next) =
-            crate::inbox::first(&conversation, |row| row.state == PendingState::Waiting).map_err(failure)?
+        // The words the handing over takes next: not a notice that goes with
+        // the next turn's words.
+        let Some(next) = crate::inbox::first(&conversation, |row| {
+            row.state == PendingState::Waiting && row.delivery.notice.along().is_none()
+        })
+        .map_err(failure)?
         else {
             return Ok(());
         };
@@ -321,14 +334,29 @@ pub(crate) async fn queued(node: &Arc<Node>, id: &ResidentId, input: &NoticeId, 
     fastctx_platform::task::blocking(move || queued_now(&node, &id, &input, &reason)).await
 }
 pub(crate) fn queued_now(node: &Arc<Node>, id: &ResidentId, input: &NoticeId, reason: &str) -> Result<(), Failure> {
+    wait_for_now(node, id, input, reason, Duration::from_secs(2))
+}
+
+/// The longest words wait for a wake on its way before they look again
+/// themselves: its settling makes them due sooner (`due_now`).
+const WAKE_AWAITED: Duration = Duration::from_secs(60);
+
+/// Puts off the words for `after`, for what they wait on and not for a
+/// failure of their own: no failure is counted.
+fn wait_for_now(
+    node: &Arc<Node>,
+    id: &ResidentId,
+    input: &NoticeId,
+    reason: &str,
+    after: Duration,
+) -> Result<(), Failure> {
     let why = reason.to_string();
     update(node, id, input, true, move |row| {
         row.reason = Some(why);
         row.attempted = false;
         row.accepted = false;
-        row.next = Timestamp::now()
-            .checked_add(Duration::from_secs(2))
-            .map_err(|error| fastctx_storage::Error::new(error.to_string()))?;
+        row.next =
+            Timestamp::now().checked_add(after).map_err(|error| fastctx_storage::Error::new(error.to_string()))?;
         Ok(())
     })
     .map(|_| ())

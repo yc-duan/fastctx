@@ -451,8 +451,8 @@ impl Device {
             Call::SetAgentWeek { machine, agent, dir, week, swing } => {
                 (machine, RemoteCall::SetAgentWeek { agent, dir, week, swing }, None)
             }
-            Call::ResetAgentUsage { machine, agent, dir, id, to_tenths, week_end } => {
-                (machine, RemoteCall::ResetAgentUsage { agent, dir, id, to_tenths, week_end }, None)
+            Call::ResetAgentUsage { machine, agent, dir, id, to_tenths, week_end, holder } => {
+                (machine, RemoteCall::ResetAgentUsage { agent, dir, id, to_tenths, week_end, holder }, None)
             }
             Call::ChangeAgentModels { machine, agent, dir, change } => {
                 (machine, RemoteCall::ChangeAgentModels { agent, dir, change }, None)

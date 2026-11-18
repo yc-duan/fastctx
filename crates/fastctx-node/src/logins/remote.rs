@@ -323,6 +323,12 @@ pub(crate) async fn set_week(
     }
 }
 
+/// The week a reset was asked of, as its maker looked at it.
+pub(crate) struct Looked {
+    pub week_end: Option<jiff::Timestamp>,
+    pub holder: Option<String>,
+}
+
 /// Resets what everyone has used of this week of a login, or takes such a
 /// reset back, here or on another of the user's machines; the holds of
 /// those it assists are looked at again.
@@ -333,15 +339,16 @@ pub(crate) async fn reset_usage(
     dir: PathBuf,
     id: String,
     to_tenths: Option<u32>,
-    week_end: Option<jiff::Timestamp>,
+    looked: Looked,
 ) -> Result<MachineLogins, Failure> {
+    let Looked { week_end, holder } = looked;
     if node.is_here(&machine) {
-        let asked = crate::usage::ResetAsked { id: &id, to_tenths, week_end, by: None };
+        let asked = crate::usage::ResetAsked { id: &id, to_tenths, week_end, holder, by: None };
         super::reset_usage(node, &agent, &dir, asked)?;
         crate::usage::after_reading(node, agent.as_str(), &dir).await;
         return super::changed_here(node).await;
     }
-    let call = RemoteCall::ResetAgentUsage { agent, dir, id, to_tenths, week_end };
+    let call = RemoteCall::ResetAgentUsage { agent, dir, id, to_tenths, week_end, holder };
     match ask(node, &machine, Purpose::Hands, call).await? {
         RemoteReply::AgentLogins(logins) => Ok(*logins),
         _ => Err(other(&machine)),
@@ -526,10 +533,11 @@ pub(crate) async fn answer(
             crate::usage::after_reading(node, agent.as_str(), &dir).await;
             super::changed_here(node).await.map(logins)
         }
-        RemoteCall::ResetAgentUsage { agent, dir, id, to_tenths, week_end } => {
+        RemoteCall::ResetAgentUsage { agent, dir, id, to_tenths, week_end, holder } => {
             // Only one who may work here asks this (`admission`).
             let by = Some(asker.account.to_string());
-            super::reset_usage(node, &agent, &dir, crate::usage::ResetAsked { id: &id, to_tenths, week_end, by })?;
+            let asked = crate::usage::ResetAsked { id: &id, to_tenths, week_end, holder, by };
+            super::reset_usage(node, &agent, &dir, asked)?;
             crate::usage::after_reading(node, agent.as_str(), &dir).await;
             super::changed_here(node).await.map(logins)
         }

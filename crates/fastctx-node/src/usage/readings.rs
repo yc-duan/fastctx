@@ -48,7 +48,8 @@ fn merge_live(
             let old = &known[index];
             match (old.resets_at, incoming.resets_at) {
                 (Some(a), Some(b)) if same(a, b) => {
-                    if !answered && incoming.used_tenths < old.used_tenths {
+                    // Said again as it was, it is no reading of now either.
+                    if !answered && incoming.used_tenths <= old.used_tenths {
                         continue;
                     }
                     // A boundary an earlier release recorded within this
@@ -71,7 +72,7 @@ fn merge_live(
                         });
                     }
                 }
-                (None, None) if !answered && incoming.used_tenths < old.used_tenths => continue,
+                (None, None) if !answered && incoming.used_tenths <= old.used_tenths => continue,
                 _ => {}
             }
             taken.push((incoming.name.clone(), incoming.minutes));

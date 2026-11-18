@@ -41,6 +41,7 @@ pub fn fixtures() -> Fixtures {
         // once by hand, to a third of what it was; a reset before that was
         // taken back.
         reckoning: Some(UsageReckoning {
+            holder: Some("5f3a0c9e1b2d4e6f".into()),
             base: Usd(3_000_000_000),
             swing: 10,
             week: Usd(2_753_424_657),

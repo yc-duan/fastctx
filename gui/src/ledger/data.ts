@@ -218,9 +218,16 @@ export interface Days {
   /** Of a hundred of the week, how far the vendor's reading stands above
    *  what the ledger comes to, or below it. */
   gap: number;
-  /** When the week these are of ends, as its machine said; a reset is of
-   *  this week. */
+  /** When the week these are of ends, as its machine said, and whose it
+   *  is; a reset is of this week. */
   weekEnd?: string | null;
+  holder?: string | null;
+}
+
+/** The week a reset is asked of, as the sheet that asks it showed it. */
+export interface Looked {
+  weekEnd: string | null;
+  holder: string | null;
 }
 
 /** Whether a gap between reading and ledger is told: past what the week's
@@ -278,7 +285,7 @@ export interface Deeds {
   expect(login: Login, expect: Expect): Promise<void>;
   /** Resets the week's usage to a part of the week, of a hundred; `id`
    *  names the reset, the same however often it is asked. */
-  resetUsage(login: Login, to: number, id: string, weekEnd: string | null): Promise<void>;
+  resetUsage(login: Login, to: number, id: string, looked: Looked): Promise<void>;
   /** Takes the newest reset back. */
   undoReset(login: Login): Promise<void>;
   /** Gives, or changes, what a person may use of the login: their share,
