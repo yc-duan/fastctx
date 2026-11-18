@@ -646,7 +646,15 @@ async fn watch(
                             identity.pid
                         ));
                     }
-                    let why = diagnosis(command, &short, why).await;
+                    // What the terminal said is read for a failure to tell
+                    // alone: words the session ended before taking wake it
+                    // again at once (below), and wait for no `claude logs`,
+                    // which takes seconds where memory is short. Judged
+                    // again under the births' lock, which decides.
+                    let retrying = waking
+                        && job.ended()
+                        && untaken(node, &session, &node.world.conversation(resident), id, true).unwrap_or(false);
+                    let why = if retrying { why } else { diagnosis(command, &short, why).await };
                     // A registration written before the host outcome wins,
                     // including one the filesystem watcher has not seen yet.
                     super::replay(node).await;

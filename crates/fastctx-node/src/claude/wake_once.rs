@@ -23,7 +23,10 @@ const QUIET: Duration = Duration::from_secs(180);
 /// (2026-11-18). Its call can still leave a second copy of the dispatch for
 /// the daemon to read after answering, so the interval leaves the daemon time
 /// to read it; one it took up then is told apart by its own claim or spawn.
-const ANSWERED_QUIET: Duration = Duration::from_secs(30);
+/// Ten seconds: the daemon reads a dispatch it is told of at once, and the
+/// next look comes as the interval ends (`register`), not on its own pace
+/// (用户 2026-11-19: 唤醒能不能更短，按照你的推荐来就行).
+const ANSWERED_QUIET: Duration = Duration::from_secs(10);
 const AGAIN: Duration = Duration::from_secs(3);
 /// How long a launch is waited for, whatever the records say of it. A
 /// supervisor that never says the session ended, a session that stays as it
@@ -198,6 +201,7 @@ pub(super) async fn begin(
         completed: false,
         settled: false,
         quiet_since: None,
+        quiet_for: None,
         quiet_owner: None,
         last_seen: None,
         last: seen.evidence,
@@ -247,6 +251,7 @@ fn reconcile(node: &Node, id: &ResidentId, mut intent: Intent, seen: &Observatio
             && seen.session == intent.session
             && intent.claimed.zip(seen.settled).is_some_and(|(claimed, (dispatched, _))| dispatched >= claimed);
         let quiet = if answered { ANSWERED_QUIET } else { QUIET };
+        intent.quiet_for = Some(quiet.as_secs());
         if intent
             .quiet_since
             .is_some_and(|since| now.as_second().saturating_sub(since.as_second()) >= quiet.as_secs() as i64)
@@ -264,6 +269,7 @@ fn reconcile(node: &Node, id: &ResidentId, mut intent: Intent, seen: &Observatio
         }
     } else {
         intent.quiet_since = None;
+        intent.quiet_for = None;
     }
     intent.problem = None;
     intent.last.clone_from(&seen.evidence);
@@ -303,8 +309,26 @@ pub(super) fn finish(
     wake_store::completed(node, id, &intent.token, accepted)
 }
 
+const IN_FLIGHT: &str = "a Claude wake is already in flight; waiting for its activation or reconciled failure";
+
 pub(super) fn waiting() -> Failure {
-    Failure::host_unavailable("a Claude wake is already in flight; waiting for its activation or reconciled failure")
+    Failure::host_unavailable(IN_FLIGHT)
+}
+
+/// Whether `failure` says a wake is already on its way: the words wait for
+/// it, which is no failure of theirs (`lifecycle::retry::unavailable`).
+pub(crate) fn in_flight(failure: &Failure) -> bool {
+    failure.message == IN_FLIGHT
+}
+
+/// When a launch is next to be looked at: on its pace, or as its quiet
+/// interval ends where that is sooner.
+fn next_look(intent: &wake_store::Intent) -> Duration {
+    let pace = pace(intent);
+    let (Some(since), Some(quiet)) = (intent.quiet_since, intent.quiet_for) else { return pace };
+    let Ok(now) = observation_time() else { return pace };
+    let left = (since.as_second() + quiet as i64).saturating_sub(now.as_second()).max(1) as u64;
+    pace.min(Duration::from_secs(left))
 }
 
 pub(crate) fn register(node: &Arc<Node>) {
@@ -326,11 +350,18 @@ pub(crate) fn register(node: &Arc<Node>) {
                 let Some((about, _)) = node.residents.about(&id) else { return Ok(true) };
                 let session = about.session.as_deref().unwrap_or(&intent.session);
                 let seen = observe(&node, about.home.as_deref(), session).await?;
-                reconcile(&node, &id, intent, &seen)
+                let settled = reconcile(&node, &id, intent, &seen)?;
+                if !settled && let Some(intent) = wake_store::get(&node, &id)? {
+                    after = next_look(&intent);
+                }
+                Ok::<bool, Failure>(settled)
             }
             .await;
             match result {
                 Ok(true) => {
+                    // The words that waited for it go at once, however long
+                    // their last try said to wait.
+                    crate::lifecycle::retry::due_now(&node, &id).await;
                     crate::lifecycle::retry::kick(&node, &id);
                     Outcome::Done
                 }
@@ -345,6 +376,7 @@ pub(crate) fn register(node: &Arc<Node>) {
                         }
                         intent.problem = Some(error.message);
                         intent.quiet_since = None;
+                        intent.quiet_for = None;
                         let _ = wake_store::put(&node, &id, intent);
                     }
                     Outcome::Again { after }

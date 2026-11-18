@@ -207,8 +207,48 @@ pub(crate) async fn unavailable(
 ) -> Result<Landed, Failure> {
     if error.permanent {
         super::refused::reject(node, id, input, error.failure).await
+    } else if crate::claude::wake_in_flight(&error.failure) {
+        // A wake already on its way is no failure of these words: they wait
+        // for it, looked at again within moments and at once as it settles
+        // (`due_now`), never put off longer for each look.
+        let (node, id, input, reason) = (node.clone(), id.clone(), input.clone(), error.failure.message);
+        fastctx_platform::task::blocking(move || {
+            queued_now(&node, &id, &input, &reason)?;
+            crate::inbox::set_state(&node.world.conversation(&id), &input, PendingState::Waiting).map_err(failure)?;
+            kick(&node, &id);
+            Ok(Landed::Waiting { why: None, answered: true })
+        })
+        .await
     } else {
         defer(node, id, input, &error.failure.message).await
+    }
+}
+
+/// Makes the handing over of the conversation's next waiting words due
+/// now, however long their last try said to wait: what they waited for has
+/// settled.
+pub(crate) async fn due_now(node: &Arc<Node>, id: &ResidentId) {
+    let (working, resident) = (node.clone(), id.clone());
+    let made = fastctx_platform::task::blocking(move || {
+        let (node, id) = (working, resident);
+        let conversation = node.world.conversation(&id);
+        let Some(next) =
+            crate::inbox::first(&conversation, |row| row.state == PendingState::Waiting).map_err(failure)?
+        else {
+            return Ok(());
+        };
+        update(&node, &id, &next.delivery.id, false, |row| {
+            if !row.attempted && row.next > Timestamp::now() {
+                row.next = Timestamp::now();
+            }
+            Ok(())
+        })
+        .map(|_| ())
+    })
+    .await;
+    // Unwritten, the words are looked at again on their own time all the same.
+    if let Err(error) = made {
+        node.log.line(format_args!("lifecycle {id}: hurrying its waiting words: {}", error.message));
     }
 }
 

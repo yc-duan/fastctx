@@ -34,6 +34,10 @@ pub(super) struct Intent {
     pub completed: bool,
     pub settled: bool,
     pub quiet_since: Option<jiff::Timestamp>,
+    /// How long the quiet interval counted from `quiet_since` lasts, as last
+    /// judged: what the next look is timed to (`wake_once::register`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quiet_for: Option<u64>,
     pub quiet_owner: Option<ProcessIdentity>,
     pub last_seen: Option<jiff::Timestamp>,
     pub last: String,
