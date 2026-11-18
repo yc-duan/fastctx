@@ -131,8 +131,11 @@ function sample(frames: Frame[], ms: number, ease: (t: number) => number): { alp
 const PEN_STEP = 1000 / 30;
 
 /** Every pen at work, moved together by one clock, held weakly: a line
- *  dropped with its page goes with it. The clock runs while one is held,
- *  and stops where the page is not shown, as its timers and frames do. */
+ *  dropped with its page goes with it. A pen is at work while its line is
+ *  in the page and its turn is not waiting on the user (`enlist`); the
+ *  clock runs while one is, and stops where the page is not shown, as its
+ *  timers and frames do. A line out of the page leaves the clock until it
+ *  is put back (`place`), so a still page asks for no frame at all. */
 const pens = new Set<WeakRef<TurnLine>>();
 let moving = false;
 
@@ -140,8 +143,9 @@ function move(): void {
   requestAnimationFrame((now) => {
     for (const pen of pens) {
       const line = pen.deref();
-      if (line) line.draw(now);
-      else pens.delete(pen);
+      if (line?.draw(now)) continue;
+      pens.delete(pen);
+      line?.dismissed();
     }
     if (pens.size > 0) window.setTimeout(move, PEN_STEP);
     else moving = false;
@@ -158,6 +162,8 @@ export class TurnLine {
    *  to, and since when the pen writes. */
   private strokes: { element: SVGPathElement; frames: Frame[]; alpha: number; scale: number }[] = [];
   private began = 0;
+  /** Its place among the pens at work, while it is one. */
+  private pen: WeakRef<TurnLine> | null = null;
   /** Held still while the turn waits on the user, the ellipsis written whole. */
   private still = false;
   private ease: (t: number) => number = (t) => t;
@@ -191,17 +197,35 @@ export class TurnLine {
       // Without its token the pen moves at an even pace.
     }
     this.began = performance.now();
-    pens.add(new WeakRef(this));
+  }
+
+  /** Puts the pen to work on the clock, where it is not already. */
+  private enlist(): void {
+    if (this.pen || this.still || !this.element.isConnected) return;
+    this.pen = new WeakRef(this);
+    pens.add(this.pen);
     if (!moving) {
       moving = true;
       move();
     }
   }
 
+  /** Takes the pen off the clock. */
+  private dismiss(): void {
+    if (!this.pen) return;
+    pens.delete(this.pen);
+    this.pen = null;
+  }
+
+  /** The clock let it go: its line is out of the page. */
+  dismissed(): void {
+    this.pen = null;
+  }
+
   /** Moves the dots to where the writing stands at `now`, setting only
-   *  what changed. */
-  draw(now: number): void {
-    if (!this.element.isConnected) return;
+   *  what changed; whether it is still at work, its line in the page. */
+  draw(now: number): boolean {
+    if (!this.element.isConnected) return false;
     const ms = this.still ? DRIES - 1 : (now - this.began) % WHOLE;
     for (const stroke of this.strokes) {
       const { alpha, scale } = sample(stroke.frames, ms, this.ease);
@@ -216,14 +240,23 @@ export class TurnLine {
         stroke.element.style.setProperty("--ink-scale", String(s));
       }
     }
+    return true;
   }
 
   /** Holds the pen with the ellipsis written whole, or lets it write on. */
   private hold(still: boolean): void {
     if (still === this.still) return;
     this.still = still;
+    if (still) {
+      // Written whole once, then left still: nothing moves while the turn
+      // waits on the user.
+      this.draw(performance.now());
+      this.dismiss();
+      return;
+    }
     // Written on, the pen picks up at the moment it was held at.
-    if (!still) this.began = performance.now() - (DRIES - 1);
+    this.began = performance.now() - (DRIES - 1);
+    this.enlist();
   }
 
   get shown(): boolean {
@@ -257,6 +290,10 @@ export class TurnLine {
   place(parent: HTMLElement, before: Element | null, drawn: boolean, after = 0): void {
     const fresh = !this.element.isConnected;
     if (this.element.parentElement !== parent || this.element.nextElementSibling !== before) parent.insertBefore(this.element, before);
+    // In the page again, as its page is shown again too: the pen writes on,
+    // or is written whole where the turn waits.
+    if (this.still) this.draw(performance.now());
+    else this.enlist();
     if (!fresh) return;
     this.tick();
     if (!drawn) return;
@@ -270,6 +307,7 @@ export class TurnLine {
     for (const animation of this.element.getAnimations()) animation.cancel();
     this.element.remove();
     clearTimeout(this.ticking);
+    this.dismiss();
   }
 
   /** Brings the clock up to date, once a second while it runs. */

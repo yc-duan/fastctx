@@ -69,14 +69,17 @@ export class StreamedProse {
       const old = this.parts[index];
       const start = block.line === null ? null : from + offsetOfLine(tail, block.line);
       // The block being written is told apart from the same block done:
-      // done, it is drawn once more, its code coloured.
-      const key = writing && index === total - 1 ? `${block.source}\u0000w` : block.source;
+      // done, it is drawn once more, its code coloured. A block written past
+      // is done, and drawn so: kept under the same key once the words end,
+      // drawn as being written it stayed uncoloured (codex-17110933).
+      const still = writing && index === total - 1;
+      const key = still ? `${block.source}\u0000w` : block.source;
       if (old?.key === key) {
         next.push({ ...old, start, container: block.container });
         return;
       }
       const holder = document.createElement("template");
-      holder.innerHTML = block.html();
+      holder.innerHTML = block.html(still);
       const nodes = [...holder.content.childNodes];
       // The new nodes stand where the part replaced stood: before the first
       // node of any part after it.

@@ -2998,6 +2998,11 @@ export class ConversationPage {
 
   /** What resting on the title says: the whole title where the line cuts
    *  it; otherwise, where it can be renamed, that it can. */
+  /** What the name's hint was last worked out for: it is measured again
+   *  when the name or what may be done with it changes, or its box does
+   *  (the observer above), not with every frame of the conversation, which
+   *  read the page's layout in the middle of drawing it. */
+  private hinted = "";
   private nameHint(): void {
     const cut = this.name.scrollWidth > this.name.clientWidth;
     const rename = this.name.classList.contains("renamable") ? (this.options.controls?.words.commands.rename ?? "") : "";
@@ -3018,7 +3023,11 @@ export class ConversationPage {
     this.name.classList.toggle("renamable", renamable);
     if (renamable) this.name.tabIndex = 0;
     else this.name.removeAttribute("tabindex");
-    this.nameHint();
+    const hint = `${renamable}|${this.name.textContent ?? ""}`;
+    if (hint !== this.hinted) {
+      this.hinted = hint;
+      this.nameHint();
+    }
     // Archived or deleted, it is not said to work or wait.
     const waiting = !this.gone && this.away === null && conversation.waiting();
     // Working for the whole of a turn, not only while something shows; a
