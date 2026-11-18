@@ -9,6 +9,10 @@
 export class DraftFit {
   private mirror: HTMLTextAreaElement | null = null;
   private frame = 0;
+  /** Asked for while the box was out of the page or not shown, where it
+   *  has no width to measure by: fitted as soon as it has one again. */
+  private pending = false;
+  private shown: ResizeObserver | null = null;
 
   constructor(private readonly input: HTMLTextAreaElement) {}
 
@@ -27,9 +31,19 @@ export class DraftFit {
 
   private measure(): void {
     const { input } = this;
-    if (!input.isConnected) return;
+    const width = input.isConnected ? input.getBoundingClientRect().width : 0;
+    if (width === 0) {
+      this.pending = true;
+      this.shown ??= new ResizeObserver(() => {
+        if (this.pending) this.fit();
+      });
+      this.shown.observe(input);
+      return;
+    }
+    this.pending = false;
+    this.shown?.disconnect();
     const mirror = this.mirrorOf();
-    mirror.style.width = `${input.getBoundingClientRect().width}px`;
+    mirror.style.width = `${width}px`;
     // A chip over the head of the input indents its first line.
     mirror.style.textIndent = input.style.textIndent;
     mirror.value = input.value;

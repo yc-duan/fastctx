@@ -453,8 +453,12 @@ export class ConversationPage {
     this.element.querySelector(".view-steps")!.addEventListener("click", () => this.toggleSteps());
     document.addEventListener("keydown", this.findKey);
     this.name = this.element.querySelector<HTMLElement>(".who-name")!;
-    // Cut or whole again as the head narrows or widens, its hint follows.
+    // Cut or whole again as the head narrows or widens, its hint follows;
+    // and as the pointer or the keyboard comes to it, where a face that
+    // came late made the same box hold more.
     new ResizeObserver(() => this.nameHint()).observe(this.name);
+    this.name.addEventListener("pointerenter", () => this.nameHint());
+    this.name.addEventListener("focus", () => this.nameHint());
     // The title is renamed in place, where the conversation takes a name.
     this.name.addEventListener("click", () => this.rename());
     this.name.addEventListener("keydown", (event) => {
