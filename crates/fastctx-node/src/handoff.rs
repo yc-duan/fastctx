@@ -110,25 +110,6 @@ struct State {
     starting: usize,
     /// Calls being answered now.
     calls: usize,
-    /// When the node was first asked to yield and was not idle; past
-    /// `DRAIN_AFTER` it takes no new call, so the ones it answers can end
-    /// (`dev-beta19-release-and-handoff` 2026-11-17: a machine always asked
-    /// something never came to none, and waited for good).
-    yielding_since: Option<std::time::Instant>,
-    draining: bool,
-}
-
-/// How long a node asked to yield answers new calls while it waits for the
-/// ones under way: a call asked meanwhile is told the node is handing over
-/// and asks again, of its successor.
-const DRAIN_AFTER: std::time::Duration = std::time::Duration::from_secs(5);
-
-impl State {
-    /// Serving on: the yield was called off.
-    fn serve_on(&mut self) {
-        self.yielding_since = None;
-        self.draining = false;
-    }
 }
 
 /// Something under way the node waits for before it yields; dropping it
@@ -185,9 +166,6 @@ impl Handoff {
         }
         state.maintenance = false;
         state.yielding = state.guardian;
-        if !state.yielding {
-            state.serve_on();
-        }
         drop(state);
         self.changed();
         true
@@ -210,7 +188,7 @@ impl Handoff {
     /// A call is being answered; `None` once the node is on its way out.
     pub fn call(self: &Arc<Self>) -> Option<Busy> {
         let mut state = self.state.lock().expect("never poisoned");
-        if state.committed || state.draining {
+        if state.committed {
             return None;
         }
         state.calls += 1;
@@ -274,9 +252,6 @@ pub(crate) fn follow(node: Arc<Node>, supervision: Prepared) {
                         if resumed {
                             state.guardian = false;
                             state.yielding = state.maintenance;
-                            if !state.yielding {
-                                state.serve_on();
-                            }
                         }
                         resumed
                     };
@@ -319,45 +294,14 @@ async fn yield_when_idle(node: Arc<Node>, say: impl Fn(ServiceEvent)) {
         let changed = node.handoff.changed.notified();
         tokio::pin!(changed);
         changed.as_mut().enable();
-        let drain_in = {
+        {
             let mut state = node.handoff.state.lock().expect("never poisoned");
             if state.yielding && state.starting == 0 && state.calls == 0 && node.codex.settled() {
                 state.committed = true;
                 break;
             }
-            // Asked to yield and still answering: after a while no new call
-            // is taken, so those under way can end.
-            match (state.yielding, state.yielding_since) {
-                (false, _) => None,
-                (true, None) => {
-                    state.yielding_since = Some(std::time::Instant::now());
-                    Some(DRAIN_AFTER)
-                }
-                (true, Some(since)) if !state.draining => {
-                    let left = DRAIN_AFTER.saturating_sub(since.elapsed());
-                    if left.is_zero() {
-                        state.draining = true;
-                        node.log.line(format_args!(
-                            "handing over: no new call is taken while the {} under way end",
-                            state.calls
-                        ));
-                        None
-                    } else {
-                        Some(left)
-                    }
-                }
-                (true, Some(_)) => None,
-            }
-        };
-        match drain_in {
-            Some(left) => {
-                tokio::select! {
-                    () = &mut changed => {}
-                    () = tokio::time::sleep(left) => {}
-                }
-            }
-            None => changed.await,
         }
+        changed.await;
     }
     node.log.line("idle: handing the World on to the successor");
     say(ServiceEvent::Yielded);
