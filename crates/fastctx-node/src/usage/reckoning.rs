@@ -32,8 +32,12 @@ pub(crate) const WIDEST: u8 = 20;
 /// in tenths of a percent: less, and a tenth of a point of rounding moves the
 /// figure by more than the reach.
 const ROSE: u32 = 250;
-/// The weeks looked back over for what they came to.
-const BACK: i64 = 4;
+/// A reading this much lower than the one before it, in tenths of a
+/// percent, is the vendor clearing the week, not two answers heard out of
+/// their order.
+const FELL: u32 = 50;
+/// The weeks looked back over for what they came to: the last four whole.
+const BACK: i64 = 5;
 const WEEKS_KEPT: usize = 26;
 const RESETS_KEPT: usize = 60;
 
@@ -193,15 +197,20 @@ pub(super) fn of(path: &Path, book: &mut Book, agent: &str, now: Timestamp) -> R
 }
 
 /// What each of the weeks before `week` came to, as the ledger's days and
-/// readings still tell it.
+/// readings still tell it: each week the account the login is in now read,
+/// by the reset its readings named, from its first reading to its last. A
+/// week whose reading fell on the way says nothing: the vendor cleared it,
+/// and what the ledger kept and what the reading rose by are of different
+/// stretches.
 fn measure(path: &Path, book: &Book, week: Week, now: Timestamp) -> io::Result<Vec<Measured>> {
+    let span = SignedDuration::from_secs(WEEK_SECONDS);
     let since = week.start - SignedDuration::from_secs(BACK * WEEK_SECONDS);
     let since = Timestamp::from_second(since.as_second().div_euclid(86400) * 86400).expect("an earlier day");
     let history = book.reset_history();
     // Read apart from the days the book keeps for its reports, which hold
     // the whole year and would be let go for these few weeks.
-    let entries = super::history::History::default().entries(path, since, now, book.reading.as_ref(), &history, &[])?;
-    let spans = super::report::spans(&entries, week, &history);
+    let mut days = super::history::History::default();
+    let entries = days.entries(path, since, now, book.reading.as_ref(), &history, &[])?;
     let mut owners: Vec<(Timestamp, &String)> = entries
         .iter()
         .filter_map(|row| match row {
@@ -213,25 +222,36 @@ fn measure(path: &Path, book: &Book, week: Week, now: Timestamp) -> io::Result<V
     let owner_at = |at: Timestamp| {
         owners.iter().rev().find(|(since, _)| *since <= at).or(owners.first()).map(|(_, key)| (*key).clone())
     };
+    let account = book.accounts.iter().max_by_key(|(at, _)| *at).map(|(_, account)| account.clone());
+    // Each reading of a week that is over: the reset it named, when, and
+    // how much of the week was used.
+    let mut read: Vec<(Timestamp, Timestamp, u32)> = entries
+        .iter()
+        .filter_map(|row| match row {
+            Entry::Reading { at, windows, account: read_as, .. } => {
+                let window = super::readings::window(windows, WEEK_MINUTES)?;
+                let end = window.resets_at?;
+                let read_as = read_as.clone().or_else(|| owner_at(*at));
+                let over = end <= week.start + SignedDuration::from_secs(120);
+                (read_as == account && over && *at < end && end - span >= since).then_some((
+                    end,
+                    *at,
+                    window.used_tenths,
+                ))
+            }
+            _ => None,
+        })
+        .collect();
+    read.sort_by_key(|(end, at, _)| (*end, *at));
+    // What was used is summed by the hour: read again cut at each week's
+    // first reading and its last, so that what lies between them is exact.
+    let cut: Vec<Timestamp> =
+        read.chunk_by(|a, b| same(a.0, b.0)).flat_map(|read| [read[0].1, read[read.len() - 1].1]).collect();
+    let entries = days.entries(path, since, now, book.reading.as_ref(), &history, &cut)?;
     let mut measured = Vec::new();
-    for span in
-        spans.iter().filter(|span| span.start >= since && span.end <= week.start + SignedDuration::from_secs(120))
-    {
-        // The week's readings, as the account it was in read them.
-        let mut read: Vec<(Timestamp, u32)> = entries
-            .iter()
-            .filter_map(|row| match row {
-                Entry::Reading { at, windows, account, .. } if *at >= span.start && *at < span.end => {
-                    let window = super::readings::window(windows, WEEK_MINUTES)?;
-                    let account = account.clone().or_else(|| owner_at(*at));
-                    (account == span.account && window.resets_at.is_some_and(|end| same(end, span.reset)))
-                        .then_some((*at, window.used_tenths))
-                }
-                _ => None,
-            })
-            .collect();
-        read.sort_by_key(|(at, _)| *at);
-        let (Some((first, low)), Some((last, high))) = (read.first().copied(), read.last().copied()) else { continue };
+    for read in read.chunk_by(|a, b| same(a.0, b.0)) {
+        let (end, first, low) = read[0];
+        let (_, last, high) = read[read.len() - 1];
         let spent = entries
             .iter()
             .filter(|row| !matches!(row, Entry::Reading { .. }) && row.at() >= first && row.at() < last)
@@ -241,11 +261,13 @@ fn measure(path: &Path, book: &Book, week: Week, now: Timestamp) -> io::Result<V
                 Some(if fastctx_hosts::claude::pricing::is_fable(&usage.model) { quota_of_fable(usd) } else { usd })
             })
             .fold(Usd::ZERO, Usd::saturating_add);
+        let fell = read.windows(2).any(|pair| pair[0].2 >= pair[1].2.saturating_add(FELL));
         let rise_tenths = high.saturating_sub(low);
-        let came_to = (rise_tenths >= ROSE).then(|| Usd((u128::from(spent.0) * 1000 / u128::from(rise_tenths)) as u64));
+        let came_to =
+            (!fell && rise_tenths >= ROSE).then(|| Usd((u128::from(spent.0) * 1000 / u128::from(rise_tenths)) as u64));
         measured.push(Measured {
-            week: UsageMeasured { start: span.start, end: span.end, spent, rise_tenths, came_to },
-            account: span.account.clone(),
+            week: UsageMeasured { start: end - span, end, spent, rise_tenths, came_to },
+            account: account.clone(),
         });
     }
     Ok(measured)
@@ -476,6 +498,21 @@ mod tests {
         let weeks = reckoned.told(true, true).weeks;
         assert_eq!(weeks.iter().map(|week| week.came_to).collect::<Vec<_>>(), vec![Some(Usd(2_900_000_000)), None]);
         assert_eq!(dollars(reckoned.figure), 2900.0);
+        // A week whose reading fell on the way says nothing either, however
+        // far it rose from end to end.
+        let fallen = tempfile::tempdir().unwrap();
+        reading(fallen.path(), start - DAY * 7 + HOUR, start, 0);
+        cost(fallen.path(), start - DAY * 5, "ann", "claude-opus-5-5", 1800);
+        reading(fallen.path(), start - DAY * 4, start, 600);
+        reading(fallen.path(), start - DAY * 4 + HOUR, start, 20);
+        cost(fallen.path(), start - DAY * 2, "ann", "claude-opus-5-5", 900);
+        reading(fallen.path(), start - HOUR, start, 320);
+        reading(fallen.path(), start + HOUR, end, 5);
+        let mut book = self::book(fallen.path(), now);
+        let reckoned = of(fallen.path(), &mut book, "claude", now);
+        let weeks = reckoned.told(true, true).weeks;
+        assert_eq!((weeks.len(), weeks[0].rise_tenths, weeks[0].came_to), (1, 320, None));
+        assert_eq!(dollars(reckoned.figure), 3000.0);
         // With no week that says anything, the figure is what is expected.
         let empty = tempfile::tempdir().unwrap();
         reading(empty.path(), start + HOUR, end, 5);
