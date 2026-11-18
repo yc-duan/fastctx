@@ -1642,7 +1642,10 @@ export class ConversationView {
       for (const plan of element.querySelectorAll<HTMLElement>(".ask-plan")) handOnAtEdge(plan);
       if (this.openRows.has(block.key)) this.fill(block.key, element);
     } finally {
-      const keys = block.kind === "activity-group" ? block.members.filter((member) => member.kind === "prose").map((member) => member.key) : [block.key];
+      // A row that folds open says it inside what it opens (`fill`): a line
+      // of its own under it, as under a picture's card, belongs to nothing.
+      const folds = block.kind !== "activity-group" && !!element.querySelector(".fold-content");
+      const keys = block.kind === "activity-group" ? block.members.filter((member) => member.kind === "prose").map((member) => member.key) : folds ? [] : [block.key];
       const deferred = keys.filter((key) => this.conversation.deferred(key));
       const fullParent = block.kind === "activity-group" ? slot.stretch!.rows : element;
       let full = fullParent.querySelector<HTMLElement>(":scope > [data-event-full-list]");
