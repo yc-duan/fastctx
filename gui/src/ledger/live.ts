@@ -118,7 +118,7 @@ export function netOf(world: WorldNow | null, seen: Seen, now: Date): Net {
         if (machine.hold === "assist") continue;
         const given = assistsOn(world, machine.name, agent, one);
         for (const { assist } of given) {
-          grants.push({ login: login.id, person: assist.account, limit: limitOf(assist, plate ?? PLATE), used: 0, fable: 0, until: assist.until ? momentSaid(new Date(assist.until)) : null });
+          grants.push({ login: login.id, person: assist.account, limit: limitOf(assist, plate ?? PLATE), used: 0, fable: 0, until: assist.until ? momentSaid(new Date(assist.until)) : null, ...(managesOf(assist) ? { manages: true } : {}) });
         }
         const first = given[0]?.assist;
         if (first && (first.five_hour || first.turns)) lines[login.id] = { fiveStop: first.five_hour ?? null, turns: first.turns ?? null };
@@ -173,6 +173,14 @@ function missingOf(record: MachineLogins): string[] {
 function assistsOn(world: WorldNow | null, machine: string, agent: string, login: WorldLogin): { hub: string; assist: AssistSeen }[] {
   const home = login.default ? null : login.dir;
   return (world?.accounts.hubs ?? []).flatMap((hub) => hub.assists.filter((assist) => assist.machine === machine && assist.agent === agent && sameHome(assist.home, home)).map((assist) => ({ hub: hub.hub, assist })));
+}
+
+/** Whether one assisted manages the login with its owner: as the hub
+ *  says, and, where it keeps no such word yet, one given no limit, who saw
+ *  the account whole before there was the word. */
+export function managesOf(assist: AssistSeen): boolean {
+  const said = (assist as { manages?: boolean }).manages;
+  return said ?? (!assist.share && !assist.weekly && !assist.daily);
 }
 
 /** The part of the week an assistance allows, of a hundred: its share where
@@ -237,7 +245,7 @@ function lentOf(world: WorldNow | null, machine: Pickable, agent: string, one: W
   const mine = loginsOf(world?.accounts);
   for (const hub of world?.accounts.hubs ?? []) {
     const assist = hub.assists.find((given) => given.machine === machine.name && given.agent === agent && sameHome(given.home, home) && mine.some((login) => login.hub === hub.hub && login.account === given.account));
-    if (assist) return { by: machine.owner ?? "", limit: limitOf(assist, PLATE), used: 0, fable: 0, until: assist.until ? momentSaid(new Date(assist.until)) : null };
+    if (assist) return { by: machine.owner ?? "", limit: limitOf(assist, PLATE), used: 0, fable: 0, until: assist.until ? momentSaid(new Date(assist.until)) : null, ...(managesOf(assist) ? { manages: true } : {}) };
   }
   return { by: machine.owner ?? "", limit: null, used: 0, fable: 0, until: null };
 }
@@ -316,7 +324,7 @@ export function daysFrom(report: UsageReport, login: Login, plate: number, world
     people: [...merged.values()],
     weeks,
     resets: report.resets ? report.resets.map((reset) => ({ at: momentSaid(new Date(reset.confirmed_at)), how: how[reset.source] ?? reset.source, from: Math.round((reset.before_used_tenths ?? 0) / 10), to: Math.round(reset.used_tenths / 10) })) : null,
-    gap: login.week && !login.week.reset && (!login.lent || login.lent.limit === null) ? login.week.used - (ledgered / plate) * 100 : 0,
+    gap: login.week && !login.week.reset && (!login.lent || login.lent.manages) ? login.week.used - (ledgered / plate) * 100 : 0,
   };
 }
 

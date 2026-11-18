@@ -38,19 +38,19 @@ const logins: Login[] = [
   { id: "cx-lab", family: "codex", machine: "lab", dir: "/home/me/.codex", who: "lab@example.com", plan: "Pro", standing: "in", workbench: true, isDefault: true, five: { used: 100, resets: "1 小时 05 分后" }, week: { used: 64, resets: "6 天 4 小时后" }, credits: "$12.40", autoTitle: true },
   { id: "dy", family: "claude", machine: "server", dir: "/root/.claude-dy", who: ".claude-dy", plan: null, planSet: null, standing: "in", workbench: true, token: true, five: { used: 12, resets: "4 小时 02 分后" }, week: { used: 42, resets: "5 天 11 小时后" }, fable: 18, readAt: "26 分钟前" },
   { id: "ada-work", family: "claude", machine: "ada-mac", dir: "/Users/ada/.claude", who: "work@example.com", plan: "Max", standing: "in", workbench: true, week: { used: 0, resets: "2 天 6 小时后" }, lent: { by: "ada", limit: 25, used: 15.5, fable: 5, until: "11 月 30 日" } },
-  { id: "bo-team", family: "claude", machine: "bo-pc", dir: "C:\\Users\\bo\\.claude", who: "team@example.com", plan: "Ultra", standing: "in", workbench: true, five: { used: 44, resets: "1 小时 32 分后" }, week: { used: 63, resets: "22 小时后" }, fable: 21, readAt: "2 分钟前", lent: { by: "bo", limit: null, used: 9, fable: 4, until: null } },
+  { id: "bo-team", family: "claude", machine: "bo-pc", dir: "C:\\Users\\bo\\.claude", who: "team@example.com", plan: "Ultra", standing: "in", workbench: true, five: { used: 44, resets: "1 小时 32 分后" }, week: { used: 63, resets: "22 小时后" }, fable: 21, readAt: "2 分钟前", lent: { by: "bo", limit: null, used: 9, fable: 4, until: null, manages: true } },
 ];
 
 const grants: Grant[] = [
   { login: "max", person: "ada", limit: 25, used: 22, fable: 12, until: "11 月 30 日" },
-  { login: "max", person: "bo", limit: 20, used: 11, fable: 6, until: null },
+  { login: "max", person: "bo", limit: null, used: 11, fable: 6, until: null, manages: true },
   { login: "max", person: "cy", limit: 10, used: 6, fable: 4, until: "11 月 21 日" },
   { login: "verges", person: "ada", limit: 50, used: 44, fable: 27, until: null },
   { login: "verges", person: "dee", limit: 25, used: 19, fable: 11, until: "12 月 05 日" },
   { login: "verges", person: "bo", limit: 15, used: 6, fable: 2, until: null },
   { login: "bo-team", person: "ada", limit: 30, used: 21, fable: 8, until: null },
   { login: "bo-team", person: "cy", limit: 15, used: 7, fable: 3, until: "12 月 12 日" },
-  { login: "bo-team", person: "eli", limit: null, used: 6, fable: 2, until: null },
+  { login: "bo-team", person: "eli", limit: null, used: 6, fable: 2, until: null, manages: true },
 ];
 
 const lines: Record<string, Line> = {
@@ -267,7 +267,7 @@ function days(login: Login): Days {
   const lent = login.lent;
   const mine = lent ? lent.used : Math.max(used - others.reduce((sum, grant) => sum + grant.used, 0), 0);
   const mineFable = lent ? lent.fable : Math.max((login.fable ?? 0) - others.reduce((sum, grant) => sum + grant.fable, 0), 0);
-  const owners = lent && lent.limit === null ? Math.max(used - mine - others.reduce((sum, grant) => sum + grant.used, 0), 0) : 0;
+  const owners = lent?.manages ? Math.max(used - mine - others.reduce((sum, grant) => sum + grant.used, 0), 0) : 0;
   const quota: Partial<Record<Split, Series>> = {
     model: cut(models.map((one) => one.name), models.map((one) => one.share * Math.max(one.price * timesOf(one.name), 0.3))),
     ...(others.length && !lent ? { person: cut(["我", ...others.map((grant) => grant.person)], [Math.max(mine, 20), ...others.map((grant) => grant.used)]) } : {}),
@@ -284,9 +284,9 @@ function days(login: Login): Days {
     hoursAre: "requests",
     people: lent
       ? [
-          ...(lent.limit === null ? [{ name: null, week: (owners / 100) * plate, fable: (Math.max((login.fable ?? 0) - mineFable - others.reduce((sum, grant) => sum + grant.fable, 0), 0) / 100) * plate }] : []),
+          ...(lent.manages ? [{ name: null, week: (owners / 100) * plate, fable: (Math.max((login.fable ?? 0) - mineFable - others.reduce((sum, grant) => sum + grant.fable, 0), 0) / 100) * plate }] : []),
           { name: "我", week: (mine / 100) * plate, fable: (mineFable / 100) * plate, me: true },
-          ...(lent.limit === null ? others.map((grant) => ({ name: grant.person, week: (grant.used / 100) * plate, fable: (grant.fable / 100) * plate })) : []),
+          ...(lent.manages ? others.map((grant) => ({ name: grant.person, week: (grant.used / 100) * plate, fable: (grant.fable / 100) * plate })) : []),
         ]
       : [
           { name: null, week: (mine / 100) * plate, fable: (mineFable / 100) * plate },

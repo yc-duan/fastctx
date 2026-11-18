@@ -18,9 +18,9 @@ import { chevron, escape, gauge, machineOf, menu, toggle } from "./ui";
 /** The part of a login's week Fable may use, of a hundred (用户
  *  2026-11-15): at it, the whole login stops Fable. */
 export const FABLE_LINE = 50;
-/** Whether the reader sees a login whole: its owner, or one it assists
- *  with no limit set. One given a limit sees their own part alone. */
-export const seesWhole = (login: Login) => !login.lent || login.lent.limit === null;
+/** Whether the reader sees a login whole: its owner, or one who manages
+ *  it with its owner. Anyone else sees their own part alone. */
+export const seesWhole = (login: Login) => !login.lent || !!login.lent.manages;
 /** Fable's part of a login's week, of a hundred: as the World says, or as
  *  its usage reckons it once fetched. */
 export function fablePart(login: Login): number | undefined {
@@ -110,7 +110,7 @@ export function lentSpent(login: Login): { week: number; fable: number } {
  *  part of its week and of its Fable, and nothing of the login's own. */
 export function allotted(login: Login, tall?: number): string[] {
   const lent = login.lent!;
-  const allot = (plateOf(login) * lent.limit!) / 100;
+  const allot = (plateOf(login) * (lent.limit ?? 100)) / 100;
   const { week, fable: fableSpent } = lentSpent(login);
   const used = (week / allot) * 100;
   const fable = (fableSpent / (allot / 2)) * 100;
@@ -130,7 +130,7 @@ function quotaBody(): string {
   const cell = (drawn: string, head: string) => (drawn ? drawn.replace('<span class="lg-cell"', `<span class="lg-cell" data-head="${head}"`) : "<span></span>");
   const row = (login: Login, heads: [string, string, string]) => {
     const lent = login.lent;
-    const cells = lent && lent.limit !== null ? ["", ...allotted(login)] : windows(login);
+    const cells = lent && !lent.manages ? ["", ...allotted(login)] : windows(login);
     const under = lent ? `来自 ${escape(lent.by)}　${lent.until ? `至 ${lent.until}` : "不限期"}` : `${escape(login.machine)}${login.plan ? `　${escape(login.plan)}` : ""}${machineOf(login).online ? "" : "　离线"}`;
     return `<div class="lg-row lg-cols${state.fresh === login.id ? " fresh" : ""}" role="link" tabindex="0" data-go="${loginPlace(login)}">
       <span class="lg-who"><b>${escape(login.who)}</b><small>${under}</small></span>

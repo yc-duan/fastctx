@@ -79,10 +79,12 @@ export interface Login {
   fable?: number;
   fableHeld?: boolean;
   /** Another person's login that assists me. `limit` is the part of its
-   *  week I may use, of a hundred; with none I share its whole quota and
-   *  see its windows as its owner does, and with one I see only my part.
-   *  `used` and `fable` are what I used, of a hundred of its week. */
-  lent?: { by: string; limit: number | null; used: number; fable: number; until: string | null };
+   *  week I may use, of a hundred. Where its owner has me manage it with
+   *  them (`manages`) I see the account whole and set the shares of those
+   *  it assists, my own among them, and may have no limit; otherwise I see
+   *  only my part. `used` and `fable` are what I used, of a hundred of its
+   *  week. */
+  lent?: { by: string; limit: number | null; used: number; fable: number; until: string | null; manages?: boolean };
   /** What keeps it from working: logged out, its program too old, its
    *  connection changed by hand, a change under way. */
   loggedOut?: boolean;
@@ -103,8 +105,12 @@ export interface Login {
 export interface Grant {
   login: string;
   person: string;
-  /** Percent of the login's week this person may use; none for no limit. */
+  /** Percent of the login's week this person may use; none for no limit,
+   *  which only one who manages the login with its owner may have. */
   limit: number | null;
+  /** They manage the login with its owner: they see the account whole and
+   *  set the shares of those it assists, and nothing else. */
+  manages?: boolean;
   /** The specimen's own figures of what they used, of a hundred of the
    *  week; the app takes them from the login's usage. */
   used: number;
@@ -266,7 +272,9 @@ export interface Deeds {
   resetUsage(login: Login, to: number): Promise<void>;
   /** Takes the newest reset back. */
   undoReset(login: Login): Promise<void>;
-  assist(login: Login, person: string, limit: number | null, until: Date | null): Promise<void>;
+  /** Gives, or changes, what a person may use of the login: their share,
+   *  until when, and, where the owner says, whether they manage it too. */
+  assist(login: Login, person: string, limit: number | null, until: Date | null, manages?: boolean): Promise<void>;
   endAssist(login: Login, person: string): Promise<void>;
   line(login: Login, line: Line): Promise<void>;
   say(text: string): void;

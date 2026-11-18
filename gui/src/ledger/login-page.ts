@@ -57,9 +57,9 @@ const waiting = (what: string | Error) =>
 export function loginPage(): string {
   const login = current();
   if (!login) return `<div class="lg-page"><header class="lg-head lg-head-login"><a class="lg-back" href="${linkOf({ kind: "quota" })}" aria-label="返回" title="返回智能体">${glyph("back", 18)}</a></header>${waiting("该登录不在列表中")}</div>`;
-  // One it assists with no limit sets the others' shares, and nothing else.
+  // One who manages it with its owner sets the shares, and nothing else.
   const tabs: [Tab, string][] = login.lent
-    ? login.lent.limit === null && grantsOf(login).length
+    ? login.lent.manages && grantsOf(login).length
       ? [["usage", "用量"], ["calls", "调用"], ["assist", "协助"]]
       : [["usage", "用量"], ["calls", "调用"]]
     : [["usage", "用量"], ["calls", "调用"], ["assist", "协助"], ["settings", "设置"]];
@@ -115,10 +115,10 @@ const big = (name: string, cell: string, said = "") => (cell ? `<div class="lg-b
 function nowOf(login: Login): string {
   const lent = login.lent;
   const days = usable(daysOf(login));
-  if (lent && lent.limit !== null) {
+  if (lent && !lent.manages) {
     const [week, fable] = allotted(login, 20);
     return group("我的额度", `来自 ${escape(lent.by)}　${lent.until ? `至 ${escape(lent.until)}` : "不限期"}`, [
-      big("份额", figure(`${lent.limit}%`, expectSaid(login)), "每周开始时按上周读数与账本定出本周周额度，只在预期值的波动幅度内变动；本人额度为其份额"),
+      big("份额", figure(`${lent.limit ?? 100}%`, expectSaid(login)), "每周开始时按上周读数与账本定出本周周额度，只在预期值的波动幅度内变动；本人额度为其份额"),
       big("本周", week!),
       big(`<span title="${fableSaid}">Fable</span>`, fable ?? ""),
     ]);
@@ -133,7 +133,7 @@ function nowOf(login: Login): string {
   const told = gap
     ? `　<span class="lg-caution" title="${gap > 0 ? "可能来自官方 app、网页或其他设备，也可能是本周用法更耗额度" : "可能是厂商重置了额度"}">官方读数${gap > 0 ? "高于" : "低于"}账本 ${Math.abs(Math.round(gap))} 点</span>`
     : "";
-  const mine = lent ? `　本人已用 ${whole(lentSpent(login).week)}` : "";
+  const mine = lent ? `　本人已用 ${whole(lentSpent(login).week)}${lent.limit === null ? "" : ` / ${whole((plateOf(login) * lent.limit) / 100)}`}` : "";
   return (
     real +
     group("推算", `按账本${mine}${told}`, [big("本周周额度", figure(whole(plateOf(login)), expectSaid(login)), "每周开始时按上周读数与账本定出，只在预期值的波动幅度内变动"), big("本周已用", spent), big(`<span title="${fableSaid}">Fable</span>`, fable)], " lg-reckoned")
@@ -566,23 +566,22 @@ on("open-turn", (button) => {
 
 // ---- 协助
 
-/** What a limit comes to, in a line: its dollars this week, and what the
- *  person given it can see and do. */
-export const limitSaid = (login: Login, limit: number | null) =>
-  limit === null
-    ? "与号主共用全部额度。对方可见真实额度与推算，可调整他人份额。"
-    : `本周 ${whole((plateOf(login) * limit) / 100)}${login.family === "claude" ? `，其中 Fable 至多 ${whole((plateOf(login) * limit) / 200)}` : ""}，随周额度变动。对方可见本人额度、份额与预期周额度。`;
+/** What a person is given comes to, in a line: their share's dollars this
+ *  week, and what they can see and do. */
+export function limitSaid(login: Login, limit: number | null, manages = false): string {
+  const comes = limit === null ? "" : `本周 ${whole((plateOf(login) * limit) / 100)}${login.family === "claude" ? `，其中 Fable 至多 ${whole((plateOf(login) * limit) / 200)}` : ""}，随周额度变动。`;
+  return manages ? `${limit === null ? "与号主共用全部额度。" : comes}可见整个号的真实额度与推算，可调整各人份额。` : `${comes}对方可见本人额度、份额与预期周额度。`;
+}
 
-/** The ways a person's limit is set: none, a few shares, or any share
- *  from 1 to 100 typed in its field, which takes effect as it is left or
- *  Enter is pressed (the user, 2026-11-17: "应该能输入一个特定的百分比").
- *  One who is not the owner sets a share and nothing else: no limit is the
- *  owner's to give. */
+/** The ways a share is set: a few shares, or any share from 1 to 100 typed
+ *  in its field, which takes effect as it is left or Enter is pressed (the
+ *  user, 2026-11-17: "应该能输入一个特定的百分比"); and, where `none`, no
+ *  limit at all, which one who manages the login with its owner may have. */
 const LIMITS = ["10", "25", "50"];
-function limitRow(limit: number | null, who: string, owner: boolean): string {
+function limitRow(limit: number | null, who: string, none: boolean): string {
   const typed = limit !== null && !LIMITS.includes(String(limit)) ? String(limit) : "";
-  const none: [string, string][] = owner ? [["none", "不设上限"]] : [];
-  const options = choices("grant-limit", [...none, ...LIMITS.map((value): [string, string] => [value, `${value}%`])], typed ? "" : String(limit ?? "none"), `data-person="${who}"`);
+  const unlimited: [string, string][] = none ? [["none", "不限"]] : [];
+  const options = choices("grant-limit", [...unlimited, ...LIMITS.map((value): [string, string] => [value, `${value}%`])], typed ? "" : String(limit ?? "none"), `data-person="${who}"`);
   return `<div class="as-limit">${options}<label class="as-custom${typed ? " chosen" : ""}"><input type="text" inputmode="numeric" placeholder="自定" value="${typed}" data-limit-of="${who}" aria-label="自定比例"><span>%</span></label></div>`;
 }
 
@@ -599,57 +598,64 @@ function spent(login: Login): { owner: { week: number; fable: number }; me: { we
   };
 }
 
+/** The reader, where they are one of those a login assists: named so in
+ *  what a press on their own row asks. */
+const ME = "@me";
+
 function assist(login: Login): string {
   const others = grantsOf(login);
   const line = lines[login.id] ?? { fiveStop: null, turns: null };
-  // Its owner gives, ends and limits; one it assists with no limit sets the
-  // others' shares and nothing more.
+  // Its owner gives, ends and limits, and says who manages it with them;
+  // one who does sets the shares of those it assists, their own among them.
   const owner = !login.lent;
   if (!others.length)
     return `<div class="lg-body lg-empty"><span class="lg-empty-marks">${familyMark(login, 34)}${glyph("colleague", 34)}</span><p>此登录未协助任何人</p>${owner ? `<button type="button" class="lg-go" data-act="add-grant">添加协助</button>` : ""}</div>`;
   const plate = plateOf(login);
   const hasFable = login.family === "claude";
-  const cols = "7em 5.6em 16em 16em minmax(0, 1fr) 2em";
+  const cols = "7em 6.4em 15em 15em minmax(7em, 1fr) 2em";
   const used = spent(login);
   const pct = (dollars: number) => (dollars / plate) * 100;
-  /** One with no limit: measured against the whole week. */
-  const whole_ = (who: string, role: string, of: { week: number; fable: number }) => {
+  const none = { week: 0, fable: 0 };
+  /** The login's owner, measured against the whole week. */
+  const ownerRow = (who: string) => {
+    const of = used?.owner ?? none;
     const week = pct(of.week);
     const fable = (pct(of.fable) / 50) * 100;
-    return `<div class="lg-item"><div class="lg-row lg-cols lg-still"><span>${who}</span><span class="lg-soft">${role}</span>${gauge(`${login.id}-${who}-week`, Math.round(week), { under: money(week, plate) })}${hasFable ? gauge(`${login.id}-${who}-fable`, Math.round(fable), { under: money(fable, plate / 2) }) : "<span></span>"}<span></span><span></span></div></div>`;
+    return `<div class="lg-item"><div class="lg-row lg-cols lg-still"><span>${who}</span><span class="lg-soft">号主</span>${gauge(`${login.id}-owner-week`, Math.round(week), { under: money(week, plate) })}${hasFable ? gauge(`${login.id}-owner-fable`, Math.round(fable), { under: money(fable, plate / 2) }) : "<span></span>"}<span></span><span></span></div></div>`;
   };
-  const none = { week: 0, fable: 0 };
-  const heads = owner ? whole_("我", "号主", used?.owner ?? none) : whole_(escape(login.lent!.by), "号主", used?.owner ?? none) + whole_("我", "不设上限", used?.me ?? none);
-  const rows = others
-    .map((grant) => {
-      const person = used ? used.of(grant.person) : { week: (grant.used / 100) * plate, fable: (grant.fable / 100) * plate };
-      const who = escape(grant.person);
-      // The owner alone gives no limit, so another's is not the reader's to change.
-      if (!owner && grant.limit === null) return whole_(who, "不设上限", person);
-      const open = state.editing === grant.person;
-      const weekPct = pct(person.week);
-      const fablePct = pct(person.fable);
-      const of = grant.limit === null ? plate : (plate * grant.limit) / 100;
-      const usedOf = grant.limit === null ? weekPct : (weekPct / grant.limit) * 100;
-      const fable = grant.limit === null ? (fablePct / 50) * 100 : (fablePct / (grant.limit / 2)) * 100;
-      const until = grant.until === null ? "none" : "pick";
-      return `<div class="lg-item${open ? " open" : ""}${state.fresh === grant.person ? " fresh" : ""}">
-        <div class="lg-row lg-cols" role="button" tabindex="0" data-act="edit-grant" data-person="${who}">
+  /** One the login assists: against their share where they have one, the
+   *  whole week where they have none; opened, what the reader may set. */
+  const row = (key: string, who: string, given: { limit: number | null; manages?: boolean; until: string | null; paused?: boolean }, person: { week: number; fable: number }) => {
+    const open = state.editing === key;
+    const weekPct = pct(person.week);
+    const fablePct = pct(person.fable);
+    const of = given.limit === null ? plate : (plate * given.limit) / 100;
+    const usedOf = given.limit === null ? weekPct : (weekPct / given.limit) * 100;
+    const fable = given.limit === null ? (fablePct / 50) * 100 : (fablePct / (given.limit / 2)) * 100;
+    const until = given.until === null ? "none" : "pick";
+    const share = given.manages ? (given.limit === null ? "共管" : `共管　${given.limit}%`) : `${given.limit ?? 100}%`;
+    // The owner alone gives no limit to another; one who manages may take
+    // their own away again.
+    const unlimited = !!given.manages && (owner || key === ME);
+    return `<div class="lg-item${open ? " open" : ""}${state.fresh === key ? " fresh" : ""}">
+        <div class="lg-row lg-cols" role="button" tabindex="0" data-act="edit-grant" data-person="${key}">
           <span>${who}</span>
-          <span class="lg-soft">${grant.limit === null ? "不设上限" : `${grant.limit}%`}</span>
-          ${gauge(`${login.id}-${grant.person}-week`, Math.round(usedOf), { near: grant.limit !== null && usedOf >= 85, under: money(usedOf, of) })}
-          ${hasFable ? gauge(`${login.id}-${grant.person}-fable`, Math.round(fable), { near: grant.limit !== null && fable >= 85, under: money(fable, of / 2) }) : "<span></span>"}
-          <span class="lg-soft">${grant.paused ? `<span class="lg-caution">已暂停</span>` : escape(grant.until ?? "不限期")}</span>
+          <span class="lg-soft">${share}</span>
+          ${gauge(`${login.id}-${key}-week`, Math.round(usedOf), { near: given.limit !== null && usedOf >= 85, under: money(usedOf, of) })}
+          ${hasFable ? gauge(`${login.id}-${key}-fable`, Math.round(fable), { near: given.limit !== null && fable >= 85, under: money(fable, of / 2) }) : "<span></span>"}
+          <span class="lg-soft">${given.paused ? `<span class="lg-caution">已暂停</span>` : escape(given.until ?? "不限期")}</span>
           <span class="lg-mark-end">${chevron()}</span>
         </div>
         <div class="lg-fold"><div class="lg-fold-inner"><div class="lg-edit">
-          <div class="choice-row"><span class="choice-name">${owner ? "额度" : "份额"}</span><div>${login.family === "claude" ? `${limitRow(grant.limit, who, owner)}<p class="lg-edit-note">${limitSaid(login, grant.limit)}</p>` : `<p class="lg-edit-note">Codex 不按人计额度；可用下方通用限制里的 5 小时额度暂停协助。</p>`}</div></div>
-          ${owner ? `<div class="choice-row"><span class="choice-name">期限</span>${choices("grant-until", [["none", "不限期"], ["pick", until === "pick" ? escape(grant.until!) : "指定…"]], until, `data-person="${who}"`)}</div>
-          <div class="lg-edit-end"><button type="button" class="lg-word lg-danger" data-act="grant-end" data-person="${who}">收回</button></div>` : ""}
+          ${owner && hasFable ? `<div class="choice-row"><span class="choice-name">身份</span>${choices("grant-role", [["plain", "普通"], ["manage", "共管"]], given.manages ? "manage" : "plain", `data-person="${key}"`)}</div>` : ""}
+          <div class="choice-row"><span class="choice-name">份额</span><div>${hasFable ? `${limitRow(given.limit, key, unlimited)}<p class="lg-edit-note">${limitSaid(login, given.limit, given.manages)}</p>` : `<p class="lg-edit-note">Codex 不按人计额度；可用下方通用限制里的 5 小时额度暂停协助。</p>`}</div></div>
+          ${owner ? `<div class="choice-row"><span class="choice-name">期限</span>${choices("grant-until", [["none", "不限期"], ["pick", until === "pick" ? escape(given.until!) : "指定…"]], until, `data-person="${key}"`)}</div>
+          <div class="lg-edit-end"><button type="button" class="lg-word lg-danger" data-act="grant-end" data-person="${key}">收回</button></div>` : ""}
         </div></div></div>
       </div>`;
-    })
-    .join("");
+  };
+  const heads = owner ? ownerRow("我") : ownerRow(escape(login.lent!.by)) + row(ME, "我", login.lent!, used?.me ?? none);
+  const rows = others.map((grant) => row(escape(grant.person), escape(grant.person), grant, used ? used.of(grant.person) : { week: (grant.used / 100) * plate, fable: (grant.fable / 100) * plate })).join("");
   return `<div class="lg-body lg-sheet"><div class="lg-list lg-people" style="--cols:${cols}">
       <div class="lg-heads lg-cols"><span>用户</span><span>份额</span><span>本周</span><span${hasFable ? ` title="${fableSaid}"` : ""}>${hasFable ? "Fable" : ""}</span><span>期限</span><span></span></div>${rule(1)}
       ${heads}${rows}
@@ -677,17 +683,45 @@ on("edit-grant", (row) => {
   state.editing = open ? row.dataset.person! : null;
 });
 on("grant-limit", (button) => setLimit(button, button.dataset.value === "none" ? null : Number(button.dataset.value)));
-/** Sets the limit of the person `element` names. */
+/** Sets the share of the person `element` names, the reader's own where
+ *  it names them. */
 function setLimit(element: HTMLElement, limit: number | null): void {
   const login = current();
+  if (!login) return;
+  if (element.dataset.person === ME) {
+    const lent = login.lent;
+    if (!lent || lent.limit === limit) return;
+    if (deeds) void deeds.assist(login, ME, limit, null).then(() => draw(), (error: unknown) => say(error instanceof Error ? error.message : "更改失败"));
+    else {
+      lent.limit = limit;
+      draw();
+    }
+    return;
+  }
   const grant = grantOf(element);
-  if (!login || !grant || grant.limit === limit) return;
-  if (deeds) void deeds.assist(login, grant.person, limit, grant.until === null ? null : untilOf(login, grant.person)).then(() => draw());
+  if (!grant || grant.limit === limit) return;
+  if (deeds) void deeds.assist(login, grant.person, limit, grant.until === null ? null : untilOf(login, grant.person), grant.manages).then(() => draw(), (error: unknown) => say(error instanceof Error ? error.message : "更改失败"));
   else {
     grant.limit = limit;
     draw();
   }
 }
+/** Whether a person manages the login with its owner, as its owner says:
+ *  one who no longer does is left a share, having had none. */
+on("grant-role", (button) => {
+  const login = current();
+  const grant = grantOf(button);
+  const manages = button.dataset.value === "manage";
+  if (!login || !grant || !!grant.manages === manages) return;
+  const limit = manages ? grant.limit : (grant.limit ?? 25);
+  if (deeds) void deeds.assist(login, grant.person, limit, grant.until === null ? null : untilOf(login, grant.person), manages).then(() => draw(), (error: unknown) => say(error instanceof Error ? error.message : "更改失败"));
+  else {
+    if (manages) grant.manages = true;
+    else delete grant.manages;
+    grant.limit = limit;
+    draw();
+  }
+});
 // A share typed in its field takes effect as the field is left, or Enter
 // is pressed in it; what is not a share from 1 to 100 is put back.
 document.addEventListener("change", (event) => {

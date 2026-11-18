@@ -224,12 +224,12 @@ on("add-grant", () => {
       <span class="as-label">额度</span>
       <div>
         <div class="as-modes">
-          ${limitable ? `<button type="button" class="as-mode chosen" data-mode="limit"><b>设上限</b><small>对方仅可见本人额度与用量</small></button>` : ""}
-          <button type="button" class="as-mode${limitable ? "" : " chosen"}" data-mode="none"><b>不设上限</b><small>${limitable ? "对方可见整个号的额度" : "Codex 不按人计额度，可用通用限制里的 5 小时额度暂停协助"}</small></button>
+          ${limitable ? `<button type="button" class="as-mode chosen" data-mode="limit"><b>份额</b><small>对方仅可见本人额度</small></button>` : ""}
+          <button type="button" class="as-mode${limitable ? "" : " chosen"}" data-mode="none"><b>${limitable ? "共管" : "不设上限"}</b><small>${limitable ? "可见整个号的额度，可调整各人份额" : "Codex 不按人计额度，可用通用限制里的 5 小时额度暂停协助"}</small></button>
         </div>
         <div class="as-swap">
           <div class="as-percent${limitable ? "" : " off"}"></div>
-          <p class="as-shared${limitable ? " off" : ""}">共用全部额度　每周 ${whole(plate)}${fable ? `　Fable 至多 ${whole(plate / 2)}` : ""}</p>
+          <p class="as-shared${limitable ? " off" : ""}">共用全部额度　本周 ${whole(plate)}${fable ? `　Fable 至多 ${whole(plate / 2)}` : ""}</p>
         </div>
       </div>
       <span class="as-label">期限</span>
@@ -242,7 +242,7 @@ on("add-grant", () => {
   const names = sheet.body.querySelector<HTMLElement>(".as-names")!;
   const percents = sheet.body.querySelector<HTMLElement>(".as-percent")!;
   const go = sheet.body.querySelector<HTMLButtonElement>("[data-do]")!;
-  const comes = () => `每周 ${whole((plate * percent) / 100)}${fable ? `　Fable 至多 ${whole((plate * percent) / 200)}` : ""}`;
+  const comes = () => `本周 ${whole((plate * percent) / 100)}${fable ? `　Fable 至多 ${whole((plate * percent) / 200)}` : ""}`;
   const paint = (keep = false) => {
     if (!keep) percents.innerHTML = `<div class="as-limit">${choices("as-limit", [["10", "10%"], ["25", "25%"], ["50", "50%"]], custom ? "" : String(percent))}<label class="as-custom${custom ? " chosen" : ""}"><input type="text" inputmode="numeric" placeholder="自定" value="${escape(custom)}" aria-label="自定比例"><span>%</span></label><span class="as-comes"></span></div>`;
     percents.querySelector(".as-comes")!.textContent = comes();
@@ -294,7 +294,7 @@ on("add-grant", () => {
       if (deeds) {
         go.disabled = true;
         sheet.busy = true;
-        deeds.assist(login, person, limited ? percent : null, until?.at ?? null).then(
+        deeds.assist(login, person, limited ? percent : null, until?.at ?? null, limitable && !limited).then(
           () => {
             sheet.busy = false;
             sheet.close();
@@ -308,7 +308,7 @@ on("add-grant", () => {
         );
         return;
       }
-      grants.push({ login: login.id, person, limit: limited ? percent : null, used: 0, fable: 0, until: until?.said ?? null });
+      grants.push({ login: login.id, person, limit: limited ? percent : null, used: 0, fable: 0, until: until?.said ?? null, ...(limitable && !limited ? { manages: true } : {}) });
       sheet.close();
       lit(person);
     }
@@ -323,7 +323,7 @@ on("grant-until", (button) => {
   const grant = grantsOf(login).find((one) => one.person === button.dataset.person)!;
   const value = button.dataset.value!;
   const keep = (until: { said: string; at: Date } | null) => {
-    if (deeds) void deeds.assist(login, grant.person, grant.limit, until?.at ?? null).then(() => draw(), (error: unknown) => say(error instanceof Error ? error.message : "更改失败"));
+    if (deeds) void deeds.assist(login, grant.person, grant.limit, until?.at ?? null, grant.manages).then(() => draw(), (error: unknown) => say(error instanceof Error ? error.message : "更改失败"));
     else {
       grant.until = until?.said ?? null;
       draw();
