@@ -9,9 +9,13 @@
 
 import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
-import type { ModelProtocol, SentinelSeam, SentinelSettings, SentinelSettingsView, SentinelTried, SentinelTryReport } from "../world/sentinels";
+import type { ModelProtocol, SentinelSeam, SentinelSettings, SentinelSettingsView, SentinelTried, SentinelTryReport, SettingsReply } from "../world/sentinels";
 import type { SentinelWords } from "./features-words";
 import { detailOf } from "./problem";
+
+/** How many times a change is written over a newer version before it is
+ *  given up. */
+const SAVE_TRIES = 3;
 
 export interface SentinelFormOptions {
   words: SentinelWords;
@@ -219,6 +223,21 @@ export class SentinelForm {
     problem.title = this.problem?.detail ?? "";
   }
 
+  /** Writes the user's change over whatever version stands now: met with a
+   *  newer one, the settings are read again and `change` made on them, so
+   *  what the user did stands and what was changed elsewhere stays (the
+   *  user, 2026-11-18: "「已在别处修改」的规矩，推到计划、笔记、目标、哨兵设置").
+   *  A conflict comes back only where it still could not be written. */
+  private async writeOver(change: (standing: SentinelSettings | null) => SentinelSettings): Promise<SettingsReply> {
+    const { seam, login } = this.options;
+    let standing = this.view;
+    for (let tries = 1; ; tries += 1) {
+      const reply = await seam.write(login.hub, login.account, standing?.version ?? null, change(standing?.settings ?? null));
+      if (reply.kind !== "conflict" || tries >= SAVE_TRIES) return reply;
+      standing = await seam.read(login.hub, login.account);
+    }
+  }
+
   private async toggle(feature: "sentinels" | "goals", on: boolean): Promise<void> {
     if (this.busy || !this.view) return;
     const { seam, login, words } = this.options;
@@ -226,7 +245,7 @@ export class SentinelForm {
     this.problem = null;
     this.draw();
     try {
-      const reply = await seam.write(login.hub, login.account, this.view.version, { ...this.view.settings, [feature]: on });
+      const reply = await this.writeOver((standing) => ({ ...(standing ?? this.draft), [feature]: on }));
       if (reply.kind === "conflict") {
         this.show(await seam.read(login.hub, login.account));
         this.problem = { text: words.changedElsewhere, detail: "" };
@@ -257,7 +276,10 @@ export class SentinelForm {
         ...this.draft,
         model: this.draft.model ? { ...this.draft.model, endpoint: this.draft.model.endpoint.trim(), model: this.draft.model.model.trim() } : null,
       };
-      const reply = await seam.write(login.hub, login.account, this.view?.version ?? null, settings);
+      // Only what the user changed goes over what stands now.
+      const before = this.view?.settings ?? null;
+      const changed = before ? changedFields(before, settings) : settings;
+      const reply = await this.writeOver((standing) => (standing ? { ...standing, ...changed } : settings));
       if (reply.kind === "conflict") {
         this.problem = { text: words.changedElsewhere, detail: "" };
         this.busy = false;
@@ -278,4 +300,14 @@ export class SentinelForm {
       this.drawSave();
     }
   }
+}
+
+/** The fields `after` sets otherwise than `before`: what the user changed in
+ *  the form. */
+function changedFields(before: SentinelSettings, after: SentinelSettings): Partial<SentinelSettings> {
+  const changed: Record<string, unknown> = {};
+  for (const key of Object.keys(after) as (keyof SentinelSettings)[]) {
+    if (JSON.stringify(before[key] ?? null) !== JSON.stringify(after[key] ?? null)) changed[key] = after[key];
+  }
+  return changed as Partial<SentinelSettings>;
 }

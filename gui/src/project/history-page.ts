@@ -15,6 +15,10 @@ import { composeText, splitHeader, type HistoryAuthor, type HistoryDocument, typ
 import type { HistoryWords } from "./history-words";
 import "./history.css";
 
+/** How many times a save is written over a newer version before it is
+ *  given up. */
+const SAVE_TRIES = 3;
+
 export interface HistoryPageOptions {
   words: HistoryWords;
   head(title: string, actions?: string): string;
@@ -185,12 +189,26 @@ export class HistoryPage {
     source.setSelectionRange(source.value.length, source.value.length);
   }
 
+  /** What the user saves stands: written elsewhere since it was read, the
+   *  note is read again and the user's text written over the version
+   *  standing now, under the name it has now (the user, 2026-11-18:
+   *  "「已在别处修改」的规矩，推到计划、笔记、目标、哨兵设置"). */
   private async saveEdit(): Promise<void> {
     const doc = this.shown;
     if (!doc) return;
     const about = this.doc.querySelector<HTMLInputElement>(".hd-about-field")?.value.trim() || doc.revision.description;
     const body = this.doc.querySelector<HTMLTextAreaElement>(".hd-source")?.value ?? "";
-    await this.attempt(() => this.options.save(composeText(doc.revision.name, about, body), doc.revision.version));
+    await this.attempt(async () => {
+      let standing = doc.revision;
+      for (let tries = 1; ; tries += 1) {
+        try {
+          return await this.options.save(composeText(standing.name, about, body), standing.version);
+        } catch (error) {
+          if (tries >= SAVE_TRIES || !stale(error, whyOf(error))) throw error;
+          standing = (await this.options.read(null)).revision;
+        }
+      }
+    });
   }
 
   /** The version read becomes the newest; a retired one comes back. */

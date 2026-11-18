@@ -11,6 +11,10 @@ import { drawPlan, planElement, type PlanSeams } from "./render";
 import type { PlanWords } from "./words";
 import "./plan.css";
 
+/** How many times a save is made again over a newer version before the
+ *  draft is handed back to save once more. */
+const SAVE_TRIES = 3;
+
 export interface PlanShown {
   source: string | null;
   version: number;
@@ -127,7 +131,7 @@ export class PlanPage implements SidePage {
     // The edit stays until the World keeps it; a save that did not go
     // through keeps it to save again.
     text.readOnly = true;
-    void this.seams.save(source, expected).then(
+    void this.saveOver(source, expected).then(
       (saved) => {
         if (this.editing !== text) return;
         if (!saved.ok) return this.conflicted(source, saved.current);
@@ -146,8 +150,22 @@ export class PlanPage implements SidePage {
     );
   }
 
-  /** A save met a newer version. The draft is kept and laid out to edit
-   *  again, from that newer version, so saving once more keeps the user's. */
+  /** Saves `source` over whatever version stands now: a save that meets a
+   *  newer version is made again over it, so what the user saves stands
+   *  (the user, 2026-11-18: "「已在别处修改」的规矩，推到计划、笔记、目标、
+   *  哨兵设置"). */
+  private async saveOver(source: string, expected: number): Promise<PlanSaved> {
+    let at = expected;
+    for (let tries = 1; ; tries += 1) {
+      const saved = await this.seams.save(source, at);
+      if (saved.ok || saved.current === null || tries >= SAVE_TRIES) return saved;
+      at = saved.current;
+    }
+  }
+
+  /** A save met newer versions each time it was made again. The draft is
+   *  kept and laid out to edit again, from the newest, so saving once more
+   *  keeps the user's. */
   private conflicted(source: string, current: number | null): void {
     if (current != null && this.shownPlan) this.shownPlan = { ...this.shownPlan, version: current };
     this.edit();
