@@ -149,12 +149,14 @@ pub(super) struct Reckoned {
 
 impl Reckoned {
     /// What a use made at `at` counts as of what it was: less where the
-    /// week's usage was reset at or after it.
+    /// week's usage was reset after it. What the ledger sums by the hour is
+    /// cut at each reset and stands at the start of its stretch, so a use
+    /// at the very moment of a reset is the stretch after it, as here.
     pub fn scale(&self, at: Timestamp) -> f64 {
         if at < self.week.start {
             return 1.0;
         }
-        self.cuts.iter().filter(|(cut, _)| at <= *cut).map(|(_, part)| part).product()
+        self.cuts.iter().filter(|(cut, _)| at < *cut).map(|(_, part)| part).product()
     }
 
     /// When each reset in force was made: what is summed is cut there.
@@ -248,7 +250,9 @@ pub(super) fn measure_due(
         return Ok((Some(tried + RETRY), false));
     }
     let measured = measure(path, book, week, &account, now)?;
-    let before = measured.iter().any(|one| same(one.week.end, week.start));
+    // The week before said what it came to; one it did not, its readings
+    // too few as yet, is looked for again while more of them may come.
+    let before = measured.iter().any(|one| same(one.week.end, week.start) && one.week.came_to.is_some());
     for new in measured {
         kept.weeks.retain(|old| !(old.account == new.account && same(old.week.end, new.week.end)));
         kept.weeks.push(new);
@@ -376,8 +380,9 @@ pub(super) fn quota(charge: &Charge) -> Usd {
     if charge.fable { quota_of_fable(charge.usd) } else { charge.usd }
 }
 
-/// What everyone has used of this week as it counts now, in quota dollars:
-/// the ledger's charges and what its meters hold not yet booked.
+/// What everyone has used of this week until `now` as it counts now, in
+/// quota dollars, while the login was in the account it is in: the
+/// ledger's charges and what its meters hold not yet booked.
 fn used(book: &Book, reckoned: &Reckoned, now: Timestamp) -> Usd {
     let booked = book.recent.iter().map(|charge| (charge.at, quota(charge)));
     let held = book.balances().into_iter().flat_map(|row| {
@@ -386,7 +391,7 @@ fn used(book: &Book, reckoned: &Reckoned, now: Timestamp) -> Usd {
     });
     booked
         .chain(held)
-        .filter(|(at, _)| *at >= reckoned.week.start && *at <= now)
+        .filter(|(at, _)| *at >= reckoned.week.start && *at < now && book.account_at(*at) == reckoned.account)
         .fold(Usd::ZERO, |sum, (at, usd)| sum.saturating_add(reckoned.counted(at, usd)))
 }
 
@@ -434,8 +439,14 @@ pub(super) fn reset(path: &Path, book: &Book, agent: &str, now: Timestamp, asked
     let made = kept.resets.iter().position(|made| made.told.id == asked.id);
     match asked.to_tenths {
         Some(to_tenths) => {
-            if made.is_some() {
-                return Ok(());
+            if let Some(made) = made {
+                // Made already: given again, the same is answered; another
+                // part asked under its name is not that reset.
+                return if kept.resets[made].told.to_tenths == to_tenths {
+                    Ok(())
+                } else {
+                    Err(refused("a reset of that name was made to another part of the week"))
+                };
             }
             let figure = reckoned.figure;
             let used = used(book, &reckoned, now);
@@ -463,9 +474,10 @@ pub(super) fn reset(path: &Path, book: &Book, agent: &str, now: Timestamp, asked
                 },
                 account,
             });
-            // This week's are all kept: an id let go could be made again.
+            // Those of a week not over, of any account, are all kept: one let
+            // go would count again, and its name could be made again.
             while kept.resets.len() > RESETS_KEPT {
-                let Some(at) = kept.resets.iter().position(|made| !same(made.told.week_end, week.end)) else { break };
+                let Some(at) = kept.resets.iter().position(|made| made.told.week_end <= now) else { break };
                 kept.resets.remove(at);
             }
         }
@@ -722,7 +734,7 @@ mod tests {
         let looked = Asked { week_end: Some(end), ..asked("r1", Some(87)) };
         reset(path, &book, "claude", now, looked).unwrap();
         // Given again, it is made once.
-        reset(path, &book, "claude", now + HOUR, asked("r1", Some(10))).unwrap();
+        reset(path, &book, "claude", now + HOUR, asked("r1", Some(87))).unwrap();
         let after = of(path, &book, "claude", now + HOUR);
         assert_eq!(after.cuts(), vec![now]);
         // To the cent what was asked: 8.7 of a hundred of $3,300.
@@ -730,10 +742,14 @@ mod tests {
         let made = &after.told(true, true).resets.unwrap()[0];
         assert_eq!((dollars(made.figure), dollars(made.from), dollars(made.to)), (3300.0, 550.0, 287.1));
         assert_eq!((made.from_tenths, made.to_tenths, made.by.as_deref()), (166, 87, Some("ann")));
-        // What is used at the reset counts as it; after it, whole; and the
-        // week before not at all.
-        assert_eq!(after.counted(now, Usd(550)), Usd(287));
+        // What was used before the reset counts as it; at it and after it,
+        // whole; and the week before not at all.
+        assert_eq!(after.counted(now - SignedDuration::from_secs(1), Usd(550)), Usd(287));
+        assert_eq!(after.counted(now, Usd(100)), Usd(100));
         assert_eq!(after.counted(now + HOUR, Usd(100)), Usd(100));
+        // Its name asked for another part is not that reset.
+        let other = reset(path, &book, "claude", now + HOUR, asked("r1", Some(20))).unwrap_err();
+        assert_eq!(other.kind(), io::ErrorKind::InvalidInput);
         assert_eq!(after.counted(after.week.start - DAY, Usd(100)), Usd(100));
         // Only one who may make resets is told them.
         assert!(after.told(true, false).resets.is_none());

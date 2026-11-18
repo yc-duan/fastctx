@@ -476,8 +476,9 @@ on("expect", () => {
   });
   // Any whole percent from none to the widest; what is not one is not taken.
   swingInput.addEventListener("input", () => {
-    const typed = swingInput.value.replace(/[^0-9]/g, "");
-    const value = typed === "" ? Number.NaN : Number(typed);
+    // A whole percent alone: "1.5" is not taken for fifteen.
+    const typed = swingInput.value.trim();
+    const value = /^\d{1,2}$/.test(typed) ? Number(typed) : Number.NaN;
     const fits = value >= 0 && value <= WIDEST;
     swingInput.closest(".as-custom")!.classList.toggle("lg-wrong", !fits);
     if (fits) {
@@ -521,9 +522,11 @@ on("reset-usage", () => {
   const login = current();
   const days = usable(daysOf(login));
   const sheet = new Sheet("lg-reset");
-  // The reset this sheet makes, named once: pressed again after an answer
-  // that was lost, it is the same reset, made once.
-  const id = `r-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+  // The reset this sheet makes, named once for each part asked: pressed
+  // again after an answer that was lost, it is the same reset, made once;
+  // another part asked is another reset. Of the week the sheet shows.
+  const named = `r-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+  const weekEnd = days?.weekEnd ?? null;
   const plate = plateOf(login);
   const people = (days?.people ?? []).filter((one) => one.week > 0 || one.fable > 0);
   const total = (people.reduce((sum, one) => sum + one.week, 0) / plate) * 100;
@@ -591,7 +594,7 @@ on("reset-usage", () => {
       if (deeds) {
         sheet.busy = true;
         go.disabled = true;
-        deeds.resetUsage(login, at, id).then(done, (error: unknown) => {
+        deeds.resetUsage(login, at, `${named}-${Math.round(at * 10)}`, weekEnd).then(done, (error: unknown) => {
           go.disabled = false;
           sheet.busy = false;
           say(error instanceof Error ? error.message : "重置失败");

@@ -113,8 +113,19 @@ fn managed(own: &mut UsageReport, whole: UsageReport, only: Option<&HubAccount>)
             span.used_tenths = of.used_tenths;
         }
     }
-    let others = whole.people.into_iter().filter(|person| person.account.as_ref() != only);
-    own.people.extend(others.map(|person| UsagePerson { day: None, went: None, ..person }));
+    // Those who used it this week, as quota dollars: not their tokens, nor
+    // anyone who used it before and not now.
+    let others = whole.people.into_iter().filter(|person| {
+        person.account.as_ref() != only && person.week.tokens + person.week.usd.unwrap_or_default().0 > 0
+    });
+    let sum = |sum: UsageSum| UsageSum { tokens: 0, usd: sum.usd };
+    own.people.extend(others.map(|person| UsagePerson {
+        week: sum(person.week),
+        fable: person.fable.map(sum),
+        day: None,
+        went: None,
+        ..person
+    }));
 }
 
 pub(super) fn summarize(

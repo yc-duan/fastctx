@@ -32,10 +32,10 @@ pub struct WeekArgs {
     #[arg(long)]
     default: bool,
     /// How far a week's own figure may stand from that, in percent either
-    /// way, from 1 to 20: each week's figure is what the week before came
-    /// to, held within this reach. Five where never set; as it is when not
+    /// way, from 0 to 20: each week's figure is what the week before came
+    /// to, held within this reach. Ten where never set; as it is when not
     /// given.
-    #[arg(long, value_parser = clap::value_parser!(u8).range(1..=20))]
+    #[arg(long, value_parser = clap::value_parser!(u8).range(0..=20))]
     swing: Option<u8>,
 }
 

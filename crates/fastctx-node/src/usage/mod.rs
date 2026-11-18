@@ -163,9 +163,15 @@ pub(crate) fn stir(node: &Arc<Node>, agent: &str, dir: &Path) {
             with_book(&working, &at, |book| reckoning::measure_due(&at, book, "claude", Timestamp::now()))
         })
         .await;
+        // Looked at again within the hour however long nothing is due: the
+        // login may be in another account by then, whose weeks are not
+        // measured yet.
+        let hour = Timestamp::now() + jiff::SignedDuration::from_hours(1);
         let until = match &measured {
-            Ok((until, _)) => until.unwrap_or_else(|| Timestamp::now() + jiff::SignedDuration::from_mins(10)),
-            Err(_) => Timestamp::now() + jiff::SignedDuration::from_hours(1),
+            Ok((until, _)) => {
+                until.map_or(Timestamp::now() + jiff::SignedDuration::from_mins(10), |until| until.min(hour))
+            }
+            Err(_) => hour,
         };
         node.usage.measuring.lock().expect("never poisoned").insert(path.clone(), until);
         match measured {

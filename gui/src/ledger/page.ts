@@ -360,10 +360,10 @@ export class AgentsPage implements Page {
     const tooOld = (error: unknown) => /does not know|unknown variant|older/i.test(String(error));
     /** Resets the week's usage, or takes a reset back; what everyone used
      *  is read again behind it. */
-    const reset = async (login: Login, id: string, toTenths: number | null) => {
+    const reset = async (login: Login, id: string, toTenths: number | null, looked?: string | null) => {
       const { machine, agent, dir } = this.recordOf(login);
       // The week looked at: one that has turned since is not reset.
-      const weekEnd = this.seen.weekEnds.get(login.id) ?? null;
+      const weekEnd = looked ?? this.seen.weekEnds.get(login.id) ?? null;
       if (weekEnd === null) throw new Error("用量还没读到，稍后再试");
       // A node that reckons no week keeps no reset of one.
       if (!this.reckoning.has(login.id)) throw new Error("该机器离线，或其 Fastctx 版本较旧，暂不能重置用量");
@@ -490,7 +490,7 @@ export class AgentsPage implements Page {
           throw new Error(tooOld(error) ? "该机器的 Fastctx 版本较旧，暂不支持设置周额度" : error instanceof Error ? error.message : String(error));
         }
       },
-      resetUsage: (login, to, id) => reset(login, id, Math.round(to * 10)),
+      resetUsage: (login, to, id, weekEnd) => reset(login, id, Math.round(to * 10), weekEnd),
       undoReset: (login) => {
         const newest = this.seen.resets.get(login.id)?.find((made) => !made.undone);
         return newest ? reset(login, newest.id, null) : Promise.reject(new Error("没有可撤回的重置"));

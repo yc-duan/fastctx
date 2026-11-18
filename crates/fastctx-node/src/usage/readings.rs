@@ -31,14 +31,15 @@ pub(super) fn same(a: Timestamp, b: Timestamp) -> bool {
 /// (`answered`), as an earlier release of the mod sent with any sample of a
 /// session's figures, may be what an earlier answer carried: it raises a
 /// window and never lowers it. A week's window that moved on to its next
-/// period is told as that week's own reset.
+/// period is told as that week's own reset. Which windows were taken.
 fn merge_live(
     known: &mut Vec<LimitWindow>,
     windows: Vec<LimitWindow>,
     at: Timestamp,
     answered: bool,
-) -> Vec<UsageReset> {
+) -> (Vec<UsageReset>, Vec<(String, Option<u32>)>) {
     let mut resets = Vec::new();
+    let mut taken = Vec::new();
     for mut incoming in windows {
         // The host reports usage, never an accounting boundary.
         incoming.since = None;
@@ -73,14 +74,21 @@ fn merge_live(
                 (None, None) if !answered && incoming.used_tenths < old.used_tenths => continue,
                 _ => {}
             }
+            taken.push((incoming.name.clone(), incoming.minutes));
             known[index] = incoming;
         } else {
+            taken.push((incoming.name.clone(), incoming.minutes));
             known.push(incoming);
         }
     }
     known.sort_by(|a, b| a.name.cmp(&b.name).then(a.minutes.cmp(&b.minutes)));
-    resets
+    (resets, taken)
 }
+
+/// How long a reading the same as the one kept is left unwritten: the
+/// ledger's last row is as old at most as this, which is what a node
+/// started again takes for when each window was last read.
+const UNCHANGED_KEPT: SignedDuration = SignedDuration::from_secs(60);
 
 /// Records what an answer at `at` carried of `account`'s windows; whether
 /// anything was written. Each window is taken where this is newer than what
@@ -106,14 +114,18 @@ pub(super) fn record(
     if incoming.is_empty() {
         return Ok(false);
     }
-    for window in &incoming {
-        heard.insert((window.name.clone(), window.minutes), at);
-    }
     let mut windows = old.map_or_else(Vec::new, |(_, windows)| windows.clone());
-    let resets = merge_live(&mut windows, incoming, at, answered);
+    let (resets, taken) = merge_live(&mut windows, incoming, at, answered);
+    // Only a window taken is read as of then: one an earlier mod said lower,
+    // left as it was, makes no later answer late.
+    let confirmed = !taken.is_empty();
+    for key in taken {
+        heard.insert(key, at);
+    }
     if resets.is_empty()
         && windows.iter().all(|window| window.resets_at.is_some())
         && old.is_some_and(|(_, old)| *old == windows)
+        && (!confirmed || ledgered.is_some_and(|seen| at < seen + UNCHANGED_KEPT))
     {
         return Ok(false);
     }
@@ -232,8 +244,13 @@ mod tests {
         // It fell, as the vendor says: that is how it stands.
         assert!(read(&mut book, 2, week(end, 300), true));
         assert_eq!(stands(&book, WEEK_MINUTES), (300, end));
-        // The same said again by another answer is a reading all the same.
-        assert!(!read(&mut book, 3, week(end, 300), true));
+        // The same said again by another answer is a reading all the same,
+        // written where the last row is a minute old or more.
+        assert!(read(&mut book, 3, week(end, 300), true));
+        assert!(
+            !record(&mut book, path, week(end, 300), at + HOUR * 3 + SignedDuration::from_secs(30), None, true)
+                .unwrap()
+        );
         assert!(read(&mut book, 4, week(end, 550), true));
         assert!(read(&mut book, 5, week(end, 300), true));
         // An answer that came before the one known is said late; so is one
@@ -242,8 +259,9 @@ mod tests {
         assert!(!read(&mut book, 6, week(end - HOUR * 168, 990), true));
         assert_eq!(stands(&book, WEEK_MINUTES), (300, end));
         // What no answer is known to have carried raises a window, never
-        // lowers it.
+        // lowers it, and makes no answer after it late.
         assert!(!read(&mut book, 7, week(end, 120), false));
+        assert_eq!(stands(&book, WEEK_MINUTES), (300, end));
         assert!(read(&mut book, 8, week(end, 320), false));
         assert_eq!(stands(&book, WEEK_MINUTES), (320, end));
         // Each window by when it was read: a newer five hours does not make
