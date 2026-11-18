@@ -132,6 +132,7 @@ import { ManagedPage, managedOf } from "./app/managed-page";
 import { enManaged, zhManaged } from "./app/managed-words";
 import { RemovalSheet } from "./app/removal-sheet";
 import { noticeDissolved } from "./app/dissolved-notice";
+import { enSafeStart, noticeSafeStart, safeStart, zhSafeStart } from "./app/safe-start";
 import { NewTalk } from "./app/new-talk";
 import { enModelPanel, zhModelPanel } from "./conversation/model-panel";
 import "./app/new-talk.css";
@@ -3812,7 +3813,9 @@ document.addEventListener("auxclick", besidePress, true);
 applyTheme(() => {
   void redrawDiagrams(shell.element);
 });
-show(specimenPlace() ?? placeOf(location.hash));
+// The shell's safe start opens on the agents, not where the page was.
+show(specimenPlace() ?? (safeStart ? { kind: "agents", machine: null } : placeOf(location.hash)));
+noticeSafeStart({ ...(english ? enSafeStart : zhSafeStart), close: (english ? enAccess : zhAccess).close });
 // A device in no network any more, however it left (it logged out, the
 // network was dissolved, its hub went away), has only the way in to show,
 // as when it first opened (`world-gui.md`).
