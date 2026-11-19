@@ -241,22 +241,27 @@ pub(crate) async fn due_now(node: &Arc<Node>, id: &ResidentId, why: &'static str
     let made = fastctx_platform::task::blocking(move || {
         let (node, id) = (working, resident);
         let conversation = node.world.conversation(&id);
-        // The words the handing over takes next: not a notice that goes with
-        // the next turn's words.
-        let Some(next) = crate::inbox::first(&conversation, |row| {
+        // The words the handing over takes, in the order they came: each that
+        // waited for what settled, up to any put off for a failure of its own,
+        // which those behind it wait behind; not a notice that goes with the
+        // next turn's words. Two that met the wake both go as it settles.
+        let waiting = crate::inbox::those(&conversation, |row| {
             row.state == PendingState::Waiting && row.delivery.notice.along().is_none()
         })
-        .map_err(failure)?
-        else {
-            return Ok(());
-        };
-        update(&node, &id, &next.delivery.id, false, move |row| {
-            if !row.attempted && row.reason.as_deref() == Some(why) && row.next > Timestamp::now() {
-                row.next = Timestamp::now();
+        .map_err(failure)?;
+        for next in waiting {
+            let waited = update(&node, &id, &next.delivery.id, false, move |row| {
+                let waited = !row.attempted && row.reason.as_deref() == Some(why);
+                if waited && row.next > Timestamp::now() {
+                    row.next = Timestamp::now();
+                }
+                Ok(waited)
+            })?;
+            if waited == Some(false) {
+                break;
             }
-            Ok(())
-        })
-        .map(|_| ())
+        }
+        Ok::<(), Failure>(())
     })
     .await;
     // Unwritten, the words are looked at again on their own time all the same.
