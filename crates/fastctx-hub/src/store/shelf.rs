@@ -57,7 +57,12 @@ impl Shelf {
         }
         let observed = super::format::prepare(dir)?;
         let schema = format!("{SCHEMA}{}", crate::assets::schema());
-        let database = Database::open_initialized(&dir.join(FILE), &schema, |connection| {
+        // Found damaged, it is left as it is and the hub does not start: what
+        // a salvage could read of it would be served as the hub's directory,
+        // grants taken back since gone with the pages they were on. It is put
+        // back from a backup, by whoever keeps the hub.
+        let shape = fastctx_storage::Shape { keep_damaged: true, ..Default::default() };
+        let database = Database::open_initialized_shaped(&dir.join(FILE), &schema, shape, |connection| {
             fastctx_storage::versions::apply(
                 connection,
                 "hub.jobs",
@@ -67,11 +72,16 @@ impl Shelf {
             crate::assets::migrate(connection)?;
             super::format::initialize(connection, &observed)
         })
-        .map_err(other)?;
-
-        if let Some(report) = database.salvaged() {
-            eprintln!("the hub's database was damaged and set aside; what could be read was salvaged:\n{report}");
-        }
+        .map_err(|error| {
+            if error.is_database_damage() {
+                io::Error::other(format!(
+                    "the hub's database {} is damaged, and is left as it is: put the hub back from a backup ({error})",
+                    dir.join(FILE).display()
+                ))
+            } else {
+                other(error)
+            }
+        })?;
         let shelf = Self(database);
         // File retirement needs exclusive startup ownership, before standby or
         // serving can read/write hub.json. This is fixed-size name cleanup.

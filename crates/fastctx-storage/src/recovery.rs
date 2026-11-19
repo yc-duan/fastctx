@@ -84,9 +84,24 @@ pub(super) fn prepare(path: &Path) -> Result<Option<String>> {
     salvage(path, &intent).map(Some)
 }
 
+/// Before a database that is never salvaged opens (`Shape::keep_damaged`):
+/// refuses it, left as it is, where it was marked damaged, is found so by
+/// `inspect`, or a salvage of it was begun.
+pub(super) fn refuse_damaged(path: &Path) -> Result<()> {
+    if intent(path)?.is_some() {
+        return Err(Error::damaged("a salvage of it was begun, and it is left as it is"));
+    }
+    let damage = match std::fs::read_to_string(damage_mark(path)) {
+        Ok(reason) => Some(reason),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => inspect(path)?,
+        Err(error) => return Err(error.into()),
+    };
+    damage.map_or(Ok(()), |reason| Err(Error::damaged(reason)))
+}
+
 /// The checks of an existing database that cost no more than its header and
-/// its schema: what is wrong, if anything. The whole file is checked in the
-/// background once it is open (`crate::integrity`). The file is read without
+/// its schema: what is wrong, if anything. Damage further in is found as
+/// SQLite reads through it (`crate::integrity`). The file is read without
 /// a writable connection, so a broken header cannot make SQLite discard its
 /// write-ahead log. Only the database's keeper runs it (`crate::keeper`), so
 /// no other connection writes the file while it is read.
