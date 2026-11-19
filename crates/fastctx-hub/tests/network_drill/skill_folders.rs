@@ -191,5 +191,54 @@ pub async fn exercise(world: &World, report: &mut Report) -> anyhow::Result<()> 
         "deletion removes the folder from the index",
         "",
     );
+    // Imported again after it was deleted, as a newer copy of it is: a
+    // writer expecting no skill writes it, its versions going on from the
+    // deletion's (a customer's import, delete, import, 2026-11-18).
+    let again = b
+        .skill_files(
+            account,
+            Request::Write {
+                name: "renamed".into(),
+                expected: None,
+                files: vec![main_file("renamed", "imported again", "newer body")],
+            },
+        )
+        .await
+        .map_err(anyhow::Error::msg)?;
+    report.check(
+        matches!(&again, Reply::Written { metadata } if metadata.version > renamed + 1 && !metadata.deleted),
+        "a deleted skill is imported again by a writer expecting none",
+        format!("{again:?}"),
+    );
+    let read = a.skill_files(account, Request::Read { name: "renamed".into() }).await.map_err(anyhow::Error::msg)?;
+    report.check(
+        matches!(read,Reply::Read{snapshot}if snapshot.skill.as_ref().is_some_and(|skill|skill.description=="imported again")),
+        "the skill imported again is the one read",
+        "",
+    );
+    // A client that carries the deletion's version back from the conflict,
+    // as earlier hubs asked, writes it anew too.
+    let Reply::Written { metadata: again } = again else { anyhow::bail!("expected the import again written") };
+    let deleted = written(
+        a.skill_files(account, Request::Delete { name: "renamed".into(), expected: again.version })
+            .await
+            .map_err(anyhow::Error::msg)?,
+    )?;
+    let over = a
+        .skill_files(
+            account,
+            Request::Write {
+                name: "renamed".into(),
+                expected: Some(deleted),
+                files: vec![main_file("renamed", "over its deletion", "body")],
+            },
+        )
+        .await
+        .map_err(anyhow::Error::msg)?;
+    report.check(
+        matches!(&over, Reply::Written { metadata } if metadata.version == deleted + 1),
+        "a deleted skill is written anew by a writer carrying the deletion's version",
+        format!("{over:?}"),
+    );
     Ok(())
 }

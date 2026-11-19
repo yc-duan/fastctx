@@ -64,6 +64,7 @@ mod wake_command;
 mod wake_once;
 pub(crate) mod wake_store;
 mod wake_words;
+pub(crate) use wake_once::in_flight as wake_in_flight;
 pub(crate) use wake_once::register;
 pub(crate) use wake_words::wake;
 

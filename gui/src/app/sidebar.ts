@@ -93,7 +93,10 @@ const FOLDING_MS = 560;
 const folded = new Set<string>(
   (() => {
     try {
-      return JSON.parse(localStorage.getItem("folded") ?? "[]") as string[];
+      // What is not a list of names, written by hand or by another version,
+      // is none: the reader folds again what they want folded.
+      const kept: unknown = JSON.parse(localStorage.getItem("folded") ?? "[]");
+      return Array.isArray(kept) ? kept.filter((name): name is string => typeof name === "string") : [];
     } catch {
       return [];
     }

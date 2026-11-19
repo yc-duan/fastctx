@@ -945,12 +945,44 @@
   white-space: nowrap;
 }
 
-/* 「用量」: the windows now, large; then what was used, drawn. */
+/* 「用量」: the account's own quota in its own place, large; under it what
+   the ledger reckons of the week; then what was used, drawn. Each group
+   says what it is on its head, so no figure is taken for the other kind. */
+.lg-group-head {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  padding: 6px 12px 10px;
+}
+.lg-group-head h2 {
+  margin: 0;
+  font: inherit;
+  color: var(--text);
+}
+.lg-group-head small {
+  color: var(--text-3);
+}
+.lg-group + .lg-group {
+  margin-top: 4px;
+}
 .lg-now {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 56px;
   padding: 4px 12px 26px;
+}
+/* A figure where a bar would stand keeps the bar's height under it, so the
+   line said under each of a row's figures is on one level. */
+.lg-big .lg-meter.lg-figure::after {
+  content: "";
+  display: block;
+  height: 20px;
+}
+.lg-group:not(.lg-reckoned) > .lg-now {
+  padding-bottom: 20px;
+}
+.lg-reckoned .lg-big .lg-meter > b {
+  font-size: calc(var(--body-size) * 1.55);
 }
 .lg-now[data-count="2"] {
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1912,3 +1944,62 @@
   }
 }
 
+
+/* The week's usage reset by hand: what it makes of each, before it is done.
+   The list scrolls in its own place; the sheet keeps its height. */
+.sheet.lg-reset .sheet-body {
+  width: min(520px, 100vw - 32px);
+}
+.sheet.lg-reset .choice-row {
+  display: grid;
+  grid-template-columns: 5em minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  margin-top: 18px;
+}
+.rs-list {
+  display: grid;
+  gap: 8px;
+  height: 13.5em;
+  margin-top: 18px;
+  padding: 2px 0;
+  overflow-y: auto;
+  align-content: start;
+  font-variant-numeric: tabular-nums;
+}
+.rs-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 5.5em 1.5em 5.5em;
+  gap: 8px;
+}
+.rs-row > :nth-child(2),
+.rs-row > :nth-child(4) {
+  text-align: right;
+}
+.rs-row > :nth-child(3) {
+  text-align: center;
+}
+.rs-row.rs-sum {
+  margin-top: 6px;
+  color: var(--text-strong);
+}
+.rs-fable {
+  min-height: 3em;
+  margin: 12px 0 0;
+  color: var(--text-3);
+}
+.ps-swing {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.lg-plate .as-custom.lg-wrong {
+  border-color: var(--wrong);
+}
+.lgc-reach {
+  fill: color-mix(in srgb, var(--pen-clay) 14%, transparent);
+}
+.lg-resets li {
+  grid-template-columns: 11em 6em 1fr auto;
+}

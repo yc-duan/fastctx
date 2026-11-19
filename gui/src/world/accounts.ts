@@ -156,6 +156,10 @@ export interface AssistSeen {
   /** The part of the login's week the account may use, in percent of the
    *  week its owner set; Fable is half of it. A hub of before keeps none. */
   share?: number;
+  /** Whether the account manages the login with its owner: it sees the
+   *  account's own quota and sets the shares of those the login assists.
+   *  Absent from a node of before. */
+  manages?: boolean;
 }
 
 /** A plan a login names none of (a Claude Code long-lived token), set by
@@ -411,7 +415,7 @@ export interface Dissolution {
 /** A change made as an account (`fastctx_types::accounts::AccountChange`). */
 export type AccountChange =
   | { change: "share"; machine: MachineName; to: AccountName; shared: boolean; jobs?: number }
-  | { change: "assist"; machine: MachineName; to: AccountName; agent: string; home?: string; assisting: boolean; until?: Timestamp; weekly?: number; daily?: number; five_hour?: number; turns?: number; share?: number }
+  | { change: "assist"; machine: MachineName; to: AccountName; agent: string; home?: string; assisting: boolean; until?: Timestamp; weekly?: number; daily?: number; five_hour?: number; turns?: number; share?: number; manages?: boolean }
   | { change: "plan"; machine: MachineName; agent: string; home?: string; plan: PlanLabel | null; ultra?: boolean }
   | { change: "stop_acting"; machine: MachineName }
   /** The administrator's change: the server checks it reaches the machine

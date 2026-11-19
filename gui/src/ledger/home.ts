@@ -8,7 +8,8 @@
 import { reachDrawing } from "../app/agents-reach";
 import type { Pickable } from "../app/agent-machines";
 import { agentGlyph, glyph } from "../conversation/glyphs";
-import { converses, daysOf, deeds, familyName, logins, machines, plateOf, usable, type Family, type Login, type Machine } from "./data";
+import { waiting } from "../app/waiting";
+import { converses, daysOf, deeds, familyName, logins, machines, plateOf, unread, usable, type Family, type Login, type Machine } from "./data";
 import { whole } from "./format";
 import { rule } from "./marks";
 import { draw, goTo, linkOf, on, say, state } from "./state";
@@ -17,20 +18,25 @@ import { chevron, escape, gauge, machineOf, menu, toggle } from "./ui";
 /** The part of a login's week Fable may use, of a hundred (用户
  *  2026-11-15): at it, the whole login stops Fable. */
 export const FABLE_LINE = 50;
+/** Whether the reader sees a login whole: its owner, or one who manages
+ *  it with its owner. Anyone else sees their own part alone. */
+export const seesWhole = (login: Login) => !login.lent || !!login.lent.manages;
 /** Fable's part of a login's week, of a hundred: as the World says, or as
  *  its usage reckons it once fetched. */
 export function fablePart(login: Login): number | undefined {
   if (login.fable !== undefined) return login.fable;
-  if (login.family !== "claude" || login.lent) return undefined;
+  if (login.family !== "claude" || !seesWhole(login)) return undefined;
   const days = usable(daysOf(login));
   if (!days) return undefined;
   return (days.people.reduce((sum, one) => sum + one.fable, 0) / plateOf(login)) * 100;
 }
 /** How much of what Fable may use of a login's week is used. */
 export const fableUsed = (login: Login) => Math.min(100, Math.round(((fablePart(login) ?? 0) / FABLE_LINE) * 100));
-export const fableSaid = "Fable 额度为周额度的 50%，官方读数不提供，按账本估算。用尽后暂停 Fable，其他型号不受影响。";
+export const fableSaid = "Fable 可用周额度的 50%，官方不提供读数，按账本推算。用尽后暂停 Fable，其他型号不受影响。";
 /** So much of so much, in whole dollars. */
 export const money = (percent: number, of: number) => `${whole((percent / 100) * of)} / ${whole(of)}`;
+/** When a window starts over, as its bar says it. */
+const startsOver = (reading: { resets: string; reset?: boolean }) => (reading.reset ? "已重置" : reading.resets ? `${reading.resets}重置` : "");
 
 export function homePage(): string {
   const attach = state.place.kind === "attach";
@@ -44,51 +50,76 @@ export function homePage(): string {
       : "";
   return `<div class="lg-page">
     <header class="page-head lg-head"><div class="page-head-title"><h1 class="page-title">智能体</h1></div>
-      <div class="page-head-actions"><div class="segmented"><button type="button" class="segment${attach ? "" : " chosen"}" data-go="${linkOf({ kind: "quota" })}">额度</button><button type="button" class="segment${attach ? " chosen" : ""}" data-go="${linkOf({ kind: "attach", machine: machine?.id ?? state.machine })}">接入</button></div>${end}</div>
+      <div class="page-head-actions">${end}<div class="segmented"><button type="button" class="segment${attach ? "" : " chosen"}" data-go="${linkOf({ kind: "quota" })}">额度</button><button type="button" class="segment${attach ? " chosen" : ""}" data-go="${linkOf({ kind: "attach", machine: machine?.id ?? state.machine })}">接入</button></div></div>
     </header>
-    ${attach ? (machine ? attachBody(machine) : `<div class="lg-body lg-empty"><p>暂无机器</p></div>`) : quotaBody()}
+    ${unread ? `<div class="lg-body lg-sheet">${waiting({ label: "正在读取", shape: "rows", rows: 4 })}</div>` : attach ? (machine ? attachBody(machine) : `<div class="lg-body lg-empty"><p>暂无机器</p></div>`) : quotaBody()}
   </div>`;
 }
 
-/** A login's three windows as its owner sees them, and as one it assists
- *  without a limit does. */
-export function windows(login: Login, tall?: number): string[] {
-  if (login.unread && !login.five && !login.week) return [`<span class="lg-soft lg-unread" title="${escape(login.unread)}">未读取额度</span>`, "", ""];
+/** A login's own windows as its vendor reads them: how full each is, and
+ *  when it starts over. Nothing here is reckoned. */
+export function official(login: Login, tall?: number): [string, string] {
+  if (login.unread && !login.five && !login.week) return [`<span class="lg-soft lg-unread" title="${escape(login.unread)}">未读取额度</span>`, ""];
+  const idle = !machineOf(login).online;
+  const more = tall ? { tall } : {};
+  const drawn = (name: string, reading: Login["five"]) =>
+    reading ? gauge(`${login.id}-${name}-${tall ?? 0}`, reading.reset ? 0 : reading.used, { ...more, idle, under: startsOver(reading), said: "官方读数" }) : "";
+  return [drawn("five", login.five), drawn("week", login.week)];
+}
+
+/** What the ledger comes to of a login's week, of a hundred, where its
+ *  usage has been fetched. */
+export function weekPart(login: Login): number | undefined {
+  const days = usable(daysOf(login));
+  if (!days) return undefined;
+  return (days.people.reduce((sum, one) => sum + one.week, 0) / plateOf(login)) * 100;
+}
+
+/** A login's week as the ledger reckons it: what was used of this week's
+ *  figure, and of what Fable may use of it. */
+export function reckoned(login: Login, tall?: number): [string, string] {
   const idle = !machineOf(login).online;
   const plate = plateOf(login);
   const more = tall ? { tall } : {};
-  const days = usable(daysOf(login));
-  const fiveSpent = days?.fiveSpent ?? null;
-  const five = login.five;
+  const week = weekPart(login);
   const fable = fablePart(login);
-  const fiveUnder = !five ? "" : five.reset ? "已重置" : `${fiveSpent !== null && five.used > 0 ? `${whole(fiveSpent)} / ${whole((fiveSpent * 100) / five.used)}` : `${five.used}%`}${five.resets ? `　${five.resets}${tall ? "重置" : ""}` : ""}`;
   return [
-    five ? gauge(`${login.id}-five-${tall ?? 0}`, five.reset ? 0 : five.used, { ...more, idle, under: fiveUnder, said: `${five.resets}重置` }) : "",
-    login.week ? gauge(`${login.id}-week-${tall ?? 0}`, login.week.reset ? 0 : login.week.used, { ...more, idle, under: login.week.reset ? "已重置" : `${money(login.week.used, plate)}${login.week.resets ? `　${login.week.resets}${tall ? " 重置" : ""}` : ""}`, said: `${login.week.resets} 重置` }) : "",
+    week === undefined ? "" : gauge(`${login.id}-spent-${tall ?? 0}`, Math.round(week), { ...more, idle, under: money(week, plate), said: "按账本推算：本周额度美元 ÷ 本周周额度" }),
     fable === undefined ? "" : gauge(`${login.id}-fable-${tall ?? 0}`, fableUsed(login), { ...more, idle, near: fableUsed(login) >= 90, under: `${money(fableUsed(login), plate / 2)}${login.fableHeld ? `　<span class="lg-caution">已暂停</span>` : ""}`, said: fableSaid }),
   ];
 }
 
+/** A login's three columns on the page of limits: its two windows as the
+ *  vendor reads them, then Fable as the ledger reckons it. */
+export function windows(login: Login): string[] {
+  const [five, week] = official(login);
+  return [five, week, five.includes("lg-unread") ? "" : reckoned(login)[1]];
+}
+
 /** What I used this week of a login that assists me, in quota dollars: as
- *  its usage tells, which to me is only mine. */
+ *  its usage tells, which names me where it tells of others too. */
 export function lentSpent(login: Login): { week: number; fable: number } {
   const days = usable(daysOf(login));
   const plate = plateOf(login);
   if (!days) return { week: ((login.lent?.used ?? 0) / 100) * plate, fable: ((login.lent?.fable ?? 0) / 100) * plate };
-  return { week: days.people.reduce((sum, one) => sum + one.week, 0), fable: days.people.reduce((sum, one) => sum + one.fable, 0) };
+  // Named so in every report that tells of them: one that names them not
+  // is one in which they used nothing.
+  const mine = days.people.filter((one) => one.me);
+  return { week: mine.reduce((sum, one) => sum + one.week, 0), fable: mine.reduce((sum, one) => sum + one.fable, 0) };
 }
 
 /** What one given a limit sees of a login that assists them: their own
  *  part of its week and of its Fable, and nothing of the login's own. */
 export function allotted(login: Login, tall?: number): string[] {
   const lent = login.lent!;
-  const allot = (plateOf(login) * lent.limit!) / 100;
+  const allot = (plateOf(login) * (lent.limit ?? 100)) / 100;
   const { week, fable: fableSpent } = lentSpent(login);
   const used = (week / allot) * 100;
   const fable = (fableSpent / (allot / 2)) * 100;
   const more = tall ? { tall } : {};
+  const starts = login.week ? startsOver(login.week) : "";
   return [
-    gauge(`${login.id}-mine-${tall ?? 0}`, Math.round(used), { ...more, near: used >= 85, under: money(used, allot) }),
+    gauge(`${login.id}-mine-${tall ?? 0}`, Math.round(used), { ...more, near: used >= 85, under: `${money(used, allot)}${tall && starts ? `　${starts}` : ""}` }),
     login.family === "claude" ? gauge(`${login.id}-mine-fable-${tall ?? 0}`, Math.round(fable), { ...more, near: fable >= 85, under: money(fable, allot / 2), said: "Fable 上限为本人额度的一半" }) : "",
   ];
 }
@@ -101,7 +132,7 @@ function quotaBody(): string {
   const cell = (drawn: string, head: string) => (drawn ? drawn.replace('<span class="lg-cell"', `<span class="lg-cell" data-head="${head}"`) : "<span></span>");
   const row = (login: Login, heads: [string, string, string]) => {
     const lent = login.lent;
-    const cells = lent && lent.limit !== null ? ["", ...allotted(login)] : windows(login);
+    const cells = lent && !lent.manages ? ["", ...allotted(login)] : windows(login);
     const under = lent ? `来自 ${escape(lent.by)}　${lent.until ? `至 ${lent.until}` : "不限期"}` : `${escape(login.machine)}${login.plan ? `　${escape(login.plan)}` : ""}${machineOf(login).online ? "" : "　离线"}`;
     return `<div class="lg-row lg-cols${state.fresh === login.id ? " fresh" : ""}" role="link" tabindex="0" data-go="${loginPlace(login)}">
       <span class="lg-who"><b>${escape(login.who)}</b><small>${under}</small></span>
@@ -112,7 +143,7 @@ function quotaBody(): string {
   // Each group names its own columns on its head, right over its rows.
   const group = (name: string, mark: string, of: Login[], heads: [string, string, string], line: 1 | 2 | 3) =>
     of.length
-      ? `<section class="lg-family"><div class="lg-family-head lg-cols"><h2>${mark}<span>${name}</span></h2>${heads.map((head) => `<span${head === "Fable" ? ` title="${fableSaid}"` : ""}>${head}</span>`).join("")}<span></span></div>${rule(line)}${of.map((login) => row(login, heads)).join("")}</section>`
+      ? `<section class="lg-family"><div class="lg-family-head lg-cols"><h2>${mark}<span>${name}</span></h2>${heads.map((head) => `<span${head.startsWith("Fable") ? ` title="${fableSaid}"` : ""}>${head}</span>`).join("")}<span></span></div>${rule(line)}${of.map((login) => row(login, heads)).join("")}</section>`
       : "";
   const working = logins.filter((login) => login.workbench && !login.lent);
   const lent = logins.filter((login) => login.lent);
@@ -121,9 +152,9 @@ function quotaBody(): string {
     return `<div class="lg-body lg-empty"><span class="lg-empty-marks">${agentGlyph("claude", 34)}${agentGlyph("codex", 34)}</span><p>尚无开启工作台的登录</p>${here ? `<button type="button" class="lg-go" data-go="${linkOf({ kind: "attach", machine: here.id })}">接入</button>` : ""}</div>`;
   }
   return `<div class="lg-body lg-sheet"><div class="lg-quota">
-    ${group(familyName("claude"), agentGlyph("claude", 20), working.filter((login) => login.family === "claude"), ["5 小时", "7 天", "Fable"], 1)}
+    ${group(familyName("claude"), agentGlyph("claude", 20), working.filter((login) => login.family === "claude"), ["5 小时", "7 天", "Fable 推算"], 1)}
     ${group(familyName("codex"), agentGlyph("codex", 20), working.filter((login) => login.family === "codex"), ["5 小时", "7 天", ""], 2)}
-    ${group("协助我的", glyph("colleague", 20), lent, ["5 小时", "7 天", "Fable"], 3)}
+    ${group("协助我的", glyph("colleague", 20), lent, ["5 小时", "7 天", "Fable 推算"], 3)}
   </div></div>`;
 }
 

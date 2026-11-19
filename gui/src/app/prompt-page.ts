@@ -31,6 +31,9 @@ export interface PromptPageOptions {
 
 /** How long 「已保存」 stays after saving. */
 const SAID_MS = 2400;
+/** How many times a save is written over the version standing now before
+ *  it is given up. */
+const SAVE_TRIES = 3;
 /** The share of the most a prompt may hold past which how much it holds is
  *  shown. */
 const SHOWN_FROM = 0.75;
@@ -54,7 +57,7 @@ export class PromptPage implements Page {
   private saving = false;
   private saidUntil = 0;
   private saidTimer = 0;
-  private note: { text: string; detail: string; theirs: boolean } | null = null;
+  private note: { text: string; detail: string } | null = null;
 
   constructor(private readonly options: PromptPageOptions) {
     const { words } = options;
@@ -82,7 +85,6 @@ export class PromptPage implements Page {
     this.body.addEventListener("click", (event) => {
       const target = event.target as HTMLElement;
       if (target.closest("[data-save]")) void this.save();
-      else if (target.closest("[data-theirs]")) this.takeTheirs();
     });
     this.stop = effect(() => {
       const world = options.store.world.get();
@@ -198,7 +200,7 @@ export class PromptPage implements Page {
     button.textContent = this.saving ? words.saving : words.prompt.save;
     const note = foot.querySelector<HTMLElement>(".prompt-note")!;
     const html = this.note
-      ? `<span class="prof-warn" title="${escape(this.note.detail)}">${escape(this.note.text)}</span>${this.note.theirs ? `<button class="text-button" type="button" data-theirs>${escape(words.loadTheirs)}</button>` : ""}`
+      ? `<span class="prof-warn" title="${escape(this.note.detail)}">${escape(this.note.text)}</span>`
       : over
         ? `<span class="prof-warn">${escape(words.prompt.tooLong)}</span>`
         : !changed && Date.now() < this.saidUntil
@@ -217,40 +219,35 @@ export class PromptPage implements Page {
     this.note = null;
     this.drawFoot();
     try {
-      const prompts = { ...view.profile.prompts, [this.options.agent]: prompt };
-      const version = await this.options.calls.write(login.hubName, login.account, { ...view.profile, prompts });
-      view.profile = { ...view.profile, prompts, version };
+      // What the user saves stands: written elsewhere since it was read, the
+      // profile is read again and this prompt written over the version
+      // standing now, the rest of it as it stands (the user, 2026-11-18:
+      // "我们不应该管用户在不在别处修改，直接读现成的就行了").
+      let standing = view;
+      for (let tries = 1; ; tries += 1) {
+        const prompts = { ...standing.profile.prompts, [this.options.agent]: prompt };
+        try {
+          const version = await this.options.calls.write(login.hubName, login.account, { ...standing.profile, prompts });
+          standing.profile = { ...standing.profile, prompts, version };
+          break;
+        } catch (error) {
+          if (tries >= SAVE_TRIES) throw error;
+          const now = await this.options.calls.read(login.hubName, login.account);
+          if (now.profile.version === standing.profile.version) throw error;
+          standing = now;
+          this.state = { kind: "ready", view: now };
+        }
+      }
       this.keepDraft();
       this.saidUntil = Date.now() + SAID_MS;
       clearTimeout(this.saidTimer);
       this.saidTimer = window.setTimeout(() => this.drawFoot(), SAID_MS + 50);
     } catch (error) {
-      // Written elsewhere since it was read: that version is offered, and
-      // saving again writes over it knowingly.
-      const detail = detailOf(error);
-      try {
-        const now = await this.options.calls.read(login.hubName, login.account);
-        if (now.profile.version !== view.profile.version) {
-          this.state = { kind: "ready", view: now };
-          this.note = { text: this.options.words.changedElsewhere, detail, theirs: true };
-        } else this.note = { text: this.options.words.saveFailed, detail, theirs: false };
-      } catch {
-        this.note = { text: this.options.words.saveFailed, detail, theirs: false };
-      }
+      this.note = { text: this.options.words.saveFailed, detail: detailOf(error) };
     } finally {
       this.saving = false;
       this.drawFoot();
     }
-  }
-
-  /** What was written elsewhere, in place of what is typed here. */
-  private takeTheirs(): void {
-    if (!this.text) return;
-    this.text.value = this.saved();
-    this.note = null;
-    this.keepDraft();
-    this.drawFoot();
-    this.text.focus();
   }
 }
 

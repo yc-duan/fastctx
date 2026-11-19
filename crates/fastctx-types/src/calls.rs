@@ -638,6 +638,29 @@ pub enum Call {
         dir: std::path::PathBuf,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         week: Option<crate::usage::Usd>,
+        /// How far a week's figure may stand from it, in percent either way;
+        /// none leaves it as it is.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        swing: Option<u8>,
+    },
+    /// Resets what everyone has used of this week of the login `dir` on
+    /// `machine`, to `to_tenths` of the week's figure in tenths of a percent,
+    /// zero for all of it; or, with none, takes the reset `id` back. The
+    /// reset is named by its maker, and one given twice is made once; one
+    /// given for a week that has turned since (`week_end`), or once the
+    /// login is in another of the vendor's accounts (`holder`), is refused.
+    /// Only by whoever may manage the login.
+    ResetAgentUsage {
+        machine: Written,
+        agent: AgentName,
+        dir: std::path::PathBuf,
+        id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        to_tenths: Option<u32>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        week_end: Option<jiff::Timestamp>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        holder: Option<String>,
     },
     /// Changes the models the World offers in the Claude Code login `dir` on
     /// `machine`; changed by whoever may manage the login, offered to
@@ -1598,7 +1621,7 @@ impl Call {
             // Takes over the streams the lost device ordered (design §28.10).
             Self::AdoptConversation { .. } => Some(Purpose::AssetSync),
             // Sets what a login's assistances and its Fable line are held to.
-            Self::SetAgentWeek { .. } => Some(Purpose::ExecutionControl),
+            Self::SetAgentWeek { .. } | Self::ResetAgentUsage { .. } => Some(Purpose::ExecutionControl),
         }
     }
 }

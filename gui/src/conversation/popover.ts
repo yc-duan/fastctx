@@ -10,6 +10,8 @@ import { reducedMotion } from "../motion";
 
 export class Popover {
   private leaving = false;
+  /** Ends what the panel hears of the whole document, as its page goes. */
+  private readonly hearing = new AbortController();
   private readonly layer: Layer = {
     isOpen: () => this.panel.isConnected && !this.panel.hidden,
     close: () => this.hide(),
@@ -32,11 +34,17 @@ export class Popover {
         const path = event.composedPath();
         if (!path.includes(panel) && !path.includes(button)) this.hide();
       },
-      true,
+      { capture: true, signal: this.hearing.signal },
     );
     panel.addEventListener("animationend", (event) => {
       if (event.target === panel && this.leaving) this.settle();
     });
+  }
+
+  /** The page it is on is let go: it no longer hears presses anywhere.
+   *  A panel a page keeps alive does not call this. */
+  dispose(): void {
+    this.hearing.abort();
   }
 
   get open(): boolean {

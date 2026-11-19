@@ -1,97 +1,14 @@
-//! Weekly reset evidence and durable boundaries, independent of the detector's switch.
+//! The weekly boundaries a ledger's rows recorded: the week's own turning,
+//! and those an earlier release found in the readings, which it counted the
+//! week anew from. They are replayed as written; none is found any more
+//! (`readings`).
 use fastctx_types::agents::LimitWindow;
 use fastctx_types::usage::{UsageReset, UsageResetSource};
 use jiff::{SignedDuration, Timestamp};
-use std::collections::HashMap;
 
 pub(super) const WEEK_MINUTES: u32 = 10_080;
 const FULL: u32 = 20;
 const RISE: u32 = 20;
-const CONFIRM_AFTER: SignedDuration = SignedDuration::from_secs(5 * 60);
-const SOURCES: usize = 65_536;
-
-#[derive(Default)]
-pub(super) struct Detector {
-    last: HashMap<String, (Timestamp, u32)>,
-    candidate: Option<Candidate>,
-}
-
-struct Candidate {
-    since: Timestamp,
-    from: u32,
-    source: String,
-}
-
-impl Detector {
-    /// Cached snapshots have no vendor observation identifier. Only a changed
-    /// figure from a previously seen source is evidence; equal repetitions,
-    /// even after successful requests, cannot prove that its quota was refreshed.
-    pub fn observe(
-        &mut self,
-        old: &mut LimitWindow,
-        incoming: &LimitWindow,
-        at: Timestamp,
-        source: &str,
-        enabled: bool,
-    ) -> Option<UsageReset> {
-        if self.last.len() >= SOURCES && !self.last.contains_key(source) {
-            self.last.clear();
-            self.candidate = None;
-        }
-        let before = self.last.get(source).copied();
-        if before.is_some_and(|(seen, _)| at <= seen) {
-            return None;
-        }
-        self.last.insert(source.to_string(), (at, incoming.used_tenths));
-        let changed = before.is_some_and(|(_, value)| value != incoming.used_tenths);
-        if !enabled {
-            self.candidate = None;
-        }
-        if before.is_some_and(|(_, value)| value == incoming.used_tenths) {
-            return None;
-        }
-        // A newly resumed session can still carry the figure from before a
-        // confirmed reset. It must change before it raises that reset's figure.
-        if before.is_none() && old.since.is_some() {
-            return None;
-        }
-        if incoming.used_tenths >= old.used_tenths {
-            old.used_tenths = incoming.used_tenths;
-        }
-        if !changed || !enabled {
-            return None;
-        }
-        if incoming.used_tenths > FULL {
-            self.candidate = None;
-            return None;
-        }
-        if self
-            .candidate
-            .as_ref()
-            .is_some_and(|pending| pending.source == source && at.duration_since(pending.since) >= CONFIRM_AFTER)
-        {
-            let pending = self.candidate.take().expect("candidate checked");
-            let reset = UsageReset {
-                window: old.name.clone(),
-                since: pending.since,
-                confirmed_at: at,
-                resets_at: old.resets_at.expect("weekly period checked"),
-                before_used_tenths: Some(pending.from),
-                used_tenths: incoming.used_tenths,
-                source: UsageResetSource::Automatic,
-            };
-            old.since = Some(reset.since);
-            old.used_tenths = incoming.used_tenths;
-            // Other sources must join the new accounting interval afresh.
-            self.last.retain(|known, _| known == source);
-            return Some(reset);
-        }
-        if self.candidate.is_none() && old.used_tenths >= incoming.used_tenths.saturating_add(RISE) {
-            self.candidate = Some(Candidate { since: at, from: old.used_tenths, source: source.to_string() });
-        }
-        None
-    }
-}
 
 pub(super) fn valid(reset: &UsageReset, window: &LimitWindow, at: Timestamp) -> bool {
     window.minutes == Some(WEEK_MINUTES)
@@ -107,9 +24,10 @@ pub(super) fn valid(reset: &UsageReset, window: &LimitWindow, at: Timestamp) -> 
         && reset.confirmed_at <= at
 }
 
-/// Replays written conclusions without running the detector or consulting its
-/// switch. Legacy near-full resets remain labelled as older records, not as
-/// confirmations by the new detector. Small old dips are not promoted.
+/// Replays a written reading and its conclusions: the windows as the row
+/// has them, which is how they stood then, higher or lower than before.
+/// Legacy near-full resets remain labelled as older records. Small old dips
+/// are not promoted.
 pub(super) fn merge_recorded(
     known: &mut Vec<LimitWindow>,
     windows: &[LimitWindow],
@@ -189,9 +107,6 @@ pub(super) fn merge_recorded(
             let previous = &known[index];
             if same_period {
                 merged.resets_at = previous.resets_at;
-                if since <= previous.since {
-                    merged.used_tenths = previous.used_tenths.max(incoming.used_tenths);
-                }
             }
             known[index] = merged;
         } else {

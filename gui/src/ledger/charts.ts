@@ -181,14 +181,16 @@ export function calendar(id: string, dates: Date[], values: number[], width: num
   return `<svg class="lgc" viewBox="0 0 ${width} ${f(height)}" width="${width}" height="${f(height)}" role="img">${drawn}</svg>`;
 }
 
-/** Where a figure set by hand stands among what the weeks came to by the
- *  readings: a ruled line of dollars, a pencilled dot for each week, the
- *  newest the darkest, and the figure as a line across in clay, which can
- *  be dragged along. `x` is how a dollar figure is placed on it, for the
- *  one that moves the line. */
-export function strip(id: string, weeks: { value: number; said: string }[], set: number, width: number): { svg: string; low: number; high: number; left: number; right: number } {
+/** Where what a login's owner expects of its week stands among what its
+ *  last weeks came to by the readings: a ruled line of dollars, a pencilled
+ *  dot for each week, the newest the darkest; the reach a week's figure is
+ *  held within as a wash; and what is expected as a line across in clay,
+ *  which can be dragged along. What comes back places a dollar figure on
+ *  it, for the one that moves the line. */
+export function strip(id: string, weeks: { value: number; said: string }[], expect: { base: number; swing: number }, width: number): { svg: string; low: number; high: number; left: number; right: number } {
   const random = seeded(`strip-${id}`);
-  const all = [...weeks.map((week) => week.value), set];
+  const reach = (base: number) => [base * (1 - expect.swing / 100), base * (1 + expect.swing / 100)] as const;
+  const all = [...weeks.map((week) => week.value), ...reach(expect.base)];
   const span = Math.max(Math.max(...all) - Math.min(...all), 600);
   const low = Math.max(0, Math.floor((Math.min(...all) - span * 0.35) / 500) * 500);
   const high = Math.ceil((Math.max(...all) + span * 0.35) / 500) * 500;
@@ -204,14 +206,19 @@ export function strip(id: string, weeks: { value: number; said: string }[], set:
   }
   // Dots that would sit on one another are stacked.
   const placed: { x: number; level: number }[] = [];
+  let dots = "";
   weeks.forEach((week, index) => {
     const at = x(week.value);
     let level = 0;
     while (placed.some((one) => one.level === level && Math.abs(one.x - at) < 11)) level += 1;
     placed.push({ x: at, level });
-    drawn += `<path class="lgc-week${index === weeks.length - 1 ? " lgc-newest" : ""}" d="${dot([at, floor - 12 - level * 11], 4.4, random)}" title="${escape(week.said)}"/>`;
+    dots += `<path class="lgc-week${index === weeks.length - 1 ? " lgc-newest" : ""}" d="${dot([at, floor - 12 - level * 11], 4.4, random)}" title="${escape(week.said)}"/>`;
   });
-  drawn += `<g class="lgc-set" transform="translate(${f(x(set))} 0)"><path d="${ruled([0, 20], [0, floor + 8], 2.2, random)}"/><text class="lgc-set-figure" x="0" y="13" text-anchor="middle">$${set.toLocaleString("en-US")}</text></g>`;
+  // The reach moves with the line: it is drawn about the line's own place,
+  // as wide as the reach is on this scale.
+  const [from, to] = reach(expect.base);
+  const half = (x(to) - x(from)) / 2;
+  drawn += `<g class="lgc-set" transform="translate(${f(x(expect.base))} 0)"><rect class="lgc-reach" x="${f(-half)}" y="24" width="${f(half * 2)}" height="${floor - 24}" rx="5"/></g>${dots}<g class="lgc-set" transform="translate(${f(x(expect.base))} 0)"><path d="${ruled([0, 20], [0, floor + 8], 2.2, random)}"/><text class="lgc-set-figure" x="0" y="13" text-anchor="middle">$${Math.round(expect.base).toLocaleString("en-US")}</text></g>`;
   return { svg: `<svg class="lgc lgc-strip" viewBox="0 0 ${width} 104" width="${width}" height="104" role="img">${drawn}</svg>`, low, high, left, right };
 }
 

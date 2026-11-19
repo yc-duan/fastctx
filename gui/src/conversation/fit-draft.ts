@@ -8,14 +8,42 @@
 
 export class DraftFit {
   private mirror: HTMLTextAreaElement | null = null;
+  private frame = 0;
+  /** Asked for while the box was out of the page or not shown, where it
+   *  has no width to measure by: fitted as soon as it has one again. */
+  private pending = false;
+  private shown: ResizeObserver | null = null;
 
   constructor(private readonly input: HTMLTextAreaElement) {}
 
+  /** Fits the box to its words before the next frame is drawn: however
+   *  often the words change meanwhile (a key, the shared draft's echo of
+   *  it, a chip), it is measured once, as they stand then. Each measure
+   *  reads the page's layout, which a key pressed made several times over
+   *  in a long conversation (codex-17110933: 1,413 layouts for 100 keys). */
   fit(): void {
+    if (this.frame) return;
+    this.frame = requestAnimationFrame(() => {
+      this.frame = 0;
+      this.measure();
+    });
+  }
+
+  private measure(): void {
     const { input } = this;
-    if (!input.isConnected) return;
+    const width = input.isConnected ? input.getBoundingClientRect().width : 0;
+    if (width === 0) {
+      this.pending = true;
+      this.shown ??= new ResizeObserver(() => {
+        if (this.pending) this.fit();
+      });
+      this.shown.observe(input);
+      return;
+    }
+    this.pending = false;
+    this.shown?.disconnect();
     const mirror = this.mirrorOf();
-    mirror.style.width = `${input.getBoundingClientRect().width}px`;
+    mirror.style.width = `${width}px`;
     // A chip over the head of the input indents its first line.
     mirror.style.textIndent = input.style.textIndent;
     mirror.value = input.value;

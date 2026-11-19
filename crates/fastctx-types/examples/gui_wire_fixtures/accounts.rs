@@ -275,6 +275,7 @@ fn hub() -> HubAccounts {
                 five_hour: Some(80),
                 turns: Some(4),
                 share: None,
+                manages: Some(false),
             },
             AssistSeen {
                 machine: "gpu".parse().unwrap(),
@@ -287,6 +288,7 @@ fn hub() -> HubAccounts {
                 five_hour: None,
                 turns: None,
                 share: None,
+                manages: Some(true),
             },
         ],
         plans: vec![PlanSeen {
@@ -388,6 +390,7 @@ pub fn fixtures() -> Fixtures {
                 five_hour: Some(90),
                 turns: Some(3),
                 share: None,
+                manages: Some(true),
             },
             AccountChange::Assist {
                 machine: machine(),
@@ -401,6 +404,7 @@ pub fn fixtures() -> Fixtures {
                 five_hour: None,
                 turns: None,
                 share: None,
+                manages: None,
             },
             AccountChange::Plan {
                 machine: "gpu".parse().unwrap(),

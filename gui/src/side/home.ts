@@ -139,6 +139,8 @@ export class SideHome implements SidePage {
   private readonly standing = new Map<string, { sign: string; element: HTMLElement }>();
   private readonly signs = new Map<string, string>();
   private readonly none = document.createElement("p");
+  /** What it hears of all the conversations' sides, each to be stopped. */
+  private readonly unheard: (() => void)[] = [];
   /** When a card was last let go after being carried. */
   private carriedAt = -SETTLE;
 
@@ -203,21 +205,17 @@ export class SideHome implements SidePage {
       const pull = this.element.closest(".sp-over") ? undefined : this.seams.pull;
       openCardsMenu(event.clientX, event.clientY, this.words, pull && section && card && card !== "goal" ? () => pull(card, section.getBoundingClientRect()) : undefined);
     });
-    // One overview hears what is chosen for all of them, and is let go with
-    // its conversation.
-    const self = new WeakRef(this);
-    const stop = onCardsChosen(() => {
-      const home = self.deref();
-      if (home) home.draw();
-      else stop();
-    });
+    // One overview hears what is chosen for all of them, and stops hearing
+    // as its conversation is let go (`dispose`): what hears holds it.
+    this.unheard.push(onCardsChosen(() => this.draw()));
     // A card taken out leaves the overview, and is back as its window goes.
-    const still = onBoards(() => {
-      const home = self.deref();
-      if (home) home.draw();
-      else still();
-    });
+    this.unheard.push(onBoards(() => this.draw()));
     this.draw();
+  }
+
+  /** Its conversation is let go. */
+  dispose(): void {
+    for (const stop of this.unheard.splice(0)) stop();
   }
 
   /** Folds a card away under its name, or opens it again, where it stands:

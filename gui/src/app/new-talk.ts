@@ -131,10 +131,13 @@ export interface NewTalkOptions {
   agents(machine: string | null): Promise<WorldAgents>;
   /** The folders in a folder of a machine, for pointing it at some. */
   folders(machine: string, path: string | null, cursor?: string | null): Promise<Folders>;
-  begin(begun: Begun): Promise<Address>;
+  /** The conversation opened, and the id its first words were kept under
+   *  there where the machine said it. */
+  begin(begun: Begun): Promise<{ to: Address; delivery: string | null }>;
   /** The conversation began: its page opens, with the first words as they
-   *  were shown here. */
-  opened(address: Address, seed: Seed | null): void;
+   *  were shown here, when this page is still the one `shown`; begun while
+   *  the user was elsewhere, it is left where it is listed. */
+  opened(address: Address, seed: Seed | null, shown: boolean): void;
   /** The conversation's own words, and this device's name, for showing it
    *  begin (`conversation/starting.ts`). */
   starting?: { words: Words; here(): string };
@@ -282,6 +285,9 @@ export class NewTalk {
   /** The label whose choices are open. */
   private opened: Pop | null = null;
   private busy = false;
+  /** Whether this is the page shown; a conversation begun from it is
+   *  followed only while it is. */
+  private shown = false;
   private tray: AttachTray | null = null;
   /** The place on a machine the files sent so far went to, and for which
    *  machine, agent and project; another choice needs another place. */
@@ -432,6 +438,7 @@ export class NewTalk {
    *  program may have been installed, logged in or updated since; `pick`
    *  is a login to begin with, `machine` one whose logins come first. */
   show(pick: string | null = null, machine: string | null = null): void {
+    this.shown = true;
     // Each opens as its own kind: outside any project, or in its project,
     // whatever was chosen in it before it was left.
     this.town = this.options.town;
@@ -452,8 +459,10 @@ export class NewTalk {
   /** The page is left: it stops listening for files dropped on the window;
    *  what was written and attached stays for when it is shown again. */
   leave(): void {
+    this.shown = false;
     // A conversation begun from here opened on its own page; the next is
-    // begun on an empty stage.
+    // begun on an empty stage. One still beginning keeps the stage until it
+    // has begun or failed (`submit`).
     if (!this.busy) this.unstage();
     this.stopDrops?.();
     this.stopDrops = null;
@@ -1331,7 +1340,7 @@ ${words.assistantWorks(option.assistant.owner ?? "")}` : said,
         }
       }
       if (!this.starting) this.note.textContent = words.starting;
-      const address = await this.options.begin({
+      const { to: address, delivery } = await this.options.begin({
         agent: option.agent,
         machine: option.written,
         town: this.town,
@@ -1360,7 +1369,12 @@ ${words.assistantWorks(option.assistant.owner ?? "")}` : said,
       this.focusPanel.set(this.focus);
       this.busy = false;
       this.note.textContent = "";
-      this.options.opened(address, this.starting?.seed() ?? null);
+      const shownSeed = this.starting?.seed() ?? null;
+      const seed = shownSeed && { ...shownSeed, delivery };
+      // Left while it began, the page is empty for the next conversation
+      // when it is shown again; one that failed keeps saying why.
+      if (!this.shown) this.unstage();
+      this.options.opened(address, seed, this.shown);
     } catch (error) {
       this.busy = false;
       this.tray?.putBack(going);

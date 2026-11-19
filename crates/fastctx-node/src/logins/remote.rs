@@ -68,10 +68,11 @@ pub(crate) const OWNERS_WINDOWS: &str = "the windows of the login's account are 
 
 /// What this machine's record shows another account: everything to one
 /// that may work here; to one logins assist, those listed logins alone.
-/// One given a limit sees nothing of their account's windows, which are
-/// their owner's; one given none shares the login's whole quota and sees
-/// its windows as its owner does, only to look at (用户 2026-11-15: 唯一一个
-/// 越界的例外是配置协助者，不配置用量，那么他就能看到账号的额度条).
+/// One a login assists sees nothing of its account's windows, which are
+/// their owner's, unless they manage the login with its owner: such a one
+/// sees its windows as its owner does, only to look at, whatever share they
+/// took for themselves (用户 2026-11-19: 共管，与份额分开；an assistance kept
+/// before the word manages where it has no limit, `Assist::manages`).
 pub(crate) fn seen(view: &fastctx_net::directory::View, asker: &Asker, mut logins: MachineLogins) -> MachineLogins {
     if asker.hands {
         return logins;
@@ -102,7 +103,12 @@ pub(crate) fn seen(view: &fastctx_net::directory::View, asker: &Asker, mut login
         for login in &mut side.listed {
             login.programs.clear();
             login.change = None;
-            if assists(login).iter().any(limited) {
+            // Codex keeps no shares: a Codex login that assists with no limit
+            // shows its windows as it did before there were shares.
+            let sees = |assist: &fastctx_net::directory::Assist| {
+                assist.manages() || (assist.agent.as_str() != "claude" && !limited(assist))
+            };
+            if assists(login).iter().any(|assist| !sees(assist)) {
                 login.limits = fastctx_types::agents::Fact::unavailable(OWNERS_WINDOWS);
             }
         }
@@ -114,6 +120,25 @@ pub(crate) fn seen(view: &fastctx_net::directory::View, asker: &Asker, mut login
 /// of its week, or dollars a week or a day.
 fn limited(assist: &fastctx_net::directory::Assist) -> bool {
     assist.share.is_some() || assist.weekly.is_some() || assist.daily.is_some()
+}
+
+/// Whether `asker` manages `agent`'s login `dir` here with its owner: it sees
+/// everyone's use of it and the account's windows, as its owner does.
+fn manages(
+    view: &fastctx_net::directory::View,
+    asker: &Asker,
+    agent: &AgentName,
+    dir: &std::path::Path,
+    default: bool,
+) -> bool {
+    view.assisting(&asker.account, &view.me).any(|assist| {
+        assist.agent == *agent
+            && assist.manages()
+            && match &assist.home {
+                None => default,
+                Some(home) => crate::homes::same_dir(home, dir),
+            }
+    })
 }
 
 /// What this machine's record shows a caller that works for no account of
@@ -276,20 +301,55 @@ pub(crate) async fn set_resets_in_place(
     }
 }
 
-/// Sets a login's week in quota dollars, here or on another of the user's
-/// machines.
+/// Sets what a login's week is expected to hold, in quota dollars, and how
+/// far a week's figure may stand from it, here or on another of the user's
+/// machines; the holds of those it assists are looked at again.
 pub(crate) async fn set_week(
     node: &Arc<Node>,
     machine: Written,
     agent: AgentName,
     dir: PathBuf,
     week: Option<fastctx_types::usage::Usd>,
+    swing: Option<u8>,
 ) -> Result<MachineLogins, Failure> {
     if node.is_here(&machine) {
-        super::set_week(node, &agent, &dir, week)?;
+        super::set_week(node, &agent, &dir, week, swing)?;
+        crate::usage::after_reading(node, agent.as_str(), &dir).await;
         return super::changed_here(node).await;
     }
-    match ask(node, &machine, Purpose::Hands, RemoteCall::SetAgentWeek { agent, dir, week }).await? {
+    match ask(node, &machine, Purpose::Hands, RemoteCall::SetAgentWeek { agent, dir, week, swing }).await? {
+        RemoteReply::AgentLogins(logins) => Ok(*logins),
+        _ => Err(other(&machine)),
+    }
+}
+
+/// The week a reset was asked of, as its maker looked at it.
+pub(crate) struct Looked {
+    pub week_end: Option<jiff::Timestamp>,
+    pub holder: Option<String>,
+}
+
+/// Resets what everyone has used of this week of a login, or takes such a
+/// reset back, here or on another of the user's machines; the holds of
+/// those it assists are looked at again.
+pub(crate) async fn reset_usage(
+    node: &Arc<Node>,
+    machine: Written,
+    agent: AgentName,
+    dir: PathBuf,
+    id: String,
+    to_tenths: Option<u32>,
+    looked: Looked,
+) -> Result<MachineLogins, Failure> {
+    let Looked { week_end, holder } = looked;
+    if node.is_here(&machine) {
+        let asked = crate::usage::ResetAsked { id: &id, to_tenths, week_end, holder, by: None };
+        super::reset_usage(node, &agent, &dir, asked)?;
+        crate::usage::after_reading(node, agent.as_str(), &dir).await;
+        return super::changed_here(node).await;
+    }
+    let call = RemoteCall::ResetAgentUsage { agent, dir, id, to_tenths, week_end, holder };
+    match ask(node, &machine, Purpose::Hands, call).await? {
         RemoteReply::AgentLogins(logins) => Ok(*logins),
         _ => Err(other(&machine)),
     }
@@ -342,7 +402,7 @@ pub(crate) async fn usage(
     dir: PathBuf,
 ) -> Result<UsageReport, Failure> {
     if node.is_here(&machine) {
-        return here_usage(node, agent, dir, None, true).await;
+        return here_usage(node, agent, dir, crate::usage::Reader::WHOLE).await;
     }
     // The machine, which tells all of it as the asker may see it; from the
     // copies here where it is away or does not answer (§28.58): they hold
@@ -432,21 +492,19 @@ async fn here_calls(
     .map_err(|e| Failure::new(format!("reading the login's calls: {e}")))
 }
 
-/// What a login here was used for: everyone's, or `only`'s alone.
+/// What a login here was used for, as `reader` may see it.
 async fn here_usage(
     node: &Arc<Node>,
     agent: AgentName,
     dir: PathBuf,
-    only: Option<HubAccount>,
-    owner: bool,
+    reader: crate::usage::Reader,
 ) -> Result<UsageReport, Failure> {
+    crate::usage::stir(node, agent.as_str(), &dir);
     let node = node.clone();
-    fastctx_platform::task::spawn_blocking(move || {
-        crate::usage::report(&node, agent.as_str(), &dir, only.as_ref(), owner)
-    })
-    .await
-    .map_err(|error| Failure::new(error.to_string()))?
-    .map_err(|error| Failure::new(format!("reading what the login was used for: {error}")))
+    fastctx_platform::task::spawn_blocking(move || crate::usage::report(&node, agent.as_str(), &dir, &reader))
+        .await
+        .map_err(|error| Failure::new(error.to_string()))?
+        .map_err(|error| Failure::new(format!("reading what the login was used for: {error}")))
 }
 
 /// Answers another machine's call about this machine's logins, for
@@ -470,8 +528,17 @@ pub(crate) async fn answer(
         RemoteCall::SetAgentResetInPlace { agent, dir, on } => {
             super::submitted::set_resets_in_place(node, agent, dir, on).await.map(logins)
         }
-        RemoteCall::SetAgentWeek { agent, dir, week } => {
-            super::set_week(node, &agent, &dir, week)?;
+        RemoteCall::SetAgentWeek { agent, dir, week, swing } => {
+            super::set_week(node, &agent, &dir, week, swing)?;
+            crate::usage::after_reading(node, agent.as_str(), &dir).await;
+            super::changed_here(node).await.map(logins)
+        }
+        RemoteCall::ResetAgentUsage { agent, dir, id, to_tenths, week_end, holder } => {
+            // Only one who may work here asks this (`admission`).
+            let by = Some(asker.account.to_string());
+            let asked = crate::usage::ResetAsked { id: &id, to_tenths, week_end, holder, by };
+            super::reset_usage(node, &agent, &dir, asked)?;
+            crate::usage::after_reading(node, agent.as_str(), &dir).await;
             super::changed_here(node).await.map(logins)
         }
         RemoteCall::ChangeAgentModels { agent, dir, change } => {
@@ -510,9 +577,17 @@ pub(crate) async fn answer(
                 .ok_or_else(|| {
                     Failure::not_run(format!("no {agent} login {} here is the account's to see", dir.display()))
                 })?;
-            let only = (!asker.hands).then(|| HubAccount { hub: asker.hub.clone(), account: asker.account.clone() });
-            let owner = crate::placement::owned(view.member(&view.me), &asker.account);
-            here_usage(node, agent, login.dir.clone(), only, owner)
+            // Everyone's use to one who may work here; to one who manages the
+            // login with its owner, their own and what each other person used
+            // of the week (用户 2026-11-19); their own alone to anyone else.
+            let managing = !asker.hands && manages(view, asker, &agent, &login.dir, login.default);
+            let reader = crate::usage::Reader {
+                only: (!asker.hands).then(|| HubAccount { hub: asker.hub.clone(), account: asker.account.clone() }),
+                managing,
+                owner: crate::placement::owned(view.member(&view.me), &asker.account),
+                may_reset: asker.hands,
+            };
+            here_usage(node, agent, login.dir.clone(), reader)
                 .await
                 .map(|report| RemoteReply::AgentUsage(Box::new(report)))
         }

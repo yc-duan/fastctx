@@ -33,6 +33,10 @@ export interface SkillsPageOptions {
 type State = { kind: "none" } | { kind: "reading" } | { kind: "failed"; detail: string } | { kind: "ready"; skills: SkillListed[] };
 
 const SAID_MS = 2400;
+/** How many times a change is made over the version standing now before it
+ *  is given up: a deleted skill written anew can take three, against a hub
+ *  of an earlier release. */
+const SAVE_TRIES = 4;
 
 export class SkillsPage implements Page {
   readonly element: HTMLElement;
@@ -197,16 +201,29 @@ export class SkillsPage implements Page {
 
   /** A new skill is written whole; a kept one is changed by what differs
    *  from the version it was read at, a new name in its SKILL.md renaming it
-   *  at once. */
+   *  at once. What the user saves stands, whatever was saved meanwhile (the
+   *  user, 2026-11-18: "我们不应该管用户在不在别处修改，直接读现成的就行了"):
+   *  a change that meets another version is made again over the one standing
+   *  now, and a kept skill deleted meanwhile is written anew as it is here. */
   private async save(name: string, files: SkillFolder["files"]): Promise<void> {
     const editing = this.editing;
     if (!editing) return;
     const { login, kept } = editing;
     const calls = this.options.calls;
-    const written = kept
-      ? await calls.edit(login.hubName, login.account, kept.name, kept.version, folderChanges(kept.files, files))
-      : await calls.write(login.hubName, login.account, name, null, files);
-    if (!written) throw new Error("the skill changed meanwhile");
+    let standing = kept !== null;
+    let expected = kept?.version ?? null;
+    for (let tries = 1; ; tries += 1) {
+      const done =
+        kept && standing && expected !== null
+          ? await calls.edit(login.hubName, login.account, kept.name, expected, folderChanges(kept.files, files))
+          : await calls.write(login.hubName, login.account, name, expected, files);
+      if (done === true) break;
+      if (tries >= SAVE_TRIES) throw new Error("the skill changed meanwhile");
+      if (standing && !(done.current && !done.current.deleted)) {
+        standing = false;
+        expected = null;
+      } else expected = done.current?.version ?? null;
+    }
     const now = await calls.read(login.hubName, login.account, name);
     if (this.editing === editing) this.editing = { login, kept: now };
     this.saidNow();
@@ -232,8 +249,15 @@ export class SkillsPage implements Page {
       title: s.removeTitle(kept.name),
       what: s.removeWhat,
       go: s.remove,
+      // Removed whatever was saved meanwhile; one gone already is gone.
       act: async () => {
-        if (!(await this.options.calls.remove(login.hubName, login.account, kept.name, kept.version))) throw new Error("the skill changed meanwhile");
+        let expected = kept.version;
+        for (let tries = 1; ; tries += 1) {
+          const done = await this.options.calls.remove(login.hubName, login.account, kept.name, expected);
+          if (done === true || !done.current || done.current.deleted) return;
+          if (tries >= SAVE_TRIES) throw new Error("the skill changed meanwhile");
+          expected = done.current.version;
+        }
       },
       done: () => {
         this.editing = null;

@@ -13,7 +13,7 @@ import type { PlanShown, PageSeams } from "../plan/panel";
 import type { PlanWords } from "../plan/words";
 import { unwatch, type WorldNow } from "../world/bridge";
 import { planRead, planWrite, watchPlan, type PlanAccount, type PlanPage } from "../world/plan";
-import { goalPast, goalShown, goalUpdate, watchGoal, type GoalChange, type GoalView } from "../world/goal";
+import { goalPast, goalRead, goalShown, goalUpdate, watchGoal, type GoalChange, type GoalView } from "../world/goal";
 import { watchCollaboration, type Branch, type Tree } from "../world/collab-tree";
 import type { Address } from "../world/wire";
 import type { GoalStatus } from "./types";
@@ -193,6 +193,26 @@ async function changeGoal(owner: string, seen: number | null, change: GoalChange
   return updated.result === "goal";
 }
 
+/** How many times the user's change is made over a newer version of the
+ *  goal before it is handed back. */
+const GOAL_TRIES = 3;
+
+/** Makes the user's change over whatever version of the goal stands now:
+ *  met with a newer one, the goal is read again and the change, made from
+ *  what the goal is now, applied over it (the user, 2026-11-18: "「已在别处
+ *  修改」的规矩，推到计划、笔记、目标、哨兵设置"). False only where it still
+ *  could not be made. */
+async function changeGoalOver(owner: string, seen: GoalView | null, version: number | null, change: (view: GoalView | null) => GoalChange): Promise<boolean> {
+  let view = seen;
+  let at = version;
+  for (let tries = 1; ; tries += 1) {
+    if (await changeGoal(owner, at, change(view))) return true;
+    if (tries >= GOAL_TRIES) return false;
+    view = await goalRead(owner);
+    at = view.version;
+  }
+}
+
 /** The account a conversation works for, where it is one, by its hub's name. */
 function accountOf(store: Store, address: Address): PlanAccount | null {
   const account = featureAccount(store.whole.peek(), address);
@@ -312,16 +332,15 @@ export function liveSide(options: LiveSide): SideSeams {
         };
       },
       // Words for a goal done set a new one; for any other, they replace its words.
-      set: (objective, version, standing) => {
-        const goal = current?.goal;
-        const change: GoalChange =
-          goal && goal.status !== "complete" ? { change: "edit", objective } : { change: "open", objective, ...(standing ? { standing: true } : {}) };
-        return changeGoal(owner, seen(version), change);
-      },
+      set: (objective, version, standing) =>
+        changeGoalOver(owner, current, seen(version), (view) => {
+          const goal = view?.goal;
+          return goal && goal.status !== "complete" ? { change: "edit", objective } : { change: "open", objective, ...(standing ? { standing: true } : {}) };
+        }),
       past: () => goalPast(owner),
-      pause: (version) => changeGoal(owner, seen(version), { change: "pause" }),
-      resume: (version) => changeGoal(owner, seen(version), { change: "resume" }),
-      clear: (version) => changeGoal(owner, seen(version), { change: "clear" }),
+      pause: (version) => changeGoalOver(owner, current, seen(version), () => ({ change: "pause" })),
+      resume: (version) => changeGoalOver(owner, current, seen(version), () => ({ change: "resume" })),
+      clear: (version) => changeGoalOver(owner, current, seen(version), () => ({ change: "clear" })),
     },
     colleagues: (show) => {
       let alive = true;

@@ -106,7 +106,9 @@ export interface ProseBlock {
   /** Whether what follows it can still become part of it: a list or a
    *  quote takes in an item or a line that comes after a blank one. */
   container: boolean;
-  html(): string;
+  /** Its HTML; `still` whether it is the block still being written, which
+   *  is all of them while the words are written, where not said. */
+  html(still?: boolean): string;
 }
 
 /** Markdown read whole and cut into its top-level blocks, each drawn on its
@@ -130,9 +132,9 @@ export function proseBlocks(text: string, writing: boolean): ProseBlock[] {
       source,
       line: map ? map[0] : null,
       container: ["bullet_list_open", "ordered_list_open", "blockquote_open"].includes(slice[0]!.type),
-      html: () => {
-        guessing = !writing;
-        growing = writing;
+      html: (still = writing) => {
+        guessing = !still;
+        growing = still;
         try {
           return markdown.renderer.render(slice, markdown.options, env);
         } finally {

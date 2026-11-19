@@ -122,13 +122,17 @@ async fn new(
     let record = checked(node, caller, owner.as_ref().map(|owner| &owner.hub), record).await?;
     let shared_on = crate::record_ownership::project_origin(node, caller, owner.as_ref()).await?;
     crate::ledger::open(node, &town, owner, shared_on).await?;
-    write(node, &town, &record).await.map_err(|failure| {
-        if failure.message.contains("already") {
-            Failure::new(format!("a project named {town} exists already ({failure})"))
-        } else {
-            failure
-        }
-    })?;
+    // Opened, the name is this project's on its hub: nothing failing after
+    // this means the name was taken, which an interface would answer by
+    // opening another project under another name. And once the hub accepted
+    // the first entry the project is made; this machine not having taken it
+    // yet is for the ledger's sync to catch up on, not a failure to open it.
+    let accepted = write_opening(node, &town, &record).await?;
+    if let Err(failure) = accepted.taken {
+        node.log.line(format_args!(
+            "project {town}: its hub accepted its first version; this machine has not taken it yet: {failure}"
+        ));
+    }
     let opened = Stamp { by: record.by.clone(), on: record.on.clone(), at: record.at };
     told(node, &crate::around::acting_of(node, caller), &town, record, opened)
 }
@@ -327,6 +331,14 @@ async fn write(node: &Arc<Node>, town: &TownName, record: &Record) -> Result<(),
     let mut bytes = serde_json::to_vec_pretty(record).map_err(|error| Failure::new(error.to_string()))?;
     bytes.push(b'\n');
     crate::ledger::write(node, town, vec![(record_path(record.version), bytes)], Some(record.machines.clone())).await
+}
+
+/// The first version of a project's record, as its hub accepts it.
+async fn write_opening(node: &Arc<Node>, town: &TownName, record: &Record) -> Result<crate::ledger::Accepted, Failure> {
+    let mut bytes = serde_json::to_vec_pretty(record).map_err(|error| Failure::new(error.to_string()))?;
+    bytes.push(b'\n');
+    crate::ledger::write_accepted(node, town, vec![(record_path(record.version), bytes)], Some(record.machines.clone()))
+        .await
 }
 
 /// `record` of `town` as `caller` may know it (`ledger::query::seen`).

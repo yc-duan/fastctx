@@ -37,6 +37,11 @@ export function gauge(seed: string, used: number, how: Gauge = {}): string {
   return `<span class="lg-cell"${how.said ? ` title="${how.said}"` : ""}><span class="lg-meter${level}"><span class="lg-ink"${how.tall ? ` style="height:${how.tall}px"` : ""}>${meter(used / 100, seed, [], false)}${stop}</span><b>${how.figure ?? `${used}%`}</b></span>${how.under === undefined ? "" : `<small>${how.under || "&nbsp;"}</small>`}</span>`;
 }
 
+/** A figure where a bar would stand, and what is said under it. */
+export function figure(text: string, under: string): string {
+  return `<span class="lg-cell"><span class="lg-meter lg-figure"><b>${text}</b></span>${under ? `<small>${under}</small>` : ""}</span>`;
+}
+
 /** A switch as the app draws it: its word, then the track. */
 export function toggle(act: string, on: boolean, word: string, more = ""): string {
   return `<button class="lg-switch" type="button" role="switch" aria-checked="${on}" data-act="${act}" ${more}>${word ? `<span>${word}</span>` : ""}<span class="switch-track" aria-hidden="true"><span class="switch-knob"></span></span></button>`;

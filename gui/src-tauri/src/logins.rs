@@ -182,7 +182,9 @@ pub(crate) async fn set_agent_reset_in_place(
         .map_err(|error| error.to_string())
 }
 
-/// Sets a login's week in quota dollars (millionths), or the default again.
+/// Sets what a login's week is expected to hold, in quota dollars
+/// (millionths), or the default again; and, where given, how far a week's
+/// figure may stand from it, in percent either way.
 #[fastctx_gui_command::command]
 pub(crate) async fn set_agent_week(
     shell: tauri::State<'_, Shell>,
@@ -190,10 +192,34 @@ pub(crate) async fn set_agent_week(
     agent_name: String,
     dir: PathBuf,
     week: Option<u64>,
+    swing: Option<u8>,
 ) -> Result<MachineLogins, String> {
     shell
         .world()
-        .set_agent_week(machine(machine_name)?, agent(agent_name)?, dir, week.map(fastctx_types::usage::Usd))
+        .set_agent_week(machine(machine_name)?, agent(agent_name)?, dir, week.map(fastctx_types::usage::Usd), swing)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+/// Resets what everyone has used of this week of a login to `to_tenths` of
+/// the week's figure, in tenths of a percent; or with none takes the reset
+/// `id` back.
+#[fastctx_gui_command::command]
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn reset_agent_usage(
+    shell: tauri::State<'_, Shell>,
+    machine_name: String,
+    agent_name: String,
+    dir: PathBuf,
+    id: String,
+    to_tenths: Option<u32>,
+    week_end: Option<String>,
+    holder: Option<String>,
+) -> Result<MachineLogins, String> {
+    let week_end = week_end.map(|at| at.parse::<jiff::Timestamp>()).transpose().map_err(|error| error.to_string())?;
+    shell
+        .world()
+        .reset_agent_usage(machine(machine_name)?, agent(agent_name)?, dir, id, to_tenths, week_end, holder)
         .await
         .map_err(|error| error.to_string())
 }

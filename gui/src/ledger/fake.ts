@@ -5,7 +5,7 @@
 // pages' data the way the World does in the app (`data.ts`, `live.ts`).
 
 import { seeded } from "../pen/shapes";
-import { grantsOf, plateOf, timesOf, type Call, type CallsPage, type CallsQuery, type Days, type Feed, type Grant, type Line, type Login, type Machine, type Net, type Outcome, type Series, type Source, type Split, type Unit } from "./data";
+import { grantsOf, plateOf, timesOf, within, type Call, type CallsPage, type CallsQuery, type Days, type Expect, type Feed, type Grant, type Line, type Login, type Machine, type Net, type Outcome, type Reset, type Sample, type Series, type Source, type Split, type Unit } from "./data";
 
 export const NOW = new Date("2026-11-15T10:04:38+08:00");
 
@@ -20,9 +20,9 @@ const machines: Machine[] = [
 ];
 
 const logins: Login[] = [
-  { id: "max", family: "claude", machine: "desktop", dir: "C:\\Users\\me\\.claude", who: "me@example.com", plan: "Max", standing: "in", workbench: true, isDefault: true, five: { used: 38, resets: "2 小时 14 分后" }, week: { used: 72, resets: "周四 05:00" }, fable: 44, program: "claude 2.1.322　npm　在 PATH 中", models: ["Fable 5.2", "Opus 5.5", "Sonnet 5.5", "Haiku 5.5"], readAt: "4 分钟前" },
+  { id: "max", family: "claude", machine: "desktop", dir: "C:\\Users\\me\\.claude", who: "me@example.com", plan: "Max", standing: "in", workbench: true, isDefault: true, five: { used: 38, resets: "2 小时 14 分后" }, week: { used: 72, resets: "3 天 19 小时后" }, fable: 44, program: "claude 2.1.322　npm　在 PATH 中", models: ["Fable 5.2", "Opus 5.5", "Sonnet 5.5", "Haiku 5.5"], readAt: "4 分钟前" },
   { id: "review", family: "claude", machine: "desktop", dir: "C:\\Users\\me\\.claude-review", who: ".claude-review", plan: null, standing: "found", workbench: false },
-  { id: "cx", family: "codex", machine: "desktop", dir: "C:\\Users\\me\\.codex", who: "me@example.com", plan: "Pro", standing: "in", workbench: true, isDefault: true, five: { used: 27, resets: "3 小时 40 分后" }, week: { used: 55, resets: "周五 09:00" }, autoTitle: true, program: "codex 0.98.0　官方安装　在 PATH 中", readAt: "1 分钟前" },
+  { id: "cx", family: "codex", machine: "desktop", dir: "C:\\Users\\me\\.codex", who: "me@example.com", plan: "Pro", standing: "in", workbench: true, isDefault: true, five: { used: 27, resets: "3 小时 40 分后" }, week: { used: 55, resets: "4 天 23 小时后" }, autoTitle: true, program: "codex 0.98.0　官方安装　在 PATH 中", readAt: "1 分钟前" },
   { id: "cx-work", family: "codex", machine: "desktop", dir: "C:\\Users\\me\\.codex-work", who: "work@example.com", plan: "Plus", standing: "in", workbench: false },
   { id: "cx-team", family: "codex", machine: "desktop", dir: "C:\\Users\\me\\CodexHomes\\team", who: "team", plan: null, standing: "found", workbench: false, under: "C:\\Users\\me\\CodexHomes" },
   { id: "cx-trial", family: "codex", machine: "desktop", dir: "C:\\Users\\me\\CodexHomes\\trial", who: "trial", plan: null, standing: "found", workbench: false, under: "C:\\Users\\me\\CodexHomes" },
@@ -34,20 +34,23 @@ const logins: Login[] = [
   { id: "opencode", family: "opencode", machine: "desktop", dir: "C:\\Users\\me\\.config\\opencode", who: "opencode", plan: null, standing: "renew", workbench: false },
   { id: "lap", family: "claude", machine: "laptop", dir: "/Users/me/.claude", who: "me@example.com", plan: "Max", standing: "in", workbench: false, isDefault: true },
   { id: "lap-cx", family: "codex", machine: "laptop", dir: "/Users/me/.codex", who: "me@example.com", plan: "Pro", standing: "found", workbench: false, isDefault: true },
-  { id: "verges", family: "claude", machine: "lab", dir: "/home/me/.claude-verges", who: ".claude-verges", plan: "Ultra", planSet: "ultra", standing: "in", workbench: true, token: true, five: { used: 61, resets: "48 分后" }, week: { used: 92, resets: "周三 21:00" }, fable: 50, fableHeld: true, program: "claude 2.1.322　npm　在 PATH 中", models: ["Fable 5.2", "Opus 5.5", "Sonnet 5.5"], readAt: "12 分钟前" },
-  { id: "cx-lab", family: "codex", machine: "lab", dir: "/home/me/.codex", who: "lab@example.com", plan: "Pro", standing: "in", workbench: true, isDefault: true, five: { used: 100, resets: "1 小时 05 分后" }, week: { used: 64, resets: "周六 14:00" }, credits: "$12.40", autoTitle: true },
-  { id: "dy", family: "claude", machine: "server", dir: "/root/.claude-dy", who: ".claude-dy", plan: null, planSet: null, standing: "in", workbench: true, token: true, five: { used: 12, resets: "4 小时 02 分后" }, week: { used: 42, resets: "周五 21:00" }, fable: 18 },
-  { id: "ada-work", family: "claude", machine: "ada-mac", dir: "/Users/ada/.claude", who: "work@example.com", plan: "Max", standing: "in", workbench: true, lent: { by: "ada", limit: 25, used: 15.5, fable: 5, until: "11 月 30 日" } },
-  { id: "bo-team", family: "claude", machine: "bo-pc", dir: "C:\\Users\\bo\\.claude", who: "team@example.com", plan: "Ultra", standing: "in", workbench: true, five: { used: 44, resets: "1 小时 32 分后" }, week: { used: 63, resets: "周一 08:00" }, fable: 21, lent: { by: "bo", limit: null, used: 9, fable: 4, until: null } },
+  { id: "verges", family: "claude", machine: "lab", dir: "/home/me/.claude-verges", who: ".claude-verges", plan: "Ultra", planSet: "ultra", standing: "in", workbench: true, token: true, five: { used: 61, resets: "48 分后" }, week: { used: 41, resets: "11 小时后" }, fable: 50, fableHeld: true, program: "claude 2.1.322　npm　在 PATH 中", models: ["Fable 5.2", "Opus 5.5", "Sonnet 5.5"], readAt: "12 分钟前" },
+  { id: "cx-lab", family: "codex", machine: "lab", dir: "/home/me/.codex", who: "lab@example.com", plan: "Pro", standing: "in", workbench: true, isDefault: true, five: { used: 100, resets: "1 小时 05 分后" }, week: { used: 64, resets: "6 天 4 小时后" }, credits: "$12.40", autoTitle: true },
+  { id: "dy", family: "claude", machine: "server", dir: "/root/.claude-dy", who: ".claude-dy", plan: null, planSet: null, standing: "in", workbench: true, token: true, five: { used: 12, resets: "4 小时 02 分后" }, week: { used: 42, resets: "5 天 11 小时后" }, fable: 18, readAt: "26 分钟前" },
+  { id: "ada-work", family: "claude", machine: "ada-mac", dir: "/Users/ada/.claude", who: "work@example.com", plan: "Max", standing: "in", workbench: true, week: { used: 0, resets: "2 天 6 小时后" }, lent: { by: "ada", limit: 25, used: 15.5, fable: 5, until: "11 月 30 日" } },
+  { id: "bo-team", family: "claude", machine: "bo-pc", dir: "C:\\Users\\bo\\.claude", who: "team@example.com", plan: "Ultra", standing: "in", workbench: true, five: { used: 44, resets: "1 小时 32 分后" }, week: { used: 63, resets: "22 小时后" }, fable: 21, readAt: "2 分钟前", lent: { by: "bo", limit: null, used: 9, fable: 4, until: null, manages: true } },
 ];
 
 const grants: Grant[] = [
   { login: "max", person: "ada", limit: 25, used: 22, fable: 12, until: "11 月 30 日" },
-  { login: "max", person: "bo", limit: 20, used: 11, fable: 6, until: null },
+  { login: "max", person: "bo", limit: null, used: 11, fable: 6, until: null, manages: true },
   { login: "max", person: "cy", limit: 10, used: 6, fable: 4, until: "11 月 21 日" },
-  { login: "verges", person: "ada", limit: 50, used: 44, fable: 25, until: null },
+  { login: "verges", person: "ada", limit: 50, used: 44, fable: 27, until: null },
   { login: "verges", person: "dee", limit: 25, used: 19, fable: 11, until: "12 月 05 日" },
   { login: "verges", person: "bo", limit: 15, used: 6, fable: 2, until: null },
+  { login: "bo-team", person: "ada", limit: 30, used: 21, fable: 8, until: null },
+  { login: "bo-team", person: "cy", limit: 15, used: 7, fable: 3, until: "12 月 12 日" },
+  { login: "bo-team", person: "eli", limit: null, used: 6, fable: 2, until: null, manages: true },
 ];
 
 const lines: Record<string, Line> = {
@@ -55,19 +58,63 @@ const lines: Record<string, Line> = {
   verges: { fiveStop: 70, turns: 2 },
 };
 
-/** What the specimen's logins' weeks are set to, and what their whole weeks
- *  came to by the readings, the newest last. */
-const plates: Record<string, number> = { max: 3000, verges: 3000, dy: 2400, cx: 1200, "cx-lab": 1200, "ada-work": 1500, "bo-team": 3000 };
+/** What each specimen login's owner expects of its week, what its last whole
+ *  weeks came to by the readings, the newest last, and from them the figure
+ *  this week is reckoned by: the last week's, held within the reach. */
+const expects: Record<string, Expect> = { max: { base: 3000, swing: 5 }, verges: { base: 3050, swing: 5 }, dy: { base: 3100, swing: 5 }, cx: { base: 1200, swing: 5 }, "cx-lab": { base: 1200, swing: 5 }, "ada-work": { base: 1500, swing: 5 }, "bo-team": { base: 3200, swing: 5 } };
 const weeksRead: Record<string, number[]> = {
-  max: [3080, 2990, 3120, 3040, 2410, 3070, 3010, 3060],
-  verges: [2960, 3050, 2980, 3020, 3090, 2940, 3010, 3030],
-  dy: [3150, 3080, 3190, 2260, 3110, 3140, 3090, 3120],
+  max: [3080, 2990, 3120, 3040, 2410, 3070, 3010, 3120],
+  verges: [2960, 3050, 2980, 3020, 3090, 2940, 3010, 2960],
+  dy: [3150, 3080, 3190, 2260, 3110, 2890, 2760, 2740],
   cx: [1180, 1230, 1150, 1210, 1190, 1240, 1170, 1200],
   "cx-lab": [1160, 1190, 1220, 1180, 1140, 1210, 1170, 1180],
+  "bo-team": [3260, 3180, 3310, 3240, 3290, 3150, 3220, 3270],
+};
+const plates: Record<string, number> = Object.fromEntries(Object.entries(expects).map(([id, expect]) => [id, Math.round(within(weeksRead[id]?.at(-1) ?? expect.base, expect))]));
+/** How far each login's reading stands from its ledger, of a hundred. */
+const gaps: Record<string, number> = { max: 2, dy: 9, verges: -45, "bo-team": -8 };
+/** What a login's ledger comes to this week, of a hundred, once its owner
+ *  reset it by hand; and what was so before, for taking the reset back. */
+const ledgers: Record<string, number> = {};
+const before: Record<string, { ledger: number | undefined; fable: number | undefined; held: boolean | undefined; grants: [Grant, number, number][] } | undefined> = {};
+const resetsMade: Record<string, Reset[]> = { max: [{ at: "11 月 14 日 10:20", how: "手动重置", from: 87, to: 37 }] };
+const ledgerOf = (login: Login) => ledgers[login.id] ?? Math.max((login.week?.used ?? 0) - (gaps[login.id] ?? 0), 0);
+
+/** The specimen's own doing of what the World does in the app. */
+export const fakeSample: Sample = {
+  expect(login, expect) {
+    expects[login.id] = { ...expect };
+    plates[login.id] = Math.round(within(weeksRead[login.id]?.at(-1) ?? expect.base, expect));
+  },
+  resetUsage(login, to) {
+    const from = ledgerOf(login);
+    const scale = from > 0 ? to / from : 0;
+    const mine = grantsOf(login);
+    before[login.id] = { ledger: ledgers[login.id], fable: login.fable, held: login.fableHeld, grants: mine.map((grant) => [grant, grant.used, grant.fable]) };
+    ledgers[login.id] = to;
+    for (const grant of mine) {
+      grant.used *= scale;
+      grant.fable *= scale;
+    }
+    if (login.fable !== undefined) login.fable *= scale;
+    if ((login.fable ?? 0) < 50) delete login.fableHeld;
+    resetsMade[login.id] = [{ at: "刚刚", how: "手动重置", from: Math.round(from), to: Math.round(to) }, ...(resetsMade[login.id] ?? [])];
+  },
+  undoReset(login) {
+    const was = before[login.id];
+    if (!was) return;
+    if (was.ledger === undefined) delete ledgers[login.id];
+    else ledgers[login.id] = was.ledger;
+    for (const [grant, used, fable] of was.grants) Object.assign(grant, { used, fable });
+    if (was.fable !== undefined) login.fable = was.fable;
+    if (was.held) login.fableHeld = true;
+    resetsMade[login.id] = (resetsMade[login.id] ?? []).slice(1);
+    before[login.id] = undefined;
+  },
 };
 
 export function fakeNet(): Net {
-  return { now: NOW, machines, logins, grants, lines, people: ["ada", "bo", "cy", "dee", "eli", "fan", "gus"], plates, admin: true };
+  return { now: NOW, machines, logins, grants, lines, people: ["ada", "bo", "cy", "dee", "eli", "fan", "gus"], plates, expects, admin: true };
 }
 
 interface Model {
@@ -212,13 +259,18 @@ function days(login: Login): Days {
     }),
   );
   const plate = plateOf(login);
-  const used = login.week?.used ?? 0;
-  const elsewhere = others.length ? 2 : 0;
-  const mine = Math.max(used - others.reduce((sum, grant) => sum + grant.used, 0) - elsewhere, 0);
-  const mineFable = Math.max((login.fable ?? 0) - others.reduce((sum, grant) => sum + grant.fable, 0), 0);
+  // What the ledger comes to is the reading less the gap, until it is
+  // reset by hand; on another's login the reader's own part is what its
+  // owner's figures say of them.
+  const used = ledgerOf(login);
+  const gap = (login.week?.used ?? 0) - used;
+  const lent = login.lent;
+  const mine = lent ? lent.used : Math.max(used - others.reduce((sum, grant) => sum + grant.used, 0), 0);
+  const mineFable = lent ? lent.fable : Math.max((login.fable ?? 0) - others.reduce((sum, grant) => sum + grant.fable, 0), 0);
+  const owners = lent?.manages ? Math.max(used - mine - others.reduce((sum, grant) => sum + grant.used, 0), 0) : 0;
   const quota: Partial<Record<Split, Series>> = {
     model: cut(models.map((one) => one.name), models.map((one) => one.share * Math.max(one.price * timesOf(one.name), 0.3))),
-    ...(others.length ? { person: cut(["我", ...others.map((grant) => grant.person)], [Math.max(mine, 20), ...others.map((grant) => grant.used)]) } : {}),
+    ...(others.length && !lent ? { person: cut(["我", ...others.map((grant) => grant.person)], [Math.max(mine, 20), ...others.map((grant) => grant.used)]) } : {}),
     kind: cut(login.family === "codex" ? ["缓存输入", "新输入", "输出", "推理"] : ["缓存读", "缓存写", "新输入", "输出"], login.family === "codex" ? [30, 8, 34, 28] : [34, 12, 6, 48]),
     source: cut(login.family === "codex" ? ["主循环", "子代理"] : ["主循环", "子代理", "后台"], login.family === "codex" ? [82, 18] : [78, 18, 4]),
   };
@@ -230,20 +282,27 @@ function days(login: Login): Days {
     parts,
     hours,
     hoursAre: "requests",
-    people: [
-      { name: null, week: (mine / 100) * plate, fable: (mineFable / 100) * plate },
-      ...others.map((grant) => ({ name: grant.person, week: (grant.used / 100) * plate, fable: (grant.fable / 100) * plate })),
-    ],
+    people: lent
+      ? [
+          ...(lent.manages ? [{ name: null, week: (owners / 100) * plate, fable: (Math.max((login.fable ?? 0) - mineFable - others.reduce((sum, grant) => sum + grant.fable, 0), 0) / 100) * plate }] : []),
+          { name: "我", week: (mine / 100) * plate, fable: (mineFable / 100) * plate, me: true },
+          ...(lent.manages ? others.map((grant) => ({ name: grant.person, week: (grant.used / 100) * plate, fable: (grant.fable / 100) * plate })) : []),
+        ]
+      : [
+          { name: null, week: (mine / 100) * plate, fable: (mineFable / 100) * plate },
+          ...others.map((grant) => ({ name: grant.person, week: (grant.used / 100) * plate, fable: (grant.fable / 100) * plate })),
+        ],
     weeks: (weeksRead[login.id] ?? []).map((value, index, all) => ({ start: new Date(NOW.getTime() - (all.length - index + 1) * 7 * DAY), value })),
-    resets: [
-      { at: "11 月 12 日 05:00", how: "周期重置", from: 96, to: 0 },
-      { at: "11 月 5 日 05:00", how: "周期重置", from: 81, to: 0 },
-      { at: "10 月 31 日 16:20", how: "自动检测", from: 64, to: 1 },
-      { at: "10 月 29 日 05:00", how: "周期重置", from: 100, to: 0 },
-    ],
-    elsewhere,
-    // A made-up size for its five-hour window, only to give the bars their dollars.
-    fiveSpent: login.five ? (login.five.used / 100) * (login.family === "codex" ? 300 : 780) : null,
+    resets: lent
+      ? null
+      : [
+          // The newest reset made by hand can be taken back, where the specimen kept what was so before.
+          ...(resetsMade[login.id] ?? []).map((reset, index) => ({ ...reset, ...(index === 0 && before[login.id] ? { undo: true } : {}) })),
+          { at: "11 月 12 日 05:00", how: "周期重置", from: 96, to: 0 },
+          { at: "11 月 5 日 05:00", how: "周期重置", from: 81, to: 0 },
+          { at: "10 月 29 日 05:00", how: "周期重置", from: 100, to: 0 },
+        ],
+    gap,
   };
 }
 

@@ -49,11 +49,17 @@ export function knownMachines(): string[] {
 export function recall(): void {
   try {
     const kept = JSON.parse(localStorage.getItem(keptKey) ?? "{}") as Record<string, unknown>;
+    // Only conversations that read as ones are taken back: one kept by
+    // another version, or damaged, is left for the node's own listing.
+    const whole = (resident: unknown): resident is ResidentNow => {
+      const about = (resident as ResidentNow | null)?.about;
+      return !!about && typeof about === "object" && typeof about.id === "string" && typeof about.machine === "string";
+    };
     for (const [machine, one] of Object.entries(kept)) {
-      if (Array.isArray(one)) lastAnswered.set(machine, { residents: one as ResidentNow[], logins: null, assisting: null });
+      if (Array.isArray(one)) lastAnswered.set(machine, { residents: one.filter(whole), logins: null, assisting: null });
       else if (one && typeof one === "object" && Array.isArray((one as Answered).residents)) {
         const { residents, logins, assisting } = one as Answered;
-        lastAnswered.set(machine, { residents, logins: Array.isArray(logins) ? logins : null, assisting: typeof assisting === "string" ? assisting : null });
+        lastAnswered.set(machine, { residents: residents.filter(whole), logins: Array.isArray(logins) ? logins : null, assisting: typeof assisting === "string" ? assisting : null });
       }
     }
   } catch {

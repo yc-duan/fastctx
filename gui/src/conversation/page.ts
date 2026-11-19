@@ -453,8 +453,13 @@ export class ConversationPage {
     this.element.querySelector(".view-steps")!.addEventListener("click", () => this.toggleSteps());
     document.addEventListener("keydown", this.findKey);
     this.name = this.element.querySelector<HTMLElement>(".who-name")!;
-    // Cut or whole again as the head narrows or widens, its hint follows.
+    // Cut or whole again as the head narrows or widens, its hint follows;
+    // and as the pointer or the keyboard comes to it, where a face that
+    // came late made the same box hold more.
     new ResizeObserver(() => this.nameHint()).observe(this.name);
+    this.name.addEventListener("pointerenter", () => this.nameHint());
+    this.name.addEventListener("focus", () => this.nameHint());
+    document.fonts.addEventListener("loadingdone", this.facesCame);
     // The title is renamed in place, where the conversation takes a name.
     this.name.addEventListener("click", () => this.rename());
     this.name.addEventListener("keydown", (event) => {
@@ -941,6 +946,29 @@ export class ConversationPage {
     this.update({ read: true });
   }
 
+  /** `bound` for a page out of view, which has nothing measured to go by:
+   *  its latest part is cut as it would be for a reader keeping to the
+   *  newest. A reader who was elsewhere in it is brought back there as the
+   *  page is shown (`resume`), the turns read again where the conversation
+   *  pages them; where it does not, what they read is kept. */
+  private boundAway(): void {
+    const conversation = this.options.conversation;
+    if (!conversation.windowed || this.trimming) return;
+    const parts = conversation.held();
+    const latest = parts[parts.length - 1];
+    if (!latest) return;
+    if (latest.end < this.trimmedAt) this.trimmedAt = 0;
+    if (latest.end - latest.start <= LATEST_MOST || latest.end - this.trimmedAt <= LATEST_KEPT) return;
+    const reading = !this.following && this.place !== null && conversation.partOf(this.place.key) === latest;
+    if (reading && !conversation.paged) return;
+    this.trimming = true;
+    this.trimmedAt = latest.end;
+    void conversation.trim(LATEST_KEPT).finally(() => {
+      this.trimming = false;
+      if (this.element.isConnected && !this.left) this.update({ read: true });
+    });
+  }
+
   /** The page holds a few thousand events of a conversation at most
    *  (`conversation.ts`): past that, it lets go of the parts farthest from
    *  the reader, and of what its latest part holds before its newest turns
@@ -1026,6 +1054,10 @@ export class ConversationPage {
     if (this.wasMoving && !moving && (this.offered?.checkpoints || !this.offered?.commands.length)) void this.askOffers();
     this.wasMoving = moving;
     this.releaseQueued();
+    // Out of view, the conversation still grows: what it holds is bounded
+    // as it comes, not when a frame is drawn, which a hidden window never
+    // is; so in a hidden window, for a reader keeping to the newest.
+    if (!this.element.isConnected || (document.hidden && this.following)) this.boundAway();
     if (!this.frame) this.frame = requestAnimationFrame(() => this.render());
   }
 
@@ -1243,10 +1275,16 @@ export class ConversationPage {
     cancelAnimationFrame(this.frame);
     this.view.destroy();
     this.badge?.dispose();
+    // What hears presses anywhere in the window goes with the page: it
+    // would hold the page, and all it holds, for as long as the window.
+    this.usagePopover?.dispose();
+    this.modelPanel?.dispose();
+    this.jobs?.dispose();
     this.side?.leave();
     this.finder.destroy();
     this.left = true;
     document.removeEventListener("keydown", this.findKey);
+    document.fonts.removeEventListener("loadingdone", this.facesCame);
     this.stopDrops?.();
     this.unlimit();
     this.unbindShared?.();
@@ -2966,6 +3004,13 @@ export class ConversationPage {
 
   /** What resting on the title says: the whole title where the line cuts
    *  it; otherwise, where it can be renamed, that it can. */
+  /** What the name's hint was last worked out for: it is measured again
+   *  when the name or what may be done with it changes, or its box does
+   *  (the observer above), not with every frame of the conversation, which
+   *  read the page's layout in the middle of drawing it. */
+  private hinted = "";
+  /** A face that came makes the name's box hold more or less. */
+  private readonly facesCame = () => this.nameHint();
   private nameHint(): void {
     const cut = this.name.scrollWidth > this.name.clientWidth;
     const rename = this.name.classList.contains("renamable") ? (this.options.controls?.words.commands.rename ?? "") : "";
@@ -2986,7 +3031,11 @@ export class ConversationPage {
     this.name.classList.toggle("renamable", renamable);
     if (renamable) this.name.tabIndex = 0;
     else this.name.removeAttribute("tabindex");
-    this.nameHint();
+    const hint = `${renamable}|${this.name.textContent ?? ""}`;
+    if (hint !== this.hinted) {
+      this.hinted = hint;
+      this.nameHint();
+    }
     // Archived or deleted, it is not said to work or wait.
     const waiting = !this.gone && this.away === null && conversation.waiting();
     // Working for the whole of a turn, not only while something shows; a

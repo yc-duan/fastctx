@@ -1,15 +1,15 @@
 // The windows the agents' pages open over themselves: what connecting a
 // login, taking it out, or opening its workbench changes, told before it is
 // done and struck off as it is done; a person a login is to assist, with or
-// without a limit; the models a login offers; a login's week in dollars; a
-// day picked for an assistance to end on.
+// without a limit; the models a login offers; what a login's week is
+// expected to hold; its week's usage reset by hand; a day picked for an
+// assistance to end on.
 
 import { Sheet } from "../app/confirm";
 import { glyph } from "../conversation/glyphs";
 import { strip } from "./charts";
-import { byId, daysOf, deeds, familyName, grants, grantsOf, NOW, people, plateCheck, plateOf, plates, usable, type Login } from "./data";
+import { byId, daysOf, deeds, expectOf, familyName, grants, grantsOf, NOW, people, pinned, plateOf, sample, usable, weeksMiddle, WIDEST, type Login } from "./data";
 import { whole } from "./format";
-import { plateSaid } from "./login-page";
 import { rule } from "./marks";
 import { draw, goTo, on, say, state } from "./state";
 import { choices, dayPicker, escape, menu } from "./ui";
@@ -224,12 +224,12 @@ on("add-grant", () => {
       <span class="as-label">额度</span>
       <div>
         <div class="as-modes">
-          ${limitable ? `<button type="button" class="as-mode chosen" data-mode="limit"><b>设上限</b><small>对方仅可见本人额度与用量</small></button>` : ""}
-          <button type="button" class="as-mode${limitable ? "" : " chosen"}" data-mode="none"><b>不设上限</b><small>${limitable ? "对方可见整个号的额度" : "Codex 不按人计额度，可用通用限制里的 5 小时额度暂停协助"}</small></button>
+          ${limitable ? `<button type="button" class="as-mode chosen" data-mode="limit"><b>份额</b><small>对方仅可见本人额度</small></button>` : ""}
+          <button type="button" class="as-mode${limitable ? "" : " chosen"}" data-mode="none"><b>${limitable ? "共管" : "不设上限"}</b><small>${limitable ? "可见整个号的额度，可调整各人份额" : "Codex 不按人计额度，可用通用限制里的 5 小时额度暂停协助"}</small></button>
         </div>
         <div class="as-swap">
           <div class="as-percent${limitable ? "" : " off"}"></div>
-          <p class="as-shared${limitable ? " off" : ""}">共用全部额度　每周 ${whole(plate)}${fable ? `　Fable 至多 ${whole(plate / 2)}` : ""}</p>
+          <p class="as-shared${limitable ? " off" : ""}">共用全部额度　本周 ${whole(plate)}${fable ? `　Fable 至多 ${whole(plate / 2)}` : ""}</p>
         </div>
       </div>
       <span class="as-label">期限</span>
@@ -242,7 +242,7 @@ on("add-grant", () => {
   const names = sheet.body.querySelector<HTMLElement>(".as-names")!;
   const percents = sheet.body.querySelector<HTMLElement>(".as-percent")!;
   const go = sheet.body.querySelector<HTMLButtonElement>("[data-do]")!;
-  const comes = () => `每周 ${whole((plate * percent) / 100)}${fable ? `　Fable 至多 ${whole((plate * percent) / 200)}` : ""}`;
+  const comes = () => `本周 ${whole((plate * percent) / 100)}${fable ? `　Fable 至多 ${whole((plate * percent) / 200)}` : ""}`;
   const paint = (keep = false) => {
     if (!keep) percents.innerHTML = `<div class="as-limit">${choices("as-limit", [["10", "10%"], ["25", "25%"], ["50", "50%"]], custom ? "" : String(percent))}<label class="as-custom${custom ? " chosen" : ""}"><input type="text" inputmode="numeric" placeholder="自定" value="${escape(custom)}" aria-label="自定比例"><span>%</span></label><span class="as-comes"></span></div>`;
     percents.querySelector(".as-comes")!.textContent = comes();
@@ -294,7 +294,7 @@ on("add-grant", () => {
       if (deeds) {
         go.disabled = true;
         sheet.busy = true;
-        deeds.assist(login, person, limited ? percent : null, until?.at ?? null).then(
+        deeds.assist(login, person, limited ? percent : null, until?.at ?? null, limitable && !limited).then(
           () => {
             sheet.busy = false;
             sheet.close();
@@ -308,7 +308,7 @@ on("add-grant", () => {
         );
         return;
       }
-      grants.push({ login: login.id, person, limit: limited ? percent : null, used: 0, fable: 0, until: until?.said ?? null });
+      grants.push({ login: login.id, person, limit: limited ? percent : null, used: 0, fable: 0, until: until?.said ?? null, ...(limitable && !limited ? { manages: true } : {}) });
       sheet.close();
       lit(person);
     }
@@ -323,7 +323,7 @@ on("grant-until", (button) => {
   const grant = grantsOf(login).find((one) => one.person === button.dataset.person)!;
   const value = button.dataset.value!;
   const keep = (until: { said: string; at: Date } | null) => {
-    if (deeds) void deeds.assist(login, grant.person, grant.limit, until?.at ?? null).then(() => draw(), (error: unknown) => say(error instanceof Error ? error.message : "更改失败"));
+    if (deeds) void deeds.assist(login, grant.person, grant.limit, until?.at ?? null, grant.manages).then(() => draw(), (error: unknown) => say(error instanceof Error ? error.message : "更改失败"));
     else {
       grant.until = until?.said ?? null;
       draw();
@@ -396,30 +396,50 @@ on("models", () => {
   sheet.show();
 });
 
-/** A login's week in dollars, set by its owner. Under the figure, where it
- *  stands among what the last weeks came to by the readings: the line is
- *  the figure, and can be dragged to where the dots are. */
-on("plate", () => {
+/** What a login's owner expects its week to hold, and how far a week's
+ *  figure may stand from it. Under them, where that stands among what the
+ *  last weeks came to by the readings: the line is what is expected, the
+ *  wash about it the reach, and the line can be dragged to where the dots
+ *  are. Nothing chosen makes the sheet taller or shorter. */
+
+/** The most a week is expected to hold, as a node takes it. */
+const MOST_WEEK = 10_000_000;
+
+on("expect", () => {
   const login = current();
   const read = usable(daysOf(login))?.weeks ?? [];
   const sheet = new Sheet("lg-plate");
-  const weeks = read.map((week) => ({ value: week.value, said: `${week.start.getMonth() + 1}/${week.start.getDate()} 起一周　按读数推算 ${whole(week.value)}` }));
-  let set = plateOf(login);
+  const weeks = read.map((week) => ({ value: week.value, said: `${week.start.getMonth() + 1}/${week.start.getDate()} 起一周　按读数实测 ${whole(week.value)}` }));
+  const set = { ...expectOf(login) };
+  const middle = weeksMiddle(read.map((week) => week.value));
   sheet.body.innerHTML = `${sheet.head(`周额度　${login.who}`, "关闭")}
-    <p class="cs-lead">此登录每周的总额度，是百分比与美元换算的基准。</p>
-    <div class="choice-row"><span class="choice-name">每周</span><div><label class="as-custom as-dollars chosen"><span>$</span><input name="plate" type="text" inputmode="numeric" value="${set}" autocomplete="off"></label></div></div>
-    ${weeks.length ? `<div class="ps-strip" title="每个点是一周：账本记下的额度，除以官方读数的已用比例。拖动竖线调整设定值。"></div><p class="ps-said"></p>` : `<p class="lg-edit-note">尚无完整一周的读数可供对照。</p>`}
+    <p class="cs-lead">每周开始时，按上周的读数与账本定出本周周额度，只在预期值的波动幅度内变动。</p>
+    <div class="choice-row"><span class="choice-name">预期</span><div><label class="as-custom as-dollars chosen"><span>$</span><input name="base" type="text" inputmode="numeric" value="${Math.round(set.base)}" autocomplete="off"></label></div></div>
+    <div class="choice-row"><span class="choice-name">波动幅度</span><div class="ps-swing"><label class="as-custom chosen"><span>±</span><input name="swing" type="text" inputmode="numeric" value="${set.swing}" autocomplete="off" aria-label="波动幅度"><span>%</span></label><span class="lg-soft">0 到 ${WIDEST}</span></div></div>
+    <div class="ps-strip" title="每个点是一周：账本记下的额度，除以官方读数的涨幅。拖动竖线调整预期值。"></div>
+    <p class="ps-said"></p>
     <footer class="cs-foot"><button type="button" class="sheet-go" data-do>完成</button></footer>`;
-  const input = sheet.body.querySelector<HTMLInputElement>("input")!;
-  const holder = sheet.body.querySelector<HTMLElement>(".ps-strip");
+  const input = sheet.body.querySelector<HTMLInputElement>("input[name='base']")!;
+  const swingInput = sheet.body.querySelector<HTMLInputElement>("input[name='swing']")!;
+  const holder = sheet.body.querySelector<HTMLElement>(".ps-strip")!;
+  // What is typed and not taken is never saved for what was taken before it.
+  const go = sheet.body.querySelector<HTMLButtonElement>("[data-do]")!;
+  const wrong = { base: false, swing: false };
+  const judged = () => {
+    go.disabled = wrong.base || wrong.swing;
+  };
   let scale: { low: number; high: number; left: number; right: number } | null = null;
   const said = () => {
-    const check = plateCheck(read.map((week) => week.value), set);
-    const line = sheet.body.querySelector<HTMLElement>(".ps-said");
-    if (line && check) line.innerHTML = `读数推算 ${whole(check.read)}${plateSaid(check) || "　"}`;
+    const line = sheet.body.querySelector<HTMLElement>(".ps-said")!;
+    if (middle === null) {
+      line.textContent = "尚无完整一周的读数可供对照。";
+      return;
+    }
+    const side = pinned(read.map((week) => week.value), set);
+    const off = Math.abs(middle - set.base) / set.base >= 0.03;
+    line.innerHTML = `近 ${read.length} 周实测居中 ${whole(middle)}${side ? `　<span class="lg-caution">近两周${side === "low" ? "低于下沿" : "高于上沿"}</span>` : ""}${off ? `　<button type="button" class="lg-word lg-accent" data-take>采用 ${whole(Math.round(middle / 10) * 10)}</button>` : ""}`;
   };
   const paint = () => {
-    if (!holder) return;
     const drawn = strip(login.id, weeks, set, Math.floor(holder.clientWidth) || 500);
     holder.innerHTML = drawn.svg;
     scale = drawn;
@@ -427,17 +447,23 @@ on("plate", () => {
   };
   /** Moves the line to a figure without drawing the dots again. */
   const move = (value: number) => {
-    set = Math.max(100, Math.round(value / 50) * 50);
-    input.value = String(set);
-    const mark = holder?.querySelector<SVGGElement>(".lgc-set");
-    if (mark && scale) {
-      const at = scale.left + ((Math.min(scale.high, Math.max(scale.low, set)) - scale.low) / (scale.high - scale.low)) * (scale.right - scale.left);
-      mark.setAttribute("transform", `translate(${at.toFixed(1)} 0)`);
-      mark.querySelector("text")!.textContent = `$${set.toLocaleString("en-US")}`;
+    set.base = Math.max(100, Math.round(value / 10) * 10);
+    input.value = String(set.base);
+    wrong.base = false;
+    input.closest(".as-custom")!.classList.remove("lg-wrong");
+    judged();
+    if (scale) {
+      const at = scale.left + ((Math.min(scale.high, Math.max(scale.low, set.base)) - scale.low) / (scale.high - scale.low)) * (scale.right - scale.left);
+      const half = ((set.base * set.swing * 2) / 100 / (scale.high - scale.low)) * (scale.right - scale.left) / 2;
+      for (const mark of holder.querySelectorAll<SVGGElement>(".lgc-set")) mark.setAttribute("transform", `translate(${at.toFixed(1)} 0)`);
+      const reach = holder.querySelector<SVGRectElement>(".lgc-reach");
+      reach?.setAttribute("x", (-half).toFixed(1));
+      reach?.setAttribute("width", (half * 2).toFixed(1));
+      holder.querySelector(".lgc-set-figure")!.textContent = `$${set.base.toLocaleString("en-US")}`;
     }
     said();
   };
-  holder?.addEventListener("pointerdown", (down) => {
+  holder.addEventListener("pointerdown", (down) => {
     if (!scale) return;
     const box = holder.getBoundingClientRect();
     const at = (event: PointerEvent) => move(scale!.low + ((event.clientX - box.left - scale!.left) / (scale!.right - scale!.left)) * (scale!.high - scale!.low));
@@ -454,32 +480,163 @@ on("plate", () => {
     holder.addEventListener("pointercancel", end, { once: true });
   });
   input.addEventListener("input", () => {
-    const typed = Number(input.value.replace(/[^0-9]/g, ""));
-    if (typed >= 100) {
-      set = typed;
+    // Whole dollars as typed, from $100 to what a node takes: "100.5" is not
+    // taken for 1,005, nor "-3000" for 3,000.
+    const said = input.value.trim().replace(/,/g, "");
+    const typed = /^\d{1,9}$/.test(said) ? Number(said) : Number.NaN;
+    wrong.base = !(typed >= 100 && typed <= MOST_WEEK);
+    input.closest(".as-custom")!.classList.toggle("lg-wrong", wrong.base);
+    judged();
+    if (!wrong.base) {
+      set.base = typed;
       paint();
     }
   });
-  sheet.body.querySelector("[data-do]")!.addEventListener("click", () => {
-    if (deeds) {
-      sheet.busy = true;
-      deeds.plate(login, set).then(
-        () => {
-          sheet.busy = false;
-          sheet.close();
-          draw();
-        },
-        (error: unknown) => {
+  // Any whole percent from none to the widest; what is not one is not taken.
+  swingInput.addEventListener("input", () => {
+    // A whole percent alone: "1.5" is not taken for fifteen.
+    const typed = swingInput.value.trim();
+    const value = /^\d{1,2}$/.test(typed) ? Number(typed) : Number.NaN;
+    const fits = value >= 0 && value <= WIDEST;
+    swingInput.closest(".as-custom")!.classList.toggle("lg-wrong", !fits);
+    wrong.swing = !fits;
+    judged();
+    if (fits) {
+      set.swing = value;
+      paint();
+    }
+  });
+  sheet.body.addEventListener("click", (event) => {
+    const target = event.target as HTMLElement;
+    if (target.closest("[data-take]") && middle !== null) {
+      set.base = Math.round(middle / 10) * 10;
+      input.value = String(set.base);
+      wrong.base = false;
+      input.closest(".as-custom")!.classList.remove("lg-wrong");
+      judged();
+      paint();
+    } else if (target.closest("[data-do]") && !go.disabled) {
+      const done = () => {
+        sheet.busy = false;
+        sheet.close();
+        draw();
+      };
+      if (deeds) {
+        sheet.busy = true;
+        deeds.expect(login, set).then(done, (error: unknown) => {
           sheet.busy = false;
           say(error instanceof Error ? error.message : "保存失败");
-        },
-      );
-      return;
+        });
+      } else {
+        sample?.expect(login, set);
+        done();
+      }
     }
-    plates[login.id] = set;
-    sheet.close();
-    draw();
   });
   sheet.show();
   paint();
+});
+
+/** The week's usage reset by its owner, after the vendor reset the quota or
+ *  a part of it: to nothing, or to a part of the week, everyone's use so
+ *  far scaled alike. What it will make of each is shown before it is done.
+ *  Nothing chosen makes the sheet taller or shorter. */
+on("reset-usage", () => {
+  const login = current();
+  const days = usable(daysOf(login));
+  const sheet = new Sheet("lg-reset");
+  // The reset this sheet makes, named once for each part asked: pressed
+  // again after an answer that was lost, it is the same reset, made once;
+  // another part asked is another reset. Of the week the sheet shows.
+  const named = `r-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+  const looked = { weekEnd: days?.weekEnd ?? null, holder: days?.holder ?? null };
+  const plate = plateOf(login);
+  const people = (days?.people ?? []).filter((one) => one.week > 0 || one.fable > 0);
+  const total = (people.reduce((sum, one) => sum + one.week, 0) / plate) * 100;
+  const fable = people.reduce((sum, one) => sum + one.fable, 0);
+  // The vendor's reading, where it stands under what the ledger comes to,
+  // is what a reset most likely means to reach.
+  const read = login.week && !login.week.reset && login.week.used < total - 1 ? login.week.used : null;
+  let all = read === null;
+  let typed = read === null ? "" : String(read);
+  sheet.body.innerHTML = `${sheet.head(`重置用量　${login.who}`, "关闭")}
+    <p class="cs-lead">厂商重置或部分重置额度后使用：所有人本周已用按同一比例折算。可在重置记录中撤回。</p>
+    <div class="choice-row"><span class="choice-name">重置为</span><div class="rs-to"></div></div>
+    <div class="rs-list"></div>
+    <p class="rs-fable"></p>
+    <footer class="cs-foot"><button type="button" class="sheet-go" data-do>重置</button></footer>`;
+  const to = sheet.body.querySelector<HTMLElement>(".rs-to")!;
+  const list = sheet.body.querySelector<HTMLElement>(".rs-list")!;
+  const go = sheet.body.querySelector<HTMLButtonElement>("[data-do]")!;
+  /** The part of the week asked for, or none where what is typed is none
+   *  or would raise the usage. */
+  const target = (): number | null => {
+    if (all) return 0;
+    const value = /^\d{1,3}$/.test(typed.trim()) ? Number(typed) : Number.NaN;
+    return value >= 0 && value < total ? value : null;
+  };
+  const paint = (keep = false) => {
+    if (!keep)
+      to.innerHTML = `<div class="as-limit">${choices("reset-to", [["all", "全部清零"], ["part", "指定比例"]], all ? "all" : "part")}<label class="as-custom${all ? "" : " chosen"}"><input type="text" inputmode="numeric" placeholder="比例" value="${escape(typed)}" aria-label="重置到的比例"><span>%</span></label><span class="as-comes">${read === null ? "" : `官方 7 天读数 ${read}%`}</span></div>`;
+    const at = target();
+    const scale = at === null ? 1 : total > 0 ? at / total : 0;
+    const row = (name: string, before: string, after: string, more = "") => `<div class="rs-row${more}"><span>${name}</span><span>${before}</span><span class="lg-soft">→</span><span>${after}</span></div>`;
+    list.innerHTML =
+      people.map((one) => row(one.name === null ? (login.lent ? escape(login.lent.by) : "我") : escape(one.name), whole(one.week), at === null ? "" : whole(one.week * scale))).join("") +
+      row("合计", `${Math.round(total)}%`, at === null ? "" : `${Math.round(at)}%`, " rs-sum");
+    sheet.body.querySelector<HTMLElement>(".rs-fable")!.innerHTML =
+      at === null
+        ? `<span class="lg-caution">须低于现有合计 ${Math.round(total)}%</span>`
+        : login.family === "claude"
+          ? `Fable ${whole(fable)} → ${whole(fable * scale)}${login.fableHeld && (fable * scale) / plate < 0.5 ? "，恢复放行" : ""}。厂商是否同样返还 Fable，读数无法得知。`
+          : "";
+    go.disabled = at === null;
+  };
+  to.addEventListener("input", (event) => {
+    typed = (event.target as HTMLInputElement).value.replace(/%$/, "").slice(0, 4);
+    all = false;
+    to.querySelector(".choice.chosen")?.classList.remove("chosen");
+    to.querySelector("[data-value='part']")?.classList.add("chosen");
+    to.querySelector(".as-custom")?.classList.add("chosen");
+    paint(true);
+  });
+  sheet.body.addEventListener("click", (event) => {
+    const pressed = event.target as HTMLElement;
+    const choice = pressed.closest<HTMLElement>("[data-act='reset-to']");
+    if (choice) {
+      all = choice.dataset.value === "all";
+      paint();
+      if (!all) to.querySelector<HTMLInputElement>("input")?.focus();
+    } else if (pressed.closest("[data-do]") && !go.disabled && !sheet.busy) {
+      const at = target()!;
+      const done = () => {
+        sheet.busy = false;
+        sheet.close();
+        draw();
+      };
+      if (deeds) {
+        sheet.busy = true;
+        go.disabled = true;
+        deeds.resetUsage(login, at, `${named}-${Math.round(at * 10)}`, looked).then(done, (error: unknown) => {
+          go.disabled = false;
+          sheet.busy = false;
+          say(error instanceof Error ? error.message : "重置失败");
+        });
+      } else {
+        sample?.resetUsage(login, at);
+        done();
+      }
+    }
+  });
+  sheet.show();
+  paint();
+});
+
+on("undo-reset", () => {
+  const login = current();
+  if (deeds) void deeds.undoReset(login).then(() => draw(), (error: unknown) => say(error instanceof Error ? error.message : "撤回失败"));
+  else {
+    sample?.undoReset(login);
+    draw();
+  }
 });

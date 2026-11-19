@@ -57,6 +57,14 @@ export class GoalBar {
     });
   }
 
+  /** Its conversation is let go: the time it tells stops being redrawn. A
+   *  clearing the person asked for is left to be made. */
+  dispose(): void {
+    clearTimeout(this.tick);
+    this.tick = 0;
+    this.goal = null;
+  }
+
   show(goal: GoalShown | null): void {
     this.goal = goal;
     if (this.clearing) return;

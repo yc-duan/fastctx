@@ -28,6 +28,10 @@ export interface UsagePerson {
   fable?: UsageSum;
   /** What its week went to; older nodes do not say. */
   went?: WeekUse;
+  /** What its week counts as against the week's figure, in millionths of
+   *  a quota dollar, after the resets made by hand: all its models, and the
+   *  part of that which is Fable's. Where the report has a reckoning. */
+  counted?: { week: number; fable: number };
 }
 
 export interface UsageHour extends UsageSum {
@@ -112,4 +116,54 @@ export interface UsageReport {
   weeks?: UsageSpan[];
   /** Only the login's owner receives this field, even when it is empty. */
   resets?: UsageReset[];
+  /** What a Claude Code login's week is reckoned to hold; absent for
+   *  Codex and from a node of before. */
+  reckoning?: UsageReckoning;
+}
+
+/** What a login's week is reckoned to hold, in millionths of a quota
+ *  dollar: what its owner expects, how far a week's figure may stand from
+ *  that, and this week's figure, which stands all week. */
+export interface UsageReckoning {
+  base: number;
+  /** Percent either way. */
+  swing: number;
+  week: number;
+  /** Whose week it is, to one who may reset it: a name for the vendor's
+   *  account that tells nothing of it. */
+  holder?: string;
+  /** The weeks measured, oldest first; to the owner and to one who manages
+   *  the login with them. */
+  weeks?: UsageMeasured[];
+  /** The resets made by hand, newest first; to the owner alone. */
+  resets?: UsageHandReset[];
+}
+
+/** What one week came to: the ledger's quota dollars between its first
+ *  reading and its last, over how far the reading rose. */
+export interface UsageMeasured {
+  start: Timestamp;
+  end: Timestamp;
+  spent: number;
+  rise_tenths: number;
+  /** Absent where the reading rose too little to say. */
+  came_to?: number;
+}
+
+/** A week's usage reset by hand: what everyone used until then counts as
+ *  `to_tenths` over `from_tenths` of what it was. */
+export interface UsageHandReset {
+  id: string;
+  at: Timestamp;
+  week_end: Timestamp;
+  /** The week's figure then, and what everyone had used of the week and
+   *  what that counts as since, in millionths of a quota dollar. */
+  figure: number;
+  from: number;
+  to: number;
+  from_tenths: number;
+  to_tenths: number;
+  /** The account that made it; absent for the machine's own user. */
+  by?: string;
+  undone?: Timestamp;
 }

@@ -229,11 +229,9 @@ pub(super) struct Book {
     pub keys: HashMap<String, Option<Timestamp>>,
     pub reading: Option<Reading>,
     pub readings: HashMap<Option<String>, Reading>,
-    /// Pending detection and source observations, separate for each account.
-    pub lowered: HashMap<Option<String>, super::readings::Lowered>,
+    /// When each account's windows were last read (`readings::Heard`).
+    pub heard: HashMap<Option<String>, super::readings::Heard>,
     pub resets: HashMap<Option<String>, Vec<UsageReset>>,
-    /// Whether future early weekly resets are detected automatically.
-    pub follow: bool,
     pub accounts: Vec<(Timestamp, String)>,
     pub recent: Vec<Charge>,
     pub history: super::history::History,
@@ -259,7 +257,7 @@ impl Book {
     /// where the one read holds less. The days' own index is made when a
     /// report reads them (`super::history`).
     pub(super) fn load_at(&mut self, path: &Path, now: Timestamp) -> io::Result<()> {
-        *self = Self { follow: super::follows_clearings(path), ..Self::default() };
+        *self = Self::default();
         let files = days(path, Timestamp::MIN)?;
         let open = super::checkpoint::first_open(path, now);
         let mut from = 0;
@@ -356,8 +354,8 @@ impl Book {
                     if let Some(legacy) = self.readings.remove(&None) {
                         self.readings.insert(Some(account.clone()), legacy);
                     }
-                    if let Some(legacy) = self.lowered.remove(&None) {
-                        self.lowered.insert(Some(account.clone()), legacy);
+                    if let Some(legacy) = self.heard.remove(&None) {
+                        self.heard.insert(Some(account.clone()), legacy);
                     }
                     if let Some(legacy) = self.resets.remove(&None) {
                         self.resets.insert(Some(account.clone()), legacy);
@@ -408,12 +406,7 @@ impl Book {
         self.meters.values().flat_map(super::meter::Meter::balances).collect()
     }
     pub fn account_at(&self, at: Timestamp) -> Option<String> {
-        self.accounts
-            .iter()
-            .rev()
-            .find(|(since, _)| *since <= at)
-            .or_else(|| self.accounts.first())
-            .map(|(_, account)| account.clone())
+        account_at(&self.accounts, at).map(str::to_string)
     }
     pub fn commit(&mut self, path: &Path, row: Entry) -> io::Result<()> {
         if let Entry::Tokens { key: Some(key), .. } = &row
@@ -529,4 +522,15 @@ pub(super) fn days(path: &Path, since: Timestamp) -> io::Result<Vec<PathBuf>> {
 
 pub(super) fn read(path: &Path) -> io::Result<Vec<Entry>> {
     super::quarantine::read(path)
+}
+
+/// The vendor's account a login was in at `at`, of the accounts it was in
+/// since when, oldest first: before the first, the first.
+pub(super) fn account_at(accounts: &[(Timestamp, String)], at: Timestamp) -> Option<&str> {
+    accounts
+        .iter()
+        .rev()
+        .find(|(since, _)| *since <= at)
+        .or_else(|| accounts.first())
+        .map(|(_, account)| account.as_str())
 }

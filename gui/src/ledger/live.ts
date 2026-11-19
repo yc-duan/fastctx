@@ -10,9 +10,9 @@ import { loginsOf } from "../world/accounts";
 import type { AgentLimits, Fact, LimitWindow } from "../world/agents";
 import type { WorldNow } from "../world/bridge";
 import type { AgentLogins, FoundProgram, Login as WorldLogin, MachineLogins, MachineLoginsHeard } from "../world/logins";
-import type { UsageReport } from "../world/usage";
+import type { UsageHandReset, UsageReport } from "../world/usage";
 import type { CallOutcome, UsageCall, UsageCallsPage, UsageCallsQuery } from "../world/usage-calls";
-import { FABLE_TIMES, isFable, planNames, PLATE, timesOf, type Call, type CallsPage, type CallsQuery, type Days, type Grant, type Line, type Login, type Machine, type Net, type Outcome, type PlanLabel, type Series, type Split, type Unit } from "./data";
+import { FABLE_TIMES, isFable, planNames, PLATE, SWING, timesOf, type Call, type CallsPage, type CallsQuery, type Days, type Expect, type Grant, type Line, type Login, type Machine, type Net, type Outcome, type PlanLabel, type Reset, type Series, type Split, type Unit } from "./data";
 
 /** A login's key in the pages and their addresses. */
 export const idOf = (machine: string, agent: string, dir: string) => `${machine}|${agent}|${dir}`;
@@ -23,7 +23,6 @@ export function partsOf(id: string): { machine: string; agent: string; dir: stri
 
 const DAY = 86400000;
 const pad = (n: number) => String(n).padStart(2, "0");
-const weekdays = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
 
 /** When a window starts over, as a row says it: in hours and minutes within
  *  a day, else its weekday and time. */
@@ -35,7 +34,9 @@ export function resetsSaid(at: Date, now: Date): string {
     const hours = Math.floor(minutes / 60);
     return hours ? `${hours} 小时 ${pad(minutes % 60)} 分后` : `${minutes} 分后`;
   }
-  return `${weekdays[at.getDay()]} ${pad(at.getHours())}:${pad(at.getMinutes())}`;
+  // Further off, in days and hours: how long is left, not which weekday.
+  const hours = Math.round(left / 3600000);
+  return hours % 24 ? `${Math.floor(hours / 24)} 天 ${hours % 24} 小时后` : `${hours / 24} 天后`;
 }
 
 export function agoSaid(at: Date, now: Date): string {
@@ -74,8 +75,42 @@ function programSaid(program: FoundProgram): string {
 export interface Seen {
   /** Each machine's record as last heard, by name. */
   records: Map<string, MachineLoginsHeard>;
-  /** Each login's week as its node keeps it, in quota dollars. */
+  /** Each login's week as its node reckons it for this week, in quota
+   *  dollars, where its usage was read. */
   plates: Map<string, number>;
+  /** What each login's owner expects of its week, as its node told it
+   *  with its usage. */
+  expects: Map<string, Expect>;
+  /** The resets made by hand in each login the reader may reset, newest
+   *  first. */
+  resets: Map<string, UsageHandReset[]>;
+  /** The end of each login's week as its usage last told it: a reset is of
+   *  that week. */
+  weekEnds: Map<string, string>;
+}
+
+/** Takes what a login's usage says its week is reckoned to hold; whether
+ *  anything the pages draw from changed. A report that says none, from a
+ *  machine of before or from the copies here while it is away, leaves
+ *  nothing of what an earlier one said. */
+export function reckonedBy(seen: Seen, login: Login, report: UsageReport): boolean {
+  const told = report.reckoning;
+  if (report.week.end) seen.weekEnds.set(login.id, report.week.end);
+  else seen.weekEnds.delete(login.id);
+  if (!told) {
+    const had = seen.plates.has(login.id) || seen.expects.has(login.id);
+    seen.plates.delete(login.id);
+    seen.expects.delete(login.id);
+    seen.resets.delete(login.id);
+    return had;
+  }
+  const [plate, expect] = [told.week / 1_000_000, { base: told.base / 1_000_000, swing: told.swing }];
+  const had = seen.expects.get(login.id);
+  const changed = seen.plates.get(login.id) !== plate || had?.base !== expect.base || had?.swing !== expect.swing;
+  seen.plates.set(login.id, plate);
+  seen.expects.set(login.id, expect);
+  seen.resets.set(login.id, told.resets ?? []);
+  return changed;
 }
 
 /** The pages' network, from what the World holds now. */
@@ -85,6 +120,7 @@ export function netOf(world: WorldNow | null, seen: Seen, now: Date): Net {
   const grants: Grant[] = [];
   const lines: Record<string, Line> = {} as never;
   const plates: Record<string, number> = {} as never;
+  const expects: Record<string, Expect> = {} as never;
   const mine = loginsOf(world?.accounts);
   const hubs = world?.accounts.hubs ?? [];
   let admin = false;
@@ -110,14 +146,21 @@ export function netOf(world: WorldNow | null, seen: Seen, now: Date): Net {
     if (!record) continue;
     for (const [agent, side] of sidesOf(record)) {
       for (const [one, listed] of [...side.listed.map((one) => [one, true] as const), ...side.candidates.map((one) => [one, false] as const)]) {
-        const login = loginOf(world, machine, agent, side, one, listed, now);
-        const plate = one.week ? one.week / 1_000_000 : seen.plates.get(login.id);
+        // This week's figure where the login's usage was read; until then
+        // what its owner expects, which the figure stands close to.
+        const base = one.week ? one.week / 1_000_000 : undefined;
+        const plate = seen.plates.get(idOf(machine.name, agent, one.dir)) ?? base;
+        const login = loginOf(world, machine, agent, side, one, listed, now, plate ?? PLATE);
         if (plate) plates[login.id] = plate;
+        const expect = seen.expects.get(login.id) ?? (base || one.swing ? { base: base ?? PLATE, swing: one.swing ?? SWING } : undefined);
+        if (expect) expects[login.id] = expect;
         logins.push(login);
-        if (machine.hold === "assist") continue;
-        const given = assistsOn(world, machine.name, agent, one);
+        // One a login assists sees whom else it assists only where they
+        // manage it with its owner, and then all but themselves.
+        if (machine.hold === "assist" && !login.lent?.manages) continue;
+        const given = assistsOn(world, machine.name, agent, one).filter(({ hub, assist }) => machine.hold !== "assist" || !mine.some((own) => own.hub === hub && own.account === assist.account));
         for (const { assist } of given) {
-          grants.push({ login: login.id, person: assist.account, limit: limitOf(assist, plate ?? PLATE), used: 0, fable: 0, until: assist.until ? momentSaid(new Date(assist.until)) : null });
+          grants.push({ login: login.id, person: assist.account, limit: limitOf(assist, plate ?? PLATE), used: 0, fable: 0, until: assist.until ? momentSaid(new Date(assist.until)) : null, ...(managesOf(assist) ? { manages: true } : {}) });
         }
         const first = given[0]?.assist;
         if (first && (first.five_hour || first.turns)) lines[login.id] = { fiveStop: first.five_hour ?? null, turns: first.turns ?? null };
@@ -133,7 +176,7 @@ export function netOf(world: WorldNow | null, seen: Seen, now: Date): Net {
     }
   }
   const people = [...new Set(hubs.flatMap((hub) => hub.accounts.map((account) => account.name)).filter((name) => !mine.some((login) => login.account === name)))].sort();
-  return { now, machines, logins, grants, lines, people, plates, admin };
+  return { now, machines, logins, grants, lines, people, plates, expects, admin };
 }
 
 function joined(folder: string, path: string): string {
@@ -174,6 +217,13 @@ function assistsOn(world: WorldNow | null, machine: string, agent: string, login
   return (world?.accounts.hubs ?? []).flatMap((hub) => hub.assists.filter((assist) => assist.machine === machine && assist.agent === agent && sameHome(assist.home, home)).map((assist) => ({ hub: hub.hub, assist })));
 }
 
+/** Whether one assisted manages the login with its owner: as the hub
+ *  says, and, where it keeps no such word yet, one given no limit, who saw
+ *  the account whole before there was the word. */
+export function managesOf(assist: AssistSeen): boolean {
+  return assist.manages ?? (!assist.share && !assist.weekly && !assist.daily);
+}
+
 /** The part of the week an assistance allows, of a hundred: its share where
  *  the hub keeps one, else its weekly dollars over the login's week. */
 export function limitOf(assist: AssistSeen, plate: number): number | null {
@@ -182,7 +232,7 @@ export function limitOf(assist: AssistSeen, plate: number): number | null {
   return Math.max(1, Math.round(((assist.weekly / 1_000_000) / plate) * 100));
 }
 
-function loginOf(world: WorldNow | null, machine: Pickable, agent: string, side: AgentLogins, one: WorldLogin, listed: boolean, now: Date): Login {
+function loginOf(world: WorldNow | null, machine: Pickable, agent: string, side: AgentLogins, one: WorldLogin, listed: boolean, now: Date, plate: number): Login {
   const identity = one.identity?.who.kind === "known" ? one.identity.who.value : null;
   const token = identity?.method === "oauth_token";
   const plan = planOf(world, machine.name, agent, one);
@@ -192,7 +242,7 @@ function loginOf(world: WorldNow | null, machine: Pickable, agent: string, side:
   const program = one.programs.map((index) => side.programs[index]).find(Boolean);
   const old = agent === "claude" ? claudeTooOld("claude", side.programs, one) : null;
   const unread = one.limits.kind === "known" ? undefined : one.limits.reason;
-  const lent = machine.hold === "assist" ? lentOf(world, machine, agent, one) : undefined;
+  const lent = machine.hold === "assist" ? lentOf(world, machine, agent, one, plate) : undefined;
   const credits = one.limits.kind === "known" ? one.limits.value.credits : undefined;
   return {
     id,
@@ -216,7 +266,6 @@ function loginOf(world: WorldNow | null, machine: Pickable, agent: string, side:
     ...(one.change && !one.change.end ? { busy: one.change.into ? "正在接入…" : "正在移除…" } : {}),
     ...(program ? { program: programSaid(program) } : {}),
     ...(one.auto_title !== undefined ? { autoTitle: one.auto_title } : {}),
-    ...(one.reset_in_place !== undefined ? { resetInPlace: one.reset_in_place } : {}),
     ...(one.models ? { models: one.models.map((model) => model.display_name || model.model || model.id) } : {}),
     ...(one.model_edits && ((one.model_edits.added?.length ?? 0) + (one.model_edits.removed?.length ?? 0) > 0) ? { modelsChanged: true } : {}),
     ...(one.limits.kind === "known" ? { readAt: agoSaid(new Date(one.limits.value.observed_at), now) } : {}),
@@ -232,12 +281,12 @@ function planOf(world: WorldNow | null, machine: string, agent: string, one: Wor
   return null;
 }
 
-function lentOf(world: WorldNow | null, machine: Pickable, agent: string, one: WorldLogin): Login["lent"] {
+function lentOf(world: WorldNow | null, machine: Pickable, agent: string, one: WorldLogin, plate: number): Login["lent"] {
   const home = one.default ? null : one.dir;
   const mine = loginsOf(world?.accounts);
   for (const hub of world?.accounts.hubs ?? []) {
     const assist = hub.assists.find((given) => given.machine === machine.name && given.agent === agent && sameHome(given.home, home) && mine.some((login) => login.hub === hub.hub && login.account === given.account));
-    if (assist) return { by: machine.owner ?? "", limit: limitOf(assist, PLATE), used: 0, fable: 0, until: assist.until ? momentSaid(new Date(assist.until)) : null };
+    if (assist) return { by: machine.owner ?? "", limit: limitOf(assist, plate), used: 0, fable: 0, until: assist.until ? momentSaid(new Date(assist.until)) : null, ...(managesOf(assist) ? { manages: true } : {}) };
   }
   return { by: machine.owner ?? "", limit: null, used: 0, fable: 0, until: null };
 }
@@ -256,7 +305,12 @@ export function daysFrom(report: UsageReport, login: Login, plate: number, world
   const first = new Date(today.getTime() - (count - 1) * DAY);
   const dates = Array.from({ length: count }, (_, index) => new Date(first.getFullYear(), first.getMonth(), first.getDate() + index));
   const dayOf = (at: Date) => Math.round((new Date(at.getFullYear(), at.getMonth(), at.getDate()).getTime() - first.getTime()) / DAY);
-  const people = report.people.map((person) => personOf(person.account, world));
+  // In a login another owns, the machine's own use is its owner's and the
+  // reader's is their own; in the reader's own, both are theirs.
+  const own = (account: HubAccount | null) => !!account && personOf(account, world) === null;
+  // The login's owner, by the machine's own use or by their account.
+  const owners = (account: HubAccount | null) => account === null || account.account === login.lent?.by;
+  const people = report.people.map((person) => (login.lent ? (owners(person.account) ? login.lent.by || "所有者" : own(person.account) ? null : person.account!.account) : personOf(person.account, world)));
   const names = [...new Set(people.map((name) => name ?? "我"))];
   const zero = () => new Array<number>(count).fill(0);
   const total: Record<Unit, number[]> = { quota: zero(), tokens: zero() };
@@ -265,8 +319,6 @@ export function daysFrom(report: UsageReport, login: Login, plate: number, world
   const fableSaid = login.family === "claude" && report.hours.some((hour) => hour.fable !== undefined);
   const hours = Array.from({ length: 7 }, () => new Array<number>(24).fill(0));
   const since = now.getTime() - 90 * DAY;
-  const fiveWindow = login.five && !login.five.reset ? windowStart(login, now) : null;
-  let fiveSpent = fiveWindow ? 0 : null;
   for (const hour of report.hours) {
     const at = new Date(hour.at);
     const index = dayOf(at);
@@ -284,7 +336,6 @@ export function daysFrom(report: UsageReport, login: Login, plate: number, world
       byPerson.tokens[who]![index]! += hour.tokens;
     }
     if (at.getTime() >= since) hours[(at.getDay() + 6) % 7]![at.getHours()]! += login.family === "codex" ? hour.tokens : dollars;
-    if (fiveWindow && at.getTime() >= fiveWindow) fiveSpent! += dollars;
   }
   // Days from older nodes carry API dollars alone; the week's Fable is
   // known apart, so the week's figures carry its multiplier either way.
@@ -294,22 +345,47 @@ export function daysFrom(report: UsageReport, login: Login, plate: number, world
     parts.quota.person = { names, values: byPerson.quota };
     parts.tokens.person = { names, values: byPerson.tokens };
   }
+  // What each person's week counts as: as the node reckons it, after the
+  // resets made by hand, or from a node of before the week's dollars with
+  // Fable's at its multiplier.
   const week = report.people.map((person, index) => {
     const fable = (person.fable?.usd ?? 0) / 1_000_000;
-    return { name: people[index] ?? null, week: (person.week.usd ?? 0) / 1_000_000 + fable * (FABLE_TIMES - 1), fable: fable * FABLE_TIMES };
+    const counted = person.counted ? { week: person.counted.week / 1_000_000, fable: person.counted.fable / 1_000_000 } : { week: (person.week.usd ?? 0) / 1_000_000 + fable * (FABLE_TIMES - 1), fable: fable * FABLE_TIMES };
+    // The reader in another's login: named apart from its owner.
+    const me = !!login.lent && own(person.account);
+    return { name: me ? "我" : login.lent && owners(person.account) ? null : (people[index] ?? null), ...counted, me };
   });
-  const merged = new Map<string, { name: string | null; week: number; fable: number }>();
+  const merged = new Map<string, { name: string | null; week: number; fable: number; me?: boolean }>();
   for (const one of week) {
-    const key = one.name ?? "";
+    const key = one.me ? "\u0000me" : (one.name ?? "");
     const had = merged.get(key) ?? { name: one.name, week: 0, fable: 0 };
-    merged.set(key, { name: one.name, week: had.week + one.week, fable: had.fable + one.fable });
+    merged.set(key, { name: one.name, week: had.week + one.week, fable: had.fable + one.fable, ...(one.me ? { me: true } : {}) });
   }
   const ledgered = [...merged.values()].reduce((sum, one) => sum + one.week, 0);
-  const weeks = (login.family === "codex" ? [] : (report.weeks ?? []))
-    .filter((span) => (span.used_tenths ?? 0) >= 50)
-    .map((span) => ({ start: new Date(span.start), value: span.used.reduce((sum, one) => sum + (one.usd ?? 0), 0) / 1_000_000 / ((span.used_tenths ?? 0) / 1000) }))
-    .slice(-8);
+  // What each whole week came to: as the node measured it, or from a node
+  // of before the week's dollars over its highest reading.
+  const weeks = (
+    report.reckoning
+      ? (report.reckoning.weeks ?? []).filter((one) => one.came_to !== undefined).map((one) => ({ start: new Date(one.start), value: one.came_to! / 1_000_000 }))
+      : (login.family === "codex" ? [] : (report.weeks ?? [])).filter((span) => (span.used_tenths ?? 0) >= 50).map((span) => ({ start: new Date(span.start), value: span.used.reduce((sum, one) => sum + (one.usd ?? 0), 0) / 1_000_000 / ((span.used_tenths ?? 0) / 1000) }))
+  ).slice(-8);
   const how: Record<string, string> = { automatic: "自动检测", scheduled: "周期重置", recorded: "已记录" };
+  // The resets on record: those the vendor's week made as it turned, and
+  // those its owner made by hand, the newest of which can be taken back
+  // while its week lasts.
+  const made = report.reckoning?.resets ?? [];
+  const newest = made.find((reset) => !reset.undone);
+  const resets: (Reset & { when: number })[] = [
+    ...(report.resets ?? []).map((reset) => ({ when: new Date(reset.confirmed_at).getTime(), at: momentSaid(new Date(reset.confirmed_at)), how: how[reset.source] ?? reset.source, from: Math.round((reset.before_used_tenths ?? 0) / 10), to: Math.round(reset.used_tenths / 10) })),
+    ...made.map((reset) => ({
+      when: new Date(reset.at).getTime(),
+      at: momentSaid(new Date(reset.at)),
+      how: reset.undone ? "手动重置（已撤回）" : "手动重置",
+      from: Math.round(reset.from_tenths / 10),
+      to: Math.round(reset.to_tenths / 10),
+      ...(reset === newest && new Date(reset.week_end).getTime() > now.getTime() ? { undo: true } : {}),
+    })),
+  ].sort((a, b) => b.when - a.when);
   return {
     dates,
     total,
@@ -318,21 +394,11 @@ export function daysFrom(report: UsageReport, login: Login, plate: number, world
     hoursAre: login.family === "codex" ? "tokens" : "quota",
     people: [...merged.values()],
     weeks,
-    resets: report.resets ? report.resets.map((reset) => ({ at: momentSaid(new Date(reset.confirmed_at)), how: how[reset.source] ?? reset.source, from: Math.round((reset.before_used_tenths ?? 0) / 10), to: Math.round(reset.used_tenths / 10) })) : null,
-    elsewhere: login.week && !login.lent ? Math.max(0, login.week.used - (ledgered / plate) * 100) : 0,
-    fiveSpent,
+    resets: report.resets || report.reckoning?.resets ? resets.map(({ when: _, ...reset }) => reset) : null,
+    gap: login.week && !login.week.reset && (!login.lent || login.lent.manages) ? login.week.used - (ledgered / plate) * 100 : 0,
+    weekEnd: report.week.end ?? null,
+    holder: report.reckoning?.holder ?? null,
   };
-}
-
-/** When the five-hour window now open began, where its end is known. */
-function windowStart(login: Login, now: Date): number | null {
-  const resets = login.five?.resets;
-  if (!resets) return null;
-  const hours = /(\d+) 小时/.exec(resets);
-  const minutes = /(\d+) 分后/.exec(resets);
-  if (!hours && !minutes) return null;
-  const left = (Number(hours?.[1] ?? 0) * 60 + Number(minutes?.[1] ?? 0)) * 60000;
-  return now.getTime() + left - 5 * 3600000;
 }
 
 const outcomes: Record<CallOutcome, Outcome> = { completed: "done", failed: "failed", interrupted: "stopped", held: "held", unknown: "done" };

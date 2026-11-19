@@ -4818,7 +4818,8 @@
                 "home": null,
                 "until": null,
                 "five_hour": 80,
-                "turns": 4
+                "turns": 4,
+                "manages": false
               },
               {
                 "machine": "gpu",
@@ -4827,7 +4828,8 @@
                 "home": "/home/bo/.claude-team",
                 "until": "2026-10-20T10:00:00Z",
                 "weekly": 42500000,
-                "daily": 8000000
+                "daily": 8000000,
+                "manages": true
               }
             ],
             "plans": [
@@ -4941,7 +4943,8 @@
         "assisting": true,
         "until": "2026-10-20T10:00:00Z",
         "five_hour": 90,
-        "turns": 3
+        "turns": 3,
+        "manages": true
       },
       {
         "change": "assist",
@@ -24907,6 +24910,10 @@
                 "cache_write": 23960000,
                 "output": 40810000
               }
+            },
+            "counted": {
+              "week": 33633333,
+              "fable": 2500000
             }
           },
           {
@@ -24940,6 +24947,10 @@
                 "cache_write": 200000,
                 "output": 60000
               }
+            },
+            "counted": {
+              "week": 1930000,
+              "fable": 0
             }
           }
         ],
@@ -25058,7 +25069,52 @@
             "used_tenths": 10,
             "source": "scheduled"
           }
-        ]
+        ],
+        "reckoning": {
+          "base": 3000000000,
+          "swing": 10,
+          "week": 2753424657,
+          "holder": "5f3a0c9e1b2d4e6f",
+          "weeks": [
+            {
+              "start": "2026-09-24T18:00:00Z",
+              "end": "2026-10-01T18:00:00Z",
+              "spent": 310000000,
+              "rise_tenths": 104
+            },
+            {
+              "start": "2026-10-01T18:00:00Z",
+              "end": "2026-10-08T18:00:00Z",
+              "spent": 2010000000,
+              "rise_tenths": 730,
+              "came_to": 2753424657
+            }
+          ],
+          "resets": [
+            {
+              "id": "r-2",
+              "at": "2026-10-11T09:00:00Z",
+              "week_end": "2026-10-15T18:00:00Z",
+              "figure": 2753424657,
+              "from": 102600000,
+              "to": 34200000,
+              "from_tenths": 36,
+              "to_tenths": 12,
+              "by": "ada"
+            },
+            {
+              "id": "r-1",
+              "at": "2026-10-10T09:00:00Z",
+              "week_end": "2026-10-15T18:00:00Z",
+              "figure": 2753424657,
+              "from": 85500000,
+              "to": 0,
+              "from_tenths": 30,
+              "to_tenths": 0,
+              "undone": "2026-10-10T09:02:00Z"
+            }
+          ]
+        }
       },
       {
         "reply": "agent_usage",
@@ -25142,6 +25198,10 @@
                 "cache_write": 23960000,
                 "output": 40810000
               }
+            },
+            "counted": {
+              "week": 33633333,
+              "fable": 2500000
             }
           },
           {
@@ -25175,6 +25235,10 @@
                 "cache_write": 200000,
                 "output": 60000
               }
+            },
+            "counted": {
+              "week": 1930000,
+              "fable": 0
             }
           }
         ],
@@ -25293,7 +25357,52 @@
             "used_tenths": 10,
             "source": "scheduled"
           }
-        ]
+        ],
+        "reckoning": {
+          "base": 3000000000,
+          "swing": 10,
+          "week": 2753424657,
+          "holder": "5f3a0c9e1b2d4e6f",
+          "weeks": [
+            {
+              "start": "2026-09-24T18:00:00Z",
+              "end": "2026-10-01T18:00:00Z",
+              "spent": 310000000,
+              "rise_tenths": 104
+            },
+            {
+              "start": "2026-10-01T18:00:00Z",
+              "end": "2026-10-08T18:00:00Z",
+              "spent": 2010000000,
+              "rise_tenths": 730,
+              "came_to": 2753424657
+            }
+          ],
+          "resets": [
+            {
+              "id": "r-2",
+              "at": "2026-10-11T09:00:00Z",
+              "week_end": "2026-10-15T18:00:00Z",
+              "figure": 2753424657,
+              "from": 102600000,
+              "to": 34200000,
+              "from_tenths": 36,
+              "to_tenths": 12,
+              "by": "ada"
+            },
+            {
+              "id": "r-1",
+              "at": "2026-10-10T09:00:00Z",
+              "week_end": "2026-10-15T18:00:00Z",
+              "figure": 2753424657,
+              "from": 85500000,
+              "to": 0,
+              "from_tenths": 30,
+              "to_tenths": 0,
+              "undone": "2026-10-10T09:02:00Z"
+            }
+          ]
+        }
       }
     ]
   },

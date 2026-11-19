@@ -292,6 +292,7 @@ import {
   setAgentTitle,
   setAgentResetInPlace,
   setAgentWeek,
+  resetAgentUsage,
   changeAgentModels,
   scanAgents,
   control,
@@ -670,7 +671,8 @@ function agentsPage(next: Place): Page {
       limits: (machine, agent, dir) => (live ? readAgentLimits(machine, agent, dir) : notLive()),
       setTitle: (machine, agent, dir, on) => (live ? setAgentTitle(machine, agent, dir, on) : specimenSetTitle(machine, agent, dir, on, specimen!.now)),
       setResetInPlace: (machine, agent, dir, on) => (live ? setAgentResetInPlace(machine, agent, dir, on) : specimenSetResetInPlace(machine, agent, dir, on, specimen!.now)),
-      setWeek: (machine, agent, dir, week) => (live ? setAgentWeek(machine, agent, dir, week) : notLive()),
+      setWeek: (machine, agent, dir, week, swing) => (live ? setAgentWeek(machine, agent, dir, week, swing) : notLive()),
+      resetUsage: (machine, agent, dir, id, toTenths, weekEnd, holder) => (live ? resetAgentUsage(machine, agent, dir, id, toTenths, weekEnd, holder) : notLive()),
       changeModels: (machine, agent, dir, change) => (live ? changeAgentModels(machine, agent, dir, change) : specimenChangeModels(machine, agent, dir, change, specimen!.now)),
       usage: (machine, agent, dir) => (live ? agentUsage(machine, agent, dir) : specimenUsage(machine, agent, dir, specimen!.now)),
       calls: (machine, agent, dir, query) => (live ? agentCalls(machine, agent, dir, query) : specimenCalls(machine, agent, dir, query, specimen!.now)),
@@ -753,8 +755,8 @@ const makeNewTalk = (town: string | null) => new NewTalk({
   agents: (machine) => agentsOn(machine),
   folders: (machine, path, cursor) => (live ? foldersOf(machine, path, cursor) : specimenFolders(machine, path)),
   async begin({ agent, machine, town, text, model, effort, attachments, account, focus, home, filesOn, mcpOff }) {
-    if (!live) return specimenBegin(params.get("start"));
-    const { to } = await openAgent(agent, machine, town, text, model, effort, attachments, {
+    if (!live) return specimenBegin(params.get("start")).then((to) => ({ to, delivery: null }));
+    const { to, landed, delivery } = await openAgent(agent, machine, town, text, model, effort, attachments, {
       ...(account ? { account } : {}),
       ...(focus.machines.length ? { focus } : {}),
       ...(home ? { home } : {}),
@@ -762,9 +764,11 @@ const makeNewTalk = (town: string | null) => new NewTalk({
       ...(mcpOff.length ? { mcp_off: mcpOff } : {}),
     });
     void store.refresh();
-    return to;
+    return { to, delivery: delivery ?? (landed.kind === "handed" ? landed.id : null) };
   },
-  opened(address, seed) {
+  opened(address, seed, shown) {
+    // The user who went elsewhere while it began stays there; it is listed.
+    if (!shown) return;
     // The first words open with the conversation, as they were shown.
     seeds.set(talkKey(address), seed);
     replacePlace(talkLink(address));
@@ -2213,8 +2217,9 @@ function liveTalk(address: Address): DeskTalk {
   // A conversation just begun here opens with its first words on their way.
   const seed = seeds.get(talkKey(address));
   seeds.delete(talkKey(address));
-  // The World answered for them as it opened the conversation.
-  if (seed) conversation.named(conversation.sending(seed.text, here, seed.attached), null);
+  // The World answered for them as it opened the conversation, under the id
+  // their record carries; without one they are known by their words.
+  if (seed) conversation.named(conversation.sending(seed.text, here, seed.attached), seed.delivery ?? null);
   // Names of files for an `@`, on the agent's machine, in its places.
   const search = new FileSearch(address.machine, address.resident);
   const page: ConversationPage = new ConversationPage({

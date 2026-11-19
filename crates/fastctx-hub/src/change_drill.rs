@@ -128,6 +128,7 @@ fn fixture(machines: usize) -> Book {
                 five_hour: None,
                 turns: None,
                 share: None,
+                manages: None,
             }));
         }
         book.directory.acting.push(Arc::new(ActsFor {

@@ -188,6 +188,7 @@ fn admit_inner(
             | RemoteCall::SetAgentTitle { .. }
             | RemoteCall::SetAgentResetInPlace { .. }
             | RemoteCall::SetAgentWeek { .. }
+            | RemoteCall::ResetAgentUsage { .. }
             | RemoteCall::ChangeAgentModels { .. }
             | RemoteCall::PreviewAgentChange { .. }
             | RemoteCall::ChangeAgentLogin { .. }

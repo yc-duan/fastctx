@@ -165,6 +165,12 @@ const remember = (key: string): void => {
 const VENDOR_SET = "phone-vendor-set";
 /** The guide to the background was shown once. */
 const GUIDE_SEEN = "phone-guide-seen";
+/** The end of a run the guide was last shown for, by when it was: the
+ *  same end is told once, however often the app is opened after it. */
+const KILL_TOLD = "phone-kill-told";
+/** Shown in this run: where the page's storage keeps nothing, it is shown
+ *  once a run, not each time the app comes to the front. */
+let shownThisRun = false;
 
 /** Whether the system ended the app's last run in the background while it
  *  was meant to keep its connection: not the user, nor a crash of its own
@@ -194,11 +200,30 @@ export function guideBackground(words: SettingsWords, phone: PhoneSeam): void {
   phone.status().then(
     (status) => {
       if (status.connection.name === null || !unset(status)) return;
-      if (remembered(GUIDE_SEEN) && !killedInBackground(status)) return;
+      // Shown once; again only for a run the system ended since it was
+      // last shown (用户 2026-11-19: 不可能每次打开都显示那个).
+      const killed = killedInBackground(status) ? String(status.background.lastExit!.at) : null;
+      const told = (() => {
+        try {
+          return localStorage.getItem(KILL_TOLD);
+        } catch {
+          return null;
+        }
+      })();
+      const news = killed !== null && killed !== told;
+      if (shownThisRun || (remembered(GUIDE_SEEN) && !news)) return;
+      shownThisRun = true;
       remember(GUIDE_SEEN);
+      if (killed !== null) {
+        try {
+          localStorage.setItem(KILL_TOLD, killed);
+        } catch {
+          // Not kept: told again next run, once.
+        }
+      }
       const sheet = new Sheet("phone-guide");
       sheet.body.innerHTML = `${sheet.head(words.phoneGuideTitle, words.phoneGuideLater)}<p class="phone-guide-why">${escape(
-        killedInBackground(status) ? words.phoneKilled : words.phoneGuideWhy,
+        news ? words.phoneKilled : words.phoneGuideWhy,
       )}</p><dl class="facts settings-phone"></dl><footer class="sheet-foot"><span></span><button class="sheet-go sheet-close" type="button">${escape(words.phoneGuideDone)}</button></footer>`;
       new PhoneRow(sheet.body.querySelector<HTMLElement>(".settings-phone")!, words, phone);
       sheet.show();

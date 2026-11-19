@@ -359,6 +359,9 @@ export class SideParts implements PartSet {
   leave(): void {
     for (const stop of this.stops) stop();
     for (const tab of this.tabs.splice(0)) tab.leave?.();
+    this.where.dispose();
+    this.home.dispose();
+    this.bar.dispose();
   }
 
   /** One that works with the conversation, pressed on its card: a

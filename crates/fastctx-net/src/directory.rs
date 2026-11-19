@@ -240,9 +240,25 @@ pub struct Assist {
     /// shares holds to `weekly`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub share: Option<u8>,
+    /// Whether the account manages the login with its owner: it sees the
+    /// account's own quota and what the ledger reckons of the week, and sets
+    /// the share of each account the login assists, its own among them, and
+    /// nothing else (用户 2026-11-19: 共管，与份额分开存). None is an
+    /// assistance kept before this was: see [`Assist::manages`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub manages: Option<bool>,
 }
 
 impl Assist {
+    /// Whether the account manages the login with its owner: only a Claude
+    /// Code login's, the one whose week is reckoned in shares. An assistance
+    /// that says neither is one of before the word was kept: it managed
+    /// where it had no limit, as such an account saw the login whole then.
+    pub fn manages(&self) -> bool {
+        self.agent.as_str() == "claude"
+            && self.manages.unwrap_or(self.share.is_none() && self.weekly.is_none() && self.daily.is_none())
+    }
+
     /// Whether this is `agent`'s login `home` there.
     pub fn is(&self, agent: &AgentName, home: Option<&Path>) -> bool {
         self.agent == *agent && self.home.as_deref() == home
@@ -735,6 +751,10 @@ pub struct View {
     /// The hub keeps each account's layer (`Change::Layer`).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub layers: bool,
+    /// The hub keeps who manages a login with its owner (`Assist::manages`),
+    /// and takes a share set by one who does.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub managing: bool,
     /// The newest version of the second version's asset sync this hub
     /// speaks (`fastctx_types::assets::VERSION`); zero where it speaks none.
     #[serde(default, skip_serializing_if = "is_none_u32")]
@@ -965,6 +985,7 @@ impl View {
             call_details: false,
             machine_log: false,
             layers: false,
+            managing: false,
             asset_sync: 0,
             hub,
             hub_name,

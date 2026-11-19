@@ -82,7 +82,8 @@ impl Day {
             let end = last.as_second().div_euclid(3600) * 3600 + 3600;
             let mut edges: Vec<Timestamp> =
                 (hour..=end).step_by(3600).map(|s| Timestamp::from_second(s).expect("existing day")).collect();
-            edges.extend(cuts.iter().copied().filter(|at| at.as_second() > hour && at.as_second() < end));
+            let (from, to) = (edges[0], *edges.last().expect("an hour at least"));
+            edges.extend(cuts.iter().copied().filter(|at| *at > from && *at < to));
             edges.extend(self.folded.iter().copied().filter(|at| at.as_second() >= hour && at.as_second() < end));
             for second in (hour..end).step_by(3600) {
                 let end_of_hour = Timestamp::from_second(second + 3599).expect("existing hour");
@@ -156,6 +157,9 @@ impl History {
     pub fn invalidate(&mut self, file: &Path) {
         self.days.remove(file);
     }
+    /// The ledger's rows since `since`: its readings as written, and what
+    /// was used summed by the hour, each hour cut at the weeks' boundaries
+    /// and at `cut`.
     pub fn entries(
         &mut self,
         path: &Path,
@@ -163,6 +167,7 @@ impl History {
         now: Timestamp,
         reading: Option<&Reading>,
         resets: &[(Option<String>, fastctx_types::usage::UsageReset)],
+        cut: &[Timestamp],
     ) -> io::Result<Vec<Entry>> {
         let files = ledger::days(path, since)?;
         self.days.retain(|file, _| files.contains(file));
@@ -200,6 +205,7 @@ impl History {
         let periods = super::report::boundaries(&super::report::spans(&entries, week, resets), week);
         let mut cuts = periods.clone();
         cuts.extend([now - SignedDuration::from_hours(24), week.start, week.end.max(now)]);
+        cuts.extend_from_slice(cut);
         for day in days {
             day.summaries(&cuts, &periods, &mut entries);
         }

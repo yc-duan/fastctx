@@ -35,6 +35,7 @@ fn request(kind: &str, round: usize, accounts: usize) -> Change {
             five_hour: None,
             turns: None,
             share: None,
+            manages: None,
         },
         "Plan" => Change::Plan {
             machine: super::machine(0),

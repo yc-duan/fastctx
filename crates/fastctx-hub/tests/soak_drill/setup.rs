@@ -570,6 +570,7 @@ pub(crate) async fn build(config: Config) -> Result<Lab> {
                 five_hour: None,
                 turns: None,
                 share: None,
+                manages: None,
             },
         )
         .await

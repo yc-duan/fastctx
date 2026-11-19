@@ -177,6 +177,12 @@ pub struct AssistArgs {
     /// of an earlier release holds to instead.
     #[arg(long, conflicts_with = "off", requires = "weekly", value_parser = clap::value_parser!(u8).range(1..=100))]
     share: Option<u8>,
+    /// Have the account manage the login with you: it sees the account's
+    /// own quota and what the ledger reckons of the week, and sets the share
+    /// of each account the login assists, its own among them, and nothing
+    /// else. Given again without it, the account manages no longer.
+    #[arg(long, conflicts_with = "off")]
+    manages: bool,
     #[arg(long = "as")]
     owner: Option<AccountName>,
     #[arg(long)]
@@ -638,9 +644,15 @@ pub fn share(args: ShareArgs) -> anyhow::Result<()> {
 }
 
 pub fn assist(args: AssistArgs) -> anyhow::Result<()> {
-    // Only a Claude Code login is held to a share of its week.
-    if args.share.is_some() && args.agent.to_string() != "claude" {
-        anyhow::bail!("a share of the week limits a Claude Code login's assistance only");
+    // Only a Claude Code login is held to a share of its week, and only it
+    // is managed with its owner; it assists an account up to a share, or
+    // with them managing it (用户 2026-11-19: 其余的人一律有份额).
+    let claude = args.agent.to_string() == "claude";
+    if !claude && (args.share.is_some() || args.manages) {
+        anyhow::bail!("a share of the week, and managing with its owner, are a Claude Code login's only");
+    }
+    if claude && !args.off && !args.manages && args.share.is_none() && args.weekly.is_none() && args.daily.is_none() {
+        anyhow::bail!("give the account --share, a percent of the login's week, or --manages");
     }
     let owner = account_or_owner(args.hub.as_ref(), args.owner, Some(&args.machine))?;
     let login = args.home.as_ref().map(|home| home.display().to_string()).unwrap_or_else(|| "default".to_string());
@@ -656,6 +668,7 @@ pub fn assist(args: AssistArgs) -> anyhow::Result<()> {
         five_hour: args.five_hour,
         turns: args.turns,
         share: args.share,
+        manages: Some(args.manages).filter(|_| !args.off),
     };
     self::change(args.hub, owner, change)?;
     if args.off {
@@ -1476,8 +1489,9 @@ fn render_accounts(reply: &AccountsReply, now: Timestamp) -> String {
                 limits.push(format!("{turns} turns at once"));
             }
             let limits = if limits.is_empty() { String::new() } else { format!(", up to {}", limits.join(", ")) };
+            let manages = if assist.manages == Some(true) { ", who manages it with its owner" } else { "" };
             text.push_str(&format!(
-                "the {} login {login} on {} assists {}{until}{limits}\n",
+                "the {} login {login} on {} assists {}{manages}{until}{limits}\n",
                 assist.agent, assist.machine, assist.account
             ));
         }

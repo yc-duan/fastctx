@@ -74,19 +74,38 @@ pub(super) fn observe(node: &Arc<Node>, resident: &ResidentId, id: NoticeId, wak
         loop {
             let result = async {
                 if !pending(&node, &resident, &id, waking)? {
-                    return Ok(());
+                    return Ok(Watched::Settled);
                 }
                 let home = node.residents.about(&resident).and_then(|(about, _)| about.home);
                 let command = super::command(&node, home.as_deref()).map_err(std::io::Error::other)?;
                 watch(&node, &resident, &id, &command, waking).await
             }
             .await;
-            let Err(error) = result else {
-                node.log.line(format_args!(
-                    "lifecycle {resident}: its session came up and its words were taken, {} ms after Claude Code took them",
-                    watching.elapsed().as_millis()
-                ));
-                break;
+            let error = match result {
+                Ok(watched) => {
+                    let after = watching.elapsed().as_millis();
+                    match watched {
+                        // The words wait on it no more: a turn took them, or
+                        // another path sent them back or the conversation went.
+                        Watched::Settled
+                            if crate::delivery::input_turn(&node.world.conversation(&resident), &id)
+                                .is_ok_and(|turn| turn.is_some()) =>
+                        {
+                            node.log.line(format_args!(
+                                "lifecycle {resident}: its session came up and its words were taken, {after} ms after Claude Code took them"
+                            ))
+                        }
+                        Watched::Settled => node.log.line(format_args!(
+                            "lifecycle {resident}: its words wait on this startup no more, {after} ms after Claude Code took them"
+                        )),
+                        Watched::Again => node.log.line(format_args!(
+                            "lifecycle {resident}: its session ended before taking its words, {after} ms after Claude Code took them; they wake it again"
+                        )),
+                        Watched::Failed | Watched::Gone => {}
+                    }
+                    break;
+                }
+                Err(error) => error,
             };
             let error = error.to_string();
             if let Err(error) = report(&node, &resident, &id, error.clone()) {
@@ -290,6 +309,13 @@ async fn diagnosis(command: &super::Command, short: &str, mut why: String) -> St
 /// The last line Claude Code's daemon logged of the session `short`, in the
 /// login the command runs with (`daemon.log` in its directory).
 fn daemon_said(command: &super::Command, short: &str) -> Option<String> {
+    let tail = daemon_tail(command)?;
+    let line = tail.lines().rev().find(|line| line.contains(short))?.trim();
+    Some(line.chars().take(400).collect())
+}
+
+/// The end of Claude Code's daemon log in the login the command runs with.
+fn daemon_tail(command: &super::Command) -> Option<String> {
     use std::io::{Read as _, Seek as _};
     let login = match command.env.iter().find(|(name, _)| name.eq_ignore_ascii_case("CLAUDE_CONFIG_DIR")) {
         Some((_, dir)) => std::path::PathBuf::from(dir),
@@ -300,14 +326,40 @@ fn daemon_said(command: &super::Command, short: &str) -> Option<String> {
     log.seek(std::io::SeekFrom::Start(length.saturating_sub(DAEMON_TAIL))).ok()?;
     let mut tail = Vec::new();
     log.read_to_end(&mut tail).ok()?;
-    let tail = String::from_utf8_lossy(&tail);
-    let line = tail.lines().rev().find(|line| line.contains(short))?.trim();
-    Some(line.chars().take(400).collect())
+    Some(String::from_utf8_lossy(&tail).into_owned())
 }
 
 /// Whether Claude Code's daemon logged that it settled the session `short`.
 pub(super) fn settled(command: &super::Command, short: &str) -> bool {
     daemon_said(command, short).is_some_and(|line| line.contains(&format!("bg settled {short}")))
+}
+
+/// When Claude Code's daemon last took the session `short` up (a spare
+/// claimed for it, or a worker spawned), and when it then settled it as
+/// done, where that settling is the last it logged of the session: none
+/// where it logged anything of it since (a claim, a spawn, a respawn),
+/// settled it otherwise, or a time cannot be read. The daemon may answer a
+/// launch before it writes the log of it, so the last lines may be an
+/// earlier launch's: the times say which launch they are of.
+pub(super) fn dispatched_and_settled(
+    command: &super::Command,
+    short: &str,
+) -> Option<(jiff::Timestamp, jiff::Timestamp)> {
+    let tail = daemon_tail(command)?;
+    let lines: Vec<&str> = tail.lines().filter(|line| line.contains(short)).collect();
+    let (last, earlier) = lines.split_last()?;
+    if !last.contains(&format!("bg settled {short} (done)")) {
+        return None;
+    }
+    let (claimed, spawned) = (format!("bg claimed-spare {short} "), format!("bg spawned {short} "));
+    let dispatched = earlier.iter().rev().find(|line| line.contains(&claimed) || line.contains(&spawned))?;
+    let (dispatched, settled) = (daemon_time(dispatched)?, daemon_time(last)?);
+    (settled >= dispatched).then_some((dispatched, settled))
+}
+
+/// The time a line of Claude Code's daemon log begins with.
+fn daemon_time(line: &str) -> Option<jiff::Timestamp> {
+    line.trim().strip_prefix('[')?.split(']').next()?.parse().ok()
 }
 
 /// How much of the end of Claude Code's daemon log is read for a session.
@@ -446,14 +498,28 @@ fn pending(node: &Node, resident: &ResidentId, id: &NoticeId, waking: bool) -> s
         .map(|pending| pending.is_some_and(|pending| !waking || pending.state == PendingState::Waking))
 }
 
+/// How watching a startup for the words it was given ended.
+enum Watched {
+    /// The words wait on it no more: a turn took them, or they went.
+    Settled,
+    /// It ended before taking them; they wake the session again.
+    Again,
+    /// It failed, as recorded with the words.
+    Failed,
+    /// The conversation or its session is gone.
+    Gone,
+}
+
 async fn watch(
     node: &Arc<Node>,
     resident: &ResidentId,
     id: &NoticeId,
     command: &super::Command,
     waking: bool,
-) -> std::io::Result<()> {
-    let Some(session) = node.residents.about(resident).and_then(|(about, _)| about.session) else { return Ok(()) };
+) -> std::io::Result<Watched> {
+    let Some(session) = node.residents.about(resident).and_then(|(about, _)| about.session) else {
+        return Ok(Watched::Gone);
+    };
     // A background job is named by the first eight characters of its
     // session's id, which a registered session holds whole.
     let short: String = session.chars().take(8).collect();
@@ -491,7 +557,7 @@ async fn watch(
         tokio::pin!(changed);
         changed.as_mut().enable();
         if !pending(node, resident, id, waking)? {
-            return Ok(());
+            return Ok(Watched::Settled);
         }
         // The handover this look's evidence is of: words woken with again
         // since — retried after the host was seen gone — are another's, and
@@ -501,7 +567,7 @@ async fn watch(
         let listed = listing.agents(command, after).await;
         after = None;
         if !pending(node, resident, id, waking)? {
-            return Ok(());
+            return Ok(Watched::Settled);
         }
         let listed = listed.and_then(|listed| startup::background(&listed, &short));
         let current =
@@ -580,7 +646,15 @@ async fn watch(
                             identity.pid
                         ));
                     }
-                    let why = diagnosis(command, &short, why).await;
+                    // What the terminal said is read for a failure to tell
+                    // alone: words the session ended before taking wake it
+                    // again at once (below), and wait for no `claude logs`,
+                    // which takes seconds where memory is short. Judged
+                    // again under the births' lock, which decides.
+                    let retrying = waking
+                        && job.ended()
+                        && untaken(node, &session, &node.world.conversation(resident), id, true).unwrap_or(false);
+                    let why = if retrying { why } else { diagnosis(command, &short, why).await };
                     // A registration written before the host outcome wins,
                     // including one the filesystem watcher has not seen yet.
                     super::replay(node).await;
@@ -589,9 +663,9 @@ async fn watch(
                     if job.ended() || settled(command, &short) {
                         let decided =
                             super::births_speaking(node, resident, || pending(node, resident, id, waking)).await?;
-                        let Some((births, held)) = decided else { return Ok(()) };
+                        let Some((births, held)) = decided else { return Ok(Watched::Settled) };
                         if node.residents.about(resident).is_none() {
-                            return Ok(());
+                            return Ok(Watched::Gone);
                         }
                         if waking && handed_at(node, resident, id)? != handed {
                             drop((births, held));
@@ -605,17 +679,17 @@ async fn watch(
                         if waking && untaken(node, &session, &directory, id, true)? {
                             drop((births, held));
                             retry_untaken(node, resident, &session, id)?;
-                            return Ok(());
+                            return Ok(Watched::Again);
                         }
                         drop(births);
                         super::failed_wake_held(node, resident, &directory, id, Failure::new(why), held)
                             .await
                             .map_err(std::io::Error::other)?;
-                        return Ok(());
+                        return Ok(Watched::Failed);
                     }
                     let _births = super::births_after_pairing(node, resident).await;
                     if !pending(node, resident, id, waking)? {
-                        return Ok(());
+                        return Ok(Watched::Settled);
                     }
                     // The host's watchdog and a real setup dialog produce the
                     // same blocked state. Preserve the fact without declaring
@@ -634,7 +708,7 @@ async fn watch(
                     super::replay(node).await;
                     let _births = super::births_after_pairing(node, resident).await;
                     if !pending(node, resident, id, waking)? {
-                        return Ok(());
+                        return Ok(Watched::Settled);
                     }
                     report(node, resident, id, why)?;
                     reported_exit = process.clone();
@@ -645,7 +719,7 @@ async fn watch(
             Ok(None) => {
                 let _births = super::births_after_pairing(node, resident).await;
                 if !pending(node, resident, id, waking)? {
-                    return Ok(());
+                    return Ok(Watched::Settled);
                 }
                 let why =
                     format!("Claude Code does not list background session {short}; its startup outcome is unknown");
@@ -657,7 +731,7 @@ async fn watch(
             Err(error) => {
                 let _births = super::births_after_pairing(node, resident).await;
                 if !pending(node, resident, id, waking)? {
-                    return Ok(());
+                    return Ok(Watched::Settled);
                 }
                 if last_problem.as_ref() != Some(&error) {
                     report(node, resident, id, error.clone())?;
@@ -693,7 +767,7 @@ async fn watch(
                         changed.set(node.claude.changed.notified());
                         changed.as_mut().enable();
                         if !pending(node, resident, id, waking)? {
-                            return Ok(());
+                            return Ok(Watched::Settled);
                         }
                         // Changes in another session do not relaunch this login's
                         // CLI. Pairing and input acceptance still wake us at once.

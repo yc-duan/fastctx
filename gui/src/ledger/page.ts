@@ -17,15 +17,16 @@ import type { Page } from "../app/shell";
 import { effect } from "../app/signals";
 import type { Store } from "../app/store";
 import { glyph } from "../conversation/glyphs";
-import type { AccountChange, Login as AccountLogin } from "../world/accounts";
+import { sameHome } from "../app/reach";
+import { loginsOf, type AccountChange, type Login as AccountLogin } from "../world/accounts";
 import type { ChangePreview, FolderChange, LoginChange, MachineLogins, ModelChange, WorldLogins } from "../world/logins";
 import { followState, LOGINS, type Following } from "../world/topics";
 import type { Folders } from "../world/focus";
 import type { UsageReport } from "../world/usage";
 import type { UsageCallsPage, UsageCallsQuery } from "../world/usage-calls";
-import { forget, grantsOf, lines, logins as shownLogins, plateOf, setHost, setNet, type Deeds, type Feed, type Login } from "./data";
+import { forget, grantsOf, lines, logins as shownLogins, ME, plateOf, setHost, setNet, SWING, type Deeds, type Feed, type Login, type Looked } from "./data";
 import { homePage } from "./home";
-import { askedOf, callsFrom, daysFrom, idOf, limitOf, netOf, partsOf, type Seen } from "./live";
+import { askedOf, callsFrom, daysFrom, idOf, limitOf, managesOf, netOf, partsOf, reckonedBy, type Seen } from "./live";
 import { fillCharts, loginPage, setUntils } from "./login-page";
 import "./sheets";
 import { actOf, draw, drawnBy, setLinker, state, toast, type How, type Place } from "./state";
@@ -48,7 +49,10 @@ export interface AgentsPageOptions {
   limits(machine: string, agent: string, dir: string): Promise<MachineLogins>;
   setTitle(machine: string, agent: string, dir: string, on: boolean): Promise<MachineLogins>;
   setResetInPlace(machine: string, agent: string, dir: string, on: boolean): Promise<MachineLogins>;
-  setWeek(machine: string, agent: string, dir: string, week: number | null): Promise<MachineLogins>;
+  setWeek(machine: string, agent: string, dir: string, week: number | null, swing?: number): Promise<MachineLogins>;
+  /** Resets the week's usage to tenths of a percent of the week's figure,
+   *  or with none takes the reset `id` back. */
+  resetUsage(machine: string, agent: string, dir: string, id: string, toTenths: number | null, weekEnd: string | null, holder: string | null): Promise<MachineLogins>;
   changeModels(machine: string, agent: string, dir: string, change: ModelChange): Promise<MachineLogins>;
   usage(machine: string, agent: string, dir: string): Promise<UsageReport>;
   calls(machine: string, agent: string, dir: string, query: UsageCallsQuery): Promise<UsageCallsPage>;
@@ -93,11 +97,16 @@ function way(from: Place, to: Place): How {
 const BUSY_MS = 1500;
 const IDLE_MS = 30_000;
 
+/** Every machine's record of its logins as last read, kept from one visit
+ *  of the page to the next: coming back, the page is drawn at once from
+ *  what it knew, and read again behind that. */
+const kept: Seen = { records: new Map(), plates: new Map(), expects: new Map(), resets: new Map(), weekEnds: new Map() };
+
 export class AgentsPage implements Page {
   readonly element = document.createElement("div");
   readonly title = "智能体";
   private readonly main: HTMLElement;
-  private readonly seen: Seen = { records: new Map(), plates: new Map() };
+  private readonly seen: Seen = kept;
   private readonly sheet: AgentChangeSheet;
   private readonly models: LoginModelsSheet;
   private readonly choosing: FolderPicker;
@@ -106,8 +115,12 @@ export class AgentsPage implements Page {
   private readonly stop: () => void;
   private resized = 0;
   private reading = false;
+  /** The last read failed: nothing more is on its way. */
+  private failed = false;
   /** The machines whose nodes page their ledger by 100 alone. */
   private readonly legacyCalls = new Set<string>();
+  /** The logins whose node reckons their week: it keeps a reset of one. */
+  private readonly reckoning = new Set<string>();
 
   constructor(private readonly options: AgentsPageOptions, place: AppPlace) {
     this.element.className = "page lg-app";
@@ -132,8 +145,8 @@ export class AgentsPage implements Page {
     setHost({ feed: this.feed(), deeds: this.deeds() });
     drawnBy((how) => this.paint(how));
     setUntils((login, person) => {
-      const { machine, agent } = this.recordOf(login);
-      const seen = options.store.world.peek()?.accounts.hubs.flatMap((hub) => hub.assists).find((one) => one.machine === machine && one.agent === agent && one.account === person);
+      const { machine, agent, home } = this.recordOf(login);
+      const seen = options.store.world.peek()?.accounts.hubs.flatMap((hub) => hub.assists).find((one) => one.machine === machine && one.agent === agent && sameHome(one.home, home) && one.account === person);
       return seen?.until ? new Date(seen.until) : null;
     });
     state.place = placeOfApp(place);
@@ -206,7 +219,7 @@ export class AgentsPage implements Page {
 
   /** Builds the pages' network again from what is now known. */
   private rebuild(): void {
-    setNet(netOf(this.options.store.world.peek(), this.seen, this.options.now()));
+    setNet({ ...netOf(this.options.store.world.peek(), this.seen, this.options.now()), unread: this.seen.records.size === 0 && !this.failed });
     draw();
   }
 
@@ -227,8 +240,12 @@ export class AgentsPage implements Page {
     try {
       const world = await this.options.read(null);
       for (const heard of world.machines) this.seen.records.set(heard.kind === "answered" ? heard.logins.machine : heard.machine, heard);
+      this.failed = false;
       this.rebuild();
     } catch (error) {
+      // What could not be read is said, and the page no longer waits for it.
+      this.failed = true;
+      this.rebuild();
       toast(error instanceof Error ? error.message : "读取失败");
     } finally {
       this.reading = false;
@@ -272,9 +289,21 @@ export class AgentsPage implements Page {
   /** The login of this device that holds the machine: its owner's, or the
    *  one it is shared with whole. */
   private holder(login: Login): AccountLogin {
-    const holder = this.recordOf(login).picked?.ownerLogin;
+    const holder = this.recordOf(login).picked?.ownerLogin ?? this.managing(login);
     if (!holder) throw new Error("无权管理该机器的登录");
     return holder;
+  }
+
+  /** The login of this device that manages `login` with its owner: the
+   *  account its assistance is given to, where the hub says it manages. */
+  private managing(login: Login): AccountLogin | null {
+    const { machine, agent, home } = this.recordOf(login);
+    const accounts = this.options.store.world.peek()?.accounts;
+    for (const mine of loginsOf(accounts)) {
+      const hub = accounts?.hubs.find((hub) => hub.hub === mine.hub);
+      if (hub?.assists.some((one) => one.account === mine.account && one.machine === machine && one.agent === agent && sameHome(one.home, home) && managesOf(one))) return mine;
+    }
+    return null;
   }
 
   private feed(): Feed {
@@ -283,7 +312,14 @@ export class AgentsPage implements Page {
       days: async (login) => {
         const { machine, agent, dir } = this.recordOf(login);
         const report = await options.usage(machine, agent, dir);
-        return daysFrom(report, login, plateOf(login), options.store.world.peek(), options.now());
+        // What the node reckons the week to hold is what its parts are of;
+        // the pages drawn from what was known before are drawn again.
+        const changed = reckonedBy(this.seen, login, report);
+        if (report.reckoning) this.reckoning.add(login.id);
+        else this.reckoning.delete(login.id);
+        if (changed) queueMicrotask(() => this.rebuild());
+        const plate = report.reckoning ? report.reckoning.week / 1_000_000 : plateOf(login);
+        return daysFrom(report, login, plate, options.store.world.peek(), options.now());
       },
       calls: async (login, query) => {
         const { machine, agent, dir, picked } = this.recordOf(login);
@@ -312,11 +348,36 @@ export class AgentsPage implements Page {
     const { options } = this;
     const refreshed = async (record: Promise<MachineLogins>) => this.took(await record);
     const accounts = async (change: AccountChange, login: Login) => {
-      await options.change_(this.holder(login), change);
+      try {
+        await options.change_(this.holder(login), change);
+      } catch (error) {
+        // A hub of before keeps no one managing a login with its owner.
+        throw new Error(/upgrade it for that/.test(String(error)) ? "中枢的 Fastctx 版本较旧，暂不支持共管" : error instanceof Error ? error.message : String(error));
+      }
       await options.store.refresh();
       this.rebuild();
     };
-    const assisted = (login: Login, person: string, limit: number | null, until: Date | null, line = lines[login.id]): AccountChange => {
+    const tooOld = (error: unknown) => /does not know|unknown variant|older/i.test(String(error));
+    /** Resets the week's usage, or takes a reset back; what everyone used
+     *  is read again behind it. */
+    const reset = async (login: Login, id: string, toTenths: number | null, looked?: Looked) => {
+      const { machine, agent, dir } = this.recordOf(login);
+      // The week looked at: one that has turned since, or of another of the
+      // vendor's accounts, is not reset. A sheet opened before the week was
+      // read says so, never taking a week read since for the one it showed.
+      const weekEnd = looked ? looked.weekEnd : (this.seen.weekEnds.get(login.id) ?? null);
+      if (weekEnd === null || (looked && looked.holder === null)) throw new Error("用量还没读到，稍后再试");
+      // A node that reckons no week keeps no reset of one.
+      if (!this.reckoning.has(login.id)) throw new Error("该机器离线，或其 Fastctx 版本较旧，暂不能重置用量");
+      try {
+        const record = await options.resetUsage(machine, agent, dir, id, toTenths, weekEnd, looked?.holder ?? null);
+        forget(login);
+        this.took(record);
+      } catch (error) {
+        throw new Error(tooOld(error) ? "该机器的 Fastctx 版本较旧，暂不支持重置用量" : error instanceof Error ? error.message : String(error));
+      }
+    };
+    const assisted = (login: Login, person: string, limit: number | null, until: Date | null, manages?: boolean, line = lines[login.id]): AccountChange => {
       const { machine, agent, home } = this.recordOf(login);
       // The assistance as the hub keeps it: what of it is not changed now
       // goes back as it was, never worked out again from what is shown (an
@@ -343,6 +404,8 @@ export class AgentsPage implements Page {
         ...limits,
         ...(line?.fiveStop ? { five_hour: line.fiveStop } : {}),
         ...(line?.turns ? { turns: line.turns } : {}),
+        // Who manages is its owner's to say; what is not said now stays.
+        manages: manages ?? (!!kept && managesOf(kept)),
       } as AccountChange;
     };
     return {
@@ -407,25 +470,39 @@ export class AgentsPage implements Page {
         const { machine, agent, dir } = this.recordOf(login);
         return refreshed(options.setTitle(machine, agent, dir, on));
       },
-      resetInPlace: (login, on) => {
-        const { machine, agent, dir } = this.recordOf(login);
-        return refreshed(options.setResetInPlace(machine, agent, dir, on));
-      },
       plan: (login, plan) => {
         const { machine, agent, home } = this.recordOf(login);
         // Ultra goes as Max marked so: a hub or node that knows no Ultra
         // keeps it as Max (`fastctx_types::accounts::PlanSeen`).
         return accounts({ change: "plan", machine, agent, ...(home ? { home } : {}), plan: plan === "ultra" ? "max" : plan, ...(plan === "ultra" ? { ultra: true } : {}) } as AccountChange, login);
       },
-      plate: async (login, dollars) => {
+      expect: async (login, expect) => {
         const { machine, agent, dir } = this.recordOf(login);
         try {
-          this.took(await options.setWeek(machine, agent, dir, Math.round(dollars * 1_000_000)));
+          const record = await options.setWeek(machine, agent, dir, Math.round(expect.base * 1_000_000), expect.swing);
+          // A node of before keeps the week and not its reach: said so,
+          // rather than taken for kept.
+          const side = record.claude.listed.find((one) => one.dir === dir) ?? record.codex.listed.find((one) => one.dir === dir);
+          if (side && (side.swing ?? SWING) !== expect.swing) throw new Error("该机器的 Fastctx 版本较旧：预期周额度已保存，波动幅度未生效");
+          this.seen.plates.delete(login.id);
+          this.seen.expects.delete(login.id);
+          forget(login);
+          this.took(record);
         } catch (error) {
-          throw new Error(/does not know|unknown variant|older/i.test(String(error)) ? "该机器的 Fastctx 版本较旧，暂不支持设置周额度" : error instanceof Error ? error.message : String(error));
+          throw new Error(tooOld(error) ? "该机器的 Fastctx 版本较旧，暂不支持设置周额度" : error instanceof Error ? error.message : String(error));
         }
       },
-      assist: (login, person, limit, until) => accounts(assisted(login, person, limit, until), login),
+      resetUsage: (login, to, id, looked) => reset(login, id, Math.round(to * 10), looked),
+      undoReset: (login) => {
+        const newest = this.seen.resets.get(login.id)?.find((made) => !made.undone);
+        return newest ? reset(login, newest.id, null) : Promise.reject(new Error("没有可撤回的重置"));
+      },
+      assist: (login, person, limit, until, manages) => {
+        // The reader's own share, set by one who manages the login.
+        const to = person === ME ? this.managing(login)?.account : person;
+        if (!to) return Promise.reject(new Error("无权管理该机器的登录"));
+        return accounts(assisted(login, to, limit, until, manages), login);
+      },
       endAssist: (login, person) => {
         const { machine, agent, home } = this.recordOf(login);
         return accounts({ change: "assist", machine, to: person, agent, ...(home ? { home } : {}), assisting: false }, login);
@@ -433,8 +510,9 @@ export class AgentsPage implements Page {
       line: async (login, line) => {
         const world = options.store.world.peek();
         for (const grant of grantsOf(login)) {
-          const seen = world?.accounts.hubs.flatMap((hub) => hub.assists).find((one) => one.account === grant.person && one.machine === login.machine);
-          await options.change_(this.holder(login), assisted(login, grant.person, grant.limit, seen?.until ? new Date(seen.until) : null, line));
+          const { agent, home } = this.recordOf(login);
+          const seen = world?.accounts.hubs.flatMap((hub) => hub.assists).find((one) => one.account === grant.person && one.machine === login.machine && one.agent === agent && sameHome(one.home, home));
+          await options.change_(this.holder(login), assisted(login, grant.person, grant.limit, seen?.until ? new Date(seen.until) : null, grant.manages ?? false, line));
         }
         await options.store.refresh();
         this.rebuild();
