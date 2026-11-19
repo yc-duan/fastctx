@@ -345,7 +345,6 @@ impl Database {
             let _ending = ending;
             writer::run(connection, queue, measurements, noticed, file, relaxed, guard);
         })?;
-        integrity::watch(Arc::downgrade(&damage), path.to_path_buf())?;
         Ok(Self(Arc::new(Inner {
             writes,
             readers: Mutex::new(readers),
