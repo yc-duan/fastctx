@@ -77,6 +77,7 @@ fn keep(node: &Node, report: SaidReport) -> Result<(), String> {
                     models: models.unwrap_or_default(),
                     signed: None,
                     credential: None,
+                    credential_rule: 0,
                     account_signed: None,
                 };
                 login.sign(signed, credential);

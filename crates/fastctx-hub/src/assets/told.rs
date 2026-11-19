@@ -107,24 +107,26 @@ fn holds(entry: &fastctx_content::v2::Entry, body: &[u8]) -> bool {
     }
 }
 
-/// Puts right the records `entries` of the scope holds, numbered `ids`, as
-/// the log has them now: whether any was otherwise.
-fn put_right(
+/// Records a scope holds otherwise than the log does now: each by its
+/// number, with its body as the log has it (none, gone).
+type Otherwise = Vec<(u64, Option<Vec<u8>>)>;
+
+/// Of the records `entries` of the scope holds, numbered `ids`, those the
+/// log has otherwise now.
+fn otherwise(
     assets: &Assets,
-    scope: &scopes::Scope,
-    library: &fastctx_content::v2::Library,
     database: &fastctx_storage::Database,
     readers: &[String],
     entries: &[fastctx_content::v2::Entry],
     ids: &[u64],
-) -> Result<bool, String> {
+) -> Result<Otherwise, String> {
     let now = crate::store::log_store::readable_of(database, readers, ids).map_err(|error| error.to_string())?;
     // Only this recovery generation's records are put right: one numbered
     // below its floor is of an earlier history — taken back from devices,
     // or written before the hub was put back — which the log put back does
     // not hold, and is no reason for it to go (§28.38, codex-795fd27c B14).
     let floor = super::restores::floor(assets.restores());
-    let (mut records, mut _leases) = (Vec::new(), Vec::new());
+    let mut otherwise = Vec::new();
     for entry in entries {
         let Some(id) = audit_id(&entry.item) else { continue };
         if id < floor {
@@ -134,13 +136,26 @@ fn put_right(
         if body.as_deref().is_some_and(|body| holds(entry, body)) {
             continue;
         }
+        otherwise.push((id, body));
+    }
+    Ok(otherwise)
+}
+
+/// Puts right the records the scope holds otherwise than the log does now
+/// (`otherwise`).
+fn put_right(
+    assets: &Assets,
+    scope: &scopes::Scope,
+    library: &fastctx_content::v2::Library,
+    otherwise: Otherwise,
+) -> Result<(), String> {
+    let (mut records, mut _leases) = (Vec::new(), Vec::new());
+    for (id, body) in otherwise {
         let (record, lease) = audit_record(library, id, body)?;
         records.push(record);
         _leases.extend(lease);
     }
-    let fixed = !records.is_empty();
-    apply(assets, scope, library, MachineAudit::STREAM, records)?;
-    Ok(fixed)
+    apply(assets, scope, library, MachineAudit::STREAM, records)
 }
 
 /// Writes the machine changes `account`, opened at `opened`, reads that its
@@ -174,18 +189,26 @@ pub(crate) fn audit(
         None => Anchor::Latest,
     };
     let mut stopped = None;
+    // Whether this look kept where it was: a look that found nothing to put
+    // right writes nothing at all, and has nothing to forget.
+    let mut marked = false;
     for page_at in 0..VERIFIED_PAGES {
         let _writing = writing(&key);
-        // Kept before the page is put right: stopped between the two, the
-        // next look begins here.
-        let marker = match &anchor {
-            Anchor::Before(place) => place_bytes(place),
-            _ => b"{\"latest\":true}".to_vec(),
-        };
-        library.keep_checkpoint(&again, marker).map_err(error)?;
         let page = library.view_page(&key, MachineAudit::STREAM, &anchor, LOOKED_AGAIN, u32::MAX).map_err(error)?;
         let ids: Vec<u64> = page.entries.iter().filter_map(|entry| audit_id(&entry.item)).collect();
-        let fixed = put_right(assets, &scope, &library, database, &readers, &page.entries, &ids)?;
+        let otherwise = otherwise(assets, database, &readers, &page.entries, &ids)?;
+        let fixed = !otherwise.is_empty();
+        if fixed {
+            // Kept before the page is put right: stopped between the two,
+            // the next look begins here.
+            let marker = match &anchor {
+                Anchor::Before(place) => place_bytes(place),
+                _ => b"{\"latest\":true}".to_vec(),
+            };
+            library.keep_checkpoint(&again, marker).map_err(error)?;
+            marked = true;
+            put_right(assets, &scope, &library, otherwise)?;
+        }
         stopped = None;
         // The first page, nothing older; or one the log has as it is.
         let Some(oldest) = page.older.clone().filter(|_| fixed || (resumed && page_at == 0)) else { break };
@@ -197,7 +220,8 @@ pub(crate) fn audit(
             library.keep_checkpoint(&again, place_bytes(&place)).map_err(error)?;
             FAILED.store(true, Ordering::SeqCst);
         }
-        None => library.drop_checkpoint(&again).map_err(error)?,
+        None if resumed || marked => library.drop_checkpoint(&again).map_err(error)?,
+        None => {}
     }
     loop {
         let _writing = writing(&key);

@@ -27,7 +27,7 @@ pub(crate) struct Readings {
     pub over_budget: &'static Counter,
     /// Operations over twenty milliseconds.
     pub slow: &'static Counter,
-    /// Damage found: by the background check or by SQLite in an operation.
+    /// Damage SQLite found in an operation.
     pub damaged: &'static Counter,
     pub queued: &'static Gauge,
     pub size: &'static Gauge,

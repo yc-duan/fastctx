@@ -892,13 +892,17 @@ pub fn hub(command: HubCommand) -> anyhow::Result<()> {
         }
         HubCommand::Serve { dir: chosen } => {
             let dir = dir(chosen);
+            crate::hub_starts::wait(&dir);
             // A hub holds a connection for every machine and transfer: as
             // many as the system lets it, and it goes on with whatever it has.
             if let Err(error) = fastctx_platform::limits::raise_open_files() {
                 eprintln!("fastctx hub: the limit on open files stays as it was: {error}");
             }
             let leave = fastctx_hub::Leave { remove_service: std::sync::Arc::new(remove_hub_service) };
-            fastctx_hub::run(&dir, leave, tokio::runtime::Builder::new_multi_thread())?;
+            let began = std::time::Instant::now();
+            let ran = fastctx_hub::run(&dir, leave, tokio::runtime::Builder::new_multi_thread());
+            crate::hub_starts::ended(&dir, ran.is_err(), began.elapsed());
+            ran?;
         }
         HubCommand::Arrive { dir: chosen } => {
             let dir = dir(chosen);

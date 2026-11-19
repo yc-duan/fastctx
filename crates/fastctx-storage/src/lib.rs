@@ -71,6 +71,11 @@ pub struct Shape {
     /// disk 9 with it inside, 34-54 beside). A drill that holds the writer's
     /// own work to that budget folds inside; every program folds beside.
     pub fold_inside: bool,
+    /// Found damaged, the database is left as it is and not opened, where it
+    /// would be set aside and what could be read of it salvaged into a new
+    /// one: for one whose rows must all be there, or it not be served at all,
+    /// as a hub's directory of grants and of grants taken back.
+    pub keep_damaged: bool,
 }
 
 /// What makes a database's guard from the opened database, if it has one.
@@ -264,7 +269,7 @@ impl Database {
                 // Damage the cheap checks did not see is set aside and salvaged
                 // as theirs is, and the salvage opened instead; only when no
                 // other connection to it is open.
-                Err(error) if error.is_database_damage() && kept.sole => {
+                Err(error) if error.is_database_damage() && kept.sole && !shape.keep_damaged => {
                     recovery::mark_damaged(path, &error.to_string())?;
                     Self::open_once(path, schema, initialize, guard, &kept, shape)
                 }
@@ -284,7 +289,14 @@ impl Database {
         let readings = readings::Readings::of(path);
         // Another handle of this process has it open, or is closing it: its
         // file is not looked at under it.
-        let salvaged = if kept.sole { recovery::prepare(path)? } else { None };
+        let salvaged = match (kept.sole, shape.keep_damaged) {
+            (false, _) => None,
+            (true, false) => recovery::prepare(path)?,
+            (true, true) => {
+                recovery::refuse_damaged(path)?;
+                None
+            }
+        };
         if salvaged.is_some() {
             fastctx_platform::health::damaged(readings.name);
         }
@@ -345,7 +357,6 @@ impl Database {
             let _ending = ending;
             writer::run(connection, queue, measurements, noticed, file, relaxed, guard);
         })?;
-        integrity::watch(Arc::downgrade(&damage), path.to_path_buf())?;
         Ok(Self(Arc::new(Inner {
             writes,
             readers: Mutex::new(readers),

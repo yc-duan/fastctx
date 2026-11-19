@@ -418,9 +418,16 @@ pub(super) fn quota(charge: &Charge) -> Usd {
 /// the ledger's charges and what its meters hold not yet booked.
 fn used(book: &Book, reckoned: &Reckoned, now: Timestamp) -> Usd {
     let booked = book.recent.iter().map(|charge| (charge.at, quota(charge)));
+    // What the meters hold not booked yet counts as a charge of the ledger
+    // would: Fable's two and a half times over (`ledger.rs`).
     let held = book.balances().into_iter().flat_map(|row| {
         let at = row.at();
-        row.uses().into_iter().filter_map(move |(_, usage)| Some((at, usage.usd?)))
+        row.uses().into_iter().filter_map(move |(_, usage)| {
+            let usd = usage.usd?;
+            let fable = fastctx_hosts::claude::pricing::is_fable(&usage.model)
+                && usage.call.as_ref().is_none_or(|call| call.observed);
+            Some((at, if fable { quota_of_fable(usd) } else { usd }))
+        })
     });
     booked
         .chain(held)

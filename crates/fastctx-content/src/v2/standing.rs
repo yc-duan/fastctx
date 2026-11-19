@@ -101,6 +101,28 @@ impl Library {
         })?)
     }
 
+    /// The bytes of every stream of a hub library as far as its latest
+    /// frame, from one row a stream rather than from the frames: what a
+    /// device standing in another of its generations has yet to take, about.
+    pub fn bytes_of_streams(&self) -> Result<Vec<StreamBytes>> {
+        Ok(self.database().read_now(|db| {
+            let mut statement = db.prepare_cached(
+                "SELECT k.key, s.name, c.bytes FROM stream_changes c JOIN streams s ON s.id = c.stream
+                 JOIN scopes k ON k.id = s.scope",
+            )?;
+            let rows = statement.query_map([], |row| {
+                let stream: String = row.get(1)?;
+                Ok(StreamBytes {
+                    scope: row.get(0)?,
+                    class: class_of(&stream),
+                    stream,
+                    bytes: row.get::<_, i64>(2)?.max(0) as u64,
+                })
+            })?;
+            Ok(rows.collect::<std::result::Result<_, _>>()?)
+        })?)
+    }
+
     /// The bytes of every stream of each of `scopes` in a hub library, as
     /// far as its latest frame.
     pub fn bytes_of_scopes(&self, scopes: Vec<String>) -> Result<Vec<StreamBytes>> {

@@ -232,6 +232,16 @@ impl Directory {
 pub fn identity(file: &File) -> io::Result<FileIdentity> {
     imp::identity(file)
 }
+
+/// The identity of the file at `path`, its links followed, without opening
+/// it where the system allows: on Unix a descriptor of a file opened and
+/// closed again takes with it every POSIX lock this process holds on that
+/// file, a database's included, after which another process closing the
+/// database takes itself for its last user and deletes the log under it
+/// (SQLite, "How To Corrupt An SQLite Database File", 2.2).
+pub fn path_identity(path: &Path) -> io::Result<FileIdentity> {
+    imp::path_identity(path)
+}
 pub(crate) fn invalid(message: &str) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidInput, message.to_owned())
 }

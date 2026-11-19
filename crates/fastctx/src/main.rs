@@ -21,6 +21,7 @@ mod doctor;
 mod first_program;
 mod host_change;
 mod hub_intake;
+mod hub_starts;
 mod hub_retire;
 
 mod goal;

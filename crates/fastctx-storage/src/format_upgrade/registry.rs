@@ -1,17 +1,18 @@
 //! Same-file openers share one process-local attempt, including startup in flight.
 use super::{MigrationGate, gate::WeakGate};
 use crate::Result;
-use fastctx_platform::rooted_path::{FileIdentity, identity};
+use fastctx_platform::rooted_path::{FileIdentity, path_identity};
 use std::{
     collections::HashMap,
-    fs::File,
     path::Path,
     sync::{LazyLock, Mutex},
     time::Duration,
 };
 static RUNS: LazyLock<Mutex<HashMap<FileIdentity, WeakGate>>> = LazyLock::new(Default::default);
+/// Never by opening the database's file: closing that descriptor would drop
+/// this process's locks on a database it has open (`path_identity`).
 fn key(path: &Path) -> Result<FileIdentity> {
-    Ok(identity(&File::open(path)?)?)
+    Ok(path_identity(path)?)
 }
 pub(super) fn claim(path: &Path, elapsed: Duration) -> Result<(MigrationGate, bool)> {
     let id = key(path)?;

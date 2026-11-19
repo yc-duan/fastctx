@@ -37,7 +37,7 @@ const logins: Login[] = [
   { id: "verges", family: "claude", machine: "lab", dir: "/home/me/.claude-verges", who: ".claude-verges", plan: "Ultra", planSet: "ultra", standing: "in", workbench: true, token: true, five: { used: 61, resets: "48 分后" }, week: { used: 41, resets: "11 小时后" }, fable: 50, fableHeld: true, program: "claude 2.1.322　npm　在 PATH 中", models: ["Fable 5.2", "Opus 5.5", "Sonnet 5.5"], readAt: "12 分钟前" },
   { id: "cx-lab", family: "codex", machine: "lab", dir: "/home/me/.codex", who: "lab@example.com", plan: "Pro", standing: "in", workbench: true, isDefault: true, five: { used: 100, resets: "1 小时 05 分后" }, week: { used: 64, resets: "6 天 4 小时后" }, credits: "$12.40", autoTitle: true },
   { id: "dy", family: "claude", machine: "server", dir: "/root/.claude-dy", who: ".claude-dy", plan: null, planSet: null, standing: "in", workbench: true, token: true, five: { used: 12, resets: "4 小时 02 分后" }, week: { used: 42, resets: "5 天 11 小时后" }, fable: 18, readAt: "26 分钟前" },
-  { id: "ada-work", family: "claude", machine: "ada-mac", dir: "/Users/ada/.claude", who: "work@example.com", plan: "Max", standing: "in", workbench: true, week: { used: 0, resets: "2 天 6 小时后" }, lent: { by: "ada", limit: 25, used: 15.5, fable: 5, until: "11 月 30 日" } },
+  { id: "ada-work", family: "claude", machine: "ada-mac", dir: "/Users/ada/.claude", who: "work@example.com", plan: "Max", standing: "in", workbench: true, lent: { by: "ada", limit: 25, used: 15.5, fable: 5, until: "11 月 30 日" } },
   { id: "bo-team", family: "claude", machine: "bo-pc", dir: "C:\\Users\\bo\\.claude", who: "team@example.com", plan: "Ultra", standing: "in", workbench: true, five: { used: 44, resets: "1 小时 32 分后" }, week: { used: 63, resets: "22 小时后" }, fable: 21, readAt: "2 分钟前", lent: { by: "bo", limit: null, used: 9, fable: 4, until: null, manages: true } },
 ];
 
@@ -303,6 +303,9 @@ function days(login: Login): Days {
           { at: "10 月 29 日 05:00", how: "周期重置", from: 100, to: 0 },
         ],
     gap,
+    // As a node tells it with the usage: the vendor's week ends two days and
+    // six hours from when the specimen is looked at.
+    resetsAt: new Date(Date.now() + (2 * 24 + 6) * 3600000),
   };
 }
 

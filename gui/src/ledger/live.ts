@@ -13,6 +13,7 @@ import type { AgentLogins, FoundProgram, Login as WorldLogin, MachineLogins, Mac
 import type { UsageHandReset, UsageReport } from "../world/usage";
 import type { CallOutcome, UsageCall, UsageCallsPage, UsageCallsQuery } from "../world/usage-calls";
 import { FABLE_TIMES, isFable, planNames, PLATE, SWING, timesOf, type Call, type CallsPage, type CallsQuery, type Days, type Expect, type Grant, type Line, type Login, type Machine, type Net, type Outcome, type PlanLabel, type Reset, type Series, type Split, type Unit } from "./data";
+import { resetsSaid } from "./format";
 
 /** A login's key in the pages and their addresses. */
 export const idOf = (machine: string, agent: string, dir: string) => `${machine}|${agent}|${dir}`;
@@ -23,21 +24,6 @@ export function partsOf(id: string): { machine: string; agent: string; dir: stri
 
 const DAY = 86400000;
 const pad = (n: number) => String(n).padStart(2, "0");
-
-/** When a window starts over, as a row says it: in hours and minutes within
- *  a day, else its weekday and time. */
-export function resetsSaid(at: Date, now: Date): string {
-  const left = at.getTime() - now.getTime();
-  if (left <= 0) return "已重置";
-  if (left < DAY) {
-    const minutes = Math.round(left / 60000);
-    const hours = Math.floor(minutes / 60);
-    return hours ? `${hours} 小时 ${pad(minutes % 60)} 分后` : `${minutes} 分后`;
-  }
-  // Further off, in days and hours: how long is left, not which weekday.
-  const hours = Math.round(left / 3600000);
-  return hours % 24 ? `${Math.floor(hours / 24)} 天 ${hours % 24} 小时后` : `${hours / 24} 天后`;
-}
 
 export function agoSaid(at: Date, now: Date): string {
   const minutes = Math.round((now.getTime() - at.getTime()) / 60000);
@@ -398,6 +384,10 @@ export function daysFrom(report: UsageReport, login: Login, plate: number, world
     gap: login.week && !login.week.reset && (!login.lent || login.lent.manages) ? login.week.used - (ledgered / plate) * 100 : 0,
     weekEnd: report.week.end ?? null,
     holder: report.reckoning?.holder ?? null,
+    // The vendor's week as its last reading has it, where one did: the end
+    // of the week the ledger counts, told with the usage to everyone the
+    // login works for.
+    resetsAt: report.week.window && report.week.end ? new Date(report.week.end) : null,
   };
 }
 

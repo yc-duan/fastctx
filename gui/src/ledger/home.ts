@@ -10,7 +10,7 @@ import type { Pickable } from "../app/agent-machines";
 import { agentGlyph, glyph } from "../conversation/glyphs";
 import { waiting } from "../app/waiting";
 import { converses, daysOf, deeds, familyName, logins, machines, plateOf, unread, usable, type Family, type Login, type Machine } from "./data";
-import { whole } from "./format";
+import { resetsSaid, whole } from "./format";
 import { rule } from "./marks";
 import { draw, goTo, linkOf, on, say, state } from "./state";
 import { chevron, escape, gauge, machineOf, menu, toggle } from "./ui";
@@ -37,6 +37,17 @@ export const fableSaid = "Fable 可用周额度的 50%，官方不提供读数�
 export const money = (percent: number, of: number) => `${whole((percent / 100) * of)} / ${whole(of)}`;
 /** When a window starts over, as its bar says it. */
 const startsOver = (reading: { resets: string; reset?: boolean }) => (reading.reset ? "已重置" : reading.resets ? `${reading.resets}重置` : "");
+/** When a login's week starts over, as the vendor's reading says it: its
+ *  window where the reader is given the login's windows, else the end of
+ *  the week its usage is reckoned by — the same reading, told to one given
+ *  a share too. */
+function weekStartsOver(login: Login): string {
+  if (login.week) return startsOver(login.week);
+  const at = usable(daysOf(login))?.resetsAt;
+  if (!at) return "";
+  const left = resetsSaid(at, new Date());
+  return at.getTime() <= Date.now() ? left : `${left}重置`;
+}
 
 export function homePage(): string {
   const attach = state.place.kind === "attach";
@@ -117,7 +128,7 @@ export function allotted(login: Login, tall?: number): string[] {
   const used = (week / allot) * 100;
   const fable = (fableSpent / (allot / 2)) * 100;
   const more = tall ? { tall } : {};
-  const starts = login.week ? startsOver(login.week) : "";
+  const starts = weekStartsOver(login);
   return [
     gauge(`${login.id}-mine-${tall ?? 0}`, Math.round(used), { ...more, near: used >= 85, under: `${money(used, allot)}${tall && starts ? `　${starts}` : ""}` }),
     login.family === "claude" ? gauge(`${login.id}-mine-fable-${tall ?? 0}`, Math.round(fable), { ...more, near: fable >= 85, under: money(fable, allot / 2), said: "Fable 上限为本人额度的一半" }) : "",

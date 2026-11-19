@@ -287,8 +287,9 @@ struct Reckoned {
     exact: bool,
 }
 
-/// How `kept` stands in what `account` reads.
-fn reckon(assets: &Assets, directory: &Indexed<'_>, account: &AccountName, kept: &Kept) -> Reckoned {
+/// How `kept` stands in what its account reads: `libraries`, as
+/// `libraries_of` has them.
+fn reckon(assets: &Assets, libraries: &[String], kept: &Kept) -> Reckoned {
     let mut worst = 0;
     let mut exact = true;
     for standing in &kept.report.owners {
@@ -301,9 +302,9 @@ fn reckon(assets: &Assets, directory: &Indexed<'_>, account: &AccountName, kept:
     // The account's own library and those of its bodies, where they hold
     // anything, are stood in by each of its machines: one it never stood in
     // is not caught up, whatever its report says of the others (H10).
-    let whole = libraries_of(assets, directory, account)
-        .into_iter()
-        .all(|owner| kept.report.owners.iter().any(|standing| standing.owner == owner) || top(assets, &owner).is_none());
+    let whole = libraries
+        .iter()
+        .all(|owner| kept.report.owners.iter().any(|standing| standing.owner == *owner) || top(assets, owner).is_none());
     Reckoned { behind: worst, whole, exact }
 }
 
@@ -361,14 +362,16 @@ fn sample(hub: &crate::Hub) -> io::Result<()> {
         }
     }
     let mut summaries = BTreeMap::new();
+    let bodies = bodies(assets, &directory);
     for account in &directory.all.accounts {
         let (mut devices, mut caught_up, mut worst) = (0, 0, 0);
+        let libraries = libraries_of(&directory, &bodies, &account.name);
         // Every machine of the account counts, one that never reported among
         // those not caught up (I05).
         for member in machines_of(&directory, &account.name) {
             devices += 1;
             let Some(kept) = kept.get(&member.name) else { continue };
-            let reckoned = reckon(assets, &directory, &account.name, kept);
+            let reckoned = reckon(assets, &libraries, kept);
             worst = worst.max(reckoned.behind);
             caught_up += u32::from(synced(kept, &reckoned, online.contains(&member.name), now));
         }
@@ -467,6 +470,11 @@ fn may_hold(
     scope.as_ref().is_some_and(|scope| scopes::readable(directory, machine, scope) && scopes::holds(directory, machine, scope, stream))
 }
 
+/// What each owner library has after where a device stands, reckoned once
+/// for every device that stands there: by the owner and the change it
+/// stands at in the library's present generation, none when all is to come.
+type LeftOf = HashMap<(String, Option<u64>), Option<Vec<fastctx_content::v2::StreamBytes>>>;
+
 /// What `machine` has yet to take of what `account` reads, by part, and
 /// whether that is only about so.
 fn left(
@@ -475,6 +483,7 @@ fn left(
     machine: &MachineName,
     account: &AccountName,
     kept: &Kept,
+    left_of: &mut LeftOf,
 ) -> (Vec<(Part, u64)>, bool) {
     let mut parts: BTreeMap<Part, u64> = BTreeMap::new();
     let mut scopes_seen: HashMap<String, Option<Scope>> = HashMap::new();
@@ -502,11 +511,25 @@ fn left(
             about = true;
             continue;
         };
-        let after = if library.generation().is_ok_and(|now| now == generation) { change } else { 0 };
-        let Ok(rows) = library.bytes_after(after) else {
+        // Where it stands in the library's present generation; standing at
+        // its start, or in another generation, none: all of it is to come.
+        let after = library.generation().is_ok_and(|now| now == generation).then_some(change).filter(|at| *at > 0);
+        let rows = left_of.entry((owner.clone(), after)).or_insert_with(|| match after {
+            // Caught up: nothing of the library is after where it stands, and
+            // its frames are not read to say so. Read whole for every device
+            // at every look, they filled the hub's disk (2026-11-19).
+            Some(after) if library.latest_change().is_ok_and(|top| top.is_none_or(|(top, _)| after >= top)) => {
+                Some(Vec::new())
+            }
+            Some(after) => library.bytes_after(after).ok(),
+            // All of it to come: each stream as far as it has come, about.
+            None => library.bytes_of_streams().ok(),
+        });
+        let Some(rows) = rows.clone() else {
             about = true;
             continue;
         };
+        about |= after.is_none() && !rows.is_empty();
         let mut here: BTreeMap<Part, u64> = BTreeMap::new();
         for row in rows {
             if unpulled.contains(row.scope.as_str())
@@ -546,38 +569,39 @@ fn left(
     (parts.into_iter().filter(|(_, bytes)| *bytes > 0).collect(), about)
 }
 
+/// Each body and its members now, read once for all that is reckoned at a
+/// time — a minute's sample, a page — never again for each machine.
+type BodyMembers = Vec<(String, BTreeSet<String>)>;
+
+fn bodies(assets: &Assets, directory: &Indexed<'_>) -> BodyMembers {
+    assets.bodies.all_members(directory.all).unwrap_or_default()
+}
+
 /// The owner libraries `account` reads in all: its own, and those of the
 /// bodies it is a member of.
-fn libraries_of(assets: &Assets, directory: &Indexed<'_>, account: &AccountName) -> Vec<String> {
+fn libraries_of(directory: &Indexed<'_>, bodies: &BodyMembers, account: &AccountName) -> Vec<String> {
     let mut owners: Vec<String> = own_key(directory, account).into_iter().collect();
-    let bodies: Vec<String> = assets
-        .control
-        .read_now(|c| {
-            let mut statement = c.prepare_cached("SELECT id FROM asset_bodies")?;
-            let rows = statement.query_map([], |row| row.get(0))?;
-            Ok(rows.collect::<Result<_, _>>()?)
-        })
-        .unwrap_or_default();
-    for body in bodies {
-        // Members are named with when their account was opened (I02).
-        if assets.bodies.members(directory.all, &body).is_ok_and(|members| super::bodies::among(directory.all, &members, account)) {
-            owners.push(Owner::Body(body).key());
-        }
-    }
+    // Members are named with when their account was opened (I02).
+    owners.extend(
+        bodies
+            .iter()
+            .filter(|(_, members)| super::bodies::among(directory.all, members, account))
+            .map(|(body, _)| Owner::Body(body.clone()).key()),
+    );
     owners
 }
 
-/// What the hub holds of what `account` reads, counted again only where a
-/// library changed since.
-fn totals(assets: &Assets, directory: &Indexed<'_>, account: &AccountName) -> HubTotals {
+/// What the hub holds of `libraries`, counted again only where a library
+/// changed since.
+fn totals(assets: &Assets, libraries: &[String]) -> HubTotals {
     let mut sum = HubTotals::default();
-    for owner in libraries_of(assets, directory, account) {
-        let Some(top) = top(assets, &owner) else { continue };
-        let cached = assets.standing.totals.lock().expect("totals").get(&owner).filter(|(at, _)| *at == top.change).map(|(_, totals)| totals.clone());
+    for owner in libraries {
+        let Some(top) = top(assets, owner) else { continue };
+        let cached = assets.standing.totals.lock().expect("totals").get(owner).filter(|(at, _)| *at == top.change).map(|(_, totals)| totals.clone());
         let counted = match cached {
             Some(totals) => totals,
             None => {
-                let Some(totals) = Owner::from_key(&owner)
+                let Some(totals) = Owner::from_key(owner)
                     .and_then(|owned| assets.library(&owned).ok())
                     .and_then(|library| library.totals().ok())
                 else {
@@ -679,13 +703,15 @@ pub(crate) fn status(
     let (kept, _) = kept(assets, &directory).map_err(|error| error.to_string())?;
     let now = now();
     let members = machines_of(&directory, account);
+    let libraries = libraries_of(&directory, &bodies(assets, &directory), account);
     let mut devices = Vec::new();
+    let mut left_of = LeftOf::new();
     for member in &members {
         let report = kept.get(&member.name);
-        let reckoned = report.map(|kept| reckon(assets, &directory, account, kept));
+        let reckoned = report.map(|kept| reckon(assets, &libraries, kept));
         let behind = reckoned.as_ref().map_or(0, |reckoned| reckoned.behind);
         let (left, about) = report.map_or((Vec::new(), false), |kept| {
-            left(assets, &directory, &member.name, account, kept)
+            left(assets, &directory, &member.name, account, kept, &mut left_of)
         });
         let since = online.get(&member.name).copied().or_else(|| report.map(|kept| kept.seen.unwrap_or(kept.at)));
         let facts = report.map(|kept| &kept.report);
@@ -718,7 +744,7 @@ pub(crate) fn status(
         members.iter().map(|member| member.name.clone()).filter(|name| only.is_none_or(|only| only == name)).collect();
     let coarse = only.is_none() && machines.len() > MANY;
     let (step, points) = points(assets, &machines, hours, now, coarse).map_err(|error| error.to_string())?;
-    let totals = totals(assets, &directory, account);
+    let totals = totals(assets, &libraries);
     let status = SyncStatus { at: now, hours, step, devices, points, totals };
     {
         // What stands no more goes, and never more than so many pages, nor

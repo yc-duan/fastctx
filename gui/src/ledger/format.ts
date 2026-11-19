@@ -27,6 +27,21 @@ export function clock(at: Date): string {
   return `${two(at.getHours())}:${two(at.getMinutes())}:${two(at.getSeconds())}`;
 }
 
+/** When a window starts over, as a row says it: in hours and minutes within
+ *  a day; further off, in days and hours — how long is left, not which
+ *  weekday. */
+export function resetsSaid(at: Date, now: Date): string {
+  const left = at.getTime() - now.getTime();
+  if (left <= 0) return "已重置";
+  if (left < 86400000) {
+    const minutes = Math.round(left / 60000);
+    const hours = Math.floor(minutes / 60);
+    return hours ? `${hours} 小时 ${two(minutes % 60)} 分后` : `${minutes} 分后`;
+  }
+  const hours = Math.round(left / 3600000);
+  return hours % 24 ? `${Math.floor(hours / 24)} 天 ${hours % 24} 小时后` : `${hours / 24} 天后`;
+}
+
 const weekdays = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
 /** A day as a person says it: the month, the day, the weekday. */
 export function dated(at: Date, weekday = true): string {

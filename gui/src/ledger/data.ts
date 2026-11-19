@@ -222,6 +222,10 @@ export interface Days {
    *  is; a reset is of this week. */
   weekEnd?: string | null;
   holder?: string | null;
+  /** When the vendor's week starts over, as the reading its usage is
+   *  reckoned by says it: told to everyone the login works for, its windows
+   *  to those who see it whole alone. None where no reading told it. */
+  resetsAt?: Date | null;
 }
 
 /** The week a reset is asked of, as the sheet that asks it showed it. */

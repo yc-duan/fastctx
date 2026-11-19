@@ -52,6 +52,19 @@ pub(crate) fn run() {
     }
     let all = hub.changes(None, 0, None, 10).unwrap();
     assert_eq!(all.top, 3);
+    // What a device has yet to take, as the hub's sync status reckons it:
+    // after the latest change, nothing; each stream as far as it has come
+    // is what its frames come to; after a change, those applied since.
+    let (latest, _) = hub.latest_change().unwrap().expect("a latest change");
+    assert_eq!(latest, 3);
+    assert!(hub.bytes_after(latest).unwrap().is_empty(), "frames after the latest change");
+    let sorted = |mut rows: Vec<fastctx_content::v2::StreamBytes>| {
+        rows.sort_by(|a, b| a.stream.cmp(&b.stream));
+        rows
+    };
+    assert_eq!(sorted(hub.bytes_of_streams().unwrap()), sorted(hub.bytes_after(0).unwrap()));
+    let since = hub.bytes_after(2).unwrap();
+    assert_eq!(since.iter().map(|row| row.stream.as_str()).collect::<Vec<_>>(), vec!["timeline"]);
     let order: Vec<_> = all.rows.iter().map(|row| (row.change, row.scope.as_str(), row.stream.as_str())).collect();
     assert_eq!(order, vec![(3, "s3", "timeline"), (2, "s2", "notes"), (1, "s1", "settings")], "newest first");
     assert!(all.rows.iter().all(|row| row.next == 1 && row.bytes > 0));

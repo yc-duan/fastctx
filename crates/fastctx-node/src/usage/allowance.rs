@@ -220,8 +220,12 @@ fn assisted(node: &Node, about: &About, account: &HubAccount, model: Option<&str
             .into_iter()
             .flat_map(|row| {
                 let at = row.at();
+                // Told as a charge of the ledger is (`ledger.rs`): Fable's
+                // counts two and a half times over against a share as well.
                 row.uses().into_iter().filter_map(move |(who, usage)| {
-                    Some(super::recent::Charge { at, who, fable: false, usd: usage.usd? })
+                    let fable = fastctx_hosts::claude::pricing::is_fable(&usage.model)
+                        && usage.call.as_ref().is_none_or(|call| call.observed);
+                    Some(super::recent::Charge { at, who, fable, usd: usage.usd? })
                 })
             })
             .collect();

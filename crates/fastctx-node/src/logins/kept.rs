@@ -126,6 +126,11 @@ pub(super) struct KeptLogin {
     /// What tells this sign-in from another (`super::sign_in::credential`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub credential: Option<String>,
+    /// The rule `credential` was read by (`super::sign_in::CREDENTIAL_RULE`),
+    /// none in a record read by the first. Files that stand as they did are
+    /// read again by the present rule, and the sign-in stays what it was.
+    #[serde(default, skip_serializing_if = "is_first_rule")]
+    pub credential_rule: u8,
     /// How the sign-in files stood when this sign-in was first asked. An
     /// account no one is named for is known by it (`usage::accounts::key`):
     /// it holds while the sign-in does, however its files are written again.
@@ -147,6 +152,7 @@ impl KeptLogin {
         self.account_signed = if same { self.account_generation().clone() } else { Some(signed.clone()) };
         self.signed = Some(signed);
         self.credential = credential;
+        self.credential_rule = super::sign_in::CREDENTIAL_RULE;
     }
 
     /// The login `dir`, found as `found`, as asking it gave while its
@@ -185,11 +191,16 @@ impl KeptLogin {
             models: asked.models.or_else(|| before.map(|before| before.models.clone())).unwrap_or_default(),
             signed: before.and_then(|before| before.signed.clone()),
             credential: before.and_then(|before| before.credential.clone()),
+            credential_rule: before.map_or(0, |before| before.credential_rule),
             account_signed: before.and_then(|before| before.account_signed.clone()),
         };
         login.sign(signed, credential);
         login
     }
+}
+
+fn is_first_rule(rule: &u8) -> bool {
+    *rule == 0
 }
 
 fn known(identified: &Identified) -> bool {
