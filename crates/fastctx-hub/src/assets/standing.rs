@@ -467,6 +467,11 @@ fn may_hold(
     scope.as_ref().is_some_and(|scope| scopes::readable(directory, machine, scope) && scopes::holds(directory, machine, scope, stream))
 }
 
+/// What each owner library has after where a device stands, reckoned once
+/// for every device that stands there: by the owner and the change it
+/// stands at in the library's present generation, none when all is to come.
+type LeftOf = HashMap<(String, Option<u64>), Option<Vec<fastctx_content::v2::StreamBytes>>>;
+
 /// What `machine` has yet to take of what `account` reads, by part, and
 /// whether that is only about so.
 fn left(
@@ -475,6 +480,7 @@ fn left(
     machine: &MachineName,
     account: &AccountName,
     kept: &Kept,
+    left_of: &mut LeftOf,
 ) -> (Vec<(Part, u64)>, bool) {
     let mut parts: BTreeMap<Part, u64> = BTreeMap::new();
     let mut scopes_seen: HashMap<String, Option<Scope>> = HashMap::new();
@@ -502,11 +508,25 @@ fn left(
             about = true;
             continue;
         };
-        let after = if library.generation().is_ok_and(|now| now == generation) { change } else { 0 };
-        let Ok(rows) = library.bytes_after(after) else {
+        // Where it stands in the library's present generation; standing at
+        // its start, or in another generation, none: all of it is to come.
+        let after = library.generation().is_ok_and(|now| now == generation).then_some(change).filter(|at| *at > 0);
+        let rows = left_of.entry((owner.clone(), after)).or_insert_with(|| match after {
+            // Caught up: nothing of the library is after where it stands, and
+            // its frames are not read to say so. Read whole for every device
+            // at every look, they filled the hub's disk (2026-11-19).
+            Some(after) if library.latest_change().is_ok_and(|top| top.is_none_or(|(top, _)| after >= top)) => {
+                Some(Vec::new())
+            }
+            Some(after) => library.bytes_after(after).ok(),
+            // All of it to come: each stream as far as it has come, about.
+            None => library.bytes_of_streams().ok(),
+        });
+        let Some(rows) = rows.clone() else {
             about = true;
             continue;
         };
+        about |= after.is_none() && !rows.is_empty();
         let mut here: BTreeMap<Part, u64> = BTreeMap::new();
         for row in rows {
             if unpulled.contains(row.scope.as_str())
@@ -680,12 +700,13 @@ pub(crate) fn status(
     let now = now();
     let members = machines_of(&directory, account);
     let mut devices = Vec::new();
+    let mut left_of = LeftOf::new();
     for member in &members {
         let report = kept.get(&member.name);
         let reckoned = report.map(|kept| reckon(assets, &directory, account, kept));
         let behind = reckoned.as_ref().map_or(0, |reckoned| reckoned.behind);
         let (left, about) = report.map_or((Vec::new(), false), |kept| {
-            left(assets, &directory, &member.name, account, kept)
+            left(assets, &directory, &member.name, account, kept, &mut left_of)
         });
         let since = online.get(&member.name).copied().or_else(|| report.map(|kept| kept.seen.unwrap_or(kept.at)));
         let facts = report.map(|kept| &kept.report);
