@@ -120,6 +120,11 @@ pub(super) fn record(
     // Only a window taken is read as of then: one an earlier mod said lower,
     // left as it was, makes no later answer late.
     let confirmed = !taken.is_empty();
+    // An earlier mod's reading that took no window says nothing of now, and
+    // moves no row's time on.
+    if !confirmed && resets.is_empty() {
+        return Ok(false);
+    }
     for key in taken {
         heard.insert(key, at);
     }
@@ -271,6 +276,12 @@ mod tests {
         assert!(read(&mut book, 10, vec![window("five_hour", 300, five, 40)], true));
         assert!(read(&mut book, 9, week(end, 330), true));
         assert_eq!((stands(&book, 300).0, stands(&book, WEEK_MINUTES).0), (40, 330));
+        // An earlier mod saying again what stands, of a window with no reset
+        // time, writes nothing and moves no row's time on.
+        let open = |tenths| vec![LimitWindow { resets_at: None, ..window("open", 60, five, tenths) }];
+        assert!(read(&mut book, 11, open(10), true));
+        assert!(!read(&mut book, 12, open(10), false));
+        assert!(read(&mut book, 12, open(11), false));
         assert!(book.reset_history().is_empty());
 
         // The week turned at its own reset: recorded as that, and no other.

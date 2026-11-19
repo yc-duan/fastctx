@@ -402,6 +402,9 @@ on("models", () => {
  *  wash about it the reach, and the line can be dragged to where the dots
  *  are. Nothing chosen makes the sheet taller or shorter. */
 
+/** The most a week is expected to hold, as a node takes it. */
+const MOST_WEEK = 10_000_000;
+
 on("expect", () => {
   const login = current();
   const read = usable(daysOf(login))?.weeks ?? [];
@@ -477,8 +480,11 @@ on("expect", () => {
     holder.addEventListener("pointercancel", end, { once: true });
   });
   input.addEventListener("input", () => {
-    const typed = Number(input.value.replace(/[^0-9]/g, ""));
-    wrong.base = !(typed >= 100);
+    // Whole dollars as typed, from $100 to what a node takes: "100.5" is not
+    // taken for 1,005, nor "-3000" for 3,000.
+    const said = input.value.trim().replace(/,/g, "");
+    const typed = /^\d{1,9}$/.test(said) ? Number(said) : Number.NaN;
+    wrong.base = !(typed >= 100 && typed <= MOST_WEEK);
     input.closest(".as-custom")!.classList.toggle("lg-wrong", wrong.base);
     judged();
     if (!wrong.base) {

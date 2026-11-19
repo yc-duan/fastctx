@@ -366,7 +366,7 @@ export class AgentsPage implements Page {
       // vendor's accounts, is not reset. A sheet opened before the week was
       // read says so, never taking a week read since for the one it showed.
       const weekEnd = looked ? looked.weekEnd : (this.seen.weekEnds.get(login.id) ?? null);
-      if (weekEnd === null) throw new Error("用量还没读到，稍后再试");
+      if (weekEnd === null || (looked && looked.holder === null)) throw new Error("用量还没读到，稍后再试");
       // A node that reckons no week keeps no reset of one.
       if (!this.reckoning.has(login.id)) throw new Error("该机器离线，或其 Fastctx 版本较旧，暂不能重置用量");
       try {
