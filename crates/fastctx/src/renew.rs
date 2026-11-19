@@ -542,9 +542,16 @@ fn follow_hubs(root: &Path, digest: &str) -> anyhow::Result<()> {
 }
 
 /// Starts the hub `hub` again on the program `digest`, when it is not on it
-/// and its user may.
+/// and its user may; not one held stopped by whoever maintains the machine.
 fn follow_hub(hub: &fastctx_install::service::Service, digest: &str) -> anyhow::Result<()> {
-    if !hub.status()?.installed {
+    let status = hub.status()?;
+    if !status.installed {
+        return Ok(());
+    }
+    // Held (`service hold` disables it, then stops it), it stays stopped
+    // until it is released, by an update as by anything else.
+    if cfg!(target_os = "linux") && !status.enabled {
+        eprintln!("the hub {} is held stopped: it is not started again until it is released", status.name);
         return Ok(());
     }
     if cfg!(windows) {
@@ -560,7 +567,38 @@ fn follow_hub(hub: &fastctx_install::service::Service, digest: &str) -> anyhow::
         }
         hub.may_restart()?;
     }
-    hub.restart_guardian(digest)
+    hub.restart_guardian(digest)?;
+    if cfg!(target_os = "linux") {
+        hub_settled(hub, digest, &status.name);
+    }
+    Ok(())
+}
+
+/// How long a hub started again has to be seen running the new program.
+const HUB_SETTLES: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// Whether the hub `hub`, started again, is seen running the program
+/// `digest` within a minute: a restart that systemd took is not one that
+/// ran. Where it is not, that is said for whoever reads the renewal's log,
+/// with what systemd last said of it; it is not started again here.
+fn hub_settled(hub: &fastctx_install::service::Service, digest: &str, name: &str) {
+    let began = std::time::Instant::now();
+    loop {
+        let running = hub.runs(digest).ok().flatten() == Some(true);
+        let status = hub.status().ok();
+        if running && status.as_ref().is_some_and(|status| status.state.starts_with("active/")) {
+            return;
+        }
+        if began.elapsed() >= HUB_SETTLES {
+            let said = status.map_or_else(
+                || "its state could not be read".to_string(),
+                |status| format!("{}, last exit {:?}; {}", status.state, status.last_exit, status.logs),
+            );
+            eprintln!("the hub {name} does not run the new program a minute after it was started again: {said}");
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_secs(2));
+    }
 }
 
 async fn recover(root: &Path, plan: &Plan, kept: bool) -> anyhow::Result<()> {
