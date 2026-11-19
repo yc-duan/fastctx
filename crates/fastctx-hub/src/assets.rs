@@ -718,18 +718,10 @@ impl Assets {
         &self.keys
     }
 
-    /// Whether the chain head (`seq`, `head`) is of a history the hub set
-    /// aside when it recovered (design §17): exactly one it was shown then.
+    /// Whether a verified chain head belongs to history retired at recovery.
     pub(crate) fn closed_head(&self, seq: u64, head: &[u8; 32]) -> io::Result<bool> {
         let head = *head;
-        self.control
-            .read_now(move |c| {
-                Ok(c.prepare_cached("SELECT 1 FROM closed_heads WHERE seq = ?1 AND head = ?2")?
-                    .query_row(fastctx_storage::rusqlite::params![seq as i64, &head[..]], |_| Ok(()))
-                    .optional()?
-                    .is_some())
-            })
-            .map_err(io::Error::other)
+        self.control.read_now(move |c| chain::closed_head(c, seq, &head)).map_err(io::Error::other)
     }
 
     /// Whether a receipt naming `head` is of a history the hub set aside

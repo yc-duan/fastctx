@@ -46,6 +46,14 @@ CREATE TABLE IF NOT EXISTS asset_seal (
     id INTEGER PRIMARY KEY CHECK (id = 1), why TEXT NOT NULL, at INTEGER NOT NULL
 );
 CREATE TABLE IF NOT EXISTS closed_heads (seq INTEGER NOT NULL, head BLOB NOT NULL, PRIMARY KEY (seq, head)) WITHOUT ROWID;
+-- A missing signed head at a sequence retired by an operator after recovery.
+-- The slot applies only while the chain contains that exact recovery anchor.
+CREATE TABLE IF NOT EXISTS closed_head_slots (
+    seq INTEGER NOT NULL CHECK (seq > 0),
+    anchor_seq INTEGER NOT NULL CHECK (anchor_seq > seq),
+    anchor_head BLOB NOT NULL CHECK (length(anchor_head) = 32),
+    PRIMARY KEY (seq, anchor_seq, anchor_head)
+) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS closed_receipts (
     scope TEXT NOT NULL, change INTEGER NOT NULL, prefix BLOB NOT NULL, parked INTEGER NOT NULL, accumulated BLOB NOT NULL,
     PRIMARY KEY (scope, change, prefix, parked, accumulated)
@@ -97,4 +105,49 @@ pub(crate) fn head_at(c: &Connection, seq: u64) -> fastctx_storage::Result<Optio
         .query_row([seq as i64], |row| row.get(0))
         .optional()?;
     found.map(digest_of).transpose()
+}
+
+/// Whether a verified head belongs to history that the hub has closed.
+/// If the directory is ever put back before the recovery anchor, a slot
+/// must not hide that rollback. A slot never changes the canonical chain.
+pub(crate) fn closed_head(c: &Connection, seq: u64, head: &[u8; 32]) -> fastctx_storage::Result<bool> {
+    let Ok(seq) = i64::try_from(seq) else { return Ok(false) };
+    Ok(c.prepare_cached(
+        "SELECT 1 FROM closed_heads WHERE seq = ?1 AND head = ?2
+         UNION ALL
+         SELECT 1 FROM closed_head_slots AS slot
+         JOIN hub_chain AS anchor ON anchor.seq = slot.anchor_seq AND anchor.head = slot.anchor_head
+         WHERE slot.seq = ?1 AND anchor.kind = 'branch-closed'
+         LIMIT 1",
+    )?
+    .exists(params![seq, &head[..]])?)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_closed_slot_requires_its_exact_recovery_anchor() {
+        let db = Connection::open_in_memory().unwrap();
+        db.execute_batch(SCHEMA).unwrap();
+        let (first, first_head) = append(&db, "checkpoint", &[1; 32]).unwrap();
+        let (second, _) = append(&db, "checkpoint", &[2; 32]).unwrap();
+        let (anchor, anchor_head) = append(&db, "branch-closed", &[3; 32]).unwrap();
+        db.execute(
+            "INSERT INTO closed_head_slots VALUES (?1, ?2, ?3)",
+            params![first as i64, anchor as i64, &anchor_head[..]],
+        )
+        .unwrap();
+        db.execute("INSERT INTO closed_heads VALUES (?1, ?2)", params![first as i64, &first_head[..]]).unwrap();
+
+        assert!(closed_head(&db, first, &[4; 32]).unwrap());
+        assert!(!closed_head(&db, second, &[4; 32]).unwrap());
+        db.execute("UPDATE hub_chain SET head = ?1 WHERE seq = ?2", params![&[5_u8; 32][..], anchor as i64])
+            .unwrap();
+        assert!(!closed_head(&db, first, &[4; 32]).unwrap());
+        db.execute("DELETE FROM hub_chain WHERE seq = ?1", [anchor as i64]).unwrap();
+        assert!(!closed_head(&db, first, &[4; 32]).unwrap());
+        assert!(closed_head(&db, first, &first_head).unwrap());
+    }
 }
