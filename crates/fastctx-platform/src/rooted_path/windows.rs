@@ -169,6 +169,11 @@ pub(super) fn open_directory(parent: &File, name: &Name, create: bool) -> io::Re
     plain_directory(&file)?;
     Ok(file)
 }
+/// Windows tells a file's index only through a handle; its locks belong to
+/// the handle that took them, not to every handle of the process.
+pub(super) fn path_identity(path: &Path) -> io::Result<FileIdentity> {
+    identity(&File::open(path)?)
+}
 pub(super) fn identity(file: &File) -> io::Result<FileIdentity> {
     let value = info(file)?;
     Ok(FileIdentity {

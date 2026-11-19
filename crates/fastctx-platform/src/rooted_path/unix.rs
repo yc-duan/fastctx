@@ -73,6 +73,10 @@ pub(super) fn identity(file: &File) -> io::Result<FileIdentity> {
     let m = file.metadata()?;
     Ok(FileIdentity { volume: m.dev(), file: m.ino() })
 }
+pub(super) fn path_identity(path: &Path) -> io::Result<FileIdentity> {
+    let m = std::fs::metadata(path)?;
+    Ok(FileIdentity { volume: m.dev(), file: m.ino() })
+}
 pub(super) fn sync_directory(file: &File) -> io::Result<()> {
     file.sync_all()
 }
