@@ -72,6 +72,11 @@ pub(super) fn credential(context: &Context, agent: &str, dir: &Path) -> Option<S
         .flatten()
 }
 
+/// The rule `credential` reads a sign-in by, kept with what it read
+/// (`KeptLogin::credential_rule`): the first read Claude Code's credentials
+/// file whole; the second only Claude's own sign-in in it.
+pub(super) const CREDENTIAL_RULE: u8 = 1;
+
 fn credential_in(context: &Context, agent: &str, dir: &Path) -> Option<String> {
     let mut digest = Sha256::new();
     let mut any = false;
@@ -79,6 +84,8 @@ fn credential_in(context: &Context, agent: &str, dir: &Path) -> Option<String> {
         let Ok(bytes) = fastctx_platform::disk::read(file) else { continue };
         let part = if file.file_name().is_some_and(|name| name == "settings.json") {
             settings_sign_in(&bytes)
+        } else if agent == "claude" {
+            credentials_sign_in(&bytes)
         } else {
             Some(bytes)
         };
@@ -89,6 +96,19 @@ fn credential_in(context: &Context, agent: &str, dir: &Path) -> Option<String> {
         any = true;
     }
     any.then(|| format!("{:x}", digest.finalize()))
+}
+
+/// What of Claude Code's credentials file signs in: Claude's own sign-in
+/// (`claudeAiOauth`), none where it holds none; the whole file where it
+/// cannot be read. Claude Code keeps there too what MCP servers' sign-ins
+/// need, and writes it as any conversation's server asks to be signed in
+/// to: read whole, that was taken for another sign-in, and the login for
+/// another account, its week's use until then counted as none (2026-11-19).
+fn credentials_sign_in(bytes: &[u8]) -> Option<Vec<u8>> {
+    let Ok(serde_json::Value::Object(credentials)) = serde_json::from_slice(bytes) else {
+        return Some(bytes.to_vec());
+    };
+    credentials.get("claudeAiOauth").map(|sign_in| serde_json::to_vec(sign_in).expect("JSON values serialize"))
 }
 
 /// What of a Claude Code settings file signs in, in a fixed order; the
@@ -149,7 +169,7 @@ pub(super) async fn refresh(node: &Arc<Node>) -> crate::passes::Left {
                 for login in unmarked {
                     let logins = &mut record.of_mut(login.agent).logins;
                     if let Some(known) = logins.iter_mut().find(|known| crate::homes::same_dir(&known.dir, &login.dir))
-                        && known.credential.is_none()
+                        && (known.credential.is_none() || known.credential_rule != CREDENTIAL_RULE)
                         && known.signed.as_ref() == Some(&login.signed)
                     {
                         known.sign(login.signed, Some(login.credential));
@@ -279,7 +299,7 @@ fn changed(node: &Node) -> Result<ToRead, Failure> {
                     signed,
                     identified_at: login.identified.at,
                 });
-            } else if login.credential.is_none()
+            } else if (login.credential.is_none() || login.credential_rule != CREDENTIAL_RULE)
                 && let Some(credential) = credential(&context, agent, &login.dir)
             {
                 unmarked.push(Unmarked { agent, dir: login.dir.clone(), signed, credential });
@@ -293,4 +313,25 @@ fn changed(node: &Node) -> Result<ToRead, Failure> {
         claude: record.claude.programs.clone(),
         env: context.env,
     })
+}
+#[cfg(test)]
+mod tests {
+    use super::credentials_sign_in;
+
+    #[test]
+    fn only_claudes_own_sign_in_tells_a_credentials_file_apart() {
+        let signed = br#"{"claudeAiOauth":{"accessToken":"a","refreshToken":"r"},"mcpOAuth":{}}"#;
+        let asked =
+            br#"{"claudeAiOauth":{"accessToken":"a","refreshToken":"r"},"mcpOAuth":{"tavily":{"accessToken":""}}}"#;
+        // An MCP server's sign-in written beside Claude's is the same sign-in.
+        assert_eq!(credentials_sign_in(signed), credentials_sign_in(asked));
+        assert!(credentials_sign_in(signed).is_some());
+        // Another of Claude's own is another.
+        let other = br#"{"claudeAiOauth":{"accessToken":"b","refreshToken":"s"},"mcpOAuth":{}}"#;
+        assert_ne!(credentials_sign_in(signed), credentials_sign_in(other));
+        // A file of MCP servers' sign-ins alone signs nothing in.
+        assert_eq!(credentials_sign_in(br#"{"mcpOAuth":{"tavily":{}}}"#), None);
+        // One that cannot be read is read whole.
+        assert_eq!(credentials_sign_in(b"not json"), Some(b"not json".to_vec()));
+    }
 }
