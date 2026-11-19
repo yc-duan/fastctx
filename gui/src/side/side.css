@@ -57,12 +57,13 @@ html.framed .sp-host {
    top to its foot, a shade under the page as the sidebar across the desk
    is (`shell.css`): the conversations are the page between two margins.
    Over the whole page, as on a phone, it keeps the page's ground over what
-   it covers. */
+   it covers. The shade is the sheet's own, so that it slides with what it
+   holds: the room it is given shows the page until it has come in, and
+   again as it goes. */
 .sp-split > .sp-panel:not(.sp-over) {
   flex: none;
   width: 0;
   overflow: hidden;
-  background: var(--bg-sunken);
   /* Shutting, it keeps its room until its sheet has slid away, and gives it
      up at once then: the conversations are set again once, not every moment
      of a glide. */
@@ -97,6 +98,7 @@ html.framed .sp-host {
 /* Beside the conversations it comes from the edge it stands at. */
 .sp-split > .sp-panel:not(.sp-over) > .sp-sheet {
   translate: 100% 0;
+  background: var(--bg-sunken);
 }
 
 .sp-split[data-dock="left"] > .sp-panel:not(.sp-over) > .sp-sheet {
