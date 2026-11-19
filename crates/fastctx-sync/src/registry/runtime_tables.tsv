@@ -13,6 +13,7 @@ asset_seal	runtime.assets	crates/fastctx-hub/src/assets/chain.rs
 recovery_heads	runtime.assets	crates/fastctx-hub/src/assets/chain.rs
 recovery_receipts	runtime.assets	crates/fastctx-hub/src/assets/chain.rs
 closed_heads	runtime.assets	crates/fastctx-hub/src/assets/chain.rs
+closed_head_slots	runtime.assets	crates/fastctx-hub/src/assets/chain.rs
 closed_receipts	runtime.assets	crates/fastctx-hub/src/assets/chain.rs
 asset_bodies	runtime.assets	crates/fastctx-hub/src/assets/bodies.rs
 asset_body_conversations	runtime.assets	crates/fastctx-hub/src/assets/bodies.rs
