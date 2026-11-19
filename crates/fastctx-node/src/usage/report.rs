@@ -82,7 +82,7 @@ fn made(
     let since = Timestamp::from_second(oldest.as_second().div_euclid(86400) * 86400).expect("retained day");
     let history = book.reset_history();
     let reckoned = (reckon && agent == "claude").then(|| super::reckoning::of(ledger, book, agent, now));
-    let cut = reckoned.as_ref().map(Reckoned::cuts).unwrap_or_default();
+    let cut = reckoned.as_ref().map(Reckoned::edges).unwrap_or_default();
     let mut entries = book.history.entries(ledger, since, now, book.reading.as_ref(), &history, &cut)?;
     entries.extend(book.balances().into_iter().filter(|row| row.at() >= since));
     let resets = (owner && only.is_none()).then(|| {

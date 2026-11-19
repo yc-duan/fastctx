@@ -176,6 +176,17 @@ impl Reckoned {
         self.cuts.iter().map(|(at, _)| *at).collect()
     }
 
+    /// Where what the ledger sums by the hour is cut for this week to count
+    /// as it does (`counted`): at each reset in force, and where the login
+    /// changed account.
+    pub fn edges(&self) -> Vec<Timestamp> {
+        let mut edges = self.cuts();
+        if self.week.window {
+            edges.extend(self.accounts.iter().map(|(at, _)| *at).filter(|at| *at > self.week.start));
+        }
+        edges
+    }
+
     /// What `usd` used at `at` counts as: of this week, nothing used while
     /// the login was in another of the vendor's accounts, whose week it is
     /// not.
@@ -747,6 +758,7 @@ mod tests {
         // Nor does what was used of the week in account a count to b's.
         assert_eq!(other.counted(now - HOUR, Usd(100)), Usd::ZERO);
         assert_eq!(other.counted(now + HOUR, Usd(100)), Usd(100));
+        assert_eq!(other.edges(), vec![now + HOUR]);
         assert_ne!(other.told(true, true).holder, reckoned.told(true, true).holder);
         assert!(other.told(true, false).holder.is_none());
     }
