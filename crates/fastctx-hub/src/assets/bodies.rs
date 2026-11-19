@@ -324,15 +324,42 @@ impl Bodies {
             })
             .map_err(io::Error::other)?;
         let Some((machine, members)) = kept else { return Ok(BTreeSet::new()) };
-        if let Ok(name) = MachineName::try_from(machine)
-            && body_of(directory, &name).as_deref() == Some(body)
-        {
-            return Ok(live(directory, &name));
-        }
-        let frozen: BTreeSet<String> = serde_json::from_str(&members).map_err(io::Error::other)?;
-        let alive: BTreeSet<String> = directory.accounts.iter().map(|account| format!("{}@{}", account.name, account.opened.as_millisecond())).collect();
-        Ok(frozen.intersection(&alive).cloned().collect())
+        members_now(directory, body, machine, &members)
     }
+
+    /// Every body's members now, as `members` has each, read in one go: for
+    /// what is reckoned of many accounts and machines at once. A body whose
+    /// frozen members cannot be read is left out, as one that has none.
+    pub(crate) fn all_members(&self, directory: &Directory) -> io::Result<Vec<(String, BTreeSet<String>)>> {
+        let kept: Vec<(String, String, String)> = self
+            .control
+            .read_now(|c| {
+                let mut statement = c.prepare_cached("SELECT id, machine, members FROM asset_bodies")?;
+                let rows = statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
+                Ok(rows.collect::<Result<_, _>>()?)
+            })
+            .map_err(io::Error::other)?;
+        Ok(kept
+            .into_iter()
+            .filter_map(|(body, machine, members)| {
+                members_now(directory, &body, machine, &members).ok().map(|members| (body, members))
+            })
+            .collect())
+    }
+}
+
+/// The members of `body`, kept as the machine `machine` with `members`
+/// frozen: as the directory has them while its machine is in it, else as
+/// they were frozen; an account deleted or made again counts for nothing.
+fn members_now(directory: &Directory, body: &str, machine: String, members: &str) -> io::Result<BTreeSet<String>> {
+    if let Ok(name) = MachineName::try_from(machine)
+        && body_of(directory, &name).as_deref() == Some(body)
+    {
+        return Ok(live(directory, &name));
+    }
+    let frozen: BTreeSet<String> = serde_json::from_str(members).map_err(io::Error::other)?;
+    let alive: BTreeSet<String> = directory.accounts.iter().map(|account| format!("{}@{}", account.name, account.opened.as_millisecond())).collect();
+    Ok(frozen.intersection(&alive).cloned().collect())
 }
 
 /// Writes bodies' rows, in the transaction `c` is in: a body first shown
