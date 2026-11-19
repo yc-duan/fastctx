@@ -56,6 +56,12 @@ pub(crate) struct Pending {
     /// What each member last said it could not do yet, recorded once.
     #[serde(default)]
     failed: BTreeMap<MachineName, String>,
+    /// The hub deleted the conversation's scopes once the machine it lived
+    /// on deleted it (`assets::deleted::conversation_gone`). Until then the
+    /// deletion is kept, and that is tried again, whatever its members did:
+    /// a deletion never ends with what the hub kept of it still readable.
+    #[serde(default)]
+    scopes_gone: bool,
 }
 
 /// The member `asker` asks, as `account`, that the conversation at
@@ -148,6 +154,7 @@ fn ask_inner(
                     audience,
                     waiting: BTreeSet::new(),
                     failed: BTreeMap::new(),
+                    scopes_gone: false,
                 };
                 if by_home {
                     pending.home = false;
@@ -312,7 +319,7 @@ pub(crate) fn prune(hub: &Hub) {
     if hub.store().book.forgetting.pending.is_empty() && hub.store().book.account_forgetting.pending.is_empty() {
         return;
     }
-    let ended = {
+    let (ended, again) = {
         let mut store = hub.edit_store();
         let accounts = accounts::prune(&mut store);
         let book = &mut *store.book;
@@ -325,13 +332,60 @@ pub(crate) fn prune(hub: &Hub) {
                 changed = true;
             }
             let gone = pending.home && directory.member(&pending.forgetting.conversation.machine).is_none();
-            !gone && (pending.home || !pending.waiting.is_empty())
+            !gone && (pending.home || !pending.waiting.is_empty() || !pending.scopes_gone)
         });
         let ended = before != book.forgetting.pending.len();
+        // Deleted where it lived, its scopes not yet: tried again
+        // (`assets::deleted` spaces the tries).
+        let again: Vec<Address> = book
+            .forgetting
+            .pending
+            .iter()
+            .filter(|pending| !pending.home && !pending.scopes_gone)
+            .map(|pending| pending.forgetting.conversation.clone())
+            .collect();
         if (changed || ended || accounts)
             && let Err(error) = store.save_book()
         {
             hub.log.line(format_args!("keeping the deletions after members left: {error}"));
+        }
+        (ended, again)
+    };
+    for conversation in &again {
+        crate::assets::deleted::conversation_gone(hub, conversation);
+    }
+    if ended {
+        crate::afoot::settle(hub);
+    }
+}
+
+/// The hub deleted the scopes of `conversation`, deleted where it lived:
+/// each deletion of it waits for that no more, and ends when no member is
+/// left to do its part.
+pub(crate) fn scopes_went(hub: &Hub, conversation: &Address) {
+    let ended = {
+        let mut store = hub.edit_store();
+        let at: Vec<usize> = store
+            .book
+            .forgetting
+            .pending
+            .iter()
+            .enumerate()
+            .filter(|(_, pending)| {
+                !pending.home && !pending.scopes_gone && pending.forgetting.conversation == *conversation
+            })
+            .map(|(index, _)| index)
+            .collect();
+        if at.is_empty() {
+            return;
+        }
+        let mut ended = false;
+        for &index in at.iter().rev() {
+            std::sync::Arc::make_mut(&mut store.book.forgetting.pending[index]).scopes_gone = true;
+            ended |= finish(hub, &mut store, index);
+        }
+        if let Err(error) = store.save_book() {
+            hub.log.line(format_args!("keeping that the scopes of {} went: {error}", conversation.key()));
         }
         ended
     };
@@ -380,7 +434,7 @@ fn done_at_home(store: &mut Store, index: usize) {
 /// says whether it did.
 fn finish(hub: &Hub, store: &mut Store, index: usize) -> bool {
     let pending = &store.book.forgetting.pending[index];
-    if pending.home || !pending.waiting.is_empty() {
+    if pending.home || !pending.waiting.is_empty() || !pending.scopes_gone {
         return false;
     }
     let conversation = pending.forgetting.conversation.clone();

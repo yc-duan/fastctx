@@ -47,7 +47,15 @@ pub(crate) struct Deleted {
     unlooked: Mutex<BTreeSet<Owner>>,
     /// Held by the one turn under way.
     turn: Mutex<()>,
+    /// The conversations whose scopes are being deleted now (none), and when
+    /// the last try of each that failed ended: tried again no sooner than
+    /// `AGAIN` after (`conversation_gone`).
+    trying: Mutex<std::collections::HashMap<String, Option<std::time::Instant>>>,
 }
+
+/// How long after a try to delete a conversation's scopes failed it is tried
+/// again.
+const AGAIN: std::time::Duration = std::time::Duration::from_secs(60);
 
 /// The scopes deleted, as a write to the control database looks them up
 /// (`Assets::deleted_scopes`).
@@ -96,6 +104,31 @@ impl Assets {
             let keys = keys.lock().expect("deleted scopes");
             !keys.is_empty() && keys.contains(&stamp(key))
         })
+    }
+
+    /// Whether to try deleting the scopes of the conversation `key` now: not
+    /// while a try is under way, nor soon after one failed.
+    fn try_conversation(&self, key: &str) -> bool {
+        let mut trying = self.deleted.trying.lock().expect("conversations being deleted");
+        match trying.get(key) {
+            Some(None) => false,
+            Some(Some(failed)) if failed.elapsed() < AGAIN => false,
+            _ => {
+                trying.insert(key.to_string(), None);
+                true
+            }
+        }
+    }
+
+    /// The try to delete the scopes of the conversation `key` ended, all of
+    /// them gone or not.
+    fn tried_conversation(&self, key: &str, gone: bool) {
+        let mut trying = self.deleted.trying.lock().expect("conversations being deleted");
+        if gone {
+            trying.remove(key);
+        } else {
+            trying.insert(key.to_string(), Some(std::time::Instant::now()));
+        }
     }
 
     /// The owner library of `owner` has something of an ended period in
@@ -307,42 +340,64 @@ pub(super) fn of_conversation(
 /// The conversation at `conversation` was deleted where it lived: its
 /// scopes are deleted, off the caller's thread, and the machines holding
 /// them told. Asked again of one whose scopes are gone, nothing is done.
+/// Once every one of them is gone, the deletion is told so
+/// (`forget::scopes_went`); one that could not be deleted now is tried
+/// again as the deletion is looked at, a minute apart at least.
 pub(crate) fn conversation_gone(hub: &crate::Hub, conversation: &Address) {
     let Some(hub) = hub.this.get().and_then(std::sync::Weak::upgrade) else { return };
     let conversation = conversation.clone();
+    let key = conversation.key();
+    if !hub.assets.try_conversation(&key) {
+        return;
+    }
     // It changes the records: a hub moving waits for it (`moving`).
     let held = crate::moving::Moving::hold(&hub);
     fastctx_platform::task::spawn_blocking(move || {
         let _held = held;
-        let keys = {
-            let store = hub.store();
-            of_conversation(&hub.assets, &store.indexed(), &conversation)
-        };
-        let keys = match keys {
-            Ok(keys) => keys,
-            Err(error) => {
-                hub.log.line(format_args!("finding the scopes of {}, deleted: {error}", conversation.key()));
-                return;
-            }
-        };
-        if keys.is_empty() {
-            return;
+        let gone = delete_its_scopes(&hub, &conversation);
+        hub.assets.tried_conversation(&key, gone);
+        if gone {
+            crate::forget::scopes_went(&hub, &conversation);
         }
-        for key in &keys {
-            match hub.assets.delete_scope(key) {
-                Ok(true) => hub.log.line(format_args!("deleted the scope {key} with its conversation")),
-                Ok(false) => {}
-                Err(error) => hub.log.line(format_args!("deleting the scope {key} with its conversation: {error}")),
-            }
-        }
-        let drained = hub.assets.drain_pushes();
-        let pushes = {
-            let store = hub.store();
-            hub.assets.take_pushes(drained, &store.indexed())
-        };
-        for (machine, push) in pushes {
-            hub.tell(&machine, fastctx_net::wire::Down::Assets { push });
-        }
-        hub.assets.let_go();
     });
+}
+
+/// Deletes the scopes of the conversation at `conversation`, deleted where
+/// it lived, and tells the machines holding them; whether none is left.
+fn delete_its_scopes(hub: &crate::Hub, conversation: &Address) -> bool {
+    let keys = {
+        let store = hub.store();
+        of_conversation(&hub.assets, &store.indexed(), conversation)
+    };
+    let keys = match keys {
+        Ok(keys) => keys,
+        Err(error) => {
+            hub.log.line(format_args!("finding the scopes of {}, deleted: {error}", conversation.key()));
+            return false;
+        }
+    };
+    if keys.is_empty() {
+        return true;
+    }
+    let mut gone = true;
+    for key in &keys {
+        match hub.assets.delete_scope(key) {
+            Ok(true) => hub.log.line(format_args!("deleted the scope {key} with its conversation")),
+            Ok(false) => {}
+            Err(error) => {
+                gone = false;
+                hub.log.line(format_args!("deleting the scope {key} with its conversation: {error}"));
+            }
+        }
+    }
+    let drained = hub.assets.drain_pushes();
+    let pushes = {
+        let store = hub.store();
+        hub.assets.take_pushes(drained, &store.indexed())
+    };
+    for (machine, push) in pushes {
+        hub.tell(&machine, fastctx_net::wire::Down::Assets { push });
+    }
+    hub.assets.let_go();
+    gone
 }
