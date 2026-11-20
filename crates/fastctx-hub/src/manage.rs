@@ -662,6 +662,7 @@ fn apply(
                         agent: assist.agent,
                         home: assist.home,
                         by: Some(account.clone()),
+                        audience: Default::default(),
                     },
                 )?;
             }
@@ -1633,9 +1634,15 @@ fn delete_account(
             "{name} is the hub's super administrator and cannot be deleted; hand that to another account first"
         ));
     }
-    // The account asked for, as it was opened, or none: one opened again
-    // under its name since is another (codex-d515b194).
-    if let Some(opened) = opened {
+    // The account asked for, as it was opened: one opened again under its
+    // name since is another, and an asking that does not say which, as
+    // work kept from before this was, is not done (codex-d515b194).
+    let Some(opened) = opened else {
+        return Err(format!(
+            "the deletion of {name} does not say which account of the name it was asked for: nothing was done; update the client and ask again"
+        ));
+    };
+    {
         if opened != found.opened {
             return Err(format!("the account {name} was opened again since its deletion was asked: nothing was done"));
         }
@@ -1643,6 +1650,10 @@ fn delete_account(
         // what was born under it is deleted where it lives (`purges`,
         // design-forget-account-v2.md F4a). The assistance its own machines
         // gave others goes with them, ended only.
+        // Those that may keep copies of what goes, as they are now, before
+        // its logins are taken away (codex-d515b194).
+        let audience = crate::forget::accounts::audience(store, name);
+        let directory = &store.book.directory;
         let given: Vec<_> = directory
             .assists
             .iter()
@@ -1659,6 +1670,7 @@ fn delete_account(
                     agent: assist.agent.clone(),
                     home: assist.home.clone(),
                     by: Some(by.clone()),
+                    audience: audience.clone(),
                 },
             )?;
         }

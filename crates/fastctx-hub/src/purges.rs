@@ -65,6 +65,11 @@ pub(crate) struct Purge {
     /// What the machine asked last said it could not do yet.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) waiting: Option<String>,
+    /// The machines that may keep copies of what goes, as they were as it
+    /// was ended: those logged in to the account then, which its removal
+    /// takes away (codex-d515b194).
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub(crate) audience: BTreeSet<MachineName>,
 }
 
 /// Where a purge stands.
@@ -149,6 +154,10 @@ pub(crate) struct Ended {
     pub(crate) agent: AgentName,
     pub(crate) home: Option<PathBuf>,
     pub(crate) by: Option<AccountName>,
+    /// The machines that may keep copies of it, frozen as it ends
+    /// (`Purge::audience`); none where the account stays, as those logged in
+    /// to it are found as its conversations go.
+    pub(crate) audience: BTreeSet<MachineName>,
 }
 
 /// Keeps the purge of the assistance `ended`, in the commit that ends it:
@@ -184,6 +193,7 @@ pub(crate) fn begin(store: &mut crate::store::Store, ended: Ended) -> Result<(),
         step: Step::Closing,
         items: BTreeMap::new(),
         waiting: None,
+        audience: ended.audience,
     };
     store.book.purges.kept.push(Arc::new(purge));
     store.book_edit = crate::store::BookEdit::Full;
@@ -478,7 +488,7 @@ pub(crate) fn settle(hub: &crate::Hub) {
         fastctx_platform::task::spawn(async move {
             let _held = held;
             let by = (purge.machine.clone(), purge.key);
-            let settled = settle_one(&hub, id, &resident, by, &purge.account, purge.generation, &purge.grants).await;
+            let settled = settle_one(&hub, &purge, &resident, by).await;
             if let Err(error) = settled {
                 hub.log.line(format_args!("letting go of what the hub keeps of {resident}, purged ({id}): {error}"));
             }
@@ -491,13 +501,11 @@ pub(crate) fn settle(hub: &crate::Hub) {
 /// to be tried again.
 async fn settle_one(
     hub: &Arc<crate::Hub>,
-    id: u64,
+    purge: &Purge,
     resident: &ResidentId,
     by: (MachineName, PublicKey),
-    account: &AccountName,
-    generation: Timestamp,
-    grants: &[GrantId],
 ) -> Result<(), String> {
+    let (id, account, generation, grants) = (purge.id, &purge.account, purge.generation, &purge.grants[..]);
     let address = fastctx_types::Address { machine: by.0.clone(), resident: resident.clone() };
     use crate::owned_records::deletion::Erased;
     // Whose its record is, before anything of it on the hub is let go of: a
@@ -544,7 +552,8 @@ async fn settle_one(
     // The copies others keep of it, by its address; its scopes went above.
     let ownership = ownership.filter(|_| erased == Erased::Gone);
     let forgetting = account.clone();
-    hub.blocking(move |hub| crate::forget::gone_there(&hub, address, forgetting, ownership, true)).await;
+    let audience = purge.audience.clone();
+    hub.blocking(move |hub| crate::forget::gone_there(&hub, address, forgetting, ownership, true, audience)).await;
     let resident = resident.clone();
     hub.blocking(move |hub| gone(&hub, id, &resident)).await;
     Ok(())
@@ -694,6 +703,7 @@ mod tests {
             step: Step::Closing,
             items: BTreeMap::new(),
             waiting: None,
+            audience: BTreeSet::new(),
         }
     }
 

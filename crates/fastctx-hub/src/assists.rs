@@ -122,6 +122,7 @@ pub(crate) fn end_due(store: &mut Store, now: Timestamp) -> io::Result<bool> {
                         agent: ended.agent.clone(),
                         home: ended.home.clone(),
                         by: None,
+                        audience: Default::default(),
                     },
                 )?;
             }

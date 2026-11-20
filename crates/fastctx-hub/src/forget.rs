@@ -234,6 +234,7 @@ pub(crate) fn gone_there(
     account: AccountName,
     ownership: Option<fastctx_types::owned_records::Conversation>,
     scopes_gone: bool,
+    known: BTreeSet<MachineName>,
 ) {
     let tell = {
         let mut store = hub.edit_store();
@@ -254,7 +255,10 @@ pub(crate) fn gone_there(
                 store.book.forgetting.last += 1;
                 let forgetting =
                     Forgetting { id: store.book.forgetting.last, conversation: conversation.clone(), account };
-                let audience = ownership::targets(&store, &forgetting, ownership.as_ref());
+                // With the machines known to keep copies of it as it was
+                // purged, which the directory may no longer say.
+                let mut audience = ownership::targets(&store, &forgetting, ownership.as_ref());
+                audience.extend(known.into_iter().filter(|machine| store.book.directory.member(machine).is_some()));
                 let mut pending = Pending {
                     forgetting,
                     asked_by: conversation.machine.clone(),

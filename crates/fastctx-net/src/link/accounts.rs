@@ -113,7 +113,7 @@ impl Link {
             AccountChange::DeleteAccount { name, opened } => {
                 // Deleting an account deletes what it was given to work by: a
                 // hub that does not would delete it by its name alone.
-                if !self.view().purges {
+                if !self.view().deletes_accounts_as_opened {
                     let hub = self.hub_name();
                     return Err(format!(
                         "the hub {hub} does not yet delete what an account deleted was given, which deleting one does now; update the hub first"

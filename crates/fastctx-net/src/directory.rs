@@ -849,6 +849,12 @@ pub struct View {
     /// would keep the spellings replaced.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub purges: bool,
+    /// Whether this hub deletes an account only as it was opened when that
+    /// was asked (`crate::wire::Change::DeleteAccount::opened`), ending what
+    /// it was given for good. Earlier hubs omit it: they would delete one of
+    /// the name, whichever it is then.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub deletes_accounts_as_opened: bool,
     /// Whether this hub registers managed machines (`Member::managed`) by
     /// tokens for them, and takes back a token (`Change::RevokeToken`).
     /// Earlier hubs omit it: they would make a token for a full login, and
@@ -1029,6 +1035,7 @@ impl View {
             afoot: false,
             forgets: false,
             purges: false,
+            deletes_accounts_as_opened: false,
             managed: false,
             roles: false,
             groups: false,

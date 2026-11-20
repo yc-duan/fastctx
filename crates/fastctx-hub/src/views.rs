@@ -222,6 +222,7 @@ pub(crate) fn view_for_in(
         afoot: true,
         forgets: true,
         purges: true,
+        deletes_accounts_as_opened: true,
         managed: true,
         roles: true,
         groups: true,

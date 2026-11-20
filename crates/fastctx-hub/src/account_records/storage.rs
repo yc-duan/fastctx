@@ -48,6 +48,9 @@ pub(crate) struct Slot {
     pub records: Arc<tokio::sync::Mutex<Account>>,
     pub count: AtomicUsize,
     pub bytes: AtomicUsize,
+    /// Its records were read from its disk: as the hub opened, or since, as
+    /// the hub let go of a removed account's own (`Records::reopen`).
+    loaded: std::sync::atomic::AtomicBool,
 }
 
 impl Slot {
@@ -93,16 +96,57 @@ impl Records {
     /// keeps its records in (§29, 2.6).
     pub fn load(&self, name: &AccountName, opened: Timestamp) -> std::io::Result<()> {
         let slot = self.account(name, opened);
+        let mut account = slot.records.try_lock().expect("not shared during startup");
+        self.fill(name, opened, &slot, &mut account, true)
+    }
+
+    /// Reads the records of a removed account, as opened at `opened`, from
+    /// its disk where the hub let go of them since it opened, for the hub to
+    /// let go of what is purged of it (`crate::purges`): a slot made anew is
+    /// otherwise empty, and what it keeps would be taken for none
+    /// (codex-d515b194). One read already, or written to since it was made,
+    /// is as it stands.
+    pub fn reopen(
+        &self,
+        name: &AccountName,
+        opened: Timestamp,
+        slot: &Slot,
+        account: &mut Account,
+    ) -> std::io::Result<()> {
+        if slot.loaded.load(Ordering::Acquire) {
+            return Ok(());
+        }
+        if !account.entries.is_empty() {
+            slot.loaded.store(true, Ordering::Release);
+            return Ok(());
+        }
+        self.fill(name, opened, slot, account, false)
+    }
+
+    /// Reads `slot`'s records from its disk into `account`; as the hub opens,
+    /// `staging` the revisions found staged, to be settled.
+    fn fill(
+        &self,
+        name: &AccountName,
+        opened: Timestamp,
+        slot: &Slot,
+        account: &mut Account,
+        staging: bool,
+    ) -> std::io::Result<()> {
         let files = match fastctx_platform::disk::read_dir(&slot.dir) {
             Ok(files) => files,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                slot.loaded.store(true, Ordering::Release);
+                return Ok(());
+            }
             Err(error) => return Err(error),
         };
-        let mut account = slot.records.try_lock().expect("not shared during startup");
         for file in files {
             let path = file?.path();
             if super::staged::is_staged(&path) {
-                self.staged.lock().expect("never poisoned").push(((name.clone(), opened), path));
+                if staging {
+                    self.staged.lock().expect("never poisoned").push(((name.clone(), opened), path));
+                }
                 continue;
             }
             if path.file_name().is_some_and(|name| name == "skill-edit.json")
@@ -127,7 +171,7 @@ impl Records {
                 Entry { metadata, size: bytes.len(), history, conversation: record_conversation(&record) },
             );
         }
-        crate::skill_storage::recover(&slot, &mut account).map_err(std::io::Error::other)?;
+        crate::skill_storage::recover(slot, account).map_err(std::io::Error::other)?;
         for entry in account.entries.values().filter(|entry| {
             entry.metadata.deleted
                 && matches!(entry.metadata.kind.as_str(), fastctx_types::plan::KIND | fastctx_types::history::RECORD_KIND)
@@ -136,6 +180,7 @@ impl Records {
         }
         slot.count.store(account.entries.len(), Ordering::Relaxed);
         slot.bytes.store(account.bytes, Ordering::Relaxed);
+        slot.loaded.store(true, Ordering::Release);
         Ok(())
     }
 
@@ -177,6 +222,7 @@ impl Records {
                     records: Default::default(),
                     count: AtomicUsize::new(0),
                     bytes: AtomicUsize::new(0),
+                    loaded: std::sync::atomic::AtomicBool::new(false),
                 })
             })
             .clone()

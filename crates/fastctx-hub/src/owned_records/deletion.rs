@@ -190,10 +190,10 @@ pub(crate) async fn erase(
             _ => return Err("the conversation's erasure received an unexpected reply".into()),
         }
     }
-    let documents: Vec<_> = slot
-        .records
-        .lock()
-        .await
+    let mut records = slot.records.lock().await;
+    // As its disk keeps them, where the hub let go of them since it opened.
+    hub.account_records.reopen(account, opened, &slot, &mut records).map_err(|error| error.to_string())?;
+    let documents: Vec<_> = records
         .entries
         .values()
         .filter(|entry| {
@@ -203,6 +203,7 @@ pub(crate) async fn erase(
         })
         .map(|entry| entry.metadata.clone())
         .collect();
+    drop(records);
     for metadata in documents {
         if !metadata.deleted {
             let request = RecordRequest::Delete {

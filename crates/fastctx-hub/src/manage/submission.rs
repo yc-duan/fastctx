@@ -78,6 +78,11 @@ struct Asked {
     key: PublicKey,
     account: AccountName,
     work: Work,
+    /// When the account that asked was opened, as it asked: done only while
+    /// it is that account, never one opened again under its name since
+    /// (codex-d515b194). None in work kept from before this was.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    opened: Option<jiff::Timestamp>,
 }
 
 /// Self-removal cannot retrieve a receipt through the identity it removes.
@@ -107,8 +112,13 @@ const OWNERSHIP_CHANGED: &str =
 pub(crate) fn register(hub: &Arc<Hub>) {
     crate::submitted::register(hub, FAMILY, |hub: Arc<Hub>, asked: Asked| async move {
         hub.blocking(move |hub| {
-            let Asked { from, key, account, work } = asked;
+            let Asked { from, key, account, work, opened } = asked;
             let origin = crate::origin::Origin { name: from, key };
+            if opened.is_some() && hub.store().book.directory.account(&account).map(|found| found.opened) != opened {
+                return Err(Failure::not_run(format!(
+                    "the account {account} that asked was opened again since: nothing was done"
+                )));
+            }
             let mut not_run = false;
             let (answer, ended) = super::change_checked(&hub, &origin, &account, work.change(), |store, change| {
                 if removes_origin(&store.book.directory, &origin, change) {
@@ -145,7 +155,8 @@ pub(crate) async fn change(
         Ok(work) => work,
         Err(why) => return (Err(why), None),
     };
-    let asked = Asked { from: origin.name.clone(), key: origin.key, account: account.clone(), work };
+    let opened = hub.store().book.directory.account(&account).map(|found| found.opened);
+    let asked = Asked { from: origin.name.clone(), key: origin.key, account: account.clone(), work, opened };
     let identity = match serde_json::to_vec(&asked) {
         Ok(identity) => identity,
         Err(error) => return (Err(error.to_string()), None),

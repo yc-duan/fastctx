@@ -148,6 +148,11 @@ async fn asked_of(
     let mut records = slot.records.clone().lock_owned().await;
     let hub = hub.clone();
     crate::readers::blocking(move || {
+        // The hub letting go of a removed account's own reads them from its
+        // disk where they were let go of from memory (`Records::reopen`).
+        if by_hub {
+            hub.account_records.reopen(&account, opened, &slot, &mut records).map_err(|error| error.to_string())?;
+        }
         if !by_hub {
             permitted(&hub, &hub.store(), &from, &member_key, &account, opened, access.as_ref())?;
         }
@@ -343,6 +348,14 @@ async fn asked_of(
                             .any(|grant| closed.contains(grant))
                         {
                             return Err("it was born under an assistance ended for good".into());
+                        }
+                        // Nor first registered, moved or not, under an id of
+                        // this account as opened being deleted for a purge:
+                        // the hub would delete what it needs (codex-87c8bbd9).
+                        if crate::purges::deleting(&store.book.purges, &account, opened, &key) {
+                            return Err(
+                                "a conversation of its id is being deleted here; register it again later".into()
+                            );
                         }
                     }
                     if let Some(before) = before {

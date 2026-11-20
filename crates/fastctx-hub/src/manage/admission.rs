@@ -25,6 +25,11 @@ pub(super) fn check(
         Change::DeleteAccount { name, opened } => {
             need_super()?;
             let found = directory.account(name).ok_or_else(|| format!("there is no account {name}"))?;
+            if opened.is_none() {
+                return Err(format!(
+                    "the deletion of {name} does not say which account of the name it was asked for: update the client and ask again"
+                ));
+            }
             if opened.is_some_and(|opened| opened != found.opened) {
                 return Err(format!(
                     "the account {name} was opened again since its deletion was asked: nothing was done"
