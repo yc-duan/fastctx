@@ -330,6 +330,8 @@ pub(super) fn resident(
                 acting: Default::default(),
                 focus: Default::default(),
                 home,
+                // A session the user opened: which login it runs in, the World did not choose.
+                login: None,
                 callee: None,
                 born_shared: crate::timeline::born_shared::now(node),
             };

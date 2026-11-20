@@ -326,6 +326,11 @@ async fn fork(
     crate::logins::workbench::may_start(node, &source.acting, source.host.agent.as_str(), source.home.as_deref())?;
     let id = node.residents.new_id(&source.host.agent)?;
     crate::record_migration::born(node, &id);
+    // It is started in its source's login as that stands now, given its id first.
+    let login = {
+        let (giving, agent, home) = (node.clone(), source.host.agent.clone(), source.home.clone());
+        fastctx_platform::task::blocking(move || crate::logins::ids::born(&giving, &agent, home.as_deref())).await
+    };
     let target_place = Arc::new(node.places.using(id.as_str()).await);
     let gate = node.residents.management(parent)?;
     let source_guard = crate::gate_waits::shared_owned(node, parent, &gate).await?;
@@ -362,6 +367,7 @@ async fn fork(
         acting: source.acting,
         focus: source.focus,
         home: source.home,
+        login,
         callee: None,
         born_shared: crate::timeline::born_shared::now(node),
     };

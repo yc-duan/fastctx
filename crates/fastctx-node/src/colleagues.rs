@@ -265,6 +265,11 @@ pub async fn ask_here(
     // Asked before anything of the colleague is kept or its login started.
     crate::logins::workbench::may_start(node, &acting, "codex", home.as_deref())?;
     let agent = AgentName::try_from("codex").expect("a valid agent name");
+    // Given its id before the colleague is kept or its login started.
+    let login = {
+        let (giving, agent, home) = (node.clone(), agent.clone(), home.clone());
+        fastctx_platform::task::blocking(move || crate::logins::ids::born(&giving, &agent, home.as_deref())).await
+    };
     let id = node.residents.new_id(&agent)?;
     crate::record_migration::born(node, &id);
     node.codex.home(home.as_deref())?.require_login().await.map_err(|error| {
@@ -318,6 +323,7 @@ pub async fn ask_here(
         acting,
         focus: Default::default(),
         home,
+        login,
         callee: Some(started.callee.name.clone()),
         born_shared: crate::timeline::born_shared::now(node),
     };

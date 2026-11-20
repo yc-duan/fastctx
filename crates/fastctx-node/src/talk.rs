@@ -1276,14 +1276,19 @@ pub async fn open_here(
     // as none, so that it follows the user's environment.
     let mut options = options;
     options.mcp_off = choices.mcp_off;
-    let home = {
-        // The logins on this machine are read from disk.
+    let (home, login) = {
+        // The logins on this machine are read from disk, and the one it is
+        // born in is given its id there before it is started.
         let (listing, agent, chosen) = (node.clone(), agent.clone(), choices.home.clone());
-        fastctx_platform::task::blocking(move || crate::homes::listed(&listing, agent.as_str(), chosen.as_deref()))
-            .await?
+        fastctx_platform::task::blocking(move || {
+            let home = crate::homes::listed(&listing, agent.as_str(), chosen.as_deref())?;
+            let login = crate::logins::ids::born(&listing, &agent, home.as_deref());
+            Ok::<_, Failure>((home, login))
+        })
+        .await?
     };
     crate::logins::workbench::may_start(node, &acting, agent.as_str(), home.as_deref())?;
-    let opened = Opened { acting, focus: choices.focus, home, files_on: choices.files_on };
+    let opened = Opened { acting, focus: choices.focus, home, login, files_on: choices.files_on };
     match agent.as_str() {
         "codex" => {}
         "claude" => return crate::claude::open_here(node, typed_on, opened, town, text, options, attachments).await,
@@ -1338,6 +1343,7 @@ pub async fn open_here(
         acting: opened.acting,
         focus: opened.focus,
         home: opened.home,
+        login: opened.login,
         callee: None,
         born_shared: crate::timeline::born_shared::now(node),
     };
@@ -1756,6 +1762,8 @@ pub struct Opened {
     pub focus: fastctx_types::focus::Focus,
     /// The agent's home here it is born in, when not the default one.
     pub home: Option<std::path::PathBuf>,
+    /// The login it is born in, `home` or the default one (`About::login`).
+    pub login: Option<fastctx_types::logins::LoginId>,
     /// Where the files attached to its first words go, other than images,
     /// when the user chose.
     pub files_on: Option<Written>,

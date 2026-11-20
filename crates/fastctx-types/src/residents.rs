@@ -94,6 +94,12 @@ pub struct About {
     /// (`agents::AgentHome`), when not the default one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub home: Option<std::path::PathBuf>,
+    /// The login it was born in, as the node knows it for good: the
+    /// directory the World started it with, `home` or the default one as it
+    /// stood then. Only a session the World started has one, from this
+    /// release on; one the user opened, or born before, has none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub login: Option<crate::logins::LoginId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub callee: Option<String>,
     /// What the machine it was born on was on each network as it was born,

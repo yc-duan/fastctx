@@ -584,6 +584,8 @@ impl Residents {
             acting: fastctx_types::access::Acting::Here,
             focus: Default::default(),
             home: hints.home,
+            // A session the user opened: which login it runs in, the World did not choose.
+            login: None,
             callee: None,
             born_shared: Default::default(),
         };

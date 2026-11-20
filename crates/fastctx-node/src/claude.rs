@@ -2223,6 +2223,7 @@ pub async fn open_here(
         acting: opened.acting,
         focus: opened.focus,
         home: opened.home,
+        login: opened.login,
         callee: None,
         born_shared: crate::timeline::born_shared::now(node),
     };
