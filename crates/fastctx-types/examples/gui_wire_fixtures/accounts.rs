@@ -276,6 +276,8 @@ fn hub() -> HubAccounts {
                 turns: Some(4),
                 share: None,
                 manages: Some(false),
+                direct: Some(false),
+                grants: vec![],
             },
             AssistSeen {
                 machine: "gpu".parse().unwrap(),
@@ -289,6 +291,8 @@ fn hub() -> HubAccounts {
                 turns: None,
                 share: None,
                 manages: Some(true),
+                direct: None,
+                grants: vec![fastctx_types::access::GrantId::try_from("g-00000000000000aa".to_string()).unwrap()],
             },
         ],
         plans: vec![PlanSeen {
@@ -391,6 +395,9 @@ pub fn fixtures() -> Fixtures {
                 turns: Some(3),
                 share: None,
                 manages: Some(true),
+                direct: Some(false),
+                purge: false,
+                shown: vec![],
             },
             AccountChange::Assist {
                 machine: machine(),
@@ -405,6 +412,9 @@ pub fn fixtures() -> Fixtures {
                 turns: None,
                 share: None,
                 manages: None,
+                direct: None,
+                purge: true,
+                shown: vec![fastctx_types::access::GrantId::try_from("g-00000000000000aa".to_string()).unwrap()],
             },
             AccountChange::Plan {
                 machine: "gpu".parse().unwrap(),
@@ -474,7 +484,10 @@ pub fn fixtures() -> Fixtures {
             AccountChange::OpenAccount { name: "cy".parse().unwrap(), password: "fixture".into(), visitor: true },
             AccountChange::SetAccount { name: "bo".parse().unwrap(), locked: true },
             AccountChange::Transfer { to: "bo".parse().unwrap() },
-            AccountChange::DeleteAccount { name: "bo".parse().unwrap() },
+            AccountChange::DeleteAccount {
+                name: "bo".parse().unwrap(),
+                opened: Some("2026-10-01T08:00:00Z".parse().unwrap()),
+            },
             AccountChange::Settings { self_registration: false },
             AccountChange::AssetSeal { at_start: true },
             AccountChange::OpenAssets,

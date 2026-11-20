@@ -13,6 +13,7 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU8, Ordering};
 
 use fastctx_types::access::Acting;
 use fastctx_types::ipc::Failure;
@@ -38,6 +39,44 @@ pub(crate) struct Open {
     dirs: Vec<(String, PathBuf)>,
     /// Each agent's default login, as the user's environment names it.
     defaults: Vec<(String, PathBuf)>,
+}
+
+/// What `told` says, kept apart from the view: the heartbeat asks on the
+/// link's own thread, which must never wait behind the view's lock (held
+/// while the record is read, or a login's directory looked up on disk).
+/// Published under that lock as the view changes, before the hubs are told.
+#[derive(Default)]
+pub(crate) struct Told(AtomicU8);
+
+impl Open {
+    /// Whether one of the logins has the workbench open: nothing until the
+    /// record was read and the logins it was open in by account worked out.
+    fn told(&self) -> Option<bool> {
+        (self.read && self.seeded).then_some(!self.dirs.is_empty())
+    }
+}
+
+impl Told {
+    fn kept(told: Option<bool>) -> u8 {
+        match told {
+            None => 0,
+            Some(false) => 1,
+            Some(true) => 2,
+        }
+    }
+
+    fn read(kept: u8) -> Option<bool> {
+        match kept {
+            1 => Some(false),
+            2 => Some(true),
+            _ => None,
+        }
+    }
+}
+
+/// Publishes what `state` tells, under its lock.
+fn publish(node: &Node, state: &Open) {
+    node.logins.workbench_told.0.store(Told::kept(state.told()), Ordering::Release);
 }
 
 /// Whether the workbench is open in `agent`'s login `home`, its default one
@@ -76,10 +115,9 @@ pub(crate) fn known(node: &Node, agent: &str, dir: &Path) -> Option<bool> {
 
 /// Whether one of this machine's logins has the workbench open, once the
 /// logins it was open in by account were worked out. The hubs are told it
-/// with each heartbeat, so it reads only what is in memory.
+/// with each heartbeat, so it reads only what was published (`Told`).
 pub(crate) fn told(node: &Node) -> Option<bool> {
-    let state = node.logins.workbench.lock().expect("never poisoned");
-    (state.read && state.seeded).then(|| !state.dirs.is_empty())
+    Told::read(node.logins.workbench_told.0.load(Ordering::Acquire))
 }
 
 /// Whether the workbench's places are shown to whoever reads the world
@@ -145,6 +183,7 @@ pub(crate) fn set(node: &Node, agent: &str, dir: &Path, open: bool) -> std::io::
     if open {
         state.dirs.push((agent.to_owned(), dir.to_path_buf()));
     }
+    publish(node, &state);
     drop(state);
     node.topics.changed(fastctx_types::topics::LOGINS);
     Ok(())
@@ -208,6 +247,7 @@ fn state(node: &Node) -> std::sync::MutexGuard<'_, Open> {
                     .flat_map(|agent| record.of(agent).workbench.iter().map(move |dir| (agent.to_owned(), dir.clone())))
                     .collect();
                 state.read = true;
+                publish(node, &state);
             }
             Err(error) => node.log.line(format_args!("reading where the workbench is open: {error}")),
         }
@@ -279,9 +319,36 @@ pub(super) fn seed(node: &Node, context: &Context) {
                 }
             }
             state.seeded = true;
+            publish(node, &state);
             drop(state);
             node.topics.changed(fastctx_types::topics::LOGINS);
         }
         Err(error) => node.log.line(format_args!("keeping where the workbench is open: {error}")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Nothing is told until the record was read and the logins worked out:
+    /// a login not known yet is never told as closed.
+    #[test]
+    fn told_as_the_view_stands() {
+        let dir = || ("codex".to_owned(), PathBuf::from("/home/someone/.codex"));
+        let mut open = Open::default();
+        assert_eq!(open.told(), None);
+        open.dirs.push(dir());
+        assert_eq!(open.told(), None, "not read yet");
+        open.read = true;
+        assert_eq!(open.told(), None, "not worked out yet");
+        open.seeded = true;
+        assert_eq!(open.told(), Some(true));
+        open.dirs.clear();
+        assert_eq!(open.told(), Some(false));
+        for told in [None, Some(false), Some(true)] {
+            assert_eq!(Told::read(Told::kept(told)), told);
+        }
+        assert_eq!(Told::read(Told::default().0.load(Ordering::Acquire)), None, "nothing told as the node starts");
     }
 }

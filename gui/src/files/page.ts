@@ -16,6 +16,7 @@ import { escape } from "../conversation/prose";
 import type { Page } from "../app/shell";
 import { fileRow, figures } from "./changed";
 import { Changes, fileKey, filesOf, plain, split, tally, within, type ChangedFile, type FileChange } from "./model";
+import { RecentFileViews } from "./recent";
 import { FileTree, type Listing, type TreeMode } from "./tree";
 import { FileView, type ViewSeams, type ViewTab } from "./view";
 import type { FilesWords } from "./words";
@@ -76,6 +77,7 @@ export class FilesPage implements Page {
   private drawn = -1;
   private readonly tree: FileTree;
   private view: FileView | null = null;
+  private readonly recent = new RecentFileViews();
   private readonly main: HTMLElement;
   private timer = 0;
   private left = false;
@@ -130,6 +132,11 @@ export class FilesPage implements Page {
     document.removeEventListener("pointerdown", this.outside);
     this.tree.leave();
     this.view?.leave();
+    this.recent.clear();
+  }
+
+  forgetRecent(): void {
+    this.recent.clear();
   }
 
   /** Another file of this page asked for from outside it; or, with no
@@ -166,6 +173,7 @@ export class FilesPage implements Page {
     const asked = (this.asked += 1);
     this.view?.leave();
     this.view = null;
+    this.recent.clear();
     this.root = null;
     this.places = { home: null, places: [] };
     this.book.replace([]);
@@ -288,16 +296,25 @@ export class FilesPage implements Page {
 
   private open(path: string, tab: ViewTab | null, told = true): void {
     const { options } = this;
-    this.path = path;
-    this.view?.leave();
     const changes = this.book.of(this.machine, path);
-    this.view = new FileView({ words: options.words, seams: options.seams, machine: this.machine, path, changes, tab: tab ?? undefined, now: options.now });
+    let view = this.view;
+    if (this.path !== path || !view?.reusable) {
+      this.park();
+      view = this.recent.take(path) ?? new FileView({
+        words: options.words, seams: options.seams, machine: this.machine, path, changes, tab: tab ?? undefined, now: options.now,
+      });
+    }
+    this.path = path;
+    this.view = view;
+    view.update(changes);
+    if (tab) view.turn(tab);
     const back = document.createElement("button");
     back.type = "button";
     back.className = "text-button page-back fb-back";
     back.innerHTML = `${glyph("back", 18)}<span>${escape(options.words.tree.label)}</span>`;
-    this.main.replaceChildren(back, this.view.element);
+    this.main.replaceChildren(back, view.element);
     this.element.classList.add("fb-reading");
+    view.shown();
     // A file outside the folder shown brings the tree to where it lies.
     if (this.mode === "all" && this.root !== null && !within(this.root, path)) {
       this.root = this.rootFor(path);
@@ -308,10 +325,16 @@ export class FilesPage implements Page {
     if (told) options.moved(options.link(this.machine, path, tab));
   }
 
-  private close(): void {
-    this.path = null;
-    this.view?.leave();
+  private park(): void {
+    if (!this.view) return;
+    if (this.path === null) this.view.leave();
+    else this.recent.put(this.path, this.view);
     this.view = null;
+  }
+
+  private close(): void {
+    this.park();
+    this.path = null;
     this.element.classList.remove("fb-reading");
     this.tree.select(null);
     this.drawMain();

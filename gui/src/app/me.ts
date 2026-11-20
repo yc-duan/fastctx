@@ -19,7 +19,7 @@ import type { WorldNow } from "../world/bridge";
 import { wholeDollars } from "../world/money";
 import { agentName } from "../world/names";
 import type { MachinesWords } from "./account-words";
-import { assistChange, termsOf } from "./assist-sheet";
+import { assistChange, endAssist } from "./assist-sheet";
 import { codeName, codeRow, codesOf } from "./code-rows";
 import { Confirm, Sheet } from "./confirm";
 import { redrawKeepingFocus } from "./focus";
@@ -180,9 +180,10 @@ export class MePage implements Page {
       case "unassist": {
         const assist = this.hubOf(login)?.assists.find((one) => assistKey(one) === button.dataset.assist);
         if (!assist) return;
-        const give = assistChange(assist.machine, assist.agent, assist.home, assist.account, termsOf(assist));
-        const take = assistChange(assist.machine, assist.agent, assist.home, assist.account, null);
-        return void this.takeBack(login, [`assist\n${assistKey(assist)}`], words.assistLabel(`${agentName(assist.agent)} ${assist.machine}`, assist.account), [take], [give]);
+        // Ended for good, once asked: what was born under it is deleted, and
+        // there is nothing to undo.
+        const take = assistChange(assist.machine, assist.agent, assist.home, assist.account, null, assist.grants ?? []);
+        return endAssist(confirm, this.options.machines, assist.account, assist.grants ?? [], () => change(login, take), refresh);
       }
       case "leave":
         return this.leaveNetwork(login);

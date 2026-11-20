@@ -4819,7 +4819,8 @@
                 "until": null,
                 "five_hour": 80,
                 "turns": 4,
-                "manages": false
+                "manages": false,
+                "direct": false
               },
               {
                 "machine": "gpu",
@@ -4829,7 +4830,10 @@
                 "until": "2026-10-20T10:00:00Z",
                 "weekly": 42500000,
                 "daily": 8000000,
-                "manages": true
+                "manages": true,
+                "grants": [
+                  "g-00000000000000aa"
+                ]
               }
             ],
             "plans": [
@@ -4944,7 +4948,8 @@
         "until": "2026-10-20T10:00:00Z",
         "five_hour": 90,
         "turns": 3,
-        "manages": true
+        "manages": true,
+        "direct": false
       },
       {
         "change": "assist",
@@ -4953,7 +4958,11 @@
         "agent": "claude",
         "assisting": true,
         "weekly": 50000000,
-        "daily": 10000000
+        "daily": 10000000,
+        "purge": true,
+        "shown": [
+          "g-00000000000000aa"
+        ]
       },
       {
         "change": "plan",
@@ -5079,7 +5088,8 @@
       },
       {
         "change": "delete_account",
-        "name": "bo"
+        "name": "bo",
+        "opened": "2026-10-01T08:00:00Z"
       },
       {
         "change": "settings",

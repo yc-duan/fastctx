@@ -334,6 +334,16 @@ fn machine(name: Option<String>) -> Result<Option<fastctx_types::access::Written
     name.map(|name| name.parse::<fastctx_types::access::Written>().map_err(|error| error.to_string())).transpose()
 }
 
+#[fastctx_gui_command::command]
+async fn conversation_preview(
+    shell: tauri::State<'_, Shell>,
+    resident_id: String,
+    machine_name: String,
+) -> Result<Option<replica::Part>, String> {
+    let (Some(machine), resident) = (machine(Some(machine_name))?, resident(resident_id)?) else { return Ok(None) };
+    Ok(replica::preview(&shell.world(), machine, resident).await)
+}
+
 /// Opens a conversation for a page: its history as its machine keeps it, the
 /// latest part first, then what follows down `pieces` until the page lets go.
 #[fastctx_gui_command::command]
@@ -1346,6 +1356,7 @@ pub fn run() {
             watch_delivery::watch_delivery_resend,
             transcript::conversation_part,
             conversation_files::conversation_files,
+            conversation_preview,
             replica_reads::conversation_page,
             replica_reads::conversation_object,
             replica_search::conversation_search,

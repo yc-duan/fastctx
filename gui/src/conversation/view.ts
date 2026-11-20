@@ -496,6 +496,7 @@ export class ConversationView {
   /** Brings the page up to the conversation as it now stands; `read` when
    *  what is new came as history rather than as it happened. */
   update(read = false): void {
+    if (this.keptStill) return;
     const blocks = this.mode === "said" ? this.conversation.chatBlocks() : this.conversation.blocks();
     this.reading = read;
     // Words already on their way when the page is first drawn (the first
@@ -592,7 +593,15 @@ export class ConversationView {
    *  spaces; the rest let go. Says which were drawn again. Unless `moved`
    *  (the view was just put somewhere), the block the reader is at stays
    *  where it is on the screen, whatever came or went above it. */
+  /** Held still (`hold`): what it shows stays as it was drawn, laid out
+   *  again only once let go. */
+  private keptStill = false;
+  hold(on: boolean): void {
+    this.keptStill = on;
+  }
+
   private lay(read = false, moved = false): HTMLElement[] {
+    if (this.keptStill) return [];
     const scroller = this.context.scroller;
     const n = this.blocks.length;
     const following = this.context.following?.() ?? true;
@@ -2503,10 +2512,11 @@ export class ConversationView {
       // What it did, a row a thing, what goes by alike gathered; a stretch
       // of hundreds of rows opens on its latest, the earlier coming a few
       // screens at a time from a line above them.
+      const cut = this.conversation.cutShort();
       const all = bunched(
         runs.flatMap((run) => this.partsOf(run)),
         (part): part is Card => !("html" in part),
-      ).map((part) => ("html" in part ? part : this.lineRow(part)));
+      ).map((part) => ("html" in part ? part : this.lineRow(part, cut)));
       const limit = this.stretchRows.get(group.key) ?? STRETCH_ROWS;
       rows = all.length > limit ? all.slice(all.length - limit) : all;
       hidden = all.length - rows.length;
@@ -2535,11 +2545,17 @@ export class ConversationView {
         const holder = document.createElement("div");
         holder.innerHTML = row.html();
         const fresh = holder.firstElementChild as HTMLElement;
+        // A card's raw words the reader opened stay open as it is drawn
+        // again, as when the whole of its event comes (codex-f9af46d4).
+        const feet = drawn ? openFeet(drawn.element) : [];
         if (drawn) {
           this.letGo(row.key);
           drawn.element.replaceWith(fresh);
         }
-        if (this.openRows.has(row.key)) this.fill(row.key, fresh);
+        if (this.openRows.has(row.key)) {
+          this.fill(row.key, fresh);
+          reopenFeet(fresh, feet);
+        }
         drawn = { signature: row.signature, element: fresh };
         stretch.drawn.set(row.key, drawn);
         if (fresh.classList.contains("row-agent")) this.agentRows.set(row.key, fresh);
@@ -2749,15 +2765,19 @@ export class ConversationView {
   }
 
   /** A thing, or things gathered, as their row (`cards/lines.ts`). */
-  private lineRow(part: Card | Bunch): Row {
+  private lineRow(part: Card | Bunch, cutShort: (key: string) => boolean): Row {
     if (part.kind === "bunch") {
       this.bunches.set(part.key, part);
       for (const card of cardsIn(part)) this.cards.set(card.key, card);
     } else this.cards.set(part.key, part);
     const words = this.context.words;
+    // Whether its events are cut short is what it is too: the way to read
+    // them whole goes as they come whole, though nothing else of it changes.
+    const sources = part.kind === "bunch" ? cardsIn(part).flatMap((card) => card.sources) : part.sources;
+    const cut = sources.filter((source) => cutShort(source.entry)).map((source) => source.entry);
     return {
       key: part.key,
-      signature: `line|${JSON.stringify(part)}`,
+      signature: `line|${cut.join(" ")}|${JSON.stringify(part)}`,
       html: () => lineHtml(part, { words, open: this.openRows.has(part.key), enter: this.entering(part.key) }),
       text: () => lineText(part, words),
     };
@@ -3405,13 +3425,20 @@ export class ConversationView {
     const deferred = owners.filter((owner) => this.conversation.deferred(owner));
     if (deferred.length) queueMicrotask(() => {
       if (!content.isConnected || !row.contains(content)) return;
-      for (const owner of deferred.filter((owner) => this.conversation.deferred(owner))) {
+      // A card's whole event is its raw words: the way to read it all ends
+      // them, opened from the card's foot, not a line under the card that
+      // belongs to nothing (the user, 2026-11-20: under a picture's card).
+      const raws = content.querySelectorAll<HTMLElement>(".dd-foot .fold-inner");
+      const at = raws.length === 1 ? raws[0]! : content;
+      // Filled twice before this is told, it is put there once.
+      const there = new Set([...content.querySelectorAll<HTMLElement>("[data-event-whole]")].map((button) => button.dataset.eventWhole));
+      for (const owner of deferred.filter((owner) => this.conversation.deferred(owner) && !there.has(owner))) {
         const button = document.createElement("button");
         button.type = "button";
         button.className = "tool-more";
         button.dataset.eventWhole = owner;
         button.textContent = this.context.words.showMore;
-        content.append(button);
+        at.append(button);
       }
     });
     if (card) {
@@ -4244,4 +4271,28 @@ function userWords(text: string): string {
   const chip = `<span class="bubble-skill">${glyph("skill", 13)}<span>${escape(asked.name)}</span></span>`;
   const rest = plain(asked.rest);
   return rest.startsWith("<p>") ? `<p>${chip}${rest.slice(3)}` : `<p>${chip}</p>`;
+}
+
+/** Which of a row's card feet stand open, in order (`deeds/draw.ts`). */
+function openFeet(row: HTMLElement): boolean[] {
+  return [...row.querySelectorAll<HTMLElement>(".dd-foot > .dd-foot-line > .dd-raw")].map((button) => button.getAttribute("aria-expanded") === "true");
+}
+
+/** Opens again, at once, the feet of a row drawn anew that stood open
+ *  before, where it has the same feet. */
+function reopenFeet(row: HTMLElement, open: boolean[]): void {
+  if (!open.includes(true)) return;
+  const buttons = [...row.querySelectorAll<HTMLButtonElement>(".dd-foot > .dd-foot-line > .dd-raw")];
+  if (buttons.length !== open.length) return;
+  const folds: HTMLElement[] = [];
+  buttons.forEach((button, at) => {
+    const fold = button.closest(".dd-foot")?.querySelector<HTMLElement>(":scope > .fold");
+    if (!open[at] || !fold || button.getAttribute("aria-expanded") === "true") return;
+    fold.style.transition = "none";
+    folds.push(fold);
+    button.click();
+  });
+  requestAnimationFrame(() => {
+    for (const fold of folds) fold.style.transition = "";
+  });
 }

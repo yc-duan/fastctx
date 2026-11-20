@@ -153,6 +153,7 @@ async fn one(node: &Arc<Node>, resident: &ResidentId) -> Result<(), String> {
         else {
             return Err("the conversation's import ownership was not confirmed".into());
         };
+        let conversation = *conversation;
         if conversation.account != transfer.account.account {
             return Err("the conversation belongs to another account".into());
         }

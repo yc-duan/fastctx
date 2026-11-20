@@ -47,7 +47,15 @@ pub(crate) struct Deleted {
     unlooked: Mutex<BTreeSet<Owner>>,
     /// Held by the one turn under way.
     turn: Mutex<()>,
+    /// The conversations whose scopes are being deleted now (none), and when
+    /// the last try of each that failed ended: tried again no sooner than
+    /// `AGAIN` after (`conversation_gone`).
+    trying: Mutex<std::collections::HashMap<String, Option<std::time::Instant>>>,
 }
+
+/// How long after a try to delete a conversation's scopes failed it is tried
+/// again.
+const AGAIN: std::time::Duration = std::time::Duration::from_secs(60);
 
 /// The scopes deleted, as a write to the control database looks them up
 /// (`Assets::deleted_scopes`).
@@ -98,6 +106,31 @@ impl Assets {
         })
     }
 
+    /// Whether to try deleting the scopes of the conversation `key` now: not
+    /// while a try is under way, nor soon after one failed.
+    fn try_conversation(&self, key: &str) -> bool {
+        let mut trying = self.deleted.trying.lock().expect("conversations being deleted");
+        match trying.get(key) {
+            Some(None) => false,
+            Some(Some(failed)) if failed.elapsed() < AGAIN => false,
+            _ => {
+                trying.insert(key.to_string(), None);
+                true
+            }
+        }
+    }
+
+    /// The try to delete the scopes of the conversation `key` ended, all of
+    /// them gone or not.
+    fn tried_conversation(&self, key: &str, gone: bool) {
+        let mut trying = self.deleted.trying.lock().expect("conversations being deleted");
+        if gone {
+            trying.remove(key);
+        } else {
+            trying.insert(key.to_string(), Some(std::time::Instant::now()));
+        }
+    }
+
     /// The owner library of `owner` has something of an ended period in
     /// it: it lets go of that at the next turn (`let_go`).
     fn lets_go(&self, owner: &Owner) {
@@ -131,6 +164,74 @@ impl Assets {
         Ok(())
     }
 
+    /// Deletes the scope `key` for good, described or not, so a description
+    /// of it that comes later is refused (`crate::purges`): marked first, so
+    /// one crossing this is turned away as it is written; then its row, if
+    /// one was written before, deleted as any scope is, its holders told; or,
+    /// with none, its mark kept for good. Call on a thread that may block.
+    pub(crate) fn purge_key(&self, key: &str, owner: &Owner, machine: &str) -> io::Result<bool> {
+        if let Some(why) = self.sealed() {
+            return Err(io::Error::other(why));
+        }
+        let keys = self.deleted_keys()?;
+        let stamp = stamp(key);
+        keys.lock().expect("deleted scopes").insert(stamp);
+        // In one write, after any description that passed its look at the
+        // marks before they had this one: its row, as written, deleted with
+        // what the hub's history kept of it, and the mark kept for good,
+        // once (codex-87c8bbd9).
+        let (name, sealing, expected, from) = (key.to_string(), self.sealing.clone(), owner.key(), machine.to_string());
+        let written = self.control.write_now(1024, move |c| {
+            use fastctx_storage::rusqlite::OptionalExtension;
+            super::unsealed(&sealing)?;
+            let found: Option<(String, Option<String>)> = c
+                .prepare_cached("SELECT owner, source FROM asset_scopes WHERE key = ?1")?
+                .query_row([&name], |row| Ok((row.get(0)?, row.get(1)?)))
+                .optional()?;
+            // A conversation's id is its machine's alone: a row of the key
+            // another machine described, or another account's as opened, is
+            // another conversation's, and stays, unmarked (codex-87c8bbd9).
+            if let Some((stored, source)) = &found
+                && (*stored != expected
+                    || source.as_deref().and_then(|source| source.split(':').next()) != Some(from.as_str()))
+            {
+                return Ok(Err(()));
+            }
+            let owner = found.map(|(owner, _)| owner);
+            if let Some(owner) = &owner {
+                c.prepare_cached("DELETE FROM asset_scopes WHERE key = ?1")?.execute([&name])?;
+                for table in ["hub_checkpoints", "hub_epoch_facts", "hub_gap_facts"] {
+                    c.prepare_cached(&format!("DELETE FROM {table} WHERE owner = ?1 AND scope = ?2"))?
+                        .execute(params![owner, name])?;
+                }
+            } else if c
+                .prepare_cached("SELECT 1 FROM hub_chain WHERE kind = ?1 AND digest = ?2")?
+                .exists(params![KIND, stamp.to_vec()])?
+            {
+                return Ok(Ok((None, None)));
+            }
+            Ok(Ok((owner, Some(chain::append(c, KIND, &stamp)?))))
+        });
+        // Not written, or not known to be: it stays marked, and is tried
+        // again as a whole.
+        let Ok((stored, appended)) = written.map_err(io::Error::other)? else {
+            keys.lock().expect("deleted scopes").remove(&stamp);
+            return Ok(false);
+        };
+        let witnessed = match appended {
+            Some((seq, head)) => self.witness.advanced(seq, &head),
+            None => Ok(()),
+        };
+        // Its holders told and its library let go of it, whether its row went
+        // now or in a write whose answer was lost: by the owner it was
+        // purged as, and by its row's where that was another (codex-87c8bbd9).
+        self.let_go_of_stored(key, owner);
+        if let Some(stored) = stored.and_then(|stored| Owner::from_key(&stored)).filter(|stored| stored != owner) {
+            self.let_go_of_stored(key, &stored);
+        }
+        witnessed.map(|()| true)
+    }
+
     /// Deletes the scope `key`; whether there was one. Its machines are
     /// told by the pushes this leaves to be sent. Call on a thread that may
     /// block.
@@ -139,6 +240,11 @@ impl Assets {
             return Err(io::Error::other(why));
         }
         let Some(scope) = scopes::scope(self, key).map_err(io::Error::other)? else { return Ok(false) };
+        self.delete_stored(key, scope)
+    }
+
+    /// `delete_scope` of the scope `key` as read, `scope`.
+    fn delete_stored(&self, key: &str, scope: scopes::Scope) -> io::Result<bool> {
         let keys = self.deleted_keys()?;
         let stamp = stamp(key);
         // Known as deleted before its row goes: what asks of it meanwhile is
@@ -179,7 +285,15 @@ impl Assets {
                 }
             }
         };
-        if let Some(scopes) = self.changed.lock().expect("changed scopes").get_mut(&scope.owner) {
+        self.let_go_of_stored(key, &scope.owner);
+        witnessed?;
+        Ok(true)
+    }
+
+    /// What follows the row of the scope `key` of `owner` deleted: its
+    /// holders told it is revoked, and its owner library let go of it.
+    fn let_go_of_stored(&self, key: &str, owner: &Owner) {
+        if let Some(scopes) = self.changed.lock().expect("changed scopes").get_mut(owner) {
             scopes.remove(key);
         }
         self.receipted.lock().expect("receipted").remove(key);
@@ -190,12 +304,10 @@ impl Assets {
             .extend(held.into_iter().map(|machine| (machine, Push::Revoked { scope: key.to_string() })));
         // The owner library holds it no more, and lets go of it in turns;
         // one not reached now is reached at a later turn.
-        match self.library(&scope.owner).and_then(|library| library.revoke(key).map_err(other)) {
-            Ok(()) => self.lets_go(&scope.owner),
-            Err(_) => self.deleted.unreached.lock().expect("scopes unreached").push((scope.owner.clone(), key.to_string())),
+        match self.library(owner).and_then(|library| library.revoke(key).map_err(other)) {
+            Ok(()) => self.lets_go(owner),
+            Err(_) => self.deleted.unreached.lock().expect("scopes unreached").push((owner.clone(), key.to_string())),
         }
-        witnessed?;
-        Ok(true)
     }
 
     /// A turn of the owner libraries at letting go of the scopes deleted
@@ -307,42 +419,104 @@ pub(super) fn of_conversation(
 /// The conversation at `conversation` was deleted where it lived: its
 /// scopes are deleted, off the caller's thread, and the machines holding
 /// them told. Asked again of one whose scopes are gone, nothing is done.
+/// Once every one of them is gone, the deletion is told so
+/// (`forget::scopes_went`); one that could not be deleted now is tried
+/// again as the deletion is looked at, a minute apart at least.
 pub(crate) fn conversation_gone(hub: &crate::Hub, conversation: &Address) {
     let Some(hub) = hub.this.get().and_then(std::sync::Weak::upgrade) else { return };
     let conversation = conversation.clone();
+    let key = conversation.key();
+    if !hub.assets.try_conversation(&key) {
+        return;
+    }
     // It changes the records: a hub moving waits for it (`moving`).
     let held = crate::moving::Moving::hold(&hub);
     fastctx_platform::task::spawn_blocking(move || {
         let _held = held;
-        let keys = {
-            let store = hub.store();
-            of_conversation(&hub.assets, &store.indexed(), &conversation)
-        };
-        let keys = match keys {
-            Ok(keys) => keys,
-            Err(error) => {
-                hub.log.line(format_args!("finding the scopes of {}, deleted: {error}", conversation.key()));
-                return;
-            }
-        };
-        if keys.is_empty() {
-            return;
+        let gone = delete_its_scopes(&hub, &conversation, None);
+        hub.assets.tried_conversation(&key, gone);
+        if gone {
+            crate::forget::scopes_went(&hub, &conversation);
         }
-        for key in &keys {
-            match hub.assets.delete_scope(key) {
-                Ok(true) => hub.log.line(format_args!("deleted the scope {key} with its conversation")),
-                Ok(false) => {}
-                Err(error) => hub.log.line(format_args!("deleting the scope {key} with its conversation: {error}")),
-            }
-        }
-        let drained = hub.assets.drain_pushes();
-        let pushes = {
-            let store = hub.store();
-            hub.assets.take_pushes(drained, &store.indexed())
-        };
-        for (machine, push) in pushes {
-            hub.tell(&machine, fastctx_net::wire::Down::Assets { push });
-        }
-        hub.assets.let_go();
     });
+}
+
+/// Deletes the scopes of the conversation at `conversation`, purged where it
+/// lived (`crate::purges`), at once: its own for good, described or not,
+/// so one on its way is refused after (`Assets::purge_key`), and every other
+/// it has. An error where not every one went, to be tried again.
+pub(crate) fn purge_scopes(
+    hub: &crate::Hub,
+    conversation: &Address,
+    machine: fastctx_net::sign::PublicKey,
+    account: &fastctx_types::AccountName,
+    generation: jiff::Timestamp,
+) -> Result<bool, String> {
+    // Born by an assistance, its scope is its opener's own (`scopes::owner_of`).
+    let readers = Readers::Conversation { openers: vec![account.clone()], born_on: None };
+    let its_own = format!("{}{}", readers.key_prefix(hub.store().hub.id.as_str()), conversation.resident);
+    let owner = Owner::Account(account.to_string(), generation.as_millisecond());
+    if !hub.assets.purge_key(&its_own, &owner, &machine.to_string()).map_err(|error| error.to_string())? {
+        // Its key held by another conversation of the same id: it never had
+        // a scope here, and nothing else is looked for under its id
+        // (codex-87c8bbd9).
+        hub.log.line(format_args!(
+            "the scope {its_own} is another conversation's of the same id: kept, and nothing deleted for it"
+        ));
+        return Ok(false);
+    }
+    // Any other it has, of that account as opened alone.
+    if !delete_its_scopes(hub, conversation, Some(&owner)) {
+        return Err("not every scope of it could be deleted now".into());
+    }
+    Ok(true)
+}
+
+/// Deletes the scopes of the conversation at `conversation`, deleted where
+/// it lived, and tells the machines holding them; whether none is left.
+fn delete_its_scopes(hub: &crate::Hub, conversation: &Address, owned_by: Option<&Owner>) -> bool {
+    let keys = {
+        let store = hub.store();
+        of_conversation(&hub.assets, &store.indexed(), conversation)
+    };
+    // Of a purge, only those of the account as purged: another's of the same
+    // id stays (codex-87c8bbd9).
+    let keys = keys.map(|keys| match owned_by {
+        None => keys,
+        Some(owner) => keys
+            .into_iter()
+            .filter(|key| scopes::scope(&hub.assets, key).ok().flatten().is_some_and(|scope| scope.owner == *owner))
+            .collect(),
+    });
+    let keys = match keys {
+        Ok(keys) => keys,
+        Err(error) => {
+            hub.log.line(format_args!("finding the scopes of {}, deleted: {error}", conversation.key()));
+            return false;
+        }
+    };
+    if keys.is_empty() {
+        return true;
+    }
+    let mut gone = true;
+    for key in &keys {
+        match hub.assets.delete_scope(key) {
+            Ok(true) => hub.log.line(format_args!("deleted the scope {key} with its conversation")),
+            Ok(false) => {}
+            Err(error) => {
+                gone = false;
+                hub.log.line(format_args!("deleting the scope {key} with its conversation: {error}"));
+            }
+        }
+    }
+    let drained = hub.assets.drain_pushes();
+    let pushes = {
+        let store = hub.store();
+        hub.assets.take_pushes(drained, &store.indexed())
+    };
+    for (machine, push) in pushes {
+        hub.tell(&machine, fastctx_net::wire::Down::Assets { push });
+    }
+    hub.assets.let_go();
+    gone
 }

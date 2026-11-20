@@ -179,6 +179,22 @@ pub enum AccountChange {
         /// owner says so; none leaves what the hub keeps.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         manages: Option<bool>,
+        /// Whether `to`'s machines link with the machine directly, where it
+        /// takes direct connections: said not, they reach it through the
+        /// hub alone and are not told where it is. Only the machine's
+        /// holder says so; none leaves what the hub keeps.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        direct: Option<bool>,
+        /// Ending it for good: the conversations born under it are deleted
+        /// with it, where the hub does that (`HubView::purges`); refused
+        /// where it does not, rather than only ending it.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        purge: bool,
+        /// Ending it for good: the grants it was shown with as that was
+        /// asked (`AssistSeen::grants`), so one given again since is not
+        /// the one ended; refused where it is other grants now.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        shown: Vec<crate::access::GrantId>,
     },
     /// The plan shown for one login of an agent on `machine`, set by the
     /// hub's super administrator on a login that names none (a Claude Code
@@ -292,6 +308,10 @@ pub enum AccountChange {
     },
     DeleteAccount {
         name: AccountName,
+        /// When the account was opened, as its deletion was asked: what is
+        /// deleted is that account, never one opened again under its name.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        opened: Option<Timestamp>,
     },
     Settings {
         self_registration: bool,
@@ -744,6 +764,15 @@ pub struct AssistSeen {
     /// node that knows no such word.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub manages: Option<bool>,
+    /// Whether the account's machines link with the machine directly:
+    /// false once the machine's holder said they do not; none is that they
+    /// do, where the machine takes direct connections.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub direct: Option<bool>,
+    /// Every grant the assistance is, as its hub gave them: what ending it
+    /// for good is bound to as it is asked (`AccountChange::Assist::shown`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub grants: Vec<crate::access::GrantId>,
 }
 
 /// A plan a login names none of, as the hub's super administrator set it

@@ -234,10 +234,14 @@ on("add-grant", () => {
       </div>
       <span class="as-label">期限</span>
       ${untilRow()}
+      ${login.ownMachine && login.allowsDirect ? `<span class="as-label">直连</span>${choices("as-direct", [["on", "允许"], ["off", "不允许"]], "on")}` : ""}
     </div>
     <p class="as-warn">${glyph("shield", 16)}<span>使用此登录的订阅额度。任务在本机运行，可随时查看与停止。</span></p>
     <footer class="cs-foot"><button type="button" class="sheet-go" data-do disabled>添加</button></footer>`;
   wireUntil(sheet, (value) => (until = value));
+  // Whether their machines link with this one directly, where it takes
+  // direct connections: said not, they never learn where it is reached.
+  let direct = true;
   const input = sheet.body.querySelector<HTMLInputElement>(".as-input")!;
   const names = sheet.body.querySelector<HTMLElement>(".as-names")!;
   const percents = sheet.body.querySelector<HTMLElement>(".as-percent")!;
@@ -273,7 +277,11 @@ on("add-grant", () => {
     const name = target.closest<HTMLElement>("[data-name]");
     const mode = target.closest<HTMLElement>("[data-mode]");
     const choice = target.closest<HTMLElement>("[data-act='as-limit']");
-    if (name) {
+    const linked = target.closest<HTMLElement>("[data-act='as-direct']");
+    if (linked) {
+      direct = linked.dataset.value === "on";
+      for (const one of linked.parentElement!.children) one.classList.toggle("chosen", one === linked);
+    } else if (name) {
       input.value = name.dataset.name!;
       listed();
     } else if (mode) {
@@ -294,7 +302,7 @@ on("add-grant", () => {
       if (deeds) {
         go.disabled = true;
         sheet.busy = true;
-        deeds.assist(login, person, limited ? percent : null, until?.at ?? null, limitable && !limited).then(
+        deeds.assist(login, person, limited ? percent : null, until?.at ?? null, limitable && !limited, direct ? undefined : false).then(
           () => {
             sheet.busy = false;
             sheet.close();
@@ -308,7 +316,7 @@ on("add-grant", () => {
         );
         return;
       }
-      grants.push({ login: login.id, person, limit: limited ? percent : null, used: 0, fable: 0, until: until?.said ?? null, ...(limitable && !limited ? { manages: true } : {}) });
+      grants.push({ login: login.id, person, limit: limited ? percent : null, used: 0, fable: 0, until: until?.said ?? null, ...(limitable && !limited ? { manages: true } : {}), ...(direct ? {} : { direct: false }) });
       sheet.close();
       lit(person);
     }
@@ -345,13 +353,29 @@ on("grant-end", (button) => {
   const login = current();
   const person = button.dataset.person!;
   if (deeds) {
-    deeds.endAssist(login, person).then(
-      () => {
-        state.editing = null;
-        draw();
-      },
-      (error: unknown) => say(error instanceof Error ? error.message : "收回失败"),
-    );
+    // Asked once, and not undone: what was born under it is deleted (the
+    // user, 2026-11-20: 「「结束协助」直接删数据，同时去掉撤销，改成弹确认框」).
+    const live = deeds;
+    // Bound to the assistance as it is shown now (codex-87c8bbd9).
+    const shown = live.assistGrants(login, person);
+    const sheet = new Sheet("lg-end-assist");
+    sheet.body.innerHTML = `${sheet.head(`结束对 ${person} 的协助`, "关闭")}<p class="confirm-what">结束后 ${person} 不能再用这个登录。${person} 借这个登录开过的会话，会从这台机器和中枢上删除，无法撤销。同事会话、和别人共用的会话会保留，并列出来供你处理。</p><footer class="cs-foot"><button type="button" class="sheet-go danger" data-do>结束并删除</button></footer>`;
+    sheet.body.querySelector("[data-do]")!.addEventListener("click", () => {
+      sheet.close();
+      // Never unbound: one given again since is not taken for it.
+      if (!shown.length) {
+        say("这里看不到这份协助的凭据，请刷新后再结束");
+        return;
+      }
+      live.endAssist(login, person, shown).then(
+        () => {
+          state.editing = null;
+          draw();
+        },
+        (error: unknown) => say(error instanceof Error ? error.message : "结束失败"),
+      );
+    });
+    sheet.show();
     return;
   }
   button.closest<HTMLElement>(".lg-item")!.classList.add("leaving");

@@ -22,23 +22,51 @@ body {
   transition: --grip-ink var(--hover) var(--ease);
 }
 
-/* Folded, the page has the whole window at once, laid out once: the sidebar
-   slides away over it, and comes back into the room the page gave up, by
-   moving, nothing set again as it goes (a page set again every moment of a
-   sidebar's glide is what made it halt). */
 .shell.folded {
   grid-template-columns: 0 minmax(0, 1fr);
 }
 
+/* The sidebar folds and comes back over one glide, its sheet riding its
+   edge, and the page gives way as it goes: any page but the desk as the
+   sidebar's room glides, laid out every moment, which such a page bears.
+   The desk has its room at once, laid out once, a long conversation set
+   once rather than every moment of the glide (which made it halt), and
+   what stands on it is carried there as the sidebar slides over it
+   (`carry.ts`). */
 @media (min-width: 761px) {
-  .shell > .sidebar-frame {
-    z-index: 2;
-    width: var(--sidebar);
-    transition: translate var(--fold) var(--fold-easing);
+  html:not(.on-desk) .shell {
+    transition:
+      grid-template-columns var(--glide) var(--glide-easing),
+      --grip-ink var(--hover) var(--ease);
   }
 
-  .shell.folded > .sidebar-frame {
+  html:not(.on-desk) .shell.resizing {
+    transition: --grip-ink var(--hover) var(--ease);
+  }
+
+  .shell > .sidebar-frame {
+    z-index: 2;
+    display: flex;
+    justify-content: flex-end;
+  }
+
+  .shell > .sidebar-frame > .sidebar {
+    flex: none;
+  }
+
+  html.on-desk .shell > .sidebar-frame {
+    width: var(--sidebar);
+    transition: translate var(--glide) var(--glide-easing);
+  }
+
+  html.on-desk .shell.folded > .sidebar-frame {
     translate: -100% 0;
+  }
+
+  /* What is carried on the desk is not cut at its edge as it goes: the
+     regions on it that scroll keep what they hold to themselves. */
+  html.on-desk .main {
+    overflow: visible;
   }
 
   .shell.resizing > .sidebar-frame {

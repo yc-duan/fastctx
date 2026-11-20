@@ -25,6 +25,7 @@ use fastctx_types::timeline_pages::{
 };
 use serde::Serialize;
 use serde_json::value::RawValue;
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -70,6 +71,9 @@ pub(crate) struct Part {
     pub newer: Option<TimelinePlace>,
     /// Whether the timeline is still being made from the history.
     pub preparing: bool,
+    /// Revision and cursor of the same reading, kept as text for JavaScript.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stamp: Option<String>,
 }
 
 /// A record the timeline gained: an event as it stands from then on, or the
@@ -285,6 +289,16 @@ impl Reader {
                 max_bytes: PAGE_BYTES,
             })
             .await?;
+        Self::decode_page(self.generation(), told, cut_left, cut_right, matches!(from, From::Latest))
+    }
+
+    fn decode_page(
+        generation: u64,
+        told: TimelineTold,
+        cut_left: bool,
+        cut_right: bool,
+        latest: bool,
+    ) -> Result<(Read, Option<From>), Error> {
         let TimelineTold::Page { revision, initializing, events, older, newer, through } = told else {
             return Err(Error::Unexpected("the timeline did not answer a page".into()));
         };
@@ -335,8 +349,31 @@ impl Reader {
             events.push(shown(raw, &event, deferred).map_err(Error::Other)?);
         }
         let preparing = initializing.unwrap_or(revision.is_none());
-        Ok((Read { part: Part { generation: self.generation(), events, older, newer, preparing }, revision, through }, onward))
+        let stamp = revision.zip(through).filter(|_| latest).map(|(revision, through)| {
+            let mut digest = Sha256::new();
+            for shown in &events {
+                digest.update(shown.key.as_bytes());
+                digest.update(shown.place.order.as_bytes());
+                digest.update(shown.event.get().as_bytes());
+                if let Some(deferred) = &shown.deferred {
+                    digest.update(deferred.object.as_bytes());
+                }
+            }
+            for place in older.iter().chain(newer.iter()) {
+                digest.update(place.order.as_bytes());
+                digest.update(place.item.as_bytes());
+            }
+            format!("{revision:016x}/{through:016x}/{:x}", digest.finalize())
+        });
+        Ok((Read { part: Part { generation, events, older, newer, preparing, stamp }, revision, through }, onward))
     }
+}
+
+/// A display preview has no reader and cannot be used to follow a timeline.
+pub(crate) async fn preview(world: &World, machine: Written, resident: ResidentId) -> Option<Part> {
+    let page = world.timeline_preview(machine, resident).await?;
+    let part = Reader::decode_page(0, page, true, false, true).ok()?.0.part;
+    (!part.events.is_empty()).then_some(part)
 }
 
 /// A conversation opened from the timeline: its latest part, and what

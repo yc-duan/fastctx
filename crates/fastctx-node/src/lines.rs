@@ -1,6 +1,7 @@
 //! User-only line sources, owned by live connections and the holding file.
 
 mod copied;
+pub(crate) mod drill;
 mod projection;
 pub(crate) mod reading;
 
@@ -31,7 +32,11 @@ struct Source {
     job_record: Option<PathBuf>,
     notes_record: Option<PathBuf>,
     state: Mutex<State>,
-    changed: tokio::sync::watch::Sender<u64>,
+    /// What the state shows, published under its lock as it changes.
+    shown: tokio::sync::watch::Sender<Shown>,
+    /// Told as a look fails for a passing reason, so that the watch looks
+    /// again soon whoever's look it was.
+    again: Arc<tokio::sync::Notify>,
     closed: tokio::sync::watch::Sender<bool>,
     events: tokio::sync::watch::Sender<std::result::Result<u64, String>>,
     _watcher: Mutex<fastctx_watch::Watcher>,
@@ -61,6 +66,31 @@ struct State {
     notes_broken: bool,
     writes: Vec<fastctx_types::run_facts::WriteFact>,
     writes_revision: Option<(u64, std::time::SystemTime)>,
+}
+/// What a source shows as its state last settled, kept apart from that
+/// state: a reader holds the state for as long as its lines are taken, and
+/// what waits on a source or asks whether to look at it again reads this
+/// instead, on whatever thread it runs (a link's own must never wait
+/// behind a reader).
+#[derive(Clone)]
+struct Shown {
+    extent: Extent,
+    first: u64,
+    error: Option<String>,
+    stale: bool,
+}
+impl Shown {
+    fn of(state: &State) -> Self {
+        Self { extent: state.extent.clone(), first: state.first, error: state.error.clone(), stale: state.stale }
+    }
+}
+/// Publishes what `state` shows, under its lock: telling whoever waits on
+/// the source as `tell` says, which whether to look again alone does not.
+fn show(source: &Source, state: &State, tell: bool) {
+    source.shown.send_if_modified(|shown| {
+        *shown = Shown::of(state);
+        tell
+    });
 }
 pub(crate) enum Lease {
     Here { node: Weak<Node>, key: Key, closed: tokio::sync::watch::Receiver<bool> },
@@ -272,6 +302,7 @@ async fn opened_here(
         })
         .await
         .map_err(failed)??;
+    let shown = Shown::of(&opened);
     let source = Arc::new(Source {
         path: path.clone(),
         immutable,
@@ -279,7 +310,8 @@ async fn opened_here(
         job_record,
         notes_record,
         state: Mutex::new(opened),
-        changed: tokio::sync::watch::channel(0).0,
+        shown: tokio::sync::watch::channel(shown).0,
+        again: Arc::default(),
         closed: tokio::sync::watch::channel(false).0,
         events,
         _watcher: Mutex::new(watcher),
@@ -293,12 +325,13 @@ async fn opened_here(
     let id: String = random.iter().map(|byte| format!("{byte:02x}")).collect();
     let key = (from, id.clone());
     let lease = Lease::Here { node: Arc::downgrade(node), key: key.clone(), closed: source.closed.subscribe() };
+    let watching = source.closed.subscribe();
     node.line_sources.0.lock().expect("line sources").insert(key, source.clone());
-    fastctx_platform::task::spawn(monitor(Arc::downgrade(&source), event_rx, source.closed.subscribe()));
+    fastctx_platform::task::spawn(monitor(Arc::downgrade(&source), event_rx, watching, source.again.clone()));
     // Catch appends racing the initial bounded snapshot, without waiting for
     // another filesystem event to happen after the monitor starts.
     refresh(source.clone(), Some(initializing)).await?;
-    let extent = source.state.lock().expect("line source").extent.clone();
+    let extent = source.shown.borrow().extent.clone();
     let (machine, path) = standing_for.unwrap_or_else(|| (node.machine(), path.to_string_lossy().into_owned()));
     Ok((Reply { machine, result: Answer::Opened { source: id, path, extent } }, lease))
 }
@@ -315,17 +348,25 @@ async fn monitor(
     source: Weak<Source>,
     mut events: tokio::sync::watch::Receiver<std::result::Result<u64, String>>,
     mut closed: tokio::sync::watch::Receiver<bool>,
+    again: Arc<tokio::sync::Notify>,
 ) {
     loop {
-        let running = source.upgrade().is_some_and(|source| {
-            source.job_record.is_some() && !source.state.lock().expect("line source").extent.complete
+        if *closed.borrow() {
+            break;
+        }
+        // As last shown: a reader may hold the state as long as it takes.
+        let (running, stale) = source.upgrade().map_or((false, false), |source| {
+            let shown = source.shown.borrow();
+            (source.job_record.is_some() && !shown.extent.complete, shown.stale)
         });
-        let stale = source.upgrade().is_some_and(|source| source.state.lock().expect("line source").stale);
         tokio::select! {
             _ = closed.changed() => break,
             event = events.changed() => if event.is_err() { break; },
             () = tokio::time::sleep(RUNNING_LOOK), if running => {}
             () = tokio::time::sleep(AGAIN), if stale => {}
+            // A look failed for a passing reason, maybe another's: looked at
+            // again once `AGAIN` has passed.
+            () = again.notified() => continue,
         }
         let Some(source) = source.upgrade() else { break };
         if refresh(source, None).await.is_err() {
@@ -415,20 +456,27 @@ async fn refresh(
         })();
         state.stale = matches!(update, Err((_, true)));
         match update {
-            Ok(None) | Err((_, true)) => Ok(()),
+            Ok(None) | Err((_, true)) => {
+                show(&source, &state, false);
+                // Shown first: the watch, told, reads it to wait to look again.
+                if state.stale {
+                    source.again.notify_one();
+                }
+                Ok(())
+            }
             Ok(Some((length, complete, first))) => {
                 state.extent.length = length;
                 state.extent.complete = complete;
                 state.extent.version += 1;
                 state.first = first;
-                source.changed.send_replace(state.extent.version);
+                show(&source, &state, true);
                 Ok(())
             }
             Err((error, _)) => {
                 state.index.take();
                 state.projection.take();
                 state.error = Some(error.clone());
-                source.changed.send_modify(|version| *version += 1);
+                show(&source, &state, true);
                 Err(failed(error))
             }
         }
@@ -491,36 +539,16 @@ pub(crate) async fn call(
         .get(&key)
         .cloned()
         .ok_or_else(|| failed("line source is closed or belongs to another caller"))?;
-    let mut changes = source.changed.subscribe();
-    let mut closed = source.closed.subscribe();
+    if let Request::Changed { version, .. } = &request {
+        let look = async {
+            crate::replicas::sync::repair_paths(node, std::slice::from_ref(&source.path)).await.map_err(failed)?;
+            refresh(source.clone(), None).await
+        };
+        let result = changed(&source, *version, look).await?;
+        return Ok(Reply { machine: node.machine(), result });
+    }
     crate::replicas::sync::repair_paths(node, std::slice::from_ref(&source.path)).await.map_err(failed)?;
     refresh(source.clone(), None).await?;
-    if let Request::Changed { version, .. } = &request {
-        loop {
-            if *closed.borrow() {
-                return Err(failed("line source closed"));
-            }
-            {
-                let state = source.state.lock().expect("line source");
-                if let Some(error) = &state.error {
-                    return Err(failed(error));
-                }
-                if state.extent.version > *version {
-                    return Ok(Reply {
-                        machine: node.machine(),
-                        result: Answer::Changed {
-                            extent: state.extent.clone(),
-                            first_changed_line: if state.extent.version - *version > 1 { 0 } else { state.first },
-                        },
-                    });
-                }
-                if state.extent.version < *version {
-                    return Err(failed("line version is ahead of the source"));
-                }
-            }
-            tokio::select! { _ = changes.changed() => {}, _ = closed.changed() => return Err(failed("line source closed")) }
-        }
-    }
     let cancelled = Cancel::default();
     let cancel = cancelled.0.clone();
     {
@@ -559,6 +587,60 @@ pub(crate) async fn call(
     .map_err(failed)?
     .map_err(failed)?;
     Ok(Reply { machine: node.machine(), result })
+}
+
+/// Waits for `source` to show a change after `version`, telling what it
+/// shows last: a change shown already is told at once, as a reader may hold
+/// the source as long as its lines take, whatever the file has become since
+/// (a read looks at the file itself). While it shows none the source is
+/// looked at afresh (`look`), once; a change shown or the source closed
+/// meanwhile is told without waiting for that look.
+async fn changed(
+    source: &Source,
+    version: u64,
+    look: impl Future<Output = std::result::Result<(), Failure>>,
+) -> std::result::Result<Answer, Failure> {
+    let mut shown = source.shown.subscribe();
+    let mut closed = source.closed.subscribe();
+    let mut look = std::pin::pin!(look);
+    let mut looking = true;
+    loop {
+        if *closed.borrow() {
+            return Err(failed("line source closed"));
+        }
+        if let Some(result) = since(&mut shown, version) {
+            return result;
+        }
+        tokio::select! {
+            looked = &mut look, if looking => {
+                looked?;
+                looking = false;
+            }
+            _ = shown.changed() => {}
+            _ = closed.changed() => return Err(failed("line source closed")),
+        }
+    }
+}
+
+/// What a change after `version` says, as the source shows it now: nothing
+/// while it shows that version still. What it shows is seen, so that waiting
+/// after wakes only as it shows more.
+fn since(
+    shown: &mut tokio::sync::watch::Receiver<Shown>,
+    version: u64,
+) -> Option<std::result::Result<Answer, Failure>> {
+    let shown = shown.borrow_and_update().clone();
+    if let Some(error) = shown.error {
+        return Some(Err(failed(error)));
+    }
+    if shown.extent.version > version {
+        let first_changed_line = if shown.extent.version - version > 1 { 0 } else { shown.first };
+        return Some(Ok(Answer::Changed { extent: shown.extent, first_changed_line }));
+    }
+    if shown.extent.version < version {
+        return Some(Err(failed("line version is ahead of the source")));
+    }
+    None
 }
 
 /// How many bytes of lines one stretch of a search reads holding the
@@ -639,7 +721,11 @@ pub(crate) async fn serve(
 }
 
 fn close(node: &Node, key: &Key) {
-    if let Some(source) = node.line_sources.0.lock().expect("line sources").remove(key) {
+    // Out of the table before it is told: a source let go of for the last
+    // time ends its watch and what was written out for it, waiting on
+    // neither the table nor its readers.
+    let removed = node.line_sources.0.lock().expect("line sources").remove(key);
+    if let Some(source) = removed {
         source.closed.send_replace(true);
         source.cancelled.store(true, Ordering::Relaxed);
         for request in source.requests.lock().expect("line requests").iter().filter_map(Weak::upgrade) {

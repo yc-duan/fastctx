@@ -68,6 +68,8 @@ export interface PeopleWords {
   removeTitle(account: string): string;
   removeWhat(machines: string[], projects: string[]): string;
   removeGo: string;
+  /** The account is not shown as it was opened: it is not removed unbound. */
+  removeStale: string;
   /** Whether anyone who reaches the server may open an account. */
   signUp: string;
   signUpState(on: boolean): string;
@@ -136,9 +138,10 @@ export const zhPeople: PeopleWords = {
       "此操作无法撤销。",
       machines.length ? `名下的机器 ${machines.join("、")} 随之移除。` : "",
       projects.length ? `项目 ${projects.join("、")} 移入归档，可转交他人。` : "",
-      "共享与协助随之结束。",
+      "共享与协助随之结束；TA 现在收到的协助下开的会话，会从那些机器（不在线的等上线后）和中枢上删除。",
     ].join(""),
   removeGo: "移除",
+  removeStale: "这里看不到这个账号的开户时间，请刷新后再移除",
   signUp: "开放注册",
   signUpState: (on) => (on ? "开放注册：开" : "开放注册：关"),
   signUpTitle: "开放注册？",
@@ -206,9 +209,10 @@ export const enPeople: PeopleWords = {
       "This cannot be undone. ",
       machines.length ? `Their machines ${machines.join(", ")} are removed with them. ` : "",
       projects.length ? `Projects ${projects.join(", ")} are archived and can be handed to someone else. ` : "",
-      "Their shares and assistance end.",
+      "Their shares and assistance end; the conversations they opened with the assistance they are given now are deleted from those machines (offline ones once back) and the hub.",
     ].join(""),
   removeGo: "Remove",
+  removeStale: "This account's opening time is not shown here; refresh, then remove it",
   signUp: "Open sign-up",
   signUpState: (on) => (on ? "Open sign-up: on" : "Open sign-up: off"),
   signUpTitle: "Open sign-up?",

@@ -4,7 +4,9 @@
 
 use std::io::{BufRead as _, IsTerminal as _, Write as _};
 
-use fastctx_types::data::{ConversationSpace, DataCall, DataReply, DeletionOutcome, Group, HostRecord, Space};
+use fastctx_types::data::{
+    ConversationSpace, CopiesOf, DataCall, DataReply, DeletionOutcome, Group, HostRecord, Space,
+};
 use fastctx_types::{Call, Reply};
 use jiff::Timestamp;
 
@@ -43,6 +45,26 @@ enum DataCommand {
     Output { days: Option<u32> },
     /// Empty what this machine keeps as viewing cache.
     ClearCache,
+    /// Whether each account logged in here goes on taking in its copies of
+    /// the conversations living on other machines, and how many of those are
+    /// held here taken in no more. A machine without the application, such
+    /// as a server, stops taking them in; opening the application here takes
+    /// them in again. `--on` and `--pause` set it for an account, as the
+    /// machine's owner: paused so, opening the application does not undo it.
+    Copies {
+        /// Take in this account's copies here again.
+        #[arg(long, value_name = "ACCOUNT", conflicts_with = "pause")]
+        on: Option<String>,
+        /// Take in nothing more of this account's copies here.
+        #[arg(long, value_name = "ACCOUNT")]
+        pause: Option<String>,
+        /// The hub the account is on, where this machine is on several.
+        #[arg(long)]
+        hub: Option<String>,
+        /// Print what the node answered, as JSON.
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Clone, Copy, clap::ValueEnum)]
@@ -73,6 +95,7 @@ pub fn run(args: DataArgs) -> anyhow::Result<()> {
             Ok(())
         }
         DataCommand::Delete { names, yes } => delete(names, yes),
+        DataCommand::Copies { on, pause, hub, json } => copies(on, pause, hub, json),
         DataCommand::Output { days } => {
             let Reply::Data(DataReply::OutputDays { days, output_retention }) = call(DataCall::OutputDays { days })?
             else {
@@ -97,6 +120,51 @@ fn list() -> anyhow::Result<Space> {
 
 fn call(call: DataCall) -> anyhow::Result<Reply> {
     Ok(crate::ask::call(Call::Data(call))?.0)
+}
+
+fn copied(reply: Reply) -> anyhow::Result<Vec<CopiesOf>> {
+    match reply {
+        Reply::Data(DataReply::Copies { accounts }) => Ok(accounts),
+        _ => anyhow::bail!("the node answered something other than its accounts' copies"),
+    }
+}
+
+fn copies(on: Option<String>, pause: Option<String>, hub: Option<String>, json: bool) -> anyhow::Result<()> {
+    let mut accounts = copied(call(DataCall::Copies)?)?;
+    if let Some((account, on)) = on.map(|account| (account, true)).or(pause.map(|account| (account, false))) {
+        let hubs: Vec<String> = accounts
+            .iter()
+            .filter(|one| one.account == account && hub.as_ref().is_none_or(|hub| *hub == one.hub))
+            .map(|one| one.hub.clone())
+            .collect();
+        let hub = match hubs.as_slice() {
+            [one] => one.clone(),
+            [] => anyhow::bail!(
+                "{account} is not logged in here{}",
+                hub.map(|hub| format!(" on {hub}")).unwrap_or_default()
+            ),
+            _ => anyhow::bail!("{account} is logged in here on several hubs; say which with --hub"),
+        };
+        accounts = copied(call(DataCall::SetCopies { hub, account, on })?)?;
+    }
+    if json {
+        println!("{}", serde_json::to_string_pretty(&accounts)?);
+        return Ok(());
+    }
+    if accounts.is_empty() {
+        println!("no account is logged in here");
+    }
+    for one in &accounts {
+        let source = one.source.as_deref().map(|source| format!(" ({source})")).unwrap_or_default();
+        println!(
+            "{} on {}: {}{source}; conversations held here and taken in no more: {}",
+            one.account,
+            one.hub,
+            if one.on { "taken in" } else { "paused" },
+            one.paused_scopes
+        );
+    }
+    Ok(())
 }
 
 fn delete(names: Vec<String>, yes: bool) -> anyhow::Result<()> {

@@ -144,10 +144,23 @@ struct Witnessed {
 /// a commit's budget, the rest in the rounds after.
 const CHECKPOINT_AT_ONCE: usize = 4096;
 
+/// The file in a hub's directory that, there as the hub opens, has
+/// conversations' streams come through the hub again
+/// (`Assets::sync_version`).
+const THROUGH_HUB: &str = "conversations-through-hub";
+
 pub(crate) struct Assets {
     /// The hub's id, which each descriptor names (design §2.1): a scope of
     /// one hub is no other's.
     pub(crate) id: String,
+    /// Whether conversations' streams come through the hub as before
+    /// `DIRECT`: a file named `THROUGH_HUB` stood in the hub's directory as
+    /// it opened. What the machines kept since goes up from where the hub
+    /// has it, and nothing is lost either way.
+    through_hub: bool,
+    /// Where each stream a machine keeps stood as that machine last said
+    /// (`Request::Stirred`): said again no further on, nobody is told again.
+    stirred: Mutex<BTreeMap<(String, String), u64>>,
     keys: Arc<keys::Keys>,
     pub(crate) owners: owners::Owners,
     pub(crate) witness: Arc<Witness>,
@@ -222,6 +235,8 @@ impl Assets {
         let owners = owners::Owners::new(dir.join("assets"), incarnation);
         let assets = Self {
             id: id.to_string(),
+            through_hub: fastctx_platform::disk::is_there(dir.join(THROUGH_HUB)),
+            stirred: Mutex::new(BTreeMap::new()),
             keys,
             owners,
             witness,
@@ -978,6 +993,23 @@ impl Assets {
     /// it starts.
     pub(crate) fn is_start_seal(why: &str) -> bool {
         why == SEALED_AT_START
+    }
+
+    /// Whether `stream` of `scope`, which a machine keeps, is said to stand
+    /// further on than it was last said to: kept as where it stands now.
+    pub(crate) fn stirred(&self, scope: &str, stream: &str, next: u64) -> bool {
+        let mut stirred = self.stirred.lock().expect("stirred");
+        let known = stirred.entry((scope.to_string(), stream.to_string())).or_insert(0);
+        let further = next > *known;
+        if further {
+            *known = next;
+        }
+        further
+    }
+
+    /// The asset sync version this hub tells machines it speaks.
+    pub(crate) fn sync_version(&self) -> u32 {
+        if self.through_hub { fastctx_types::assets::DIRECT - 1 } else { fastctx_types::assets::VERSION }
     }
 
     /// The hub's answer that its assets are sealed for `why`: sealed for a

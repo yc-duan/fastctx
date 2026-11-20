@@ -1,7 +1,7 @@
 //! The conversation side panel's collaboration tree: read once, or followed
 //! while the panel shows it.
 
-use crate::Shell;
+use crate::{NotWatched, Shell};
 use fastctx_client::{CollaborationWatch, World};
 use fastctx_types::{ResidentId, access::Written, collaboration::Tree};
 use serde::Serialize;
@@ -23,6 +23,7 @@ pub(crate) async fn collaboration_tree(
 pub enum Piece {
     Tree { tree: Box<Tree> },
     Interrupted { error: String, since: u64 },
+    Ended { error: String },
 }
 
 #[derive(Serialize)]
@@ -39,7 +40,7 @@ pub(crate) async fn collaboration_watch(
     resident: String,
     machine: Option<String>,
     pieces: Channel<crate::watch_delivery::Push>,
-) -> Result<Watching, String> {
+) -> Result<Watching, NotWatched> {
     let page = shell.page.load(std::sync::atomic::Ordering::Relaxed);
     let world = shell.world();
     let resident = ResidentId::try_from(resident).map_err(|error| error.to_string())?;
@@ -47,7 +48,7 @@ pub(crate) async fn collaboration_watch(
     #[cfg(target_os = "android")]
     crate::android::readiness::wait(&world, machine.as_ref()).await?;
     let (watch, tree) =
-        world.watch_collaboration(resident.clone(), machine.clone()).await.map_err(|error| error.to_string())?;
+        world.watch_collaboration(resident.clone(), machine.clone()).await.map_err(NotWatched::from)?;
     let id = shell.next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let mut initial = Some(watch);
     shell.follow_delivery(
@@ -76,13 +77,17 @@ pub(crate) async fn collaboration_watch(
                             }
                             continue;
                         }
-                        Ok(None) => (fastctx_types::collab_prompt::WATCH_ENDED.to_string(), false),
-                        Err(error) => (error.to_string(), error.is_deleted() || error.is_refused()),
+                        Ok(None) => fastctx_types::collab_prompt::WATCH_ENDED.to_string(),
+                        Err(error) if error.is_deleted() || error.is_refused() => {
+                            let _ = pieces.send(Piece::Ended { error: error.to_string() });
+                            return;
+                        }
+                        Err(error) => error.to_string(),
                     };
-                    let interruption = again.broke(ended.0);
+                    let interruption = again.broke(ended);
                     let interrupted =
                         Piece::Interrupted { error: interruption.why, since: crate::epoch_ms(interruption.since) };
-                    if pieces.send(interrupted).is_err() || ended.1 {
+                    if pieces.send(interrupted).is_err() {
                         return;
                     }
                     again.pause(&world, machine.as_ref()).await;
@@ -111,12 +116,15 @@ async fn open(
     loop {
         match world.watch_collaboration(resident.clone(), machine.clone()).await {
             Ok((watch, tree)) => return pieces.send(Piece::Tree { tree: Box::new(tree) }).ok().map(|()| watch),
+            Err(error) if error.is_deleted() || error.is_refused() => {
+                let _ = pieces.send(Piece::Ended { error: error.to_string() });
+                return None;
+            }
             Err(error) => {
-                let lost = error.is_deleted() || error.is_refused();
                 let interruption = again.broke(error.to_string());
                 let interrupted =
                     Piece::Interrupted { error: interruption.why, since: crate::epoch_ms(interruption.since) };
-                if pieces.send(interrupted).is_err() || lost {
+                if pieces.send(interrupted).is_err() {
                     return None;
                 }
                 again.pause(world, machine.as_ref()).await;

@@ -45,7 +45,7 @@ use report::Report;
 use world::{Program, World};
 
 /// Every scenario, in the order they run.
-const SCENARIOS: [&str; 18] = [
+const SCENARIOS: [&str; 19] = [
     "update-policy",
     "skill-folders",
     "plan-copies",
@@ -61,6 +61,7 @@ const SCENARIOS: [&str; 18] = [
     "unread-stream",
     "slow",
     "cancel",
+    "held-answer",
     "presence",
     "earlier-hub",
     "earlier-node",
@@ -68,7 +69,7 @@ const SCENARIOS: [&str; 18] = [
 
 /// The longest a scenario may take.
 const LONGEST: Duration = Duration::from_secs(8 * 60);
-pub const EXPECTED_EARLIER: &str = "1.0.1-beta.20";
+pub const EXPECTED_EARLIER: &str = "1.0.1-beta.21";
 static EARLIER_VERSION: std::sync::OnceLock<String> = std::sync::OnceLock::new();
 pub fn expected_earlier() -> &'static str {
     EARLIER_VERSION.get().map_or(EXPECTED_EARLIER, String::as_str)
@@ -160,7 +161,10 @@ fn drill(args: &[String]) -> anyhow::Result<bool> {
         );
     }
     stalls::watch();
-    let runtime = tokio::runtime::Builder::new_multi_thread().enable_all().build()?;
+    // Workers enough that a call whose answer holds one (`held-answer`) leaves
+    // others for the rest, however few processors the runner has.
+    let workers = std::thread::available_parallelism().map_or(4, |count| count.get().max(4));
+    let runtime = tokio::runtime::Builder::new_multi_thread().worker_threads(workers).enable_all().build()?;
     let (mut passed, mut failed, mut skipped) = (0, 0, 0);
     for name in SCENARIOS {
         if options.only.as_ref().is_some_and(|only| !only.iter().any(|wanted| wanted == name))
@@ -320,6 +324,7 @@ async fn scenario(name: &'static str, dir: &Path, earlier: Option<&Path>) -> Rep
             "unread-stream" => scenarios::unread_stream(&world, &mut report).await,
             "slow" => scenarios::slow(&world, &mut report).await,
             "cancel" => scenarios::cancel(&world, &mut report).await,
+            "held-answer" => scenarios::held_answer(&world, &mut report).await,
             "presence" => scenarios::presence(&world, &mut report, true).await,
             "earlier-hub" => mixed::earlier_hub(&world, &mut report).await,
             "earlier-node" => {

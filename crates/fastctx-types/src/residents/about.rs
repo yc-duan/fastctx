@@ -31,6 +31,10 @@ pub(super) struct Stored {
     #[serde(default)]
     home: Option<std::path::PathBuf>,
     #[serde(default)]
+    login: Option<crate::logins::LoginId>,
+    #[serde(default)]
+    born_as: Option<Vec<super::BornAs>>,
+    #[serde(default)]
     callee: Option<String>,
     #[serde(default)]
     born_shared: std::collections::BTreeMap<String, Option<String>>,
@@ -64,8 +68,38 @@ impl TryFrom<Stored> for About {
             focus: stored.focus,
             mcp_off: stored.mcp_off,
             home: stored.home,
+            login: stored.login,
+            born_as: stored.born_as,
             callee: stored.callee,
             born_shared: stored.born_shared,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::About;
+
+    fn about(login: Option<&str>) -> serde_json::Value {
+        let mut about = serde_json::json!({
+            "id": "claude-ab12", "host": {"agent": "claude", "client": "claude-code", "version": ""},
+            "machine": "laptop", "born_at": "2026-11-20T00:00:00Z", "origin": {"kind": "user"}, "session": null,
+        });
+        if let Some(login) = login {
+            about["login"] = login.into();
+        }
+        about
+    }
+
+    #[test]
+    fn a_login_is_kept_where_it_was_born_and_none_before() {
+        let before: About = serde_json::from_value(about(None)).expect("a record from before");
+        assert_eq!(before.login, None);
+        assert!(serde_json::to_value(&before).expect("written").get("login").is_none());
+        let born: About = serde_json::from_value(about(Some("l-0011223344556677"))).expect("a record");
+        assert_eq!(born.login.as_ref().map(|login| login.as_str()), Some("l-0011223344556677"));
+        let again: About = serde_json::from_value(serde_json::to_value(&born).expect("written")).expect("read again");
+        assert_eq!(again, born);
+        assert!(serde_json::from_value::<About>(about(Some("/home/ada/.claude"))).is_err());
     }
 }

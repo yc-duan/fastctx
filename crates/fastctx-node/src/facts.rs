@@ -8,7 +8,8 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
 use fastctx_net::directory::Member;
-use fastctx_net::link::Link;
+use fastctx_net::link::{CallFailure, Link, Way};
+use fastctx_net::sign::PublicKey;
 use fastctx_types::access::{HubId, Purpose};
 use fastctx_types::remote::{RemoteCall, RemoteReply};
 use fastctx_types::world::MachineFacts;
@@ -27,6 +28,72 @@ const AGAIN: jiff::SignedDuration = jiff::SignedDuration::from_secs(30);
 pub(crate) struct Facts {
     kept: Mutex<HashMap<HubId, BTreeMap<MachineName, Kept>>>,
     asking: Mutex<HashSet<(HubId, MachineName)>>,
+    current: Mutex<HashMap<(HubId, MachineName), Declaration>>,
+}
+
+struct Declaration {
+    key: PublicKey,
+    way: Way,
+    facts: MachineFacts,
+}
+
+fn connection(link: &Link, machine: &MachineName) -> Option<(PublicKey, Way)> {
+    if !link.view_current() {
+        return None;
+    }
+    let view = link.view();
+    let member = view.member(machine)?;
+    let way = link.way_to(&member.name)?;
+    if matches!(way, Way::Hub { since: None, .. }) {
+        return None;
+    }
+    Some((member.key, way))
+}
+
+fn remember(
+    node: &Node,
+    link: &Link,
+    machine: &MachineName,
+    before: Option<(PublicKey, Way)>,
+    facts: &MachineFacts,
+) {
+    let Some((key, way)) = before.filter(|before| connection(link, machine).as_ref() == Some(before)) else {
+        return;
+    };
+    let mut current = node.facts.current.lock().expect("current machine declarations");
+    let index = (link.membership().id.clone(), machine.clone());
+    if current.len() >= 4096
+        && !current.contains_key(&index)
+        && let Some(old) = current.keys().next().cloned()
+    {
+        current.remove(&old);
+    }
+    current.insert(index, Declaration { key, way, facts: facts.clone() });
+}
+
+/// Reuses capabilities heard on this connection; older cached display facts
+/// do not decide which calls the peer can decode.
+pub(crate) async fn declared(
+    node: &Node,
+    link: &Link,
+    machine: &MachineName,
+    account: &AccountName,
+) -> Result<fastctx_types::remote::RemoteResult, CallFailure> {
+    let before = connection(link, machine);
+    if let Some((key, way)) = &before {
+        let index = (link.membership().id.clone(), machine.clone());
+        let current = node.facts.current.lock().expect("current machine declarations");
+        if let Some(declaration) = current.get(&index)
+            && declaration.key == *key && declaration.way == *way
+        {
+            return Ok(Ok(RemoteReply::Facts(declaration.facts.clone())));
+        }
+    }
+    let answer = link.call(machine, account, Purpose::Look, RemoteCall::Facts).await?;
+    if let Ok(RemoteReply::Facts(facts)) = &answer {
+        remember(node, link, machine, before, facts);
+    }
+    Ok(answer)
 }
 
 /// What a machine said of itself, and when it had connected then.
@@ -87,7 +154,7 @@ fn ask(
 ) {
     let (node, link) = (node.clone(), link.clone());
     fastctx_platform::task::spawn(async move {
-        let answer = match link.call(&name, &account, Purpose::Look, RemoteCall::Facts).await {
+        let answer = match declared(&node, &link, &name, &account).await {
             Ok(Ok(RemoteReply::Facts(facts))) => Ok(facts),
             Ok(Ok(_)) => Err("it answered something else".to_string()),
             Ok(Err(failure)) => Err(failure.message),

@@ -21,6 +21,53 @@ use serde::{Deserialize, Serialize};
 use crate::agents::{AgentLimits, AgentModel, Fact, Integration};
 use crate::{AgentName, MachineName};
 
+/// A login of an agent on one machine as the node knows it for good,
+/// whatever its directory is called: chosen at random the first time the
+/// login is used, and kept in the node's `login-ids.json`. Written `l-` and
+/// sixteen hex digits.
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
+pub struct LoginId(String);
+
+impl LoginId {
+    pub fn from_bytes(bytes: [u8; 8]) -> Self {
+        Self(format!("l-{}", bytes.iter().map(|byte| format!("{byte:02x}")).collect::<String>()))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl TryFrom<String> for LoginId {
+    type Error = String;
+
+    fn try_from(text: String) -> Result<Self, String> {
+        let ok = text.len() == 18
+            && text.starts_with("l-")
+            && text[2..].bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b));
+        if ok { Ok(Self(text)) } else { Err(format!("{text:?} is not a login id")) }
+    }
+}
+
+impl From<LoginId> for String {
+    fn from(id: LoginId) -> String {
+        id.0
+    }
+}
+
+impl std::fmt::Display for LoginId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::fmt::Debug for LoginId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Debug::fmt(&self.0, f)
+    }
+}
+
 /// The record of every machine asked: this one, or each the asker may use.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WorldLogins {

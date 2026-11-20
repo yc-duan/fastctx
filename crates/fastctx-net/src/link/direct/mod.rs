@@ -323,6 +323,11 @@ impl Inner {
         view.machines()
             .filter(|member| member.name != *me && !member.direct.is_empty())
             .filter(|member| may_talk(view, me, &member.name))
+            // Nor one kept from linking with this machine (`Assist::direct`),
+            // though a hub of before the word still says where it is reached.
+            .filter(|member| {
+                !view.me().is_some_and(|mine| view.directory.direct_withheld(mine, member, jiff::Timestamp::now()))
+            })
             // Two machines that both take direct connections link once: the
             // one whose name sorts first dials.
             .filter(|member| !i_listen || me.as_str() < member.name.as_str())
@@ -386,6 +391,12 @@ impl Inner {
         for conn in conns {
             if view.member(&conn.name).is_none_or(|member| member.key != conn.key) {
                 conn.close(format!("{} is no longer a member this machine knows", conn.name));
+            } else if view.me().zip(view.member(&conn.name)).is_some_and(|(mine, member)| {
+                view.directory.direct_withheld(mine, member, jiff::Timestamp::now())
+            }) {
+                // Whichever of the two made the link: one kept from linking
+                // with this machine (`Assist::direct`) is let go here too.
+                conn.close(format!("{}'s account's machines no longer link with this machine directly", conn.name));
             }
         }
         self.cut_lapsed(view);

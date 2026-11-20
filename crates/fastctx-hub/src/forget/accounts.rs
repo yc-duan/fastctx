@@ -82,7 +82,8 @@ pub(crate) fn tell(hub: &Hub, member: Option<&MachineName>) {
                     .waiting
                     .iter()
                     .filter(|waiting| member.is_none_or(|member| directory.same(waiting, member)))
-                    .map(|waiting| (waiting.clone(), pending.forgetting.clone()))
+                    // Under its name now, renamed since (codex-d515b194).
+                    .map(|waiting| (directory.canonical(waiting).clone(), pending.forgetting.clone()))
             })
             .collect()
     };
@@ -103,12 +104,21 @@ pub(crate) fn tell(hub: &Hub, member: Option<&MachineName>) {
 pub(crate) fn forgot(hub: &Hub, member: &MachineName, id: u64, outcome: Forgot) {
     let mut store = hub.edit_store();
     let member = store.book.directory.canonical(member).clone();
+    let Some(index) = store.book.account_forgetting.pending.iter().position(|pending| pending.forgetting.id == id)
+    else {
+        return;
+    };
+    // Waited for under the name it had as it was asked (codex-d515b194).
+    let waited = store.book.account_forgetting.pending[index]
+        .waiting
+        .iter()
+        .find(|waiting| store.book.directory.same(waiting, &member))
+        .cloned();
     let deletions = &mut store.book.account_forgetting;
-    let Some(index) = deletions.pending.iter().position(|pending| pending.forgetting.id == id) else { return };
     match outcome {
         Forgot::Done => {
             let pending = std::sync::Arc::make_mut(&mut deletions.pending[index]);
-            if !pending.waiting.remove(&member) {
+            if !waited.is_some_and(|waited| pending.waiting.remove(&waited)) {
                 return;
             }
             if pending.waiting.is_empty() {

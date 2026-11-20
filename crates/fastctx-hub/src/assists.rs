@@ -54,6 +54,8 @@ pub(crate) async fn expire(hub: &Hub) -> io::Result<()> {
                 drop(store);
                 if ended {
                     hub.changed();
+                    // Each ended for good: its machine is asked to close it.
+                    crate::purges::tell(&hub, None);
                 }
                 next
             })
@@ -95,23 +97,71 @@ pub(crate) fn heard(hub: &Hub) {
     }
 }
 
-/// Ends the assistance due at `now`, each recorded as the hub's own doing;
-/// whether there was any.
+/// Ends the assistance due at `now`, each recorded as the hub's own doing,
+/// for good: what was born under it is deleted, the purge written in the
+/// same commit as the ending (`crate::purges`). One that could not be
+/// written is put back as it was, and stays due. Whether there was any.
 pub(crate) fn end_due(store: &mut Store, now: Timestamp) -> io::Result<bool> {
     let due = store.assist_ends.due(now);
     let hub = Actor { account: None, authenticated: true, member: None, peer: None };
     for assist in &due {
-        let before = store.book.directory.clone();
-        store.book.directory.assists.retain(|kept| !kept.same(assist));
-        store.book.directory.settle_acting(&before);
-        let action = Action::AssistEnded {
-            machine: assist.machine.clone(),
-            to: assist.account.clone(),
-            agent: assist.agent.clone(),
-            home: assist.home.clone(),
-        };
-        machine_log::effects(store, &before, &hub, &action).map_err(io::Error::other)?;
-        machine_log::keep(store, &before, hub.clone(), action, Outcome::Done).map_err(io::Error::other)?;
+        let book = store.book.clone();
+        let ended = (|| {
+            let before = store.book.directory.clone();
+            store.book.directory.assists.retain(|kept| !kept.same(assist));
+            store.book.directory.settle_acting(&before);
+            if let Some(ended) = before.assists.iter().find(|kept| kept.same(assist))
+                && ended.grants().next().is_some()
+            {
+                crate::purges::begin(
+                    store,
+                    crate::purges::Ended {
+                        grants: ended.grants().cloned().collect(),
+                        machine: ended.machine.clone(),
+                        account: ended.account.clone(),
+                        agent: ended.agent.clone(),
+                        home: ended.home.clone(),
+                        by: None,
+                        audience: Default::default(),
+                    },
+                )?;
+            }
+            let action = Action::AssistEnded {
+                machine: assist.machine.clone(),
+                to: assist.account.clone(),
+                agent: assist.agent.clone(),
+                home: assist.home.clone(),
+            };
+            machine_log::effects(store, &before, &hub, &action)?;
+            machine_log::keep(store, &before, hub.clone(), action, Outcome::Done)
+        })();
+        if let Err(error) = ended {
+            // Neither the ending nor its purge stands: the book is as it was
+            // committed last, and written whole when it is written next.
+            store.book = book;
+            store.book_edit = crate::store::BookEdit::Full;
+            return Err(io::Error::other(error));
+        }
     }
     Ok(!due.is_empty())
+}
+
+/// Gives each assistance kept before grants were its own (`Assist::grant`),
+/// at random, before any member is heard: every node then reads the grant the
+/// hub keeps, which a renamed machine or an assistance given again does not
+/// change or repeat (design-forget-account-v2.md F0, codex-87c8bbd9). How
+/// many it gave.
+pub(crate) fn grant_kept(store: &mut Store) -> io::Result<usize> {
+    let mut given = 0;
+    for assist in &mut store.book.directory.assists {
+        if assist.grant.is_none() {
+            let bytes = fastctx_net::sign::random::<8>()?;
+            std::sync::Arc::make_mut(assist).grant = Some(fastctx_types::access::GrantId::from_bytes(bytes));
+            given += 1;
+        }
+    }
+    if given > 0 {
+        store.save_book()?;
+    }
+    Ok(given)
 }

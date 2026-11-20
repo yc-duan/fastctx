@@ -111,8 +111,14 @@ pub(crate) fn view_for_in(
     // the hub through another (`relay`, `through`, the forwarders) stays:
     // the machines are to come to the hub sealed.
     let sealed = hub.assets.sealed().is_some();
+    // The machines this one is kept from linking with directly, a holder
+    // having said an account's machines do not link with the machine that
+    // assists it (`Assist::direct`): neither is told where the other is
+    // reached, nor goes to the hub through it.
+    let apart = Apart::of(x, me);
     for member in &mut directory.members {
         let others = member.name != *me && visitors_alone(x, &mine, member);
+        let withheld = apart.is(member);
         // Where a machine may be reached is the super administrator's to
         // choose from, and the machine's own to know; a visitor's is its own.
         let reach = (whole && !others) || member.name == *me;
@@ -128,6 +134,16 @@ pub(crate) fn view_for_in(
         }
         if sealed && member.name != *me {
             member.direct.clear();
+        }
+        if withheld {
+            member.direct.clear();
+            member.relay.clear();
+            member.paths = None;
+        } else if apart.any()
+            && let Some(paths) = &mut member.paths
+        {
+            // What a machine says of its lines names where each is reached.
+            paths.links.retain(|link| !x.member(&link.peer).is_some_and(|peer| apart.is(peer)));
         }
     }
     // A release that cannot read a visitor would lose its whole view to one.
@@ -176,6 +192,7 @@ pub(crate) fn view_for_in(
         .filter(|member| member.name != *me)
         // A visitor's machine is nobody else's to know of, nor to go through.
         .filter(|member| !visitors_alone(x, &mine, member))
+        .filter(|member| !apart.is(member))
         .filter_map(|member| {
             let relays = member.home.as_ref().is_some_and(|owner| mine.contains(owner)) && !member.relay.is_empty();
             let at = if !member.direct.is_empty() {
@@ -199,7 +216,7 @@ pub(crate) fn view_for_in(
         machine_log: true,
         layers: true,
         managing: true,
-        asset_sync: fastctx_types::assets::VERSION,
+        asset_sync: hub.assets.sync_version(),
         hub: store.hub.id.clone(),
         hub_name: store.hub.name.clone(),
         hub_machine: crate::hub_machine::current(hub, store)
@@ -212,6 +229,7 @@ pub(crate) fn view_for_in(
         assets_sealed: hub.assets.sealed(),
         synced: hub.assets.standing.summaries_for(x, me),
         direct_links: true,
+        assist_direct: true,
         // Its machines tell how their own work goes with each heartbeat
         // (`crate::strain`).
         health: true,
@@ -221,6 +239,8 @@ pub(crate) fn view_for_in(
         renames: true,
         afoot: true,
         forgets: true,
+        purges: true,
+        deletes_accounts_as_opened: true,
         managed: true,
         roles: true,
         groups: true,
@@ -281,7 +301,72 @@ pub(crate) fn presence_for(
         member.through = None;
         member.paths = None;
     }
+    // Nor how its lines go, where it is kept from linking with the reader;
+    // nor, of any machine's lines, the one with a machine that is
+    // (`Assist::direct`): a line's word names where its other end is reached.
+    let apart = Apart::of(x, reader);
+    if apart.is(&member) {
+        member.paths = None;
+    } else if apart.any()
+        && let Some(paths) = &mut member.paths
+    {
+        paths.links.retain(|link| !x.member(&link.peer).is_some_and(|peer| apart.is(peer)));
+    }
     Some(fastctx_net::directory::Presence::of(&member))
+}
+
+/// The machines one machine is kept from linking with directly
+/// (`Directory::direct_withheld`), found once for a view of it through the
+/// index: the machines whose logins assist an account of its own with their
+/// holder's word that the account's machines do not link with them, and the
+/// accounts its own logins assist so.
+struct Apart {
+    me: MachineName,
+    home: Option<AccountName>,
+    hosts: BTreeSet<MachineName>,
+    guests: BTreeSet<AccountName>,
+}
+
+impl Apart {
+    fn of(x: &Indexed<'_>, me: &MachineName) -> Self {
+        let all = x.all;
+        let now = Timestamp::now();
+        let mut apart = Apart { me: me.clone(), home: None, hosts: BTreeSet::new(), guests: BTreeSet::new() };
+        let Some(mine) = x.member(me) else { return apart };
+        apart.home = mine.home.clone();
+        let said = |assist: &fastctx_net::directory::Assist| {
+            assist.direct == Some(false) && assist.live(now) && !all.is_super(&assist.account)
+        };
+        for &at in x.assists_by_machine(&mine.name) {
+            if said(&all.assists[at]) {
+                apart.guests.insert(all.assists[at].account.clone());
+            }
+        }
+        for account in mine.home.iter().chain(&mine.logins) {
+            for &at in x.assists_by_account(account) {
+                if said(&all.assists[at]) {
+                    apart.hosts.insert(all.canonical(&all.assists[at].machine).clone());
+                }
+            }
+        }
+        apart
+    }
+
+    /// Whether it is kept from linking with any machine at all.
+    fn any(&self) -> bool {
+        !(self.hosts.is_empty() && self.guests.is_empty())
+    }
+
+    /// Whether it is kept from linking with `member`: never with itself,
+    /// nor with another machine of its own owner.
+    fn is(&self, member: &Member) -> bool {
+        if !self.any() || member.name == self.me || (member.home.is_some() && member.home == self.home) {
+            return false;
+        }
+        self.hosts.contains(&member.name)
+            || member.home.as_ref().is_some_and(|home| self.guests.contains(home))
+            || member.logins.iter().any(|account| self.guests.contains(account))
+    }
 }
 
 /// Whether `member` is a visitor's machine that none of `mine` owns or is

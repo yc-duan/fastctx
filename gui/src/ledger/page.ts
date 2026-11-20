@@ -121,11 +121,20 @@ export class AgentsPage implements Page {
   private readonly legacyCalls = new Set<string>();
   /** The logins whose node reckons their week: it keeps a reset of one. */
   private readonly reckoning = new Set<string>();
+  /** Changes made to the page but by drawing it, as a field put where a
+   *  button stood: the page is no longer what was drawn last. What a chart
+   *  says of the mark under the pointer, there and in its legend, is the
+   *  chart's own. */
+  private readonly touched = new MutationObserver((changes) => {
+    const own = (node: Node) => (node instanceof Element ? node : node.parentElement)?.closest("[data-chart], .lg-legend");
+    if (changes.some((change) => !own(change.target))) this.painted = "";
+  });
 
   constructor(private readonly options: AgentsPageOptions, place: AppPlace) {
     this.element.className = "page lg-app";
     this.element.innerHTML = `<main class="lg-main"></main>`;
     this.main = this.element.querySelector<HTMLElement>(".lg-main")!;
+    this.touched.observe(this.main, { childList: true, subtree: true, characterData: true });
     this.sheet = new AgentChangeSheet(options.changeWords, {
       preview: (target) => options.preview(target.machine, target.agent, target.dir, target.into, !!target.takeBack, target.workbench),
       change: (target, raise, expected) => options.change(target.machine, target.agent, target.dir, target.into, raise, !!target.takeBack, expected, target.workbench),
@@ -161,7 +170,6 @@ export class AgentsPage implements Page {
         target.click();
       }
     });
-    window.addEventListener("resize", this.onResize);
     this.stop = effect(() => {
       options.store.world.get();
       this.rebuild();
@@ -184,25 +192,66 @@ export class AgentsPage implements Page {
   }
 
   leave(): void {
+    this.touched.disconnect();
     this.stop();
     this.following?.();
-    window.removeEventListener("resize", this.onResize);
+    this.sized.disconnect();
+    window.clearTimeout(this.resized);
     document.querySelector(".lg-pop")?.remove();
   }
 
-  private readonly onResize = () => {
+  /** The chart's room changing width, with the window, as the sidebar comes
+   *  and goes, or as the page lays its parts out otherwise: the chart is
+   *  drawn for the width it has, so it alone is drawn again once its room is
+   *  still. Nothing else of the page is, a page number being typed
+   *  included (codex-f9af46d4). */
+  private readonly sized = new ResizeObserver(() => {
     window.clearTimeout(this.resized);
-    this.resized = window.setTimeout(() => draw(), 120);
-  };
+    this.resized = window.setTimeout(() => {
+      const holder = this.main.querySelector<HTMLElement>("[data-chart]");
+      if (!holder || Math.floor(holder.clientWidth) === this.chartWidth) return;
+      this.chartWidth = Math.floor(holder.clientWidth);
+      fillCharts(this.main);
+      this.touched.takeRecords();
+    }, 120);
+  });
+
+  /** The width the chart was last drawn at. */
+  private chartWidth = 0;
+
+  /** What was drawn last, to draw nothing again where nothing changed. */
+  private painted = "";
 
   private paint(how: How): void {
+    const html = state.place.kind === "login" ? loginPage() : homePage();
+    // Drawn again as what it shows comes in, or the window changes size, it
+    // keeps the region that scrolls: what it holds is set anew in it, so a
+    // finger on it, its glide and where it stands go on (the user,
+    // 2026-11-20: as the agents' windows came in, a phone's page would not
+    // scroll and went back to its top). Where nothing changed nothing is
+    // drawn at all: a chart says which reading it draws, and the window
+    // changing size draws the page again.
+    if (how === "quiet" && html === this.painted) return;
+    this.painted = html;
     const kept = this.main.querySelector<HTMLElement>(".lg-sheet")?.scrollTop ?? 0;
     this.main.dataset.coming = how;
-    this.main.innerHTML = state.place.kind === "login" ? loginPage() : homePage();
+    if (how !== "quiet" || !redrawAround(this.main, html, ".lg-sheet")) {
+      this.main.innerHTML = html;
+      if (how === "quiet") this.main.querySelector<HTMLElement>(".lg-sheet")?.scrollTo({ top: kept });
+    }
     // The sidebar's button, where the sidebar folds away (`shell.ts`).
     this.main.querySelector(".lg-head")?.insertAdjacentHTML("afterbegin", `<button class="icon-button menu-button" type="button" aria-label="${this.options.menuLabel}">${glyph("menu", 20)}</button>`);
-    if (how === "quiet") this.main.querySelector<HTMLElement>(".lg-sheet")?.scrollTo({ top: kept });
     fillCharts(this.main, how !== "quiet");
+    // The chart drawn is watched for the room it has; a chart drawn anew
+    // for the first time says only what width it was drawn at.
+    this.sized.disconnect();
+    const holder = this.main.querySelector<HTMLElement>("[data-chart]");
+    if (holder) {
+      this.chartWidth = Math.floor(holder.clientWidth);
+      this.sized.observe(holder);
+    }
+    // What drawing changed is no change of the page's own.
+    this.touched.takeRecords();
   }
 
   private click(event: MouseEvent): void {
@@ -377,7 +426,7 @@ export class AgentsPage implements Page {
         throw new Error(tooOld(error) ? "该机器的 Fastctx 版本较旧，暂不支持重置用量" : error instanceof Error ? error.message : String(error));
       }
     };
-    const assisted = (login: Login, person: string, limit: number | null, until: Date | null, manages?: boolean, line = lines[login.id]): AccountChange => {
+    const assisted = (login: Login, person: string, limit: number | null, until: Date | null, manages?: boolean, line = lines[login.id], direct?: boolean): AccountChange => {
       const { machine, agent, home } = this.recordOf(login);
       // The assistance as the hub keeps it: what of it is not changed now
       // goes back as it was, never worked out again from what is shown (an
@@ -406,6 +455,8 @@ export class AgentsPage implements Page {
         ...(line?.turns ? { turns: line.turns } : {}),
         // Who manages is its owner's to say; what is not said now stays.
         manages: manages ?? (!!kept && managesOf(kept)),
+        // So is whether their machines link with this one directly.
+        ...(direct === undefined ? {} : { direct }),
       } as AccountChange;
     };
     return {
@@ -497,15 +548,23 @@ export class AgentsPage implements Page {
         const newest = this.seen.resets.get(login.id)?.find((made) => !made.undone);
         return newest ? reset(login, newest.id, null) : Promise.reject(new Error("没有可撤回的重置"));
       },
-      assist: (login, person, limit, until, manages) => {
+      assist: (login, person, limit, until, manages, direct) => {
         // The reader's own share, set by one who manages the login.
         const to = person === ME ? this.managing(login)?.account : person;
         if (!to) return Promise.reject(new Error("无权管理该机器的登录"));
-        return accounts(assisted(login, to, limit, until, manages), login);
+        return accounts(assisted(login, to, limit, until, manages, undefined, direct), login);
       },
-      endAssist: (login, person) => {
+      endAssist: (login, person, shown) => {
         const { machine, agent, home } = this.recordOf(login);
-        return accounts({ change: "assist", machine, to: person, agent, ...(home ? { home } : {}), assisting: false }, login);
+        // Ended for good, as the sheet asked: what was born under it is
+        // deleted, the assistance as it was shown then.
+        return accounts({ change: "assist", machine, to: person, agent, ...(home ? { home } : {}), assisting: false, purge: true, ...(shown.length ? { shown } : {}) }, login);
+      },
+      assistGrants: (login, person) => {
+        const { machine, agent, home } = this.recordOf(login);
+        const world = options.store.world.peek();
+        const seen = world?.accounts.hubs.flatMap((hub) => hub.assists).find((one) => one.account === person && one.machine === machine && one.agent === agent && sameHome(one.home, home));
+        return seen?.grants ?? [];
       },
       line: async (login, line) => {
         const world = options.store.world.peek();
@@ -520,4 +579,47 @@ export class AgentsPage implements Page {
       say: toast,
     };
   }
+}
+
+/** Draws `html` into `root` around the element `keep` names, which stays
+ *  where it is, its content and attributes set anew: what stands on the way
+ *  to it is the same kind of element in both, and only what is beside that
+ *  way is drawn again. Whether it could. */
+function redrawAround(root: HTMLElement, html: string, keep: string): boolean {
+  const old = root.querySelector<HTMLElement>(keep);
+  const next = document.createElement("div");
+  next.innerHTML = html;
+  const fresh = next.querySelector<HTMLElement>(keep);
+  if (!old || !fresh) return false;
+  const way = (element: HTMLElement, top: HTMLElement) => {
+    const steps: HTMLElement[] = [];
+    for (let at: HTMLElement | null = element; at && at !== top; at = at.parentElement) steps.unshift(at);
+    return steps;
+  };
+  const was = way(old, root);
+  const now = way(fresh, next);
+  if (was.length !== now.length || was.some((step, at) => step.tagName !== now[at]!.tagName || step.className !== now[at]!.className)) return false;
+  [root, ...was].forEach((parent, at) => {
+    const stays = was[at];
+    const comes = now[at];
+    const from = at === 0 ? next : now[at - 1]!;
+    if (!stays || !comes) {
+      // The element kept: what it holds, anew.
+      parent.replaceChildren(...from.childNodes);
+      return;
+    }
+    for (const child of [...parent.childNodes]) if (child !== stays) child.remove();
+    let before = true;
+    for (const child of [...from.childNodes]) {
+      if (child === comes) {
+        before = false;
+        continue;
+      }
+      if (before) parent.insertBefore(child, stays);
+      else parent.append(child);
+    }
+    for (const name of stays.getAttributeNames()) if (!comes.hasAttribute(name)) stays.removeAttribute(name);
+    for (const name of comes.getAttributeNames()) stays.setAttribute(name, comes.getAttribute(name)!);
+  });
+  return true;
 }

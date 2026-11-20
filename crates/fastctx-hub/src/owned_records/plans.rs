@@ -54,5 +54,5 @@ pub(super) async fn head(
         .entries
         .get(&(fastctx_types::plan::KIND.into(), resident.to_string()))
         .map(|entry| entry.metadata.clone());
-    Ok(Response::PlanHead { conversation: access.map(|access| access.conversation), metadata })
+    Ok(Response::PlanHead { conversation: access.map(|access| Box::new(access.conversation)), metadata })
 }

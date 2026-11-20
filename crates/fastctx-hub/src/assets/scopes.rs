@@ -442,6 +442,12 @@ pub(crate) fn scope(assets: &Assets, key: &str) -> Result<Option<Scope>, String>
     if assets.was_deleted(key) {
         return Ok(None);
     }
+    stored(assets, key)
+}
+
+/// The scope `key` as its row stands, deleted or not: for deleting what a
+/// purge marked deleted as it was described (`deleted::purge_key`).
+pub(crate) fn stored(assets: &Assets, key: &str) -> Result<Option<Scope>, String> {
     let key = key.to_string();
     let found: Option<Row> = assets
         .control

@@ -1208,7 +1208,9 @@ pub async fn open(
     };
     match target.filter(|target| !node.is_here(target)) {
         None => {
-            let (id, landed) = open_here(node, &here, acting, agent, town, text, options, attachments, choices).await?;
+            // Opened here at once: the right it works by is read as it is born.
+            let opening = OpenHere { acting, agent, town, text, options, attachments, choices, admitted: None };
+            let (id, landed) = open_here(node, &here, opening).await?;
             Ok((Address { machine: here, resident: id }, landed))
         }
         Some(target) => {
@@ -1257,33 +1259,69 @@ pub async fn open(
     }
 }
 
+/// What a session opened on this machine is asked to be: whom it works for,
+/// of which agent, in which project, with which first words and choices, and
+/// by what right it was let in, which it is born by or not at all.
+pub struct OpenHere {
+    pub acting: Acting,
+    pub agent: AgentName,
+    pub town: Option<TownName>,
+    pub text: String,
+    pub options: fastctx_types::agents::SessionOptions,
+    pub attachments: Vec<Attachment>,
+    pub choices: Choices,
+    pub admitted: Option<Vec<fastctx_types::residents::BornAs>>,
+}
+
 /// Opens a session on this machine for the user typing on `typed_on`, with
-/// their words as its first, working for `acting`.
-#[allow(clippy::too_many_arguments)]
+/// their words as its first, working for its `acting`.
 pub async fn open_here(
     node: &Arc<Node>,
     typed_on: &MachineName,
-    acting: Acting,
-    agent: AgentName,
-    town: Option<TownName>,
-    text: String,
-    options: fastctx_types::agents::SessionOptions,
-    attachments: Vec<Attachment>,
-    choices: Choices,
+    opening: OpenHere,
 ) -> Result<(ResidentId, Landed), Failure> {
+    let OpenHere { acting, agent, town, text, options, attachments, choices, admitted } = opening;
     // The login it is born in must be in this machine's agent list, the
     // default one too (`world-agent-logins.md`); the default one is recorded
     // as none, so that it follows the user's environment.
     let mut options = options;
     options.mcp_off = choices.mcp_off;
-    let home = {
-        // The logins on this machine are read from disk.
-        let (listing, agent, chosen) = (node.clone(), agent.clone(), choices.home.clone());
-        fastctx_platform::task::blocking(move || crate::homes::listed(&listing, agent.as_str(), chosen.as_deref()))
-            .await?
+    let (home, login, born_as) = {
+        // The logins on this machine are read from disk, and a Codex one it
+        // is born in is given its id there before it is started; a Claude
+        // Code one, as its first session is started (`claude::prepare_launch`).
+        // Whom it is born working for, and by what right, is read as it is
+        // born (`assists::born_as`).
+        let (listing, agent, chosen, working) = (node.clone(), agent.clone(), choices.home.clone(), acting.clone());
+        fastctx_platform::task::blocking(move || {
+            let home = crate::homes::listed(&listing, agent.as_str(), chosen.as_deref())?;
+            let born_as = crate::assists::born_as(&listing, &working, &agent, home.as_deref())?;
+            let login = if agent.as_str() == "codex" {
+                let login = crate::logins::ids::codex_born(&listing, home.as_deref());
+                crate::assists::evidenced(&born_as, login.as_ref())?;
+                login
+            } else {
+                None
+            };
+            Ok::<_, Failure>((home, login, born_as))
+        })
+        .await?
     };
+    // Let in by one right, it is not born by another: an assistance ended
+    // and given again meanwhile, or the account of its name opened anew, is
+    // not the one it was asked under (codex-87c8bbd9).
+    if admitted.as_ref().is_some_and(|admitted| *admitted != born_as) {
+        return Err(Failure::refused(
+            "the right it was asked to be opened by no longer stands: the assistance or the account it was asked under has changed since",
+        ));
+    }
     crate::logins::workbench::may_start(node, &acting, agent.as_str(), home.as_deref())?;
-    let opened = Opened { acting, focus: choices.focus, home, files_on: choices.files_on };
+    // Born by an assistance, it holds off its closing for good from before
+    // its record is written until its host was asked and answered
+    // (`purges::permit`): a Claude Code one started at once until then, one
+    // that waits for its login's turn until its record is (`claude::queued`).
+    let _permit = crate::purges::permit(node, &born_as)?;
+    let opened = Opened { acting, focus: choices.focus, home, login, born_as, files_on: choices.files_on };
     match agent.as_str() {
         "codex" => {}
         "claude" => return crate::claude::open_here(node, typed_on, opened, town, text, options, attachments).await,
@@ -1315,12 +1353,16 @@ pub async fn open_here(
             .await?;
     // Until it is claimed below, reports of threads nobody claims are kept.
     let _starting = crate::codex::starting(node);
+    // Still born by the right it was let in by, read again as the thread is
+    // asked for, nothing asked of Codex where it no longer stands
+    // (codex-87c8bbd9).
+    let still = crate::assists::still(node, &opened.acting, &agent, opened.home.as_deref(), &opened.born_as);
     let (thread, model) = node
         .codex
         .session(opened.home.as_deref(), crate::assists::host::kept(node, &id)?.unwrap_or(false))?
-        .start_thread(spec)
+        .start_thread(spec, still.ask())
         .await
-        .map_err(Failure::new)?;
+        .map_err(|error| still.failure(error))?;
     let born_at = Timestamp::now();
     let about = About {
         side: false,
@@ -1338,6 +1380,8 @@ pub async fn open_here(
         acting: opened.acting,
         focus: opened.focus,
         home: opened.home,
+        login: opened.login,
+        born_as: Some(opened.born_as),
         callee: None,
         born_shared: crate::timeline::born_shared::now(node),
     };
@@ -1756,6 +1800,10 @@ pub struct Opened {
     pub focus: fastctx_types::focus::Focus,
     /// The agent's home here it is born in, when not the default one.
     pub home: Option<std::path::PathBuf>,
+    /// The login it is born in, `home` or the default one (`About::login`).
+    pub login: Option<fastctx_types::logins::LoginId>,
+    /// Whom it is born working for, and by what right (`About::born_as`).
+    pub born_as: Vec<fastctx_types::residents::BornAs>,
     /// Where the files attached to its first words go, other than images,
     /// when the user chose.
     pub files_on: Option<Written>,

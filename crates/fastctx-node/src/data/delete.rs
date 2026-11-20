@@ -76,6 +76,11 @@ pub(super) async fn delete(node: &Arc<Node>, names: Vec<String>) -> Vec<Deletion
 /// anything outside is done for it.
 pub(crate) const INTENT: &str = "deleting";
 
+/// The file that says it is deleted for a purge (`crate::purges`): its plan
+/// is not asked of its hub as the account it worked for, which its hub lets
+/// go of itself.
+pub(crate) const PURGING: &str = "purging";
+
 /// What a deletion freed, and why some of it is still being cleared.
 pub(crate) struct Gone {
     pub(crate) bytes: u64,
@@ -327,7 +332,9 @@ async fn records(
     node.residents
         .remove(&node.world, id)
         .map_err(|error| Stop::Failed(format!("recording deletion in progress: {error}")))?;
-    crate::plan::delete(node, &resident.about).await.map_err(|failure| Stop::Failed(failure.message))?;
+    if !fastctx_platform::disk::is_file(directory.path().join(PURGING)) {
+        crate::plan::delete(node, &resident.about).await.map_err(|failure| Stop::Failed(failure.message))?;
+    }
     crate::goals::lifecycle::delete(node, id).await.map_err(|error| Stop::Failed(error.message))?;
     // Whatever its sessions reported and is being applied is applied to its
     // end first, in the order applying takes these locks: a Claude session's

@@ -58,9 +58,7 @@ pub(super) async fn delete(
         .entries
         .values()
         .filter(|entry| {
-            (entry.metadata.kind == fastctx_types::plan::KIND && entry.metadata.key == resident.as_str())
-                || (entry.metadata.kind == fastctx_types::history::RECORD_KIND
-                    && entry.metadata.key.strip_prefix(resident.as_str()).is_some_and(|suffix| suffix.starts_with('/')))
+            account_records::staged::documents_of(&entry.metadata.kind, &entry.metadata.key, resident.as_str())
         })
         .map(|entry| entry.metadata.clone())
         .collect();
@@ -82,5 +80,217 @@ pub(super) async fn delete(
             .map_err(|error| error.to_string())?
             .map_err(|error| error.to_string())?;
     }
-    Ok(())
+    // Its own machine asks: what is staged under its id goes.
+    staged_gone(&slot, resident, Arc::new(|_| true)).await.map(|_| ())
+}
+
+/// Lets go of what of the conversation `resident`'s documents is staged in
+/// `slot` and was never published, with a file published of one the index
+/// does not keep (`staged::let_go_of`): its text, taken by the asset library
+/// or not, is on the disk all the same (codex-d515b194). Under the records'
+/// lock, none of them is staged meanwhile.
+async fn staged_gone(
+    slot: &Arc<account_records::storage::Slot>,
+    resident: &ResidentId,
+    owns: Owns,
+) -> Result<Vec<String>, String> {
+    let records = slot.records.lock().await;
+    let indexed: std::collections::BTreeSet<(String, String)> = records
+        .entries
+        .keys()
+        .filter(|(kind, key)| account_records::staged::documents_of(kind, key, resident.as_str()))
+        .cloned()
+        .collect();
+    let (held, of) = (slot.clone(), resident.to_string());
+    let let_go = fastctx_platform::task::spawn_blocking(move || {
+        account_records::staged::let_go_of(&held, &of, &indexed, &*owns)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+    .map_err(|error| error.to_string())?;
+    drop(records);
+    let mut left = Vec::new();
+    if let_go.foreign > 0 {
+        left.push(format!("{} revisions staged under its id, not proven its own", let_go.foreign));
+    }
+    if let_go.unread > 0 {
+        left.push(format!(
+            "{} revisions staged in the account's records that could not be read as any conversation's",
+            let_go.unread
+        ));
+    }
+    Ok(left)
+}
+
+/// Whether a record of a conversation being let go of is proven its own.
+type Owns = Arc<dyn Fn(&fastctx_types::account_records::Metadata) -> bool + Send + Sync>;
+
+/// What erasing a purged conversation's record came to (`erase`).
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum Erased {
+    /// Its record, and its plan and history, are gone.
+    Gone,
+    /// The hub keeps no record of it, nor ever did under this account as
+    /// opened.
+    Unrecorded,
+    /// The record of its id is another conversation's, or it moved since:
+    /// kept, for a person to look at.
+    Another,
+}
+
+/// Whether `conversation`, a record as read, is the purged conversation's:
+/// the one of its id living on the machine `machine` names by its key, born
+/// under one of `grants`, never moved (codex-87c8bbd9).
+fn its_own(
+    hub: &Hub,
+    conversation: &Conversation,
+    machine: &PublicKey,
+    grants: &[fastctx_types::access::GrantId],
+) -> bool {
+    let born = [&conversation.birth.born_under, &conversation.birth.claimed_under]
+        .into_iter()
+        .flatten()
+        .any(|grant| grants.contains(grant));
+    born && never_moved(&hub.store().book.directory, conversation, machine)
+}
+
+/// Whether `conversation` lives on the machine of the key `machine` and no
+/// address is recorded before the one it has. An earlier address is a name,
+/// and a name is another machine's once the one it named has left: what such
+/// a name stands for now proves nothing of where the conversation was, so one
+/// that ever had another address is taken as moved, and kept. A machine
+/// renamed records no earlier address for that, and still deletes its own
+/// whole. One judgment wherever a purge asks (codex-87c8bbd9, codex-d515b194).
+pub(crate) fn never_moved(
+    directory: &fastctx_net::directory::Directory,
+    conversation: &Conversation,
+    machine: &PublicKey,
+) -> bool {
+    conversation.previous.is_empty()
+        && directory.member(&conversation.address.machine).is_some_and(|member| member.key == *machine)
+}
+
+/// Whether the record of the conversation `resident` that `account`, as
+/// `opened`, opened is the purged conversation's (`Gone`, also where it was
+/// deleted already), another's or of one moved since (`Another`), or there
+/// is none (`Unrecorded`): read before anything of it on the hub is let go
+/// of, which a move would leave the conversation without (codex-87c8bbd9).
+pub(crate) async fn judge(
+    hub: &Arc<Hub>,
+    by: (MachineName, PublicKey),
+    account: &AccountName,
+    opened: Timestamp,
+    resident: &ResidentId,
+    grants: &[fastctx_types::access::GrantId],
+) -> Result<Erased, String> {
+    let request = RecordRequest::Read { kind: fastctx_types::owned_records::KIND.into(), key: resident.to_string() };
+    let Told::AccountRecords { response: RecordResponse::Read { record } } =
+        account_records::erase(hub, by.clone(), account.clone(), opened, request).await?
+    else {
+        return Err("the conversation's record was answered with something else".into());
+    };
+    let Some(record) = record else { return Ok(Erased::Unrecorded) };
+    if record.metadata.deleted {
+        return Ok(Erased::Gone);
+    }
+    let conversation: Conversation = serde_json::from_value(record.body).map_err(|error| error.to_string())?;
+    Ok(if its_own(hub, &conversation, &by.1, grants) { Erased::Gone } else { Erased::Another })
+}
+
+/// Deletes, as the hub itself, the record of the conversation `resident`
+/// that `account`, as `opened`, opened, and its plan and history: for a
+/// conversation purged, gone where it lived, whose machine `by` may no longer
+/// act for the account (`crate::purges`). Each version is let go of only
+/// where it is that very conversation's, read again as it is let go of; one
+/// deleted already has its plan and history let go of, as no other of its id
+/// is recorded under the account after it. Asked again, it goes on.
+pub(crate) async fn erase(
+    hub: &Arc<Hub>,
+    by: (MachineName, PublicKey),
+    account: &AccountName,
+    opened: Timestamp,
+    resident: &ResidentId,
+    grants: &[fastctx_types::access::GrantId],
+) -> Result<(Erased, Option<String>), String> {
+    let request = RecordRequest::Read { kind: fastctx_types::owned_records::KIND.into(), key: resident.to_string() };
+    let slot = hub.account_records.account(account, opened);
+    let mut recorded = true;
+    loop {
+        let Told::AccountRecords { response: RecordResponse::Read { record } } =
+            account_records::erase(hub, by.clone(), account.clone(), opened, request.clone()).await?
+        else {
+            return Err("the conversation's erasure received an unexpected reply".into());
+        };
+        // Never recorded: nothing the hub keeps under its id is proven its
+        // own, as who wrote it is said by a name alone; it is kept, and said
+        // (codex-d515b194, codex-87c8bbd9).
+        let Some(record) = record else {
+            recorded = false;
+            break;
+        };
+        if record.metadata.deleted {
+            break;
+        }
+        let conversation: Conversation =
+            serde_json::from_value(record.body.clone()).map_err(|error| error.to_string())?;
+        if !its_own(hub, &conversation, &by.1, grants) {
+            return Ok((Erased::Another, None));
+        }
+        let deleted = RecordRequest::Delete {
+            kind: fastctx_types::owned_records::KIND.into(),
+            key: resident.to_string(),
+            expected: Some(record.metadata.version),
+        };
+        match account_records::erase(hub, by.clone(), account.clone(), opened, deleted).await? {
+            Told::AccountRecords { response: RecordResponse::Written { .. } } => {
+                super::notify(hub, &conversation);
+                break;
+            }
+            // Changed since it was read: read, and judged, again.
+            Told::AccountRecords { response: RecordResponse::Conflict { .. } } => {}
+            _ => return Err("the conversation's erasure received an unexpected reply".into()),
+        }
+    }
+    let mut records = slot.records.lock().await;
+    // As its disk keeps them, where the hub let go of them since it opened.
+    hub.account_records.reopen(account, opened, &slot, &mut records).map_err(|error| error.to_string())?;
+    let documents: Vec<_> = records
+        .entries
+        .values()
+        .filter(|entry| {
+            account_records::staged::documents_of(&entry.metadata.kind, &entry.metadata.key, resident.as_str())
+        })
+        .map(|entry| entry.metadata.clone())
+        .collect();
+    drop(records);
+    let owns: Owns = Arc::new(move |_| recorded);
+    let (documents, unproven): (Vec<_>, Vec<_>) = documents.into_iter().partition(|metadata| owns(metadata));
+    let mut left = Vec::new();
+    if !unproven.is_empty() {
+        left.push(format!(
+            "{} documents under its id, never recorded as its own conversation's",
+            unproven.iter().filter(|metadata| !metadata.deleted).count()
+        ));
+    }
+    for metadata in documents {
+        if !metadata.deleted {
+            let request = RecordRequest::Delete {
+                kind: metadata.kind.clone(),
+                key: metadata.key.clone(),
+                expected: Some(metadata.version),
+            };
+            match account_records::erase(hub, by.clone(), account.clone(), opened, request).await? {
+                Told::AccountRecords { response: RecordResponse::Written { .. } } => {}
+                _ => return Err("a record changed while its conversation was being erased".into()),
+            }
+        }
+        let history = slot.history(&metadata.kind, &metadata.key);
+        fastctx_platform::task::spawn_blocking(move || account_records::history::delete(&history))
+            .await
+            .map_err(|error| error.to_string())?
+            .map_err(|error| error.to_string())?;
+    }
+    left.extend(staged_gone(&slot, resident, owns).await?);
+    let left = (!left.is_empty()).then(|| left.join("; "));
+    Ok((if recorded { Erased::Gone } else { Erased::Unrecorded }, left))
 }

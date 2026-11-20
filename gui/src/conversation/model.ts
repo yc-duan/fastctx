@@ -733,6 +733,10 @@ export class Fold {
     for (const [place, entries] of this.placedEntries) if (entries.has(key)) return place;
     return null;
   }
+  /** The entries placed at each place, in the order `placeOf` reads them. */
+  placements(): ReadonlyMap<string, ReadonlySet<string>> {
+    return this.placedEntries;
+  }
   livePending(event: SessionEvent): void {
     if (event.event !== "changed") return;
     const change = event.change;

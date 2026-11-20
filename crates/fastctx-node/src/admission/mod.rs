@@ -36,6 +36,11 @@ pub struct Asker {
     /// Whether the account may work on this machine: it sees the machine's
     /// agents and pages, never a conversation that works for another (`seen`).
     pub hands: bool,
+    /// Of a call to open a conversation here, or ask a colleague here: what
+    /// it is born as, by the
+    /// right the call is let in by, read from the very view it is let in by
+    /// (`assists::born_by`; design-forget-account-v2.md F0, codex-87c8bbd9).
+    pub born: Option<fastctx_types::residents::BornAs>,
 }
 
 /// The resident of this machine `call` is about, if it is about one.
@@ -245,7 +250,13 @@ fn admit_inner(
     });
     if let Some(resident) = resident {
         if !node.residents.knows(resident) && matches!(call, RemoteCall::CommitAttachment { .. }) {
-            return Ok(Asker { machine: caller.machine.clone(), hub, account: caller.account.clone(), hands });
+            return Ok(Asker {
+                machine: caller.machine.clone(),
+                hub,
+                account: caller.account.clone(),
+                hands,
+                born: None,
+            });
         }
         if !node.residents.knows(resident) {
             return Err(crate::forget::gone(node, resident));
@@ -275,5 +286,15 @@ fn admit_inner(
     {
         login(&about.host.agent, about.home.as_deref())?;
     }
-    Ok(Asker { machine: caller.machine.clone(), hub, account: caller.account.clone(), hands })
+    let born = match call {
+        RemoteCall::Open { agent, home, .. } => {
+            Some(crate::assists::born_by(node, &view, &hub, &caller.account, agent, home.as_deref())?)
+        }
+        RemoteCall::Ask { started, .. } => {
+            let login = &started.callee.login;
+            Some(crate::assists::born_by(node, &view, &hub, &caller.account, &login.agent, login.home.as_deref())?)
+        }
+        _ => None,
+    };
+    Ok(Asker { machine: caller.machine.clone(), hub, account: caller.account.clone(), hands, born })
 }

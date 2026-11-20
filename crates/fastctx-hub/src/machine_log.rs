@@ -505,7 +505,7 @@ pub(crate) fn action(change: &Change, book: &Book, policy: &fastctx_types::updat
         Change::OpenAccount { name, visitor } => Action::OpenAccount { name: name.clone(), visitor: *visitor },
         Change::SetAccount { name, locked } => Action::SetAccount { name: name.clone(), locked: *locked },
         Change::Transfer { to } => Action::Transfer { to: to.clone() },
-        Change::DeleteAccount { name } => Action::DeleteAccount { name: name.clone() },
+        Change::DeleteAccount { name, .. } => Action::DeleteAccount { name: name.clone() },
         Change::Settings { self_registration } => Action::Settings { self_registration: *self_registration },
         Change::Updates { policy } => Action::Updates {
             channel: policy.channel,

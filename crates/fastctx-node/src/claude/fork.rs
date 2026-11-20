@@ -86,6 +86,27 @@ pub async fn fork(
     crate::record_migration::born(node, &id);
     let target_place = Arc::new(node.places.using(id.as_str()).await);
     let launching = super::command(node, source.home.as_deref())?;
+    // It is born in the login it is started in, as it is started, given its
+    // id before it is recorded, working for its source's accounts by the
+    // right they have now.
+    let (login, born_as) = {
+        let (giving, env, working, agent, home) = (
+            node.clone(),
+            launching.env.clone(),
+            source.acting.clone(),
+            source.host.agent.clone(),
+            source.home.clone(),
+        );
+        fastctx_platform::task::blocking(move || {
+            let born_as = crate::assists::born_as(&giving, &working, &agent, home.as_deref())?;
+            let login = crate::logins::ids::claude_started(&giving, &env);
+            crate::assists::evidenced(&born_as, login.as_ref())?;
+            Ok::<_, Failure>((login, born_as))
+        })
+        .await?
+    };
+    // Held until its session is started and recorded (`purges::permit`).
+    let _permit = crate::purges::permit(node, &born_as)?;
     super::oldest::check(node, &launching).await?;
     let super::Command { program, env, .. } = launching;
     let (words, heard) =
@@ -98,6 +119,8 @@ pub async fn fork(
     // Where its parent of the same login started, where Claude Code finds it.
     let cwd = super::start_dir(node, town.as_ref(), assisting, &env)?;
     let at = Timestamp::now();
+    // Read again as Claude Code is about to be asked to fork.
+    let (born_home, born) = (source.home.clone(), born_as.clone());
     let about = About {
         forked_from: Some(Address { machine: node.machine(), resident: resident.clone() }),
         side,
@@ -114,6 +137,8 @@ pub async fn fork(
         acting: source.acting.clone(),
         focus: source.focus,
         home: source.home,
+        login,
+        born_as: Some(born_as),
         callee: None,
         born_shared: crate::timeline::born_shared::now(node),
     };
@@ -177,6 +202,9 @@ pub async fn fork(
         if let Some(town) = &town {
             crate::town::access::check(node, &source.acting, town)?;
         }
+        // Still born by the right it was born by, as Claude Code is asked (codex-87c8bbd9).
+        let claude = fastctx_types::AgentName::try_from("claude").expect("a valid agent name");
+        crate::assists::still_born_as(node, &source.acting, &claude, born_home.as_deref(), &born)?;
         let printed = fastctx_platform::task::spawn_blocking(fastctx_platform::doing::carried(move || {
             let start = background::Start {
                 plugin: &plugin,

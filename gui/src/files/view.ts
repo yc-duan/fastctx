@@ -83,6 +83,11 @@ export class FileView {
   private viewport: LineViewport | null = null;
   private stops: (() => void)[] = [];
   private settling = 0;
+  private parked = false;
+  private interrupted = false;
+  private redrawProse: (() => void) | null = null;
+  private proseScroll: HTMLDivElement | null = null;
+  private proseTop = 0;
   private tab: ViewTab;
   private changes: FileChange[];
   /** The changes opened, and those whose lines were read. */
@@ -133,9 +138,28 @@ export class FileView {
     this.show();
   }
 
+  get reusable(): boolean {
+    return !this.request.signal.aborted && !this.interrupted && !!(this.viewport || this.proseScroll);
+  }
+
+  park(): void {
+    this.parked = true;
+  }
+
+  shown(): void {
+    this.parked = false;
+    this.viewport?.shown();
+    if (this.proseScroll?.clientHeight) this.proseScroll.scrollTop = this.proseTop;
+    const redraw = this.redrawProse;
+    this.redrawProse = null;
+    redraw?.();
+  }
+
   leave(): void {
     this.request.abort();
     clearTimeout(this.settling);
+    this.redrawProse = null;
+    this.proseScroll = null;
     for (const stop of this.stops) stop();
     this.stops = [];
     this.viewport?.destroy();
@@ -297,6 +321,8 @@ export class FileView {
       return;
     }
     this.source = source;
+    const watch = source.interruptions?.((broken) => { this.interrupted = broken !== null; });
+    if (watch) this.stops.push(watch);
     if (isMarkdown(path) && source.extent.length <= PROSE_LINES) await this.prose(source);
     else this.showLines(source);
   }
@@ -355,20 +381,21 @@ export class FileView {
     status.className = "fx-status";
     status.hidden = true;
     const set = async (): Promise<boolean> => {
+      if (this.viewport) return false;
       const length = source.extent.length;
       // Grown past what prose is set for, it is shown as its lines.
       if (length > PROSE_LINES) {
+        this.proseScroll = null;
         this.content.replaceChildren();
         this.showLines(source);
         return false;
       }
       const lines = length ? await source.read(0, length, signal) : [];
       if (signal.aborted) return false;
-      const top = scroll.scrollTop;
       article.innerHTML = render(lines.join("\n"));
       this.placePictures(article);
       void drawDiagrams(article);
-      scroll.scrollTop = top;
+      scroll.scrollTop = this.proseTop;
       return true;
     };
     try {
@@ -378,19 +405,26 @@ export class FileView {
       return;
     }
     this.content.replaceChildren(status, scroll);
-    this.stops.push(
-      source.subscribe(() => {
-        clearTimeout(this.settling);
-        this.settling = window.setTimeout(() => {
-          void set().catch((error: unknown) => {
-            if (signal.aborted) return;
-            status.hidden = false;
-            status.textContent = words.view.failed;
-            status.title = this.options.seams.detail(error);
-          });
-        }, SETTLE);
-      }),
-    );
+    this.proseScroll = scroll;
+    scroll.addEventListener("scroll", () => {
+      if (scroll.clientHeight) this.proseTop = scroll.scrollTop;
+    });
+    const redraw = () => {
+      if (this.parked) {
+        this.redrawProse = redraw;
+        return;
+      }
+      void set().catch((error: unknown) => {
+        if (signal.aborted) return;
+        status.hidden = false;
+        status.textContent = words.view.failed;
+        status.title = this.options.seams.detail(error);
+      });
+    };
+    this.stops.push(source.subscribe(() => {
+      clearTimeout(this.settling);
+      this.settling = window.setTimeout(redraw, SETTLE);
+    }));
     const heard = source.interruptions?.((broken: LineInterruption | null) => {
       status.hidden = !broken;
       status.textContent = broken ? words.view.interrupted : "";

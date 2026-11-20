@@ -271,9 +271,11 @@ async fn wanted(assets: &Assets, hub: &HubId, limit: usize) -> Result<Vec<(Strin
             .collect()
     };
     // What this hub's network's scopes want alone is asked of it, in one
-    // look however many scopes it has.
+    // look however many scopes it has; of those this machine takes nothing
+    // of in now (`copies`), nothing.
     let theirs = hub.as_str().to_string();
-    blocking(&assets.library, move |library| library.wanted_of_hub(&theirs, limit, &waiting)).await
+    let paused: Vec<String> = assets.copies.paused_now().iter().cloned().collect();
+    blocking(&assets.library, move |library| library.wanted_of_hub_but(&theirs, limit, &waiting, &paused)).await
 }
 
 /// The hub gave `object`.
@@ -284,7 +286,12 @@ fn reached(assets: &Assets, hub: &HubId, object: &ObjectRef) {
 /// The hub did not give `object`: it waits before it is asked for again.
 fn unreached(assets: &Assets, hub: &HubId, object: &ObjectRef) {
     let mut unreached = assets.unreached.lock().expect("unreached");
-    let times = unreached.get(&(hub.clone(), object.hash)).map_or(0, |(_, times)| times + 1);
+    // One a machine keeps (`direct`) waits no longer each time: the hub's
+    // not having it says nothing of its machine giving it the next time.
+    let times = match assets.direct.is_kept_elsewhere(hub, &object.hash) {
+        true => 0,
+        false => unreached.get(&(hub.clone(), object.hash)).map_or(0, |(_, times)| times + 1),
+    };
     unreached.insert((hub.clone(), object.hash), (Instant::now(), times));
 }
 
@@ -312,6 +319,10 @@ async fn fetch_alone(assets: &Assets, hub: &HubId, link: &Arc<Link>, scope: &str
     let library = &assets.library;
     // Kept as it comes: this machine clears nothing until it is all here.
     let _keeping = assets.clearing.read().await;
+    // Paused since it was listed, it is not asked for (`copies`).
+    if assets.copies.paused_now().contains(scope) {
+        return Ok(());
+    }
     match fetch_one(library, link, scope, object).await {
         Ok(()) => {
             reached(assets, hub, &object);
@@ -369,6 +380,10 @@ async fn round(node: &Arc<Node>, hub: &HubId, link: &Arc<Link>) -> (usize, Vec<S
         Ok(wanted) => wanted,
         Err(why) => return (0, vec![format!("listing the objects wanted: {why}")]),
     };
+    // What a conversation's frames refer to comes from the machine that
+    // keeps them (`direct`); the hub is asked for the rest, and for what
+    // that machine did not give.
+    let (from_machines, wanted) = from_machines(assets, hub, link, wanted).await;
     // Those of one scope go in one ask, up to what an ask carries; one too
     // long for a line goes alone, under a ticket.
     let mut asks: Vec<(String, Vec<ObjectRef>)> = Vec::new();
@@ -395,7 +410,7 @@ async fn round(node: &Arc<Node>, hub: &HubId, link: &Arc<Link>) -> (usize, Vec<S
             asked(assets, &hub, &link, &scope, objects).await
         }));
     }
-    let (mut fetched, mut failed) = (0, Vec::new());
+    let (mut fetched, mut failed) = (from_machines, Vec::new());
     for (scope, object) in alone {
         match fetch_alone(assets, hub, link, &scope, object).await {
             Ok(()) => fetched += 1,
@@ -411,10 +426,119 @@ async fn round(node: &Arc<Node>, hub: &HubId, link: &Arc<Link>) -> (usize, Vec<S
     (fetched, failed)
 }
 
+/// The longest object taken from the machine that keeps a conversation's
+/// frames: it comes whole, held in memory until it is seen to be the object.
+/// A longer one is read where the conversation lives as it is opened.
+const MACHINE_OBJECT_BYTES: u64 = 64 << 20;
+
+/// Takes from the machines that keep them the objects, of those `wanted`,
+/// that conversations' frames refer to (`direct`): how many came, and those
+/// left for the hub — what is no conversation's, what its machine did not
+/// give, and what no machine could be asked for now.
+async fn from_machines(
+    assets: &Assets,
+    hub: &HubId,
+    link: &Arc<Link>,
+    wanted: Vec<(String, ObjectRef)>,
+) -> (usize, Vec<(String, ObjectRef)>) {
+    let mut rest = Vec::new();
+    let mut asks: Vec<(fastctx_types::MachineName, String, Vec<ObjectRef>)> = Vec::new();
+    let mut elsewhere = Vec::new();
+    for (scope, object) in wanted {
+        let machine = match object.size <= MACHINE_OBJECT_BYTES {
+            true => super::direct::object_source(assets, hub, link, &scope, object.hash).await,
+            false => None,
+        };
+        let Some((machine, asked)) = machine else {
+            rest.push((scope, object));
+            continue;
+        };
+        elsewhere.push(object.hash);
+        // Its machine left alone for now, the hub is asked: it has what
+        // went to it before conversations stayed on their machines.
+        if !asked {
+            rest.push((scope, object));
+            continue;
+        }
+        match asks.iter_mut().rev().find(|(of, within, objects)| {
+            *of == machine
+                && *within == scope
+                && objects.len() < OBJECTS
+                && objects.iter().map(|object| object.size).sum::<u64>() + object.size <= ASKED_BYTES
+        }) {
+            Some((_, _, objects)) => objects.push(object),
+            None => asks.push((machine, scope, vec![object])),
+        }
+    }
+    assets.direct.keeps_elsewhere(hub, elsewhere);
+    let mut came = 0;
+    for (machine, scope, objects) in asks {
+        // Kept only while this machine has not begun since to clear what
+        // another account may not see.
+        let cleared = assets.cleared_times.load(std::sync::atomic::Ordering::SeqCst);
+        let named = objects.iter().map(|object| wire::ObjectRef { hash: object.hash.into(), size: object.size }).collect();
+        let given = match super::direct::objects(assets, hub, link, &machine, &scope, named).await {
+            Ok(given) => given,
+            Err(_) => {
+                rest.extend(objects.into_iter().map(|object| (scope.clone(), object)));
+                continue;
+            }
+        };
+        for (object, bytes) in objects.into_iter().zip(given) {
+            let kept = match bytes {
+                Some(bytes) => given_kept(assets, &scope, object, bytes, cleared).await,
+                None => false,
+            };
+            if kept {
+                reached(assets, hub, &object);
+                came += 1;
+            } else {
+                rest.push((scope.clone(), object));
+            }
+        }
+    }
+    (came, rest)
+}
+
+/// Keeps `bytes` a machine gave as `object` of `scope`, once they are seen
+/// to be the object: whether it is kept.
+async fn given_kept(assets: &Assets, scope: &str, object: ObjectRef, bytes: Vec<u8>, cleared: u64) -> bool {
+    use sha2::Digest as _;
+    fastctx_platform::readings::counter_of("sync.taken", "peer.objects").add(bytes.len() as u64);
+    // Seen to be the object before anything of it is written.
+    if bytes.len() as u64 != object.size || <[u8; 32]>::from(sha2::Sha256::digest(&bytes)) != object.hash {
+        return false;
+    }
+    let _keeping = assets.clearing.read().await;
+    if assets.cleared_times.load(std::sync::atomic::Ordering::SeqCst) != cleared {
+        return false;
+    }
+    let holder = format!("fetch:{scope}");
+    let size = object.size;
+    let kept = blocking(&assets.library, move |library| {
+        let lease = library.put(&mut bytes.as_slice(), &holder, LEASE)?;
+        if lease.object != object {
+            return Err(fastctx_content::Error::Invalid("the bytes given do not hash to the object".into()));
+        }
+        library.release(lease)?;
+        library.unwant(&object.hash)
+    })
+    .await
+    .is_ok();
+    if kept {
+        fastctx_platform::readings::counter_of("sync.applied", "peer.objects").add(size);
+    }
+    kept
+}
+
 /// Asks for `objects` of `scope` on one line and keeps each as it comes;
 /// how many came, and what did not and why. A line that breaks leaves the
 /// rest to be asked for again at once, as none of them was refused.
 async fn asked(assets: &Assets, hub: &HubId, link: &Arc<Link>, scope: &str, objects: Vec<ObjectRef>) -> (usize, Vec<String>) {
+    // Paused since it was listed, nothing of it is asked for (`copies`).
+    if assets.copies.paused_now().contains(scope) {
+        return (0, Vec::new());
+    }
     let library = &assets.library;
     let named: Vec<wire::ObjectRef> = objects.iter().map(|object| wire::ObjectRef { hash: object.hash.into(), size: object.size }).collect();
     let _coming = fastctx_platform::doing::waiting_outside(format!("{} objects of {scope} coming from the hub on an asset line", objects.len()), SENT_WITHIN);
@@ -426,6 +550,10 @@ async fn asked(assets: &Assets, hub: &HubId, link: &Arc<Link>, scope: &str, obje
         Ok(line) => line,
         Err(why) => return (0, vec![format!("an asset line for the objects of {scope}: {why}")]),
     };
+    // Paused while a line was waited for, nothing is asked for.
+    if assets.copies.paused_now().contains(scope) {
+        return (0, Vec::new());
+    }
     if let Err(why) = line.ask_objects(scope, &named).await {
         return (0, vec![format!("asking for the objects of {scope}: {why}")]);
     }

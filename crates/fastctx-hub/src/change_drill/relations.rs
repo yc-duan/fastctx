@@ -36,6 +36,9 @@ fn request(kind: &str, round: usize, accounts: usize) -> Change {
             turns: None,
             share: None,
             manages: None,
+            direct: None,
+            purge: Vec::new(),
+            replaces: Vec::new(),
         },
         "Plan" => Change::Plan {
             machine: super::machine(0),
@@ -104,8 +107,22 @@ pub(super) fn exercise(root: &Path, base: &Path, seed: u64, kind: &str, round: u
         (cut(&mut left_receivers[0]), cut(&mut right_receivers[0]))
     };
     anyhow::ensure!(cut_left == cut_right, "the same live streams cut");
+    // Each hub gives an assistance a grant of its own at random: the books
+    // are the same but for those.
+    let without_grants = |mut book: Value| {
+        if let Some(assists) = book.get_mut("lends").and_then(Value::as_array_mut) {
+            for assist in assists.iter_mut().filter_map(Value::as_object_mut) {
+                assist.remove("grant");
+            }
+        }
+        book
+    };
     let book_left = serde_json::to_value(&*left.store().book)?;
-    anyhow::ensure!(book_left == serde_json::to_value(&*right.store().book)?, "books equal after round {round}");
+    let book_right = serde_json::to_value(&*right.store().book)?;
+    anyhow::ensure!(
+        without_grants(book_left.clone()) == without_grants(book_right.clone()),
+        "books equal after round {round}"
+    );
     anyhow::ensure!(
         left.store().indexed().all.shares.len() == left.store().book.directory.shares.len(),
         "the index rebuilt with the book"
@@ -118,8 +135,13 @@ pub(super) fn exercise(root: &Path, base: &Path, seed: u64, kind: &str, round: u
     let reopened_left = crate::Store::open(&left_dir).context("reopening the narrow hub")?;
     let reopened_right = crate::Store::open(&right_dir).context("reopening the full hub")?;
     let reopened = serde_json::to_value(&*reopened_left.book)?;
+    let reopened_other = serde_json::to_value(&*reopened_right.book)?;
     anyhow::ensure!(reopened == book_left, "the narrow hub's reopened book equals what it committed");
-    anyhow::ensure!(reopened == serde_json::to_value(&*reopened_right.book)?, "both reopened books equal");
+    anyhow::ensure!(reopened_other == book_right, "the full hub's reopened book equals what it committed");
+    anyhow::ensure!(
+        without_grants(reopened) == without_grants(reopened_other),
+        "both reopened books equal but for their grants"
+    );
     drop((reopened_left, reopened_right));
     wait_closed(&left_dir)?;
     wait_closed(&right_dir)?;

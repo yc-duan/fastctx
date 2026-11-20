@@ -187,7 +187,7 @@ impl Link {
                 let owner = ownership
                     .get_or_try_init(|| async {
                         match self.owned_records(&key.0, Request::Resolve { conversation: address.clone() }).await? {
-                            Response::Conversation { conversation } => Ok(conversation),
+                            Response::Conversation { conversation } => Ok(*conversation),
                             _ => Err("the history's conversation ownership is unavailable".to_string()),
                         }
                     })

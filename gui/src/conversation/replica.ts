@@ -30,6 +30,8 @@ export interface ReplicaPart {
   newer: Place | null;
   /** Whether the timeline is still being made from the history. */
   preparing: boolean;
+  /** Revision and cursor of a single reading. */
+  stamp?: string;
 }
 
 export type ReplicaRecord = { record: "is"; shown: Shown } | { record: "gone"; key: string };

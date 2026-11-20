@@ -117,11 +117,14 @@ impl CodexHost {
     }
 
     /// Forks history with a new resident's instructions and tool identity.
+    /// `still` is asked last, as the fork is about to be asked for: whatever
+    /// it refuses, nothing was asked of Codex.
     pub async fn fork(
         self: &Arc<Self>,
         source: &str,
         through: Option<&str>,
         spec: ThreadSpec,
+        still: impl Fn() -> Result<(), String> + Send + Sync,
     ) -> Result<(String, Option<String>), ControlError> {
         let server = self.server().await?;
         self.ensure_loaded(&server, source).await?;
@@ -139,6 +142,7 @@ impl CodexHost {
         if let Some(effort) = &selection.effort {
             config["model_reasoning_effort"] = json!(effort);
         }
+        still()?;
         let answer = server
             .ask(
                 "thread/fork",

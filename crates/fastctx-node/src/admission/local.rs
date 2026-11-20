@@ -107,7 +107,7 @@ fn askers(node: &Node, acting: &Acting) -> Vec<(Arc<Link>, Asker)> {
         let here = view.me.clone();
         for account in node.accounts_on(&link, acting) {
             let hands = view.rights(&account, &here).hands;
-            let asker = Asker { machine: here.clone(), hub: link.membership().id.clone(), account, hands };
+            let asker = Asker { machine: here.clone(), hub: link.membership().id.clone(), account, hands, born: None };
             askers.push((link.clone(), asker));
         }
     }

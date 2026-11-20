@@ -270,6 +270,20 @@ pub(crate) fn ahead(node: &Node, id: &ResidentId) -> Option<(u32, bool)> {
     })
 }
 
+/// The turn of `about`'s login let through for `id` never began, nothing
+/// asked of its host: its place goes to the next (`ended`).
+pub(crate) fn unstarted(node: &Arc<Node>, id: &ResidentId, about: &About) {
+    let end = TurnEnd {
+        how: TurnHow::Interrupted,
+        reason: Some("its first session was not started".to_string()),
+        error: None,
+        duration_ms: None,
+        facts: None,
+        last_message: None,
+    };
+    ended(node, id, about, &end);
+}
+
 /// A turn of `about`'s login ended: the vendor's refusal tightens the
 /// limit, a turn that ended well widens it, and the turns that now have room
 /// are woken.

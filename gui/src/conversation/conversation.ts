@@ -151,6 +151,9 @@ export class Conversation {
   searchVersion = 0;
   private searchSource = 0;
   get searchIdentity(): string { return this.source?.identity?.() ?? String(this.searchSource); }
+  /** What a read is a read of: its source and the generation of its
+   *  timeline, which a read finished under another no longer speaks to. */
+  get readEpoch(): string { return `${this.searchIdentity}#${this.generation}`; }
   search(request: import("./timeline-find").SearchRequest): Promise<import("./timeline-find").SearchReply> {
     if (!this.source?.search) return Promise.reject(new Error("this source cannot search the complete history"));
     return this.source.search(request);
@@ -349,6 +352,13 @@ export class Conversation {
     this.parts = [held];
     this.reading.clear();
     this.structure += 1;
+  }
+
+  /** The preview already shows this reading. Give it a live source in place. */
+  attachReplicaSource(source: PartSource): void {
+    if (this.source === source) return;
+    this.source = source;
+    this.searchSource += 1;
   }
 
   /** Whether its timeline is still being made, as its machine says now. */
@@ -644,6 +654,29 @@ export class Conversation {
     return !!deferred && !this.expanded.has(deferred.object);
   }
 
+  /** `deferred`, asked of many entries at once: each entry's place is found
+   *  once for them all, as `deferred` finds it (the first part that shows
+   *  where the entry is first placed), where asking `deferred` of each
+   *  would go through the page's events each time (codex-f9af46d4). */
+  cutShort(): (key: string) => boolean {
+    const any = this.parts.some((part) => [...(this.spans.get(part)?.deferred.values() ?? [])].some((deferred) => !this.expanded.has(deferred.object)));
+    if (!any) return () => false;
+    const decided = new Map<string, boolean>();
+    for (const part of this.parts) {
+      const span = this.spans.get(part);
+      if (!span) continue;
+      const shown = new Set(span.keys);
+      const first = new Map<string, string>();
+      for (const [place, entries] of part.fold.placements()) for (const entry of entries) if (!first.has(entry)) first.set(entry, place);
+      for (const [entry, place] of first) {
+        if (decided.has(entry) || !shown.has(place)) continue;
+        const deferred = span.deferred.get(place);
+        decided.set(entry, !!deferred && !this.expanded.has(deferred.object));
+      }
+    }
+    return (key) => decided.get(key) ?? false;
+  }
+
   /** Facts a run's job told about a run an earlier part holds go to it as
    *  well: a job goes on after its turn. So does what one of the host's own
    *  agents did, to the part holding the call that started it: an agent
@@ -727,6 +760,11 @@ export class Conversation {
   async expandPosition(place: TimelinePosition): Promise<void> {
     const key = this.entriesAtPosition(place)[0]?.key;
     if (key && this.deferred(key)) await this.readFull(key);
+  }
+
+  /** Whether what the page holds has `place`. */
+  holdsPosition(place: TimelinePosition): boolean {
+    return this.parts.some((part) => this.spans.get(part)?.keys.includes(place.item));
   }
 
   /** Reads the part that holds `place`, wherever it is; true once held. */

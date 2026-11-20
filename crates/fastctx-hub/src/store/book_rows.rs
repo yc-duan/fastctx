@@ -38,11 +38,13 @@ pub(super) struct BookRows {
     project_deletions: Listed<crate::project_deletions::Pending>,
     forgetting: Listed<crate::forget::Pending>,
     account_forgetting: Listed<crate::forget::accounts::AccountPending>,
+    purges: Listed<crate::purges::Purge>,
     passwords: Mapped<fastctx_types::AccountName, fastctx_net::sign::Bytes>,
     log_next: u64,
     uncertain: bool,
     forgetting_last: u64,
     account_forgetting_last: u64,
+    purges_last: u64,
 }
 impl BookRows {
     pub(super) fn load(shelf: &Shelf) -> io::Result<(Book, Self)> {
@@ -73,6 +75,8 @@ impl BookRows {
         book.forgetting.pending = entries;
         let (entries, account_forgetting) = list(shelf, "account_forgetting")?;
         book.account_forgetting.pending = entries;
+        let (entries, purges) = list(shelf, "purges")?;
+        book.purges.kept = entries;
         let mut passwords = BTreeMap::new();
         for (key, _, value) in shelf.rows("passwords")? {
             passwords.insert(key.parse().map_err(io::Error::other)?, value);
@@ -81,12 +85,14 @@ impl BookRows {
         book.machine_log = crate::machine_log::History::from_database(shelf)?;
         book.forgetting.last = shelf.meta("forgetting.last")?.unwrap_or(0);
         book.account_forgetting.last = shelf.meta("account_forgetting.last")?.unwrap_or(0);
+        book.purges.last = shelf.meta("purges.last")?.unwrap_or(0);
         let state = Self {
             passwords: Mapped::read("passwords", passwords),
             log_next: book.machine_log.next,
             uncertain: false,
             forgetting_last: book.forgetting.last,
             account_forgetting_last: book.account_forgetting.last,
+            purges_last: book.purges.last,
             accounts,
             members,
             shares,
@@ -100,6 +106,7 @@ impl BookRows {
             project_deletions,
             forgetting,
             account_forgetting,
+            purges,
         };
         Ok((book, state))
     }
@@ -135,6 +142,7 @@ impl BookRows {
         let project_deletions = stage!(project_deletions, &book.project_deletions, "project_deletions");
         let forgetting = stage!(forgetting, &book.forgetting.pending, "forgetting");
         let account_forgetting = stage!(account_forgetting, &book.account_forgetting.pending, "account_forgetting");
+        let purges = stage!(purges, &book.purges.kept, "purges");
         let passwords = if edit.is_full() {
             Some(self.passwords.changes(&book.passwords, |key| key.to_string(), &mut changes)?)
         } else {
@@ -148,6 +156,9 @@ impl BookRows {
         }
         if self.uncertain || self.account_forgetting_last != book.account_forgetting.last {
             changes.meta("account_forgetting.last", super::rows::body(&book.account_forgetting.last)?);
+        }
+        if self.uncertain || self.purges_last != book.purges.last {
+            changes.meta("purges.last", super::rows::body(&book.purges.last)?);
         }
         book.machine_log.changes(&mut changes)?;
         if let Err(error) = shelf.write(changes) {
@@ -165,6 +176,7 @@ impl BookRows {
             self.project_deletions.lost();
             self.forgetting.lost();
             self.account_forgetting.lost();
+            self.purges.lost();
             self.passwords.lost();
             return Err(error);
         }
@@ -182,12 +194,14 @@ impl BookRows {
         self.project_deletions.keep_stage(project_deletions);
         self.forgetting.keep_stage(forgetting);
         self.account_forgetting.keep_stage(account_forgetting);
+        self.purges.keep_stage(purges);
         if let Some(passwords) = passwords {
             self.passwords.kept(passwords);
         }
         self.log_next = book.machine_log.next;
         self.forgetting_last = book.forgetting.last;
         self.account_forgetting_last = book.account_forgetting.last;
+        self.purges_last = book.purges.last;
         book.machine_log.committed();
         Ok(edit)
     }

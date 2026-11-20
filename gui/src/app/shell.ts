@@ -12,6 +12,7 @@ import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
 import type { Place } from "./places";
 import { arrive, tabSide, wayBetween } from "./arrive";
+import { carry } from "./carry";
 import { Sidebar, type ProjectMenuOptions } from "./sidebar";
 import type { Store } from "./store";
 import type { TalkActs } from "./talk-acts";
@@ -278,7 +279,12 @@ export class Shell {
   }
 
   private fold(shut: boolean): void {
-    this.element.classList.toggle("folded", shut);
+    // On the desk the page has its room at once and what stands on it is
+    // carried there as the sidebar slides over it (`carry.ts`); any other
+    // page gives way as the sidebar's room glides (`shell.css`).
+    const change = () => this.element.classList.toggle("folded", shut);
+    if (!narrow.matches && document.documentElement.classList.contains("on-desk")) carry(this.element, change);
+    else change();
     try {
       localStorage.setItem("sidebar", shut ? "folded" : "open");
     } catch {

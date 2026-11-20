@@ -133,6 +133,7 @@ mod plan_reads;
 mod profile;
 mod program_collection;
 mod proxy_setting;
+mod purges;
 mod ranked;
 mod reach;
 mod received;
@@ -322,6 +323,9 @@ pub(crate) struct Node {
     /// How many turns each agent login runs at once, and the turns waiting
     /// for room (`turn_slots`).
     turn_slots: turn_slots::Slots,
+    /// The assistances closed here for good, and the births by assistances
+    /// under way (`purges`).
+    purges: purges::Gate,
     /// How far the machine is toward its system's limits over the last day.
     limits: limits::Readings,
     /// Whom each job running here works for (`job_accounts`).
@@ -792,7 +796,7 @@ pub async fn run_prepared(
             if database.fault().is_none() {
                 record_database::start_upgrade(&database, log.clone()).context("pinning the World upgrade snapshot")?;
             }
-            let assets = match world::key(&world).and_then(|key| assets::Assets::open(world.assets(), key)) {
+            let assets = match world::key(&world).and_then(|key| assets::Assets::open(world.assets(), key, fastctx_root.to_path_buf())) {
                 Ok(assets) => Some(assets),
                 Err(error) => {
                     log.line(format_args!("the asset library is unavailable: {error}"));
@@ -885,6 +889,7 @@ pub async fn run_prepared(
                 actions: Default::default(),
                 long_controls: Default::default(),
                 turn_slots: Default::default(),
+                purges: Default::default(),
                 limits: Default::default(),
                 job_accounts: Default::default(),
                 cpu_shares,
@@ -1191,6 +1196,11 @@ pub async fn run_prepared(
 pub use storage_drill::{migration as record_migration_drill, run as record_drill, transfer as record_transfer_drill};
 #[cfg(feature = "storage-drill")]
 mod storage_drill;
+
+/// A reader holding a line source leaves the rest of it going (the release
+/// test `line_sources`).
+#[doc(hidden)]
+pub use lines::drill::run as line_source_drill;
 
 pub use conversation_store::transfer::status::ConversationImport;
 

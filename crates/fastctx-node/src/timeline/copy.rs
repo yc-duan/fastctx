@@ -124,9 +124,15 @@ pub(crate) fn read_here(node: &Node, scope: &fastctx_content::v2::HeldScope) -> 
 }
 
 /// `read_here`, as `only` reads it where given: the copy one account asks
-/// for is one that account reads, not another logged in here.
+/// for is one that account reads, not another logged in here. One this
+/// machine takes nothing of in now is no copy to read (`copies`): what it
+/// holds stopped where it was, and the machine it lives on is asked. Which
+/// those are is what the last pass found: a read may run on any thread,
+/// the hub's line's own among them, and looks nothing up for it.
 pub(crate) fn read_here_as(node: &Node, scope: &fastctx_content::v2::HeldScope, only: Option<&AccountName>) -> bool {
-    fastctx_client::timeline_copy::conversation_copy(scope) && reader_here_as(node, scope, only)
+    fastctx_client::timeline_copy::conversation_copy(scope)
+        && reader_here_as(node, scope, only)
+        && !crate::assets::copies::paused_here(node, scope)
 }
 
 /// Whether the records' scope `scope` — an account's, or a body's — is read

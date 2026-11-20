@@ -247,9 +247,33 @@ pub struct Assist {
     /// assistance kept before this was: see [`Assist::manages`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub manages: Option<bool>,
+    /// Whether the account's machines link with this machine directly,
+    /// where it takes direct connections: `Some(false)` once the machine's
+    /// holder said they do not, the same on every login of the machine that
+    /// assists the account. They reach it through the hub alone then, and
+    /// are not told where it is (`Directory::direct_withheld`). None is as
+    /// before the word was kept, and as nothing said: they link.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub direct: Option<bool>,
+    /// Which assistance this is (`GrantId`), as the hub gave it at random,
+    /// one kept before grants were given its own as the hub opens: none only
+    /// from a hub from before them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grant: Option<fastctx_types::access::GrantId>,
+    /// The grants of the other spellings of the same login this assistance
+    /// took the place of, kept with it: what was born under them is its own
+    /// (design-forget-account-v2.md F1/F3 v2).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub also: Vec<fastctx_types::access::GrantId>,
 }
 
 impl Assist {
+    /// Every grant this assistance is: its own, and those of the spellings
+    /// it took the place of (`also`).
+    pub fn grants(&self) -> impl Iterator<Item = &fastctx_types::access::GrantId> {
+        self.grant.iter().chain(&self.also)
+    }
+
     /// Whether the account manages the login with its owner: only a Claude
     /// Code login's, the one whose week is reckoned in shares. An assistance
     /// that says neither is one of before the word was kept: it managed
@@ -273,6 +297,30 @@ impl Assist {
     /// Whether it still assists at `now`: its deadline, if any, is later.
     pub fn live(&self, now: Timestamp) -> bool {
         self.until.is_none_or(|until| until > now)
+    }
+}
+
+impl Directory {
+    /// Whether `a` and `b` are kept from linking directly (`Assist::direct`):
+    /// a login of one assists an account the other is a machine of — its
+    /// owner's, or one the account is logged in on — and the holder of the
+    /// first said the account's machines do not link with it. Neither is
+    /// told where the other is reached, and what goes between them goes
+    /// through the hub. Two machines of one owner link all the same; and
+    /// the super administrator, who sets where every machine is reached, is
+    /// kept from none.
+    pub fn direct_withheld(&self, a: &Member, b: &Member, now: Timestamp) -> bool {
+        if a.name == b.name || (a.home.is_some() && a.home == b.home) {
+            return false;
+        }
+        let of = |account: &AccountName, member: &Member| {
+            member.home.as_ref() == Some(account) || member.logins.contains(account)
+        };
+        self.assists.iter().filter(|assist| assist.direct == Some(false) && assist.live(now)).any(|assist| {
+            let machine = self.canonical(&assist.machine);
+            ((*machine == a.name && of(&assist.account, b)) || (*machine == b.name && of(&assist.account, a)))
+                && !self.is_super(&assist.account)
+        })
     }
 }
 
@@ -792,6 +840,11 @@ pub struct View {
     /// Older hubs omit it.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub direct_links: bool,
+    /// Whether this hub keeps, for each account a machine's logins assist,
+    /// whether the account's machines link with the machine directly
+    /// (`Assist::direct`). Earlier hubs omit it, and would drop the word.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub assist_direct: bool,
     /// Whether this hub reads the health its members' heartbeats carry
     /// (`fastctx_types::health`). Older hubs omit it, and are told none.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -826,6 +879,19 @@ pub struct View {
     /// it, and would end the session of a member that asked.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub forgets: bool,
+    /// Whether this hub deletes what was born under an assistance its giver
+    /// ends for good (`crate::wire::Change::Assist::purge`), and takes one
+    /// spelling of a login in place of others in one change
+    /// (`replaces`). Earlier hubs omit it: they only end an assistance, and
+    /// would keep the spellings replaced.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub purges: bool,
+    /// Whether this hub deletes an account only as it was opened when that
+    /// was asked (`crate::wire::Change::DeleteAccount::opened`), ending what
+    /// it was given for good. Earlier hubs omit it: they would delete one of
+    /// the name, whichever it is then.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub deletes_accounts_as_opened: bool,
     /// Whether this hub registers managed machines (`Member::managed`) by
     /// tokens for them, and takes back a token (`Change::RevokeToken`).
     /// Earlier hubs omit it: they would make a token for a full login, and
@@ -998,6 +1064,7 @@ impl View {
             assets_sealed: None,
             synced: Vec::new(),
             direct_links: false,
+            assist_direct: false,
             health: false,
             trial: Vec::new(),
             forwarders: Vec::new(),
@@ -1005,6 +1072,8 @@ impl View {
             renames: false,
             afoot: false,
             forgets: false,
+            purges: false,
+            deletes_accounts_as_opened: false,
             managed: false,
             roles: false,
             groups: false,

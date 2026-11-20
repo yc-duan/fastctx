@@ -1743,13 +1743,38 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
             users_voice(node, peer)?;
             crate::history::api::call(node, &Caller::User, request).await.map(Reply::History)
         }
+        Call::TimelinePreview { machine, resident } => {
+            users_voice(node, peer)?;
+            let page = crate::timeline::last_page::get(node, machine, resident).await;
+            Ok(Reply::Timeline(page.unwrap_or(fastctx_types::timeline_pages::TimelineTold::Reread)))
+        }
         Call::Timeline { machine, request } => {
             let admitted = Call::Timeline { machine: machine.clone(), request: request.clone() };
-            crate::timeline::api::checked(node, crate::timeline::api::call(node, machine, request), || {
-                users_voice(node, peer).and_then(|()| crate::admission::local::admit(node, peer, &admitted))
-            })
-            .await
-            .map(Reply::Timeline)
+            users_voice(node, peer)?;
+            let resident = request.resident().clone();
+            let captured = if let Some(machine) = machine.as_ref() {
+                tokio::time::timeout(
+                    std::time::Duration::from_millis(5),
+                    crate::timeline::last_page::capture(node, machine, &request),
+                ).await.ok().flatten()
+            } else {
+                None
+            };
+            let page = crate::timeline::api::checked(
+                node, crate::timeline::api::call(node, machine.clone(), request), || {
+                    users_voice(node, peer).and_then(|()| crate::admission::local::admit(node, peer, &admitted))
+                },
+            ).await;
+            match (&page, machine, captured) {
+                (Ok(page), Some(machine), Some(captured)) => {
+                    crate::timeline::last_page::keep(node, machine, captured, page.clone());
+                }
+                (Err(error), Some(machine), _) if error.is_deleted() || error.is_refused() => {
+                    crate::timeline::last_page::discard(node, machine, resident);
+                }
+                _ => {}
+            }
+            page.map(Reply::Timeline)
         }
         Call::Topics { request } => {
             // The state the topics name is read by the user's interfaces.

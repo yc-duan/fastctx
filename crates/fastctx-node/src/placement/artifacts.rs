@@ -66,6 +66,7 @@ impl Lease {
                 hub: self.scope.hub.clone(),
                 account: self.scope.account.clone(),
                 hands: true,
+                born: None,
             };
             return super::prepare_copy(node, &asker, self.owner.clone(), self.version, resource).await;
         }

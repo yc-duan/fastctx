@@ -119,6 +119,8 @@ fn residents() -> Vec<ResidentNow> {
                     Default::default()
                 },
                 home: (i == 1).then(|| "C:/Users/ada/.codex-work".into()),
+                login: None,
+                born_as: None,
                 callee: None,
                 born_shared: Default::default(),
             },

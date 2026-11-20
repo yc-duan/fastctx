@@ -20,16 +20,31 @@ const FAMILY: Family = Family {
 /// cannot be represented by this payload.
 #[derive(Serialize, Deserialize)]
 enum Work {
-    DeleteAccount { name: AccountName },
-    DeleteProject { town: TownId },
-    RenameGroup { owner: AccountName, from: String, to: Option<String> },
-    SetRole { name: AccountName, visitor: bool },
+    DeleteAccount {
+        name: AccountName,
+        /// As it was opened; none from work kept before this was, which
+        /// deletes it by its name alone, as it was asked then.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        opened: Option<jiff::Timestamp>,
+    },
+    DeleteProject {
+        town: TownId,
+    },
+    RenameGroup {
+        owner: AccountName,
+        from: String,
+        to: Option<String>,
+    },
+    SetRole {
+        name: AccountName,
+        visitor: bool,
+    },
 }
 
 impl Work {
     fn from_change(change: Change) -> Result<Self, String> {
         Ok(match change {
-            Change::DeleteAccount { name } => Self::DeleteAccount { name },
+            Change::DeleteAccount { name, opened } => Self::DeleteAccount { name, opened },
             Change::DeleteProject { town } => Self::DeleteProject { town },
             Change::RenameGroup { owner, from, to } => Self::RenameGroup { owner, from, to },
             Change::SetRole { name, visitor } => Self::SetRole { name, visitor },
@@ -39,7 +54,7 @@ impl Work {
 
     fn change(&self) -> Change {
         match self {
-            Self::DeleteAccount { name } => Change::DeleteAccount { name: name.clone() },
+            Self::DeleteAccount { name, opened } => Change::DeleteAccount { name: name.clone(), opened: *opened },
             Self::DeleteProject { town } => Change::DeleteProject { town: town.clone() },
             Self::RenameGroup { owner, from, to } => {
                 Change::RenameGroup { owner: owner.clone(), from: from.clone(), to: to.clone() }
@@ -50,7 +65,7 @@ impl Work {
 
     fn unit(&self) -> String {
         match self {
-            Self::DeleteAccount { name } | Self::SetRole { name, .. } => format!("account/{name}"),
+            Self::DeleteAccount { name, .. } | Self::SetRole { name, .. } => format!("account/{name}"),
             Self::DeleteProject { town } => format!("project/{town}"),
             Self::RenameGroup { owner, .. } => format!("groups/{owner}"),
         }
@@ -63,6 +78,11 @@ struct Asked {
     key: PublicKey,
     account: AccountName,
     work: Work,
+    /// When the account that asked was opened, as it asked: done only while
+    /// it is that account, never one opened again under its name since
+    /// (codex-d515b194). None in work kept from before this was.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    opened: Option<jiff::Timestamp>,
 }
 
 /// Self-removal cannot retrieve a receipt through the identity it removes.
@@ -82,8 +102,19 @@ fn removes_origin(
     origin: &crate::origin::Origin,
     change: &Change,
 ) -> bool {
-    matches!(change, Change::DeleteAccount { name }
+    matches!(change, Change::DeleteAccount { name, .. }
         if directory.member(&origin.name).is_some_and(|member| member.home.as_ref() == Some(name)))
+}
+
+const REASK: &str = "the account deletion was asked by an earlier version: nothing was done, please ask again";
+
+/// Whether `account` is as it was opened when it asked, `opened`.
+fn asked_as(store: &crate::store::Store, account: &AccountName, opened: Option<jiff::Timestamp>) -> bool {
+    store.book.directory.account(account).map(|found| found.opened) == opened
+}
+
+fn reopened(account: &AccountName) -> String {
+    format!("the account {account} that asked was opened again since: nothing was done")
 }
 
 const OWNERSHIP_CHANGED: &str =
@@ -92,18 +123,30 @@ const OWNERSHIP_CHANGED: &str =
 pub(crate) fn register(hub: &Arc<Hub>) {
     crate::submitted::register(hub, FAMILY, |hub: Arc<Hub>, asked: Asked| async move {
         hub.blocking(move |hub| {
-            let Asked { from, key, account, work } = asked;
+            let Asked { from, key, account, work, opened } = asked;
             let origin = crate::origin::Origin { name: from, key };
-            let mut not_run = false;
+            // Asked before the asking account's opening was kept with what
+            // it asks, a deletion is asked again (codex-d515b194).
+            if opened.is_none() && matches!(work, Work::DeleteAccount { .. }) {
+                return Err(Failure::not_run(REASK));
+            }
+            let mut not_run = None;
+            // Judged as the change is written, under the directory's writer:
+            // the account that asked may be opened again meanwhile, and its
+            // machine logged in to it anew (codex-d515b194).
             let (answer, ended) = super::change_checked(&hub, &origin, &account, work.change(), |store, change| {
-                if removes_origin(&store.book.directory, &origin, change) {
-                    not_run = true;
-                    return Err(OWNERSHIP_CHANGED.into());
-                }
-                Ok(())
+                let why = if removes_origin(&store.book.directory, &origin, change) {
+                    OWNERSHIP_CHANGED.to_string()
+                } else if opened.is_some() && !asked_as(store, &account, opened) {
+                    reopened(&account)
+                } else {
+                    return Ok(());
+                };
+                not_run = Some(why.clone());
+                Err(why)
             });
-            if not_run {
-                return Err(Failure::not_run(OWNERSHIP_CHANGED));
+            if let Some(why) = not_run {
+                return Err(Failure::not_run(why));
             }
             super::end(&hub, ended);
             crate::updates::prefetch(&hub);
@@ -130,7 +173,8 @@ pub(crate) async fn change(
         Ok(work) => work,
         Err(why) => return (Err(why), None),
     };
-    let asked = Asked { from: origin.name.clone(), key: origin.key, account: account.clone(), work };
+    let opened = hub.store().book.directory.account(&account).map(|found| found.opened);
+    let asked = Asked { from: origin.name.clone(), key: origin.key, account: account.clone(), work, opened };
     let identity = match serde_json::to_vec(&asked) {
         Ok(identity) => identity,
         Err(error) => return (Err(error.to_string()), None),
@@ -161,8 +205,16 @@ pub(crate) async fn change(
         return (Err(why), None);
     }
     if came == Err(synchronous) {
-        let change = asked.work.change();
-        let (answer, ended) = hub.blocking(move |hub| super::change(&hub, &origin, &account, change)).await;
+        let (change, opened) = (asked.work.change(), asked.opened);
+        // As the change is written, by the account that asked as it was
+        // opened then (codex-d515b194).
+        let (answer, ended) = hub
+            .blocking(move |hub| {
+                super::change_checked(&hub, &origin, &account, change, |store, _| {
+                    if asked_as(store, &account, opened) { Ok(()) } else { Err(reopened(&account)) }
+                })
+            })
+            .await;
         return (answer, Some(ended));
     }
     (crate::submitted::told(came.map(|()| Told::Done)), None)

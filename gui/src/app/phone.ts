@@ -17,7 +17,6 @@ import type { Place } from "./places";
 import type { PresenceWords } from "./presence";
 import type { TroubleWords } from "./trouble-words";
 import type { SettingsWords } from "./words";
-import { Sheet } from "./confirm";
 
 export const onPhone = (): boolean => inShell() && /Android/i.test(navigator.userAgent);
 
@@ -163,14 +162,6 @@ const remember = (key: string): void => {
 
 /** The user said the maker's switches, which no app can read, are set. */
 const VENDOR_SET = "phone-vendor-set";
-/** The guide to the background was shown once. */
-const GUIDE_SEEN = "phone-guide-seen";
-/** The end of a run the guide was last shown for, by when it was: the
- *  same end is told once, however often the app is opened after it. */
-const KILL_TOLD = "phone-kill-told";
-/** Shown in this run: where the page's storage keeps nothing, it is shown
- *  once a run, not each time the app comes to the front. */
-let shownThisRun = false;
 
 /** Whether the system ended the app's last run in the background while it
  *  was meant to keep its connection: not the user, nor a crash of its own
@@ -180,57 +171,11 @@ export function killedInBackground(status: PhoneStatus): boolean {
   return exit !== null && !exit.byUser && ![4, 5, 6].includes(exit.reason);
 }
 
-/** Whether anything the World needs to stay online in the background is
- *  not set, as far as it can tell. */
-function unset(status: PhoneStatus): boolean {
-  return (
-    !status.notificationsAllowed ||
-    !status.batteryOptimizationExempt ||
-    !status.serviceRunning ||
-    (status.background.hasAutostart && !remembered(VENDOR_SET))
-  );
-}
-
-/** Once the phone is in a World, a sheet that walks the user through what
- *  keeps it online in the background — the system's own dialogs where the
- *  system has them, straight to the maker's page where it does not — shown
- *  once, and again when the system ended it in the background with
- *  something still unset. */
-export function guideBackground(words: SettingsWords, phone: PhoneSeam): void {
-  phone.status().then(
-    (status) => {
-      if (status.connection.name === null || !unset(status)) return;
-      // Shown once; again only for a run the system ended since it was
-      // last shown (用户 2026-11-19: 不可能每次打开都显示那个).
-      const killed = killedInBackground(status) ? String(status.background.lastExit!.at) : null;
-      const told = (() => {
-        try {
-          return localStorage.getItem(KILL_TOLD);
-        } catch {
-          return null;
-        }
-      })();
-      const news = killed !== null && killed !== told;
-      if (shownThisRun || (remembered(GUIDE_SEEN) && !news)) return;
-      shownThisRun = true;
-      remember(GUIDE_SEEN);
-      if (killed !== null) {
-        try {
-          localStorage.setItem(KILL_TOLD, killed);
-        } catch {
-          // Not kept: told again next run, once.
-        }
-      }
-      const sheet = new Sheet("phone-guide");
-      sheet.body.innerHTML = `${sheet.head(words.phoneGuideTitle, words.phoneGuideLater)}<p class="phone-guide-why">${escape(
-        news ? words.phoneKilled : words.phoneGuideWhy,
-      )}</p><dl class="facts settings-phone"></dl><footer class="sheet-foot"><span></span><button class="sheet-go sheet-close" type="button">${escape(words.phoneGuideDone)}</button></footer>`;
-      new PhoneRow(sheet.body.querySelector<HTMLElement>(".settings-phone")!, words, phone);
-      sheet.show();
-    },
-    (error: unknown) => console.error("reading what the phone lets the World do", error),
-  );
-}
+// What keeps the phone online in the background is in the settings, on the
+// device's page (`PhoneRow`), and nowhere else: nothing opens over the app
+// to walk through it (the user, 2026-11-20: "这个其实没必要啊…放在手机的设置里面
+// 不就行了"). A sheet did, as the app came to the front after the system
+// ended it in the background, which a Xiaomi does every time, all set.
 
 /** What the settings ask of the phone. */
 export interface PhoneSeam {

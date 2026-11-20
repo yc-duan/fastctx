@@ -13,6 +13,10 @@ name = "own_lifetime"
 harness = false
 
 [[test]]
+name = "line_sources"
+harness = false
+
+[[test]]
 name = "record_drill"
 harness = false
 required-features = ["storage-drill"]

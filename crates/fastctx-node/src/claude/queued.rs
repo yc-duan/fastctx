@@ -57,18 +57,38 @@ pub(super) fn wait(node: &Arc<Node>, id: ResidentId) {
                 return;
             }
             let Some((about, _)) = node.residents.about(&id) else { return };
+            // Busy in line, where making it idle failed before, holds no turn
+            // of its login: it is made idle again, as often as it takes,
+            // before it waits for anything (codex-87c8bbd9's eighth look).
+            idle_again(&node, &id);
             // Held back as any wake is: while its account is in Connect, its
             // home is away, its assistance or its project's access does not
-            // hold.
+            // hold; and while it may not be started as it was born, before it
+            // takes a turn of its login (codex-87c8bbd9).
             if crate::lifecycle::wake::check(&node, &id, &about).await.is_err()
-                || crate::turn_slots::admit(&node, &id, &about).is_err()
+                || crate::assists::host::kept(&node, &id)
+                    .and_then(|isolated| crate::assists::may_still_start(&node, &about, isolated))
+                    .is_err()
             {
+                tokio::time::sleep(ASK_AGAIN).await;
+                continue;
+            }
+            // Its first session started by an assistance holds off that
+            // assistance's closing for good until it was asked and answered
+            // (`purges::permit`); one closed already is not started.
+            let Ok(_permit) = crate::purges::permit(&node, about.born_as.as_deref().unwrap_or_default()) else {
+                tokio::time::sleep(ASK_AGAIN).await;
+                continue;
+            };
+            if crate::turn_slots::admit(&node, &id, &about).is_err() {
                 tokio::time::sleep(ASK_AGAIN).await;
                 continue;
             }
             let prepared = match super::prepare_launch(&node, &id).await {
                 Ok(prepared) => prepared,
                 Err(failure) => {
+                    // The turn of its login it took goes to the next meanwhile.
+                    crate::turn_slots::unstarted(&node, &id, &about);
                     node.log.line(format_args!(
                         "preparing {id}'s first turn, which waited for its login; tried again in {} s: {}",
                         again.as_secs(),
@@ -85,8 +105,13 @@ pub(super) fn wait(node: &Arc<Node>, id: ResidentId) {
                     now.activity = Activity::Busy;
                     now.since = jiff::Timestamp::now();
                 })
-                .and_then(|()| unmark(&directory));
+                .and_then(|()| {
+                    // Still in line, it is not busy: idle again, as it waits
+                    // (codex-87c8bbd9's seventh look).
+                    unmark(&directory).inspect_err(|_| idle_again(&node, &id))
+                });
             if let Err(error) = started {
+                crate::turn_slots::unstarted(&node, &id, &about);
                 node.log
                     .line(format_args!("starting {id}'s first turn, which waited for its login; tried again: {error}"));
                 tokio::time::sleep(again).await;
@@ -101,4 +126,22 @@ pub(super) fn wait(node: &Arc<Node>, id: ResidentId) {
             return;
         }
     });
+}
+
+/// A first turn still in line made idle again, as one waiting for its login
+/// is: one marked Busy holds no turn of its login, nothing being asked of
+/// Claude Code.
+pub(super) fn idle_again(node: &Arc<Node>, id: &ResidentId) {
+    if !node.residents.now(id).is_some_and(|now| now.activity == Activity::Busy && now.turn.is_none()) {
+        return;
+    }
+    let idle = node.residents.change_now(&node.world, id, |now| {
+        if now.activity == Activity::Busy && now.turn.is_none() {
+            now.activity = Activity::Idle;
+            now.since = jiff::Timestamp::now();
+        }
+    });
+    if let Err(error) = idle {
+        node.log.line(format_args!("letting {id}'s first turn wait idle: {error}"));
+    }
 }

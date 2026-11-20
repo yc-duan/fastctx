@@ -571,6 +571,9 @@ pub(crate) async fn build(config: Config) -> Result<Lab> {
                 turns: None,
                 share: None,
                 manages: None,
+                direct: None,
+                purge: false,
+                shown: Vec::new(),
             },
         )
         .await

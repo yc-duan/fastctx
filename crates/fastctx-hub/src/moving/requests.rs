@@ -140,6 +140,7 @@ fn start(
         if !hub.sessions().contains_key(&to) {
             return Err(format!("{to} is offline"));
         }
+        crate::purges::takes_over(hub, &to)?;
         let version =
             crate::updates::running_of(hub, &member.key).and_then(|r| fastctx_types::update::release(&r.kernel));
         if version.is_none_or(|v| Some(v) < fastctx_types::update::release("1.0.1-beta.12")) {

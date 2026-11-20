@@ -37,6 +37,28 @@ use crate::wire::{self, Down, HEARTBEAT, Intent, Letters, Refusal, SILENCE, Up};
 /// after its own line is back (`world-network.md`).
 const RETURN: Duration = Duration::from_secs(60);
 
+/// Calls the hub passed on answered at once, as they came, and those that
+/// waited their turn behind a view not yet taken in; how long one answered
+/// at once waited for the node's runtime to start it. Taken once before the
+/// line starts (`prepare`): the measures are found under a lock the whole
+/// process shares, which the lines' thread does not wait on.
+struct Calls {
+    at_once: &'static fastctx_platform::readings::Counter,
+    in_turn: &'static fastctx_platform::readings::Counter,
+    started: &'static fastctx_platform::readings::Timing,
+}
+
+static CALLS: std::sync::LazyLock<Calls> = std::sync::LazyLock::new(|| Calls {
+    at_once: fastctx_platform::readings::counter("link.calls.at_once"),
+    in_turn: fastctx_platform::readings::counter("link.calls.in_turn"),
+    started: fastctx_platform::readings::timing("link.calls.started"),
+});
+
+/// Finds what the line measures before it starts, off its thread.
+pub(super) fn prepare() {
+    std::sync::LazyLock::force(&CALLS);
+}
+
 enum Ended {
     /// Try again.
     Retry(String),
@@ -322,6 +344,7 @@ async fn greet(inner: &Arc<Inner>, upstream: &Upstream, dialed: dial::Dialed) ->
             project_entry: true,
             conversation_deletions: true,
             forgets_accounts: true,
+            purges: inner.node.purges(),
             profiles: true,
             machine_updates: true,
             history_switch: true,
@@ -722,15 +745,17 @@ async fn connected(
             }
             // A call to take is answered on its own task at once, not after
             // letters the node is still taking in, as long as no view it may
-            // be judged by waits.
+            // be judged by waits. Answered on the node's runtime, as every
+            // other call is: what answers it may wait on the node's locks,
+            // and these lines must go on being read meanwhile.
             Down::Incoming { call, message } if views_waiting.load(std::sync::atomic::Ordering::Acquire) == 0 => {
                 let stop = inner.answers.open(inner, CallOn::Hub(generation), call);
-                fastctx_platform::task::spawn(super::answering::answer(
-                    inner.clone(),
-                    Replier::Hub(up.clone(), call),
-                    message,
-                    stop,
-                ));
+                let (inner_now, up, came) = (inner.clone(), up.clone(), Instant::now());
+                CALLS.at_once.add(1);
+                inner.on_node(async move {
+                    CALLS.started.record(came.elapsed());
+                    super::answering::answer(inner_now, Replier::Hub(up, call), message, stop).await;
+                });
             }
             // The rest is the node's to do, in the order it came. A node that
             // falls this far behind lets the connection go rather than hold
@@ -951,6 +976,7 @@ async fn handle_frame(
         }
         Down::Incoming { call, message } => {
             let stop = inner.answers.open(inner, CallOn::Hub(generation), call);
+            CALLS.in_turn.add(1);
             fastctx_platform::task::spawn(super::answering::answer(
                 inner.clone(),
                 Replier::Hub(up.clone(), call),
@@ -1002,6 +1028,15 @@ async fn handle_frame(
                 let outcome = inner.node.forget_account(forgetting).await;
                 // A session ended meanwhile: the hub tells it again.
                 let _ = up.send(Up::ForgotAccount { id, outcome });
+            });
+        }
+        Down::Purge { purging } => {
+            let (inner, up) = (inner.clone(), up.clone());
+            fastctx_platform::task::spawn(async move {
+                let (id, round) = (purging.id, purging.round);
+                let outcome = inner.node.purge(purging).await;
+                // A session ended meanwhile: the hub asks again.
+                let _ = up.send(Up::Purged { id, round, outcome });
             });
         }
         Down::Versions { network } => {

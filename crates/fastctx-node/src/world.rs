@@ -627,7 +627,7 @@ async fn put_aside_in(node: &Arc<Node>, link: &Arc<Link>) -> Result<std::path::P
     node.ways_changed();
     // What the network had here goes with it (the user, 2026-11-12), before
     // its records are put aside: a stop in between leaves again at start.
-    crate::assets::membership::left(node, &hub).await;
+    crate::assets::membership::left(node, &hub, Some(link.as_ref())).await;
     // Its view is gone, and every interface shows the World without it.
     node.views_changed();
     // The machines each session may use, and who may ask for colleagues,
@@ -917,6 +917,10 @@ impl fastctx_net::link::Node for Handler {
                         let stream = stream.ok_or_else(|| Failure::new("MCP requires a data connection"))?;
                         crate::mcp::serve(&node, &hub, &caller.account, &name, stream).await.map(|()| RemoteReply::Set)
                     }
+                    RemoteCall::Assets => {
+                        let stream = stream.ok_or_else(|| Failure::new("what is kept here is given over a data connection"))?;
+                        crate::assets::served::serve(&node, &hub, &caller, stream).await.map(|()| RemoteReply::Set)
+                    }
                     RemoteCall::Relay { made } => crate::devices::relay(&node, &asker, made).await,
                     // A resident of the calling machine works here (`world-run.md`,
                     // 这里).
@@ -1011,6 +1015,7 @@ impl fastctx_net::link::Node for Handler {
                     }
                     RemoteCall::Ask { asker: resident, requester_turn, town, label, prompt, started } => {
                         let acting = Acting::one(hub.clone(), caller.account.clone());
+                        let born = asker.born.clone();
                         let asker = Address { machine: from, resident };
                         let (colleague, waiting) = crate::talk::submission::ask_here(
                             &node,
@@ -1020,6 +1025,7 @@ impl fastctx_net::link::Node for Handler {
                             label,
                             prompt,
                             started,
+                            born,
                         )
                         .await?;
                         Ok(RemoteReply::Asked { colleague, waiting })
@@ -1086,7 +1092,7 @@ impl fastctx_net::link::Node for Handler {
                         let mut stream =
                             stream.ok_or_else(|| Failure::new("a timeline read requires its data connection"))?;
                         let reading =
-                            crate::timeline::api::checked(&node, crate::timeline::api::here(&node, request), || {
+                            crate::timeline::api::checked(&node, crate::timeline::api::served(&node, request), || {
                                 crate::admission::admit(&node, &link, &caller, &admitted).map(|_| ())
                             });
                         tokio::select! {
@@ -1196,6 +1202,7 @@ impl fastctx_net::link::Node for Handler {
                             options,
                             attachments,
                             choices,
+                            asker.born.clone(),
                         )
                         .await?;
                         Ok(RemoteReply::Opened { resident, landed })
@@ -1397,7 +1404,17 @@ impl fastctx_net::link::Node for Handler {
                         .await
                         .map(|answer| RemoteReply::Book(Box::new(answer))),
                     RemoteCall::Stats { after, seen } => {
-                        crate::stats::here(&node, after, seen).await.map(|stats| RemoteReply::Stats(Box::new(stats)))
+                        // Where this machine's cards are reached is not told
+                        // to a machine kept from linking with it directly.
+                        let apart = kept_apart(&node, &hub, &caller.machine);
+                        crate::stats::here(&node, after, seen).await.map(|mut stats| {
+                            if apart {
+                                for card in &mut stats.cards {
+                                    card.addresses.clear();
+                                }
+                            }
+                            RemoteReply::Stats(Box::new(stats))
+                        })
                     }
                     RemoteCall::Inspect { inspect, evidence_of } => {
                         let scope = HubAccount { hub: hub.clone(), account: caller.account.clone() };
@@ -1412,6 +1429,9 @@ impl fastctx_net::link::Node for Handler {
                         Ok(()) => Ok(RemoteReply::Topics(node.topics.told(&request, crate::topics::WAITS).await)),
                         Err(reason) => Err(Failure::not_run(reason)),
                     },
+                    RemoteCall::Interfaces if kept_apart(&node, &hub, &caller.machine) => Err(Failure::new(
+                        "this machine's addresses are not told to a machine it does not link with directly",
+                    )),
                     RemoteCall::Interfaces => {
                         crate::hub_arrival::interfaces().map(|addresses| RemoteReply::Interfaces { addresses })
                     }
@@ -1686,7 +1706,7 @@ impl fastctx_net::link::Node for Handler {
             {
                 let _one = memberships().lock().await;
                 if !node.link_of(&hub).is_some_and(|link| link.membership_active()) {
-                    crate::assets::membership::left(&node, &hub).await;
+                    crate::assets::membership::left(&node, &hub, node.link_of(&hub).as_deref()).await;
                 }
             }
             let Some(then) = then else { return };
@@ -1773,6 +1793,9 @@ impl fastctx_net::link::Node for Handler {
         let (keeping, hub) = (node.clone(), self.hub.clone());
         fastctx_platform::task::spawn_blocking(move || {
             crate::admitted::notice(&keeping, &hub);
+            if swept && let Err(error) = crate::timeline::last_page::prune(&keeping, &hub) {
+                keeping.log.line(format_args!("pruning cached timeline pages: {error}"));
+            }
             // What a reader holds of its account's records follows the
             // directory — a project's ledger under the machines it may use
             // now (§29, 2.4), a project taken back, the same machines again:
@@ -1877,6 +1900,20 @@ impl fastctx_net::link::Node for Handler {
         })
     }
 
+    fn purges(&self) -> bool {
+        true
+    }
+
+    fn purge(&self, purging: fastctx_net::wire::Purging) -> fastctx_net::link::BoxFuture<fastctx_net::wire::Purged> {
+        let (node, hub) = (self.node.upgrade(), self.hub.clone());
+        Box::pin(async move {
+            match node {
+                Some(node) => crate::purges::told(&node, &hub, purging).await,
+                None => fastctx_net::wire::Purged::Failed { reason: "the node is stopping".to_string() },
+            }
+        })
+    }
+
     fn open_ports(&self, ports: &std::collections::BTreeSet<u16>) -> Result<fastctx_net::wire::Firewall, String> {
         crate::firewall::open(&self.hub, ports)
     }
@@ -1946,4 +1983,15 @@ pub fn grouped_machines(
         group.machines.sort();
     }
     (here, others, groups)
+}
+
+/// Whether `caller` is a machine kept from linking with this one directly on
+/// `hub` (`Assist::direct`): it is not told where this machine is reached.
+fn kept_apart(node: &Node, hub: &HubId, caller: &MachineName) -> bool {
+    node.link_of(hub).is_some_and(|link| {
+        let view = link.view();
+        view.me()
+            .zip(view.member(caller))
+            .is_some_and(|(mine, theirs)| view.directory.direct_withheld(mine, theirs, jiff::Timestamp::now()))
+    })
 }

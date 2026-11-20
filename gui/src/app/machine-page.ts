@@ -22,7 +22,7 @@ import type { Card, LimitUse, MachineStats, StatsSeen } from "../world/stats";
 import type { DoctorReadings } from "../world/doctor";
 import type { MachineFacts } from "../world/world";
 import type { AccessWords, MachinesWords } from "./account-words";
-import { AssistSheet, assistChange, assistancesIn, namesOn, type Assistance } from "./assist-sheet";
+import { AssistSheet, assistChange, assistancesIn, endAssist, namesOn, type Assistance } from "./assist-sheet";
 import type { Confirm } from "./confirm";
 import { bytesSaid } from "./data-page";
 import { redrawKeepingFocus } from "./focus";
@@ -1404,21 +1404,20 @@ export class MachinePage implements Page {
         const to = target.dataset.to ?? "";
         const agent = target.dataset.agent ?? "";
         const home = target.dataset.home ? { home: target.dataset.home } : {};
-        // Given again by the undo, it ends when it was to, and keeps its allowances.
-        const until = target.dataset.until ? { until: target.dataset.until } : {};
-        const caps = {
-          ...(target.dataset.daily ? { daily: Number(target.dataset.daily) } : {}),
-          ...(target.dataset.weekly ? { weekly: Number(target.dataset.weekly) } : {}),
-          ...(target.dataset.fiveHour ? { five_hour: Number(target.dataset.fiveHour) } : {}),
-          ...(target.dataset.turns ? { turns: Number(target.dataset.turns) } : {}),
-        };
+        // Ended for good, once asked: what was born under it is deleted, and
+        // there is nothing to undo; bound to the assistance as shown now.
+        const seen = owner
+          ? hubOf(this.options.store.world.peek(), owner)?.assists.find((one) => one.machine === machine.name && one.account === to && one.agent === agent && (one.home ?? null) === (target.dataset.home ?? null))
+          : undefined;
+        const shown = seen?.grants ?? [];
         if (owner)
-          void this.takeBack(
-            button,
-            owner,
-            `${agentName(agent)} ${to}`,
-            { change: "assist", machine: machine.name, to, agent, ...home, assisting: false },
-            { change: "assist", machine: machine.name, to, agent, ...home, assisting: true, ...until, ...caps },
+          endAssist(
+            this.options.confirm,
+            this.options.machines,
+            to,
+            shown,
+            () => this.options.change(owner, { change: "assist", machine: machine.name, to, agent, ...home, assisting: false, purge: true, shown }),
+            () => void this.options.store.refresh(),
           );
         return;
       }
@@ -1464,8 +1463,8 @@ export class MachinePage implements Page {
     this.assistSheet.open({
       title: options.access.assistTitle(name, machine.written),
       assistances: assistances(),
-      assist: async (to, terms) => {
-        await options.change(login, assistChange(machine.name, agent, home, to, terms));
+      assist: async (to, terms, shown) => {
+        await options.change(login, assistChange(machine.name, agent, home, to, terms, shown));
         await options.store.refresh();
         return assistances();
       },

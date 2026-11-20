@@ -43,7 +43,7 @@ pub(crate) async fn prepare(
             .await
             .map_err(failure)?
         {
-            fastctx_types::owned_records::Response::Conversation { conversation } => Some(conversation),
+            fastctx_types::owned_records::Response::Conversation { conversation } => Some(*conversation),
             _ => return Err(failure("the hub did not return the conversation's ownership")),
         },
     };
@@ -83,6 +83,7 @@ pub(crate) async fn prepare(
                 hub: account.hub.clone(),
                 account: account.account.clone(),
                 hands: true,
+                born: None,
             };
             match crate::placement::prepare_copy(node, &asker, owner.clone(), 0, resource.clone()).await {
                 Ok(location) => {
@@ -183,6 +184,7 @@ pub(crate) async fn prepare_here(
             let fastctx_types::owned_records::Response::Conversation { conversation } = response else {
                 return Err(failure("conversation ownership was not returned"));
             };
+            let conversation = *conversation;
             let view = crate::authorization::current_view(&link)?;
             if !view.me().is_some_and(|member| {
                 fastctx_net::record_ownership::keeps(

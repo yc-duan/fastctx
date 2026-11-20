@@ -69,15 +69,16 @@ fn stand(db: &Connection, hub: &str, term: i64, joined: bool) -> fastctx_storage
 }
 
 /// Every scope of `hub`'s network held here revoked, `device`'s writes not
-/// yet uploaded kept first: how many were held.
-fn revoke_all(db: &Connection, hub: &str, device: &[u8; 32]) -> fastctx_storage::Result<usize> {
+/// yet uploaded kept first, but for the streams `stays` names by scope and
+/// stream (`Library::revoke_keeping_but`): how many were held.
+fn revoke_all(db: &Connection, hub: &str, device: &[u8; 32], stays: &dyn Fn(&str, &str) -> bool) -> fastctx_storage::Result<usize> {
     let keys: Vec<String> = {
         let mut statement = db.prepare_cached("SELECT key FROM scopes WHERE hub = ?1 AND holding IS NOT NULL ORDER BY key")?;
         let rows = statement.query_map([hub], |row| row.get(0))?;
         rows.collect::<std::result::Result<_, _>>()?
     };
     for key in &keys {
-        super::letgo::revoke_keeping_in(db, key, device)?;
+        super::letgo::revoke_keeping_in(db, key, device, &|stream| stays(key, stream))?;
     }
     Ok(keys.len())
 }
@@ -102,6 +103,19 @@ impl Library {
     /// not done yet, as when the hub removed the machine — ends with it
     /// (AJ04).
     pub fn join(&self, hub: &str, device: &[u8; 32], anew: bool) -> Result<Network> {
+        self.join_but(hub, device, anew, |_, _| false)
+    }
+
+    /// `join`, with nothing kept of the streams `stays` names by scope and
+    /// stream where an earlier term's holdings are revoked
+    /// (`revoke_keeping_but`).
+    pub fn join_but(
+        &self,
+        hub: &str,
+        device: &[u8; 32],
+        anew: bool,
+        stays: impl Fn(&str, &str) -> bool + Send + 'static,
+    ) -> Result<Network> {
         let (hub, device) = (hub.to_string(), *device);
         let joined = self.database().write_now_at(Priority::Control, 1 << 20, move |db| {
             let before = standing(db, &hub)?;
@@ -111,7 +125,7 @@ impl Library {
                 return Ok(Network { hub, term });
             }
             db.prepare_cached("DELETE FROM feeds WHERE hub = ?1")?.execute([&hub])?;
-            revoke_all(db, &hub, &device)?;
+            revoke_all(db, &hub, &device, &stays)?;
             let term = before.map_or(1, |(term, _)| term + 1);
             stand(db, &hub, term, true)?;
             Ok(Network { hub, term })
@@ -124,6 +138,12 @@ impl Library {
     /// it held here is revoked in the same transaction, `device`'s writes
     /// not yet uploaded kept first. How many scopes were held.
     pub fn leave(&self, hub: &str, device: &[u8; 32]) -> Result<usize> {
+        self.leave_but(hub, device, |_, _| false)
+    }
+
+    /// `leave`, with nothing kept of the streams `stays` names by scope and
+    /// stream (`revoke_keeping_but`).
+    pub fn leave_but(&self, hub: &str, device: &[u8; 32], stays: impl Fn(&str, &str) -> bool + Send + 'static) -> Result<usize> {
         let (hub, device) = (hub.to_string(), *device);
         let held = self.database().write_now_at(Priority::Control, 1 << 20, move |db| {
             let term = standing(db, &hub)?.map_or(1, |(term, _)| term + 1);
@@ -131,7 +151,7 @@ impl Library {
             // Where it stood in the network's libraries goes with it: joined
             // again, it starts from nothing.
             db.prepare_cached("DELETE FROM feeds WHERE hub = ?1")?.execute([&hub])?;
-            revoke_all(db, &hub, &device)
+            revoke_all(db, &hub, &device, &stays)
         })?;
         self.wrote();
         Ok(held)
@@ -159,6 +179,18 @@ impl Library {
         let hub = hub.to_string();
         Ok(self.database().write_now_at(Priority::Normal, 128, move |db| {
             db.prepare_cached("UPDATE scopes SET pulled = NULL WHERE hub = ?1")?.execute([&hub])?;
+            Ok(())
+        })?)
+    }
+
+    /// The scope `scope` counts as pulled whole here no more: it is pulled by
+    /// itself again, each stream from where it stands here, before its
+    /// changes carry it — what passed it by while this machine took nothing
+    /// of it in comes down then, though nothing of it moves again.
+    pub fn forget_pulled_of(&self, scope: &str) -> Result<()> {
+        let scope = scope.to_string();
+        Ok(self.database().write_now_at(Priority::Normal, 128, move |db| {
+            db.prepare_cached("UPDATE scopes SET pulled = NULL WHERE key = ?1")?.execute([&scope])?;
             Ok(())
         })?)
     }

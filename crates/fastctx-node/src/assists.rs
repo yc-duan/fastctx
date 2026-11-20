@@ -46,6 +46,221 @@ pub(crate) fn own_accounts(node: &Node, acting: &Acting) -> bool {
     })
 }
 
+/// Whom a session the World starts here for `acting`, in `agent`'s login
+/// `home`, is born working for, and by what right (`About::born_as`), as
+/// this machine's hubs say now: each account, which account of its name it
+/// is, and the assistance it works by where it does not hold the machine
+/// (design-forget-account-v2.md F0). The account that owns this computer is
+/// read as its hub last said while the hub has not said again, as a session
+/// working for it is let work here meanwhile (`authorization`), so its own
+/// work is not held up; another whose hub has not said yet, or that may no
+/// longer use the login here, is refused: nothing is born for it, as a call
+/// from it would be refused (`admission`). The assistance is the one the hub
+/// gave: one from a hub from before grants has none, worked by all the same.
+pub(crate) fn born_as(
+    node: &Node,
+    acting: &Acting,
+    agent: &fastctx_types::AgentName,
+    home: Option<&std::path::Path>,
+) -> Result<Vec<fastctx_types::residents::BornAs>, Failure> {
+    let Acting::Accounts { accounts } = acting else { return Ok(Vec::new()) };
+    accounts
+        .iter()
+        .map(|account| {
+            let link = node.link_of(&account.hub).ok_or_else(|| {
+                Failure::from(fastctx_types::authorization::Denial::new(
+                    fastctx_types::authorization::DenialReason::ViewUnavailable,
+                    "the account it works for is no longer connected; it waits for authority",
+                ))
+            })?;
+            let view = match crate::authorization::current_view(&link) {
+                Ok(view) => view,
+                Err(_) if link.view().me().is_some_and(|me| me.home.as_ref() == Some(&account.account)) => link.view(),
+                Err(failure) => return Err(failure),
+            };
+            born_by(node, &view, &account.hub, &account.account, agent, home)
+        })
+        .collect()
+}
+
+/// What `account` of `hub` is born as here in `agent`'s login `home`, as
+/// `view` says (`born_as`): read by the door as it lets a call to open one
+/// in, from the very view it lets it in by, as by `born_as` as it is born.
+pub(crate) fn born_by(
+    node: &Node,
+    view: &fastctx_net::directory::Directory,
+    hub: &fastctx_types::access::HubId,
+    account: &fastctx_types::AccountName,
+    agent: &fastctx_types::AgentName,
+    home: Option<&std::path::Path>,
+) -> Result<fastctx_types::residents::BornAs, Failure> {
+    let here = node.machine();
+    let generation = view
+        .account(account)
+        .ok_or_else(|| Failure::refused(format!("there is no account {account} on its hub")))?
+        .opened;
+    let (assisted, grant) = if view.rights(account, &here).hands {
+        (false, None)
+    } else {
+        let may = crate::homes::may_use_login(node, view, account, &here, agent, home)?;
+        match crate::homes::assistance(node, view, account, &here, agent, home)? {
+            Some(assist) if may => (true, assist.grant),
+            _ => {
+                let login = home.map_or_else(|| "default".to_string(), |home| home.display().to_string());
+                return Err(Failure::refused(format!(
+                    "the {agent} login {login} on {here} does not assist the account {account}"
+                )));
+            }
+        }
+    };
+    Ok(fastctx_types::residents::BornAs { hub: hub.clone(), account: account.clone(), generation, assisted, grant })
+}
+
+/// That a session about to be started or forked here is still born by the
+/// right it was born by, `born_as`, read again as late as can be before the
+/// host is asked anything (codex-87c8bbd9): an error otherwise, the denial
+/// of a hub that has not said again where that is why.
+pub(crate) fn still_born_as(
+    node: &Node,
+    acting: &Acting,
+    agent: &fastctx_types::AgentName,
+    home: Option<&std::path::Path>,
+    born: &[fastctx_types::residents::BornAs],
+) -> Result<(), Failure> {
+    if born_as(node, acting, agent, home)? != born {
+        return Err(Failure::refused(
+            "the right it was opened by no longer stands: the assistance or the account it was opened under has changed since",
+        ));
+    }
+    Ok(())
+}
+
+/// `still_born_as` as a host's last question before it is asked to make a
+/// thread or fork (`Still`).
+pub(crate) fn still(
+    node: &std::sync::Arc<Node>,
+    acting: &Acting,
+    agent: &fastctx_types::AgentName,
+    home: Option<&std::path::Path>,
+    born: &[fastctx_types::residents::BornAs],
+) -> Still {
+    Still {
+        node: node.clone(),
+        acting: acting.clone(),
+        agent: agent.clone(),
+        home: home.map(std::path::Path::to_path_buf),
+        born: born.to_vec(),
+        refused: Default::default(),
+    }
+}
+
+/// What a host asks last before it is asked to make a thread or fork
+/// (`ask`): whether the session is still born by the right it was born by.
+/// What it refused is kept whole, its kind with it, for the failure the
+/// host's words come back as (`failure`; codex-87c8bbd9).
+pub(crate) struct Still {
+    node: std::sync::Arc<Node>,
+    acting: Acting,
+    agent: fastctx_types::AgentName,
+    home: Option<std::path::PathBuf>,
+    born: Vec<fastctx_types::residents::BornAs>,
+    refused: std::sync::Arc<std::sync::Mutex<Option<Failure>>>,
+}
+
+impl Still {
+    /// The question, as the host asks it.
+    pub(crate) fn ask(&self) -> impl Fn() -> Result<(), String> + Send + Sync + use<> {
+        let (node, acting, agent, home, born, refused) = (
+            self.node.clone(),
+            self.acting.clone(),
+            self.agent.clone(),
+            self.home.clone(),
+            self.born.clone(),
+            self.refused.clone(),
+        );
+        move || {
+            still_born_as(&node, &acting, &agent, home.as_deref(), &born).map_err(|failure| {
+                let message = failure.message.clone();
+                *refused.lock().expect("never poisoned") = Some(failure);
+                message
+            })
+        }
+    }
+
+    /// What this refused, whole, where that is why the host asked nothing.
+    pub(crate) fn refused(&self) -> Option<Failure> {
+        self.refused.lock().expect("never poisoned").take()
+    }
+
+    /// The failure the host's `error` stands for: what this refused, where
+    /// it did; else the host's own.
+    pub(crate) fn failure(&self, error: impl Into<String>) -> Failure {
+        self.refused().unwrap_or_else(|| Failure::new(error.into()))
+    }
+}
+
+/// Whether a session born here, its first session not yet started, may be
+/// started now (codex-87c8bbd9): each account it was born working for is
+/// still the account of its name it was born for, and may use its login
+/// here, by whatever right (an assistance ended and given again is right
+/// enough: what it was born as stays what it was born as), but not by an
+/// assistance where it was born holding the machine: its host was made not
+/// kept apart, which an assistance asks for (codex-87c8bbd9); nor, by an
+/// assistance, where its host was made not kept apart, `isolated` saying how
+/// its host was made where that is decided already: what it was born as does
+/// not say so of a host made before its right changed (codex-87c8bbd9's
+/// seventh look). An error otherwise, the denial of a hub that has not said
+/// again where that is why.
+pub(crate) fn may_still_start(node: &Node, about: &About, isolated: Option<bool>) -> Result<(), Failure> {
+    let Some(born) = &about.born_as else { return Ok(()) };
+    // Nor where an assistance it was born by was closed here for good: what
+    // was born by it is being deleted (`purges`).
+    if crate::purges::closed(node, born) {
+        return Err(Failure::refused(
+            "the assistance it was opened by was ended for good, and what was born by it is being deleted",
+        ));
+    }
+    let now = born_as(node, &about.acting, &about.host.agent, about.home.as_deref())?;
+    for was in born {
+        let Some(is) =
+            now.iter().find(|is| is.hub == was.hub && is.account == was.account && is.generation == was.generation)
+        else {
+            return Err(Failure::refused(format!(
+                "the account {} it was opened for is no longer the account of that name",
+                was.account
+            )));
+        };
+        if is.assisted && !was.assisted {
+            return Err(Failure::refused(format!(
+                "the account {} no longer holds this machine, only an assistance of its login, and the session was opened not kept apart",
+                was.account
+            )));
+        }
+        if is.assisted && isolated == Some(false) {
+            return Err(Failure::refused(format!(
+                "the account {} holds this machine no longer, only an assistance of its login, and the session's host was made not kept apart",
+                was.account
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// A session born working by an assistance is born in a login it knows by
+/// its id, or not at all: what it was born under is what ending the
+/// assistance takes away (design-forget-account-v2.md F0, codex-d1962125).
+pub(crate) fn evidenced(
+    born_as: &[fastctx_types::residents::BornAs],
+    login: Option<&fastctx_types::logins::LoginId>,
+) -> Result<(), Failure> {
+    if login.is_none() && born_as.iter().any(|born| born.assisted) {
+        return Err(Failure::new(
+            "the login it would be born in could not be given its id (the node's log says why), and a session working by an assistance is born only in a login known by its id",
+        ));
+    }
+    Ok(())
+}
+
 /// Whether this account may still use the conversation's login, without applying usage limits.
 pub(crate) fn permitted(
     node: &Node,

@@ -48,6 +48,8 @@ struct Told {
     account: AccountName,
     shared: bool,
     previous: Option<fastctx_types::MachineName>,
+    /// Whether what it was born as was said: once it is born whole.
+    born: bool,
 }
 
 /// Registration contains coordinates and birth mode only, never document text.
@@ -83,24 +85,56 @@ pub(crate) async fn register_at(
         None => matches!(acting, Acting::Here),
     };
     let previous = node.residents.birth_machine(resident);
-    let born_at = node.residents.about(resident).map(|(about, _)| about.born_at);
+    let about = node.residents.about(resident).map(|(about, _)| about);
+    let born_at = about.as_ref().map(|about| about.born_at);
+    // What it was born as, for this account, which the hub keeps once
+    // (design-forget-account-v2.md F0): said once it is born whole, one
+    // working by an assistance once it knows the login it was born in, a
+    // Claude Code one as its first session is started (codex-87c8bbd9).
+    let born = about.as_ref().and_then(|about| {
+        let born =
+            about.born_as.as_ref()?.iter().find(|born| born.hub == scope.hub && born.account == scope.account)?;
+        (!born.assisted || about.login.is_some()).then(|| born.clone())
+    });
+    let colleague =
+        about.as_ref().is_some_and(|about| matches!(about.origin, fastctx_types::residents::Origin::Colleague { .. }));
     let key = (scope.hub.clone(), resident.clone());
     let told = match link.status() {
-        fastctx_net::link::Status::Online { since, .. } => {
-            Some(Told { connection: since, account: scope.account.clone(), shared, previous: previous.clone() })
-        }
+        fastctx_net::link::Status::Online { since, .. } => Some(Told {
+            connection: since,
+            account: scope.account.clone(),
+            shared,
+            previous: previous.clone(),
+            born: born.is_some(),
+        }),
         _ => None,
     };
     if told.is_some() && node.registered.0.lock().expect("never poisoned").get(&key) == told.as_ref() {
         return Ok(());
     }
-    link.owned_records(
-        &scope.account,
-        fastctx_types::owned_records::Request::Register { resident: resident.clone(), shared, previous, born_at },
-    )
-    .await
-    .map_err(fastctx_types::ipc::Failure::new)?;
-    if let Some(told) = told {
+    let answered = link
+        .owned_records(
+            &scope.account,
+            fastctx_types::owned_records::Request::Register {
+                resident: resident.clone(),
+                shared,
+                previous,
+                born_at,
+                generation: born.as_ref().map(|born| born.generation),
+                assisted: born.as_ref().is_some_and(|born| born.assisted),
+                born_under: born.and_then(|born| born.grant),
+                colleague,
+            },
+        )
+        .await
+        .map_err(fastctx_types::ipc::Failure::new)?;
+    // What it was born as counts as told only where the hub kept it, so a hub
+    // that did not, from before it kept births, is told again
+    // (codex-87c8bbd9).
+    let kept = matches!(&answered, fastctx_types::owned_records::Response::Conversation { conversation }
+        if conversation.birth.generation.is_some());
+    if let Some(mut told) = told {
+        told.born &= kept;
         node.registered.0.lock().expect("never poisoned").insert(key, told);
     }
     Ok(())

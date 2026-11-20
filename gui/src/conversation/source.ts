@@ -7,7 +7,7 @@
 
 import type { Address, SessionEvent } from "../world/events";
 import { after, whyOf } from "../world/again";
-import { conversationSearch, conversationCut, conversationFiles, conversationFind, conversationIndex, conversationLocate, conversationObject, conversationPage, conversationPart, unwatch, watch, type Piece } from "../world/bridge";
+import { conversationPreview, conversationSearch, conversationCut, conversationFiles, conversationFind, conversationIndex, conversationLocate, conversationObject, conversationPage, conversationPart, onComputer, unwatch, watch, type Piece } from "../world/bridge";
 import type { PartSource, Window } from "./conversation";
 import type { ReplicaPart, ReplicaRecord } from "./replica";
 
@@ -23,6 +23,9 @@ export interface ConversationFeed {
   /** The latest part of its timeline, in place of all held; `parts` reads
    *  the rest. */
   replica(part: ReplicaPart, parts: PartSource): void;
+  preview(part: ReplicaPart): void;
+  attached(parts: PartSource): void;
+  dropPreview(): void;
   /** Records its timeline gained. */
   records(generation: number, records: ReplicaRecord[]): void;
   /** Whether its timeline is still being made from the history. */
@@ -52,6 +55,7 @@ export interface Reading {
   again(): void;
   /** Reconsiders a refusal when the current listing or its permission revision changes. */
   recheck?(revision: string | null): void;
+  hidePreview?(): void;
   close(): void;
 }
 
@@ -72,6 +76,14 @@ export const watched: ConversationSource = {
     let closed = false;
     let refused = false;
     let authority: string | null = null;
+    let preview: ReplicaPart | null = null;
+    let authoritative = false;
+    let previewBlocked = false;
+    const hidePreview = () => {
+      if (!preview) return;
+      preview = null;
+      feed.dropPreview();
+    };
     const current = () => {
       if (id === null) throw new Error("the conversation is not watched now");
       return id;
@@ -110,6 +122,7 @@ export const watched: ConversationSource = {
     };
     const decline = (why: string, attempted: string | null) => {
       refused = true;
+      hidePreview();
       feed.refused(why);
       // A reply from before a new grant must not close the newly usable conversation.
       if (authority !== null && authority !== attempted) return restart();
@@ -170,6 +183,7 @@ export const watched: ConversationSource = {
           return;
         case "deleted":
           closed = true;
+          hidePreview();
           feed.deleted(piece.error);
           return;
         case "refused":
@@ -190,6 +204,14 @@ export const watched: ConversationSource = {
       let ready = false;
       const early: Piece[] = [];
       let earlyBytes = 0;
+      if (onComputer() && !authoritative && !previewBlocked && !preview) {
+        void conversationPreview(address).then((part) => {
+          if (part && !closed && !refused && !authoritative && !previewBlocked && mine === reading) {
+            preview = part;
+            feed.preview(part);
+          }
+        }).catch(() => {});
+      }
       watch(address, (piece) => {
         if (closed || refused || mine !== reading) return;
         if (!ready) {
@@ -206,8 +228,13 @@ export const watched: ConversationSource = {
           id = started.id;
           tries = 0;
           since = null;
-          if (started.replica) feed.replica(started.replica, parts);
-          else if (started.window) feed.window(started.window, parts);
+          authoritative = true;
+          if (started.replica) {
+            if (preview?.stamp && preview.stamp === started.replica.stamp && preview.preparing === started.replica.preparing) {
+              feed.attached(parts);
+            } else feed.replica(started.replica, parts);
+          } else if (started.window) feed.window(started.window, parts);
+          preview = null;
           for (const piece of early) {
             if (closed || refused || mine !== reading) break;
             take(piece, attempted);
@@ -219,6 +246,7 @@ export const watched: ConversationSource = {
           // Deletion is final. A refusal waits for changed facts instead of retrying on a timer.
           if (typeof error === "object" && error !== null && (error as { deleted?: unknown }).deleted === true) {
             closed = true;
+            hidePreview();
             feed.deleted(whyOf(error));
             return;
           }
@@ -255,6 +283,10 @@ export const watched: ConversationSource = {
         const changed = authority !== revision;
         authority = revision;
         if (changed && authority !== null && refused) restart();
+      },
+      hidePreview() {
+        previewBlocked = true;
+        hidePreview();
       },
       close() {
         closed = true;

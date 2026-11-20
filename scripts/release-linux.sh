@@ -37,8 +37,8 @@ for target in x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu; do
     export FASTCTX_TEST_BASH=/bin/bash
     export FASTCTX_TEST_ROOT="$CARGO_TARGET_DIR/lifecycle-check"
     mkdir -p "$FASTCTX_TEST_ROOT"
-    for contract in own_lifetime job_lifecycle; do
-      if [ "$contract" = own_lifetime ]; then package=fastctx-node; else package=fastctx-hands; fi
+    for contract in own_lifetime line_sources job_lifecycle; do
+      if [ "$contract" = job_lifecycle ]; then package=fastctx-hands; else package=fastctx-node; fi
       # The test executable this build made, as cargo reports it: a reused target directory keeps
       # the ones earlier builds made beside it.
       mapfile -t tests < <(cargo +1.92.0 zigbuild --locked --release -j "$CARGO_BUILD_JOBS" -p "$package" --test "$contract" --target x86_64-unknown-linux-musl --message-format=json-render-diagnostics |

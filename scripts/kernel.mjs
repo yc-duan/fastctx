@@ -3,7 +3,7 @@
 //   node scripts/kernel.mjs [TARGET]
 //   node scripts/kernel.mjs --tests TARGET DIR
 // `--tests` builds the release tests for TARGET into DIR (the bundled ripgrep, the node's lifetime,
-// job control and byte streams, the network drill, and on Linux the hub's scale drill) from the very units the kernel is built of: with the kernel's
+// its line sources, job control and byte streams, the network drill, and on Linux the hub's scale drill) from the very units the kernel is built of: with the kernel's
 // package among theirs every dependency gets the kernel's features, and the same environment keeps
 // the embedded notices, so only the tests themselves are compiled.
 import { execFileSync } from "node:child_process";
@@ -15,7 +15,7 @@ const repo = fileURLToPath(new URL("..", import.meta.url));
 export const toolchain = "+1.92.0";
 // The release tests, by the package each belongs to.
 const tests = {
-  offline: "fastctx-ripgrep", own_lifetime: "fastctx-node", job_lifecycle: "fastctx-hands", network_drill: "fastctx-hub",
+  offline: "fastctx-ripgrep", own_lifetime: "fastctx-node", line_sources: "fastctx-node", job_lifecycle: "fastctx-hands", network_drill: "fastctx-hub",
   placement_drill: "fastctx-hub", letter_drill: "fastctx-net",
 };
 // The hub's scale drill and the soak hold what they run with systemd, on Linux alone.

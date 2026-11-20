@@ -265,7 +265,7 @@ import { Confirm } from "./app/confirm";
 import { showPathNotice } from "./app/path-notice";
 import { forgetConversation, manage as manageResident, type Forgetting, type Managed, type Management } from "./world/management";
 import { FileSearch } from "./world/file-search";
-import { configurePhone, guideBackground, onPhone, phoneSeam, routeActivations, tellPhoneViewing } from "./app/phone";
+import { configurePhone, onPhone, phoneSeam, routeActivations, tellPhoneViewing } from "./app/phone";
 import { copySeam } from "./app/phone-copy";
 import { renewalState, renewHere, type VersionMismatch } from "./world/renewal";
 import type { Address, SessionEvent } from "./world/events";
@@ -273,6 +273,7 @@ import type { MachineLogins, WorldLogins } from "./world/logins";
 import { ownerResident, type ResidentNow, type WorldWho } from "./world/world";
 import { agentName, titleOf } from "./world/names";
 import { liveSide, specimenSide } from "./side/live";
+import { forgetCollaborations } from "./side/collaboration-follow";
 import { whereOf } from "./side/where-live";
 import { enSide, zhSide } from "./side/words";
 import { enPlan, zhPlan } from "./plan/words";
@@ -858,6 +859,8 @@ function forgetShown(): void {
   forgetAnswered();
   theDesk?.forget();
   keptTalks.dropAll();
+  forgetCollaborations(store);
+  filesShown?.page?.forgetRecent();
   try {
     for (const key of Object.keys(localStorage)) if (key.startsWith("draft:") || key === "desk" || key === "side-open") localStorage.removeItem(key);
   } catch {
@@ -2451,6 +2454,15 @@ function liveTalk(address: Address): DeskTalk {
       page.update({ read: true });
     },
     replica: (part, parts) => page.reopened(() => conversation.openReplica(part, parts)),
+    preview: (part) => page.reopened(() => conversation.openReplica(part, null)),
+    attached: (parts) => {
+      conversation.attachReplicaSource(parts);
+      page.update();
+    },
+    dropPreview: () => {
+      conversation.openReplica({ generation: 0, events: [], older: null, newer: null, preparing: false }, null);
+      page.update({ read: true });
+    },
     records: (generation, records) => {
       heardAt = Date.now();
       conversation.records(generation, records);
@@ -2486,6 +2498,7 @@ function liveTalk(address: Address): DeskTalk {
       page.update();
     },
     refused: (why) => {
+      forgetCollaborations(store, address);
       page.refused(why);
       page.update();
     },
@@ -2503,6 +2516,7 @@ function liveTalk(address: Address): DeskTalk {
     if (deleted) return;
     deleted = true;
     reading.close();
+    forgetCollaborations(store, address);
     page.presence("deleted");
     letGo(address);
     keptTalks.gone(talkKey(address));
@@ -2526,7 +2540,11 @@ function liveTalk(address: Address): DeskTalk {
     : effect(() => {
         const now = store.world.get();
         talkActs.changed.get();
-        if (!left) page.presence(deleted ? "deleted" : presenceOf(now, address));
+        if (!left) {
+          const presence = deleted ? "deleted" : presenceOf(now, address);
+          if (presence === "away" || presence === "deleted") reading.hidePreview?.();
+          page.presence(presence);
+        }
         const known = residentAt(now, address);
         reading.recheck?.(known ? lookRevision(now, address.machine) : null);
         const who = someoneOf(now, address);
@@ -3860,12 +3878,6 @@ if (!live && params.get("s") === "invite") {
 // words the page gives it; a tap on a call opens what it was about.
 if (live && onPhone()) {
   void configurePhone(presenceWords, notifying()).catch((error: unknown) => console.error("telling the phone its calls", error));
-  // Once in a World, what keeps the phone online in the background, walked
-  // through once; looked at again as the app comes back to the front.
-  guideBackground(english ? enSettings : zhSettings, phoneSeam);
-  document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "visible") guideBackground(english ? enSettings : zhSettings, phoneSeam);
-  });
   void routeActivations().catch((error: unknown) => console.error("opening tapped calls", error));
   const viewing = () => void tellPhoneViewing(placeOf(location.hash)).catch((error: unknown) => console.error("telling the phone what is in view", error));
   addEventListener("hashchange", viewing);

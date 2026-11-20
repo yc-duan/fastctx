@@ -181,6 +181,19 @@ impl Claude {
         self.handed.lock().expect("never poisoned").entry(resident.clone()).or_default().push(text.to_string());
     }
 
+    /// Takes back words `handing` told of that were not handed after all.
+    fn unhanding(&self, resident: &ResidentId, text: &str) {
+        let mut handed = self.handed.lock().expect("never poisoned");
+        if let Some(texts) = handed.get_mut(resident) {
+            if let Some(at) = texts.iter().rposition(|handed| handed == text) {
+                texts.remove(at);
+            }
+            if texts.is_empty() {
+                handed.remove(resident);
+            }
+        }
+    }
+
     /// Whether the user's message `text` Claude Code reports keeping in
     /// `resident`'s session is words the World handed it as the user's. The
     /// World shows those as it heard them, so the host's own record of them
@@ -2223,6 +2236,8 @@ pub async fn open_here(
         acting: opened.acting,
         focus: opened.focus,
         home: opened.home,
+        login: opened.login,
+        born_as: Some(opened.born_as),
         callee: None,
         born_shared: crate::timeline::born_shared::now(node),
     };
@@ -2290,16 +2305,48 @@ pub async fn open_here(
         queued::wait(node, id.clone());
         return Ok((id, queued.landed()));
     }
-    let landed = launch(node, &id).await?;
+    // What starting it needs is read before Claude Code is asked anything:
+    // where that fails, as where the right it was opened by does not stand
+    // now, it goes back in line as a first turn waiting for its login does,
+    // asked again as that one is, its first words kept (codex-87c8bbd9).
+    let prepared = match prepare_launch(node, &id).await {
+        Ok(prepared) => prepared,
+        Err(failure) => return Ok((id.clone(), back_in_line(node, &id, failure)?)),
+    };
+    let landed = begin_launch(node, &id, prepared).await?;
     Ok((id, landed))
 }
 
-/// Starts the session of the new conversation `id` with its first words,
-/// its first turn having its login's turn: at once, or once one is free
-/// (`queued`).
-async fn launch(node: &Arc<Node>, id: &ResidentId) -> Result<Landed, Failure> {
-    let prepared = prepare_launch(node, id).await?;
-    begin_launch(node, id, prepared).await
+/// A new conversation's first turn that could not be started though it had
+/// its login's turn, nothing asked of Claude Code: idle, its login's turn let
+/// go of, in line as one waiting for its login, its first words kept.
+fn back_in_line(node: &Arc<Node>, id: &ResidentId, failure: Failure) -> Result<Landed, Failure> {
+    node.log.line(format_args!("lifecycle {id}: its first session waits: {}", failure.message));
+    // Marked in line first, so that a node stopped meanwhile finds it there.
+    // Where it cannot be, it waits all the same while the node runs, idle,
+    // its login's turn let go of, and that is said: it is waiting, not
+    // failed, as its opener is told, for it may still be started
+    // (codex-87c8bbd9's seventh and eighth looks).
+    let mut why = failure.message;
+    if let Err(error) = queued::mark(&node.world.conversation(id)) {
+        node.log.line(format_args!("lifecycle {id}: marking its first turn as waiting: {error}"));
+        why.push_str(&format!(
+            "; it waits while this node runs, but could not be marked as waiting, so a node stopped meanwhile would not start it: {error}"
+        ));
+    }
+    let idle = node.residents.change_now(&node.world, id, |now| {
+        now.activity = Activity::Idle;
+        now.since = Timestamp::now();
+    });
+    if let Err(error) = idle {
+        // Its line makes it idle again as it waits (`queued::wait`).
+        node.log.line(format_args!("lifecycle {id}: letting its first turn wait idle: {error}"));
+    }
+    if let Some((about, _)) = node.residents.about(id) {
+        crate::turn_slots::unstarted(node, id, &about);
+    }
+    queued::wait(node, id.clone());
+    Ok(Landed::Waiting { why: Some(why), answered: true })
 }
 
 /// What starting a new conversation's session needs, read before anything is
@@ -2327,7 +2374,31 @@ pub(super) async fn prepare_launch(node: &Arc<Node>, id: &ResidentId) -> Result<
 fn prepare_launch_now(node: &Arc<Node>, id: &ResidentId) -> Result<Prepared, Failure> {
     let (about, town) = node.residents.about(id).ok_or_else(|| Failure::new(format!("{id} was deleted")))?;
     let Command { program, env, .. } = command(node, about.home.as_deref())?;
+    // It is born in the login its first session is started in, as that is
+    // started, waiting for a turn of its login or not (codex-d1962125).
+    // What it was born as stays what it was born as, waiting for a turn of
+    // its login or not: one opened under an assistance since ended is that
+    // assistance's, and goes with it as it ends (design-forget-account-v2.md
+    // F2/F3, its first turn queued or not).
+    let unstarted = about.session.is_none();
+    if unstarted {
+        // It is started only while the account it was opened for may still
+        // start it here, and is still that account (codex-87c8bbd9), and by
+        // an assistance only in a host kept apart, as its host was made
+        // where that is decided already, before it is decided now.
+        crate::assists::may_still_start(node, &about, crate::assists::host::kept(node, id)?)?;
+        let login = crate::logins::ids::claude_started(node, &env);
+        node.residents
+            .set_born_login(&node.world, id, login.clone())
+            .map_err(|error| Failure::new(format!("recording the login {id} is born in: {error}")))?;
+        crate::assists::evidenced(about.born_as.as_deref().unwrap_or_default(), login.as_ref())?;
+    }
     let assisting = crate::assists::host::starting(node, id, &about.acting)?;
+    // And as its host is made, which the account's right may have changed
+    // since it was read (codex-87c8bbd9's seventh look).
+    if unstarted {
+        crate::assists::may_still_start(node, &about, Some(assisting))?;
+    }
     let options = crate::session_options::read(node, id)?;
     let directory = node.world.conversation(id);
     let mcp = crate::profile::session::claude(node, id, true)?;
@@ -2354,10 +2425,32 @@ pub(super) async fn begin_launch(node: &Arc<Node>, id: &ResidentId, prepared: Pr
     // Until the World knows which session this is, a Claude session's MCP
     // connection it cannot place waits, rather than becoming someone new.
     let _birth = node.claude.births.read().await;
+    // Read again as Claude Code is about to be asked, after the waits for
+    // memory and for the births gate: nothing is asked where it may no
+    // longer be started, which goes back in line, as not asked
+    // (codex-87c8bbd9).
+    if let Some((about, _)) = node.residents.about(id)
+        && let Err(failure) = crate::assists::may_still_start(node, &about, Some(assisting))
+    {
+        drop(_birth);
+        node.claude.unhanding(id, &text);
+        return back_in_line(node, id, failure);
+    }
     let began = first.since.unwrap_or(first.delivery.at);
     let since = move || Timestamp::now().as_millisecond().saturating_sub(began.as_millisecond());
     node.log.line(format_args!("lifecycle {id}: launching its first session, {} ms after it was opened", since()));
-    let started = fastctx_platform::task::spawn_blocking(fastctx_platform::doing::carried(move || {
+    // Read again in the worker, after the trust is written and just before
+    // Claude Code is asked, each time it is (codex-87c8bbd9's seventh and
+    // eighth looks).
+    let handed = text.clone();
+    let still = {
+        let (node, id) = (node.clone(), id.clone());
+        move || match node.residents.about(&id) {
+            Some((about, _)) => crate::assists::may_still_start(&node, &about, Some(assisting)),
+            None => Ok(()),
+        }
+    };
+    let asked = fastctx_platform::task::spawn_blocking(fastctx_platform::doing::carried(move || {
         let start = background::Start {
             plugin: &plugin,
             settings: &settings,
@@ -2370,21 +2463,38 @@ pub(super) async fn begin_launch(node: &Arc<Node>, id: &ResidentId, prepared: Pr
         };
         let args = background::start_args(&start);
         trust(&[world.as_path(), cwd.as_path()], &env)?;
+        if let Err(refused) = still() {
+            return Ok(Err(refused));
+        }
         match background::claude(&program, &args, &cwd, &env) {
             // A Claude Code that was running can write its state back over
             // the trust a moment after it was written; a new session refused
             // for exactly that was not created, so it is started once more.
             Err(why) if why.contains(background::UNTRUSTED) => {
                 trust(&[world.as_path(), cwd.as_path()], &env)?;
-                background::claude(&program, &args, &cwd, &env)
+                if let Err(refused) = still() {
+                    return Ok(Err(refused));
+                }
+                background::claude(&program, &args, &cwd, &env).map(Ok)
             }
-            started => started,
+            started => started.map(Ok),
         }
     }))
     .await
     .map_err(|error| Failure::new(format!("starting the session: {error}")))
-    .and_then(|result| result.map_err(Failure::new))
-    .and_then(|printed| {
+    .and_then(|result| result.map_err(Failure::new));
+    // Not asked, as it may no longer be started: nothing was made of it, and
+    // it goes back in line as before it was asked.
+    let printed = match asked {
+        Ok(Err(refused)) => {
+            drop(_birth);
+            node.claude.unhanding(id, &handed);
+            return back_in_line(node, id, refused);
+        }
+        Ok(Ok(printed)) => Ok(printed),
+        Err(failure) => Err(failure),
+    };
+    let started = printed.and_then(|printed| {
         background::started(&printed).ok_or_else(|| {
             Failure::new(format!(
                 "Claude Code started a session without saying which, so the World cannot follow it; it printed: {}",

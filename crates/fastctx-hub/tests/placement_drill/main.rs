@@ -5,6 +5,7 @@
 #![allow(clippy::disallowed_methods)]
 
 mod attachments;
+mod births;
 mod colleagues;
 mod controls;
 #[path = "../../../../gui/src-tauri/src/conversation_piece.rs"]
@@ -430,6 +431,9 @@ async fn main() -> Result<()> {
                 turns: None,
                 share: None,
                 manages: None,
+                direct: None,
+                purge: false,
+                shown: Vec::new(),
             },
         )
         .await
@@ -481,6 +485,7 @@ async fn main() -> Result<()> {
             && idle_after(&host, &m, None).await,
         json!([a, b, o, m]),
     );
+    births::check(&host, &[(&a, "alice"), (&b, "bob"), (&m, "mobile")], (&o, "owner"));
     let pa = plan_file(&host, &a)?;
     let pb = plan_file(&host, &b)?;
     let po = plan_file(&host, &o)?;
@@ -836,6 +841,7 @@ async fn main() -> Result<()> {
     sharing::exercise(&base, &host, &owner_pc, &wo, &wb, &so.to.resident, &sb.to, &home).await?;
     visitors::exercise(&wo, &wa, &wb).await?;
     submissions::exercise_management(&base, &wo).await?;
+    births::exercise(&base, &wo, listen, &host, &agent, &home).await?;
     host_node.kill()?;
     host_node.wait()?;
     let host_offline =

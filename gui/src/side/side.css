@@ -12,6 +12,13 @@
 .sp-host {
   --side-width: 0px;
   --side-height: 0px;
+  /* How wide the side stands now, beside the conversations: its room
+     changes at once (`carry.ts`), so it is its width while it is open. */
+  --side-now: 0px;
+}
+
+.sp-host.sp-shown {
+  --side-now: var(--side-width);
 }
 
 
@@ -58,31 +65,29 @@ html.framed .sp-host {
    is (`shell.css`): the conversations are the page between two margins.
    Over the whole page, as on a phone, it keeps the page's ground over what
    it covers. The shade is the sheet's own, so that it slides with what it
-   holds: the room it is given shows the page until it has come in, and
-   again as it goes. */
+   holds.
+   Opening or shutting, the desk has its new room at once, laid out once,
+   and the sheet and the conversations are carried from where they stood
+   (`carry.ts`): the room itself is bare, so what is carried shows through
+   it until the sheet has come, and as it goes. Shut, the sheet stands past
+   the desk's edge, where its room was, unseen. */
 .sp-split > .sp-panel:not(.sp-over) {
   flex: none;
   width: 0;
-  overflow: hidden;
-  /* Shutting, it keeps its room until its sheet has slid away, and gives it
-     up at once then: the conversations are set again once, not every moment
-     of a glide. */
-  transition: width 0s linear var(--fold), height 0s linear var(--fold);
+  overflow: visible;
+  background: none;
 }
 
-/* Opening, it has its room at once, and its sheet slides into it. */
 .sp-host.sp-shown > .sp-split > .sp-panel:not(.sp-over) {
   width: var(--side-width);
-  transition: none;
 }
 
 .sp-resizing > .sp-split > .sp-panel {
   transition: none;
 }
 
-/* The sheet keeps its width while the side widens, so nothing in it is set
-   again as it comes: it rides in on the side's edge, pushing the
-   conversation aside, its words coming up as it does. */
+/* The sheet keeps its width as the side's room comes and goes, so nothing
+   in it is set again as it moves. */
 .sp-sheet {
   position: relative;
   flex: none;
@@ -92,26 +97,42 @@ html.framed .sp-host {
   width: var(--side-width);
   min-height: 0;
   opacity: 0;
-  transition: opacity var(--fold) var(--fold-easing), translate var(--fold) var(--fold-easing);
+  transition: opacity var(--glide) var(--glide-easing);
 }
 
-/* Beside the conversations it comes from the edge it stands at. */
 .sp-split > .sp-panel:not(.sp-over) > .sp-sheet {
-  translate: 100% 0;
   background: var(--bg-sunken);
 }
 
-.sp-split[data-dock="left"] > .sp-panel:not(.sp-over) > .sp-sheet {
-  translate: -100% 0;
+/* Its shade reaches past its outer edge: carried there narrower than the
+   side was, it leaves no strip of the page at the window's edge. Past the
+   desk, it is never seen standing. */
+.sp-split > .sp-panel:not(.sp-over) > .sp-sheet::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 100%;
+  width: 100vw;
+  background: inherit;
+  pointer-events: none;
 }
 
-.sp-split[data-dock="bottom"] > .sp-panel:not(.sp-over) > .sp-sheet {
-  translate: 0 100%;
+.sp-split[data-dock="left"] > .sp-panel:not(.sp-over) > .sp-sheet::after {
+  left: auto;
+  right: 100%;
+}
+
+.sp-split[data-dock="bottom"] > .sp-panel:not(.sp-over) > .sp-sheet::after {
+  top: 100%;
+  bottom: auto;
+  left: 0;
+  width: 100%;
+  height: 100vh;
 }
 
 .sp-host.sp-shown > .sp-split > .sp-panel > .sp-sheet {
   opacity: 1;
-  translate: 0 0;
 }
 
 /* The margin ruled down the side's left edge from the window's top to its

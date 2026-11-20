@@ -127,6 +127,16 @@ impl Device {
         let library = replica.library().clone();
         let mut found = None;
         for (scope, hub) in self.copies(&replica, resident, machine, None)? {
+            // With a hub that keeps no conversation's streams
+            // (`fastctx_types::assets::DIRECT`), what was written of one
+            // since stays on the machine that orders it, and nothing of it
+            // comes to this device's copy: it is read where it lives.
+            let kept_elsewhere = self.sessions().iter().any(|session| {
+                session.link.membership().id == hub && session.link.asset_version() >= fastctx_types::assets::DIRECT
+            });
+            if kept_elsewhere {
+                continue;
+            }
             let Some(at) = library.view_revision(&scope.key, Timeline::STREAM).map_err(failure)? else { continue };
             if at & ((1 << 40) - 1) == 0 {
                 continue;

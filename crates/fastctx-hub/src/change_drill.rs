@@ -129,6 +129,9 @@ fn fixture(machines: usize) -> Book {
                 turns: None,
                 share: None,
                 manages: None,
+                direct: None,
+                grant: None,
+                also: Vec::new(),
             }));
         }
         book.directory.acting.push(Arc::new(ActsFor {

@@ -12,6 +12,7 @@ pub mod account_records;
 pub mod accounts;
 pub mod activity_book;
 pub mod asset_lines;
+pub mod asset_peers;
 pub mod assets;
 pub mod agent;
 pub mod agents;

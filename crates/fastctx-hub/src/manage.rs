@@ -59,10 +59,14 @@ pub(super) fn change_checked(
         _ => None,
     };
     let deleting_account = matches!(change, Change::DeleteAccount { .. });
+    let purges = hub.store().book.purges.last;
     let (told, reconcile) = match made(hub, asker, account, change, &mut ended, renaming, check) {
         Ok(told) => told,
         Err(reason) => return (Err(reason), Vec::new()),
     };
+    // An assistance ended for good, by this change or past its deadline:
+    // its machine is asked to close it, from the directory committed.
+    let purging = hub.store().book.purges.last != purges;
     if ended.iter().any(|(_, refusal)| matches!(refusal, Refusal::Removed { .. })) {
         let (dir, log) = (hub.store().dir().to_path_buf(), hub.log.clone());
         fastctx_platform::task::spawn_blocking(move || {
@@ -88,6 +92,9 @@ pub(super) fn change_checked(
     }
     if dissolving {
         crate::dissolve::changed(hub);
+    }
+    if purging {
+        crate::purges::tell(hub, None);
     }
     (Ok(told), ended)
 }
@@ -487,6 +494,9 @@ fn apply(
             turns,
             share,
             manages,
+            direct,
+            purge,
+            replaces,
         } => {
             let directory = &mut store.book.directory;
             let owner = match held_machine(directory, account, &machine) {
@@ -494,6 +504,9 @@ fn apply(
                 // Not its machine: one who manages the login with its owner
                 // sets a share, and anyone else is told what a holder is.
                 Err(denied) => {
+                    if !purge.is_empty() || !replaces.is_empty() {
+                        return Err(denied);
+                    }
                     let login = (&machine, &agent, home.as_deref());
                     return match set_share(directory, account, login, &to, assisting, share) {
                         Some(set) => set.map(|()| Told::Done),
@@ -502,6 +515,12 @@ fn apply(
                 }
             };
             other_account(directory, &owner, &to, &machine)?;
+            // Whether an account's machines link with the machine directly
+            // is its owner's alone to say: one the machine is shared with
+            // whole holds it, and does not say where it is reached from.
+            if direct.is_some() && owner != *account {
+                return Err(format!("only the owner of {machine} says whether {to}'s machines link with it directly"));
+            }
             // A visitor gives nothing; ending an assistance on a machine it
             // holds gives nothing either (`net-sharing-and-assist`
             // 2026-10-23: 访客收到的共享一样管，只收不给).
@@ -545,6 +564,29 @@ fn apply(
             if assisting && manages == Some(true) && agent.as_str() != "claude" {
                 return Err("only a Claude Code login is managed with its owner".to_string());
             }
+            if assisting && !purge.is_empty() {
+                return Err("an assistance is ended for good, not given so".to_string());
+            }
+            // The other spellings of the login this one takes the place of:
+            // each must assist the account now, as its giver was shown.
+            let mut replaced = Vec::new();
+            for spelling in &replaces {
+                if *spelling == home {
+                    continue;
+                }
+                let found = directory.assists.iter().find(|existing| {
+                    existing.machine == machine
+                        && existing.account == to
+                        && existing.agent == agent
+                        && existing.home == *spelling
+                });
+                match found {
+                    Some(found) => replaced.push(found.clone()),
+                    None => {
+                        return Err(format!("the login does not assist {to} as shown; look at its assistance again"));
+                    }
+                }
+            }
             // A sender that knows no shares (an earlier release) sends the
             // weekly dollars it was shown and no share: where those dollars
             // are what was kept, it changed something else of the
@@ -563,6 +605,54 @@ fn apply(
             // owner: that stays as kept, an assistance it makes anew being
             // one of before the word (`Assist::manages`).
             let manages = manages.or_else(|| kept.and_then(|kept| kept.manages));
+            // Which assistance it is stays while what it allows is changed;
+            // one given anew is another, never one given before
+            // (design-forget-account-v2.md F0). Each kept has its own since
+            // the hub opened (`assists::grant_kept`).
+            // The spellings it takes the place of keep their grants with it
+            // (`Assist::also`): what was born under them stays its own.
+            let mut grants: Vec<fastctx_types::access::GrantId> = Vec::new();
+            let sources = kept.map(|kept| &**kept).into_iter().chain(replaced.iter().map(|replaced| &**replaced));
+            for grant in sources.flat_map(Assist::grants) {
+                if !grants.contains(grant) {
+                    grants.push(grant.clone());
+                }
+            }
+            // Ended for good: every grant it is, as its giver was shown it.
+            if !purge.is_empty() {
+                let shown: std::collections::BTreeSet<_> = purge.iter().collect();
+                let now: std::collections::BTreeSet<_> = grants.iter().collect();
+                if grants.is_empty() || shown != now {
+                    return Err(
+                        "the assistance is not as it was shown; look at it again before ending it for good".to_string()
+                    );
+                }
+            }
+            let mut grants = grants.into_iter();
+            let grant = match grants.next() {
+                Some(grant) => Some(grant),
+                None if assisting => Some(fastctx_types::access::GrantId::from_bytes(
+                    fastctx_net::sign::random::<8>()
+                        .map_err(|error| format!("choosing the assistance's grant: {error}"))?,
+                )),
+                None => None,
+            };
+            let also: Vec<_> = grants.collect();
+            // Whether the account's machines link with the machine directly
+            // is one word for every login of the machine that assists the
+            // account: said now, it is kept on each; not said, it stays as
+            // any of them keeps it. That they link is kept as nothing said.
+            let said = direct.is_some();
+            let direct = match direct {
+                Some(true) => None,
+                Some(false) => Some(false),
+                None => directory
+                    .assists
+                    .iter()
+                    .find(|existing| existing.machine == machine && existing.account == to)
+                    .and_then(|existing| existing.direct),
+            };
+            let (of_machine, of_account) = (machine.clone(), to.clone());
             let assist = Assist {
                 machine,
                 account: to,
@@ -575,10 +665,36 @@ fn apply(
                 turns: turns.filter(|_| assisting),
                 share: share.filter(|_| assisting),
                 manages: manages.filter(|_| assisting),
+                direct: direct.filter(|_| assisting),
+                grant,
+                also,
             };
-            directory.assists.retain(|existing| !existing.same(&assist));
+            directory
+                .assists
+                .retain(|existing| !existing.same(&assist) && !replaced.iter().any(|replaced| existing.same(replaced)));
             if assisting {
                 directory.assists.push(Arc::new(assist));
+                if said {
+                    for existing in &mut directory.assists {
+                        if existing.machine == of_machine && existing.account == of_account && existing.direct != direct {
+                            Arc::make_mut(existing).direct = direct;
+                        }
+                    }
+                }
+            } else if !purge.is_empty() {
+                // Written with the ending, in the same commit (`commit`).
+                crate::purges::begin(
+                    store,
+                    crate::purges::Ended {
+                        grants: assist.grants().cloned().collect(),
+                        machine: assist.machine,
+                        account: assist.account,
+                        agent: assist.agent,
+                        home: assist.home,
+                        by: Some(account.clone()),
+                        audience: Default::default(),
+                    },
+                )?;
             }
             Ok(Told::Done)
         }
@@ -835,9 +951,9 @@ fn apply(
             }
             Ok(Told::Done)
         }
-        Change::DeleteAccount { name } => {
+        Change::DeleteAccount { name, opened } => {
             need_super()?;
-            delete_account(store, &name, account, ended)?;
+            delete_account(store, &name, opened, account, ended)?;
             Ok(Told::Done)
         }
         Change::Settings { self_registration } => {
@@ -1537,6 +1653,7 @@ pub(crate) fn left(hub: &Hub, key: &PublicKey, left: &str) {
 fn delete_account(
     store: &mut Store,
     name: &AccountName,
+    opened: Option<jiff::Timestamp>,
     by: &AccountName,
     ended: &mut Vec<(MachineName, Refusal)>,
 ) -> Result<(), String> {
@@ -1546,6 +1663,50 @@ fn delete_account(
         return Err(format!(
             "{name} is the hub's super administrator and cannot be deleted; hand that to another account first"
         ));
+    }
+    // The account asked for, as it was opened: one opened again under its
+    // name since is another, and an asking that does not say which, as
+    // work kept from before this was, is not done (codex-d515b194).
+    let Some(opened) = opened else {
+        return Err(format!(
+            "the deletion of {name} does not say which account of the name it was asked for: nothing was done; update the client and ask again"
+        ));
+    };
+    {
+        if opened != found.opened {
+            return Err(format!("the account {name} was opened again since its deletion was asked: nothing was done"));
+        }
+        // Each assistance it was given is ended for good, in this commit:
+        // what was born under it is deleted where it lives (`purges`,
+        // design-forget-account-v2.md F4a). The assistance its own machines
+        // gave others goes with them, ended only.
+        // Those that may keep copies of what goes, as they are now, before
+        // its logins are taken away (codex-d515b194).
+        let directory = &store.book.directory;
+        let audience: std::collections::BTreeSet<_> = crate::forget::accounts::audience(store, name)
+            .iter()
+            .filter_map(|machine| directory.member(machine).map(|member| member.key))
+            .collect();
+        let given: Vec<_> = directory
+            .assists
+            .iter()
+            .filter(|assist| assist.account == *name && assist.grants().next().is_some())
+            .cloned()
+            .collect();
+        for assist in given {
+            crate::purges::begin(
+                store,
+                crate::purges::Ended {
+                    grants: assist.grants().cloned().collect(),
+                    machine: assist.machine.clone(),
+                    account: assist.account.clone(),
+                    agent: assist.agent.clone(),
+                    home: assist.home.clone(),
+                    by: Some(by.clone()),
+                    audience: audience.clone(),
+                },
+            )?;
+        }
     }
     // Who may keep something done for it, read before its logins, shares
     // and assistances go: they let go of it once it is gone.

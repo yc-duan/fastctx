@@ -202,6 +202,10 @@ async function open(): Promise<void> {
       else if (!tabs.turn(machine, path, null)) tabs.open(machine, path, null);
     },
   });
+  window.addEventListener("pagehide", () => {
+    tabs.leave();
+    parts.leave();
+  }, { once: true });
   remote.watch("changed", (told: ChangedTold) => {
     changed = restored(told);
     parts.changed(changed);

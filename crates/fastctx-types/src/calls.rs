@@ -115,6 +115,11 @@ pub enum Call {
         machine: Option<Written>,
         request: crate::timeline_pages::TimelineAsk,
     },
+    /// A display-only page already on this node. Never relayed.
+    TimelinePreview {
+        machine: Written,
+        resident: ResidentId,
+    },
     /// Waits until a piece of this machine's state a reader reads from has
     /// changed (`crate::topics`), in place of reading it again on a timer.
     Topics {
@@ -1617,7 +1622,9 @@ impl Call {
             | Self::WorldNow { .. }
             | Self::Write { .. } => None,
             Self::Timeline { .. } => Some(Purpose::AssetSync),
-            Self::Topics { .. } | Self::RemoteTopics { .. } | Self::SyncStatus { .. } => Some(Purpose::Observation),
+            Self::Topics { .. } | Self::RemoteTopics { .. } | Self::SyncStatus { .. } | Self::TimelinePreview { .. } => {
+                Some(Purpose::Observation)
+            }
             // Takes over the streams the lost device ordered (design §28.10).
             Self::AdoptConversation { .. } => Some(Purpose::AssetSync),
             // Sets what a login's assistances and its Fable line are held to.

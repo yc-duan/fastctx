@@ -248,6 +248,17 @@ const GATHERING_TRIES = 12;
  *  view is theirs: nothing keeps it at the newest meanwhile. */
 const READING_MS = 150;
 
+/** How many times running a gap read that fills none of it is asked again,
+ *  and how much further apart each time. */
+const GAP_TRIES = 3;
+const GAP_AGAIN_MS = 400;
+/** Past which it is asked again no further apart: every few seconds. */
+const GAP_SLOWEST = 12;
+
+/** How long the view holds still on what the reader read while their place
+ *  is read again, at the most: past that, it is drawn as it stands. */
+const HOLD_AT_MOST_MS = 4000;
+
 /** How far below the top of the view words just sent are put, the answer
  *  coming in beneath them. */
 const SENT_AT = 24;
@@ -818,11 +829,27 @@ export class ConversationPage {
       this.view.readerMoved();
       moved();
     }, { passive: true });
-    // The scroll bar is the region itself, not anything in it.
+    // The reader's own wheel, finger, key or pointer lets a view held still
+    // over a reading of their place again go at once: they move on from
+    // what they see.
+    for (const kind of ["wheel", "touchstart", "pointerdown", "keydown"] as const) {
+      this.scroller.addEventListener(kind, () => this.letGo(), { capture: true, passive: true });
+    }
+    // The scroll bar is the region itself, not anything in it, and is held
+    // by a mouse or a pen: a finger put down on the region's bare part moves
+    // the region itself, the browser taking the pointer over as it does
+    // (codex-f9af46d4). Held until let go, or taken over.
     this.scroller.addEventListener("pointerdown", (event) => {
-      if (event.target === this.scroller) {
+      if (event.target === this.scroller && event.pointerType !== "touch") {
         this.pointerPaging = true;
-        window.addEventListener("pointerup", () => { this.pointerPaging = false; }, { once: true });
+        const held = new AbortController();
+        const done = (ended: PointerEvent) => {
+          if (ended.pointerId !== event.pointerId) return;
+          this.pointerPaging = false;
+          held.abort();
+        };
+        window.addEventListener("pointerup", done, { signal: held.signal });
+        window.addEventListener("pointercancel", done, { signal: held.signal });
         moved();
       }
     });
@@ -843,7 +870,10 @@ export class ConversationPage {
       this.element.classList.toggle("scrolled", scrollTop > 0);
       const resized = clientHeight !== sized.client || scrollHeight !== sized.content;
       // The reader drags the scroll bar: wherever it stops is read.
-      if (this.pointerPaging && scrollTop !== sized.top) this.view.readerMoved();
+      if (this.pointerPaging && scrollTop !== sized.top) {
+        reading();
+        this.view.readerMoved();
+      }
       sized = { client: clientHeight, content: scrollHeight, top: scrollTop };
       if (resized && !this.reading()) {
         if (this.following) this.scroller.scrollTop = scrollHeight;
@@ -883,6 +913,11 @@ export class ConversationPage {
   private toLatest(): void {
     this.latestRead += 1;
     this.following = true;
+    // A view held still while the reader's place is read again is let go
+    // first, so the newest is drawn in the same frame as it is scrolled to,
+    // rather than the held view scrolled to its empty end (codex-0fe83e04).
+    this.unhold();
+    this.shownAgain();
     this.dropRoom();
     // The latest part is always held: there is nothing to read first.
     this.render();
@@ -940,10 +975,90 @@ export class ConversationPage {
       this.view.retryGap(gap.key);
       return;
     }
+    const conversation = this.options.conversation;
+    const epoch = conversation.readEpoch;
+    // A gap whose reads filled none of it waits its turn to be read again,
+    // however often the reader's moving asks for it meanwhile
+    // (codex-0fe83e04's look at 2277448d1).
+    const tried = this.gapTries.get(gap.key);
+    if (tried && tried.epoch === epoch && Date.now() < tried.next) {
+      this.waitGap(gap.key);
+      return;
+    }
     this.paging = gap.paged === true;
-    try { await this.options.conversation.fill(gap, side, into); }
+    try { await conversation.fill(gap, side, into); }
     finally { this.paging = false; }
+    // A read finished under a timeline since read anew says nothing of the
+    // gap of that name now.
+    if (conversation.readEpoch !== epoch) {
+      this.update({ read: true });
+      return;
+    }
+    // A read that filled none of the gap, its answer empty, of a reading
+    // since replaced, or failed, left the gap asked for good: the view stood
+    // empty where the reader was until they went to the newest
+    // (codex-0fe83e04). It is asked again, further apart each time, while
+    // the reader is near it. One another reading of it holds is asked again
+    // once that ends, if it leaves the gap still.
+    const still = conversation.gaps().find((one) => one.key === gap.key);
+    if (!still) this.filledGap(gap.key);
+    else if (still.loading) this.view.retryGap(gap.key);
+    else this.missedGap(gap.key, epoch);
     this.update({ read: true });
+  }
+
+  /** The reads of each gap that filled none of it, in a row, under one
+   *  timeline: how many, when it may be read again, and what reads it then. */
+  private readonly gapTries = new Map<string, { epoch: string; misses: number; next: number; timer: number }>();
+
+  /** What the page said of a place it could not show, said no more once
+   *  what is near the reader is read. */
+  private notShown: string | null = null;
+
+  private missedGap(key: string, epoch: string): void {
+    if (this.gapTries.size > 64) this.forgetGaps();
+    const before = this.gapTries.get(key);
+    if (before) window.clearTimeout(before.timer);
+    const misses = before && before.epoch === epoch ? before.misses + 1 : 1;
+    this.gapTries.set(key, { epoch, misses, next: Date.now() + GAP_AGAIN_MS * Math.min(misses, GAP_SLOWEST), timer: 0 });
+    if (misses === GAP_TRIES + 1) this.sayNotShown(this.options.words.english ? "This part of the conversation could not be read for now: go to the newest, or come back to it later." : "这段内容暂时读不到：可以回到最新，稍后再来看。");
+    this.waitGap(key);
+  }
+
+  /** Reads the gap `key` again once its turn comes, once however often asked. */
+  private waitGap(key: string): void {
+    const tried = this.gapTries.get(key);
+    if (!tried || tried.timer) return;
+    tried.timer = window.setTimeout(() => {
+      tried.timer = 0;
+      if (!this.element.isConnected || this.left) return;
+      this.view.retryGap(key);
+      this.update({ read: true });
+    }, Math.max(0, tried.next - Date.now()));
+  }
+
+  private filledGap(key: string): void {
+    const tried = this.gapTries.get(key);
+    if (tried) window.clearTimeout(tried.timer);
+    this.gapTries.delete(key);
+    this.shownAgain();
+  }
+
+  /** What is near the reader is shown again: what was said of a place that
+   *  could not be is said no more. */
+  private shownAgain(): void {
+    if (this.notShown !== null && this.note.textContent === this.notShown) this.say("");
+    this.notShown = null;
+  }
+
+  private forgetGaps(): void {
+    for (const tried of this.gapTries.values()) window.clearTimeout(tried.timer);
+    this.gapTries.clear();
+  }
+
+  private sayNotShown(text: string): void {
+    this.say(text);
+    this.notShown = text;
   }
 
   /** `bound` for a page out of view, which has nothing measured to go by:
@@ -1072,7 +1187,7 @@ export class ConversationPage {
   private render(): void {
     if (!this.options.conversation.paged) this.finder.setScope(null);
     this.frame = 0;
-    if (!this.element.isConnected) return;
+    if (!this.element.isConnected || this.holdingView) return;
     const follow = this.following;
     this.view.update(this.read);
     this.read = false;
@@ -1132,17 +1247,19 @@ export class ConversationPage {
 
   /** The page goes out of view and stays alive, its conversation still
    *  followed. */
-  private suspendedPosition: import("./conversation").TimelinePosition | null = null;
   suspend(): void {
+    this.letGo();
     this.suspended = true;
-    if (this.element.isConnected) {
-      this.place = this.following ? null : this.view.anchor();
-      this.suspendedPosition = this.place ? this.options.conversation.positionOf(this.place.key) : null;
-    }
+    if (this.element.isConnected) this.place = this.following ? null : this.view.anchor();
   }
 
   /** The page is shown again, as it was left and as the conversation now
-   *  stands. */
+   *  stands: where the reader was, if what they read is still held, else at
+   *  the newest. What they read is not read again first: the page stood
+   *  empty meanwhile, as long as that took, and a reader who had just sent
+   *  words was back in that wait each time they came (the user, 2026-11-20:
+   *  "每次进入一个会话…一直显示这个白屏…点一下这个滚动到最下方的这个按钮，
+   *  它里面内容一会马上出来…最简单的一个逻辑就是进入之后直接到最下面"). */
   resume(): void {
     if (this.suspended) {
       this.suspended = false;
@@ -1155,10 +1272,10 @@ export class ConversationPage {
       this.render();
       if (!this.element.isConnected) return;
       if (this.following) this.scroller.scrollTop = this.scroller.scrollHeight;
-      else if (this.place && !this.view.restore(this.place)) {
-        if (this.options.conversation.paged) this.restoreReading(this.place, this.suspendedPosition);
-        else this.toLatest();
-      }
+      // A reader whose view held nothing read as it was left has no place
+      // to go back to: they come to the newest, as where it is no longer
+      // held (codex-0fe83e04).
+      else if (!this.place || !this.view.restore(this.place)) this.toLatest();
     });
   }
 
@@ -1167,6 +1284,14 @@ export class ConversationPage {
    *  longer held. */
   private restoringPosition = false;
   reopened(apply: () => void): void {
+    // Out of view, where the reader stands is the page's to say as it is
+    // shown again (`resume`).
+    if (this.suspended) {
+      apply();
+      this.update({ read: true });
+      if (this.wantedTurn) this.bringTurn();
+      return;
+    }
     const place = this.following ? null : this.view.anchor();
     const turn = place ? this.turnOf(place.key) : null;
     const position = place ? this.options.conversation.positionOf(place.key) : null;
@@ -1176,8 +1301,29 @@ export class ConversationPage {
     if (this.wantedTurn) return this.bringTurn();
     if (!place) return;
     cancelAnimationFrame(this.frame);
+    // Read anew where the latest part no longer holds what the reader reads,
+    // the view holds still on what they read until it is read again and
+    // shown where it was, rather than standing empty meanwhile (the user,
+    // 2026-11-20: "有的时候这个会话会莫名其妙跳动到其他位置，所以进入了加载";
+    // codex-0fe83e04).
+    if (position && this.options.conversation.paged && !this.restoringPosition && !this.options.conversation.holdsPosition(position)) {
+      this.frame = 0;
+      this.holdView();
+      this.restoreReading(place, position);
+      return;
+    }
+    // Where the conversation pages its turns, nothing near the view as it
+    // stood is read before the reader's place: read first, the place would
+    // find its part being read and give up.
+    const holding = this.options.conversation.paged && !this.restoringPosition;
+    if (holding) this.restoringPosition = true;
     this.render();
-    if (this.view.restore(place)) return;
+    const restored = this.view.restore(place);
+    if (holding) this.restoringPosition = false;
+    if (restored) {
+      if (holding) this.update({ read: true });
+      return;
+    }
     if (this.options.conversation.paged) {
       this.restoreReading(place, position);
       return;
@@ -1189,18 +1335,61 @@ export class ConversationPage {
     });
   }
 
+  /** The reader's place read again where the conversation pages its turns
+   *  and it is no longer held, the reader staying where they were. */
+  private restoreReading(place: { key: string; offset: number }, position: import("./conversation").TimelinePosition | null): void {
+    const failed = () => this.sayNotShown(this.options.words.english ? "This position could not be restored. Search the content again." : "暂时无法恢复这个位置，请重新查找这段内容。");
+    if (this.restoringPosition) return;
+    if (!position) {
+      failed();
+      this.update({ read: true });
+      return;
+    }
+    this.restoringPosition = true;
+    const asked = { readAt: this.readAt, latest: this.latestRead };
+    void this.options.conversation.reachPosition(position).then((reached) => {
+      // What the reader read, held still meanwhile, gives way to it read
+      // again, drawn in the same frame as they are put back there.
+      if (this.holdingView) this.letGo();
+      else this.render();
+      // The reader moved the view meanwhile, or went to the newest: they
+      // stay where they are.
+      if (this.following || this.pointerPaging || this.readAt !== asked.readAt || this.latestRead !== asked.latest) return;
+      if (!reached || !this.view.restore(place)) failed();
+    }).catch((error) => this.say(String(error))).finally(() => {
+      this.letGo();
+      this.restoringPosition = false;
+      // What near the view was put off meanwhile is asked for now.
+      this.update({ read: true });
+    });
+  }
+
+  /** The view held still over what the reader read while their place is
+   *  read again (`reopened`): the timer that lets it go at the latest. */
+  private holdingView = 0;
+
+  private holdView(): void {
+    this.view.hold(true);
+    window.clearTimeout(this.holdingView);
+    this.holdingView = window.setTimeout(() => this.letGo(), HOLD_AT_MOST_MS);
+  }
+
+  /** Lets the view held still go, and draws it as the conversation stands. */
+  private letGo(): void {
+    if (this.unhold()) this.render();
+  }
+
+  /** Lets the view held still go without drawing it; whether it was held. */
+  private unhold(): boolean {
+    if (!this.holdingView) return false;
+    window.clearTimeout(this.holdingView);
+    this.holdingView = 0;
+    this.view.hold(false);
+    return true;
+  }
+
   /** A turn asked for from elsewhere, as a request in its login's usage,
    *  until it is brought into view. */
-  private restoreReading(place: { key: string; offset: number }, position: import("./conversation").TimelinePosition | null): void {
-    const failed = () => this.say(this.options.words.english ? "This position could not be restored. Search the content again." : "暂时无法恢复这个位置，请重新查找这段内容。");
-    if (this.restoringPosition) return;
-    if (!position) return failed();
-    this.restoringPosition = true;
-    void this.options.conversation.reachPosition(position).then((reached) => {
-      this.render();
-      if (!reached || !this.view.restore(place)) failed();
-    }).catch((error) => this.say(String(error))).finally(() => { this.restoringPosition = false; });
-  }
   private wantedTurn: string | null = null;
 
   /** Brings `turn` into view, read first where it is not held; a page
@@ -1280,9 +1469,12 @@ export class ConversationPage {
     this.usagePopover?.dispose();
     this.modelPanel?.dispose();
     this.jobs?.dispose();
+    this.fileTabs?.leave();
     this.side?.leave();
     this.finder.destroy();
     this.left = true;
+    this.forgetGaps();
+    window.clearTimeout(this.holdingView);
     document.removeEventListener("keydown", this.findKey);
     document.fonts.removeEventListener("loadingdone", this.facesCame);
     this.stopDrops?.();

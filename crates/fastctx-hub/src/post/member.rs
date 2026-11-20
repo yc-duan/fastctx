@@ -400,6 +400,7 @@ impl State {
                 record.due = caps.due;
                 record.project_deletes = caps.project_deletes;
                 record.conversation_deletions = caps.conversation_deletions;
+                record.purges = caps.purges;
                 record.profiles = caps.profiles;
                 record.machine_updates = caps.machine_updates;
                 record.history_switch = caps.history_switch;

@@ -225,6 +225,19 @@ pub trait Node: Send + Sync + 'static {
         let _ = forgetting;
         Box::pin(async { crate::wire::Forgot::Done })
     }
+    /// Whether this member deletes the conversations born on it under an
+    /// assistance the hub ended (`purge`), as its session says.
+    fn purges(&self) -> bool {
+        false
+    }
+    /// Does a step of deleting what was born under an assistance ended for
+    /// good, and says how that went (`crate::wire::Down::Purge`). The hub asks
+    /// again until it is answered, so it may come for what is done already.
+    /// Asked only of a member that says it `purges`.
+    fn purge(&self, purging: crate::wire::Purging) -> BoxFuture<crate::wire::Purged> {
+        let _ = purging;
+        Box::pin(async { crate::wire::Purged::Failed { reason: "this member deletes no conversations".into() } })
+    }
     /// What the hub tells of the network's versions changed
     /// (`Link::versions`).
     fn versions_changed(&self) {}
@@ -626,6 +639,7 @@ impl Link {
         // this machine's network changing or waking, which only hastens a
         // reconnect: without it, heartbeats and retries still find the hub.
         let running = inner.clone();
+        session::prepare();
         let task = fastctx_platform::task::spawn_on(&crate::threads::lines(), async move {
             let changes = match watch_changes {
                 false => None,

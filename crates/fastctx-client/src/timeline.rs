@@ -22,6 +22,17 @@ impl World {
         self.remote_timeline(machine, request).await
     }
 
+    /// Gets a display page without asking any other machine.
+    pub async fn timeline_preview(&self, machine: Written, resident: fastctx_types::ResidentId) -> Option<TimelineTold> {
+        if self.device().is_some() {
+            return None;
+        }
+        match self.ask(Call::TimelinePreview { machine, resident }).await.ok()? {
+            Reply::Timeline(page @ TimelineTold::Page { .. }) => Some(page),
+            _ => None,
+        }
+    }
+
     /// The reading asked of the machine the conversation lives on.
     async fn remote_timeline(&self, machine: Option<Written>, request: TimelineAsk) -> Result<TimelineTold, Error> {
         match self.ask(Call::Timeline { machine, request }).await? {

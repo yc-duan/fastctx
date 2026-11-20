@@ -29,6 +29,19 @@ pub enum DataCall {
     OutputDays { days: Option<u32> },
     /// Empties this machine's viewing cache, coordinating with its viewers.
     ClearCache,
+    /// Whether each account logged in here goes on taking in its copies of
+    /// the conversations living on other machines, and how many of those it
+    /// holds here taken in no more (`fastctx data copies`).
+    Copies,
+    /// Sets whether `account` of the hub `hub` takes in its copies here, as
+    /// the machine's owner would: taken in again, what passed it by comes
+    /// down; paused, what is here stays, read here no more.
+    SetCopies { hub: String, account: String, on: bool },
+    /// The application was opened here as `account` of the hub `hub`,
+    /// opened at `opened` (milliseconds): it takes in its copies here from
+    /// now on, unless the machine's owner paused them. Sent by the
+    /// application alone, never by a command.
+    AppOpened { hub: String, account: String, opened: i64 },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -48,6 +61,29 @@ pub enum DataReply {
     CacheCleared {
         bytes: u64,
     },
+    Copies {
+        accounts: Vec<CopiesOf>,
+    },
+}
+
+/// Whether an account logged in here takes in its copies of conversations
+/// living elsewhere (`DataCall::Copies`).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CopiesOf {
+    pub hub: String,
+    pub account: String,
+    /// When the account was opened, in milliseconds.
+    pub opened: i64,
+    pub on: bool,
+    /// What set it so: `install` (as this machine was found installed),
+    /// `app` (the application was opened here), `owner`; none while it is
+    /// not known yet whether the application is installed here.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub at: Option<Timestamp>,
+    /// The conversations' scopes it reads held here and taken in no more.
+    pub paused_scopes: u64,
 }
 
 /// The days full command output may be kept for: what the user chooses from.

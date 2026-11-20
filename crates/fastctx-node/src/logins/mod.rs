@@ -10,6 +10,7 @@ pub(crate) mod change;
 pub(crate) mod folders;
 pub(crate) mod heard;
 pub(crate) mod identify;
+pub(crate) mod ids;
 pub(crate) mod kept;
 pub(crate) mod limits;
 pub(crate) mod models;
@@ -46,6 +47,8 @@ use crate::Node;
 pub(crate) struct Logins {
     /// Writing the kept records, one at a time.
     keeping: Mutex<()>,
+    /// Giving logins their ids, one at a time (`ids`).
+    giving_ids: Mutex<()>,
     /// Whether a scan of the usual places is under way.
     scanning: AtomicBool,
     /// The searches of the chosen folders under way.
@@ -66,6 +69,8 @@ pub(crate) struct Logins {
     asking: crate::ranked::LoginAsking,
     /// The logins the workbench is open in, as last read (`workbench`).
     workbench: Mutex<workbench::Open>,
+    /// What the heartbeat tells of it (`workbench::Told`).
+    workbench_told: workbench::Told,
     /// Told when a login was connected or taken out, so that the files
     /// watched are those of the logins as they stand (`watch`).
     rewatch: Arc<tokio::sync::Notify>,

@@ -65,6 +65,7 @@ mod post;
 mod presence;
 mod project_deletions;
 mod project_entry;
+mod purges;
 mod question_parts;
 mod readers;
 mod record_subscriptions;
@@ -374,6 +375,9 @@ pub(crate) struct Session {
     forgets: bool,
     /// Whether it lets go of what it keeps of an account deleted when told.
     forgets_accounts: bool,
+    /// Whether it deletes the conversations born on it under an assistance
+    /// ended, when told (`purges`).
+    purges: bool,
     /// Whether it reads the network's versions.
     versions: bool,
     version_parts: bool,
@@ -893,6 +897,7 @@ fn open(dir: &Path, log: Arc<log::Log>) -> anyhow::Result<Opened> {
     // An assistance whose deadline passed while the hub was stopped is
     // ended before any member is heard.
     assists::end_due(&mut store, Timestamp::now())?;
+    let granted = assists::grant_kept(&mut store)?;
     let certificate = HubCertificate {
         certificate: fastctx_platform::disk::read(Store::certificate_file(dir))?,
         key: fastctx_platform::disk::read(Store::key_file(dir))?,
@@ -927,6 +932,9 @@ fn open(dir: &Path, log: Arc<log::Log>) -> anyhow::Result<Opened> {
         .map(|town| format!("deleted the ledger of {town}, a project deleted before the hub stopped"))
         .collect();
     said.extend(imported);
+    if granted > 0 {
+        said.push(format!("gave {granted} assistances kept before grants were their own"));
+    }
     said.extend(store.upgraded.iter().map(|line| format!("took up the directory of an earlier fastctx: {line}")));
     said.extend(store.tidied.iter().map(|line| format!("on opening, {line}")));
     // Revisions the asset library took as the hub stopped, before their files
@@ -1072,6 +1080,7 @@ async fn serving(
     fastctx_platform::task::spawn(assets::checkpoints(Arc::downgrade(&hub)));
     fastctx_platform::task::spawn(assets::standing::every_minute(Arc::downgrade(&hub)));
     fastctx_platform::task::spawn(data::expire(Arc::downgrade(&hub)));
+    fastctx_platform::task::spawn(purges::again(Arc::downgrade(&hub)));
     fastctx_platform::task::spawn(expiry::settle(Arc::downgrade(&hub)));
     fastctx_platform::task::spawn(updates::look_every(Arc::downgrade(&hub)));
     fastctx_platform::task::spawn(updates::watch_rollouts(Arc::downgrade(&hub)));
@@ -1284,6 +1293,7 @@ async fn intended(
                 afoot,
                 forgets,
                 forgets_accounts,
+                purges,
                 roles,
                 versions,
                 version_parts,
@@ -1319,6 +1329,7 @@ async fn intended(
                 afoot,
                 forgets,
                 forgets_accounts,
+                purges,
                 roles,
                 versions,
                 version_parts,

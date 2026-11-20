@@ -1,12 +1,14 @@
 //! Resource-level record access keeps the reader separate from the opener.
 
-mod deletion;
+pub(crate) mod deletion;
 pub(crate) mod hints;
 pub(crate) mod index;
 mod plans;
 mod projection;
 pub(crate) mod record_deletions;
 mod registration;
+pub(crate) use registration::birth_kept;
+pub(crate) use registration::identity as conversation_identity;
 mod replicas;
 mod sentinels;
 pub(crate) mod submission;
@@ -191,10 +193,11 @@ pub(crate) async fn ask(
 ) -> Result<Told, String> {
     acts_for(hub, &from, &key, &account)?;
     let mut response = match request {
-        Request::Register { resident, shared, previous, born_at } => {
+        Request::Register { resident, shared, previous, born_at, generation, assisted, born_under, colleague } => {
+            let birth = registration::Birth { at: born_at, generation, assisted, under: born_under, colleague };
             let conversation =
-                registration::register(hub, &from, &key, &account, resident, shared, previous, born_at).await?;
-            Response::Conversation { conversation }
+                registration::register(hub, &from, &key, &account, resident, shared, previous, birth).await?;
+            Response::Conversation { conversation: Box::new(conversation) }
         }
         Request::PrepareDeletion { conversation } => {
             let (from, account) = (from.clone(), account.clone());
@@ -257,7 +260,7 @@ pub(crate) async fn ask(
             Response::Conversations { conversations }
         }
         Request::Resolve { conversation } => match resolve(hub, &account, &conversation) {
-            Ok((access, _)) => Response::Conversation { conversation: access.conversation },
+            Ok((access, _)) => Response::Conversation { conversation: Box::new(access.conversation) },
             // A machine from before the records registered none: its
             // conversations' records are their account's, as before them.
             Err(_) if !registered(hub, &conversation.machine) => Response::Unregistered,

@@ -68,6 +68,22 @@ pub(crate) fn run() {
     library.dropped("dev:8").unwrap();
     db.execute("UPDATE objects SET placed = placed - 90000000, unreferenced = unreferenced - 90000000", []).unwrap();
     assert_eq!(library.collect().unwrap().objects, 1, "dropped: collected after its grace");
+    // More committed to the stream while the hub is asked for the new epoch
+    // of a refusal: the epoch's opening cuts that away too, kept to commit
+    // again, so the epoch begins at the cut with nothing of the one before
+    // left past it.
+    let cut = library.raw_commit(c(vec![rec("e", State::Is { body: b"e".to_vec(), objects: vec![] })], vec![], None), signer.clone()).unwrap().first;
+    library.rejected("s", "t", cut).unwrap();
+    let meanwhile = library.raw_commit(c(vec![rec("f", State::Is { body: b"f".to_vec(), objects: vec![] })], vec![], None), signer.clone()).unwrap().first;
+    assert_eq!(meanwhile, cut, "written where the stream was cut back to, in the epoch before");
+    library.new_epoch_at("s", "t", 2, b"epoch-2".to_vec(), cut).unwrap();
+    assert!(library.item("s", "t", b"f").unwrap().is_none(), "what was committed meanwhile left the stream");
+    assert_eq!(count(&db, "SELECT next FROM streams WHERE name = 't'") as u64, cut, "the new epoch begins at the cut");
+    assert_eq!(library.resubmits("s", "t", 1000).unwrap().len(), 2, "both wait to be committed again");
+    while library.resubmit("s", "t", 8, signer.clone()).unwrap() > 0 {}
+    let epoch: i64 = db.query_row("SELECT epoch FROM frames WHERE first = ?1", params![cut as i64], |r| r.get(0)).unwrap();
+    assert_eq!(epoch, 2, "committed again in the new epoch, from the cut");
+    assert!(library.item("s", "t", b"e").unwrap().is_some() && library.item("s", "t", b"f").unwrap().is_some());
     println!("v2 rejected drill: ok");
     let _ = std::fs::remove_dir_all(&dir);
 }

@@ -175,6 +175,14 @@ async fn take_over(assets: &Assets, hub: &HubId, link: &Arc<Link>, key: &PublicK
     let adopted =
         assets.adopting.lock().expect("adopting").contains(scope) || super::release::adopting(&directory, hub.as_str(), scope, &device);
     let carried = if adopted { None } else { super::release::carried(&directory, hub.as_str(), scope, stream, &device) };
+    // A stream kept by the machine that orders it (`direct`) is not adopted
+    // by the account's word: the hub holds too little of it to say where
+    // another machine takes over, and one taken over there would order on
+    // from a place the copies are past. Released by its machine, it is
+    // taken over as ever, with what that machine sent beside it.
+    if adopted && super::direct::stays(link, scope, stream) {
+        return Ok(false);
+    }
     // Ordered nowhere yet, only the account's adopting begins it here
     // (NN14); otherwise it waits for its first frame where it was born.
     if !adopted && (carried.is_none() || orderer.is_none()) {

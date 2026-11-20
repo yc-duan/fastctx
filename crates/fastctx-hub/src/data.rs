@@ -332,7 +332,7 @@ pub(crate) async fn end(
             refuse(&mut socket, Refusal::Broken { reason }).await;
         }
         Ok(Some((waiting, registration))) => match pair(&hub, stream, &waiting, end, &me) {
-            Ok((source, sink, standings)) => {
+            Ok((_, _, standings)) => {
                 // The first end relays. Capacity, ownership and handover
                 // are decided together, before either end can give up.
                 let (cut, cutting) = oneshot::channel();
@@ -367,7 +367,9 @@ pub(crate) async fn end(
                     }
                 };
                 match handed {
-                    Ok(()) => hub.log.line(format_args!("a transfer from {source} to {sink} started")),
+                    // A transfer paired is told only as it ends, where it
+                    // carried much or took long (`TOLD_FROM_BYTES`).
+                    Ok(()) => {}
                     Err((mut socket, reason)) => {
                         hub.log.line(format_args!("refused to pair a data connection of {me}: {reason}"));
                         refuse(&mut socket, Refusal::Broken { reason }).await;
@@ -402,9 +404,20 @@ pub(crate) async fn end(
             };
             match peer {
                 Ok((peer, cutting)) => {
+                    let began = Instant::now();
                     let carried = relay(socket, peer, cutting).await;
                     drop(active);
-                    hub.log.line(format_args!("a transfer ended; {carried} bytes came from {me}"));
+                    let took = began.elapsed();
+                    TRANSFERS.record(took);
+                    // Each of the many small ones is kept in the hub's
+                    // readings, not its log: two lines each, copied to the
+                    // system's logs too, filled a hub's disk (2026-11-20).
+                    if carried >= TOLD_FROM_BYTES || took >= TOLD_FROM {
+                        hub.log.line(format_args!(
+                            "a transfer of {me} ended; {carried} bytes passed in {} s",
+                            took.as_secs()
+                        ));
+                    }
                 }
                 Err(reason) => {
                     drop(active);
@@ -414,6 +427,15 @@ pub(crate) async fn end(
         }
     }
 }
+
+/// How long each transfer the hub relayed took (`fastctx doctor readings`).
+static TRANSFERS: std::sync::LazyLock<&'static fastctx_platform::readings::Timing> =
+    std::sync::LazyLock::new(|| fastctx_platform::readings::timing("hub.transfer"));
+
+/// A transfer is told in the hub's log as it ends where it carried at least
+/// this many bytes, both ways, or took at least `TOLD_FROM`.
+const TOLD_FROM_BYTES: u64 = 1 << 20;
+const TOLD_FROM: std::time::Duration = std::time::Duration::from_secs(30);
 
 /// Checks that the two ends of `stream` are the machines a registration
 /// names and that what it was allowed under still holds. Returns the source,
@@ -462,7 +484,7 @@ fn pair(
 }
 
 /// Relays between the two ends until either is done or the pair is cut;
-/// returns how many bytes passed from the first end to the second. An end
+/// returns how many bytes passed, both ways (codex-d515b194). An end
 /// that does not take a message within the silence ends the pair, as one
 /// that says nothing ends it at its own end.
 async fn relay(mut first: Socket, mut second: Socket, cutting: oneshot::Receiver<String>) -> u64 {
@@ -470,6 +492,7 @@ async fn relay(mut first: Socket, mut second: Socket, cutting: oneshot::Receiver
         return 0;
     }
     let mut carried = 0_u64;
+    let mut returned = 0_u64;
     let (first_pulse, second_pulse) = (crate::pulse_of(&first), crate::pulse_of(&second));
     let (mut first_sink, mut first_stream) = first.split();
     let (mut second_sink, mut second_stream) = second.split();
@@ -495,6 +518,7 @@ async fn relay(mut first: Socket, mut second: Socket, cutting: oneshot::Receiver
     let backward = async {
         while let Some(Ok(message)) = second_stream.next().await {
             told(&second_pulse, &message);
+            returned += message.len() as u64;
             if message.is_close() {
                 break;
             }
@@ -522,7 +546,7 @@ async fn relay(mut first: Socket, mut second: Socket, cutting: oneshot::Receiver
     };
     close(&mut first_sink, first_why).await;
     close(&mut second_sink, second_why).await;
-    carried
+    carried + returned
 }
 
 /// Closes an end of a pair, saying `why` when there is something to say.

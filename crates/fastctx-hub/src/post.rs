@@ -140,6 +140,9 @@ pub(crate) struct Capabilities {
     pub due: bool,
     pub project_deletes: bool,
     pub conversation_deletions: bool,
+    /// Its key, where it deletes what was born on it under an assistance
+    /// ended for good (`crate::purges`).
+    pub purges: Option<fastctx_net::sign::PublicKey>,
     pub profiles: bool,
     pub machine_updates: bool,
     pub history_switch: bool,
@@ -157,6 +160,7 @@ impl From<&crate::control::Said> for Capabilities {
             due: said.due,
             project_deletes: said.project_deletes,
             conversation_deletions: said.conversation_deletions,
+            purges: None,
             profiles: said.profiles,
             machine_updates: said.machine_updates,
             history_switch: said.history_switch,

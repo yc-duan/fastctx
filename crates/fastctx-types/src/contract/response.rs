@@ -84,6 +84,7 @@ impl RemoteCall {
             | Self::CopySend { .. }
             | Self::Follow { .. }
             | Self::McpServe { .. }
+            | Self::Assets
             | Self::On { .. }
             | Self::PipeOut { .. }
             | Self::Place { .. }
@@ -289,12 +290,15 @@ impl Call {
                 }
             }
             Self::Timeline { request, .. } => timeline(request),
+            Self::TimelinePreview { .. } => Response::Answer,
             // It waits for a change, as a timeline's `Moved` does.
             Self::Topics { .. } | Self::RemoteTopics { .. } => Response::Stream,
             Self::Data(request) => {
                 use crate::data::DataCall;
                 match request {
                     DataCall::List { .. } | DataCall::OutputDays { .. } => Response::Answer,
+                    // A word kept in one small file, answered as it is kept.
+                    DataCall::Copies | DataCall::SetCopies { .. } | DataCall::AppOpened { .. } => Response::Answer,
                     DataCall::Delete { .. } | DataCall::ClearCache => Response::Submit,
                 }
             }

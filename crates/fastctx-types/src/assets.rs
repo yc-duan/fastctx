@@ -21,8 +21,9 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error};
 /// device nothing its version does not know (sync v2 freeze spec, 1). The
 /// second brings proofs of holding by challenge (design §28.45); the third,
 /// frames of a stream taken several at a time (`MANY`); the fourth, asset
-/// lines (`LINES`).
-pub const VERSION: u32 = 4;
+/// lines (`LINES`); the fifth, a conversation's streams kept by the machine
+/// that orders them and taken from it (`DIRECT`).
+pub const VERSION: u32 = 5;
 
 /// The oldest version a side still speaks.
 pub const OLDEST: u32 = 1;
@@ -40,6 +41,12 @@ pub const MANY: u32 = 3;
 /// (`crate::asset_lines`): frames and objects go on them one after another,
 /// with no ticket and no connection of their own.
 pub const LINES: u32 = 4;
+
+/// The version from which what a machine orders of a conversation stays on
+/// that machine (`crate::asset_peers`): the machines that hold a copy take
+/// its frames and objects from it, and the hub keeps who orders each stream
+/// and who may read it, and none of what the streams hold.
+pub const DIRECT: u32 = 5;
 
 /// The most frames one `TakeMany` carries.
 pub const FRAMES_A_TAKE: usize = 16;
@@ -289,6 +296,29 @@ pub fn classes_for(readers: &Readers, key: &str) -> Vec<StreamClass> {
     }
 }
 
+/// Whether the scope `key` is a conversation's: one opened on a machine, or
+/// on a machine shared whole, that machine's log and records apart.
+pub fn of_conversation(key: &str) -> bool {
+    key.starts_with("c/") || (key.starts_with("b/") && !key.ends_with("/log") && !key.ends_with("/records"))
+}
+
+/// What the hub signs to say the device whose key is `device` holds each
+/// scope of `granted` until `until`, the hub's milliseconds (`Reply::Permits`).
+pub fn permit_statement(device: &[u8], until: i64, granted: &[String]) -> Vec<u8> {
+    let mut statement = b"fastctx-asset-permit/1".to_vec();
+    let mut field = |bytes: &[u8]| {
+        statement.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
+        statement.extend_from_slice(bytes);
+    };
+    field(device);
+    field(&until.to_le_bytes());
+    field(&(granted.len() as u32).to_le_bytes());
+    for scope in granted {
+        field(scope.as_bytes());
+    }
+    statement
+}
+
 /// The key of the scope an account's records are kept in on `hub`: by when
 /// it was opened too, so one made again under the same name has its own.
 pub fn records_key(hub: &str, account: &AccountName, opened_ms: i64) -> String {
@@ -510,6 +540,18 @@ pub enum Request {
     /// asked again with the same nonce and answer, how the proof stands
     /// (design §28.45). From version `CHALLENGES` on.
     Proof { nonce: Bytes, answer: Bytes },
+    /// Opens the first epoch of `stream`, which this device orders and
+    /// sends the hub no frame of: answered with the epoch's descriptor, the
+    /// one the hub signed already where it did. From version `DIRECT` on.
+    Begin { scope: String, stream: String },
+    /// `stream`, which this device orders and keeps, reaches `next`: the
+    /// machines that hold the scope are told it moved. From version `DIRECT`
+    /// on.
+    Stirred { scope: String, stream: String, next: u64 },
+    /// The hub's word on which of `scopes` this device holds, for the
+    /// machines that keep their streams to give them by. From version
+    /// `DIRECT` on.
+    Permits { scopes: Vec<String> },
 }
 
 /// How a proof of holding by challenge stands (design §28.45).
@@ -688,6 +730,9 @@ impl Request {
             Self::SyncStatus { .. } => "sync_status",
             Self::Challenge { .. } => "challenge",
             Self::Proof { .. } => "proof",
+            Self::Begin { .. } => "begin",
+            Self::Stirred { .. } => "stirred",
+            Self::Permits { .. } => "permits",
         }
     }
 
@@ -718,7 +763,10 @@ impl Request {
             | Self::Report { .. }
             | Self::SyncStatus { .. }
             | Self::Challenge { .. }
-            | Self::Proof { .. } => Purpose::AssetSync,
+            | Self::Proof { .. }
+            | Self::Begin { .. }
+            | Self::Stirred { .. }
+            | Self::Permits { .. } => Purpose::AssetSync,
         }
     }
 }
@@ -949,6 +997,11 @@ pub enum Reply {
     Challenge { nonce: Bytes, until: i64 },
     /// How a proof by challenge stands.
     Proof { proof: ProofState },
+    /// What was said of a stream's moving was told on.
+    Noted,
+    /// The scopes, of those asked after, this device holds until `until`, the
+    /// hub's milliseconds, and the hub's word on it (`permit_statement`).
+    Permits { until: i64, granted: Vec<String>, word: Bytes },
 }
 
 /// What the hub tells a device unasked.

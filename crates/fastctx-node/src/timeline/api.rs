@@ -36,16 +36,75 @@ pub(crate) async fn checked<T>(
     }
 }
 
+/// How long reading a page of a conversation's timeline took, by where it
+/// was read: here, from this machine's copy of it, or of the machine it
+/// lives on; and, on the machine it lives on, how long a page another
+/// machine asked of it took to read (`fastctx doctor readings`); so that
+/// where a page is slow to come is known rather than guessed (the user,
+/// 2026-11-20: "所以进入了加载，然后加载本身又比较慢").
+struct Pages {
+    here: &'static fastctx_platform::readings::Timing,
+    copy: &'static fastctx_platform::readings::Timing,
+    remote: &'static fastctx_platform::readings::Timing,
+    served: &'static fastctx_platform::readings::Timing,
+}
+
+static PAGES: std::sync::LazyLock<Pages> = std::sync::LazyLock::new(|| Pages {
+    here: fastctx_platform::readings::timing("timeline.page.here"),
+    copy: fastctx_platform::readings::timing("timeline.page.copy"),
+    remote: fastctx_platform::readings::timing("timeline.page.remote"),
+    served: fastctx_platform::readings::timing("timeline.page.served"),
+});
+
+/// `here`, for another machine that asked this one (`Pages::served`).
+pub(crate) async fn served(node: &Arc<Node>, request: TimelineAsk) -> Result<TimelineTold, Failure> {
+    let page = matches!(request, TimelineAsk::Page { .. });
+    let began = std::time::Instant::now();
+    let told = here(node, request).await;
+    if page {
+        PAGES.served.record(began.elapsed());
+    }
+    told
+}
+
+const HERE: u8 = 0;
+const COPY: u8 = 1;
+const REMOTE: u8 = 2;
+
 pub(crate) async fn call(
     node: &Arc<Node>,
     machine: Option<Written>,
     request: TimelineAsk,
 ) -> Result<TimelineTold, Failure> {
+    let page = matches!(request, TimelineAsk::Page { .. });
+    let began = std::time::Instant::now();
+    let way = std::sync::atomic::AtomicU8::new(REMOTE);
+    let told = read(node, machine, request, &way).await;
+    if page {
+        let timing = match way.load(std::sync::atomic::Ordering::Relaxed) {
+            HERE => PAGES.here,
+            COPY => PAGES.copy,
+            _ => PAGES.remote,
+        };
+        timing.record(began.elapsed());
+    }
+    told
+}
+
+/// `call`, saying in `way` where it was read.
+async fn read(
+    node: &Arc<Node>,
+    machine: Option<Written>,
+    request: TimelineAsk,
+    way: &std::sync::atomic::AtomicU8,
+) -> Result<TimelineTold, Failure> {
+    let read_here = || way.store(HERE, std::sync::atomic::Ordering::Relaxed);
     let local = machine.is_none() && node.residents.about(request.resident()).is_some();
     // A place read from another machine, asked of this machine's library:
     // read anew (§28.30).
     let marked = super::copy::after(&request).is_some_and(|after| after & super::copy::ELSEWHERE != 0);
     if local || machine.as_ref().is_some_and(|machine| node.is_here(machine)) {
+        read_here();
         return if marked { Ok(super::copy::anew(&request)) } else { here(node, request).await };
     }
     // Held here whole for one logged in here: read here, the machine it
@@ -56,6 +115,7 @@ pub(crate) async fn call(
             super::copy::of(node, &resident, machine.as_ref())
         })?;
         if let Some(held) = copy {
+            way.store(COPY, std::sync::atomic::Ordering::Relaxed);
             return if marked { Ok(super::copy::anew(&request)) } else { from_copy(&held, request).await };
         }
     }
@@ -64,6 +124,7 @@ pub(crate) async fn call(
         None => crate::talk::locate(node, request.resident()).await?,
     };
     if node.is_here(&machine) {
+        read_here();
         return if marked { Ok(super::copy::anew(&request)) } else { here(node, request).await };
     }
     // Asked of the machine it lives on, a place read here means nothing
@@ -78,7 +139,7 @@ pub(crate) async fn call(
             refused = Some(Failure::unsupported("this network's hub does not relay timeline pages; update the hub"));
             continue;
         }
-        let facts = link.call(&machine.name, &account, Purpose::Look, RemoteCall::Facts).await.map_err(failure)?;
+        let facts = crate::facts::declared(node, &link, &machine.name, &account).await.map_err(failure)?;
         // The files a conversation changed: never asked of a hub or a
         // machine that does not know the question; none known there.
         if matches!(request, TimelineAsk::Files { .. })

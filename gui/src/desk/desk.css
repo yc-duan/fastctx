@@ -145,10 +145,9 @@
 }
 
 /* Beside the side at the right, the head makes room only for what of the
-   corner the side does not already keep it from, by how wide the side is
-   this moment (`--side-now`, `frame.ts`): as the side opens and shuts the
-   head's marks stay where they are until its edge reaches them. Reckoned
-   from the side's width to come, they leapt there at once and glided back. */
+   corner the side does not already keep it from, by how wide the side
+   stands (`--side-now`, `side.css`); as it opens and shuts the head's marks
+   are carried from where they stood (`carry.ts`). */
 .sp-host:not(.sp-over) > .sp-split[data-dock="right"] .desk-pane > :is(.conversation-page, .dk-fork-page) > .page-head {
   --dk-room: max(var(--space-4), calc(var(--sp-corner) - var(--side-now, 0px)));
 }

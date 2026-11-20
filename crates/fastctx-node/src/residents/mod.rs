@@ -584,6 +584,10 @@ impl Residents {
             acting: fastctx_types::access::Acting::Here,
             focus: Default::default(),
             home: hints.home,
+            // A session the user opened: which login it runs in, the World did not choose.
+            login: None,
+            // For those logged in on this computer.
+            born_as: Some(Vec::new()),
             callee: None,
             born_shared: Default::default(),
         };
@@ -737,6 +741,24 @@ impl Residents {
             live.about = changing.about;
         }
         Ok(true)
+    }
+
+    /// The login `id`'s first session is started in (`About::login`), as it
+    /// is started: only until its session is known.
+    pub(crate) fn set_born_login(
+        &self,
+        world: &WorldDir,
+        id: &ResidentId,
+        login: Option<fastctx_types::logins::LoginId>,
+    ) -> io::Result<()> {
+        self.change_about(world, id, |changing| {
+            if changing.removed || changing.about.session.is_some() {
+                return false;
+            }
+            changing.about.login = login;
+            true
+        })
+        .map(|_| ())
     }
 
     /// Persists the restoration contract before the first native resumption.

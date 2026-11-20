@@ -10,13 +10,16 @@
 //! (design §6.1).
 
 mod apart;
+pub(crate) mod direct;
 mod hand_back;
 mod lines;
 pub(crate) mod activity;
+pub(crate) mod copies;
 pub(crate) mod logs;
 pub(crate) mod membership;
 mod objects;
 pub(crate) mod release;
+pub(crate) mod served;
 mod session;
 pub(crate) mod standing;
 pub(crate) mod takeover;
@@ -90,6 +93,7 @@ pub(crate) struct Assets {
     pub(crate) library: Library,
     device: Arc<SecretKey>,
     path: PathBuf,
+    viewer_root: PathBuf,
     hubs: Mutex<BTreeMap<String, Pinned>>,
     /// Session numbers: unique among this library's sessions, across
     /// restarts too (they start from the clock).
@@ -170,6 +174,12 @@ pub(crate) struct Assets {
     /// (`session::committed`): a few scopes at once, the rest left to the
     /// pass, so that what waits for a line holds no frames meanwhile.
     pub(crate) quick: Arc<tokio::sync::Semaphore>,
+    /// Whether each account's copies of conversations living elsewhere are
+    /// taken in here (`copies`).
+    pub(crate) copies: copies::Copies,
+    /// What is kept of taking conversations' streams from the machines that
+    /// order them, and of giving this machine's own (`direct`).
+    pub(crate) direct: direct::Direct,
 }
 
 /// How far a hub's scopes this machine may hold were listed.
@@ -224,7 +234,7 @@ impl Assets {
 
     /// Opens the asset side in `dir` for the machine whose key is `device`.
     /// Call on a thread that may block.
-    pub(crate) fn open(dir: PathBuf, device: SecretKey) -> io::Result<Self> {
+    pub(crate) fn open(dir: PathBuf, device: SecretKey, viewer_root: PathBuf) -> io::Result<Self> {
         fastctx_platform::ensure_private_dir(&dir)?;
         let (library, _) = Library::open(&dir).map_err(|error| io::Error::other(error.to_string()))?;
         // What readings kept on disk left when a node stopped short: no
@@ -249,6 +259,7 @@ impl Assets {
             library,
             device: Arc::new(device),
             path,
+            viewer_root,
             hubs: Mutex::new(hubs),
             sessions: AtomicU64::new(start),
             drivers: Mutex::new(HashMap::new()),
@@ -278,6 +289,8 @@ impl Assets {
             clearing: tokio::sync::RwLock::new(()),
             cleared_times: std::sync::atomic::AtomicU64::new(0),
             quick: Arc::new(tokio::sync::Semaphore::new(2)),
+            copies: copies::Copies::open(&dir),
+            direct: direct::Direct::default(),
         })
     }
 

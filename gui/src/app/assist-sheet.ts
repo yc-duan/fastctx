@@ -12,8 +12,8 @@ import { escape } from "../conversation/prose";
 import type { AccountChange, AssistSeen, HubAccounts, Login } from "../world/accounts";
 import type { LimitWindow } from "../world/agents";
 import { wholeDollars } from "../world/money";
-import type { AccessWords } from "./account-words";
-import { Sheet } from "./confirm";
+import type { AccessWords, EndAssistWords } from "./account-words";
+import { Confirm, Sheet } from "./confirm";
 import { redrawKeepingFocus } from "./focus";
 import { NameSuggest } from "./name-suggest";
 import { WhenPicker } from "./when";
@@ -37,6 +37,8 @@ export interface Terms {
 /** One account the login assists, on its terms. */
 export interface Assistance {
   to: string;
+  /** Its grants, as the hub gave them (`AssistSeen::grants`). */
+  grants: string[];
   until: string | null;
   daily: number | null;
   weekly: number | null;
@@ -46,7 +48,7 @@ export interface Assistance {
 
 /** Lets the login assist `to` on `terms`, or no longer when there are
  *  none; answers the assistances as they are then. */
-export type Assist = (to: string, terms: Terms | null) => Promise<Assistance[]>;
+export type Assist = (to: string, terms: Terms | null, shown?: string[]) => Promise<Assistance[]>;
 
 /** What the sheet opens on. */
 export interface AssistOpening {
@@ -71,7 +73,7 @@ const dollars = (micro: number | undefined) => (micro ? micro / 1_000_000 : null
 export function assistancesIn(assists: AssistSeen[], machine: string, agent: string, home: string | null): Assistance[] {
   return assists
     .filter((assist) => assist.machine === machine && assist.agent === agent && (assist.home ?? null) === home)
-    .map((assist) => ({ to: assist.account, until: assist.until ?? null, daily: dollars(assist.daily), weekly: dollars(assist.weekly), fiveHour: assist.five_hour ?? null, turns: assist.turns ?? null }));
+    .map((assist) => ({ to: assist.account, grants: assist.grants ?? [], until: assist.until ?? null, daily: dollars(assist.daily), weekly: dollars(assist.weekly), fiveHour: assist.five_hour ?? null, turns: assist.turns ?? null }));
 }
 
 /** The terms an assistance the hub keeps was given on. */
@@ -90,8 +92,25 @@ export function namesOn(hub: HubAccounts | null | undefined, login: Login): stri
   return (hub?.accounts ?? []).map((account) => account.name).filter((name) => name !== login.account);
 }
 
+/** Asks once, then ends the assistance of `to` for good: what was born
+ *  under it is deleted, and nothing is undone (the user, 2026-11-20:
+ *  「「结束协助」直接删数据，同时去掉撤销，改成弹确认框」). */
+export function endAssist(
+  confirm: Confirm,
+  words: EndAssistWords,
+  to: string,
+  shown: string[],
+  act: () => Promise<void>,
+  done: () => void,
+): void {
+  // Never unbound: an assistance whose grants are not at hand here is not
+  // ended for good, lest one given again since be taken for it.
+  const bound = () => (shown.length ? act() : Promise.reject(new Error(words.endAssistStale)));
+  confirm.ask({ title: words.endAssistTitle(to), what: words.endAssistWhat(to), go: words.endAssistGo, act: bound, done });
+}
+
 /** The change that has the login assist `to` on `terms`, or no longer. */
-export function assistChange(machine: string, agent: string, home: string | null, to: string, terms: Terms | null): AccountChange {
+export function assistChange(machine: string, agent: string, home: string | null, to: string, terms: Terms | null, shown: string[] = []): AccountChange {
   return {
     change: "assist",
     machine,
@@ -99,6 +118,9 @@ export function assistChange(machine: string, agent: string, home: string | null
     agent,
     ...(home ? { home } : {}),
     assisting: !!terms,
+    // Ended for good: what was born under it is deleted (`endAssist`), the
+    // assistance as it was shown as that was asked.
+    ...(terms ? {} : { purge: true, ...(shown.length ? { shown } : {}) }),
     ...(terms?.until ? { until: terms.until.toISOString() } : {}),
     ...(terms?.weekly ? { weekly: Math.round(terms.weekly * 1_000_000) } : {}),
     ...(terms?.daily ? { daily: Math.round(terms.daily * 1_000_000) } : {}),
@@ -118,6 +140,8 @@ type Editing =
 
 export class AssistSheet {
   private readonly sheet = new Sheet("device-sheet assist-sheet");
+  /** Asks before an assistance is ended for good (`endAssist`). */
+  private readonly ending: Confirm;
   private opening: AssistOpening = { title: "", assistances: [], assist: async () => [], costs: false, names: [] };
   private assistances: Assistance[] = [];
   /** The share of its five-hour window the login lends at most, which every
@@ -132,13 +156,19 @@ export class AssistSheet {
   private readonly suggest: NameSuggest;
 
   constructor(private readonly words: AccessWords) {
+    this.ending = new Confirm(words);
     this.fresh = new WhenPicker(words.when, null);
     this.suggest = new NameSuggest(words.assistNames);
     this.sheet.body.tabIndex = -1;
     this.sheet.body.addEventListener("click", (event) => {
       const button = (event.target as HTMLElement).closest<HTMLButtonElement>("button");
       if (!button || button.disabled) return;
-      if (button.dataset.takeBack) void this.change(button.dataset.takeBack, null);
+      if (button.dataset.takeBack) {
+        const to = button.dataset.takeBack;
+        // Bound to the assistance as it is shown now (codex-87c8bbd9).
+        const shown = this.assistances.find((one) => one.to === to)?.grants ?? [];
+        endAssist(this.ending, words, to, shown, () => this.change(to, null, shown), () => {});
+      }
       else if (button.dataset.change) this.edit(button.dataset.change);
       else if (button.hasAttribute("data-window")) this.editWindow();
       else if (button.hasAttribute("data-turns")) this.editTurns();
@@ -381,10 +411,10 @@ export class AssistSheet {
   }
 
   /** Has the login assist `to` on `terms`, or no longer. */
-  private async change(to: string, terms: Terms | null): Promise<void> {
+  private async change(to: string, terms: Terms | null, shown: string[] = []): Promise<void> {
     if (terms?.until && terms.until <= new Date()) return this.say(this.words.untilPassed);
     const wasNew = !!terms && !(this.editing?.kind === "one" && this.editing.to === to);
-    await this.run(() => this.opening.assist(to, terms), wasNew);
+    await this.run(() => this.opening.assist(to, terms, shown), wasNew);
   }
 
   /** Sets what holds for the whole login, the share of its five-hour

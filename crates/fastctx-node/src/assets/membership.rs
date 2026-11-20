@@ -37,7 +37,10 @@ pub(crate) async fn joined(node: &Arc<Node>, hub: &HubId, anew: bool) -> Result<
     let mark = joining(node, hub);
     let anew = anew || fastctx_platform::disk::is_there(&mark);
     let (theirs, device) = (hub.as_str().to_string(), assets.device());
-    let network = match blocking(&assets.library, move |library| library.join(&theirs, &device, anew)).await {
+    // What an earlier term left held here of streams this machine keeps
+    // (`direct`) is not unsent: it ends with that term's holdings.
+    let stays = super::standing::kept_here_of(node.link_of(hub).as_deref());
+    let network = match blocking(&assets.library, move |library| library.join_but(&theirs, &device, anew, stays)).await {
         Ok(network) => network,
         Err(why) => {
             // Not joined: no earlier term stands in for it here meanwhile.
@@ -67,15 +70,18 @@ pub(crate) async fn joined(node: &Arc<Node>, hub: &HubId, anew: bool) -> Result<
 
 /// This machine left `hub`'s network: every scope of it held here is
 /// revoked now, its writes not yet uploaded kept; the upkeep carries on with
-/// the rest. Call holding `world::memberships`.
-pub(crate) async fn left(node: &Arc<Node>, hub: &HubId) {
+/// the rest. `link` is the link it had there, where one is still known: by
+/// it, what this machine kept of its conversations (`direct`) is not taken
+/// for unsent. Call holding `world::memberships`.
+pub(crate) async fn left(node: &Arc<Node>, hub: &HubId, link: Option<&Link>) {
     let Some(assets) = node.assets.as_ref() else { return };
     assets.networks.lock().expect("networks").remove(hub);
     // Joined again, its scopes are looked at whole from the first.
     assets.looked.lock().expect("looked").remove(hub);
     assets.forget_listing(hub);
     let (theirs, device) = (hub.as_str().to_string(), assets.device());
-    match blocking(&assets.library, move |library| library.leave(&theirs, &device)).await {
+    let stays = super::standing::kept_here_of(link);
+    match blocking(&assets.library, move |library| library.leave_but(&theirs, &device, stays)).await {
         Ok(0) => {}
         Ok(scopes) => node.log.line(format_args!("left {hub}: its {scopes} scope(s) here are let go")),
         // The library has the network still on: the upkeep finds its scopes
