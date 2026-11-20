@@ -26,6 +26,9 @@ const FRAMES_AT_ONCE: u32 = 64;
 const CHANGES_AT_ONCE: usize = 512;
 /// Bytes of frames given in one answer at most.
 const FRAME_BYTES_AT_ONCE: usize = 4 << 20;
+/// How long the hub's word that a device holds a scope stands
+/// (`Request::Permits`): what a right taken back still opens elsewhere.
+const PERMIT_FOR: std::time::Duration = std::time::Duration::from_secs(120);
 
 /// Checks a frame's signature against its ordering device's key, under the
 /// domain the device signs frames in.
@@ -352,8 +355,12 @@ pub(crate) fn stream_of(request: &Request) -> Option<&str> {
         | Request::Epoch { stream, .. }
         | Request::Takeover { stream, .. }
         | Request::Window { stream, .. }
-        | Request::Older { stream, .. } => Some(stream),
-        Request::Open { .. }
+        | Request::Older { stream, .. }
+        | Request::Begin { stream, .. }
+        | Request::Stirred { stream, .. } => Some(stream),
+        // Each scope asked after is judged by itself as it is answered.
+        Request::Permits { .. }
+        | Request::Open { .. }
         | Request::Describe { .. }
         | Request::Cleared { .. }
         | Request::Holdings { .. }
@@ -502,8 +509,12 @@ pub(crate) fn scope_of(request: &Request) -> Option<&str> {
         | Request::SyncStatus { .. }
         // Of the scope the hub asked the object proved for, judged there.
         | Request::Challenge { .. }
-        | Request::Proof { .. } => None,
-        Request::Answer { scope, .. }
+        | Request::Proof { .. }
+        // Of several scopes, each judged as it is answered.
+        | Request::Permits { .. } => None,
+        Request::Begin { scope, .. }
+        | Request::Stirred { scope, .. }
+        | Request::Answer { scope, .. }
         | Request::Take { scope, .. }
         | Request::TakeMany { scope, .. }
         | Request::Stage { scope, .. }
@@ -1061,6 +1072,71 @@ pub(crate) fn ask_in(
                 wire::Fact { fact: signed.fact.into(), word: word.into() }
             };
             Ok(Reply::Succession { epochs: epochs.into_iter().map(fact).collect(), gaps: gaps.into_iter().map(fact).collect() })
+        }
+        Request::Begin { scope, stream } => {
+            if fastctx_content::v2::hub_orders(&stream) {
+                return Err("the hub orders that stream itself".into());
+            }
+            if !wire::of_conversation(&scope) {
+                return Err(format!("{scope} is no conversation's: what is ordered in it comes to the hub"));
+            }
+            let kept = held(assets, directory, machine, &scope, &stream)?;
+            let library = scopes::library(assets, &kept)?;
+            let device = *key.as_bytes();
+            let signer = assets.signer();
+            let word_of = |signed: &fastctx_content::v2::Signed| wire::Fact { fact: signed.fact.clone().into(), word: signer.sign(&signed.fact).into() };
+            match library.last_epoch(&scope, &stream).map_err(|error| error.to_string())? {
+                // Begun already by this device: the epoch it orders in is the
+                // answer, however often it asks.
+                Some((_, orderer)) if orderer == device => {
+                    let (epochs, _) = library.succession(&scope, &stream).map_err(|error| error.to_string())?;
+                    let current = epochs.into_iter().last().ok_or("the stream's epochs are not here")?;
+                    assets.witness_facts(&kept.owner, &scope, &stream, std::slice::from_ref(&current), &[]).map_err(|error| error.to_string())?;
+                    Ok(Reply::Epoch { descriptor: word_of(&current) })
+                }
+                Some(_) => Err(format!("{stream} of {scope} is ordered by another device")),
+                // The device a first frame of it would be taken from, and no
+                // other, begins it without one (AQ07).
+                None => {
+                    first_epoch_gate(assets, directory, &kept, &scope, &stream, &device)?;
+                    let successor = Successor { device, key: device, kind: EpochKind::Source };
+                    let signed = library.open_epoch(&scope, &stream, successor, assets.signer()).map_err(|error| error.to_string())?;
+                    assets.changed(kept.owner.clone(), &scope);
+                    let epoch = fastctx_content::v2::EpochFact::decode(&signed.fact)?.epoch;
+                    assets.opened_epoch(&kept.owner, &scope, &stream, epoch, &signed.fact).map_err(|error| error.to_string())?;
+                    Ok(Reply::Epoch { descriptor: word_of(&signed) })
+                }
+            }
+        }
+        Request::Stirred { scope, stream, next } => {
+            let kept = held(assets, directory, machine, &scope, &stream)?;
+            let library = scopes::library(assets, &kept)?;
+            // Only the device that orders the stream says where it stands.
+            let last = library.last_epoch(&scope, &stream).map_err(|error| error.to_string())?;
+            if last.is_none_or(|(_, device)| &device != key.as_bytes()) {
+                return Err("only the device that orders the stream says it moved".into());
+            }
+            // A machine says again where all it keeps stands as it starts:
+            // those that hold the scope are told only of what moved on.
+            if assets.stirred(&scope, &stream, next) {
+                assets.moved(&kept.owner, &scope, &stream, next, machine);
+            }
+            Ok(Reply::Noted)
+        }
+        Request::Permits { scopes } => {
+            if scopes.len() > fastctx_types::asset_peers::SCOPES {
+                return Err(format!("the hub's word is asked for {} scopes at a time at most", fastctx_types::asset_peers::SCOPES));
+            }
+            // Held as a frame of its timeline is given: every stream a machine
+            // orders of a conversation is of that stream's class.
+            let timeline = <fastctx_content::v2::Timeline as fastctx_content::v2::Kind>::STREAM;
+            let granted: Vec<String> = scopes
+                .into_iter()
+                .filter(|scope| wire::of_conversation(scope) && !assets.was_deleted(scope) && held(assets, directory, machine, scope, timeline).is_ok())
+                .collect();
+            let until = jiff::Timestamp::now().as_millisecond().saturating_add(i64::try_from(PERMIT_FOR.as_millis()).unwrap_or(i64::MAX));
+            let word = assets.signer().sign(&wire::permit_statement(key.as_bytes(), until, &granted));
+            Ok(Reply::Permits { until, granted, word: word.into() })
         }
     }
 }

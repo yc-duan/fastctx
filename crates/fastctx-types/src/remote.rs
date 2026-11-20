@@ -105,6 +105,10 @@ pub enum RemoteCall {
     McpServe {
         name: String,
     },
+    /// The data connection this call owns carries what this machine keeps of
+    /// the conversations it orders, asked for and given
+    /// (`crate::asset_peers`).
+    Assets,
     /// The user's shared composer, addressed directly to its resident machine.
     Composer {
         resident: ResidentId,
@@ -764,6 +768,7 @@ impl RemoteCall {
             | RemoteCall::Talk { .. }
             | RemoteCall::Watch { .. }
             | RemoteCall::Timeline { .. }
+            | RemoteCall::Assets
             | RemoteCall::Open { .. }
             | RemoteCall::Stop { .. }
             | RemoteCall::Manage { .. }
@@ -946,6 +951,7 @@ impl RemoteCall {
         use crate::sync::transfer::Purpose;
         match self {
             Self::Timeline { .. } | Self::Topics { .. } => Some(Purpose::Observation),
+            Self::Assets => Some(Purpose::AssetSync),
             Self::SetAgentWeek { .. } | Self::ResetAgentUsage { .. } => Some(Purpose::ExecutionControl),
             Self::AddAgentLogin { .. }
             | Self::AgentActivity { .. }

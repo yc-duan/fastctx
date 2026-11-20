@@ -763,5 +763,47 @@
     "purpose": "ExecutionControl",
     "capability": "timeline_reads",
     "mapping": "crates/fastctx-types/src/remote.rs"
+  },
+  {
+    "type": "crates/fastctx-net/src/wire.rs::Down",
+    "variant": "Purge",
+    "purpose": "ExecutionControl",
+    "capability": "asset_sync.transport",
+    "mapping": "crates/fastctx-net/src/wire.rs"
+  },
+  {
+    "type": "crates/fastctx-net/src/wire.rs::Up",
+    "variant": "Purged",
+    "purpose": "ExecutionControl",
+    "capability": "asset_sync.transport",
+    "mapping": "crates/fastctx-net/src/wire.rs"
+  },
+  {
+    "type": "crates/fastctx-types/src/assets.rs::Request",
+    "variant": "Begin",
+    "purpose": "AssetSync",
+    "capability": "asset_sync",
+    "mapping": "crates/fastctx-types/src/assets.rs"
+  },
+  {
+    "type": "crates/fastctx-types/src/assets.rs::Request",
+    "variant": "Stirred",
+    "purpose": "AssetSync",
+    "capability": "asset_sync",
+    "mapping": "crates/fastctx-types/src/assets.rs"
+  },
+  {
+    "type": "crates/fastctx-types/src/assets.rs::Request",
+    "variant": "Permits",
+    "purpose": "AssetSync",
+    "capability": "asset_sync",
+    "mapping": "crates/fastctx-types/src/assets.rs"
+  },
+  {
+    "type": "crates/fastctx-types/src/remote.rs::RemoteCall",
+    "variant": "Assets",
+    "purpose": "AssetSync",
+    "capability": "asset_sync",
+    "mapping": "crates/fastctx-types/src/remote.rs"
   }
 ]

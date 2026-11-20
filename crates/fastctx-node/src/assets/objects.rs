@@ -375,6 +375,10 @@ async fn round(node: &Arc<Node>, hub: &HubId, link: &Arc<Link>) -> (usize, Vec<S
         Ok(wanted) => wanted,
         Err(why) => return (0, vec![format!("listing the objects wanted: {why}")]),
     };
+    // What a conversation's frames refer to comes from the machine that
+    // keeps them (`direct`); the hub is asked for the rest, and for what
+    // that machine did not give.
+    let (from_machines, wanted) = from_machines(assets, hub, link, wanted).await;
     // Those of one scope go in one ask, up to what an ask carries; one too
     // long for a line goes alone, under a ticket.
     let mut asks: Vec<(String, Vec<ObjectRef>)> = Vec::new();
@@ -401,7 +405,7 @@ async fn round(node: &Arc<Node>, hub: &HubId, link: &Arc<Link>) -> (usize, Vec<S
             asked(assets, &hub, &link, &scope, objects).await
         }));
     }
-    let (mut fetched, mut failed) = (0, Vec::new());
+    let (mut fetched, mut failed) = (from_machines, Vec::new());
     for (scope, object) in alone {
         match fetch_alone(assets, hub, link, &scope, object).await {
             Ok(()) => fetched += 1,
@@ -415,6 +419,102 @@ async fn round(node: &Arc<Node>, hub: &HubId, link: &Arc<Link>) -> (usize, Vec<S
         }
     }
     (fetched, failed)
+}
+
+/// The longest object taken from the machine that keeps a conversation's
+/// frames: it comes whole, held in memory until it is seen to be the object.
+/// A longer one is read where the conversation lives as it is opened.
+const MACHINE_OBJECT_BYTES: u64 = 64 << 20;
+
+/// Takes from the machines that keep them the objects, of those `wanted`,
+/// that conversations' frames refer to (`direct`): how many came, and those
+/// left for the hub — what is no conversation's, what its machine did not
+/// give, and what no machine could be asked for now.
+async fn from_machines(
+    assets: &Assets,
+    hub: &HubId,
+    link: &Arc<Link>,
+    wanted: Vec<(String, ObjectRef)>,
+) -> (usize, Vec<(String, ObjectRef)>) {
+    let mut rest = Vec::new();
+    let mut asks: Vec<(fastctx_types::MachineName, String, Vec<ObjectRef>)> = Vec::new();
+    for (scope, object) in wanted {
+        let machine = match object.size <= MACHINE_OBJECT_BYTES {
+            true => super::direct::object_source(assets, hub, link, &scope, object.hash).await,
+            false => None,
+        };
+        let Some(machine) = machine else {
+            rest.push((scope, object));
+            continue;
+        };
+        match asks.iter_mut().rev().find(|(of, within, objects)| {
+            *of == machine
+                && *within == scope
+                && objects.len() < OBJECTS
+                && objects.iter().map(|object| object.size).sum::<u64>() + object.size <= ASKED_BYTES
+        }) {
+            Some((_, _, objects)) => objects.push(object),
+            None => asks.push((machine, scope, vec![object])),
+        }
+    }
+    let mut came = 0;
+    for (machine, scope, objects) in asks {
+        // Kept only while this machine has not begun since to clear what
+        // another account may not see.
+        let cleared = assets.cleared_times.load(std::sync::atomic::Ordering::SeqCst);
+        let named = objects.iter().map(|object| wire::ObjectRef { hash: object.hash.into(), size: object.size }).collect();
+        let given = match super::direct::objects(assets, hub, link, &machine, &scope, named).await {
+            Ok(given) => given,
+            Err(_) => {
+                rest.extend(objects.into_iter().map(|object| (scope.clone(), object)));
+                continue;
+            }
+        };
+        for (object, bytes) in objects.into_iter().zip(given) {
+            let kept = match bytes {
+                Some(bytes) => given_kept(assets, &scope, object, bytes, cleared).await,
+                None => false,
+            };
+            if kept {
+                reached(assets, hub, &object);
+                came += 1;
+            } else {
+                rest.push((scope.clone(), object));
+            }
+        }
+    }
+    (came, rest)
+}
+
+/// Keeps `bytes` a machine gave as `object` of `scope`, once they are seen
+/// to be the object: whether it is kept.
+async fn given_kept(assets: &Assets, scope: &str, object: ObjectRef, bytes: Vec<u8>, cleared: u64) -> bool {
+    use sha2::Digest as _;
+    fastctx_platform::readings::counter_of("sync.taken", "peer.objects").add(bytes.len() as u64);
+    // Seen to be the object before anything of it is written.
+    if bytes.len() as u64 != object.size || <[u8; 32]>::from(sha2::Sha256::digest(&bytes)) != object.hash {
+        return false;
+    }
+    let _keeping = assets.clearing.read().await;
+    if assets.cleared_times.load(std::sync::atomic::Ordering::SeqCst) != cleared {
+        return false;
+    }
+    let holder = format!("fetch:{scope}");
+    let size = object.size;
+    let kept = blocking(&assets.library, move |library| {
+        let lease = library.put(&mut bytes.as_slice(), &holder, LEASE)?;
+        if lease.object != object {
+            return Err(fastctx_content::Error::Invalid("the bytes given do not hash to the object".into()));
+        }
+        library.release(lease)?;
+        library.unwant(&object.hash)
+    })
+    .await
+    .is_ok();
+    if kept {
+        fastctx_platform::readings::counter_of("sync.applied", "peer.objects").add(size);
+    }
+    kept
 }
 
 /// Asks for `objects` of `scope` on one line and keeps each as it comes;

@@ -236,7 +236,7 @@ impl RemoteCall {
                 Contract::CHANGE
             }
             Self::Mcp { mcp: crate::mcp::MachineCall::Test { .. } } => Contract::ASKS_AGENT,
-            Self::McpServe { .. } => Contract { cancellable: true, ..Contract::STREAM },
+            Self::McpServe { .. } | Self::Assets => Contract { cancellable: true, ..Contract::STREAM },
             Self::Collaboration { .. } => Contract { cancellable: true, ..Contract::ASKS_AGENT },
             Self::Timeline { .. }
             | Self::Topics { .. }

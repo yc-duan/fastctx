@@ -206,8 +206,18 @@ async fn taken_at_once(assets: &Assets, hub: &HubId, link: &Arc<Link>, key: &Pub
         Ok(Some((holding, at)))
     })
     .await?;
-    let Some((holding, at)) = held else { return Ok(()) };
-    pull_stream(assets, hub, link, key, scope, stream, holding, at, next, None).await
+    // Kept by the machine that orders it (`direct`), a stream is taken from
+    // that machine: the hub was told only where it stands. What cannot be
+    // taken so now is left to the pass.
+    let stays = super::direct::stays(link, scope, stream);
+    let Some((holding, at)) = held else {
+        return if stays { Err("left to the pass".into()) } else { Ok(()) };
+    };
+    let source = super::direct::source(assets, hub, link, scope, stream).await;
+    if stays && source.is_none() {
+        return Err("left to the pass".into());
+    }
+    pull_stream(assets, hub, link, key, scope, stream, holding, at, next, None, source.as_ref()).await
 }
 
 /// This machine committed records of its own to `scope`: with a hub that
@@ -557,6 +567,20 @@ async fn pass(node: &Arc<Node>, hub: &HubId, link: &Arc<Link>, network: &Network
             node.log.line(format_args!("assets with {hub}: telling where this machine stands: {why}"));
         }
         return failed.map_or(Ok(()), Err);
+    }
+    // The machines that order what this one holds of conversations are asked
+    // where their streams stand, now and then (`direct`): a scope left
+    // behind by a word of moving lost on the way is gone through at once.
+    if assets.direct.look_due(hub) {
+        let _step = phase(hub, "asking the machines that keep conversations where they stand");
+        match super::direct::look(assets, hub, link).await {
+            Ok(behind) if !behind.is_empty() => {
+                assets.relook.lock().expect("relook").extend(behind);
+                assets.more.lock().expect("more").insert(hub.clone());
+            }
+            Ok(_) => {}
+            Err(why) => node.log.line(format_args!("assets with {hub}: asking where kept conversations stand: {why}")),
+        }
     }
     // With a hub that keeps asset lines, objects are fetched off the passes
     // (`objects::lane`): no pass waits for one.
@@ -1126,7 +1150,7 @@ async fn catch_up(
                 .into_iter()
                 .find(|(name, _)| *name == changed.stream)
                 .map_or(0, |(_, next)| next);
-            pull_stream(assets, hub, link, key, &changed.scope, &changed.stream, holding, at, changed.next, Some(counted)).await
+            pull_stream(assets, hub, link, key, &changed.scope, &changed.stream, holding, at, changed.next, Some(counted), None).await
         }
         .await;
         // Paused part way, it owes a whole pull already (`copies`): passed
@@ -1194,7 +1218,12 @@ async fn open(assets: &Assets, hub: &HubId, link: &Arc<Link>, session: u64) -> R
         lineage: assets.lineage(hub),
     };
     let (offered, checkpointed, rotations, closed) = match link.assets(request).await? {
-        Reply::Ready { key, checkpointed, rotations, closed, .. } => (key, checkpointed, rotations, closed),
+        Reply::Ready { key, clock, checkpointed, rotations, closed, .. } => {
+            // What the hub's word that a device holds a scope is timed by
+            // (`direct`).
+            assets.direct.hub_clock(hub, clock);
+            (key, checkpointed, rotations, closed)
+        }
         Reply::Sealed { why, recovery } => {
             // Sealed for its recovery: what this machine holds of what the
             // hub signed past where it was put back is handed back (§28.38).
@@ -1488,6 +1517,11 @@ async fn upload(
     // A stream that fails holds up none after it; the scope reports the first.
     let mut failed: Option<String> = waiting_failed;
     for (stream, from) in blocking(library, move |library| library.uploads(&key_text, &device)).await? {
+        // What this machine orders of a conversation stays here (`direct`):
+        // the hub is told only where it stands, below.
+        if super::direct::stays(link, scope, &stream) {
+            continue;
+        }
         let _step = phase(hub, &format!("going up {stream} of {scope} from {from}"));
         let done: Result<(), String> = async {
             let mut from = from;
@@ -1646,6 +1680,7 @@ async fn upload(
             failed.get_or_insert(format!("{stream}: {why}"));
         }
     }
+    super::direct::announce(assets, hub, link, scope).await;
     failed.map_or(Ok(()), Err)
 }
 
@@ -1872,6 +1907,16 @@ async fn pull(
     let mut cut_back = Vec::new();
     for (stream, at) in &local {
         let hub_at = theirs.get(stream).copied();
+        // A stream kept by the machine that orders it (`direct`): the hub
+        // holding less of it is as it is meant to be. Nothing of it goes
+        // back to the hub or is cut to where the hub stands, and where it
+        // stands is not checked against the hub (`cursors`).
+        if super::direct::stays(link, scope, stream) {
+            if !own.contains(stream) {
+                ahead.insert(stream.clone());
+            }
+            continue;
+        }
         if own.contains(stream) {
             let hub_at = hub_at.unwrap_or(0);
             if *at > hub_at {
@@ -1925,9 +1970,21 @@ async fn pull(
     }
     // Isolated, the hub's frames do not come down to this disk.
     let streams = if isolated { Vec::new() } else { streams };
+    // Where each machine that orders streams of the scope says they stand
+    // (`direct`), asked once a pull; none for one that did not answer.
+    let mut kept: Kept = Kept::new();
     for wire::StreamAt { stream, next, .. } in streams {
         let at = local.get(&stream).copied().unwrap_or(0);
-        if let Err(why) = pull_stream(assets, hub, link, key, scope, &stream, holding, at, next, None).await {
+        let pulled = if super::direct::stays(link, scope, &stream) {
+            // Its own, a stream kept here comes from nowhere.
+            if own.contains(&stream) {
+                continue;
+            }
+            pull_kept(assets, hub, link, key, scope, &stream, holding, at, next, &mut kept).await
+        } else {
+            pull_stream(assets, hub, link, key, scope, &stream, holding, at, next, None, None).await
+        };
+        if let Err(why) = pulled {
             if why.starts_with(REVOKED) {
                 return Err(why);
             }
@@ -1953,6 +2010,70 @@ async fn pull(
     let scope_text = scope.to_string();
     blocking(library, move |library| library.hold_again(&scope_text, holding, caught_up)).await?;
     Ok((ahead, failed))
+}
+
+/// Where the machines that order streams of a scope say they stand, by
+/// machine: asked once while the scope is pulled; none for a machine that
+/// did not answer.
+type Kept = std::collections::HashMap<fastctx_types::MachineName, Option<std::collections::HashMap<String, u64>>>;
+
+/// Takes the replica `stream` of `scope`, one the machine that orders it
+/// keeps (`direct`): from that machine, as far as it says the stream
+/// stands; and where that machine gives nothing now, from the hub as far
+/// as the hub still holds it. A machine that does not answer fails nothing:
+/// the stream is taken when it does, told by the hub or found at a look.
+#[allow(clippy::too_many_arguments)]
+async fn pull_kept(
+    assets: &Assets,
+    hub: &HubId,
+    link: &Arc<Link>,
+    key: &PublicKey,
+    scope: &str,
+    stream: &str,
+    holding: i64,
+    at: u64,
+    hub_next: u64,
+    kept: &mut Kept,
+) -> Result<(), String> {
+    let library = &assets.library;
+    // Who orders it is known by its epochs, which the hub signs.
+    let (scope_text, stream_text) = (scope.to_string(), stream.to_string());
+    if blocking(library, move |library| library.known_last_epoch(&scope_text, &stream_text)).await?.is_none() {
+        succession(assets, hub, link, key, scope, stream).await?;
+    }
+    if let Some(machine) = super::direct::source(assets, hub, link, scope, stream).await {
+        if !kept.contains_key(&machine) {
+            let heads = super::direct::heads(assets, hub, link, &machine, vec![scope.to_string()]).await;
+            kept.insert(machine.clone(), heads.ok().map(|heads| heads.into_iter().map(|head| (head.stream, head.next)).collect()));
+        }
+        if let Some(Some(theirs)) = kept.get(&machine)
+            && let Some(next) = theirs.get(stream).copied()
+        {
+            if next <= at {
+                return Ok(());
+            }
+            match pull_stream(assets, hub, link, key, scope, stream, holding, at, next, None, Some(&machine)).await {
+                Ok(()) => return Ok(()),
+                Err(why) if why.starts_with(REVOKED) || why.starts_with(PAUSED) || why.starts_with(GOES_ON) => return Err(why),
+                // Its machine gave nothing now: taken from the hub below as
+                // far as the hub holds it; the rest waits for its machine.
+                Err(why) if why.starts_with(super::direct::UNREACHED) => {}
+                // What its machine gave could not be kept: said, as what the
+                // hub gives that cannot be kept is.
+                Err(why) => return Err(why),
+            }
+        }
+    }
+    let (scope_text, stream_text) = (scope.to_string(), stream.to_string());
+    let at = blocking(library, move |library| library.streams(&scope_text))
+        .await?
+        .into_iter()
+        .find(|(name, _)| *name == stream_text)
+        .map_or(0, |(_, next)| next);
+    if at >= hub_next {
+        return Ok(());
+    }
+    pull_stream(assets, hub, link, key, scope, stream, holding, at, hub_next, None, None).await
 }
 
 /// Takes the hub's signed epochs and gap facts of `stream` of `scope`.
@@ -2057,6 +2178,7 @@ async fn pull_stream(
     mut at: u64,
     next: u64,
     counted: Option<&super::standing::Counted<'_>>,
+    source: Option<&fastctx_types::MachineName>,
 ) -> Result<(), String> {
     let library = &assets.library;
     let stream = stream.to_string();
@@ -2075,7 +2197,15 @@ async fn pull_stream(
         if assets.copies.paused_now().contains(scope) {
             return Err(format!("{PAUSED}{scope}"));
         }
-        let frames = if lines {
+        // Taken from the machine that orders it (`direct`), what took the
+        // stream nowhere from here lately is not asked for again yet: the
+        // same frames would come, and go nowhere again.
+        if source.is_some() && assets.direct.stalled(scope, &stream, at) {
+            return Err(format!("{}{stream} of {scope}: what its machine gave from {at} took it no further lately", super::direct::UNREACHED));
+        }
+        let frames = if let Some(machine) = source {
+            super::direct::frames(assets, hub, link, machine, scope, &stream, at).await?
+        } else if lines {
             super::lines::frames(assets, link, scope, &stream, at).await?
         } else {
             let request = Request::Frames {
@@ -2091,13 +2221,29 @@ async fn pull_stream(
             frames
         };
         if frames.is_empty() {
+            // The machine that keeps it said it stands further than it gave.
+            if source.is_some() {
+                assets.direct.stall(scope, &stream, at);
+                return Err(format!("{}{stream} of {scope}: its machine gave nothing from {at} of {next}", super::direct::UNREACHED));
+            }
             break;
         }
+        let taken = if source.is_some() { "peer.frames" } else { "hub.frames" };
         // Frames that take it nowhere are not asked for again and again.
         let began = at;
         let mut went = false;
         for frame in frames {
             let bytes = (frame.header.0.len() + frame.signature.0.len() + frame.body.0.len()) as u64;
+            fastctx_platform::readings::counter_of("sync.taken", taken).add(bytes);
+            // A frame is put where its header says: one a machine gives is
+            // of the very stream asked for, or nothing more of the batch is
+            // kept.
+            if source.is_some()
+                && !Header::decode(&frame.header.0).is_ok_and(|header| header.scope == scope && header.stream == stream)
+            {
+                assets.direct.stall(scope, &stream, began);
+                return Err(format!("{stream} of {scope}: its machine gave a frame of another stream"));
+            }
             let raw = RawFrame {
                 header: frame.header.0,
                 signature: frame.signature.0,
@@ -2115,6 +2261,7 @@ async fn pull_stream(
                     at = reached;
                     went = true;
                     super::standing::took(assets, hub, counted, bytes);
+                    fastctx_platform::readings::counter_of("sync.applied", taken).add(bytes);
                     if stream == <fastctx_content::v2::ConversationMeta as fastctx_content::v2::Kind>::STREAM {
                         assets.metadata_moved.send_modify(|count| *count = count.wrapping_add(1));
                     }
@@ -2125,9 +2272,15 @@ async fn pull_stream(
                     at = from;
                 }
                 Imported::Conflict => {
+                    if source.is_some() {
+                        assets.direct.stall(scope, &stream, began);
+                    }
                     return Err(format!("{stream} of {scope} holds other records at a place the hub gave"));
                 }
                 Imported::Epoch(epoch) => {
+                    if source.is_some() {
+                        assets.direct.stall(scope, &stream, began);
+                    }
                     return Err(format!(
                         "{stream} of {scope} has a frame of epoch {epoch} the hub gave no descriptor of"
                     ));
@@ -2135,7 +2288,10 @@ async fn pull_stream(
             }
         }
         if !went {
-            return Err(format!("{stream} of {scope}: the hub's frames from {began} take it no further"));
+            if source.is_some() {
+                assets.direct.stall(scope, &stream, began);
+            }
+            return Err(format!("{stream} of {scope}: the frames given from {began} take it no further"));
         }
         // Its turn is over: the rest comes the next pass, at once.
         if at < next && at.saturating_sub(from) >= turn {
@@ -2240,7 +2396,9 @@ async fn cursors(
         blocking(library, move |library| library.replica_standing(&scope_text, &device))
             .await?
             .into_iter()
-            .filter(|(stream, _, _)| !ahead.contains(stream))
+            // A stream kept by the machine that orders it stands where that
+            // machine has it, not where the hub does (`direct`).
+            .filter(|(stream, _, _)| !ahead.contains(stream) && !super::direct::stays(link, scope, stream))
             .collect();
     if standing.is_empty() {
         return Ok(false);

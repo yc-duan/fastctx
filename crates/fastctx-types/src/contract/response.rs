@@ -84,6 +84,7 @@ impl RemoteCall {
             | Self::CopySend { .. }
             | Self::Follow { .. }
             | Self::McpServe { .. }
+            | Self::Assets
             | Self::On { .. }
             | Self::PipeOut { .. }
             | Self::Place { .. }

@@ -1538,11 +1538,40 @@ impl Intent {
     }
 }
 
+impl Up {
+    pub fn up_purpose(&self) -> Option<fastctx_types::sync::transfer::Purpose> {
+        use fastctx_types::sync::transfer::Purpose;
+        match self {
+            Self::Purged { .. } => Some(Purpose::ExecutionControl),
+            Self::Hello { .. }
+            | Self::Ping { .. }
+            | Self::LoginFinish { .. }
+            | Self::RegisterFinish { .. }
+            | Self::Send { .. }
+            | Self::Call { .. }
+            | Self::Answer { .. }
+            | Self::Cancel { .. }
+            | Self::Ack { .. }
+            | Self::Ask { .. }
+            | Self::QuestionPart { .. }
+            | Self::CancelQuestion { .. }
+            | Self::Afoot { .. }
+            | Self::Forgot { .. }
+            | Self::ForgotAccount { .. }
+            | Self::Versions { .. }
+            | Self::Unfetched { .. }
+            | Self::FetchProgress { .. }
+            | Self::PackageDone { .. } => None,
+        }
+    }
+}
+
 impl Down {
     pub fn down_purpose(&self) -> Option<fastctx_types::sync::transfer::Purpose> {
         use fastctx_types::sync::transfer::Purpose;
         match self {
             Self::Assets { .. } => Some(Purpose::AssetSync),
+            Self::Purge { .. } => Some(Purpose::ExecutionControl),
             Self::AccountRecordChanged { .. }
             | Self::Ack { .. }
             | Self::Afoot { .. }
@@ -1554,7 +1583,6 @@ impl Down {
             | Self::FetchCancelled { .. }
             | Self::Forget { .. }
             | Self::ForgetAccount { .. }
-            | Self::Purge { .. }
             | Self::HistoryChanged { .. }
             | Self::Incoming { .. }
             | Self::LedgerChanged { .. }

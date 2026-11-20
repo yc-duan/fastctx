@@ -10,6 +10,7 @@
 //! (design §6.1).
 
 mod apart;
+pub(crate) mod direct;
 mod hand_back;
 mod lines;
 pub(crate) mod activity;
@@ -18,6 +19,7 @@ pub(crate) mod logs;
 pub(crate) mod membership;
 mod objects;
 pub(crate) mod release;
+pub(crate) mod served;
 mod session;
 pub(crate) mod standing;
 pub(crate) mod takeover;
@@ -174,6 +176,9 @@ pub(crate) struct Assets {
     /// Whether each account's copies of conversations living elsewhere are
     /// taken in here (`copies`).
     pub(crate) copies: copies::Copies,
+    /// What is kept of taking conversations' streams from the machines that
+    /// order them, and of giving this machine's own (`direct`).
+    pub(crate) direct: direct::Direct,
 }
 
 /// How far a hub's scopes this machine may hold were listed.
@@ -283,6 +288,7 @@ impl Assets {
             cleared_times: std::sync::atomic::AtomicU64::new(0),
             quick: Arc::new(tokio::sync::Semaphore::new(2)),
             copies: copies::Copies::open(&dir),
+            direct: direct::Direct::default(),
         })
     }
 

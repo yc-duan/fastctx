@@ -917,6 +917,10 @@ impl fastctx_net::link::Node for Handler {
                         let stream = stream.ok_or_else(|| Failure::new("MCP requires a data connection"))?;
                         crate::mcp::serve(&node, &hub, &caller.account, &name, stream).await.map(|()| RemoteReply::Set)
                     }
+                    RemoteCall::Assets => {
+                        let stream = stream.ok_or_else(|| Failure::new("what is kept here is given over a data connection"))?;
+                        crate::assets::served::serve(&node, &hub, &caller, stream).await.map(|()| RemoteReply::Set)
+                    }
                     RemoteCall::Relay { made } => crate::devices::relay(&node, &asker, made).await,
                     // A resident of the calling machine works here (`world-run.md`,
                     // 这里).
