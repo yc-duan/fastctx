@@ -644,21 +644,27 @@ export class Conversation {
     return !!deferred && !this.expanded.has(deferred.object);
   }
 
-  /** Whether entries are shown cut short, asked of many at once: the
-   *  entries of the events held cut short are gathered once, where asking
-   *  `deferred` of each would go through the page's events each time
-   *  (codex-f9af46d4). */
+  /** `deferred`, asked of many entries at once: each entry's place is found
+   *  once for them all, as `deferred` finds it (the first part that shows
+   *  where the entry is first placed), where asking `deferred` of each
+   *  would go through the page's events each time (codex-f9af46d4). */
   cutShort(): (key: string) => boolean {
-    const cut = new Set<string>();
+    const any = this.parts.some((part) => [...(this.spans.get(part)?.deferred.values() ?? [])].some((deferred) => !this.expanded.has(deferred.object)));
+    if (!any) return () => false;
+    const decided = new Map<string, boolean>();
     for (const part of this.parts) {
       const span = this.spans.get(part);
       if (!span) continue;
-      for (const [place, deferred] of span.deferred) {
-        if (this.expanded.has(deferred.object)) continue;
-        for (const key of part.fold.entriesAt(place) ?? []) cut.add(key);
+      const shown = new Set(span.keys);
+      const first = new Map<string, string>();
+      for (const [place, entries] of part.fold.placements()) for (const entry of entries) if (!first.has(entry)) first.set(entry, place);
+      for (const [entry, place] of first) {
+        if (decided.has(entry) || !shown.has(place)) continue;
+        const deferred = span.deferred.get(place);
+        decided.set(entry, !!deferred && !this.expanded.has(deferred.object));
       }
     }
-    return (key) => cut.has(key);
+    return (key) => decided.get(key) ?? false;
   }
 
   /** Facts a run's job told about a run an earlier part holds go to it as
