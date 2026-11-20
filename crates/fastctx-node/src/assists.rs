@@ -199,6 +199,28 @@ impl Still {
     }
 }
 
+/// Whether a session born here, its first session not yet started, may be
+/// started now (codex-87c8bbd9): each account it was born working for is
+/// still the account of its name it was born for, and may use its login
+/// here, by whatever right (an assistance ended and given again is right
+/// enough: what it was born as stays what it was born as). An error
+/// otherwise, the denial of a hub that has not said again where that is why.
+pub(crate) fn may_still_start(node: &Node, about: &About) -> Result<(), Failure> {
+    let Some(born) = &about.born_as else { return Ok(()) };
+    let now = born_as(node, &about.acting, &about.host.agent, about.home.as_deref())?;
+    for was in born {
+        let same =
+            now.iter().any(|is| is.hub == was.hub && is.account == was.account && is.generation == was.generation);
+        if !same {
+            return Err(Failure::refused(format!(
+                "the account {} it was opened for is no longer the account of that name",
+                was.account
+            )));
+        }
+    }
+    Ok(())
+}
+
 /// A session born working by an assistance is born in a login it knows by
 /// its id, or not at all: what it was born under is what ending the
 /// assistance takes away (design-forget-account-v2.md F0, codex-d1962125).

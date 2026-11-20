@@ -2292,16 +2292,44 @@ pub async fn open_here(
         queued::wait(node, id.clone());
         return Ok((id, queued.landed()));
     }
-    let landed = launch(node, &id).await?;
+    // What starting it needs is read before Claude Code is asked anything:
+    // where that fails, as where the right it was opened by does not stand
+    // now, it goes back in line as a first turn waiting for its login does,
+    // asked again as that one is, its first words kept (codex-87c8bbd9).
+    let prepared = match prepare_launch(node, &id).await {
+        Ok(prepared) => prepared,
+        Err(failure) => return Ok((id.clone(), back_in_line(node, &id, failure)?)),
+    };
+    let landed = begin_launch(node, &id, prepared).await?;
     Ok((id, landed))
 }
 
-/// Starts the session of the new conversation `id` with its first words,
-/// its first turn having its login's turn: at once, or once one is free
-/// (`queued`).
-async fn launch(node: &Arc<Node>, id: &ResidentId) -> Result<Landed, Failure> {
-    let prepared = prepare_launch(node, id).await?;
-    begin_launch(node, id, prepared).await
+/// A new conversation's first turn that could not be started though it had
+/// its login's turn, nothing asked of Claude Code: idle, its login's turn let
+/// go of, in line as one waiting for its login, its first words kept.
+fn back_in_line(node: &Arc<Node>, id: &ResidentId, failure: Failure) -> Result<Landed, Failure> {
+    node.log.line(format_args!("lifecycle {id}: its first session waits: {}", failure.message));
+    node.residents
+        .change_now(&node.world, id, |now| {
+            now.activity = Activity::Idle;
+            now.since = Timestamp::now();
+        })
+        .map_err(|error| Failure::new(format!("letting {id}'s first turn wait: {error}")))?;
+    if let Some((about, _)) = node.residents.about(id) {
+        let end = fastctx_types::session::TurnEnd {
+            how: fastctx_types::session::TurnHow::Interrupted,
+            reason: Some(failure.message.clone()),
+            error: None,
+            duration_ms: None,
+            facts: None,
+            last_message: None,
+        };
+        crate::turn_slots::ended(node, id, &about, &end);
+    }
+    queued::mark(&node.world.conversation(id))
+        .map_err(|error| Failure::new(format!("keeping the first turn in line: {error}")))?;
+    queued::wait(node, id.clone());
+    Ok(Landed::Waiting { why: Some(failure.message), answered: true })
 }
 
 /// What starting a new conversation's session needs, read before anything is
@@ -2336,6 +2364,9 @@ fn prepare_launch_now(node: &Arc<Node>, id: &ResidentId) -> Result<Prepared, Fai
     // assistance's, and goes with it as it ends (design-forget-account-v2.md
     // F2/F3, its first turn queued or not).
     if about.session.is_none() {
+        // It is started only while the account it was opened for may still
+        // start it here, and is still that account (codex-87c8bbd9).
+        crate::assists::may_still_start(node, &about)?;
         let login = crate::logins::ids::claude_started(node, &env);
         node.residents
             .set_born_login(&node.world, id, login.clone())
