@@ -733,6 +733,10 @@ export class Fold {
     for (const [place, entries] of this.placedEntries) if (entries.has(key)) return place;
     return null;
   }
+  /** The entries placed at `place`. */
+  entriesAt(place: string): ReadonlySet<string> | undefined {
+    return this.placedEntries.get(place);
+  }
   livePending(event: SessionEvent): void {
     if (event.event !== "changed") return;
     const change = event.change;

@@ -826,7 +826,8 @@ export class ConversationPage {
       if (event.target === this.scroller && event.pointerType !== "touch") {
         this.pointerPaging = true;
         const held = new AbortController();
-        const done = () => {
+        const done = (ended: PointerEvent) => {
+          if (ended.pointerId !== event.pointerId) return;
           this.pointerPaging = false;
           held.abort();
         };

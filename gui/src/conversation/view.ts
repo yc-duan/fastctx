@@ -2503,10 +2503,11 @@ export class ConversationView {
       // What it did, a row a thing, what goes by alike gathered; a stretch
       // of hundreds of rows opens on its latest, the earlier coming a few
       // screens at a time from a line above them.
+      const cut = this.conversation.cutShort();
       const all = bunched(
         runs.flatMap((run) => this.partsOf(run)),
         (part): part is Card => !("html" in part),
-      ).map((part) => ("html" in part ? part : this.lineRow(part)));
+      ).map((part) => ("html" in part ? part : this.lineRow(part, cut)));
       const limit = this.stretchRows.get(group.key) ?? STRETCH_ROWS;
       rows = all.length > limit ? all.slice(all.length - limit) : all;
       hidden = all.length - rows.length;
@@ -2755,7 +2756,7 @@ export class ConversationView {
   }
 
   /** A thing, or things gathered, as their row (`cards/lines.ts`). */
-  private lineRow(part: Card | Bunch): Row {
+  private lineRow(part: Card | Bunch, cutShort: (key: string) => boolean): Row {
     if (part.kind === "bunch") {
       this.bunches.set(part.key, part);
       for (const card of cardsIn(part)) this.cards.set(card.key, card);
@@ -2764,7 +2765,7 @@ export class ConversationView {
     // Whether its events are cut short is what it is too: the way to read
     // them whole goes as they come whole, though nothing else of it changes.
     const sources = part.kind === "bunch" ? cardsIn(part).flatMap((card) => card.sources) : part.sources;
-    const cut = sources.filter((source) => this.conversation.deferred(source.entry)).map((source) => source.entry);
+    const cut = sources.filter((source) => cutShort(source.entry)).map((source) => source.entry);
     return {
       key: part.key,
       signature: `line|${cut.join(" ")}|${JSON.stringify(part)}`,

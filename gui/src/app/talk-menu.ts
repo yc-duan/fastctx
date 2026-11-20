@@ -154,7 +154,9 @@ export class TalkMenu {
     let width = this.element.offsetWidth;
     this.towns = true;
     this.draw();
-    const towns = this.element.offsetWidth;
+    // Without a scroll bar, which the projects may need already at the
+    // window's height (codex-f9af46d4).
+    const towns = this.element.clientWidth;
     this.element.style.height = `${height}px`;
     width = Math.max(width, towns + this.element.offsetWidth - this.element.clientWidth);
     this.towns = false;
@@ -345,7 +347,11 @@ export class TalkMenu {
     const next = stepped(items, document.activeElement, event.key);
     if (next === null) return;
     event.preventDefault();
-    // Where the projects scroll, the one stepped to is brought into view.
+    // Where the projects scroll, the one stepped to is brought into view,
+    // below the head a phone's sheet keeps at its top (codex-f9af46d4).
+    const head = this.element.querySelector<HTMLElement>(".talk-menu-head");
+    const covered = head ? head.getBoundingClientRect().bottom - this.element.getBoundingClientRect().top : 0;
+    this.element.style.scrollPaddingTop = covered > 0 ? `${Math.ceil(covered)}px` : "";
     items[next]?.focus({ preventScroll: true });
     items[next]?.scrollIntoView({ block: "nearest", inline: "nearest" });
   }
