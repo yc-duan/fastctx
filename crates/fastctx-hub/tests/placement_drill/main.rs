@@ -431,6 +431,7 @@ async fn main() -> Result<()> {
                 turns: None,
                 share: None,
                 manages: None,
+                purge: false,
             },
         )
         .await

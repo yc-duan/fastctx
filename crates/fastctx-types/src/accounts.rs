@@ -179,6 +179,11 @@ pub enum AccountChange {
         /// owner says so; none leaves what the hub keeps.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         manages: Option<bool>,
+        /// Ending it for good: the conversations born under it are deleted
+        /// with it, where the hub does that (`HubView::purges`); refused
+        /// where it does not, rather than only ending it.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        purge: bool,
     },
     /// The plan shown for one login of an agent on `machine`, set by the
     /// hub's super administrator on a login that names none (a Claude Code

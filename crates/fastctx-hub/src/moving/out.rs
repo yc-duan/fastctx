@@ -252,6 +252,9 @@ async fn copy(hub: &Arc<Hub>, record: &Outgoing, socket: &mut HubSocket) -> Resu
     reached(hub, &record.id, MoveStage::Switching).await;
     hub.log.line(format_args!("the move {}: the hub stops taking anything and hands over", record.id));
     frames::working::<_, ToNew, _>(socket, Moving::freeze(hub)).await??;
+    // Asked again with the hub frozen: an assistance ended for good while
+    // the records were copied is handed over with them.
+    crate::purges::takes_over(hub, &record.to)?;
     let theirs = holds(socket).await?;
     let mine = listing(socket, &dir).await?;
     send_difference(socket, &dir, &mine, &theirs).await?;

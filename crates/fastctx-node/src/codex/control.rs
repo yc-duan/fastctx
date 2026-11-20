@@ -339,6 +339,8 @@ async fn fork(
         })
         .await?
     };
+    // Held until its record is written (`purges::permit`).
+    let _permit = crate::purges::permit(node, &born_as)?;
     let target_place = Arc::new(node.places.using(id.as_str()).await);
     let gate = node.residents.management(parent)?;
     let source_guard = crate::gate_waits::shared_owned(node, parent, &gate).await?;

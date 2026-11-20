@@ -158,6 +158,10 @@ pub struct Book {
     /// (`crate::forget::accounts`).
     #[serde(default)]
     pub(crate) account_forgetting: crate::forget::accounts::AccountForgettings,
+    /// Assistances ended for good, and what is deleted of what was born
+    /// under them (`crate::purges`).
+    #[serde(default)]
+    pub(crate) purges: crate::purges::Purges,
 }
 
 /// An enrollment token, by the public half of its key.

@@ -213,6 +213,13 @@ impl Still {
 /// again where that is why.
 pub(crate) fn may_still_start(node: &Node, about: &About, isolated: Option<bool>) -> Result<(), Failure> {
     let Some(born) = &about.born_as else { return Ok(()) };
+    // Nor where an assistance it was born by was closed here for good: what
+    // was born by it is being deleted (`purges`).
+    if crate::purges::closed(node, born) {
+        return Err(Failure::refused(
+            "the assistance it was opened by was ended for good, and what was born by it is being deleted",
+        ));
+    }
     let now = born_as(node, &about.acting, &about.host.agent, about.home.as_deref())?;
     for was in born {
         let Some(is) =

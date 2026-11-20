@@ -59,10 +59,14 @@ pub(super) fn change_checked(
         _ => None,
     };
     let deleting_account = matches!(change, Change::DeleteAccount { .. });
+    let purges = hub.store().book.purges.last;
     let (told, reconcile) = match made(hub, asker, account, change, &mut ended, renaming, check) {
         Ok(told) => told,
         Err(reason) => return (Err(reason), Vec::new()),
     };
+    // An assistance ended for good, by this change or past its deadline:
+    // its machine is asked to close it, from the directory committed.
+    let purging = hub.store().book.purges.last != purges;
     if ended.iter().any(|(_, refusal)| matches!(refusal, Refusal::Removed { .. })) {
         let (dir, log) = (hub.store().dir().to_path_buf(), hub.log.clone());
         fastctx_platform::task::spawn_blocking(move || {
@@ -88,6 +92,9 @@ pub(super) fn change_checked(
     }
     if dissolving {
         crate::dissolve::changed(hub);
+    }
+    if purging {
+        crate::purges::tell(hub, None);
     }
     (Ok(told), ended)
 }
@@ -487,6 +494,8 @@ fn apply(
             turns,
             share,
             manages,
+            purge,
+            replaces,
         } => {
             let directory = &mut store.book.directory;
             let owner = match held_machine(directory, account, &machine) {
@@ -494,6 +503,9 @@ fn apply(
                 // Not its machine: one who manages the login with its owner
                 // sets a share, and anyone else is told what a holder is.
                 Err(denied) => {
+                    if !purge.is_empty() || !replaces.is_empty() {
+                        return Err(denied);
+                    }
                     let login = (&machine, &agent, home.as_deref());
                     return match set_share(directory, account, login, &to, assisting, share) {
                         Some(set) => set.map(|()| Told::Done),
@@ -545,6 +557,29 @@ fn apply(
             if assisting && manages == Some(true) && agent.as_str() != "claude" {
                 return Err("only a Claude Code login is managed with its owner".to_string());
             }
+            if assisting && !purge.is_empty() {
+                return Err("an assistance is ended for good, not given so".to_string());
+            }
+            // The other spellings of the login this one takes the place of:
+            // each must assist the account now, as its giver was shown.
+            let mut replaced = Vec::new();
+            for spelling in &replaces {
+                if *spelling == home {
+                    continue;
+                }
+                let found = directory.assists.iter().find(|existing| {
+                    existing.machine == machine
+                        && existing.account == to
+                        && existing.agent == agent
+                        && existing.home == *spelling
+                });
+                match found {
+                    Some(found) => replaced.push(found.clone()),
+                    None => {
+                        return Err(format!("the login does not assist {to} as shown; look at its assistance again"));
+                    }
+                }
+            }
             // A sender that knows no shares (an earlier release) sends the
             // weekly dollars it was shown and no share: where those dollars
             // are what was kept, it changed something else of the
@@ -567,7 +602,27 @@ fn apply(
             // one given anew is another, never one given before
             // (design-forget-account-v2.md F0). Each kept has its own since
             // the hub opened (`assists::grant_kept`).
-            let grant = match kept.and_then(|kept| kept.grant.clone()) {
+            // The spellings it takes the place of keep their grants with it
+            // (`Assist::also`): what was born under them stays its own.
+            let mut grants: Vec<fastctx_types::access::GrantId> = Vec::new();
+            let sources = kept.map(|kept| &**kept).into_iter().chain(replaced.iter().map(|replaced| &**replaced));
+            for grant in sources.flat_map(Assist::grants) {
+                if !grants.contains(grant) {
+                    grants.push(grant.clone());
+                }
+            }
+            // Ended for good: every grant it is, as its giver was shown it.
+            if !purge.is_empty() {
+                let shown: std::collections::BTreeSet<_> = purge.iter().collect();
+                let now: std::collections::BTreeSet<_> = grants.iter().collect();
+                if grants.is_empty() || shown != now {
+                    return Err(
+                        "the assistance is not as it was shown; look at it again before ending it for good".to_string()
+                    );
+                }
+            }
+            let mut grants = grants.into_iter();
+            let grant = match grants.next() {
                 Some(grant) => Some(grant),
                 None if assisting => Some(fastctx_types::access::GrantId::from_bytes(
                     fastctx_net::sign::random::<8>()
@@ -575,6 +630,7 @@ fn apply(
                 )),
                 None => None,
             };
+            let also: Vec<_> = grants.collect();
             let assist = Assist {
                 machine,
                 account: to,
@@ -588,10 +644,26 @@ fn apply(
                 share: share.filter(|_| assisting),
                 manages: manages.filter(|_| assisting),
                 grant,
+                also,
             };
-            directory.assists.retain(|existing| !existing.same(&assist));
+            directory
+                .assists
+                .retain(|existing| !existing.same(&assist) && !replaced.iter().any(|replaced| existing.same(replaced)));
             if assisting {
                 directory.assists.push(Arc::new(assist));
+            } else if !purge.is_empty() {
+                // Written with the ending, in the same commit (`commit`).
+                crate::purges::begin(
+                    store,
+                    crate::purges::Ended {
+                        grants: assist.grants().cloned().collect(),
+                        machine: assist.machine,
+                        account: assist.account,
+                        agent: assist.agent,
+                        home: assist.home,
+                        by: Some(account.clone()),
+                    },
+                )?;
             }
             Ok(Told::Done)
         }

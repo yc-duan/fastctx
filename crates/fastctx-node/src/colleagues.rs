@@ -287,6 +287,8 @@ pub async fn ask_here(
             "the right the colleague was asked by no longer stands: the assistance or the account it was asked under has changed since",
         ));
     }
+    // Held until its record is written (`purges::permit`).
+    let _permit = crate::purges::permit(node, &born_as)?;
     let id = node.residents.new_id(&agent)?;
     crate::record_migration::born(node, &id);
     node.codex.home(home.as_deref())?.require_login().await.map_err(|error| {

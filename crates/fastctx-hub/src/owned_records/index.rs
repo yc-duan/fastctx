@@ -217,6 +217,43 @@ impl Index {
         Ok(conversation)
     }
 
+    /// The conversation `resident` that `account`, as opened, opened, and
+    /// whether it was described into a body (`crate::purges`).
+    pub(crate) fn opened(
+        &self,
+        account: &AccountName,
+        opened: Timestamp,
+        resident: &str,
+    ) -> Option<(&Conversation, bool)> {
+        let identity = (account.clone(), opened, resident.to_string());
+        let conversation = self.conversations.get(&identity)?;
+        Some((conversation, self.body(&identity).is_some()))
+    }
+
+    /// The conversations `account`, as opened, opened that say they were
+    /// born under any of `grants`, found by the hub or still to be found
+    /// (`crate::purges`).
+    pub(crate) fn born_under(
+        &self,
+        account: &AccountName,
+        opened: Timestamp,
+        grants: &[fastctx_types::access::GrantId],
+    ) -> Vec<&Conversation> {
+        self.accounts
+            .get(account)
+            .into_iter()
+            .flatten()
+            .filter(|identity| identity.1 == opened)
+            .filter_map(|identity| self.conversations.get(identity))
+            .filter(|conversation| {
+                [&conversation.birth.born_under, &conversation.birth.claimed_under]
+                    .into_iter()
+                    .flatten()
+                    .any(|grant| grants.contains(grant))
+            })
+            .collect()
+    }
+
     /// Whether `machine`, by any name it had, registered a conversation.
     pub(crate) fn registered(&self, directory: &fastctx_net::directory::Directory, machine: &MachineName) -> bool {
         let names: Vec<_> = match directory.member(machine) {

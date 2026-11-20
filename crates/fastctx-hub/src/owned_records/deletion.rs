@@ -84,3 +84,74 @@ pub(super) async fn delete(
     }
     Ok(())
 }
+
+/// Deletes, as the hub itself, the record of the conversation `resident`
+/// that `account`, as `opened`, opened, and its plan and history: for a
+/// conversation purged, gone where it lived, whose machine `by` may no longer
+/// act for the account (`crate::purges`). Asked again of one deleted, it
+/// does nothing.
+pub(crate) async fn erase(
+    hub: &Arc<Hub>,
+    by: (MachineName, PublicKey),
+    account: &AccountName,
+    opened: Timestamp,
+    resident: &ResidentId,
+) -> Result<(), String> {
+    let request = RecordRequest::Read { kind: fastctx_types::owned_records::KIND.into(), key: resident.to_string() };
+    let slot = hub.account_records.account(account, opened);
+    loop {
+        let Told::AccountRecords { response: RecordResponse::Read { record } } =
+            account_records::erase(hub, by.clone(), account.clone(), opened, request.clone()).await?
+        else {
+            return Err("the conversation's erasure received an unexpected reply".into());
+        };
+        let Some(record) = record.filter(|record| !record.metadata.deleted) else { break };
+        let conversation: Conversation =
+            serde_json::from_value(record.body.clone()).map_err(|error| error.to_string())?;
+        let deleted = RecordRequest::Delete {
+            kind: fastctx_types::owned_records::KIND.into(),
+            key: resident.to_string(),
+            expected: Some(record.metadata.version),
+        };
+        match account_records::erase(hub, by.clone(), account.clone(), opened, deleted).await? {
+            Told::AccountRecords { response: RecordResponse::Written { .. } } => {
+                super::notify(hub, &conversation);
+                break;
+            }
+            Told::AccountRecords { response: RecordResponse::Conflict { .. } } => {}
+            _ => return Err("the conversation's erasure received an unexpected reply".into()),
+        }
+    }
+    let documents: Vec<_> = slot
+        .records
+        .lock()
+        .await
+        .entries
+        .values()
+        .filter(|entry| {
+            (entry.metadata.kind == fastctx_types::plan::KIND && entry.metadata.key == resident.as_str())
+                || (entry.metadata.kind == fastctx_types::history::RECORD_KIND
+                    && entry.metadata.key.strip_prefix(resident.as_str()).is_some_and(|suffix| suffix.starts_with('/')))
+        })
+        .map(|entry| entry.metadata.clone())
+        .collect();
+    for metadata in documents {
+        if !metadata.deleted {
+            let request = RecordRequest::Delete {
+                kind: metadata.kind.clone(),
+                key: metadata.key.clone(),
+                expected: Some(metadata.version),
+            };
+            match account_records::erase(hub, by.clone(), account.clone(), opened, request).await? {
+                Told::AccountRecords { response: RecordResponse::Written { .. } } => {}
+                _ => return Err("a record changed while its conversation was being erased".into()),
+            }
+        }
+        let history = slot.history(&metadata.kind, &metadata.key);
+        fastctx_platform::task::spawn_blocking(move || account_records::history::delete(&history))
+            .await
+            .map_err(|error| error.to_string())?
+            .map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}

@@ -344,6 +344,7 @@ async fn greet(inner: &Arc<Inner>, upstream: &Upstream, dialed: dial::Dialed) ->
             project_entry: true,
             conversation_deletions: true,
             forgets_accounts: true,
+            purges: inner.node.purges(),
             profiles: true,
             machine_updates: true,
             history_switch: true,
@@ -1027,6 +1028,15 @@ async fn handle_frame(
                 let outcome = inner.node.forget_account(forgetting).await;
                 // A session ended meanwhile: the hub tells it again.
                 let _ = up.send(Up::ForgotAccount { id, outcome });
+            });
+        }
+        Down::Purge { purging } => {
+            let (inner, up) = (inner.clone(), up.clone());
+            fastctx_platform::task::spawn(async move {
+                let (id, round) = (purging.id, purging.round);
+                let outcome = inner.node.purge(purging).await;
+                // A session ended meanwhile: the hub asks again.
+                let _ = up.send(Up::Purged { id, round, outcome });
             });
         }
         Down::Versions { network } => {

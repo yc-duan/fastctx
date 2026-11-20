@@ -76,6 +76,9 @@ pub(crate) struct Said {
     pub forgets: bool,
     /// Whether it lets go of what it keeps of an account deleted when told.
     pub forgets_accounts: bool,
+    /// Whether it deletes the conversations born on it under an assistance
+    /// ended, when told (`crate::purges`).
+    pub purges: bool,
     /// Whether it reads visitors among the accounts.
     pub roles: bool,
     /// Whether it reads the network's versions.
@@ -255,6 +258,7 @@ pub(crate) async fn session(
     hub.blocking(move |hub| crate::moving::follow::came(&hub, &arriving, dialed)).await;
     crate::forget::opened(&hub, &name);
     crate::forget::accounts::tell(&hub, Some(&name));
+    crate::purges::tell(&hub, Some(&name));
     match &through {
         Some(through) => hub.log.line(format_args!("{name} connected through {through}, from {peer}")),
         None => hub.log.line(format_args!("{name} connected from {peer}")),
@@ -659,6 +663,7 @@ async fn open(
             afoot: said.afoot,
             forgets: said.forgets,
             forgets_accounts: said.forgets_accounts,
+            purges: said.purges,
             versions: said.versions,
             version_parts: said.version_parts,
             cancels: said.cancels,
@@ -911,6 +916,7 @@ fn handle(
         Up::Afoot { change } => crate::afoot::heard(hub, name, key, *change),
         Up::Forgot { id, outcome } => crate::forget::forgot(hub, name, id, outcome),
         Up::ForgotAccount { id, outcome } => crate::forget::accounts::forgot(hub, name, id, outcome),
+        Up::Purged { id, round, outcome } => crate::purges::purged(hub, name, id, round, outcome),
         Up::Versions { report } => crate::updates::heard(hub, name, generation, *report),
         Up::Unfetched { id, why } => crate::updates::unfetched(hub, name, id, why),
         Up::FetchProgress { id, progress } => crate::updates::progress(hub, name, generation, id, progress),

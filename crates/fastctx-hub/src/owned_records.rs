@@ -1,6 +1,6 @@
 //! Resource-level record access keeps the reader separate from the opener.
 
-mod deletion;
+pub(crate) mod deletion;
 pub(crate) mod hints;
 pub(crate) mod index;
 mod plans;

@@ -79,6 +79,7 @@ pub(super) async fn exercise(
         turns,
         share: None,
         manages: None,
+        purge: false,
     };
     let choices = fastctx_types::agents::Choices { home: Some(home.to_path_buf()), ..Default::default() };
     let open = |words: &'static str| {

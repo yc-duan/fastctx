@@ -105,6 +105,8 @@ pub async fn fork(
         })
         .await?
     };
+    // Held until its session is started and recorded (`purges::permit`).
+    let _permit = crate::purges::permit(node, &born_as)?;
     super::oldest::check(node, &launching).await?;
     let super::Command { program, env, .. } = launching;
     let (words, heard) =

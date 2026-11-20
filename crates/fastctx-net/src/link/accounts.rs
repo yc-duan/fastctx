@@ -56,6 +56,7 @@ impl Link {
                 turns,
                 share,
                 manages,
+                purge,
             } => {
                 return self
                     .assist(
@@ -74,8 +75,10 @@ impl Link {
                             manages,
                             // The hub gives it.
                             grant: None,
+                            also: Vec::new(),
                         },
                         assisting,
+                        purge,
                     )
                     .await
                     .map(|()| None);
@@ -145,7 +148,13 @@ impl Link {
     /// know and keeps the assistance without it; one meant to end, or to
     /// stop at an allowance, must not outlive that, so it is ended at once
     /// and the owner told why.
-    async fn assist(&self, account: &AccountName, mut assist: Assist, assisting: bool) -> Result<(), String> {
+    async fn assist(
+        &self,
+        account: &AccountName,
+        mut assist: Assist,
+        assisting: bool,
+        purge: bool,
+    ) -> Result<(), String> {
         // One who manages the login with its owner names the assistance as
         // the hub keeps it, and the hub alone says what of it they change:
         // its machine's logins are not theirs to ask for, nor is another
@@ -155,7 +164,21 @@ impl Link {
             let hub = self.hub_name();
             return Err(format!("the hub {hub} keeps no one managing a login with its owner; upgrade it for that"));
         }
+        // Ending one for good is asked only of a hub that deletes what was
+        // born under it: anywhere else it would only end it.
+        if purge && assisting {
+            return Err("an assistance is ended for good, not given so".into());
+        }
+        if purge && !view.purges {
+            let hub = self.hub_name();
+            return Err(format!(
+                "the hub {hub} does not delete what was born under an assistance; update it, or end the assistance without that"
+            ));
+        }
         if !view.holds(account, &assist.machine) {
+            if purge {
+                return Err("only the login's owner ends its assistance for good".into());
+            }
             if !view.managing {
                 let hub = self.hub_name();
                 return Err(format!("the hub {hub} takes a share from no one but the login's owner; upgrade it for that"));
@@ -173,6 +196,8 @@ impl Link {
                 turns: assist.turns,
                 share: assist.share,
                 manages: assist.manages,
+                purge: Vec::new(),
+                replaces: Vec::new(),
             };
             return self.manage(account, change).await.map(|_| ());
         }
@@ -206,6 +231,52 @@ impl Link {
             })
             .map(|entry| entry.as_ref().clone())
             .collect();
+        // A hub that purges takes the spellings replaced in the very change,
+        // their grants kept with it, or ended with it for good: never ended
+        // one by one, which would end for good what is only spelled anew
+        // (codex-87c8bbd9).
+        if view.purges {
+            let replaces: Vec<_> =
+                aliases.iter().filter(|entry| entry.home != assist.home).map(|entry| entry.home.clone()).collect();
+            let mut grants = Vec::new();
+            if purge {
+                // Every grant of every spelling ended, as shown now.
+                for entry in view.assists.iter().filter(|entry| {
+                    entry.machine == assist.machine
+                        && entry.account == assist.account
+                        && entry.agent == assist.agent
+                        && super::login_identity::canonical(entry.home.as_deref(), &homes) == assist.home
+                }) {
+                    for grant in entry.grants() {
+                        if !grants.contains(grant) {
+                            grants.push(grant.clone());
+                        }
+                    }
+                }
+                if grants.is_empty() {
+                    return Err("the hub keeps no grant for this assistance; look at it again".into());
+                }
+            }
+            let change = Change::Assist {
+                machine: assist.machine.clone(),
+                to: assist.account.clone(),
+                agent: assist.agent.clone(),
+                home: assist.home.clone(),
+                assisting,
+                until: assist.until,
+                weekly: assist.weekly,
+                daily: assist.daily,
+                five_hour: assist.five_hour,
+                turns: assist.turns,
+                share: assist.share,
+                manages: assist.manages,
+                purge: grants,
+                replaces,
+            };
+            // Such a hub keeps every limit an assistance has: what it was
+            // asked stands, and nothing is ended for a view not read again.
+            return self.manage(account, change).await.map(|_| ());
+        }
         for entry in aliases {
             self.manage(
                 account,
@@ -222,6 +293,8 @@ impl Link {
                     turns: None,
                     share: None,
                     manages: None,
+                    purge: Vec::new(),
+                    replaces: Vec::new(),
                 },
             )
             .await?;
@@ -239,6 +312,8 @@ impl Link {
             turns: assist.turns.filter(|_| limited),
             share: assist.share.filter(|_| limited),
             manages: assist.manages.filter(|_| limited),
+            purge: Vec::new(),
+            replaces: Vec::new(),
         };
         self.manage(account, change(assisting, true)).await?;
         let limits = (assist.until, assist.weekly, assist.daily, assist.five_hour, assist.turns);

@@ -224,6 +224,65 @@ fn ask_inner(
     Ok(Told::Done)
 }
 
+/// The conversation at `conversation`, which worked for `account`, was
+/// deleted where it lived for a purge (`crate::purges`): what other members
+/// keep of it, and the hub's scopes of it, go as for a deletion its machine
+/// asked for having deleted it, the hub's log saying the hub did.
+pub(crate) fn gone_there(
+    hub: &Hub,
+    conversation: Address,
+    account: AccountName,
+    ownership: Option<fastctx_types::owned_records::Conversation>,
+) {
+    let tell = {
+        let mut store = hub.edit_store();
+        let kept = store.book.forgetting.pending.iter().position(|pending| {
+            pending.forgetting.conversation == conversation && pending.forgetting.account == account
+        });
+        match kept {
+            Some(index) => {
+                if store.book.forgetting.pending[index].home {
+                    done_at_home(&mut store, index);
+                    if let Err(error) = store.save_book() {
+                        hub.log.line(format_args!("keeping that {} went: {error}", conversation.key()));
+                    }
+                }
+                told_now(&store.book.forgetting.pending[index])
+            }
+            None => {
+                store.book.forgetting.last += 1;
+                let forgetting =
+                    Forgetting { id: store.book.forgetting.last, conversation: conversation.clone(), account };
+                let audience = ownership::targets(&store, &forgetting, ownership.as_ref());
+                let mut pending = Pending {
+                    forgetting,
+                    asked_by: conversation.machine.clone(),
+                    at: Timestamp::now(),
+                    home: false,
+                    ownership,
+                    audience,
+                    waiting: BTreeSet::new(),
+                    failed: BTreeMap::new(),
+                    scopes_gone: false,
+                };
+                pending.waiting = targets(&store, &pending);
+                let tell = told_now(&pending);
+                store.book.forgetting.pending.push(std::sync::Arc::new(pending));
+                let hub_actor = Actor { account: None, authenticated: true, member: None, peer: None };
+                let action = Action::Forgotten { conversation: conversation.clone(), on: conversation.machine.clone() };
+                let directory = store.book.directory.clone();
+                if let Err(error) = crate::machine_log::keep(&mut store, &directory, hub_actor, action, Outcome::Done) {
+                    hub.log.line(format_args!("keeping that {} went: {error}", conversation.key()));
+                }
+                tell
+            }
+        }
+    };
+    crate::assets::deleted::conversation_gone(hub, &conversation);
+    send(hub, tell);
+    crate::afoot::settle(hub);
+}
+
 /// What the member `member` did with the deletion `id`.
 pub(crate) fn forgot(hub: &Hub, member: &MachineName, id: u64, outcome: Forgot) {
     let (tell, ended) = {

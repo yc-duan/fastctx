@@ -146,6 +146,10 @@ pub struct AssistArgs {
     /// End the assistance.
     #[arg(long)]
     off: bool,
+    /// With --off: end it for good, deleting the conversations born under
+    /// it, wherever the hub can (design-forget-account-v2.md F1/F3).
+    #[arg(long, requires = "off")]
+    purge: bool,
     /// When the assistance ends by itself: a date and time on this
     /// computer's clock, such as "2026-10-20 18:00", or a full timestamp.
     /// Given again without it, the login assists until the assistance is
@@ -669,6 +673,7 @@ pub fn assist(args: AssistArgs) -> anyhow::Result<()> {
         turns: args.turns,
         share: args.share,
         manages: Some(args.manages).filter(|_| !args.off),
+        purge: args.purge,
     };
     self::change(args.hub, owner, change)?;
     if args.off {

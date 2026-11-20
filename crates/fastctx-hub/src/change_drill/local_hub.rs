@@ -88,6 +88,7 @@ pub(super) fn open(dir: &Path) -> anyhow::Result<Arc<Hub>> {
                 afoot: true,
                 forgets: true,
                 forgets_accounts: true,
+                purges: false,
                 versions: true,
                 version_parts: false,
                 cancels: true,

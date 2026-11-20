@@ -42,6 +42,7 @@ fn assist(to: &str, home: Option<PathBuf>) -> Assist {
         share: None,
         manages: None,
         grant: None,
+        also: Vec::new(),
     }
 }
 

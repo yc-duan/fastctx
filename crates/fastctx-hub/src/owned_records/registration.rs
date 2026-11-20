@@ -25,7 +25,9 @@ pub(super) struct Birth {
 /// `grant`.
 fn gives(directory: &Directory, account: &AccountName, born_on: &MachineName, grant: &GrantId) -> bool {
     directory.assists.iter().any(|assist| {
-        assist.account == *account && directory.same(&assist.machine, born_on) && assist.grant.as_ref() == Some(grant)
+        assist.account == *account
+            && directory.same(&assist.machine, born_on)
+            && assist.grants().any(|given| given == grant)
     })
 }
 

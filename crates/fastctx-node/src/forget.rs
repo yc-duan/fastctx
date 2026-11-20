@@ -323,6 +323,38 @@ async fn home(node: &Arc<Node>, id: &ResidentId) -> Result<(), String> {
     forget_copies(node, id, machines).await
 }
 
+/// `home`, for a purge (`crate::purges`): nothing of it is asked of a hub as
+/// the account it worked for, which may no longer let this machine act for
+/// it (its hub lets go of what it keeps itself); what is still being let go
+/// of here, where anything is, is said rather than taken for done.
+pub(crate) async fn purge_home(node: &Arc<Node>, id: &ResidentId) -> Result<Option<String>, String> {
+    let _deleting = node.residents.deleting(id);
+    stop_turn(node, id).await?;
+    let address = Address { machine: node.machine(), resident: id.clone() };
+    stop_jobs(node, &address).await?;
+    let marked = node.world.conversation(id).path().join(crate::data::delete::PURGING);
+    fastctx_platform::publish(&marked, b"", fastctx_platform::Permissions::Private)
+        .map_err(|error| format!("recording that it is deleted for a purge: {error}"))?;
+    let finishing = match crate::data::delete::delete_one(node, id.as_str()).await {
+        Ok(gone) => gone.finishing,
+        Err(Stop::Nothing(_)) => None,
+        Err(stop) => {
+            // Not deleted: one deleted later for another reason is deleted
+            // as any is.
+            if let Err(error) = fastctx_platform::disk::remove_file(&marked) {
+                node.log.line(format_args!("{id}: {error}"));
+            }
+            return Err(stop.why());
+        }
+    };
+    node.context_bodies.remove(id);
+    let names = node.machine_names();
+    let mut machines = vec![names.name];
+    machines.extend(names.was);
+    forget_copies(node, id, machines).await?;
+    Ok(finishing)
+}
+
 /// Stops the turn `id` runs, for its deletion. A Claude Code background
 /// session the World started whose turn does not end as asked, or whose
 /// plugin cannot be asked, is stopped as a whole, and its turn with it.

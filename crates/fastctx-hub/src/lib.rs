@@ -65,6 +65,7 @@ mod post;
 mod presence;
 mod project_deletions;
 mod project_entry;
+mod purges;
 mod question_parts;
 mod readers;
 mod record_subscriptions;
@@ -374,6 +375,9 @@ pub(crate) struct Session {
     forgets: bool,
     /// Whether it lets go of what it keeps of an account deleted when told.
     forgets_accounts: bool,
+    /// Whether it deletes the conversations born on it under an assistance
+    /// ended, when told (`purges`).
+    purges: bool,
     /// Whether it reads the network's versions.
     versions: bool,
     version_parts: bool,
@@ -1076,6 +1080,7 @@ async fn serving(
     fastctx_platform::task::spawn(assets::checkpoints(Arc::downgrade(&hub)));
     fastctx_platform::task::spawn(assets::standing::every_minute(Arc::downgrade(&hub)));
     fastctx_platform::task::spawn(data::expire(Arc::downgrade(&hub)));
+    fastctx_platform::task::spawn(purges::again(Arc::downgrade(&hub)));
     fastctx_platform::task::spawn(expiry::settle(Arc::downgrade(&hub)));
     fastctx_platform::task::spawn(updates::look_every(Arc::downgrade(&hub)));
     fastctx_platform::task::spawn(updates::watch_rollouts(Arc::downgrade(&hub)));
@@ -1288,6 +1293,7 @@ async fn intended(
                 afoot,
                 forgets,
                 forgets_accounts,
+                purges,
                 roles,
                 versions,
                 version_parts,
@@ -1323,6 +1329,7 @@ async fn intended(
                 afoot,
                 forgets,
                 forgets_accounts,
+                purges,
                 roles,
                 versions,
                 version_parts,

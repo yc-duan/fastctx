@@ -252,9 +252,20 @@ pub struct Assist {
     /// from a hub from before them.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub grant: Option<fastctx_types::access::GrantId>,
+    /// The grants of the other spellings of the same login this assistance
+    /// took the place of, kept with it: what was born under them is its own
+    /// (design-forget-account-v2.md F1/F3 v2).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub also: Vec<fastctx_types::access::GrantId>,
 }
 
 impl Assist {
+    /// Every grant this assistance is: its own, and those of the spellings
+    /// it took the place of (`also`).
+    pub fn grants(&self) -> impl Iterator<Item = &fastctx_types::access::GrantId> {
+        self.grant.iter().chain(&self.also)
+    }
+
     /// Whether the account manages the login with its owner: only a Claude
     /// Code login's, the one whose week is reckoned in shares. An assistance
     /// that says neither is one of before the word was kept: it managed
@@ -831,6 +842,13 @@ pub struct View {
     /// it, and would end the session of a member that asked.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub forgets: bool,
+    /// Whether this hub deletes what was born under an assistance its giver
+    /// ends for good (`crate::wire::Change::Assist::purge`), and takes one
+    /// spelling of a login in place of others in one change
+    /// (`replaces`). Earlier hubs omit it: they only end an assistance, and
+    /// would keep the spellings replaced.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub purges: bool,
     /// Whether this hub registers managed machines (`Member::managed`) by
     /// tokens for them, and takes back a token (`Change::RevokeToken`).
     /// Earlier hubs omit it: they would make a token for a full login, and
@@ -1010,6 +1028,7 @@ impl View {
             renames: false,
             afoot: false,
             forgets: false,
+            purges: false,
             managed: false,
             roles: false,
             groups: false,

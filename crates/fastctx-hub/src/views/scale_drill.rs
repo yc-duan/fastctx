@@ -132,6 +132,7 @@ fn network() -> Directory {
             share: None,
             manages: None,
             grant: None,
+            also: Vec::new(),
         }));
     }
     for _ in 0..1000 {

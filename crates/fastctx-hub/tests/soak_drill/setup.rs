@@ -571,6 +571,7 @@ pub(crate) async fn build(config: Config) -> Result<Lab> {
                 turns: None,
                 share: None,
                 manages: None,
+                purge: false,
             },
         )
         .await

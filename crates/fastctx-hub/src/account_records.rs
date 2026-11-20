@@ -112,12 +112,45 @@ pub(crate) async fn ask_as(
     request: Request,
     access: Option<crate::owned_records::Access>,
 ) -> Result<Told, String> {
+    asked_of(hub, from, member_key, account, opened, request, access, false).await
+}
+
+/// Deletes, as the hub itself, the record `kind` `key` of `account` as
+/// `opened`, at `expected`: for what the hub lets go of itself, as of a
+/// conversation purged, whose machine may no longer act for the account
+/// (`crate::purges`). `by` is the machine the record is said deleted by.
+pub(crate) async fn erase(
+    hub: &Arc<Hub>,
+    by: (MachineName, PublicKey),
+    account: AccountName,
+    opened: Timestamp,
+    request: Request,
+) -> Result<Told, String> {
+    if !matches!(&request, Request::Read { .. } | Request::Delete { .. }) {
+        return Err("the hub only reads and deletes records itself".into());
+    }
+    asked_of(hub, by.0, by.1, account, opened, request, None, true).await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn asked_of(
+    hub: &Arc<Hub>,
+    from: MachineName,
+    member_key: PublicKey,
+    account: AccountName,
+    opened: Timestamp,
+    request: Request,
+    access: Option<crate::owned_records::Access>,
+    by_hub: bool,
+) -> Result<Told, String> {
     request.validate()?;
     let slot = hub.account_records.account(&account, opened);
     let mut records = slot.records.clone().lock_owned().await;
     let hub = hub.clone();
     crate::readers::blocking(move || {
-        permitted(&hub, &hub.store(), &from, &member_key, &account, opened, access.as_ref())?;
+        if !by_hub {
+            permitted(&hub, &hub.store(), &from, &member_key, &account, opened, access.as_ref())?;
+        }
         for metadata in crate::skill_storage::recover(&slot, &mut records)? {
             tell(&hub, &account, opened, &metadata);
         }
@@ -144,7 +177,9 @@ pub(crate) async fn ask_as(
                     .collect(),
             },
             Request::Read { kind, key } => {
-                crate::record_subscriptions::follow(&hub, &from, &member_key, &account, &kind, &key)?;
+                if !by_hub {
+                    crate::record_subscriptions::follow(&hub, &from, &member_key, &account, &kind, &key)?;
+                }
                 if let Some(access) = &access
                     && crate::owned_records::scoped_body(&kind)
                     && records.entries.get(&(kind.clone(), key.clone())).is_some_and(|entry| {
@@ -163,7 +198,9 @@ pub(crate) async fn ask_as(
                 } else {
                     None
                 };
-                permitted(&hub, &hub.store(), &from, &member_key, &account, opened, access.as_ref())?;
+                if !by_hub {
+                    permitted(&hub, &hub.store(), &from, &member_key, &account, opened, access.as_ref())?;
+                }
                 if kind == fastctx_types::skills::KIND
                     && !crate::record_subscriptions::folder_reader(&hub, &from, &member_key)
                     && let Some(record) = record.as_ref().filter(|record| !record.metadata.deleted)
@@ -296,6 +333,17 @@ pub(crate) async fn ask_as(
                     // holds, however the write comes (`owned_records::birth_kept`).
                     if before.is_none() {
                         crate::owned_records::birth_kept(&store.book.directory, None, &ownership)?;
+                        // Born under an assistance ended for good, it is being
+                        // deleted where it was born: it is not registered anew
+                        // (`purges`).
+                        let closed = crate::purges::closed(&store.book.purges);
+                        if [&ownership.birth.born_under, &ownership.birth.claimed_under]
+                            .into_iter()
+                            .flatten()
+                            .any(|grant| closed.contains(grant))
+                        {
+                            return Err("it was born under an assistance ended for good".into());
+                        }
                     }
                     if let Some(before) = before {
                         if before.metadata.deleted {
@@ -468,7 +516,9 @@ pub(crate) async fn ask_as(
                 let first = place.is_some();
                 let mut projected = true;
                 let failure = if let Some(place) = place {
-                    permitted(&hub, &hub.store(), &from, &member_key, &account, opened, access.as_ref())?;
+                    if !by_hub {
+                        permitted(&hub, &hub.store(), &from, &member_key, &account, opened, access.as_ref())?;
+                    }
                     if let Some((history_author, submitted)) = &history_author {
                         crate::history_author::check(
                             &hub,
@@ -543,6 +593,7 @@ pub(crate) async fn ask_as(
                         historical,
                         &bytes,
                         deleted,
+                        by_hub,
                     )?
                 };
                 if record.metadata.kind == fastctx_types::owned_records::KIND {
@@ -698,6 +749,7 @@ fn legacy_publish(
     historical: Option<std::path::PathBuf>,
     bytes: &[u8],
     deleted: bool,
+    by_hub: bool,
 ) -> Result<Option<String>, String> {
     let result = (|| {
         fastctx_platform::ensure_private_dir(path.parent().expect("record folder"))
@@ -709,7 +761,9 @@ fn legacy_publish(
         let published =
             fastctx_platform::publish_checked(path, bytes, fastctx_platform::Permissions::Private, true, || {
                 let store = hub.edit_store();
-                permitted(hub, &store, from, member_key, account, opened, access).map_err(std::io::Error::other)?;
+                if !by_hub {
+                    permitted(hub, &store, from, member_key, account, opened, access).map_err(std::io::Error::other)?;
+                }
                 if let Some((history_author, submitted)) = history_author {
                     crate::history_author::check(
                         hub,

@@ -4953,7 +4953,8 @@
         "agent": "claude",
         "assisting": true,
         "weekly": 50000000,
-        "daily": 10000000
+        "daily": 10000000,
+        "purge": true
       },
       {
         "change": "plan",

@@ -69,8 +69,18 @@ pub(super) fn wait(node: &Arc<Node>, id: ResidentId) {
                 || crate::assists::host::kept(&node, &id)
                     .and_then(|isolated| crate::assists::may_still_start(&node, &about, isolated))
                     .is_err()
-                || crate::turn_slots::admit(&node, &id, &about).is_err()
             {
+                tokio::time::sleep(ASK_AGAIN).await;
+                continue;
+            }
+            // Its first session started by an assistance holds off that
+            // assistance's closing for good until it was asked and answered
+            // (`purges::permit`); one closed already is not started.
+            let Ok(_permit) = crate::purges::permit(&node, about.born_as.as_deref().unwrap_or_default()) else {
+                tokio::time::sleep(ASK_AGAIN).await;
+                continue;
+            };
+            if crate::turn_slots::admit(&node, &id, &about).is_err() {
                 tokio::time::sleep(ASK_AGAIN).await;
                 continue;
             }

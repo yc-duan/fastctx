@@ -133,6 +133,9 @@ pub enum Up {
     /// What this member did with the account deletion the hub numbered `id`
     /// (`Down::ForgetAccount`).
     ForgotAccount { id: u64, outcome: Forgot },
+    /// What this machine did with the purge the hub numbered `id`, as asked
+    /// in its `round` (`Down::Purge`).
+    Purged { id: u64, round: u64, outcome: Purged },
     /// The versions this machine runs and knows of; sent only to a hub
     /// whose view says it takes them, when the session opens and whenever
     /// they change.
@@ -228,6 +231,12 @@ pub enum Intent {
         /// would end the session on a frame they cannot read.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         forgets_accounts: bool,
+        /// The member deletes the conversations born on it under an
+        /// assistance the hub ended, when told (`Down::Purge`). Earlier
+        /// releases do not say so: they are not told, and what was born on
+        /// them waits for them to be updated.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        purges: bool,
         /// The member reads the records of profiles written. Earlier
         /// releases do not say so, and could read nothing of a machine log
         /// page with one.
@@ -532,6 +541,15 @@ pub enum Down {
     ForgetAccount {
         forgetting: AccountForgetting,
     },
+    /// A step of deleting what was born under an assistance ended for good,
+    /// and say how it went (`Up::Purged`): closing it on the machine whose
+    /// login gave it, and deleting the conversations decided on where each
+    /// is now. Sent only to a machine whose session says it purges, by its
+    /// key: as the step is decided, at each session it opens, and again
+    /// until it is answered (design-forget-account-v2.md F1/F3 v2).
+    Purge {
+        purging: Purging,
+    },
     /// The versions of the network as the hub knows them, sent when the
     /// session opens and whenever they change, only to a member whose
     /// session says it reads them.
@@ -622,6 +640,90 @@ pub struct AccountForgetting {
     pub id: u64,
     pub account: AccountName,
     pub at: jiff::Timestamp,
+}
+
+/// A step of deleting what was born under an assistance its giver ended for
+/// good (`Down::Purge`): only what was born under that very assistance, for
+/// that account of its name; one given again later is another.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Purging {
+    /// The hub's number of the purge, which what the machine says of it
+    /// names.
+    pub id: u64,
+    /// Which asking this is: an answer to an earlier one is not taken.
+    pub round: u64,
+    /// Every grant the assistance was (`directory::Assist::grants`).
+    pub grants: Vec<fastctx_types::access::GrantId>,
+    pub account: AccountName,
+    /// When the account of that name was opened, as the assistance ended.
+    pub generation: jiff::Timestamp,
+    pub step: PurgeStep,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "step")]
+pub enum PurgeStep {
+    /// Close it here, for good, before anything is deleted: nothing more is
+    /// born, started or forked under it; what is being born under it is
+    /// waited for; then what was born here under it is told (`Purged::Closed`).
+    Close,
+    /// Delete these conversations here, each only where it was born under
+    /// it, and tell how each went (`Purged::Deleted`).
+    Delete { residents: Vec<fastctx_types::ResidentId> },
+}
+
+/// What a machine did with a step of a purge (`Down::Purge`).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "told")]
+pub enum Purged {
+    /// It is closed here, and these were born here under it.
+    Closed { born: Vec<BornUnder> },
+    /// How deleting each went.
+    Deleted { results: Vec<(fastctx_types::ResidentId, PurgeResult)> },
+    /// Not done yet, and why: the hub asks again.
+    Waiting { why: String },
+    /// It could not be done, and why: the hub asks again.
+    Failed { reason: String },
+}
+
+/// A conversation born on this machine under an assistance being purged
+/// (`Purged::Closed`), with what would keep it whole.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BornUnder {
+    pub resident: fastctx_types::ResidentId,
+    /// A colleague's conversation: never deleted for an assistance.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub colleague: bool,
+    /// It works for another account as well.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub others: bool,
+}
+
+/// How deleting one conversation went (`Purged::Deleted`).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "kind")]
+pub enum PurgeResult {
+    /// Nothing of it is kept here any more.
+    Deleted,
+    /// It is deleted, and something of it is still being let go of here.
+    Finishing {
+        why: String,
+    },
+    /// Part of it is kept here, and why, as an original a fork still needs.
+    Kept {
+        why: String,
+    },
+    /// It is not here, and was not deleted for this purge here.
+    NotHere,
+    /// It is here, and not born under the assistance: nothing was deleted.
+    NotBornUnder,
+    /// It could not be deleted now, and why: asked again.
+    Busy {
+        why: String,
+    },
+    Failed {
+        why: String,
+    },
 }
 
 /// What a member did with a deletion (`Down::Forget`).
@@ -978,6 +1080,18 @@ pub enum Change {
         /// that knows no such word, which leaves what the hub keeps of it.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         manages: Option<bool>,
+        /// Ending it for good: every grant the assistance is, as its giver
+        /// was shown it (`Assist::grants`). What was born under them is
+        /// deleted (`Down::Purge`); the hub refuses where the assistance is
+        /// other grants now. Empty only ends it, as from an earlier sender,
+        /// or where another spelling of the login is replaced.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        purge: Vec<fastctx_types::access::GrantId>,
+        /// Other spellings of the same login this assistance takes the place
+        /// of, each ended in the same change and its grants kept with it
+        /// (`Assist::also`), so nothing born under them is lost or deleted.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        replaces: Vec<Option<std::path::PathBuf>>,
     },
     /// The super administrator sets the plan shown for `agent`'s login
     /// `home` on `machine`, or takes it away.
@@ -1421,6 +1535,7 @@ impl Down {
             | Self::FetchCancelled { .. }
             | Self::Forget { .. }
             | Self::ForgetAccount { .. }
+            | Self::Purge { .. }
             | Self::HistoryChanged { .. }
             | Self::Incoming { .. }
             | Self::LedgerChanged { .. }

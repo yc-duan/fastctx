@@ -1316,6 +1316,11 @@ pub async fn open_here(
         ));
     }
     crate::logins::workbench::may_start(node, &acting, agent.as_str(), home.as_deref())?;
+    // Born by an assistance, it holds off its closing for good from before
+    // its record is written until its host was asked and answered
+    // (`purges::permit`): a Claude Code one started at once until then, one
+    // that waits for its login's turn until its record is (`claude::queued`).
+    let _permit = crate::purges::permit(node, &born_as)?;
     let opened = Opened { acting, focus: choices.focus, home, login, born_as, files_on: choices.files_on };
     match agent.as_str() {
         "codex" => {}

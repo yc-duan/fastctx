@@ -391,6 +391,7 @@ pub fn fixtures() -> Fixtures {
                 turns: Some(3),
                 share: None,
                 manages: Some(true),
+                purge: false,
             },
             AccountChange::Assist {
                 machine: machine(),
@@ -405,6 +406,7 @@ pub fn fixtures() -> Fixtures {
                 turns: None,
                 share: None,
                 manages: None,
+                purge: true,
             },
             AccountChange::Plan {
                 machine: "gpu".parse().unwrap(),

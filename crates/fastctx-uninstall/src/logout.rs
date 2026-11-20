@@ -88,6 +88,7 @@ async fn open_saying(
         project_entry: false,
         conversation_deletions: false,
         forgets_accounts: false,
+        purges: false,
         profiles: false,
         machine_updates: false,
         history_switch: false,

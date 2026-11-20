@@ -133,6 +133,7 @@ mod plan_reads;
 mod profile;
 mod program_collection;
 mod proxy_setting;
+mod purges;
 mod ranked;
 mod reach;
 mod received;
@@ -322,6 +323,9 @@ pub(crate) struct Node {
     /// How many turns each agent login runs at once, and the turns waiting
     /// for room (`turn_slots`).
     turn_slots: turn_slots::Slots,
+    /// The assistances closed here for good, and the births by assistances
+    /// under way (`purges`).
+    purges: purges::Gate,
     /// How far the machine is toward its system's limits over the last day.
     limits: limits::Readings,
     /// Whom each job running here works for (`job_accounts`).
@@ -885,6 +889,7 @@ pub async fn run_prepared(
                 actions: Default::default(),
                 long_controls: Default::default(),
                 turn_slots: Default::default(),
+                purges: Default::default(),
                 limits: Default::default(),
                 job_accounts: Default::default(),
                 cpu_shares,

@@ -221,6 +221,7 @@ pub(crate) fn view_for_in(
         renames: true,
         afoot: true,
         forgets: true,
+        purges: true,
         managed: true,
         roles: true,
         groups: true,

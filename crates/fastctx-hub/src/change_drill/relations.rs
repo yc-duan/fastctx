@@ -36,6 +36,8 @@ fn request(kind: &str, round: usize, accounts: usize) -> Change {
             turns: None,
             share: None,
             manages: None,
+            purge: Vec::new(),
+            replaces: Vec::new(),
         },
         "Plan" => Change::Plan {
             machine: super::machine(0),
