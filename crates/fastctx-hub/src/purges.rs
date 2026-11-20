@@ -789,6 +789,33 @@ mod tests {
         BornUnder { resident: resident(name), colleague: false, others: false, born_at: None }
     }
 
+    /// A computer named `name`, renamed from each of `was`, whose key is
+    /// `byte` repeated.
+    fn member(name: &str, was: &[&str], byte: u8) -> Arc<fastctx_net::directory::Member> {
+        Arc::new(fastctx_net::directory::Member {
+            name: name.parse().expect("a machine"),
+            was: was.iter().map(|name| name.parse().expect("a machine")).collect(),
+            key: PublicKey::from_bytes([byte; 32]),
+            kind: fastctx_net::directory::Kind::Computer,
+            logins: Default::default(),
+            home: None,
+            managed: false,
+            code: None,
+            group: None,
+            direct: Vec::new(),
+            relay: Vec::new(),
+            added: OPENED.parse().expect("a time"),
+            online: false,
+            since: None,
+            through: None,
+            reach: None,
+            paths: None,
+            strain: None,
+            workbench: None,
+            settled: None,
+        })
+    }
+
     fn record(name: &str, machine: &str, under: &str) -> Conversation {
         let mut conversation = Conversation {
             account: "carol".parse().expect("an account"),
@@ -836,30 +863,8 @@ mod tests {
         ];
         // Its machine, and another, by their keys.
         let mut directory = directory();
-        for (name, byte) in [("host", 7), ("laptop", 8)] {
-            directory.members.push(Arc::new(fastctx_net::directory::Member {
-                name: name.parse().expect("a machine"),
-                was: Vec::new(),
-                key: PublicKey::from_bytes([byte; 32]),
-                kind: fastctx_net::directory::Kind::Computer,
-                logins: Default::default(),
-                home: None,
-                managed: false,
-                code: None,
-                group: None,
-                direct: Vec::new(),
-                relay: Vec::new(),
-                added: opened,
-                online: false,
-                since: None,
-                through: None,
-                reach: None,
-                paths: None,
-                strain: None,
-                workbench: None,
-                settled: None,
-            }));
-        }
+        directory.members.push(member("host", &[], 7));
+        directory.members.push(member("laptop", &[], 8));
         let items = decide(&fastctx_types::access::HubId::from_bytes([7; 8]), &directory, &owners, &purge(), found);
         let fate = |name: &str| items.get(&resident(name)).map(|item| item.fate.clone());
         assert_eq!(fate("codex-0001"), Some(Fate::Going));
@@ -869,6 +874,43 @@ mod tests {
         }
         // Each goes where it was born, by that machine's key.
         assert_eq!(items[&resident("codex-0001")].host, Some(PublicKey::from_bytes([7; 32])));
+    }
+
+    #[test]
+    fn a_conversation_that_ever_had_another_address_is_kept_whatever_its_names_stand_for_now() {
+        let opened: Timestamp = OPENED.parse().expect("a time");
+        let account: AccountName = "carol".parse().expect("an account");
+        let mut owners = crate::owned_records::index::Index::default();
+        let take = |owners: &mut crate::owned_records::index::Index, conversation: Conversation| {
+            let key = conversation.address.resident.to_string();
+            owners.take(&account, opened, &key, Some(conversation));
+        };
+        let machine = |name: &str| -> MachineName { name.parse().expect("a machine") };
+        // Born on the host, moved to a laptop and back; the laptop then left
+        // the network and the host took its name: both names are the host's.
+        let mut there_and_back = record("codex-0001", "host", ENDED);
+        there_and_back.previous = vec![machine("host"), machine("laptop")];
+        take(&mut owners, there_and_back);
+        // An earlier address a build before recorded as its machine was
+        // renamed: not told apart from a move, and kept as one.
+        let mut renamed_before = record("codex-0002", "laptop", ENDED);
+        renamed_before.previous = vec![machine("host")];
+        take(&mut owners, renamed_before);
+        // Recorded under the name its machine had, no address before it.
+        take(&mut owners, record("codex-0003", "host", ENDED));
+        // Recorded under the name its machine has now.
+        take(&mut owners, record("codex-0004", "laptop", ENDED));
+        let mut directory = directory();
+        directory.members.push(member("laptop", &["host"], 7));
+        let found = vec![born("codex-0001"), born("codex-0002"), born("codex-0003"), born("codex-0004")];
+        let items = decide(&fastctx_types::access::HubId::from_bytes([7; 8]), &directory, &owners, &purge(), found);
+        let fate = |name: &str| items.get(&resident(name)).map(|item| item.fate.clone());
+        for kept in ["codex-0001", "codex-0002"] {
+            assert!(matches!(fate(kept), Some(Fate::Kept { .. })), "{kept} is kept");
+        }
+        for going in ["codex-0003", "codex-0004"] {
+            assert_eq!(fate(going), Some(Fate::Going), "{going} goes whole");
+        }
     }
 
     #[test]

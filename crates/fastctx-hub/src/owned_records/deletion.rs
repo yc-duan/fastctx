@@ -154,17 +154,20 @@ fn its_own(
     born && never_moved(&hub.store().book.directory, conversation, machine)
 }
 
-/// Whether `conversation` lives on the machine of the key `machine`, and
-/// every address it had was that machine's, under any of its names: renamed,
-/// it never moved. One judgment wherever a purge asks (codex-87c8bbd9).
+/// Whether `conversation` lives on the machine of the key `machine` and no
+/// address is recorded before the one it has. An earlier address is a name,
+/// and a name is another machine's once the one it named has left: what such
+/// a name stands for now proves nothing of where the conversation was, so one
+/// that ever had another address is taken as moved, and kept. A machine
+/// renamed records no earlier address for that, and still deletes its own
+/// whole. One judgment wherever a purge asks (codex-87c8bbd9, codex-d515b194).
 pub(crate) fn never_moved(
     directory: &fastctx_net::directory::Directory,
     conversation: &Conversation,
     machine: &PublicKey,
 ) -> bool {
-    std::iter::once(&conversation.address.machine)
-        .chain(&conversation.previous)
-        .all(|name| directory.member(name).is_some_and(|member| member.key == *machine))
+    conversation.previous.is_empty()
+        && directory.member(&conversation.address.machine).is_some_and(|member| member.key == *machine)
 }
 
 /// Whether the record of the conversation `resident` that `account`, as
