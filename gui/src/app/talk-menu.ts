@@ -136,10 +136,13 @@ export class TalkMenu {
     if (document.activeElement === how.anchor || !how.anchor) this.items()[0]?.focus({ preventScroll: true });
   }
 
-  /** The menu's size while it is open: as tall and as wide as the larger
-   *  of its two faces, its acts and the projects to move to, so turning
-   *  from one to the other moves nothing. Both are laid out at once, before
-   *  it is painted. */
+  /** The menu's size while it is open: as tall as its acts, and as wide as
+   *  the wider of its two faces, its acts and the projects to move to, so
+   *  turning from one to the other moves nothing; projects more than its
+   *  acts are tall scroll in it. As tall as the taller face, the acts stood
+   *  over an empty foot where there were many projects (the user,
+   *  2026-11-20: "这下面空了一块"). Both are laid out at once, before it
+   *  is painted, the acts last. */
   private fit(): void {
     this.element.style.height = this.element.style.width = "";
     if (!this.opened || this.opened.r.removed) return;
@@ -148,7 +151,7 @@ export class TalkMenu {
     for (const towns of [true, false]) {
       this.towns = towns;
       this.draw();
-      height = Math.max(height, this.element.offsetHeight);
+      if (!towns) height = this.element.offsetHeight;
       width = Math.max(width, this.element.offsetWidth);
     }
     this.element.style.height = `${height}px`;
