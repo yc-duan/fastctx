@@ -917,7 +917,7 @@ fn handle(
         Up::Afoot { change } => crate::afoot::heard(hub, name, key, *change),
         Up::Forgot { id, outcome } => crate::forget::forgot(hub, name, key, id, outcome),
         Up::ForgotAccount { id, outcome } => crate::forget::accounts::forgot(hub, name, id, outcome),
-        Up::Purged { id, round, outcome } => crate::purges::purged(hub, name, id, round, outcome),
+        Up::Purged { id, round, outcome } => crate::purges::purged(hub, name, key, id, round, outcome),
         Up::Versions { report } => crate::updates::heard(hub, name, generation, *report),
         Up::Unfetched { id, why } => crate::updates::unfetched(hub, name, id, why),
         Up::FetchProgress { id, progress } => crate::updates::progress(hub, name, generation, id, progress),

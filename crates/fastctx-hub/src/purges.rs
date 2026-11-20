@@ -278,7 +278,7 @@ fn tell_of(hub: &crate::Hub, member: Option<&MachineName>, id: Option<u64>) {
     if hub.moving.frozen() {
         return;
     }
-    let tell: Vec<(MachineName, fastctx_net::wire::Purging)> = {
+    let tell: Vec<(MachineName, PublicKey, fastctx_net::wire::Purging)> = {
         let store = hub.store();
         let directory = &store.book.directory;
         store
@@ -290,7 +290,7 @@ fn tell_of(hub: &crate::Hub, member: Option<&MachineName>, id: Option<u64>) {
             .flat_map(|purge| asked(purge))
             .filter_map(|(key, purging)| {
                 let to = directory.members.iter().find(|found| found.key == key)?;
-                member.is_none_or(|member| directory.same(&to.name, member)).then(|| (to.name.clone(), purging))
+                member.is_none_or(|member| directory.same(&to.name, member)).then(|| (to.name.clone(), key, purging))
             })
             .collect()
     };
@@ -298,8 +298,10 @@ fn tell_of(hub: &crate::Hub, member: Option<&MachineName>, id: Option<u64>) {
         return;
     }
     let sessions = hub.sessions();
-    for (member, purging) in tell {
-        if let Some(session) = sessions.get(&member).filter(|session| session.purges) {
+    for (member, key, purging) in tell {
+        // The session of the very device asked, not one that took its name
+        // since (codex-d515b194).
+        if let Some(session) = sessions.get(&member).filter(|session| session.purges && session.key == key) {
             let _ = session.out.send(crate::Out::Frame(fastctx_net::wire::Down::Purge { purging }));
         }
     }
@@ -308,7 +310,16 @@ fn tell_of(hub: &crate::Hub, member: Option<&MachineName>, id: Option<u64>) {
 /// What the machine `member` did with the step of the purge `id` asked in
 /// `round`. An answer to an earlier round, or from a machine not asked, is
 /// not taken.
-pub(crate) fn purged(hub: &crate::Hub, member: &MachineName, id: u64, round: u64, outcome: fastctx_net::wire::Purged) {
+/// `key` is the one its session proved: an answer is taken by it, not by
+/// the name, which another device may have taken since (codex-d515b194).
+pub(crate) fn purged(
+    hub: &crate::Hub,
+    member: &MachineName,
+    key: PublicKey,
+    id: u64,
+    round: u64,
+    outcome: fastctx_net::wire::Purged,
+) {
     use fastctx_net::wire::{PurgeResult, Purged};
     // Not taken while the hub is frozen to hand itself over: asked again by
     // the hub that takes over. Counted until written, so freezing waits.
@@ -317,7 +328,6 @@ pub(crate) fn purged(hub: &crate::Hub, member: &MachineName, id: u64, round: u64
     let hub_id = hub.store().hub.id.clone();
     let (went, advanced) = {
         let mut store = hub.edit_store();
-        let Some(key) = store.book.directory.member(member).map(|found| found.key) else { return };
         let Some(index) = store.book.purges.kept.iter().position(|purge| purge.id == id) else { return };
         let kept = &store.book.purges.kept[index];
         if kept.round != round || !asked(kept).iter().any(|(asked, _)| *asked == key) {
@@ -429,8 +439,7 @@ fn decide(
                 Some((_, true)) => kept("a body's conversation"),
                 Some((conversation, _)) if conversation.birth.colleague => kept("a colleague's conversation"),
                 Some((conversation, _))
-                    if !directory.same(&conversation.address.machine, &purge.machine)
-                        || conversation.previous.iter().any(|old| !directory.same(old, &purge.machine)) =>
+                    if !crate::owned_records::deletion::never_moved(directory, conversation, &purge.key) =>
                 {
                     kept("it moved since it was born")
                 }
@@ -590,16 +599,26 @@ async fn settle_one(
     let ownership = ownership.filter(|_| erased == Erased::Gone);
     let forgetting = account.clone();
     let mut audience = purge.audience.clone();
-    {
-        // A name kept then is not proof which device it was: it is not
-        // told (codex-d515b194).
-        audience.extend(
-            purge
-                .audience_named
-                .iter()
-                .filter_map(|said| serde_json::from_value::<PublicKey>(serde_json::Value::String(said.clone())).ok()),
-        );
+    // A name kept then is not proof which device it was: it is not told,
+    // and said (codex-d515b194).
+    let mut unproven = Vec::new();
+    for said in &purge.audience_named {
+        match serde_json::from_value::<PublicKey>(serde_json::Value::String(said.clone())) {
+            Ok(key) => {
+                audience.insert(key);
+            }
+            Err(_) => unproven.push(said.as_str()),
+        }
     }
+    let left = match (left, unproven.is_empty()) {
+        (left, true) => left,
+        (left, false) => Some(
+            left.into_iter()
+                .chain([format!("copies on machines kept by name only, not told: {}", unproven.join(", "))])
+                .collect::<Vec<_>>()
+                .join("; "),
+        ),
+    };
     hub.blocking(move |hub| crate::forget::gone_there(&hub, address, forgetting, ownership, true, audience)).await?;
     let resident = resident.clone();
     hub.blocking(move |hub| gone(&hub, id, &resident, left)).await;
@@ -815,7 +834,33 @@ mod tests {
             // Not registered yet: its machine's word is enough.
             born("codex-0008"),
         ];
-        let items = decide(&fastctx_types::access::HubId::from_bytes([7; 8]), &directory(), &owners, &purge(), found);
+        // Its machine, and another, by their keys.
+        let mut directory = directory();
+        for (name, byte) in [("host", 7), ("laptop", 8)] {
+            directory.members.push(Arc::new(fastctx_net::directory::Member {
+                name: name.parse().expect("a machine"),
+                was: Vec::new(),
+                key: PublicKey::from_bytes([byte; 32]),
+                kind: fastctx_net::directory::Kind::Computer,
+                logins: Default::default(),
+                home: None,
+                managed: false,
+                code: None,
+                group: None,
+                direct: Vec::new(),
+                relay: Vec::new(),
+                added: opened,
+                online: false,
+                since: None,
+                through: None,
+                reach: None,
+                paths: None,
+                strain: None,
+                workbench: None,
+                settled: None,
+            }));
+        }
+        let items = decide(&fastctx_types::access::HubId::from_bytes([7; 8]), &directory, &owners, &purge(), found);
         let fate = |name: &str| items.get(&resident(name)).map(|item| item.fate.clone());
         assert_eq!(fate("codex-0001"), Some(Fate::Going));
         assert_eq!(fate("codex-0008"), Some(Fate::Going));

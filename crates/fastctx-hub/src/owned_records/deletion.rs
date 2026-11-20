@@ -147,13 +147,24 @@ fn its_own(
     machine: &PublicKey,
     grants: &[fastctx_types::access::GrantId],
 ) -> bool {
-    let here =
-        hub.store().book.directory.member(&conversation.address.machine).is_some_and(|member| member.key == *machine);
     let born = [&conversation.birth.born_under, &conversation.birth.claimed_under]
         .into_iter()
         .flatten()
         .any(|grant| grants.contains(grant));
-    here && born && conversation.previous.is_empty()
+    born && never_moved(&hub.store().book.directory, conversation, machine)
+}
+
+/// Whether `conversation` lives on the machine of the key `machine`, and
+/// every address it had was that machine's, under any of its names: renamed,
+/// it never moved. One judgment wherever a purge asks (codex-87c8bbd9).
+pub(crate) fn never_moved(
+    directory: &fastctx_net::directory::Directory,
+    conversation: &Conversation,
+    machine: &PublicKey,
+) -> bool {
+    std::iter::once(&conversation.address.machine)
+        .chain(&conversation.previous)
+        .all(|name| directory.member(name).is_some_and(|member| member.key == *machine))
 }
 
 /// Whether the record of the conversation `resident` that `account`, as
