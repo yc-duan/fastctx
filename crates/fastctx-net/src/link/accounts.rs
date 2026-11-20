@@ -172,7 +172,7 @@ impl Link {
         if purge && !view.purges {
             let hub = self.hub_name();
             return Err(format!(
-                "the hub {hub} does not delete what was born under an assistance; update it, or end the assistance without that"
+                "the hub {hub} does not yet delete what was born under an assistance, which ending one does now; update the hub first"
             ));
         }
         if !view.holds(account, &assist.machine) {

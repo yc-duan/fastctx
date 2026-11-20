@@ -370,6 +370,10 @@ pub struct Letters {
     pub project_deletes: bool,
     #[serde(default)]
     pub conversation_deletions: bool,
+    /// The member's last session said it deletes what was born on it under
+    /// an assistance ended for good (`crate::purges`), by the key it had.
+    #[serde(default)]
+    pub purges: Option<fastctx_net::sign::PublicKey>,
     /// The member's last session said it reads the records of profiles
     /// written.
     #[serde(default)]
@@ -416,6 +420,7 @@ impl Letters {
             due: false,
             project_deletes: false,
             conversation_deletions: false,
+            purges: None,
             profiles: false,
             machine_updates: false,
             history_switch: false,

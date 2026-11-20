@@ -12,8 +12,8 @@ import { escape } from "../conversation/prose";
 import type { AccountChange, AssistSeen, HubAccounts, Login } from "../world/accounts";
 import type { LimitWindow } from "../world/agents";
 import { wholeDollars } from "../world/money";
-import type { AccessWords } from "./account-words";
-import { Sheet } from "./confirm";
+import type { AccessWords, EndAssistWords } from "./account-words";
+import { Confirm, Sheet } from "./confirm";
 import { redrawKeepingFocus } from "./focus";
 import { NameSuggest } from "./name-suggest";
 import { WhenPicker } from "./when";
@@ -90,6 +90,13 @@ export function namesOn(hub: HubAccounts | null | undefined, login: Login): stri
   return (hub?.accounts ?? []).map((account) => account.name).filter((name) => name !== login.account);
 }
 
+/** Asks once, then ends the assistance of `to` for good: what was born
+ *  under it is deleted, and nothing is undone (the user, 2026-11-20:
+ *  「「结束协助」直接删数据，同时去掉撤销，改成弹确认框」). */
+export function endAssist(confirm: Confirm, words: EndAssistWords, to: string, act: () => Promise<void>, done: () => void): void {
+  confirm.ask({ title: words.endAssistTitle(to), what: words.endAssistWhat(to), go: words.endAssistGo, act, done });
+}
+
 /** The change that has the login assist `to` on `terms`, or no longer. */
 export function assistChange(machine: string, agent: string, home: string | null, to: string, terms: Terms | null): AccountChange {
   return {
@@ -99,6 +106,8 @@ export function assistChange(machine: string, agent: string, home: string | null
     agent,
     ...(home ? { home } : {}),
     assisting: !!terms,
+    // Ended for good: what was born under it is deleted (`endAssist`).
+    ...(terms ? {} : { purge: true }),
     ...(terms?.until ? { until: terms.until.toISOString() } : {}),
     ...(terms?.weekly ? { weekly: Math.round(terms.weekly * 1_000_000) } : {}),
     ...(terms?.daily ? { daily: Math.round(terms.daily * 1_000_000) } : {}),
@@ -118,6 +127,8 @@ type Editing =
 
 export class AssistSheet {
   private readonly sheet = new Sheet("device-sheet assist-sheet");
+  /** Asks before an assistance is ended for good (`endAssist`). */
+  private readonly ending: Confirm;
   private opening: AssistOpening = { title: "", assistances: [], assist: async () => [], costs: false, names: [] };
   private assistances: Assistance[] = [];
   /** The share of its five-hour window the login lends at most, which every
@@ -132,13 +143,17 @@ export class AssistSheet {
   private readonly suggest: NameSuggest;
 
   constructor(private readonly words: AccessWords) {
+    this.ending = new Confirm(words);
     this.fresh = new WhenPicker(words.when, null);
     this.suggest = new NameSuggest(words.assistNames);
     this.sheet.body.tabIndex = -1;
     this.sheet.body.addEventListener("click", (event) => {
       const button = (event.target as HTMLElement).closest<HTMLButtonElement>("button");
       if (!button || button.disabled) return;
-      if (button.dataset.takeBack) void this.change(button.dataset.takeBack, null);
+      if (button.dataset.takeBack) {
+        const to = button.dataset.takeBack;
+        endAssist(this.ending, words, to, () => this.change(to, null), () => {});
+      }
       else if (button.dataset.change) this.edit(button.dataset.change);
       else if (button.hasAttribute("data-window")) this.editWindow();
       else if (button.hasAttribute("data-turns")) this.editTurns();

@@ -621,7 +621,8 @@ async fn open(
     }
     let member = store.letters.member(name).ok_or(Refusal::NotMember)?;
     let versions = said.versions;
-    let capabilities = (&said).into();
+    let mut capabilities: crate::post::Capabilities = (&said).into();
+    capabilities.purges = said.purges.then_some(key);
     let (registering, registered_name, registered_out) = (hub.clone(), name.clone(), out.clone());
     let register = Box::new(move |entry: &crate::store::Letters| -> Result<(), String> {
         let hub = registering;

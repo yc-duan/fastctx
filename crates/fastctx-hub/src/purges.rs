@@ -179,7 +179,11 @@ pub(crate) fn begin(store: &mut crate::store::Store, ended: Ended) -> Result<(),
 /// machine whose session says it does too, so no purge kept is left to a
 /// hub that would not carry it on (codex-87c8bbd9).
 pub(crate) fn takes_over(hub: &crate::Hub, to: &MachineName) -> Result<(), String> {
-    if hub.sessions().get(to).is_some_and(|session| session.purges) {
+    // As its last session said, by the key it has now: the hub's sessions
+    // are closed once it is frozen to hand over (codex-87c8bbd9).
+    let store = hub.store();
+    let key = store.book.directory.member(to).map(|member| member.key);
+    if key.is_some() && store.letters.get(to).and_then(|letters| letters.purges) == key {
         return Ok(());
     }
     Err(format!(
@@ -221,6 +225,15 @@ fn asked(purge: &Purge) -> Vec<(PublicKey, fastctx_net::wire::Purging)> {
 /// session says it purges; of the machine `member` only, when given. A
 /// machine of an earlier release is asked nothing: its part waits for it.
 pub(crate) fn tell(hub: &crate::Hub, member: Option<&MachineName>) {
+    tell_of(hub, member, None);
+}
+
+/// `tell`, of the purge `id` only, when given.
+fn tell_of(hub: &crate::Hub, member: Option<&MachineName>, id: Option<u64>) {
+    // Nothing is asked while the hub is frozen to hand itself over.
+    if hub.moving.frozen() {
+        return;
+    }
     let tell: Vec<(MachineName, fastctx_net::wire::Purging)> = {
         let store = hub.store();
         let directory = &store.book.directory;
@@ -229,7 +242,7 @@ pub(crate) fn tell(hub: &crate::Hub, member: Option<&MachineName>) {
             .purges
             .kept
             .iter()
-            .filter(|purge| purge.open())
+            .filter(|purge| purge.open() && id.is_none_or(|id| purge.id == id))
             .flat_map(|purge| asked(purge))
             .filter_map(|(key, purging)| {
                 let to = directory.members.iter().find(|found| found.key == key)?;
@@ -253,7 +266,12 @@ pub(crate) fn tell(hub: &crate::Hub, member: Option<&MachineName>) {
 /// not taken.
 pub(crate) fn purged(hub: &crate::Hub, member: &MachineName, id: u64, round: u64, outcome: fastctx_net::wire::Purged) {
     use fastctx_net::wire::{PurgeResult, Purged};
-    let went = {
+    // Not taken while the hub is frozen to hand itself over: asked again by
+    // the hub that takes over.
+    if hub.moving.frozen() {
+        return;
+    }
+    let (went, advanced) = {
         let mut store = hub.edit_store();
         let Some(key) = store.book.directory.member(member).map(|found| found.key) else { return };
         let Some(index) = store.book.purges.kept.iter().position(|purge| purge.id == id) else { return };
@@ -261,6 +279,7 @@ pub(crate) fn purged(hub: &crate::Hub, member: &MachineName, id: u64, round: u64
         if kept.round != round || !asked(kept).iter().any(|(asked, _)| *asked == key) {
             return;
         }
+        let old = kept.clone();
         let mut purge = Purge::clone(kept);
         let mut went = Vec::new();
         match (&purge.step, outcome) {
@@ -318,19 +337,27 @@ pub(crate) fn purged(hub: &crate::Hub, member: &MachineName, id: u64, round: u64
                 return;
             }
         }
-        let went: Vec<_> = went.into_iter().map(|resident| (resident, purge.machine.clone())).collect();
+        // A step taken is asked at once; what is not done yet waits to be
+        // asked again (`AGAIN`), so a machine that keeps failing is not
+        // asked over and over (codex-87c8bbd9).
+        let advanced = purge.step != old.step;
         store.book.purges.kept[index] = Arc::new(purge);
         store.book_edit = crate::store::BookEdit::Full;
         if let Err(error) = store.save_book() {
+            // Not kept: it stands as it did, and is asked again as it did.
+            store.book.purges.kept[index] = old;
             hub.log.line(format_args!("keeping what {member} did with the purge {id}: {error}"));
+            return;
         }
-        went
+        (went, advanced)
     };
-    for (resident, _) in &went {
+    for resident in &went {
         hub.log.line(format_args!("the purge {id}: {resident} went where it lived"));
     }
     settle(hub);
-    tell(hub, None);
+    if advanced {
+        tell_of(hub, None, Some(id));
+    }
 }
 
 /// Decides, of each conversation found born under the purge's assistance,
@@ -403,6 +430,9 @@ pub(crate) fn settle(hub: &crate::Hub) {
     static SETTLING: std::sync::LazyLock<Mutex<BTreeSet<(u64, ResidentId)>>> =
         std::sync::LazyLock::new(Default::default);
     let Some(hub) = hub.this.get().and_then(std::sync::Weak::upgrade) else { return };
+    if hub.moving.frozen() {
+        return;
+    }
     let went: Vec<(u64, ResidentId, MachineName, PublicKey, AccountName, Timestamp)> = {
         let store = hub.store();
         store
@@ -429,7 +459,10 @@ pub(crate) fn settle(hub: &crate::Hub) {
             continue;
         }
         let hub = hub.clone();
+        // It changes the records: a hub moving waits for it (`moving`).
+        let held = crate::moving::Moving::hold(&hub);
         fastctx_platform::task::spawn(async move {
+            let _held = held;
             let ownership = hub
                 .account_records
                 .owners
@@ -437,6 +470,16 @@ pub(crate) fn settle(hub: &crate::Hub) {
                 .expect("never poisoned")
                 .opened(&account, generation, resident.as_str())
                 .map(|(conversation, _)| conversation.clone());
+            // Its scope, described or not: one on its way is refused after
+            // (codex-87c8bbd9). Born by an assistance, it is the opener's own.
+            let readers =
+                fastctx_types::assets::Readers::Conversation { openers: vec![account.clone()], born_on: None };
+            let scope = format!("{}{resident}", readers.key_prefix(hub.store().hub.id.as_str()));
+            if let Err(error) = hub.blocking(move |hub| hub.assets.bury(&scope)).await {
+                hub.log.line(format_args!("marking the scope of {resident}, purged ({id}), deleted: {error}"));
+                SETTLING.lock().expect("never poisoned").remove(&(id, resident));
+                return;
+            }
             let address = fastctx_types::Address { machine: machine.clone(), resident: resident.clone() };
             let forgetting = account.clone();
             hub.blocking(move |hub| crate::forget::gone_there(&hub, address, forgetting, ownership)).await;
@@ -460,7 +503,8 @@ pub(crate) fn settle(hub: &crate::Hub) {
 fn gone(hub: &crate::Hub, id: u64, resident: &ResidentId) {
     let mut store = hub.edit_store();
     let Some(index) = store.book.purges.kept.iter().position(|purge| purge.id == id) else { return };
-    let mut purge = Purge::clone(&store.book.purges.kept[index]);
+    let old = store.book.purges.kept[index].clone();
+    let mut purge = Purge::clone(&old);
     if let Some(item) = purge.items.get_mut(resident) {
         item.fate = Fate::Gone;
     }
@@ -471,6 +515,8 @@ fn gone(hub: &crate::Hub, id: u64, resident: &ResidentId) {
     store.book.purges.kept[index] = Arc::new(purge);
     store.book_edit = crate::store::BookEdit::Full;
     if let Err(error) = store.save_book() {
+        // Not kept: settled again as purges are looked at again.
+        store.book.purges.kept[index] = old;
         hub.log.line(format_args!("keeping that {resident} of the purge {id} went: {error}"));
     }
 }
@@ -529,7 +575,7 @@ pub(crate) async fn again(hub: std::sync::Weak<crate::Hub>) {
         tokio::time::sleep(AGAIN).await;
         let Some(hub) = hub.upgrade() else { return };
         hub.blocking(|hub| {
-            if hub.store().book.purges.kept.iter().any(|purge| purge.open()) {
+            if !hub.moving.frozen() && hub.store().book.purges.kept.iter().any(|purge| purge.open()) {
                 let mut store = hub.edit_store();
                 if prune(&mut store) {
                     store.book_edit = crate::store::BookEdit::Full;

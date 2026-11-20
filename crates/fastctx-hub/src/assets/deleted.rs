@@ -164,6 +164,34 @@ impl Assets {
         Ok(())
     }
 
+    /// Marks the scope `key` deleted though it may never have been described,
+    /// for good, so a description of it that comes later is refused, as of
+    /// one deleted (`crate::purges`): a conversation purged where it lived
+    /// may have had one on its way. Call on a thread that may block.
+    pub(crate) fn bury(&self, key: &str) -> io::Result<()> {
+        if let Some(why) = self.sealed() {
+            return Err(io::Error::other(why));
+        }
+        let keys = self.deleted_keys()?;
+        let stamp = stamp(key);
+        if !keys.lock().expect("deleted scopes").insert(stamp) {
+            return Ok(());
+        }
+        let sealing = self.sealing.clone();
+        let written = self.control.write_now(256, move |c| {
+            super::unsealed(&sealing)?;
+            chain::append(c, KIND, &stamp)
+        });
+        match written {
+            Ok((seq, head)) => self.witness.advanced(seq, &head),
+            Err(error) => {
+                // Not kept for good: marked again as it is tried again.
+                keys.lock().expect("deleted scopes").remove(&stamp);
+                Err(io::Error::other(error))
+            }
+        }
+    }
+
     /// Deletes the scope `key`; whether there was one. Its machines are
     /// told by the pushes this leaves to be sent. Call on a thread that may
     /// block.

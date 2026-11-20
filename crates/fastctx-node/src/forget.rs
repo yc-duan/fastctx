@@ -348,11 +348,17 @@ pub(crate) async fn purge_home(node: &Arc<Node>, id: &ResidentId) -> Result<Opti
         }
     };
     node.context_bodies.remove(id);
+    purge_copies(node, id).await?;
+    Ok(finishing)
+}
+
+/// Lets go of the copies here of `id`, which lived here, by every name this
+/// machine had (`purge_home`); asked again of what is gone, it does nothing.
+pub(crate) async fn purge_copies(node: &Arc<Node>, id: &ResidentId) -> Result<(), String> {
     let names = node.machine_names();
     let mut machines = vec![names.name];
     machines.extend(names.was);
-    forget_copies(node, id, machines).await?;
-    Ok(finishing)
+    forget_copies(node, id, machines).await
 }
 
 /// Stops the turn `id` runs, for its deletion. A Claude Code background

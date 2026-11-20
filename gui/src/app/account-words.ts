@@ -464,7 +464,33 @@ export const enLogin: LoginWords = {
   problems: enProblems,
 };
 
-export interface MachinesWords {
+/** Ending an assistance, which deletes what was born under it, asked once
+ *  and not undone (the user, 2026-11-20: 「「结束协助」直接删数据，同时去掉撤销，
+ *  改成弹确认框」). */
+export interface EndAssistWords {
+  endAssistTitle(to: string): string;
+  endAssistWhat(to: string): string;
+  endAssistGo: string;
+  endedAssist(to: string): string;
+}
+
+const zhEndAssist: EndAssistWords = {
+  endAssistTitle: (to) => `结束对 ${to} 的协助`,
+  endAssistWhat: (to) =>
+    `结束后 ${to} 不能再用这个登录。${to} 借这个登录开过的会话，会从这台机器和中枢上删除，无法撤销。同事会话、和别人共用的会话会保留，并列出来供你处理。`,
+  endAssistGo: "结束并删除",
+  endedAssist: (to) => `已结束对 ${to} 的协助，${to} 的会话正在删除`,
+};
+
+const enEndAssist: EndAssistWords = {
+  endAssistTitle: (to) => `Stop assisting ${to}`,
+  endAssistWhat: (to) =>
+    `${to} will no longer use this login. The conversations ${to} opened with it are deleted from this machine and the hub; this cannot be undone. Colleague conversations, and ones shared with others, are kept and listed for you.`,
+  endAssistGo: "Stop and delete",
+  endedAssist: (to) => `Stopped assisting ${to}; their conversations are being deleted`,
+};
+
+export interface MachinesWords extends EndAssistWords {
   title: string;
   /** The head's button that lets another machine or device in. */
   add: string;
@@ -790,6 +816,7 @@ export interface MachinesWords {
 }
 
 export const zhMachines: MachinesWords = {
+  ...zhEndAssist,
   title: "机器",
   add: "添加",
   here: "本机",
@@ -1152,6 +1179,7 @@ export const zhMachines: MachinesWords = {
 };
 
 export const enMachines: MachinesWords = {
+  ...enEndAssist,
   title: "Machines",
   add: "Add",
   here: "this computer",
@@ -1515,7 +1543,7 @@ export const enMachines: MachinesWords = {
 
 /** The sheets on a machine: whom its owner shares it with, whom one login
  *  of an agent on it assists, and removing it. */
-export interface AccessWords {
+export interface AccessWords extends EndAssistWords {
   shareTitle(machine: string): string;
   shareWhat: string;
   shareSees: string;
@@ -1603,6 +1631,7 @@ export interface AccessWords {
 }
 
 export const zhAccess: AccessWords = {
+  ...zhEndAssist,
   shareTitle: (machine) => `共享 ${machine}`,
   shareWhat: "对方可使用此机器及其上的所有智能体。",
   shareSees: "对方可以此机器的系统用户身份执行任何操作，包括读取文件与智能体登录凭据。请仅共享给信任的人。",
@@ -1673,6 +1702,7 @@ export const zhAccess: AccessWords = {
 };
 
 export const enAccess: AccessWords = {
+  ...enEndAssist,
   shareTitle: (machine) => `Share ${machine}`,
   shareWhat: "They can use this machine and every agent on it.",
   shareSees: "They can do anything this machine's system user can, its files and its agents' login credentials included. Share only with people you trust.",

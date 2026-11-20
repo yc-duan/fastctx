@@ -276,12 +276,28 @@ async fn close(node: &Arc<Node>, hub: &HubId, purging: &Purging) -> Result<Purge
     let born = node
         .residents
         .everyone()
-        .filter(|resident| resident.removed.is_none() && born_under(&resident.about, hub, purging))
+        // Archived ones too: they keep what they had.
+        .filter(|resident| born_under(&resident.about, hub, purging))
         .map(|resident| {
             let (colleague, others) = keeps(&resident.about, hub, purging);
             BornUnder { resident: resident.id, colleague, others }
         })
-        .collect();
+        .collect::<Vec<_>>();
+    // And those deleted whose original is kept for their forks: what is
+    // left of them goes once the forks let it.
+    let mut born = born;
+    for kept in node.world.kept().map_err(|error| Failure::new(error.to_string()))? {
+        let fastctx_types::layout::Kind::Home(id) = &kept.kind else { continue };
+        if born.iter().any(|found| found.resident == *id) || node.residents.about(id).is_some() {
+            continue;
+        }
+        if let Some(about) = crate::forks::retained(&kept.directory).map_err(|error| Failure::new(error.to_string()))?
+            && born_under(&about, hub, purging)
+        {
+            let (colleague, others) = keeps(&about, hub, purging);
+            born.push(BornUnder { resident: id.clone(), colleague, others });
+        }
+    }
     Ok(Purged::Closed { born })
 }
 
@@ -305,6 +321,90 @@ fn recorded(node: &Node, hub: &HubId, id: u64, resident: &ResidentId) -> Result<
         .map(|deletion| deletion.state.clone()))
 }
 
+/// What of `resident` is still here, where its deletion began: its
+/// directory, with the deletion's intent or the original its forks still
+/// need (`forks::RETAINED_HOST`), is left until it is wholly gone.
+fn left_here(node: &Node, resident: &ResidentId) -> Result<Option<String>, Failure> {
+    let directory = node.world.conversation(resident);
+    let left = |path: std::path::PathBuf| {
+        fastctx_platform::disk::exists(&path).map_err(|error| Failure::new(format!("{}: {error}", path.display())))
+    };
+    if left(directory.path().join(crate::forks::RETAINED_HOST))? {
+        return Ok(Some("its original is kept while its forks need it".into()));
+    }
+    if left(directory.path().to_path_buf())? {
+        return Ok(Some("its deletion is still being finished here".into()));
+    }
+    Ok(None)
+}
+
+/// Whether `about` holds a share of a body here: its scope one of a body's,
+/// or what it would take for one; an assistance's purge never takes it whole
+/// (codex-87c8bbd9).
+fn a_bodys(node: &Node, about: &About) -> Result<bool, Failure> {
+    let Some(assets) = node.assets.as_ref() else { return Ok(false) };
+    let keys =
+        assets.library.keys_ending(&format!("/{}", about.id)).map_err(|error| Failure::new(error.to_string()))?;
+    Ok(keys.iter().any(|key| key.starts_with("b/")))
+}
+
+/// Why `about`, born under the purge's assistance, is kept whole here, if it
+/// is: a colleague's, working for another account too, a body's, or one
+/// whose host was not kept apart, as an assistance asks.
+fn kept_whole(node: &Node, about: &About, hub: &HubId, purging: &Purging) -> Result<Option<&'static str>, Failure> {
+    let (colleague, others) = keeps(about, hub, purging);
+    if colleague {
+        return Ok(Some("a colleague's conversation"));
+    }
+    if others {
+        return Ok(Some("it works for another account as well"));
+    }
+    if a_bodys(node, about)? {
+        return Ok(Some("a body's conversation"));
+    }
+    if about.session.is_some() && crate::assists::host::kept(node, &about.id)? != Some(true) {
+        return Ok(Some("its host was not kept apart from its login's own"));
+    }
+    Ok(None)
+}
+
+/// The record of `resident` as it stands here: on record, or kept only for
+/// the original its forks need, deleted otherwise.
+fn about_of(node: &Node, resident: &ResidentId) -> Result<Option<About>, Failure> {
+    if let Some((about, _)) = node.residents.about(resident) {
+        return Ok(Some(about));
+    }
+    crate::forks::retained(&node.world.conversation(resident)).map_err(|error| Failure::new(error.to_string()))
+}
+
+/// Goes on deleting `resident`, begun already: what its deletion left is
+/// finished, as a node that starts again finishes it, and the copies of it
+/// here are let go of; it is told deleted only once nothing of it is left.
+async fn go_on(node: &Arc<Node>, resident: &ResidentId) -> Result<PurgeResult, Failure> {
+    if node.residents.about(resident).is_some() {
+        return Ok(match crate::forget::purge_home(node, resident).await {
+            Ok(_) => match left_here(node, resident)? {
+                None => PurgeResult::Deleted,
+                Some(why) => PurgeResult::Finishing { why },
+            },
+            Err(why) => PurgeResult::Busy { why },
+        });
+    }
+    if left_here(node, resident)?.is_some() {
+        match crate::data::delete::delete_one(node, resident.as_str()).await {
+            Ok(_) | Err(crate::data::delete::Stop::Nothing(_)) => {}
+            Err(stop) => return Ok(PurgeResult::Finishing { why: stop.why() }),
+        }
+    }
+    if let Err(why) = crate::forget::purge_copies(node, resident).await {
+        return Ok(PurgeResult::Finishing { why });
+    }
+    Ok(match left_here(node, resident)? {
+        None => PurgeResult::Deleted,
+        Some(why) => PurgeResult::Finishing { why },
+    })
+}
+
 async fn delete(node: &Arc<Node>, hub: &HubId, purging: &Purging, residents: &[ResidentId]) -> Result<Purged, Failure> {
     let mut results = Vec::with_capacity(residents.len());
     // A Codex thread its forks still need goes once they went: those asked
@@ -318,16 +418,19 @@ async fn delete(node: &Arc<Node>, hub: &HubId, purging: &Purging, residents: &[R
                     results.push((resident, result));
                     continue;
                 }
-                // Begun before the node stopped: its deletion finished as any
-                // interrupted one does, where it is no longer on record.
-                Some(Deleting::Begun) if node.residents.about(&resident).is_none() => {
-                    record(node, hub, purging.id, &resident, Deleting::Done { result: PurgeResult::Deleted })?;
-                    results.push((resident, PurgeResult::Deleted));
+                // Begun: gone on with from where it stands, told deleted
+                // only once nothing of it is left (codex-87c8bbd9).
+                Some(Deleting::Begun) => {
+                    let result = go_on(node, &resident).await?;
+                    if result == PurgeResult::Deleted {
+                        record(node, hub, purging.id, &resident, Deleting::Done { result: PurgeResult::Deleted })?;
+                    }
+                    results.push((resident, result));
                     continue;
                 }
-                _ => {}
+                None => {}
             }
-            let Some((about, _)) = node.residents.about(&resident) else {
+            let Some(about) = about_of(node, &resident)? else {
                 results.push((resident, PurgeResult::NotHere));
                 continue;
             };
@@ -337,44 +440,29 @@ async fn delete(node: &Arc<Node>, hub: &HubId, purging: &Purging, residents: &[R
                 results.push((resident, PurgeResult::NotBornUnder));
                 continue;
             }
-            let (colleague, others) = keeps(&about, hub, purging);
-            if colleague || others {
-                let why = if colleague { "a colleague's conversation" } else { "it works for another account as well" };
+            if let Some(why) = kept_whole(node, &about, hub, purging)? {
                 let result = PurgeResult::Kept { why: why.into() };
                 record(node, hub, purging.id, &resident, settled(result.clone()))?;
                 results.push((resident, result));
                 continue;
             }
-            if about.host.agent.as_str() == "codex"
+            if pass == 0
+                && about.host.agent.as_str() == "codex"
                 && crate::forks::has_dependents(node, &resident).map_err(|error| Failure::new(error.to_string()))?
             {
-                if pass == 0 {
-                    later.push(resident);
-                } else {
-                    // Asked again: its forks may have gone meanwhile.
-                    results.push((resident, PurgeResult::Busy { why: "its forks still need its original".into() }));
-                }
+                later.push(resident);
                 continue;
             }
             record(node, hub, purging.id, &resident, Deleting::Begun)?;
-            let result = match crate::forget::purge_home(node, &resident).await {
-                Ok(None) => PurgeResult::Deleted,
-                Ok(Some(why)) => PurgeResult::Finishing { why },
-                Err(why) => PurgeResult::Busy { why },
-            };
+            let result = go_on(node, &resident).await?;
             match &result {
                 PurgeResult::Deleted => {
                     record(node, hub, purging.id, &resident, settled(PurgeResult::Deleted))?;
                     node.log.line(format_args!("deleted {resident}, born by an assistance ended for good"));
                 }
-                // Not deleted: asked again as it stands.
+                // Not begun after all: asked again as it stands.
                 PurgeResult::Busy { .. } if node.residents.about(&resident).is_some() => {
-                    let mut state = node.purges.inner.state.lock().expect("never poisoned");
-                    let mut kept = state.kept(node.world.path())?.clone();
-                    kept.deletions.retain(|deletion| {
-                        !(deletion.hub == *hub && deletion.id == purging.id && deletion.resident == resident)
-                    });
-                    state.keep(node.world.path(), kept)?;
+                    forget_begun(node, hub, purging.id, &resident)?;
                 }
                 _ => {}
             }
@@ -382,6 +470,14 @@ async fn delete(node: &Arc<Node>, hub: &HubId, purging: &Purging, residents: &[R
         }
     }
     Ok(Purged::Deleted { results })
+}
+
+/// Lets go of a deletion recorded as begun that did not begin.
+fn forget_begun(node: &Node, hub: &HubId, id: u64, resident: &ResidentId) -> Result<(), Failure> {
+    let mut state = node.purges.inner.state.lock().expect("never poisoned");
+    let mut kept = state.kept(node.world.path())?.clone();
+    kept.deletions.retain(|deletion| !(deletion.hub == *hub && deletion.id == id && deletion.resident == *resident));
+    state.keep(node.world.path(), kept)
 }
 
 #[cfg(test)]

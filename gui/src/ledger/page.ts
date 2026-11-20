@@ -554,7 +554,8 @@ export class AgentsPage implements Page {
       },
       endAssist: (login, person) => {
         const { machine, agent, home } = this.recordOf(login);
-        return accounts({ change: "assist", machine, to: person, agent, ...(home ? { home } : {}), assisting: false }, login);
+        // Ended for good, as the sheet asked: what was born under it is deleted.
+        return accounts({ change: "assist", machine, to: person, agent, ...(home ? { home } : {}), assisting: false, purge: true }, login);
       },
       line: async (login, line) => {
         const world = options.store.world.peek();

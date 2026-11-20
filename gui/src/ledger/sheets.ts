@@ -345,13 +345,22 @@ on("grant-end", (button) => {
   const login = current();
   const person = button.dataset.person!;
   if (deeds) {
-    deeds.endAssist(login, person).then(
-      () => {
-        state.editing = null;
-        draw();
-      },
-      (error: unknown) => say(error instanceof Error ? error.message : "收回失败"),
-    );
+    // Asked once, and not undone: what was born under it is deleted (the
+    // user, 2026-11-20: 「「结束协助」直接删数据，同时去掉撤销，改成弹确认框」).
+    const live = deeds;
+    const sheet = new Sheet("lg-end-assist");
+    sheet.body.innerHTML = `${sheet.head(`结束对 ${person} 的协助`, "关闭")}<p class="confirm-what">结束后 ${person} 不能再用这个登录。${person} 借这个登录开过的会话，会从这台机器和中枢上删除，无法撤销。同事会话、和别人共用的会话会保留，并列出来供你处理。</p><footer class="cs-foot"><button type="button" class="sheet-go danger" data-do>结束并删除</button></footer>`;
+    sheet.body.querySelector("[data-do]")!.addEventListener("click", () => {
+      sheet.close();
+      live.endAssist(login, person).then(
+        () => {
+          state.editing = null;
+          draw();
+        },
+        (error: unknown) => say(error instanceof Error ? error.message : "结束失败"),
+      );
+    });
+    sheet.show();
     return;
   }
   button.closest<HTMLElement>(".lg-item")!.classList.add("leaving");
