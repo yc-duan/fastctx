@@ -18,7 +18,7 @@ use std::time::{Duration, Instant};
 use fastctx_types::ipc::Failure;
 use fastctx_types::lines::{Extent, Result as Answer};
 
-use super::{Shown, Source, State, changed, failed, monitor, observe, refresh, show};
+use super::{AGAIN, Shown, Source, State, changed, failed, monitor, observe, refresh, show};
 
 /// How long the reader holds the source at the most: past it the drill lets
 /// it go itself, so that a thread held behind it shows as held, not as a
@@ -37,12 +37,14 @@ const LINES: u64 = 3000;
 
 type Events = tokio::sync::watch::Receiver<Result<u64, String>>;
 type Waiting = tokio::task::JoinHandle<Result<Answer, Failure>>;
+type Told = Option<tokio::sync::oneshot::Sender<()>>;
 
 pub fn run() -> Result<(), String> {
     let root = tempfile::tempdir().map_err(err)?;
     let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().map_err(err)?;
     runtime.block_on(async {
         closed_while_looking(root.path()).await?;
+        looked_again(root.path()).await?;
         drill(root.path()).await
     })
 }
@@ -50,7 +52,7 @@ pub fn run() -> Result<(), String> {
 async fn drill(directory: &Path) -> Result<(), String> {
     let path = directory.join("output.txt");
     fastctx_platform::disk::write(&path, numbered(0, LINES)).map_err(err)?;
-    let (source, events) = opened(&path, directory)?;
+    let (source, events) = opened(&path, directory, true)?;
     shown_alone(&source)?;
 
     let longest = Arc::new(AtomicU64::new(0));
@@ -113,8 +115,9 @@ async fn drill(directory: &Path) -> Result<(), String> {
     // One at the version shown looks at the source afresh, behind the reader,
     // and is told a change another look shows meanwhile without waiting for
     // its own.
-    let behind = waiting(&source, VERSION, None);
-    tokio::time::sleep(MEANWHILE).await;
+    let (entered, entering) = tokio::sync::oneshot::channel();
+    let behind = waiting(&source, VERSION, Some(entered), None);
+    entering.await.map_err(|_| "the wait never looked")?;
     if behind.is_finished() {
         return Err(format!("a wait at the version shown ended with nothing shown: {:?}", behind.await));
     }
@@ -131,7 +134,7 @@ async fn drill(directory: &Path) -> Result<(), String> {
 
     // One at the version shown waits on, its look behind the reader.
     let (looked, looking) = tokio::sync::oneshot::channel();
-    let waits = waiting(&source, VERSION, Some(looked));
+    let waits = waiting(&source, VERSION, None, Some(looked));
     tokio::time::sleep(MEANWHILE).await;
     if waits.is_finished() {
         return Err(format!("a wait at the version shown ended while the reader held the source: {:?}", waits.await));
@@ -172,7 +175,7 @@ async fn drill(directory: &Path) -> Result<(), String> {
     // Then its output is cut short: the watch's look ends the source, and a
     // wait already waiting hears so.
     let (looked, looking) = tokio::sync::oneshot::channel();
-    let ends = waiting(&source, VERSION + 1, Some(looked));
+    let ends = waiting(&source, VERSION + 1, None, Some(looked));
     tokio::time::timeout(SOON, looking).await.map_err(|_| "the last wait never looked")?.map_err(err)?;
     fastctx_platform::disk::write(&path, numbered(0, 10)).map_err(err)?;
     told(&source);
@@ -199,36 +202,82 @@ async fn drill(directory: &Path) -> Result<(), String> {
 async fn closed_while_looking(directory: &Path) -> Result<(), String> {
     let path = directory.join("closing.txt");
     fastctx_platform::disk::write(&path, numbered(0, 10)).map_err(err)?;
-    let (source, _events) = opened(&path, directory)?;
+    let (source, _events) = opened(&path, directory, true)?;
+    let holding = Arc::new(AtomicBool::new(true));
     let (held, holds) = std::sync::mpsc::channel();
     let (release, released) = std::sync::mpsc::channel::<()>();
     let holder = {
-        let source = source.clone();
+        let (source, holding) = (source.clone(), holding.clone());
         std::thread::spawn(move || {
-            let _state = source.state.lock().expect("line source");
+            let state = source.state.lock().expect("line source");
             let _ = held.send(());
             let _ = released.recv_timeout(HOLD);
+            holding.store(false, Ordering::SeqCst);
+            drop(state);
         })
     };
     fastctx_platform::task::blocking(move || holds.recv()).await.map_err(|_| "nothing held the source")?;
-    let behind = waiting(&source, VERSION, None);
-    tokio::time::sleep(MEANWHILE).await;
+    let (entered, entering) = tokio::sync::oneshot::channel();
+    let behind = waiting(&source, VERSION, Some(entered), None);
+    entering.await.map_err(|_| "the wait never looked")?;
     source.closed.send_replace(true);
     let heard = within(behind).await;
+    let still = holding.load(Ordering::SeqCst);
     let _ = release.send(());
     fastctx_platform::task::blocking(move || holder.join()).await.map_err(|_| "the holder panicked")?;
     match heard? {
-        Err(error) if error.message.contains("closed") => Ok(()),
+        Err(error) if error.message.contains("closed") && still => Ok(()),
+        Err(error) if error.message.contains("closed") => {
+            Err("a source closed was heard only once the reader let go".into())
+        }
         other => Err(format!("a source closed while a wait looked at it behind a reader was heard as {other:?}")),
     }
 }
 
+/// A look that fails for a passing reason has the watch look again, though
+/// the source is still and nothing else would wake it: a job's output whose
+/// record cannot be read, looked at by a wait. Its watch then fails without
+/// a word; only its looking again finds that, and ends the source, which the
+/// wait hears.
+async fn looked_again(directory: &Path) -> Result<(), String> {
+    let path = directory.join("unrecorded.txt");
+    fastctx_platform::disk::write(&path, numbered(0, 10)).map_err(err)?;
+    let (source, events) = opened(&path, directory, false)?;
+    fastctx_platform::task::spawn(monitor(
+        Arc::downgrade(&source),
+        events,
+        source.closed.subscribe(),
+        source.again.clone(),
+    ));
+    tokio::time::sleep(MEANWHILE).await;
+    let (looked, looking) = tokio::sync::oneshot::channel();
+    let waits = waiting(&source, VERSION, None, Some(looked));
+    tokio::time::timeout(SOON, looking).await.map_err(|_| "the wait never looked")?.map_err(err)?;
+    if !source.shown.borrow().stale {
+        return Err("a look that could not read the job's record left the source as it was".into());
+    }
+    source.events.send_if_modified(|state| {
+        *state = Err("the drill's watch failed".into());
+        false
+    });
+    match tokio::time::timeout(AGAIN + SOON, waits).await {
+        Ok(Ok(Err(error))) if error.message.contains("watch failed") => Ok(()),
+        Ok(other) => Err(format!("a source looked at again heard {other:?}")),
+        Err(_) => Err("a look failed for a passing reason, and the source was never looked at again".into()),
+    }
+}
+
 /// A wait for a change after `version`, looking at the source afresh: told
-/// as its look is done, where `looked` is given.
-fn waiting(source: &Arc<Source>, version: u64, looked: Option<tokio::sync::oneshot::Sender<()>>) -> Waiting {
+/// as its look begins, where `entered` is given, and as it is done, where
+/// `looked` is. Once its look began the wait listens too: all it waits on is
+/// asked as one.
+fn waiting(source: &Arc<Source>, version: u64, entered: Told, looked: Told) -> Waiting {
     let source = source.clone();
     fastctx_platform::task::spawn(async move {
         let look = async {
+            if let Some(entered) = entered {
+                let _ = entered.send(());
+            }
             let done = refresh(source.clone(), None).await;
             if let Some(looked) = looked {
                 let _ = looked.send(());
@@ -270,13 +319,15 @@ fn shown_alone(source: &Source) -> Result<(), String> {
     }
 }
 
-/// The output of a job still running at `path`, opened here, showing
-/// `VERSION`, its last change from `FIRST`. Its record is never read: the
-/// source stands as one written out from the copy here would, not whole.
-fn opened(path: &Path, directory: &Path) -> Result<(Arc<Source>, Events), String> {
+/// A job's output at `path`, opened here, showing `VERSION`, its last change
+/// from `FIRST`. `running`, its record is never read: the source stands as
+/// one written out from the copy here would, not whole. Otherwise it was
+/// whole as it was opened, and its record, asked as it is looked at again,
+/// cannot be read.
+fn opened(path: &Path, directory: &Path, running: bool) -> Result<(Arc<Source>, Events), String> {
     let snapshot = observe(path).map_err(err)?;
     let index = fastctx_hands::lines::Index::open(path, directory, true, None, Arc::new(AtomicBool::new(false)))?;
-    let extent = Extent { length: index.length, complete: false, version: VERSION };
+    let extent = Extent { length: index.length, complete: !running, version: VERSION };
     let state = State {
         index: Some(index),
         snapshot,
@@ -296,7 +347,7 @@ fn opened(path: &Path, directory: &Path) -> Result<(Arc<Source>, Events), String
         path: path.to_path_buf(),
         immutable: false,
         annotation: None,
-        job_record: Some(PathBuf::from(directory).join("job.json")),
+        job_record: Some(PathBuf::from(directory).join(if running { "job.json" } else { "no-record.json" })),
         notes_record: None,
         state: Mutex::new(state),
         shown: tokio::sync::watch::channel(shown).0,
@@ -306,7 +357,7 @@ fn opened(path: &Path, directory: &Path) -> Result<(Arc<Source>, Events), String
         _watcher: Mutex::new(fastctx_watch::Watcher::new(|_: notify::Result<notify::Event>| {})),
         cancelled: Arc::new(AtomicBool::new(false)),
         requests: Mutex::new(Vec::new()),
-        copy_whole: Some(false),
+        copy_whole: running.then_some(false),
         _copied: None,
     });
     Ok((source, watched))

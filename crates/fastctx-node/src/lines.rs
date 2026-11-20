@@ -455,12 +455,13 @@ async fn refresh(
             Ok(Some((length, ended, first)))
         })();
         state.stale = matches!(update, Err((_, true)));
-        if state.stale {
-            source.again.notify_one();
-        }
         match update {
             Ok(None) | Err((_, true)) => {
                 show(&source, &state, false);
+                // Shown first: the watch, told, reads it to wait to look again.
+                if state.stale {
+                    source.again.notify_one();
+                }
                 Ok(())
             }
             Ok(Some((length, complete, first))) => {

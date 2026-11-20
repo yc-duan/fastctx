@@ -626,6 +626,7 @@ impl Link {
         // this machine's network changing or waking, which only hastens a
         // reconnect: without it, heartbeats and retries still find the hub.
         let running = inner.clone();
+        session::prepare();
         let task = fastctx_platform::task::spawn_on(&crate::threads::lines(), async move {
             let changes = match watch_changes {
                 false => None,

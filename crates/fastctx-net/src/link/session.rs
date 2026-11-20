@@ -39,10 +39,25 @@ const RETURN: Duration = Duration::from_secs(60);
 
 /// Calls the hub passed on answered at once, as they came, and those that
 /// waited their turn behind a view not yet taken in; how long one answered
-/// at once waited for the node's runtime to start it.
-const CALLS_AT_ONCE: &str = "link.calls.at_once";
-const CALLS_IN_TURN: &str = "link.calls.in_turn";
-const CALLS_STARTED: &str = "link.calls.started";
+/// at once waited for the node's runtime to start it. Taken once before the
+/// line starts (`prepare`): the measures are found under a lock the whole
+/// process shares, which the lines' thread does not wait on.
+struct Calls {
+    at_once: &'static fastctx_platform::readings::Counter,
+    in_turn: &'static fastctx_platform::readings::Counter,
+    started: &'static fastctx_platform::readings::Timing,
+}
+
+static CALLS: std::sync::LazyLock<Calls> = std::sync::LazyLock::new(|| Calls {
+    at_once: fastctx_platform::readings::counter("link.calls.at_once"),
+    in_turn: fastctx_platform::readings::counter("link.calls.in_turn"),
+    started: fastctx_platform::readings::timing("link.calls.started"),
+});
+
+/// Finds what the line measures before it starts, off its thread.
+pub(super) fn prepare() {
+    std::sync::LazyLock::force(&CALLS);
+}
 
 enum Ended {
     /// Try again.
@@ -735,9 +750,9 @@ async fn connected(
             Down::Incoming { call, message } if views_waiting.load(std::sync::atomic::Ordering::Acquire) == 0 => {
                 let stop = inner.answers.open(inner, CallOn::Hub(generation), call);
                 let (inner_now, up, came) = (inner.clone(), up.clone(), Instant::now());
-                fastctx_platform::readings::counter(CALLS_AT_ONCE).add(1);
+                CALLS.at_once.add(1);
                 inner.on_node(async move {
-                    fastctx_platform::readings::timing(CALLS_STARTED).record(came.elapsed());
+                    CALLS.started.record(came.elapsed());
                     super::answering::answer(inner_now, Replier::Hub(up, call), message, stop).await;
                 });
             }
@@ -960,7 +975,7 @@ async fn handle_frame(
         }
         Down::Incoming { call, message } => {
             let stop = inner.answers.open(inner, CallOn::Hub(generation), call);
-            fastctx_platform::readings::counter(CALLS_IN_TURN).add(1);
+            CALLS.in_turn.add(1);
             fastctx_platform::task::spawn(super::answering::answer(
                 inner.clone(),
                 Replier::Hub(up.clone(), call),
