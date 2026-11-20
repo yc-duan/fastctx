@@ -75,7 +75,7 @@ async fn once(node: &Arc<Node>) -> Result<(), String> {
         // between the look and now stands.
         let _one = crate::world::memberships().lock().await;
         if !stands(&hub) {
-            super::membership::left(node, &hub).await;
+            super::membership::left(node, &hub, node.link_of(&hub).as_deref()).await;
         }
     }
     while blocking(library, |library| library.purging()).await? {

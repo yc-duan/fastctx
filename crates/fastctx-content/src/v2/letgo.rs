@@ -18,14 +18,26 @@ const FRAMES_AT_ONCE: i64 = 64;
 /// one is — with this device's own frames past what the hub took of it
 /// moved into the records waiting to be committed again. They are the
 /// stream's tail, whoever orders the stream now: a successor known does not
-/// make what this device wrote and never sent any less its own (S04).
-fn keep_unsent(db: &Connection, scope_id: i64, holding: i64, device: &[u8; 32], only: Option<i64>) -> fastctx_storage::Result<()> {
+/// make what this device wrote and never sent any less its own (S04). A
+/// stream `stays` names is left out (`Library::revoke_keeping_but`): it
+/// goes with the rest.
+fn keep_unsent(
+    db: &Connection,
+    scope_id: i64,
+    holding: i64,
+    device: &[u8; 32],
+    only: Option<i64>,
+    stays: &dyn Fn(&str) -> bool,
+) -> fastctx_storage::Result<()> {
     let streams: Vec<(i64, String)> = {
         let mut statement = db.prepare_cached("SELECT id, name FROM streams WHERE scope = ?1 AND (?2 IS NULL OR id = ?2) ORDER BY name")?;
         let rows = statement.query_map(params![scope_id, only], |row| Ok((row.get(0)?, row.get(1)?)))?;
         rows.collect::<std::result::Result<_, _>>()?
     };
     for (stream, name) in streams {
+        if stays(&name) {
+            continue;
+        }
         let uploaded: i64 =
             db.prepare_cached("SELECT uploaded FROM outbox WHERE stream = ?1")?.query_row([stream], |row| row.get(0)).optional()?.unwrap_or(0);
         // From the tail back, while the frames are this device's and the hub
@@ -81,7 +93,7 @@ impl Library {
             // A stream not begun here yet is begun withheld: a commit on its
             // way finds it so (T04).
             let (stream_id, ..) = super::commit::stream_of(db, scope_id, &stream)?;
-            keep_unsent(db, scope_id, holding, &device, Some(stream_id))?;
+            keep_unsent(db, scope_id, holding, &device, Some(stream_id), &|_| false)?;
             super::window::truncate_in(db, scope_id, holding, stream_id, None)?;
             db.prepare_cached("INSERT OR IGNORE INTO withheld (stream, holding) VALUES (?1, ?2)")?.execute(params![stream_id, holding])?;
             Ok(())
@@ -104,7 +116,7 @@ impl Library {
                 .query_row(params![scope_id, stream], |row| row.get(0))
                 .optional()?;
             let Some(stream_id) = found else { return Ok(()) };
-            keep_unsent(db, scope_id, holding, &device, Some(stream_id))?;
+            keep_unsent(db, scope_id, holding, &device, Some(stream_id), &|_| false)?;
             super::window::truncate_in(db, scope_id, holding, stream_id, None)?;
             db.prepare_cached("DELETE FROM coverage WHERE stream = ?1 AND holding = ?2")?.execute(params![stream_id, holding])?;
             for table in ["installing", "backfills", "retention"] {
@@ -166,17 +178,31 @@ impl Library {
     /// same transaction: when the period's purge comes, it is kept for its
     /// user (§3, §4.5).
     pub fn revoke_keeping(&self, scope: &str, device: &[u8; 32]) -> Result<()> {
+        self.revoke_keeping_but(scope, device, |_| false)
+    }
+
+    /// `revoke_keeping`, with nothing kept of the streams of `scope` that
+    /// `stays` names: streams whose frames stay on the device that orders
+    /// them, the hub taking none. None of theirs was ever on its way
+    /// anywhere, so none is unsent: what the device held of them ends with
+    /// the period, and where they stand in their order stays as it is.
+    pub fn revoke_keeping_but(&self, scope: &str, device: &[u8; 32], stays: impl Fn(&str) -> bool + Send + 'static) -> Result<()> {
         let (scope, device) = (scope.to_string(), *device);
-        self.database().write_now_at(Priority::Control, 1 << 20, move |db| revoke_keeping_in(db, &scope, &device))?;
+        self.database().write_now_at(Priority::Control, 1 << 20, move |db| revoke_keeping_in(db, &scope, &device, &stays))?;
         self.wrote();
         Ok(())
     }
 }
 
-/// `Library::revoke_keeping` in the transaction `db` is in.
-pub(super) fn revoke_keeping_in(db: &Connection, scope: &str, device: &[u8; 32]) -> fastctx_storage::Result<()> {
+/// `Library::revoke_keeping_but` in the transaction `db` is in.
+pub(super) fn revoke_keeping_in(
+    db: &Connection,
+    scope: &str,
+    device: &[u8; 32],
+    stays: &dyn Fn(&str) -> bool,
+) -> fastctx_storage::Result<()> {
     if let Some((scope_id, _, Some(holding))) = held(db, scope)? {
-        keep_unsent(db, scope_id, holding, device, None)?;
+        keep_unsent(db, scope_id, holding, device, None, stays)?;
     }
     super::scopes::revoke_in(db, scope)
 }

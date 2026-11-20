@@ -627,7 +627,7 @@ async fn put_aside_in(node: &Arc<Node>, link: &Arc<Link>) -> Result<std::path::P
     node.ways_changed();
     // What the network had here goes with it (the user, 2026-11-12), before
     // its records are put aside: a stop in between leaves again at start.
-    crate::assets::membership::left(node, &hub).await;
+    crate::assets::membership::left(node, &hub, Some(link.as_ref())).await;
     // Its view is gone, and every interface shows the World without it.
     node.views_changed();
     // The machines each session may use, and who may ask for colleagues,
@@ -1706,7 +1706,7 @@ impl fastctx_net::link::Node for Handler {
             {
                 let _one = memberships().lock().await;
                 if !node.link_of(&hub).is_some_and(|link| link.membership_active()) {
-                    crate::assets::membership::left(&node, &hub).await;
+                    crate::assets::membership::left(&node, &hub, node.link_of(&hub).as_deref()).await;
                 }
             }
             let Some(then) = then else { return };

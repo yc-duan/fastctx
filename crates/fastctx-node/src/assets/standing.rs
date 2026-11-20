@@ -86,7 +86,14 @@ pub(super) fn stood(assets: &Assets, hub: &HubId, owner: &str) {
 /// Which streams, by scope and stream, stay on this machine with the hub
 /// of `link` (`direct`): nothing of theirs is on its way to the hub.
 fn kept_here(link: &Link) -> impl Fn(&str, &str) -> bool + Send + 'static {
-    let kept = link.asset_version() >= fastctx_types::assets::DIRECT;
+    kept_here_of(Some(link))
+}
+
+/// `kept_here`, of a hub whose link may be gone: with none to say which
+/// version its hub speaks, no stream is taken as kept here, and what was
+/// not uploaded counts as unsent, as with a hub of the version before.
+pub(super) fn kept_here_of(link: Option<&Link>) -> impl Fn(&str, &str) -> bool + Send + 'static {
+    let kept = link.is_some_and(|link| link.asset_version() >= fastctx_types::assets::DIRECT);
     move |scope, stream| kept && fastctx_types::assets::of_conversation(scope) && super::direct::machine_orders(stream)
 }
 

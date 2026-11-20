@@ -1,6 +1,6 @@
 //! A drill of withheld streams (S05) and records of a kind not
 // known yet taken in later (S09); not kept.
-use fastctx_content::v2::{Authorizer, Commit, Entry, Header, HubSigner, KindRecord, Library, Received, Signer, Taking, Verifier};
+use fastctx_content::v2::{Authorizer, Commit, Entry, Header, HubSigner, KindRecord, Library, Op, Received, Signer, Taking, Verifier};
 use fastctx_content::{ObjectRef, Record, State};
 use std::sync::Arc;
 
@@ -28,7 +28,7 @@ fn rec(item: &str) -> KindRecord {
 pub(crate) fn run() {
     let base = std::env::temp_dir().join(format!("v2-letgo-drill-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&base);
-    for d in ["p", "h"] { std::fs::create_dir_all(base.join(d)).unwrap(); }
+    for d in ["p", "h", "k"] { std::fs::create_dir_all(base.join(d)).unwrap(); }
     let (producer, _) = Library::open(&base.join("p")).unwrap();
     let (hub, _) = Library::open_hub(&base.join("h")).unwrap();
     let signer: Arc<dyn Signer> = Arc::new(Fake);
@@ -60,5 +60,19 @@ pub(crate) fn run() {
     assert_eq!(hub.reconsider(Arc::new(Knows(true)), true).unwrap(), 2, "known now: both records go in");
     assert!(hub.item("s", "u", b"x").unwrap().is_some() && hub.item("s", "u", b"y").unwrap().is_some());
     assert_eq!(hub.reconsider(Arc::new(Knows(true)), true).unwrap(), 0, "and only once");
+    // A stream that stays on the device that orders it was never on its way to a hub: its
+    // holding ended, nothing of it is kept as unsent, while another stream's unsent write is.
+    let (keeper, _) = Library::open(&base.join("k")).unwrap();
+    keeper.install("s", b"d".to_vec(), 1).unwrap();
+    let held = keeper.holding("s").unwrap().unwrap();
+    for stream in ["stays", "goes"] {
+        let op = Op { id: format!("op:{stream}"), digest: [7; 32], kind: "talk".into() };
+        let write = Commit { scope: "s".into(), stream: stream.into(), records: vec![rec(stream)], leases: vec![], durable: true, op: Some((op, true)), holding: held };
+        keeper.raw_commit(write, signer.clone()).unwrap();
+    }
+    keeper.revoke_keeping_but("s", &[1; 32], |stream| stream == "stays").unwrap();
+    while keeper.purging().unwrap() { keeper.purge().unwrap(); }
+    assert!(keeper.refused("op:stays").unwrap().is_none(), "nothing of a stream kept here waits for its user");
+    assert!(keeper.refused("op:goes").unwrap().is_some(), "an unsent write of a stream on its way to the hub is kept for its user");
     println!("v2 letgo drill: ok");
 }

@@ -112,10 +112,19 @@ pub(crate) fn pushed(node: &Arc<Node>, hub: &HubId, push: wire::Push) {
             assets.forget_listing(hub);
             let (library, log, device) = (assets.library.clone(), node.log.clone(), assets.device());
             let root = assets.viewer_root.clone();
+            // What this machine keeps of a conversation (`direct`) was never
+            // on its way to the hub: none of it is unsent, and it ends with
+            // the holding.
+            let stays = super::standing::kept_here_of(node.link_of(hub).as_deref());
             let (weak, hub) = (Arc::downgrade(node), hub.clone());
             fastctx_platform::task::spawn(async move {
                 let key = scope.clone();
-                if let Err(error) = blocking(&library, move |library| library.revoke_keeping(&key, &device)).await {
+                let ended = blocking(&library, move |library| {
+                    let scope = key.clone();
+                    library.revoke_keeping_but(&key, &device, move |stream| stays(&scope, stream))
+                })
+                .await;
+                if let Err(error) = ended {
                     log.line(format_args!("ending what this machine held of {scope}: {error}"));
                 }
                 if let Err(error) = drop_viewed_page(root, scope.clone()).await {
@@ -353,7 +362,14 @@ pub(super) async fn heard(assets: &Assets, link: &Arc<Link>, reply: Reply) -> Re
             assets.forget_listing(&link.membership().id);
             let key = scope.clone();
             let device = assets.device();
-            blocking(&assets.library, move |library| library.revoke_keeping(&key, &device)).await?;
+            // As where the hub pushed it (`pushed`): nothing of a stream
+            // kept here is unsent.
+            let stays = super::standing::kept_here_of(Some(link.as_ref()));
+            blocking(&assets.library, move |library| {
+                let scope = key.clone();
+                library.revoke_keeping_but(&key, &device, move |stream| stays(&scope, stream))
+            })
+            .await?;
             // And again once the holding ended (DD01).
             assets.forget_listing(&link.membership().id);
             if let Err(error) = drop_viewed_page(assets.viewer_root.clone(), scope.clone()).await {
@@ -1592,6 +1608,19 @@ async fn upload(
                 .await?;
                 if frames.is_empty() {
                     break;
+                }
+                // Frames that begin past where the stream goes up from — what
+                // came before went with a holding of it that ended while the
+                // stream stayed on this machine (`direct`) — have nothing the
+                // hub can take them after: said, and none of them sent, lest
+                // the same frames go up again each time the hub answers with
+                // what it still lacks before them.
+                if let Some(first) = frames.first().and_then(|frame| Header::decode(&frame.header).ok()).map(|header| header.first)
+                    && first > from
+                {
+                    return Err(format!(
+                        "{stream} of {scope}: its frames here begin at {first}, past {from} where it goes up from; what came before them is not on this machine"
+                    ));
                 }
                 if gone >= turn {
                     assets.more.lock().expect("more").insert(hub.clone());
