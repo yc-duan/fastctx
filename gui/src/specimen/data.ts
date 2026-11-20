@@ -110,6 +110,10 @@ export async function specimenData(call: DataCall): Promise<DataReply> {
           return { name, outcome: { outcome: "deleted", bytes: gone!.bytes } };
         }),
       };
+    case "copies":
+    case "set_copies":
+    case "app_opened":
+      return { data: "copies", accounts: [] };
   }
 }
 

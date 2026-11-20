@@ -13,6 +13,7 @@ mod apart;
 mod hand_back;
 mod lines;
 pub(crate) mod activity;
+pub(crate) mod copies;
 pub(crate) mod logs;
 pub(crate) mod membership;
 mod objects;
@@ -170,6 +171,9 @@ pub(crate) struct Assets {
     /// (`session::committed`): a few scopes at once, the rest left to the
     /// pass, so that what waits for a line holds no frames meanwhile.
     pub(crate) quick: Arc<tokio::sync::Semaphore>,
+    /// Whether each account's copies of conversations living elsewhere are
+    /// taken in here (`copies`).
+    pub(crate) copies: copies::Copies,
 }
 
 /// How far a hub's scopes this machine may hold were listed.
@@ -278,6 +282,7 @@ impl Assets {
             clearing: tokio::sync::RwLock::new(()),
             cleared_times: std::sync::atomic::AtomicU64::new(0),
             quick: Arc::new(tokio::sync::Semaphore::new(2)),
+            copies: copies::Copies::open(&dir),
         })
     }
 

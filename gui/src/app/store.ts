@@ -13,6 +13,7 @@ import { lendTitles } from "../world/names";
 import type { Address } from "../world/events";
 import type { MachineWho, ResidentNow, RunningJob, WhoFor, WhoReply } from "../world/world";
 import { keepNetwork, shownNetwork, viewOf } from "./network";
+import { noteOpened } from "./app-opened";
 import { signal, type Signal } from "./signals";
 
 export interface Store {
@@ -55,6 +56,7 @@ export function createStore(specimen?: () => { world: WorldNow; now: Date }): St
     lendTitles([...residentsOf(now, true), ...unreachedOf(now, true)]);
     whole.set(now);
     world.set(viewOf(now, shownNetwork(now)));
+    if (live) noteOpened(now);
   };
   const showNetwork = (hub: string) => {
     keepNetwork(hub);

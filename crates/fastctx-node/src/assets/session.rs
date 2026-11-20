@@ -175,6 +175,7 @@ fn moved(node: &Arc<Node>, hub: &HubId, scope: String, stream: String, next: u64
     fastctx_platform::task::spawn(async move {
         if let Some(assets) = node.assets.as_ref()
             && shared_elsewhere(&node, &hub).is_none()
+            && !assets.copies.paused_of(hub.as_str()).contains(&scope)
             && let Err(why) = taken_at_once(assets, &hub, &link, &key, &scope, &stream, next).await
             && !why.starts_with(REVOKED)
         {
@@ -392,6 +393,17 @@ async fn pass(node: &Arc<Node>, hub: &HubId, link: &Arc<Link>, network: &Network
     // its streams' past (design §28.1, E01).
     let theirs = hub.as_str().to_string();
     let unpulled = blocking(library, move |library| library.unpulled_of(&theirs)).await?;
+    // What this machine takes nothing of in now (`copies`): its turn sends up
+    // and gives back as ever, and takes nothing down; it is not pulled by
+    // itself for being new, nor caught up by its changes. Looked at whole,
+    // or found missing from a whole listing, it is gone through all the same:
+    // whether it may be held still is asked as of any.
+    let paused = {
+        let (node, theirs) = (node.clone(), hub.as_str().to_string());
+        fastctx_platform::task::spawn_blocking(move || super::copies::paused_of_hub(&node, &theirs))
+            .await
+            .unwrap_or_default()
+    };
     // Every scope is looked at whole when the driver begins, a day after
     // it last was, after the hub was put back, and while a share of this
     // machine waits for it to clear; otherwise only those that call for it
@@ -411,7 +423,7 @@ async fn pass(node: &Arc<Node>, hub: &HubId, link: &Arc<Link>, network: &Network
     // is asked where it stands every pass until it is (II01).
     let mut owner_of: std::collections::HashMap<String, String> = std::collections::HashMap::new();
     for (scope, descriptor, holding) in held {
-        let fresh = unpulled.contains(&scope);
+        let fresh = unpulled.contains(&scope) && !paused.contains(&scope);
         if let Ok(read) = serde_json::from_slice::<OwnerOf>(&descriptor) {
             if whole || fresh || !stood.contains(&read.owner) {
                 owners.insert(read.owner.clone());
@@ -458,6 +470,7 @@ async fn pass(node: &Arc<Node>, hub: &HubId, link: &Arc<Link>, network: &Network
     let mut turning = Vec::with_capacity(scopes.len());
     for (scope, holding, first) in scopes {
         let (node, hub, link, room) = (node.clone(), hub.clone(), link.clone(), room.clone());
+        let alone = alone || paused.contains(&scope);
         turning.push(fastctx_platform::task::spawn(async move {
             let _room = room.acquire_owned().await;
             turn(&node, &hub, &link, &key, session, scope, holding, first, alone, untold).await
@@ -501,7 +514,7 @@ async fn pass(node: &Arc<Node>, hub: &HubId, link: &Arc<Link>, network: &Network
             let theirs = hub.as_str().to_string();
             let unpulled = blocking(library, move |library| library.unpulled_of(&theirs)).await?;
             let _phase = phase(hub, &format!("taking what changed in {owner}"));
-            if let Err(why) = feed(assets, hub, link, &key, owner, &unpulled).await {
+            if let Err(why) = feed(assets, hub, link, &key, owner, &unpulled, &paused).await {
                 failed.get_or_insert(format!("what changed in {owner}: {why}"));
             }
         }
@@ -950,6 +963,7 @@ async fn feed(
     key: &PublicKey,
     owner: &str,
     unpulled: &std::collections::BTreeSet<String>,
+    paused: &std::collections::BTreeSet<String>,
 ) -> Result<(), String> {
     let library = &assets.library;
     let stood = {
@@ -998,7 +1012,7 @@ async fn feed(
     // this machine's listing is not forgotten (KK04).
     let era = assets.forgotten.load(std::sync::atomic::Ordering::SeqCst);
     let counted = super::standing::Counted { owner, generation: &generation, era };
-    let mut failed = catch_up(assets, hub, link, key, &counted, unpulled, streams).await;
+    let mut failed = catch_up(assets, hub, link, key, &counted, unpulled, paused, streams).await;
     // More than a page: class by class, each newest first.
     if more {
         for class in CLASSES {
@@ -1007,7 +1021,7 @@ async fn feed(
                 let Reply::Changes { streams, through, more, .. } = page(after, before, Some(class)).await? else {
                     return Err("the hub did not say what changed".into());
                 };
-                if let Some(why) = catch_up(assets, hub, link, key, &counted, unpulled, streams).await {
+                if let Some(why) = catch_up(assets, hub, link, key, &counted, unpulled, paused, streams).await {
                     failed.get_or_insert(why);
                 }
                 if !more {
@@ -1029,7 +1043,10 @@ async fn feed(
 /// Brings each of `streams`, as the hub said they stand, to where they
 /// stand here: a replica's frames taken; this machine's own streams go up
 /// by their uploads instead. A scope not held here yet is listed again at
-/// the next pass. The first failure, the rest gone on with.
+/// the next pass. The first failure, the rest gone on with. Of a scope this
+/// machine takes nothing of in now (`paused`), a stream's descriptors are
+/// taken, and none of its frames.
+#[allow(clippy::too_many_arguments)]
 async fn catch_up(
     assets: &Assets,
     hub: &HubId,
@@ -1037,6 +1054,7 @@ async fn catch_up(
     key: &PublicKey,
     counted: &super::standing::Counted<'_>,
     unpulled: &std::collections::BTreeSet<String>,
+    paused: &std::collections::BTreeSet<String>,
     streams: Vec<wire::ChangedStream>,
 ) -> Option<String> {
     let library = &assets.library;
@@ -1075,6 +1093,9 @@ async fn catch_up(
             }
             if changed.epoch > 0 && known.is_none_or(|known| known < changed.epoch) {
                 succession(assets, hub, link, key, &changed.scope, &changed.stream).await?;
+            }
+            if paused.contains(&changed.scope) {
+                return Ok(());
             }
             let (scope, stream) = (changed.scope.clone(), changed.stream.clone());
             if blocking(library, move |library| library.orderer(&scope, &stream)).await? == Some(device) {

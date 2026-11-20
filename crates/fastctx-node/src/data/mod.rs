@@ -103,6 +103,40 @@ pub(crate) async fn answer(node: &Arc<Node>, call: DataCall) -> Result<DataReply
             .map_err(|error| Failure::new(format!("clearing this machine's cache: {error}")))?;
             Ok(DataReply::CacheCleared { bytes })
         }
+        DataCall::Copies => {
+            let node = node.clone();
+            let accounts = fastctx_platform::task::spawn_blocking(move || crate::assets::copies::report(&node))
+                .await
+                .map_err(|error| Failure::new(error.to_string()))?;
+            Ok(DataReply::Copies { accounts })
+        }
+        DataCall::SetCopies { hub, account, on } => {
+            use crate::assets::copies::{Source, State};
+            let setting = node.clone();
+            let state = if on { State::On } else { State::Paused };
+            fastctx_platform::task::spawn_blocking(move || {
+                crate::assets::copies::set_here(&setting, &hub, &account, None, state, Source::Owner)
+            })
+            .await
+            .map_err(|error| Failure::new(error.to_string()))?
+            .map_err(Failure::not_run)?;
+            let node = node.clone();
+            let accounts = fastctx_platform::task::spawn_blocking(move || crate::assets::copies::report(&node))
+                .await
+                .map_err(|error| Failure::new(error.to_string()))?;
+            Ok(DataReply::Copies { accounts })
+        }
+        DataCall::AppOpened { hub, account, opened } => {
+            use crate::assets::copies::{Source, State};
+            let setting = node.clone();
+            fastctx_platform::task::spawn_blocking(move || {
+                crate::assets::copies::set_here(&setting, &hub, &account, Some(opened), State::On, Source::App)
+            })
+            .await
+            .map_err(|error| Failure::new(error.to_string()))?
+            .map_err(Failure::not_run)?;
+            Ok(DataReply::Copies { accounts: Vec::new() })
+        }
         DataCall::OutputDays { days } => {
             if days.is_some() {
                 return Err(Failure::not_run("Job output is an asset and has no retention deadline."));

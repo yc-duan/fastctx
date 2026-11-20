@@ -57,6 +57,9 @@ struct Held {
     app_executable: Option<PathBuf>,
     /// The release someone asked from elsewhere that the application take.
     take: Option<String>,
+    /// What was kept here was read (`start`): whether the application is
+    /// installed is known from then on.
+    read: bool,
     origin: Option<schedule::Origin>,
     fetching: Option<Fetching>,
     attempt: retry::Attempt,
@@ -137,6 +140,7 @@ pub(crate) fn start(node: &Arc<Node>) {
             held.program = program;
             held.app_executable = executable;
         }
+        held.read = true;
         if let Ok(Some(take)) = read_json::<application::Take>(&dir.join("take.json")) {
             held.take = Some(take.version);
             held.chosen = take.manifest;
@@ -213,6 +217,14 @@ fn look(node: &Arc<Node>) {
         report(&node);
         auto(&node);
     });
+}
+
+/// What kind of device this machine is, once what was kept of its
+/// application was read (`start`): none before, when a computer with the
+/// application would be taken for one without.
+pub(crate) fn install_kind(node: &Node) -> Option<Kind> {
+    let held = node.updates.held.lock().expect("never poisoned");
+    held.read.then(|| kind(node, &held))
 }
 
 /// What kind of device this machine is for its updates.

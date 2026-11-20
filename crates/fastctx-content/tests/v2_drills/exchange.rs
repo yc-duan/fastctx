@@ -59,6 +59,14 @@ pub(crate) fn run() {
     assert_eq!(wanted, 1);
     assert_eq!(replica.wanted_of(&["s".to_string()], 10, &[]).unwrap().len(), 1, "wanted through the scope that refers to it");
     assert!(replica.wanted_of(&["elsewhere".to_string()], 10, &[]).unwrap().is_empty());
+    // Of a hub's network: what only a scope left out refers to is wanted no
+    // more, through no other scope; one not left out still is.
+    let was: String = db.query_row("SELECT hub FROM scopes WHERE key = 's'", [], |r| r.get(0)).unwrap();
+    db.execute("UPDATE scopes SET hub = 'h' WHERE key = 's'", []).unwrap();
+    assert_eq!(replica.wanted_of_hub("h", 10, &[]).unwrap().len(), 1);
+    assert!(replica.wanted_of_hub_but("h", 10, &[], &["s".to_string()]).unwrap().is_empty(), "left out");
+    assert_eq!(replica.wanted_of_hub_but("h", 10, &[], &["elsewhere".to_string()]).unwrap().len(), 1);
+    db.execute("UPDATE scopes SET hub = ?1 WHERE key = 's'", [was]).unwrap();
     assert_eq!(row(&db, "x"), Some((1, 2, 1)), "x is a tombstone at revision 2 in period 1");
     // A hub requires the object.
     let (hub, _) = Library::open(&base.join("hub")).unwrap();

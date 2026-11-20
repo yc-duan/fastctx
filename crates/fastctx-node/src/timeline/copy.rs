@@ -124,9 +124,13 @@ pub(crate) fn read_here(node: &Node, scope: &fastctx_content::v2::HeldScope) -> 
 }
 
 /// `read_here`, as `only` reads it where given: the copy one account asks
-/// for is one that account reads, not another logged in here.
+/// for is one that account reads, not another logged in here. One this
+/// machine takes nothing of in now is no copy to read (`copies`): what it
+/// holds stopped where it was, and the machine it lives on is asked.
 pub(crate) fn read_here_as(node: &Node, scope: &fastctx_content::v2::HeldScope, only: Option<&AccountName>) -> bool {
-    fastctx_client::timeline_copy::conversation_copy(scope) && reader_here_as(node, scope, only)
+    fastctx_client::timeline_copy::conversation_copy(scope)
+        && reader_here_as(node, scope, only)
+        && !crate::assets::copies::paused(node, scope, only)
 }
 
 /// Whether the records' scope `scope` — an account's, or a body's — is read

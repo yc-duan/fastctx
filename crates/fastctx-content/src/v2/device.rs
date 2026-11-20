@@ -150,14 +150,41 @@ impl Library {
     /// current holding period, as `wanted_of` gives them for those scopes,
     /// in one look however many scopes there are.
     pub fn wanted_of_hub(&self, hub: &str, limit: usize, skipped: &[[u8; 32]]) -> Result<Vec<(String, crate::record::ObjectRef)>> {
-        self.wanted_within(hub, limit, skipped, u64::MAX)
+        self.wanted_where(hub, limit, skipped, u64::MAX, &[])
+    }
+
+    /// `wanted_of_hub`, but for the objects only the scopes `but` refer to:
+    /// this machine takes nothing of those in now. One a scope not among
+    /// them refers to as well is still wanted, through that scope; they are
+    /// left out before any is chosen, so they never take the place of one
+    /// wanted.
+    pub fn wanted_of_hub_but(
+        &self,
+        hub: &str,
+        limit: usize,
+        skipped: &[[u8; 32]],
+        but: &[String],
+    ) -> Result<Vec<(String, crate::record::ObjectRef)>> {
+        self.wanted_where(hub, limit, skipped, u64::MAX, but)
     }
 
     /// `wanted_of_hub`, of those at most `at_most` bytes long alone: a light
     /// device lists what it fetches as records come, the longer ones not at
     /// all (they are fetched as they are read).
     pub fn wanted_within(&self, hub: &str, limit: usize, skipped: &[[u8; 32]], at_most: u64) -> Result<Vec<(String, crate::record::ObjectRef)>> {
+        self.wanted_where(hub, limit, skipped, at_most, &[])
+    }
+
+    fn wanted_where(
+        &self,
+        hub: &str,
+        limit: usize,
+        skipped: &[[u8; 32]],
+        at_most: u64,
+        but: &[String],
+    ) -> Result<Vec<(String, crate::record::ObjectRef)>> {
         let hub = hub.to_string();
+        let but = serde_json::to_string(but).map_err(|error| invalid(error.to_string()))?;
         let at_most = i64::try_from(at_most).unwrap_or(i64::MAX);
         let skipped: std::collections::HashSet<[u8; 32]> = skipped.iter().copied().collect();
         let enough = limit + skipped.len();
@@ -173,9 +200,10 @@ impl Library {
                                    WHERE f.hash = i.hash AND t.scope = s.id AND f.holding = s.holding))
                    AND NOT EXISTS (SELECT 1 FROM objects o WHERE o.hash = i.hash AND +o.state = 1)
                    AND w.size <= ?3
+                   AND s.key NOT IN (SELECT value FROM json_each(?4))
                  GROUP BY w.hash ORDER BY MAX(w.priority) DESC, w.hash LIMIT ?2",
             )?;
-            let rows = statement.query_map(params![hub, enough as i64, at_most], |row| {
+            let rows = statement.query_map(params![hub, enough as i64, at_most, but], |row| {
                 Ok((row.get::<_, Vec<u8>>(0)?, row.get::<_, i64>(1)?, row.get::<_, String>(2)?))
             })?;
             let mut wanted = Vec::new();

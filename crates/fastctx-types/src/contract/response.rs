@@ -295,6 +295,8 @@ impl Call {
                 use crate::data::DataCall;
                 match request {
                     DataCall::List { .. } | DataCall::OutputDays { .. } => Response::Answer,
+                    // A word kept in one small file, answered as it is kept.
+                    DataCall::Copies | DataCall::SetCopies { .. } | DataCall::AppOpened { .. } => Response::Answer,
                     DataCall::Delete { .. } | DataCall::ClearCache => Response::Submit,
                 }
             }

@@ -163,6 +163,18 @@ impl Library {
         })?)
     }
 
+    /// The scope `scope` counts as pulled whole here no more: it is pulled by
+    /// itself again, each stream from where it stands here, before its
+    /// changes carry it — what passed it by while this machine took nothing
+    /// of it in comes down then, though nothing of it moves again.
+    pub fn forget_pulled_of(&self, scope: &str) -> Result<()> {
+        let scope = scope.to_string();
+        Ok(self.database().write_now_at(Priority::Normal, 128, move |db| {
+            db.prepare_cached("UPDATE scopes SET pulled = NULL WHERE key = ?1")?.execute([&scope])?;
+            Ok(())
+        })?)
+    }
+
     /// Whether every stream of `scope` was pulled whole in its holding period
     /// here: what orders each is known.
     pub fn is_pulled(&self, scope: &str) -> Result<bool> {
