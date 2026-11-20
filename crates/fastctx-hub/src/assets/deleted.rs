@@ -169,7 +169,7 @@ impl Assets {
     /// one crossing this is turned away as it is written; then its row, if
     /// one was written before, deleted as any scope is, its holders told; or,
     /// with none, its mark kept for good. Call on a thread that may block.
-    pub(crate) fn purge_key(&self, key: &str, owner: &Owner) -> io::Result<()> {
+    pub(crate) fn purge_key(&self, key: &str, owner: &Owner, machine: &str) -> io::Result<bool> {
         if let Some(why) = self.sealed() {
             return Err(io::Error::other(why));
         }
@@ -180,14 +180,24 @@ impl Assets {
         // marks before they had this one: its row, as written, deleted with
         // what the hub's history kept of it, and the mark kept for good,
         // once (codex-87c8bbd9).
-        let (name, sealing) = (key.to_string(), self.sealing.clone());
+        let (name, sealing, expected, from) = (key.to_string(), self.sealing.clone(), owner.key(), machine.to_string());
         let written = self.control.write_now(1024, move |c| {
             use fastctx_storage::rusqlite::OptionalExtension;
             super::unsealed(&sealing)?;
-            let owner: Option<String> = c
-                .prepare_cached("SELECT owner FROM asset_scopes WHERE key = ?1")?
-                .query_row([&name], |row| row.get(0))
+            let found: Option<(String, Option<String>)> = c
+                .prepare_cached("SELECT owner, source FROM asset_scopes WHERE key = ?1")?
+                .query_row([&name], |row| Ok((row.get(0)?, row.get(1)?)))
                 .optional()?;
+            // A conversation's id is its machine's alone: a row of the key
+            // another machine described, or another account's as opened, is
+            // another conversation's, and stays, unmarked (codex-87c8bbd9).
+            if let Some((stored, source)) = &found
+                && (*stored != expected
+                    || source.as_deref().and_then(|source| source.split(':').next()) != Some(from.as_str()))
+            {
+                return Ok(Err(()));
+            }
+            let owner = found.map(|(owner, _)| owner);
             if let Some(owner) = &owner {
                 c.prepare_cached("DELETE FROM asset_scopes WHERE key = ?1")?.execute([&name])?;
                 for table in ["hub_checkpoints", "hub_epoch_facts", "hub_gap_facts"] {
@@ -198,13 +208,16 @@ impl Assets {
                 .prepare_cached("SELECT 1 FROM hub_chain WHERE kind = ?1 AND digest = ?2")?
                 .exists(params![KIND, stamp.to_vec()])?
             {
-                return Ok((None, None));
+                return Ok(Ok((None, None)));
             }
-            Ok((owner, Some(chain::append(c, KIND, &stamp)?)))
+            Ok(Ok((owner, Some(chain::append(c, KIND, &stamp)?))))
         });
         // Not written, or not known to be: it stays marked, and is tried
         // again as a whole.
-        let (stored, appended) = written.map_err(io::Error::other)?;
+        let Ok((stored, appended)) = written.map_err(io::Error::other)? else {
+            keys.lock().expect("deleted scopes").remove(&stamp);
+            return Ok(false);
+        };
         let witnessed = match appended {
             Some((seq, head)) => self.witness.advanced(seq, &head),
             None => Ok(()),
@@ -216,7 +229,7 @@ impl Assets {
         if let Some(stored) = stored.and_then(|stored| Owner::from_key(&stored)).filter(|stored| stored != owner) {
             self.let_go_of_stored(key, &stored);
         }
-        witnessed
+        witnessed.map(|()| true)
     }
 
     /// Deletes the scope `key`; whether there was one. Its machines are
@@ -435,6 +448,7 @@ pub(crate) fn conversation_gone(hub: &crate::Hub, conversation: &Address) {
 pub(crate) fn purge_scopes(
     hub: &crate::Hub,
     conversation: &Address,
+    machine: fastctx_net::sign::PublicKey,
     account: &fastctx_types::AccountName,
     generation: jiff::Timestamp,
 ) -> Result<(), String> {
@@ -442,7 +456,11 @@ pub(crate) fn purge_scopes(
     let readers = Readers::Conversation { openers: vec![account.clone()], born_on: None };
     let its_own = format!("{}{}", readers.key_prefix(hub.store().hub.id.as_str()), conversation.resident);
     let owner = Owner::Account(account.to_string(), generation.as_millisecond());
-    hub.assets.purge_key(&its_own, &owner).map_err(|error| error.to_string())?;
+    if !hub.assets.purge_key(&its_own, &owner, &machine.to_string()).map_err(|error| error.to_string())? {
+        hub.log.line(format_args!(
+            "the scope {its_own} is another conversation's of the same id, described by another machine: kept"
+        ));
+    }
     if !delete_its_scopes(hub, conversation) {
         return Err("not every scope of it could be deleted now".into());
     }

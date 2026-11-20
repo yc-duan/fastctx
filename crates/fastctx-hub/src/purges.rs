@@ -479,8 +479,9 @@ pub(crate) fn settle(hub: &crate::Hub) {
             // again as purges are looked at again where not all went
             // (codex-87c8bbd9).
             let (scopes, opener) = (address.clone(), account.clone());
-            if let Err(error) =
-                hub.blocking(move |hub| crate::assets::deleted::purge_scopes(&hub, &scopes, &opener, generation)).await
+            if let Err(error) = hub
+                .blocking(move |hub| crate::assets::deleted::purge_scopes(&hub, &scopes, key, &opener, generation))
+                .await
             {
                 hub.log.line(format_args!("deleting the scopes of {resident}, purged ({id}): {error}"));
                 SETTLING.lock().expect("never poisoned").remove(&(id, resident));
