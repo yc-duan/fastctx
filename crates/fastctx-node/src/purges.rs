@@ -380,18 +380,21 @@ fn kept_whole(node: &Node, about: &About, hub: &HubId, purging: &Purging) -> Res
     if a_bodys(node, about)? {
         return Ok(Some("a body's conversation"));
     }
-    // Born on a machine shared whole, or where that is not known, it may be
-    // a body's, its scope not described yet (codex-87c8bbd9).
-    if about.born_shared.get(hub.as_str()) != Some(&None) {
-        return Ok(Some("it may be a body's: whether this machine was shared whole as it was born is not known"));
+    // Its host as it was made, started or not: one not kept apart holds the
+    // login's own; one kept apart is the assistance's alone, whatever else
+    // this machine is shared as (codex-87c8bbd9).
+    match crate::assists::host::kept(node, &about.id)? {
+        Some(true) => Ok(None),
+        Some(false) => Ok(Some("its host was not kept apart from its login's own")),
+        None if about.session.is_some() => Ok(Some("its host was not kept apart from its login's own")),
+        // Not started, its host not made yet: born on a machine shared
+        // whole, or where that is not known, it may be a body's, its scope
+        // not described yet.
+        None if about.born_shared.get(hub.as_str()) != Some(&None) => {
+            Ok(Some("it may be a body's: whether this machine was shared whole as it was born is not known"))
+        }
+        None => Ok(None),
     }
-    // Its host as it was made, started or not: one not kept apart holds
-    // the login's own.
-    let isolated = crate::assists::host::kept(node, &about.id)?;
-    if isolated == Some(false) || (about.session.is_some() && isolated != Some(true)) {
-        return Ok(Some("its host was not kept apart from its login's own"));
-    }
-    Ok(None)
 }
 
 /// The record of `resident` as it stands here: on record, or kept only for

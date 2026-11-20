@@ -164,17 +164,23 @@ impl Assets {
         Ok(())
     }
 
-    /// Marks the scope `key` deleted though it may never have been described,
-    /// for good, so a description of it that comes later is refused, as of
-    /// one deleted (`crate::purges`): a conversation purged where it lived
-    /// may have had one on its way. Call on a thread that may block.
-    pub(crate) fn bury(&self, key: &str) -> io::Result<()> {
+    /// Deletes the scope `key` for good, described or not, so a description
+    /// of it that comes later is refused (`crate::purges`): marked first, so
+    /// one crossing this is turned away as it is written; then its row, if
+    /// one was written before, deleted as any scope is, its holders told; or,
+    /// with none, its mark kept for good. Call on a thread that may block.
+    pub(crate) fn purge_key(&self, key: &str) -> io::Result<()> {
         if let Some(why) = self.sealed() {
             return Err(io::Error::other(why));
         }
         let keys = self.deleted_keys()?;
         let stamp = stamp(key);
-        if !keys.lock().expect("deleted scopes").insert(stamp) {
+        let fresh = keys.lock().expect("deleted scopes").insert(stamp);
+        let deleted = match scopes::stored(self, key).map_err(io::Error::other)? {
+            Some(scope) => self.delete_stored(key, scope)?,
+            None => false,
+        };
+        if deleted || !fresh && self.chained(stamp)? {
             return Ok(());
         }
         let sealing = self.sealing.clone();
@@ -192,6 +198,16 @@ impl Assets {
         }
     }
 
+    /// Whether the chain keeps the deletion `stamp` already.
+    fn chained(&self, stamp: [u8; 32]) -> io::Result<bool> {
+        self.control
+            .read_now(move |c| {
+                Ok(c.prepare_cached("SELECT 1 FROM hub_chain WHERE kind = ?1 AND digest = ?2")?
+                    .exists(params![KIND, stamp.to_vec()])?)
+            })
+            .map_err(io::Error::other)
+    }
+
     /// Deletes the scope `key`; whether there was one. Its machines are
     /// told by the pushes this leaves to be sent. Call on a thread that may
     /// block.
@@ -200,6 +216,11 @@ impl Assets {
             return Err(io::Error::other(why));
         }
         let Some(scope) = scopes::scope(self, key).map_err(io::Error::other)? else { return Ok(false) };
+        self.delete_stored(key, scope)
+    }
+
+    /// `delete_scope` of the scope `key` as read, `scope`.
+    fn delete_stored(&self, key: &str, scope: scopes::Scope) -> io::Result<bool> {
         let keys = self.deleted_keys()?;
         let stamp = stamp(key);
         // Known as deleted before its row goes: what asks of it meanwhile is
@@ -391,15 +412,15 @@ pub(crate) fn conversation_gone(hub: &crate::Hub, conversation: &Address) {
 }
 
 /// Deletes the scopes of the conversation at `conversation`, purged where it
-/// lived (`crate::purges`), at once, then marks `its_own` deleted whether
-/// it was described or not, so one on its way is refused after: in that
-/// order, as a scope marked is one the hub reads no more. An error where
-/// not every one went, to be tried again.
+/// lived (`crate::purges`), at once: its own for good, described or not,
+/// so one on its way is refused after (`Assets::purge_key`), and every other
+/// it has. An error where not every one went, to be tried again.
 pub(crate) fn purge_scopes(hub: &crate::Hub, conversation: &Address, its_own: &str) -> Result<(), String> {
+    hub.assets.purge_key(its_own).map_err(|error| error.to_string())?;
     if !delete_its_scopes(hub, conversation) {
         return Err("not every scope of it could be deleted now".into());
     }
-    hub.assets.bury(its_own).map_err(|error| error.to_string())
+    Ok(())
 }
 
 /// Deletes the scopes of the conversation at `conversation`, deleted where

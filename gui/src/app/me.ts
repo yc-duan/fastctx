@@ -183,7 +183,7 @@ export class MePage implements Page {
         // Ended for good, once asked: what was born under it is deleted, and
         // there is nothing to undo.
         const take = assistChange(assist.machine, assist.agent, assist.home, assist.account, null, assist.grants ?? []);
-        return endAssist(confirm, this.options.machines, assist.account, () => change(login, take), refresh);
+        return endAssist(confirm, this.options.machines, assist.account, assist.grants ?? [], () => change(login, take), refresh);
       }
       case "leave":
         return this.leaveNetwork(login);

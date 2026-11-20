@@ -1409,13 +1409,14 @@ export class MachinePage implements Page {
         const seen = owner
           ? hubOf(this.options.store.world.peek(), owner)?.assists.find((one) => one.machine === machine.name && one.account === to && one.agent === agent && (one.home ?? null) === (target.dataset.home ?? null))
           : undefined;
-        const shown = seen?.grants?.length ? { shown: seen.grants } : {};
+        const shown = seen?.grants ?? [];
         if (owner)
           endAssist(
             this.options.confirm,
             this.options.machines,
             to,
-            () => this.options.change(owner, { change: "assist", machine: machine.name, to, agent, ...home, assisting: false, purge: true, ...shown }),
+            shown,
+            () => this.options.change(owner, { change: "assist", machine: machine.name, to, agent, ...home, assisting: false, purge: true, shown }),
             () => void this.options.store.refresh(),
           );
         return;

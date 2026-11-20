@@ -172,15 +172,6 @@ impl Link {
         if purge && assisting {
             return Err("an assistance is ended for good, not given so".into());
         }
-        // Bound to what its giver was shown as they asked: one given again
-        // since is another (codex-87c8bbd9).
-        if purge && !shown.is_empty() {
-            let now: std::collections::BTreeSet<_> =
-                view.assists.iter().filter(|entry| entry.same(&assist)).flat_map(|entry| entry.grants()).collect();
-            if now != shown.iter().collect() {
-                return Err("the assistance is not as it was shown; look at it again before ending it".into());
-            }
-        }
         if purge && !view.purges {
             let hub = self.hub_name();
             return Err(format!(
@@ -267,6 +258,14 @@ impl Link {
                 }
                 if grants.is_empty() {
                     return Err("the hub keeps no grant for this assistance; look at it again".into());
+                }
+                // Bound to what its giver was shown as they asked, every
+                // spelling's grant with it: one given again since, or another
+                // spelling's added since, is not what they ended
+                // (codex-87c8bbd9).
+                let now: std::collections::BTreeSet<_> = grants.iter().collect();
+                if !shown.is_empty() && now != shown.iter().collect() {
+                    return Err("the assistance is not as it was shown; look at it again before ending it".into());
                 }
             }
             let change = Change::Assist {

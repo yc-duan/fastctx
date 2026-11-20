@@ -472,6 +472,8 @@ export interface EndAssistWords {
   endAssistWhat(to: string): string;
   endAssistGo: string;
   endedAssist(to: string): string;
+  /** The assistance's grants are not at hand: it is not ended unbound. */
+  endAssistStale: string;
 }
 
 const zhEndAssist: EndAssistWords = {
@@ -480,6 +482,7 @@ const zhEndAssist: EndAssistWords = {
     `结束后 ${to} 不能再用这个登录。${to} 借这个登录开过的会话，会从这台机器和中枢上删除，无法撤销。同事会话、和别人共用的会话会保留，并列出来供你处理。`,
   endAssistGo: "结束并删除",
   endedAssist: (to) => `已结束对 ${to} 的协助，${to} 的会话正在删除`,
+  endAssistStale: "这里看不到这份协助的凭据，请刷新后再结束",
 };
 
 const enEndAssist: EndAssistWords = {
@@ -488,6 +491,7 @@ const enEndAssist: EndAssistWords = {
     `${to} will no longer use this login. The conversations ${to} opened with it are deleted from this machine and the hub; this cannot be undone. Colleague conversations, and ones shared with others, are kept and listed for you.`,
   endAssistGo: "Stop and delete",
   endedAssist: (to) => `Stopped assisting ${to}; their conversations are being deleted`,
+  endAssistStale: "This assistance's grant is not shown here; refresh, then end it",
 };
 
 export interface MachinesWords extends EndAssistWords {

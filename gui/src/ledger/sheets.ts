@@ -354,6 +354,11 @@ on("grant-end", (button) => {
     sheet.body.innerHTML = `${sheet.head(`结束对 ${person} 的协助`, "关闭")}<p class="confirm-what">结束后 ${person} 不能再用这个登录。${person} 借这个登录开过的会话，会从这台机器和中枢上删除，无法撤销。同事会话、和别人共用的会话会保留，并列出来供你处理。</p><footer class="cs-foot"><button type="button" class="sheet-go danger" data-do>结束并删除</button></footer>`;
     sheet.body.querySelector("[data-do]")!.addEventListener("click", () => {
       sheet.close();
+      // Never unbound: one given again since is not taken for it.
+      if (!shown.length) {
+        say("这里看不到这份协助的凭据，请刷新后再结束");
+        return;
+      }
       live.endAssist(login, person, shown).then(
         () => {
           state.editing = null;

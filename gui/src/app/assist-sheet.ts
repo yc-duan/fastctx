@@ -95,8 +95,18 @@ export function namesOn(hub: HubAccounts | null | undefined, login: Login): stri
 /** Asks once, then ends the assistance of `to` for good: what was born
  *  under it is deleted, and nothing is undone (the user, 2026-11-20:
  *  「「结束协助」直接删数据，同时去掉撤销，改成弹确认框」). */
-export function endAssist(confirm: Confirm, words: EndAssistWords, to: string, act: () => Promise<void>, done: () => void): void {
-  confirm.ask({ title: words.endAssistTitle(to), what: words.endAssistWhat(to), go: words.endAssistGo, act, done });
+export function endAssist(
+  confirm: Confirm,
+  words: EndAssistWords,
+  to: string,
+  shown: string[],
+  act: () => Promise<void>,
+  done: () => void,
+): void {
+  // Never unbound: an assistance whose grants are not at hand here is not
+  // ended for good, lest one given again since be taken for it.
+  const bound = () => (shown.length ? act() : Promise.reject(new Error(words.endAssistStale)));
+  confirm.ask({ title: words.endAssistTitle(to), what: words.endAssistWhat(to), go: words.endAssistGo, act: bound, done });
 }
 
 /** The change that has the login assist `to` on `terms`, or no longer. */
@@ -157,7 +167,7 @@ export class AssistSheet {
         const to = button.dataset.takeBack;
         // Bound to the assistance as it is shown now (codex-87c8bbd9).
         const shown = this.assistances.find((one) => one.to === to)?.grants ?? [];
-        endAssist(this.ending, words, to, () => this.change(to, null, shown), () => {});
+        endAssist(this.ending, words, to, shown, () => this.change(to, null, shown), () => {});
       }
       else if (button.dataset.change) this.edit(button.dataset.change);
       else if (button.hasAttribute("data-window")) this.editWindow();

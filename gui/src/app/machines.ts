@@ -719,13 +719,14 @@ export class MachinesPage implements Page {
         const seen = login
           ? this.hubOf(login)?.assists.find((one) => one.machine === machine && one.account === to && one.agent === agent && (one.home ?? null) === (button.dataset.home ?? null))
           : undefined;
-        const shown = seen?.grants?.length ? { shown: seen.grants } : {};
+        const shown = seen?.grants ?? [];
         if (login)
           endAssist(
             this.options.confirm,
             this.options.words,
             to,
-            () => this.options.change(login, { change: "assist", machine: machine, to, agent, ...home, assisting: false, purge: true, ...shown }),
+            shown,
+            () => this.options.change(login, { change: "assist", machine: machine, to, agent, ...home, assisting: false, purge: true, shown }),
             () => void this.options.store.refresh(),
           );
         return;
