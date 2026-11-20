@@ -195,13 +195,27 @@ export class AgentsPage implements Page {
     this.resized = window.setTimeout(() => draw(), 120);
   };
 
+  /** What was drawn last, to draw nothing again where nothing changed. */
+  private painted = "";
+
   private paint(how: How): void {
+    const html = state.place.kind === "login" ? loginPage() : homePage();
+    // Drawn again as what it shows comes in, or the window changes size, it
+    // keeps the region that scrolls: what it holds is set anew in it, so a
+    // finger on it, its glide and where it stands go on (the user,
+    // 2026-11-20: as the agents' windows came in, a phone's page would not
+    // scroll and went back to its top). Where nothing changed nothing is
+    // drawn at all.
+    if (how === "quiet" && html === this.painted) return;
+    this.painted = html;
     const kept = this.main.querySelector<HTMLElement>(".lg-sheet")?.scrollTop ?? 0;
     this.main.dataset.coming = how;
-    this.main.innerHTML = state.place.kind === "login" ? loginPage() : homePage();
+    if (how !== "quiet" || !redrawAround(this.main, html, ".lg-sheet")) {
+      this.main.innerHTML = html;
+      if (how === "quiet") this.main.querySelector<HTMLElement>(".lg-sheet")?.scrollTo({ top: kept });
+    }
     // The sidebar's button, where the sidebar folds away (`shell.ts`).
     this.main.querySelector(".lg-head")?.insertAdjacentHTML("afterbegin", `<button class="icon-button menu-button" type="button" aria-label="${this.options.menuLabel}">${glyph("menu", 20)}</button>`);
-    if (how === "quiet") this.main.querySelector<HTMLElement>(".lg-sheet")?.scrollTo({ top: kept });
     fillCharts(this.main, how !== "quiet");
   }
 
@@ -520,4 +534,47 @@ export class AgentsPage implements Page {
       say: toast,
     };
   }
+}
+
+/** Draws `html` into `root` around the element `keep` names, which stays
+ *  where it is, its content and attributes set anew: what stands on the way
+ *  to it is the same kind of element in both, and only what is beside that
+ *  way is drawn again. Whether it could. */
+function redrawAround(root: HTMLElement, html: string, keep: string): boolean {
+  const old = root.querySelector<HTMLElement>(keep);
+  const next = document.createElement("div");
+  next.innerHTML = html;
+  const fresh = next.querySelector<HTMLElement>(keep);
+  if (!old || !fresh) return false;
+  const way = (element: HTMLElement, top: HTMLElement) => {
+    const steps: HTMLElement[] = [];
+    for (let at: HTMLElement | null = element; at && at !== top; at = at.parentElement) steps.unshift(at);
+    return steps;
+  };
+  const was = way(old, root);
+  const now = way(fresh, next);
+  if (was.length !== now.length || was.some((step, at) => step.tagName !== now[at]!.tagName || step.className !== now[at]!.className)) return false;
+  [root, ...was].forEach((parent, at) => {
+    const stays = was[at];
+    const comes = now[at];
+    const from = at === 0 ? next : now[at - 1]!;
+    if (!stays || !comes) {
+      // The element kept: what it holds, anew.
+      parent.replaceChildren(...from.childNodes);
+      return;
+    }
+    for (const child of [...parent.childNodes]) if (child !== stays) child.remove();
+    let before = true;
+    for (const child of [...from.childNodes]) {
+      if (child === comes) {
+        before = false;
+        continue;
+      }
+      if (before) parent.insertBefore(child, stays);
+      else parent.append(child);
+    }
+    for (const name of stays.getAttributeNames()) if (!comes.hasAttribute(name)) stays.removeAttribute(name);
+    for (const name of comes.getAttributeNames()) stays.setAttribute(name, comes.getAttribute(name)!);
+  });
+  return true;
 }
