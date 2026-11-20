@@ -46,7 +46,7 @@ enum DataCommand {
     /// Empty what this machine keeps as viewing cache.
     ClearCache,
     /// Whether each account logged in here goes on taking in its copies of
-    /// the conversations living on other machines, and how much of those is
+    /// the conversations living on other machines, and how many of those are
     /// held here taken in no more. A machine without the application, such
     /// as a server, stops taking them in; opening the application here takes
     /// them in again. `--on` and `--pause` set it for an account, as the
@@ -157,12 +157,11 @@ fn copies(on: Option<String>, pause: Option<String>, hub: Option<String>, json: 
     for one in &accounts {
         let source = one.source.as_deref().map(|source| format!(" ({source})")).unwrap_or_default();
         println!(
-            "{} on {}: {}{source}; held here and taken in no more: {} conversations, {}",
+            "{} on {}: {}{source}; conversations held here and taken in no more: {}",
             one.account,
             one.hub,
             if one.on { "taken in" } else { "paused" },
-            one.paused_scopes,
-            size(one.paused_bytes)
+            one.paused_scopes
         );
     }
     Ok(())

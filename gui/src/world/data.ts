@@ -37,7 +37,6 @@ export interface CopiesOf {
   source?: string;
   at?: Timestamp;
   paused_scopes: number;
-  paused_bytes: number;
 }
 
 /** The days full command output may be kept for, to choose from. */

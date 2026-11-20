@@ -175,7 +175,7 @@ fn moved(node: &Arc<Node>, hub: &HubId, scope: String, stream: String, next: u64
     fastctx_platform::task::spawn(async move {
         if let Some(assets) = node.assets.as_ref()
             && shared_elsewhere(&node, &hub).is_none()
-            && !assets.copies.paused_of(hub.as_str()).contains(&scope)
+            && !assets.copies.paused_now().contains(&scope)
             && let Err(why) = taken_at_once(assets, &hub, &link, &key, &scope, &stream, next).await
             && !why.starts_with(REVOKED)
         {
@@ -393,16 +393,16 @@ async fn pass(node: &Arc<Node>, hub: &HubId, link: &Arc<Link>, network: &Network
     // its streams' past (design §28.1, E01).
     let theirs = hub.as_str().to_string();
     let unpulled = blocking(library, move |library| library.unpulled_of(&theirs)).await?;
-    // What this machine takes nothing of in now (`copies`): its turn sends up
-    // and gives back as ever, and takes nothing down; it is not pulled by
-    // itself for being new, nor caught up by its changes. Looked at whole,
-    // or found missing from a whole listing, it is gone through all the same:
-    // whether it may be held still is asked as of any.
+    // What this machine takes nothing of in now (`copies`), settled again:
+    // its turn sends up and gives back as ever, and takes nothing down; it
+    // is not pulled by itself for being new, nor caught up by its changes.
+    // Looked at whole, or found missing from a whole listing, it is gone
+    // through all the same: whether it may be held still is asked as of any.
     let paused = {
-        let (node, theirs) = (node.clone(), hub.as_str().to_string());
-        fastctx_platform::task::spawn_blocking(move || super::copies::paused_of_hub(&node, &theirs))
+        let settling = node.clone();
+        fastctx_platform::task::spawn_blocking(move || super::copies::settle(&settling))
             .await
-            .unwrap_or_default()
+            .unwrap_or_else(|_| assets.copies.paused_now())
     };
     // Every scope is looked at whole when the driver begins, a day after
     // it last was, after the hub was put back, and while a share of this
@@ -470,9 +470,10 @@ async fn pass(node: &Arc<Node>, hub: &HubId, link: &Arc<Link>, network: &Network
     let mut turning = Vec::with_capacity(scopes.len());
     for (scope, holding, first) in scopes {
         let (node, hub, link, room) = (node.clone(), hub.clone(), link.clone(), room.clone());
-        let alone = alone || paused.contains(&scope);
         turning.push(fastctx_platform::task::spawn(async move {
             let _room = room.acquire_owned().await;
+            // Paused while it waited its turn, it takes nothing down either.
+            let alone = alone || node.assets.as_ref().is_some_and(|assets| assets.copies.paused_now().contains(&scope));
             turn(&node, &hub, &link, &key, session, scope, holding, first, alone, untold).await
         }));
     }
@@ -514,7 +515,7 @@ async fn pass(node: &Arc<Node>, hub: &HubId, link: &Arc<Link>, network: &Network
             let theirs = hub.as_str().to_string();
             let unpulled = blocking(library, move |library| library.unpulled_of(&theirs)).await?;
             let _phase = phase(hub, &format!("taking what changed in {owner}"));
-            if let Err(why) = feed(assets, hub, link, &key, owner, &unpulled, &paused).await {
+            if let Err(why) = feed(assets, hub, link, &key, owner, &unpulled).await {
                 failed.get_or_insert(format!("what changed in {owner}: {why}"));
             }
         }
@@ -675,7 +676,14 @@ async fn turn(
     drop(step);
     // Every stream pulled and checked: the scope is pulled whole in its
     // holding period, and the change numbers carry it from now on.
-    if first && !untold && matches!(&pulled, Ok((_, None))) && checked.is_ok() {
+    // Paused meanwhile, it is not taken for pulled whole: what passes it by
+    // from now on is owed (`copies`).
+    if first
+        && !untold
+        && matches!(&pulled, Ok((_, None)))
+        && checked.is_ok()
+        && !assets.copies.paused_now().contains(scope)
+    {
         let key_text = scope.clone();
         match blocking(library, move |library| library.pulled(&key_text, holding)).await {
             // Pulled whole, its copy is read here from now: what the
@@ -963,7 +971,6 @@ async fn feed(
     key: &PublicKey,
     owner: &str,
     unpulled: &std::collections::BTreeSet<String>,
-    paused: &std::collections::BTreeSet<String>,
 ) -> Result<(), String> {
     let library = &assets.library;
     let stood = {
@@ -1012,7 +1019,7 @@ async fn feed(
     // this machine's listing is not forgotten (KK04).
     let era = assets.forgotten.load(std::sync::atomic::Ordering::SeqCst);
     let counted = super::standing::Counted { owner, generation: &generation, era };
-    let mut failed = catch_up(assets, hub, link, key, &counted, unpulled, paused, streams).await;
+    let mut failed = catch_up(assets, hub, link, key, &counted, unpulled, streams).await;
     // More than a page: class by class, each newest first.
     if more {
         for class in CLASSES {
@@ -1021,7 +1028,7 @@ async fn feed(
                 let Reply::Changes { streams, through, more, .. } = page(after, before, Some(class)).await? else {
                     return Err("the hub did not say what changed".into());
                 };
-                if let Some(why) = catch_up(assets, hub, link, key, &counted, unpulled, paused, streams).await {
+                if let Some(why) = catch_up(assets, hub, link, key, &counted, unpulled, streams).await {
                     failed.get_or_insert(why);
                 }
                 if !more {
@@ -1044,9 +1051,8 @@ async fn feed(
 /// stand here: a replica's frames taken; this machine's own streams go up
 /// by their uploads instead. A scope not held here yet is listed again at
 /// the next pass. The first failure, the rest gone on with. Of a scope this
-/// machine takes nothing of in now (`paused`), a stream's descriptors are
+/// machine takes nothing of in now (`copies`), a stream's descriptors are
 /// taken, and none of its frames.
-#[allow(clippy::too_many_arguments)]
 async fn catch_up(
     assets: &Assets,
     hub: &HubId,
@@ -1054,7 +1060,6 @@ async fn catch_up(
     key: &PublicKey,
     counted: &super::standing::Counted<'_>,
     unpulled: &std::collections::BTreeSet<String>,
-    paused: &std::collections::BTreeSet<String>,
     streams: Vec<wire::ChangedStream>,
 ) -> Option<String> {
     let library = &assets.library;
@@ -1094,7 +1099,7 @@ async fn catch_up(
             if changed.epoch > 0 && known.is_none_or(|known| known < changed.epoch) {
                 succession(assets, hub, link, key, &changed.scope, &changed.stream).await?;
             }
-            if paused.contains(&changed.scope) {
+            if assets.copies.paused_now().contains(&changed.scope) {
                 return Ok(());
             }
             let (scope, stream) = (changed.scope.clone(), changed.stream.clone());

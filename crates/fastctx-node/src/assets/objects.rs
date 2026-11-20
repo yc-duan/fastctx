@@ -274,7 +274,7 @@ async fn wanted(assets: &Assets, hub: &HubId, limit: usize) -> Result<Vec<(Strin
     // look however many scopes it has; of those this machine takes nothing
     // of in now (`copies`), nothing.
     let theirs = hub.as_str().to_string();
-    let paused: Vec<String> = assets.copies.paused_of(hub.as_str()).iter().cloned().collect();
+    let paused: Vec<String> = assets.copies.paused_now().iter().cloned().collect();
     blocking(&assets.library, move |library| library.wanted_of_hub_but(&theirs, limit, &waiting, &paused)).await
 }
 

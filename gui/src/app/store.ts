@@ -62,6 +62,7 @@ export function createStore(specimen?: () => { world: WorldNow; now: Date }): St
     keepNetwork(hub);
     const now = whole.peek();
     if (now) world.set(viewOf(now, shownNetwork(now)));
+    if (now && live) noteOpened(now);
   };
   const trouble = signal<string | null>(null);
   const clock = signal(new Date());

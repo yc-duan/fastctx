@@ -30,7 +30,7 @@ pub enum DataCall {
     /// Empties this machine's viewing cache, coordinating with its viewers.
     ClearCache,
     /// Whether each account logged in here goes on taking in its copies of
-    /// the conversations living on other machines, and how much of those it
+    /// the conversations living on other machines, and how many of those it
     /// holds here taken in no more (`fastctx data copies`).
     Copies,
     /// Sets whether `account` of the hub `hub` takes in its copies here, as
@@ -82,10 +82,8 @@ pub struct CopiesOf {
     pub source: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub at: Option<Timestamp>,
-    /// The conversations' scopes held here and taken in no more.
+    /// The conversations' scopes it reads held here and taken in no more.
     pub paused_scopes: u64,
-    /// Their streams' bytes, as far as each stream's latest frame here.
-    pub paused_bytes: u64,
 }
 
 /// The days full command output may be kept for: what the user chooses from.

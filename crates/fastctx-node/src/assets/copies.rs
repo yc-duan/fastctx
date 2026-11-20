@@ -9,6 +9,13 @@
 //! not read as its copy, its own machine asked instead. Nothing here ends a
 //! holding or deletes anything: the hub is told nothing of this.
 //!
+//! A scope once paused owes a whole pull: however it comes to be taken in
+//! again — its owner's word, the application opened, another reader here
+//! taking it in, the conversation coming to live here — it is marked not
+//! pulled whole before it is read here again, and pulled by itself from
+//! where each of its streams stands here (`settle`). What is owed is kept,
+//! so a machine stopped short owes it still.
+//!
 //! What is kept is by hub, account and when the account was opened, in
 //! `copies.json` beside the library: one made again under the same name
 //! starts as a new one would.
@@ -19,14 +26,16 @@ use fastctx_types::update::Kind;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 const FILE: &str = "copies.json";
 
-/// How long the conversations living here are taken as they were found
-/// before they are found again, however often residents change.
-const HOSTED_AGAIN: std::time::Duration = std::time::Duration::from_secs(10);
+/// The conversations living here are found again once residents changed,
+/// no sooner than this after the last time.
+const HOSTED_AGAIN: Duration = Duration::from_secs(10);
+/// And at the latest this long after, whatever changed.
+const HOSTED_AT_MOST: Duration = Duration::from_secs(60);
 
 /// Whether an account's copies are taken in here.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -50,7 +59,7 @@ pub(crate) enum Source {
 }
 
 /// One account's word here.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct Entry {
     pub(crate) hub: String,
     pub(crate) account: String,
@@ -61,10 +70,13 @@ pub(crate) struct Entry {
     pub(crate) at: jiff::Timestamp,
 }
 
-#[derive(Default, Serialize, Deserialize)]
+#[derive(Clone, Default, Serialize, Deserialize)]
 struct Kept {
     #[serde(default)]
     accounts: Vec<Entry>,
+    /// The scopes paused here since they were last pulled whole.
+    #[serde(default)]
+    owed: BTreeSet<String>,
 }
 
 /// What was asked of an account's copies here, and what came of it.
@@ -80,10 +92,7 @@ pub(crate) enum Set {
 
 /// The scopes of the conversations living here as last found, with the
 /// count of resident changes they were found at, and when.
-type Hosted = Option<(u64, std::time::Instant, Arc<BTreeSet<String>>)>;
-
-/// What a pass found paused of each hub's network, at a generation.
-type PausedOf = std::collections::HashMap<String, (u64, Arc<BTreeSet<String>>)>;
+type Hosted = Option<(u64, Instant, Arc<BTreeSet<String>>)>;
 
 pub(crate) struct Copies {
     path: PathBuf,
@@ -91,14 +100,12 @@ pub(crate) struct Copies {
     /// The file could not be read: nothing is paused, and nothing is
     /// written over it.
     broken: bool,
-    /// Counted up whenever an account's state changes.
-    generation: AtomicU64,
-    /// The scopes of the conversations living here, as last found, with the
-    /// count of resident changes they were found at and when.
     hosted: Mutex<Hosted>,
-    /// The scopes of each hub's network a pass found paused, for what goes
-    /// on beside the passes (a push, the objects).
-    paused: Mutex<PausedOf>,
+    /// What is taken in here no more, as last settled; what was owed as the
+    /// node starts, before that.
+    paused: Mutex<Arc<BTreeSet<String>>>,
+    /// One settling at a time.
+    settling: Mutex<()>,
 }
 
 impl Copies {
@@ -106,25 +113,22 @@ impl Copies {
     pub(crate) fn open(dir: &Path) -> Self {
         let path = dir.join(FILE);
         let (kept, broken) = match fastctx_platform::disk::read(&path) {
-            Ok(bytes) => match serde_json::from_slice(&bytes) {
+            Ok(bytes) => match serde_json::from_slice::<Kept>(&bytes) {
                 Ok(kept) => (kept, false),
                 Err(_) => (Kept::default(), true),
             },
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => (Kept::default(), false),
             Err(_) => (Kept::default(), true),
         };
+        let paused = Arc::new(kept.owed.clone());
         Self {
             path,
             kept: Mutex::new(kept),
             broken,
-            generation: AtomicU64::new(0),
             hosted: Mutex::new(None),
-            paused: Mutex::new(std::collections::HashMap::new()),
+            paused: Mutex::new(paused),
+            settling: Mutex::new(()),
         }
-    }
-
-    pub(crate) fn generation(&self) -> u64 {
-        self.generation.load(Ordering::SeqCst)
     }
 
     /// Every account's word here.
@@ -132,9 +136,16 @@ impl Copies {
         self.kept.lock().expect("copies").accounts.clone()
     }
 
+    /// What is taken in here no more, as last settled: looked up, nothing
+    /// read, on whatever thread.
+    pub(crate) fn paused_now(&self) -> Arc<BTreeSet<String>> {
+        self.paused.lock().expect("paused").clone()
+    }
+
     /// Whether the account `account@opened` of `hub` takes in its copies
     /// here. None kept yet, it is kept as this machine is installed, once
-    /// that is known (`kind`): on until then.
+    /// that is known (`kind`): on until then. Not kept for a write that
+    /// failed, it is worked out the same way again.
     pub(crate) fn state(&self, hub: &str, account: &str, opened: i64, kind: Option<Kind>) -> State {
         if self.broken {
             return State::On;
@@ -147,7 +158,8 @@ impl Copies {
         }
         let Some(kind) = kind else { return State::On };
         let state = if kind == Kind::Headless { State::Paused } else { State::On };
-        kept.accounts.push(Entry {
+        let mut next = kept.clone();
+        next.accounts.push(Entry {
             hub: hub.to_string(),
             account: account.to_string(),
             opened,
@@ -155,14 +167,16 @@ impl Copies {
             source: Source::Install,
             at: jiff::Timestamp::now(),
         });
-        // Not kept, it is worked out the same way again.
-        let _ = self.write(&kept);
+        if self.write(&next).is_ok() {
+            *kept = next;
+        }
         state
     }
 
     /// Sets whether `account@opened` of `hub` takes in its copies here, as
     /// `source` says: the application opened takes on no account its owner
-    /// paused.
+    /// paused; the owner's word is kept as the owner's, though it says what
+    /// was so already. Kept on disk before it holds.
     pub(crate) fn set(
         &self,
         hub: &str,
@@ -179,12 +193,12 @@ impl Copies {
             .accounts
             .iter()
             .position(|entry| entry.hub == hub && entry.account == account && entry.opened == opened);
-        if let Some(at) = found {
-            let entry = &kept.accounts[at];
-            if source == Source::App && entry.state == State::Paused && entry.source == Source::Owner {
+        let was = found.map(|at| kept.accounts[at].clone());
+        if let Some(was) = &was {
+            if source == Source::App && was.state == State::Paused && was.source == Source::Owner {
                 return Ok(Set::OwnersWord);
             }
-            if entry.state == state {
+            if was.state == state && (source != Source::Owner || was.source == Source::Owner) {
                 return Ok(Set::Unchanged);
             }
         }
@@ -196,13 +210,14 @@ impl Copies {
             source,
             at: jiff::Timestamp::now(),
         };
+        let mut next = kept.clone();
         match found {
-            Some(at) => kept.accounts[at] = entry,
-            None => kept.accounts.push(entry),
+            Some(at) => next.accounts[at] = entry,
+            None => next.accounts.push(entry),
         }
-        self.write(&kept)?;
-        self.generation.fetch_add(1, Ordering::SeqCst);
-        Ok(Set::Changed)
+        self.write(&next)?;
+        *kept = next;
+        Ok(if was.is_some_and(|was| was.state == state) { Set::Unchanged } else { Set::Changed })
     }
 
     fn write(&self, kept: &Kept) -> std::io::Result<()> {
@@ -215,10 +230,11 @@ impl Copies {
     fn hosted(&self, node: &Node) -> Arc<BTreeSet<String>> {
         let at = *node.residents.changes().borrow();
         let mut found = self.hosted.lock().expect("hosted");
-        if let Some((was, when, scopes)) = &*found
-            && (*was == at || when.elapsed() < HOSTED_AGAIN)
-        {
-            return scopes.clone();
+        if let Some((was, when, scopes)) = &*found {
+            let stale = when.elapsed() >= HOSTED_AT_MOST || (*was != at && when.elapsed() >= HOSTED_AGAIN);
+            if !stale {
+                return scopes.clone();
+            }
         }
         let mut scopes = BTreeSet::new();
         for record in node.residents.everyone() {
@@ -230,54 +246,69 @@ impl Copies {
             }
         }
         let scopes = Arc::new(scopes);
-        *found = Some((at, std::time::Instant::now(), scopes.clone()));
+        *found = Some((at, Instant::now(), scopes.clone()));
         scopes
-    }
-
-    /// What a pass found paused of `hub`'s network, for what goes on beside
-    /// it: none before a pass found it, or after the states changed.
-    pub(crate) fn paused_of(&self, hub: &str) -> Arc<BTreeSet<String>> {
-        let generation = self.generation();
-        self.paused
-            .lock()
-            .expect("paused")
-            .get(hub)
-            .filter(|(at, _)| *at == generation)
-            .map_or_else(Default::default, |(_, scopes)| scopes.clone())
-    }
-
-    fn found_paused(&self, hub: &str, generation: u64, scopes: Arc<BTreeSet<String>>) {
-        self.paused.lock().expect("paused").insert(hub.to_string(), (generation, scopes));
     }
 }
 
-/// The accounts a scope's readers here are, as the hub last said: one
-/// `account@opened` a line.
+/// Who the hub last listed as reading a scope held here, as the driver
+/// keeps it (`session::discover`): `{"of": ["account@opened", …], …}`.
+#[derive(Deserialize)]
+struct Listed {
+    #[serde(default)]
+    of: Vec<String>,
+}
+
+/// The accounts a scope's readers here are, as the hub last listed them,
+/// each with when it was opened; none where that cannot be read.
 fn readers(scope: &HeldScope) -> Vec<(String, i64)> {
-    scope
-        .readers
-        .as_deref()
-        .unwrap_or_default()
-        .lines()
-        .filter_map(|line| {
-            let (account, opened) = line.rsplit_once('@')?;
+    let Some(listed) = scope.readers.as_deref().and_then(|text| serde_json::from_str::<Listed>(text).ok()) else {
+        return Vec::new();
+    };
+    listed
+        .of
+        .iter()
+        .filter_map(|one| {
+            let (account, opened) = one.rsplit_once('@')?;
             Some((account.to_string(), opened.parse().ok()?))
         })
         .collect()
 }
 
-/// Whether nothing of `scope` is taken in here now: a conversation's — or
-/// the hub's own log — every reader of which logged in here paused it, and
-/// which does not live here. `only`, where given, is the one account it is
-/// read as: whether that one paused it decides. Where anything of it cannot
-/// be told, it is taken in.
-pub(crate) fn paused(node: &Node, scope: &HeldScope, only: Option<&fastctx_types::AccountName>) -> bool {
+/// Whether `account@opened` is among the readers of `scope` here.
+fn read_by(scope: &HeldScope, account: &str, opened: i64) -> bool {
+    readers(scope).iter().any(|(one, at)| one == account && *at == opened)
+}
+
+/// The readers of `scope` the hub listed that are logged in here now.
+fn readers_here(node: &Node, scope: &HeldScope) -> Vec<(String, i64)> {
+    let Some(link) = node.links().into_iter().find(|link| Some(link.membership().id.as_str()) == scope.hub.as_deref())
+    else {
+        return Vec::new();
+    };
+    let logins: BTreeSet<String> = node
+        .accounts_on(&link, &fastctx_types::access::Acting::Here)
+        .into_iter()
+        .map(|account| account.to_string())
+        .collect();
+    readers(scope).into_iter().filter(|(account, _)| logins.contains(account)).collect()
+}
+
+/// Whether nothing of `scope` is to be taken in here now: a conversation's,
+/// every reader of which logged in here paused it, which does not live here
+/// and is not being taken over here. `only`, where given, is the one
+/// account it is read as: whether that one paused it decides. Where
+/// anything of it cannot be told, it is taken in. Call on a thread that may
+/// block: it reads the library, and may keep a first word.
+fn paused(node: &Node, scope: &HeldScope, only: Option<&fastctx_types::AccountName>) -> bool {
     let Some(assets) = node.assets.as_ref() else { return false };
-    if !(scope.key.starts_with("c/") || scope.key.starts_with("h/")) {
+    // A conversation's alone: a body's, the hub's log and what an account
+    // keeps are taken in as before.
+    if !scope.key.starts_with("c/") {
         return false;
     }
     let Some(hub) = scope.hub.as_deref() else { return false };
-    let mut readers = readers(scope);
+    let mut readers = readers_here(node, scope);
     if let Some(only) = only {
         readers.retain(|(account, _)| account == only.as_str());
     }
@@ -288,7 +319,10 @@ pub(crate) fn paused(node: &Node, scope: &HeldScope, only: Option<&fastctx_types
     if !readers.iter().all(|(account, opened)| assets.copies.state(hub, account, *opened, kind) == State::Paused) {
         return false;
     }
-    if assets.copies.hosted(node).contains(&scope.key) {
+    if assets.copies.hosted(node).contains(&scope.key)
+        || assets.adopting.lock().expect("adopting").contains(&scope.key)
+        || assets.takeovers.lock().expect("takeovers").iter().any(|(taken, _)| *taken == scope.key)
+    {
         return false;
     }
     // A stream this machine orders in it is made here: it lives here, or
@@ -296,73 +330,81 @@ pub(crate) fn paused(node: &Node, scope: &HeldScope, only: Option<&fastctx_types
     assets.library.own_streams(&scope.key, &assets.device()).is_ok_and(|own| own.is_empty())
 }
 
-/// The scopes of `hub`'s network nothing of which is taken in here now, kept
-/// for what goes on beside the passes. Call on a thread that may block.
-pub(crate) fn paused_of_hub(node: &Node, hub: &str) -> Arc<BTreeSet<String>> {
+/// Works out again what is taken in here no more, and keeps what that owes:
+/// a scope paused now owes a whole pull; one owing it that is taken in again
+/// is marked not pulled whole, then read here no more as a copy until it is
+/// pulled whole again, each stream from where it stands here; one not held
+/// any more owes nothing. The scopes paused, as published. Call on a thread
+/// that may block.
+pub(crate) fn settle(node: &Arc<Node>) -> Arc<BTreeSet<String>> {
     let Some(assets) = node.assets.as_ref() else { return Default::default() };
-    let generation = assets.copies.generation();
-    let found: BTreeSet<String> = match assets.library.held_scopes() {
-        Ok(scopes) => scopes
-            .into_iter()
-            .filter(|scope| scope.hub.as_deref() == Some(hub) && paused(node, scope, None))
-            .map(|scope| scope.key)
-            .collect(),
-        Err(_) => BTreeSet::new(),
-    };
-    let found = Arc::new(found);
-    assets.copies.found_paused(hub, generation, found.clone());
-    found
-}
-
-/// Sets whether the account `account@opened` of `hub` takes in its copies
-/// here, and what follows: taken in again, each of its scopes is pulled by
-/// itself again from where each stream stands here — what passed it by
-/// while paused comes down, though nothing of it moves again — and is read
-/// here once it is whole; either way the World shown is worked out again.
-pub(crate) fn set(
-    node: &Arc<Node>,
-    hub: &fastctx_types::access::HubId,
-    account: &str,
-    opened: i64,
-    state: State,
-    source: Source,
-) -> std::io::Result<Set> {
-    let Some(assets) = node.assets.as_ref() else {
-        return Err(std::io::Error::other("the asset library is unavailable"));
-    };
-    let set = assets.copies.set(hub.as_str(), account, opened, state, source)?;
-    if set != Set::Changed {
-        return Ok(set);
-    }
-    if state == State::On {
-        let reader = format!("{account}@{opened}");
-        let scopes = assets.library.held_scopes().map_err(|error| std::io::Error::other(error.to_string()))?;
-        for scope in scopes {
-            let read = scope.readers.as_deref().unwrap_or_default().lines().any(|line| line == reader);
-            if scope.hub.as_deref() == Some(hub.as_str())
-                && read
-                && (scope.key.starts_with("c/") || scope.key.starts_with("h/"))
-            {
-                assets
-                    .library
-                    .forget_pulled_of(&scope.key)
-                    .map_err(|error| std::io::Error::other(error.to_string()))?;
-                assets.relook.lock().expect("relook").insert(scope.key);
+    let _one = assets.copies.settling.lock().expect("settling");
+    let Ok(held) = assets.library.held_scopes() else { return assets.copies.paused_now() };
+    let held_keys: BTreeSet<&str> = held.iter().map(|scope| scope.key.as_str()).collect();
+    let mut now: BTreeSet<String> =
+        held.iter().filter(|scope| paused(node, scope, None)).map(|scope| scope.key.clone()).collect();
+    let owed = assets.copies.kept.lock().expect("copies").owed.clone();
+    let mut released = Vec::new();
+    for key in &owed {
+        if !held_keys.contains(key.as_str()) || now.contains(key) {
+            continue;
+        }
+        // Taken in again: not read here before it is pulled whole again.
+        match assets.library.forget_pulled_of(key) {
+            Ok(()) => released.push(key.clone()),
+            Err(_) => {
+                now.insert(key.clone());
             }
         }
     }
-    assets.metadata_moved.send_modify(|count| *count = count.wrapping_add(1));
-    super::session::wake(node, hub);
-    Ok(set)
+    let still: BTreeSet<String> = owed.iter().filter(|key| held_keys.contains(key.as_str())).cloned().collect();
+    let next_owed: BTreeSet<String> =
+        still.into_iter().filter(|key| !released.contains(key)).chain(now.iter().cloned()).collect();
+    if next_owed != owed && !assets.copies.broken {
+        let mut kept = assets.copies.kept.lock().expect("copies");
+        let mut next = kept.clone();
+        next.owed = next_owed;
+        if assets.copies.write(&next).is_ok() {
+            *kept = next;
+        }
+    }
+    let now = Arc::new(now);
+    let changed = {
+        let mut paused = assets.copies.paused.lock().expect("paused");
+        let changed = **paused != *now;
+        *paused = now.clone();
+        changed
+    };
+    if !released.is_empty() {
+        let mut relook = assets.relook.lock().expect("relook");
+        relook.extend(released.iter().cloned());
+    }
+    if changed {
+        assets.metadata_moved.send_modify(|count| *count = count.wrapping_add(1));
+    }
+    if !released.is_empty() {
+        for link in node.links() {
+            super::session::wake(node, link.hub());
+        }
+    }
+    now
+}
+
+/// Whether nothing of `scope` is taken in here now, for a reader on
+/// whatever thread it runs: what was last settled is looked up, and
+/// nothing is read from the disk or the library.
+pub(crate) fn paused_here(node: &Node, scope: &HeldScope) -> bool {
+    node.assets.as_ref().is_some_and(|assets| assets.copies.paused_now().contains(&scope.key))
 }
 
 /// Each account logged in here, on each hub: whether it takes in its copies,
-/// and what of them is held here taken in no more. Call on a thread that may
-/// block.
+/// and how many of the scopes it reads are taken in here no more. Call on a
+/// thread that may block.
 pub(crate) fn report(node: &Node) -> Vec<fastctx_types::data::CopiesOf> {
     let Some(assets) = node.assets.as_ref() else { return Vec::new() };
     let kind = crate::updates::install_kind(node);
     let held = assets.library.held_scopes().unwrap_or_default();
+    let paused = assets.copies.paused_now();
     let mut found = Vec::new();
     for link in node.links() {
         let hub = link.hub().as_str().to_string();
@@ -378,18 +420,11 @@ pub(crate) fn report(node: &Node) -> Vec<fastctx_types::data::CopiesOf> {
                 .entries()
                 .into_iter()
                 .find(|entry| entry.hub == hub && entry.account == account.as_str() && entry.opened == opened);
-            let reader = format!("{account}@{opened}");
-            let held_paused: Vec<String> = held
+            let paused_scopes = held
                 .iter()
-                .filter(|scope| scope.hub.as_deref() == Some(hub.as_str()))
-                .filter(|scope| scope.readers.as_deref().unwrap_or_default().lines().any(|line| line == reader))
-                .filter(|scope| paused(node, scope, Some(account)))
-                .map(|scope| scope.key.clone())
-                .collect();
-            let bytes = assets
-                .library
-                .bytes_of_scopes(held_paused.clone())
-                .map_or(0, |streams| streams.iter().map(|stream| stream.bytes).sum());
+                .filter(|scope| scope.hub.as_deref() == Some(hub.as_str()) && paused.contains(&scope.key))
+                .filter(|scope| read_by(scope, account.as_str(), opened))
+                .count();
             found.push(fastctx_types::data::CopiesOf {
                 hub: hub.clone(),
                 account: account.to_string(),
@@ -404,8 +439,7 @@ pub(crate) fn report(node: &Node) -> Vec<fastctx_types::data::CopiesOf> {
                     .to_string()
                 }),
                 at: entry.map(|entry| entry.at),
-                paused_scopes: held_paused.len() as u64,
-                paused_bytes: bytes,
+                paused_scopes: paused_scopes as u64,
             });
         }
     }
@@ -413,9 +447,12 @@ pub(crate) fn report(node: &Node) -> Vec<fastctx_types::data::CopiesOf> {
 }
 
 /// Sets whether `account` of the hub `hub`, logged in here, takes in its
-/// copies here, as `source` says (`set`); `opened`, where given, is when the
-/// account the asker means was opened: one made again since is not it. Call
-/// on a thread that may block.
+/// copies here, as `source` says (`Copies::set`), and settles what follows
+/// before it answers: paused, nothing more of them comes down from now on,
+/// but for what is under way already; taken in again, they are pulled whole
+/// before they are read here. `opened`, where given, is when the account the
+/// asker means was opened: one made again since is not it. Call on a thread
+/// that may block.
 pub(crate) fn set_here(
     node: &Arc<Node>,
     hub: &str,
@@ -424,28 +461,29 @@ pub(crate) fn set_here(
     state: State,
     source: Source,
 ) -> Result<Set, String> {
+    let Some(assets) = node.assets.as_ref() else { return Err("the asset library is unavailable".into()) };
     let link = node
         .links()
         .into_iter()
         .find(|link| link.hub().as_str() == hub)
         .ok_or_else(|| format!("this machine is on no network of the hub {hub}"))?;
     let name = fastctx_types::AccountName::try_from(account.to_string()).map_err(|error| error.to_string())?;
-    let (hub_id, now) = {
+    let now = {
         let view = link.view();
         if !view.me().is_some_and(|me| me.logins.contains(&name)) {
             return Err(format!("{account} is not logged in here on {hub}"));
         }
-        let now = view
-            .directory
+        view.directory
             .account(&name)
             .map(|found| found.opened.as_millisecond())
-            .ok_or_else(|| format!("there is no account {account} on {hub}"))?;
-        (link.hub().clone(), now)
+            .ok_or_else(|| format!("there is no account {account} on {hub}"))?
     };
     if opened.is_some_and(|opened| opened != now) {
         return Err(format!("{account} on {hub} was made again since"));
     }
-    set(node, &hub_id, account, now, state, source).map_err(|error| error.to_string())
+    let set = assets.copies.set(hub, account, now, state, source).map_err(|error| error.to_string())?;
+    settle(node);
+    Ok(set)
 }
 
 #[cfg(test)]
@@ -476,19 +514,28 @@ mod tests {
         assert_eq!(copies.state("h", "a", 1, Some(Kind::App)), State::Paused);
         // The same name opened again is another account.
         assert_eq!(copies.state("h", "a", 2, Some(Kind::App)), State::On);
-        // Opened as the application: taken in.
-        let before = copies.generation();
-        assert_eq!(copies.set("h", "a", 1, State::On, Source::App).unwrap(), Set::Changed);
-        assert_eq!(copies.state("h", "a", 1, None), State::On);
-        assert!(copies.generation() > before);
-        assert_eq!(copies.set("h", "a", 1, State::On, Source::App).unwrap(), Set::Unchanged);
-        // Paused by its owner, opening the application does not undo it.
-        assert_eq!(copies.set("h", "a", 1, State::Paused, Source::Owner).unwrap(), Set::Changed);
+        // Paused as installed, its owner pausing it makes it the owner's:
+        // opening the application no longer takes it on.
+        assert_eq!(copies.set("h", "a", 1, State::Paused, Source::Owner).unwrap(), Set::Unchanged);
         assert_eq!(copies.set("h", "a", 1, State::On, Source::App).unwrap(), Set::OwnersWord);
         assert_eq!(copies.state("h", "a", 1, None), State::Paused);
-        // Its owner takes it in again.
+        // Its owner takes it in again; then opened as the application.
         assert_eq!(copies.set("h", "a", 1, State::On, Source::Owner).unwrap(), Set::Changed);
+        assert_eq!(copies.set("h", "a", 1, State::On, Source::App).unwrap(), Set::Unchanged);
         assert_eq!(Copies::open(&dir).state("h", "a", 1, None), State::On);
+        // Paused as installed, opening the application takes it on.
+        assert_eq!(copies.state("h", "d", 1, Some(Kind::Headless)), State::Paused);
+        assert_eq!(copies.set("h", "d", 1, State::On, Source::App).unwrap(), Set::Changed);
+        let _ = fastctx_platform::disk::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn what_is_owed_is_paused_as_the_node_starts() {
+        let dir = dir("owed");
+        let kept = Kept { accounts: Vec::new(), owed: ["c/h/m/r".to_string()].into_iter().collect() };
+        fastctx_platform::disk::write(dir.join(FILE), serde_json::to_vec(&kept).unwrap()).unwrap();
+        let copies = Copies::open(&dir);
+        assert!(copies.paused_now().contains("c/h/m/r"));
         let _ = fastctx_platform::disk::remove_dir_all(&dir);
     }
 
@@ -499,21 +546,28 @@ mod tests {
         let copies = Copies::open(&dir);
         assert_eq!(copies.state("h", "a", 1, Some(Kind::Headless)), State::On);
         assert!(copies.set("h", "a", 1, State::Paused, Source::Owner).is_err());
+        assert!(copies.paused_now().is_empty());
         assert_eq!(fastctx_platform::disk::read(dir.join(FILE)).unwrap(), b"not json");
         let _ = fastctx_platform::disk::remove_dir_all(&dir);
     }
 
     #[test]
-    fn readers_as_the_hub_says_them() {
+    fn readers_as_the_driver_keeps_them() {
         let scope = HeldScope {
             key: "c/h/m/r".into(),
             holding: 1,
             pulled: Some(1),
             allowed: None,
-            readers: Some("ada@12\nbob@34\nnot one".into()),
+            // As `session::discover` keeps it.
+            readers: Some(r#"{"of":["ada@12","bob@34","not one"],"frozen":false}"#.into()),
             hub: Some("h".into()),
             description: None,
         };
         assert_eq!(readers(&scope), vec![("ada".to_string(), 12), ("bob".to_string(), 34)]);
+        assert!(read_by(&scope, "bob", 34));
+        assert!(!read_by(&scope, "bob", 35));
+        // Kept otherwise, read as no one.
+        let plain = HeldScope { readers: Some("ada@12".into()), ..scope };
+        assert!(readers(&plain).is_empty());
     }
 }
