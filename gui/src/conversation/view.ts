@@ -496,6 +496,7 @@ export class ConversationView {
   /** Brings the page up to the conversation as it now stands; `read` when
    *  what is new came as history rather than as it happened. */
   update(read = false): void {
+    if (this.keptStill) return;
     const blocks = this.mode === "said" ? this.conversation.chatBlocks() : this.conversation.blocks();
     this.reading = read;
     // Words already on their way when the page is first drawn (the first
@@ -592,7 +593,15 @@ export class ConversationView {
    *  spaces; the rest let go. Says which were drawn again. Unless `moved`
    *  (the view was just put somewhere), the block the reader is at stays
    *  where it is on the screen, whatever came or went above it. */
+  /** Held still (`hold`): what it shows stays as it was drawn, laid out
+   *  again only once let go. */
+  private keptStill = false;
+  hold(on: boolean): void {
+    this.keptStill = on;
+  }
+
   private lay(read = false, moved = false): HTMLElement[] {
+    if (this.keptStill) return [];
     const scroller = this.context.scroller;
     const n = this.blocks.length;
     const following = this.context.following?.() ?? true;

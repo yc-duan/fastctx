@@ -755,6 +755,11 @@ export class Conversation {
     if (key && this.deferred(key)) await this.readFull(key);
   }
 
+  /** Whether what the page holds has `place`. */
+  holdsPosition(place: TimelinePosition): boolean {
+    return this.parts.some((part) => this.spans.get(part)?.keys.includes(place.item));
+  }
+
   /** Reads the part that holds `place`, wherever it is; true once held. */
   async reachPosition(place: TimelinePosition): Promise<boolean> {
     if (!this.replica) return false;

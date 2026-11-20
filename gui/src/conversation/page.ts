@@ -255,6 +255,10 @@ const GAP_AGAIN_MS = 400;
 /** Past which it is asked again no further apart: every few seconds. */
 const GAP_SLOWEST = 12;
 
+/** How long the view holds still on what the reader read while their place
+ *  is read again, at the most: past that, it is drawn as it stands. */
+const HOLD_AT_MOST_MS = 4000;
+
 /** How far below the top of the view words just sent are put, the answer
  *  coming in beneath them. */
 const SENT_AT = 24;
@@ -825,6 +829,12 @@ export class ConversationPage {
       this.view.readerMoved();
       moved();
     }, { passive: true });
+    // The reader's own wheel, finger, key or pointer lets a view held still
+    // over a reading of their place again go at once: they move on from
+    // what they see.
+    for (const kind of ["wheel", "touchstart", "pointerdown", "keydown"] as const) {
+      this.scroller.addEventListener(kind, () => this.letGo(), { capture: true, passive: true });
+    }
     // The scroll bar is the region itself, not anything in it, and is held
     // by a mouse or a pen: a finger put down on the region's bare part moves
     // the region itself, the browser taking the pointer over as it does
@@ -1173,7 +1183,7 @@ export class ConversationPage {
   private render(): void {
     if (!this.options.conversation.paged) this.finder.setScope(null);
     this.frame = 0;
-    if (!this.element.isConnected) return;
+    if (!this.element.isConnected || this.holdingView) return;
     const follow = this.following;
     this.view.update(this.read);
     this.read = false;
@@ -1234,6 +1244,7 @@ export class ConversationPage {
   /** The page goes out of view and stays alive, its conversation still
    *  followed. */
   suspend(): void {
+    this.letGo();
     this.suspended = true;
     if (this.element.isConnected) this.place = this.following ? null : this.view.anchor();
   }
@@ -1286,6 +1297,17 @@ export class ConversationPage {
     if (this.wantedTurn) return this.bringTurn();
     if (!place) return;
     cancelAnimationFrame(this.frame);
+    // Read anew where the latest part no longer holds what the reader reads,
+    // the view holds still on what they read until it is read again and
+    // shown where it was, rather than standing empty meanwhile (the user,
+    // 2026-11-20: "有的时候这个会话会莫名其妙跳动到其他位置，所以进入了加载";
+    // codex-0fe83e04).
+    if (position && this.options.conversation.paged && !this.restoringPosition && !this.options.conversation.holdsPosition(position)) {
+      this.frame = 0;
+      this.holdView();
+      this.restoreReading(place, position);
+      return;
+    }
     // Where the conversation pages its turns, nothing near the view as it
     // stood is read before the reader's place: read first, the place would
     // find its part being read and give up.
@@ -1322,16 +1344,39 @@ export class ConversationPage {
     this.restoringPosition = true;
     const asked = { readAt: this.readAt, latest: this.latestRead };
     void this.options.conversation.reachPosition(position).then((reached) => {
-      this.render();
+      // What the reader read, held still meanwhile, gives way to it read
+      // again, drawn in the same frame as they are put back there.
+      if (this.holdingView) this.letGo();
+      else this.render();
       // The reader moved the view meanwhile, or went to the newest: they
       // stay where they are.
       if (this.following || this.pointerPaging || this.readAt !== asked.readAt || this.latestRead !== asked.latest) return;
       if (!reached || !this.view.restore(place)) failed();
     }).catch((error) => this.say(String(error))).finally(() => {
+      this.letGo();
       this.restoringPosition = false;
       // What near the view was put off meanwhile is asked for now.
       this.update({ read: true });
     });
+  }
+
+  /** The view held still over what the reader read while their place is
+   *  read again (`reopened`): the timer that lets it go at the latest. */
+  private holdingView = 0;
+
+  private holdView(): void {
+    this.view.hold(true);
+    window.clearTimeout(this.holdingView);
+    this.holdingView = window.setTimeout(() => this.letGo(), HOLD_AT_MOST_MS);
+  }
+
+  /** Lets the view held still go, and draws it as the conversation stands. */
+  private letGo(): void {
+    if (!this.holdingView) return;
+    window.clearTimeout(this.holdingView);
+    this.holdingView = 0;
+    this.view.hold(false);
+    this.render();
   }
 
   /** A turn asked for from elsewhere, as a request in its login's usage,
@@ -1419,6 +1464,7 @@ export class ConversationPage {
     this.finder.destroy();
     this.left = true;
     this.forgetGaps();
+    window.clearTimeout(this.holdingView);
     document.removeEventListener("keydown", this.findKey);
     document.fonts.removeEventListener("loadingdone", this.facesCame);
     this.stopDrops?.();
