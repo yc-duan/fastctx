@@ -1182,8 +1182,18 @@ export class ConversationPage {
     if (this.wantedTurn) return this.bringTurn();
     if (!place) return;
     cancelAnimationFrame(this.frame);
+    // Where the conversation pages its turns, nothing near the view as it
+    // stood is read before the reader's place: read first, the place would
+    // find its part being read and give up.
+    const holding = this.options.conversation.paged && !this.restoringPosition;
+    if (holding) this.restoringPosition = true;
     this.render();
-    if (this.view.restore(place)) return;
+    const restored = this.view.restore(place);
+    if (holding) this.restoringPosition = false;
+    if (restored) {
+      if (holding) this.update({ read: true });
+      return;
+    }
     if (this.options.conversation.paged) {
       this.restoreReading(place, position);
       return;
@@ -1202,12 +1212,18 @@ export class ConversationPage {
     if (this.restoringPosition) return;
     if (!position) return failed();
     this.restoringPosition = true;
+    const asked = { readAt: this.readAt, latest: this.latestRead };
     void this.options.conversation.reachPosition(position).then((reached) => {
       this.render();
-      // Gone to the newest meanwhile, the reader stays there.
-      if (this.following) return;
+      // The reader moved the view meanwhile, or went to the newest: they
+      // stay where they are.
+      if (this.following || this.readAt !== asked.readAt || this.latestRead !== asked.latest) return;
       if (!reached || !this.view.restore(place)) failed();
-    }).catch((error) => this.say(String(error))).finally(() => { this.restoringPosition = false; });
+    }).catch((error) => this.say(String(error))).finally(() => {
+      this.restoringPosition = false;
+      // What near the view was put off meanwhile is asked for now.
+      this.update({ read: true });
+    });
   }
 
   /** A turn asked for from elsewhere, as a request in its login's usage,

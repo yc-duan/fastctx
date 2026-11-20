@@ -122,9 +122,12 @@ export class AgentsPage implements Page {
   /** The logins whose node reckons their week: it keeps a reset of one. */
   private readonly reckoning = new Set<string>();
   /** Changes made to the page but by drawing it, as a field put where a
-   *  button stood: the page is no longer what was drawn last. */
-  private readonly touched = new MutationObserver(() => {
-    this.painted = "";
+   *  button stood: the page is no longer what was drawn last. What a chart
+   *  says of the mark under the pointer, there and in its legend, is the
+   *  chart's own. */
+  private readonly touched = new MutationObserver((changes) => {
+    const own = (node: Node) => (node instanceof Element ? node : node.parentElement)?.closest("[data-chart], .lg-legend");
+    if (changes.some((change) => !own(change.target))) this.painted = "";
   });
 
   constructor(private readonly options: AgentsPageOptions, place: AppPlace) {
@@ -199,7 +202,12 @@ export class AgentsPage implements Page {
 
   private readonly onResize = () => {
     window.clearTimeout(this.resized);
-    this.resized = window.setTimeout(() => draw(), 120);
+    // Its charts are drawn for the width they have: drawn again, with the
+    // region that scrolls kept.
+    this.resized = window.setTimeout(() => {
+      this.painted = "";
+      draw();
+    }, 120);
   };
 
   /** What was drawn last, to draw nothing again where nothing changed. */
@@ -212,13 +220,9 @@ export class AgentsPage implements Page {
     // finger on it, its glide and where it stands go on (the user,
     // 2026-11-20: as the agents' windows came in, a phone's page would not
     // scroll and went back to its top). Where nothing changed nothing is
-    // drawn but the charts, which show what the page's words do not, at the
-    // width they now have.
-    if (how === "quiet" && html === this.painted) {
-      fillCharts(this.main, false);
-      this.touched.takeRecords();
-      return;
-    }
+    // drawn at all: a chart says which reading it draws, and the window
+    // changing size draws the page again.
+    if (how === "quiet" && html === this.painted) return;
     this.painted = html;
     const kept = this.main.querySelector<HTMLElement>(".lg-sheet")?.scrollTop ?? 0;
     this.main.dataset.coming = how;

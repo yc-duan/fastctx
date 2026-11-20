@@ -26,7 +26,12 @@ const SCROLLERS = ".talk-scroller, .starting-scroller";
 
 /** What is under way, one glide at a time: each part's and region's inline
  *  style to put back, and how it ends. */
-let carrying: { styles: [HTMLElement, string, string][]; timer: number; waiting: ResizeObserver | null } | null = null;
+let carrying: {
+  styles: [HTMLElement, string, string][];
+  timer: number;
+  waiting: ResizeObserver | null;
+  before: Map<HTMLElement, DOMRect>;
+} | null = null;
 
 /** Makes `change` to `desk`'s room at once, and carries what stands on the
  *  desk from where it stood to where the change puts it. A glide under way
@@ -44,7 +49,12 @@ export function carry(desk: HTMLElement, change: () => void): void {
     ...[...desk.querySelectorAll<HTMLElement>(ACROSS)].map((part) => ({ part, across: true })),
   ].filter(({ part }) => shown(part));
   const scrollers = [...desk.querySelectorAll<HTMLElement>(SCROLLERS)].filter(shown);
-  const before = new Map([...parts.map(({ part }) => part), ...scrollers].map((element) => [element, element.getBoundingClientRect()]));
+  // Where each was last seen: before a change not yet painted, where it
+  // stood before that one.
+  const unpainted = carrying?.waiting ? carrying.before : null;
+  const before = new Map(
+    [...parts.map(({ part }) => part), ...scrollers].map((element) => [element, unpainted?.get(element) ?? element.getBoundingClientRect()]),
+  );
   stopCarrying();
   change();
   // Where the change puts each part is measured once what it sets off has
@@ -60,7 +70,7 @@ export function carry(desk: HTMLElement, change: () => void): void {
     carrying.waiting = null;
     land(desk, glide, parts, scrollers, before, styles);
   });
-  carrying = { styles, timer: window.setTimeout(stopCarrying, glide + 1000), waiting };
+  carrying = { styles, timer: window.setTimeout(stopCarrying, glide + 1000), waiting, before };
   waiting.observe(desk);
 }
 

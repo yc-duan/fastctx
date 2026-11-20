@@ -141,6 +141,20 @@ function nowOf(login: Login): string {
   );
 }
 
+/** Each reading of a login's days, by when it came: the page's chart says
+ *  which it draws, so a new reading draws the page again though nothing of
+ *  its words changed. */
+const readings = new WeakMap<object, number>();
+let read = 0;
+function readingOf(days: object): number {
+  let at = readings.get(days);
+  if (at === undefined) {
+    at = ++read;
+    readings.set(days, at);
+  }
+  return at;
+}
+
 function usage(login: Login): string {
   const fetched = daysOf(login);
   const days = usable(fetched);
@@ -155,7 +169,7 @@ function usage(login: Login): string {
           ${state.chart === "hours" || login.family === "codex" ? "" : `<div class="ledger-switch small"><button type="button" class="${state.unit === "quota" ? "current" : ""}" data-act="unit" data-value="quota" title="额度美元：请求的 API 价，Fable 另乘倍率">额度</button><button type="button" class="${state.unit === "tokens" ? "current" : ""}" data-act="unit" data-value="tokens">token</button></div>`}
         </span>
       </header>
-      <div class="lg-stats-body" data-kind="${split ? "split" : state.chart}"><div class="lg-chart" data-chart></div>${split ? legend(login, days) : ""}</div>
+      <div class="lg-stats-body" data-kind="${split ? "split" : state.chart}"><div class="lg-chart" data-chart="${readingOf(days)}"></div>${split ? legend(login, days) : ""}</div>
       ${figures(days)}`
     : `<p class="lg-soft lg-wait">${fetched instanceof Error ? `用量读取失败：${escape(fetched.message.slice(0, 120))}` : "正在读取用量…"}</p>`;
   return `<div class="lg-body lg-sheet">
