@@ -92,11 +92,6 @@ pub(crate) struct Item {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(crate) previous: Vec<MachineName>,
     pub(crate) fate: Fate,
-    /// Its record on the hub was found to be this very conversation's, the
-    /// one of its id that lived on the machine that gave the assistance and
-    /// was born under it: its erasing goes on from there however far it got.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub(crate) verified: bool,
 }
 
 /// What becomes of a conversation found born under an assistance purged.
@@ -405,7 +400,7 @@ fn decide(
                 _ => Fate::Going,
             }
         };
-        items.insert(found.resident, Item { host: Some(purge.key), previous: Vec::new(), fate, verified: false });
+        items.insert(found.resident, Item { host: Some(purge.key), previous: Vec::new(), fate });
     }
     // Registered as born under it, and not found born there: where it is
     // now, or why its machine did not find it, is for a person to look at.
@@ -419,10 +414,7 @@ fn decide(
             "its record says it was born under the assistance, and its machine did not find it so; it is on {} now",
             conversation.address.machine
         );
-        items.insert(
-            resident.clone(),
-            Item { host, previous: conversation.previous.clone(), fate: kept(&why), verified: false },
-        );
+        items.insert(resident.clone(), Item { host, previous: conversation.previous.clone(), fate: kept(&why) });
     }
     items
 }
@@ -441,7 +433,7 @@ pub(crate) fn settle(hub: &crate::Hub) {
     // a hub freezing to hand itself over waits for it, or it does nothing
     // (codex-87c8bbd9).
     let Some(_entered) = crate::moving::Moving::enter(&hub) else { return };
-    let went: Vec<(Arc<Purge>, ResidentId, bool)> = {
+    let went: Vec<(Arc<Purge>, ResidentId)> = {
         let store = hub.store();
         store
             .book
@@ -453,11 +445,11 @@ pub(crate) fn settle(hub: &crate::Hub) {
                     .items
                     .iter()
                     .filter(|(_, item)| item.fate == Fate::GoneThere)
-                    .map(|(resident, item)| (purge.clone(), resident.clone(), item.verified))
+                    .map(|(resident, _)| (purge.clone(), resident.clone()))
             })
             .collect()
     };
-    for (purge, resident, verified) in went {
+    for (purge, resident) in went {
         let id = purge.id;
         if !SETTLING.lock().expect("never poisoned").insert((id, resident.clone())) {
             continue;
@@ -471,8 +463,7 @@ pub(crate) fn settle(hub: &crate::Hub) {
         fastctx_platform::task::spawn(async move {
             let _held = held;
             let by = (purge.machine.clone(), purge.key);
-            let settled =
-                settle_one(&hub, id, &resident, by, &purge.account, purge.generation, &purge.grants, verified).await;
+            let settled = settle_one(&hub, id, &resident, by, &purge.account, purge.generation, &purge.grants).await;
             if let Err(error) = settled {
                 hub.log.line(format_args!("letting go of what the hub keeps of {resident}, purged ({id}): {error}"));
             }
@@ -483,7 +474,6 @@ pub(crate) fn settle(hub: &crate::Hub) {
 
 /// `settle` of one conversation gone where it lived; an error where it is
 /// to be tried again.
-#[allow(clippy::too_many_arguments)]
 async fn settle_one(
     hub: &Arc<crate::Hub>,
     id: u64,
@@ -492,80 +482,68 @@ async fn settle_one(
     account: &AccountName,
     generation: Timestamp,
     grants: &[GrantId],
-    verified: bool,
 ) -> Result<(), String> {
     let address = fastctx_types::Address { machine: by.0.clone(), resident: resident.clone() };
     // Its scopes: its own deleted for good, described or not, so one on its
     // way is refused after, and every other it has of that account as
-    // opened; none where its key is another conversation's of the same id
+    // opened. Its key held by another conversation of the same id, nothing
+    // of it is let go of on the hub: kept, for a person to look at
     // (codex-87c8bbd9).
     let (scopes, opener, key) = (address.clone(), account.clone(), by.1);
-    hub.blocking(move |hub| crate::assets::deleted::purge_scopes(&hub, &scopes, key, &opener, generation)).await?;
-    // Its record, only once it is found to be this very conversation's: a
-    // record of the same id another machine registered is another's
-    // (codex-87c8bbd9).
-    let ours = verified
-        || match crate::owned_records::deletion::verify(hub, by.clone(), account, generation, resident, grants).await? {
-            Some(true) => {
-                let resident = resident.clone();
-                hub.blocking(move |hub| mark_verified(&hub, id, &resident)).await?;
-                true
-            }
-            Some(false) => {
-                hub.log.line(format_args!(
-                    "the record of {resident} on the hub is another conversation's of the same id: kept ({id})"
-                ));
-                false
-            }
-            None => false,
-        };
-    let ownership = ours
-        .then(|| {
-            hub.account_records
-                .owners
-                .lock()
-                .expect("never poisoned")
-                .opened(account, generation, resident.as_str())
-                .map(|(conversation, _)| conversation.clone())
-        })
-        .flatten();
+    let own =
+        hub.blocking(move |hub| crate::assets::deleted::purge_scopes(&hub, &scopes, key, &opener, generation)).await?;
+    if !own {
+        let resident = resident.clone();
+        let why = "its scope on the hub is another conversation's of the same id";
+        hub.blocking(move |hub| kept_on_hub(&hub, id, &resident, why)).await;
+        return Ok(());
+    }
+    // As recorded before its record goes: who else keeps copies of it.
+    let ownership = hub
+        .account_records
+        .owners
+        .lock()
+        .expect("never poisoned")
+        .opened(account, generation, resident.as_str())
+        .map(|(conversation, _)| conversation.clone());
+    // Its record, each version let go of only where it is this very
+    // conversation's (codex-87c8bbd9).
+    use crate::owned_records::deletion::Erased;
+    let erased = crate::owned_records::deletion::erase(hub, by, account, generation, resident, grants).await?;
+    if erased == Erased::Another {
+        let resident = resident.clone();
+        let why = "its record on the hub is another conversation's of the same id, or it moved";
+        hub.blocking(move |hub| kept_on_hub(&hub, id, &resident, why)).await;
+        return Ok(());
+    }
     // The copies others keep of it, by its address; its scopes went above.
+    let ownership = ownership.filter(|_| erased == Erased::Gone);
     let forgetting = account.clone();
     hub.blocking(move |hub| crate::forget::gone_there(&hub, address, forgetting, ownership, true)).await;
-    if ours {
-        crate::owned_records::deletion::erase(hub, by, account, generation, resident).await?;
-    }
     let resident = resident.clone();
     hub.blocking(move |hub| gone(&hub, id, &resident)).await;
     Ok(())
 }
 
-/// Keeps that the record of `resident`, of the purge `id`, is its own.
-fn mark_verified(hub: &crate::Hub, id: u64, resident: &ResidentId) -> Result<(), String> {
-    let mut store = hub.edit_store();
-    let Some(index) = store.book.purges.kept.iter().position(|purge| purge.id == id) else { return Ok(()) };
-    let old = store.book.purges.kept[index].clone();
-    let mut purge = Purge::clone(&old);
-    if let Some(item) = purge.items.get_mut(resident) {
-        item.verified = true;
-    }
-    store.book.purges.kept[index] = Arc::new(purge);
-    store.book_edit = crate::store::BookEdit::Full;
-    if let Err(error) = store.save_book() {
-        store.book.purges.kept[index] = old;
-        return Err(format!("keeping that the record of {resident} is its own: {error}"));
-    }
-    Ok(())
+/// What the hub keeps of `resident`, of the purge `id`, is kept, and why.
+fn kept_on_hub(hub: &crate::Hub, id: u64, resident: &ResidentId, why: &str) {
+    hub.log.line(format_args!("the purge {id}: what the hub keeps of {resident} stays: {why}"));
+    settled_as(hub, id, resident, Fate::Kept { why: why.to_string() });
 }
 
 /// Nothing is kept any more of `resident`, of the purge `id`.
 fn gone(hub: &crate::Hub, id: u64, resident: &ResidentId) {
+    settled_as(hub, id, resident, Fate::Gone);
+}
+
+/// `resident`, of the purge `id`, comes to `fate`.
+fn settled_as(hub: &crate::Hub, id: u64, resident: &ResidentId, fate: Fate) {
     let mut store = hub.edit_store();
     let Some(index) = store.book.purges.kept.iter().position(|purge| purge.id == id) else { return };
     let old = store.book.purges.kept[index].clone();
     let mut purge = Purge::clone(&old);
     if let Some(item) = purge.items.get_mut(resident) {
-        item.fate = Fate::Gone;
+        item.fate = fate;
     }
     if !purge.items.values().any(|item| matches!(item.fate, Fate::Going | Fate::GoneThere)) {
         purge.step = Step::Done;
@@ -767,13 +745,10 @@ mod tests {
         purge.step = Step::Deleting;
         purge.round = 2;
         let host = PublicKey::from_bytes([7; 32]);
-        purge.items.insert(
-            resident("codex-0001"),
-            Item { host: Some(host), previous: Vec::new(), fate: Fate::Going, verified: false },
-        );
+        purge.items.insert(resident("codex-0001"), Item { host: Some(host), previous: Vec::new(), fate: Fate::Going });
         purge.items.insert(
             resident("codex-0002"),
-            Item { host: Some(host), previous: Vec::new(), fate: Fate::Kept { why: "moved".into() }, verified: false },
+            Item { host: Some(host), previous: Vec::new(), fate: Fate::Kept { why: "moved".into() } },
         );
         let told = asked(&purge);
         assert_eq!(told.len(), 1);

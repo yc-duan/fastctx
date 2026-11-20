@@ -85,18 +85,52 @@ pub(super) async fn delete(
     Ok(())
 }
 
+/// What erasing a purged conversation's record came to (`erase`).
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum Erased {
+    /// Its record, and its plan and history, are gone.
+    Gone,
+    /// The hub keeps no record of it, nor ever did under this account as
+    /// opened.
+    Unrecorded,
+    /// The record of its id is another conversation's, or it moved since:
+    /// kept, for a person to look at.
+    Another,
+}
+
+/// Whether `conversation`, a record as read, is the purged conversation's:
+/// the one of its id living on the machine `machine` names by its key, born
+/// under one of `grants`, never moved (codex-87c8bbd9).
+fn its_own(
+    hub: &Hub,
+    conversation: &Conversation,
+    machine: &PublicKey,
+    grants: &[fastctx_types::access::GrantId],
+) -> bool {
+    let here =
+        hub.store().book.directory.member(&conversation.address.machine).is_some_and(|member| member.key == *machine);
+    let born = [&conversation.birth.born_under, &conversation.birth.claimed_under]
+        .into_iter()
+        .flatten()
+        .any(|grant| grants.contains(grant));
+    here && born && conversation.previous.is_empty()
+}
+
 /// Deletes, as the hub itself, the record of the conversation `resident`
 /// that `account`, as `opened`, opened, and its plan and history: for a
 /// conversation purged, gone where it lived, whose machine `by` may no longer
-/// act for the account (`crate::purges`). Asked again of one deleted, it
-/// does nothing.
+/// act for the account (`crate::purges`). Each version is let go of only
+/// where it is that very conversation's, read again as it is let go of; one
+/// deleted already has its plan and history let go of, as no other of its id
+/// is recorded under the account after it. Asked again, it goes on.
 pub(crate) async fn erase(
     hub: &Arc<Hub>,
     by: (MachineName, PublicKey),
     account: &AccountName,
     opened: Timestamp,
     resident: &ResidentId,
-) -> Result<(), String> {
+    grants: &[fastctx_types::access::GrantId],
+) -> Result<Erased, String> {
     let request = RecordRequest::Read { kind: fastctx_types::owned_records::KIND.into(), key: resident.to_string() };
     let slot = hub.account_records.account(account, opened);
     loop {
@@ -105,9 +139,15 @@ pub(crate) async fn erase(
         else {
             return Err("the conversation's erasure received an unexpected reply".into());
         };
-        let Some(record) = record.filter(|record| !record.metadata.deleted) else { break };
+        let Some(record) = record else { return Ok(Erased::Unrecorded) };
+        if record.metadata.deleted {
+            break;
+        }
         let conversation: Conversation =
             serde_json::from_value(record.body.clone()).map_err(|error| error.to_string())?;
+        if !its_own(hub, &conversation, &by.1, grants) {
+            return Ok(Erased::Another);
+        }
         let deleted = RecordRequest::Delete {
             kind: fastctx_types::owned_records::KIND.into(),
             key: resident.to_string(),
@@ -118,6 +158,7 @@ pub(crate) async fn erase(
                 super::notify(hub, &conversation);
                 break;
             }
+            // Changed since it was read: read, and judged, again.
             Told::AccountRecords { response: RecordResponse::Conflict { .. } } => {}
             _ => return Err("the conversation's erasure received an unexpected reply".into()),
         }
@@ -153,34 +194,5 @@ pub(crate) async fn erase(
             .map_err(|error| error.to_string())?
             .map_err(|error| error.to_string())?;
     }
-    Ok(())
-}
-
-/// Whether the record of the conversation `resident` that `account`, as
-/// `opened`, opened is this very conversation's (`crate::purges`): the one of
-/// its id living on the machine `by` names by its key, born under one of
-/// `grants`. None where there is no record of it now.
-pub(crate) async fn verify(
-    hub: &Arc<Hub>,
-    by: (MachineName, PublicKey),
-    account: &AccountName,
-    opened: Timestamp,
-    resident: &ResidentId,
-    grants: &[fastctx_types::access::GrantId],
-) -> Result<Option<bool>, String> {
-    let request = RecordRequest::Read { kind: fastctx_types::owned_records::KIND.into(), key: resident.to_string() };
-    let Told::AccountRecords { response: RecordResponse::Read { record } } =
-        account_records::erase(hub, by.clone(), account.clone(), opened, request).await?
-    else {
-        return Err("the conversation's record was answered with something else".into());
-    };
-    let Some(record) = record.filter(|record| !record.metadata.deleted) else { return Ok(None) };
-    let conversation: Conversation = serde_json::from_value(record.body).map_err(|error| error.to_string())?;
-    let here =
-        hub.store().book.directory.member(&conversation.address.machine).is_some_and(|member| member.key == by.1);
-    let born = [&conversation.birth.born_under, &conversation.birth.claimed_under]
-        .into_iter()
-        .flatten()
-        .any(|grant| grants.contains(grant));
-    Ok(Some(here && born && conversation.previous.is_empty()))
+    Ok(Erased::Gone)
 }
