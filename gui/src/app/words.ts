@@ -536,11 +536,6 @@ export interface SettingsWords {
   phoneCopyWhole: string;
   phoneCopyLightSaid: string;
   phoneCopyWholeSaid: string;
-  /** The sheet that walks through it once the phone is in a World. */
-  phoneGuideTitle: string;
-  phoneGuideWhy: string;
-  phoneGuideDone: string;
-  phoneGuideLater: string;
   serviceOn: string;
   /** What a startup service does, when its state is pointed at. */
   serviceWhat: string;
@@ -678,10 +673,6 @@ export const zhSettings: SettingsWords = {
   phoneCopyWhole: "全部内容",
   phoneCopyLightSaid: "保存每段对话的近期内容及计划、笔记，离线可读；更早的内容与较大的文件在打开时获取。",
   phoneCopyWholeSaid: "保存可读取的全部对话与文件，占用更多空间与流量；切回「近期内容」后，已保存的部分随对话清理释放。",
-  phoneGuideTitle: "后台保持在线",
-  phoneGuideWhy: "切到后台或锁屏后，仍可收到提醒，其他机器也显示本机在线。逐项点击即可；部分手机还需在系统设置中开启一个开关。",
-  phoneGuideDone: "完成",
-  phoneGuideLater: "稍后",
   serviceOn: "已开启",
   serviceWhat: "断网后自动重连",
   serviceOff: "未开启",
@@ -825,10 +816,6 @@ export const enSettings: SettingsWords = {
   phoneCopyWhole: "Everything",
   phoneCopyLightSaid: "Each conversation's recent part, plan and notes are kept and readable offline; older parts and large files load when opened.",
   phoneCopyWholeSaid: "Every conversation and file you can read is kept, which takes more space and data; back on Recent, what is kept goes as conversations are cleared.",
-  phoneGuideTitle: "Keep Fastctx online in the background",
-  phoneGuideWhy: "In the background or with the screen locked, notifications still arrive and other machines show this phone online. Tap each item below; some phones also need a switch in system settings.",
-  phoneGuideDone: "Done",
-  phoneGuideLater: "Later",
   serviceOn: "On",
   serviceWhat: "Reconnects by itself after the network drops",
   serviceOff: "Off",
