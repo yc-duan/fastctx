@@ -426,7 +426,7 @@ export class AgentsPage implements Page {
         throw new Error(tooOld(error) ? "该机器的 Fastctx 版本较旧，暂不支持重置用量" : error instanceof Error ? error.message : String(error));
       }
     };
-    const assisted = (login: Login, person: string, limit: number | null, until: Date | null, manages?: boolean, line = lines[login.id]): AccountChange => {
+    const assisted = (login: Login, person: string, limit: number | null, until: Date | null, manages?: boolean, line = lines[login.id], direct?: boolean): AccountChange => {
       const { machine, agent, home } = this.recordOf(login);
       // The assistance as the hub keeps it: what of it is not changed now
       // goes back as it was, never worked out again from what is shown (an
@@ -455,6 +455,8 @@ export class AgentsPage implements Page {
         ...(line?.turns ? { turns: line.turns } : {}),
         // Who manages is its owner's to say; what is not said now stays.
         manages: manages ?? (!!kept && managesOf(kept)),
+        // So is whether their machines link with this one directly.
+        ...(direct === undefined ? {} : { direct }),
       } as AccountChange;
     };
     return {
@@ -546,11 +548,11 @@ export class AgentsPage implements Page {
         const newest = this.seen.resets.get(login.id)?.find((made) => !made.undone);
         return newest ? reset(login, newest.id, null) : Promise.reject(new Error("没有可撤回的重置"));
       },
-      assist: (login, person, limit, until, manages) => {
+      assist: (login, person, limit, until, manages, direct) => {
         // The reader's own share, set by one who manages the login.
         const to = person === ME ? this.managing(login)?.account : person;
         if (!to) return Promise.reject(new Error("无权管理该机器的登录"));
-        return accounts(assisted(login, to, limit, until, manages), login);
+        return accounts(assisted(login, to, limit, until, manages, undefined, direct), login);
       },
       endAssist: (login, person, shown) => {
         const { machine, agent, home } = this.recordOf(login);

@@ -79,6 +79,7 @@ pub(super) async fn exercise(
         turns,
         share: None,
         manages: None,
+        direct: None,
         purge: false,
         shown: Vec::new(),
     };

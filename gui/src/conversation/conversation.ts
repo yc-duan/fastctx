@@ -354,6 +354,13 @@ export class Conversation {
     this.structure += 1;
   }
 
+  /** The preview already shows this reading. Give it a live source in place. */
+  attachReplicaSource(source: PartSource): void {
+    if (this.source === source) return;
+    this.source = source;
+    this.searchSource += 1;
+  }
+
   /** Whether its timeline is still being made, as its machine says now. */
   prepares(making: boolean): void {
     if (this.making === making) return;

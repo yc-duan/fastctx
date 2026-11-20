@@ -131,6 +131,7 @@ fn network() -> Directory {
             turns: None,
             share: None,
             manages: None,
+            direct: None,
             grant: None,
             also: Vec::new(),
         }));

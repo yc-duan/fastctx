@@ -979,6 +979,16 @@ pub(crate) fn ask_in(
                     if !opened_here(directory, machine, &kept) {
                         return Err(format!("{scope} was opened by no account logged in on {me}: it is not this machine's to adopt"));
                     }
+                    // What a machine orders of a conversation stays on that
+                    // machine (`Request::Begin`): the hub holds too little
+                    // of it to say where another would go on from, and one
+                    // handed it where the hub's part ends would order on
+                    // from a place the copies are past.
+                    if last.is_some() && assets.sync_version() >= wire::DIRECT && wire::of_conversation(&scope) {
+                        return Err(format!(
+                            "{stream} of {scope} is kept by the machine that orders it: the hub does not hold where another would go on from"
+                        ));
+                    }
                     // Nothing of it ordered anywhere yet: the account that
                     // opened it begins it on its own machine (§29, 2.3, NN14).
                     if last.is_none() {

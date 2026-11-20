@@ -640,7 +640,7 @@ function assist(login: Login): string {
   };
   /** One the login assists: against their share where they have one, the
    *  whole week where they have none; opened, what the reader may set. */
-  const row = (key: string, who: string, given: { limit: number | null; manages?: boolean; until: string | null; paused?: boolean }, person: { week: number; fable: number }) => {
+  const row = (key: string, who: string, given: { limit: number | null; manages?: boolean; until: string | null; paused?: boolean; direct?: boolean }, person: { week: number; fable: number }) => {
     const open = state.editing === key;
     const weekPct = pct(person.week);
     const fablePct = pct(person.fable);
@@ -665,6 +665,7 @@ function assist(login: Login): string {
           ${owner && hasFable ? `<div class="choice-row"><span class="choice-name">身份</span>${choices("grant-role", [["plain", "普通"], ["manage", "共管"]], given.manages ? "manage" : "plain", `data-person="${key}"`)}</div>` : ""}
           <div class="choice-row"><span class="choice-name">份额</span><div>${hasFable ? `${limitRow(given.limit, key, unlimited)}<p class="lg-edit-note">${limitSaid(login, given.limit, given.manages)}</p>` : `<p class="lg-edit-note">Codex 不按人计额度；可用下方通用限制里的 5 小时额度暂停协助。</p>`}</div></div>
           ${owner ? `<div class="choice-row"><span class="choice-name">期限</span>${choices("grant-until", [["none", "不限期"], ["pick", until === "pick" ? escape(given.until!) : "指定…"]], until, `data-person="${key}"`)}</div>
+          ${login.ownMachine ? `<div class="choice-row"><span class="choice-name">直连</span><div>${choices("grant-direct", [["on", "允许"], ["off", "不允许"]], login.allowsDirect && given.direct !== false ? "on" : "off", `data-person="${key}"${login.allowsDirect ? "" : " disabled"}`)}<p class="lg-edit-note">${login.allowsDirect ? "不允许时，对方的机器与这台机器之间只经中枢往来，对方不会得知这台机器的地址。" : "这台机器未开启「允许直连」，与所有人都只经中枢往来。"}</p></div></div>` : ""}
           <div class="lg-edit-end"><button type="button" class="lg-word lg-danger" data-act="grant-end" data-person="${key}">收回</button></div>` : ""}
         </div></div></div>
       </div>`;
@@ -734,6 +735,21 @@ on("grant-role", (button) => {
     if (manages) grant.manages = true;
     else delete grant.manages;
     grant.limit = limit;
+    draw();
+  }
+});
+/** Whether a person's machines link with the login's machine directly, as
+ *  its owner says; where the machine takes no direct connections there is
+ *  nothing to say. */
+on("grant-direct", (button) => {
+  const login = current();
+  const grant = grantOf(button);
+  const direct = button.dataset.value === "on";
+  if (!login || !grant || !login.allowsDirect || (grant.direct !== false) === direct) return;
+  if (deeds) void deeds.assist(login, grant.person, grant.limit, grant.until === null ? null : untilOf(login, grant.person), grant.manages, direct).then(() => draw(), (error: unknown) => say(error instanceof Error ? error.message : "更改失败"));
+  else {
+    if (direct) delete grant.direct;
+    else grant.direct = false;
     draw();
   }
 });

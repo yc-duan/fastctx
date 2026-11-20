@@ -1085,6 +1085,12 @@ pub enum Change {
         /// that knows no such word, which leaves what the hub keeps of it.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         manages: Option<bool>,
+        /// Whether `to`'s machines link with the machine directly, where it
+        /// takes direct connections (`Assist::direct`): only the machine's
+        /// holder says so; none leaves what the hub keeps, which is that
+        /// they link where nothing was ever said.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        direct: Option<bool>,
         /// Ending it for good: every grant the assistance is, as its giver
         /// was shown it (`Assist::grants`). What was born under them is
         /// deleted (`Down::Purge`); the hub refuses where the assistance is

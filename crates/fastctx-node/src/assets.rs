@@ -93,6 +93,7 @@ pub(crate) struct Assets {
     pub(crate) library: Library,
     device: Arc<SecretKey>,
     path: PathBuf,
+    viewer_root: PathBuf,
     hubs: Mutex<BTreeMap<String, Pinned>>,
     /// Session numbers: unique among this library's sessions, across
     /// restarts too (they start from the clock).
@@ -233,7 +234,7 @@ impl Assets {
 
     /// Opens the asset side in `dir` for the machine whose key is `device`.
     /// Call on a thread that may block.
-    pub(crate) fn open(dir: PathBuf, device: SecretKey) -> io::Result<Self> {
+    pub(crate) fn open(dir: PathBuf, device: SecretKey, viewer_root: PathBuf) -> io::Result<Self> {
         fastctx_platform::ensure_private_dir(&dir)?;
         let (library, _) = Library::open(&dir).map_err(|error| io::Error::other(error.to_string()))?;
         // What readings kept on disk left when a node stopped short: no
@@ -258,6 +259,7 @@ impl Assets {
             library,
             device: Arc::new(device),
             path,
+            viewer_root,
             hubs: Mutex::new(hubs),
             sessions: AtomicU64::new(start),
             drivers: Mutex::new(HashMap::new()),

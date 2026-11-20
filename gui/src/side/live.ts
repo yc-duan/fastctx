@@ -14,7 +14,8 @@ import type { PlanWords } from "../plan/words";
 import { unwatch, type WorldNow } from "../world/bridge";
 import { planRead, planWrite, watchPlan, type PlanAccount, type PlanPage } from "../world/plan";
 import { goalPast, goalRead, goalShown, goalUpdate, watchGoal, type GoalChange, type GoalView } from "../world/goal";
-import { watchCollaboration, type Branch, type Tree } from "../world/collab-tree";
+import type { Branch, Tree } from "../world/collab-tree";
+import { collaborationKey, followCollaboration, type CollaborationState } from "./collaboration-follow";
 import type { Address } from "../world/wire";
 import type { GoalStatus } from "./types";
 import { goalSamples, pastSamples, teamSample } from "./samples";
@@ -343,79 +344,48 @@ export function liveSide(options: LiveSide): SideSeams {
       clear: (version) => changeGoalOver(owner, current, seen(version), () => ({ change: "clear" })),
     },
     colleagues: (show) => {
-      let alive = true;
       let detail = false;
-      // The collaboration as the World last told it, followed while a page
-      // shows it; the colleagues drawn from it, or why they no longer stand
-      // as they did.
-      let tree: Tree | null = null;
-      let broken: string | null = null;
-      let watching: number | null = null;
-      // Which following a told piece belongs to: one let go says no more.
-      let following = 0;
+      let key: string | null = null;
+      let release: (() => void) | null = null;
+      let state: CollaborationState = { tree: null, broken: null };
       const draw = () => {
         const now = Date.now();
-        const told = tree ? treeNodes(tree, options.store, now) : null;
+        const told = state.tree ? treeNodes(state.tree, options.store, now) : null;
         const colleagues = told
-          ? broken === null ? told : told.map((node) => ({ ...node, state: "unknown" as const, why: broken }))
+          ? state.broken === null ? told : told.map((node) => ({ ...node, state: "unknown" as const, why: state.broken }))
           : worldColleagues(options.store, options.address, now);
         show([...colleagues, ...sideNodes(options.store, options.address, options.words, now)]);
       };
-      const follow = () => {
-        const mine = ++following;
-        const current = () => alive && detail && mine === following;
-        watchCollaboration(owner, options.address.machine, (piece) => {
-          if (!current()) return;
-          if (piece.kind === "tree") {
-            tree = piece.tree;
-            broken = null;
-          } else broken = piece.error;
+      const follow = (next: string | null) => {
+        release?.();
+        release = null;
+        key = next;
+        state = { tree: null, broken: null };
+        if (detail) release = followCollaboration(options.store, options.address, (told) => {
+          state = told;
           draw();
-        })
-          .then(({ id, tree: first }) => {
-            if (!current()) {
-              void unwatch(id);
-              return;
-            }
-            watching = id;
-            tree = first;
-            broken = null;
-            draw();
-          })
-          .catch((error: unknown) => {
-            if (!current()) return;
-            broken = error instanceof Error ? error.message : String(error);
-            draw();
-          });
+        });
       };
-      const letGo = () => {
-        following++;
-        if (watching != null) void unwatch(watching);
-        watching = null;
-        tree = null;
-        broken = null;
-      };
-      // The World's changes redraw the colleagues from what was last told.
       const stop = effect(() => {
+        const world = options.store.whole.get();
         options.store.world.get();
+        if (detail) {
+          const next = collaborationKey(world, options.address);
+          if (next !== key) follow(next);
+        }
         draw();
       });
       return {
         stop: () => {
-          alive = false;
-          letGo();
           stop();
+          release?.();
+          release = null;
         },
         detail: (shown) => {
           if (shown === detail) return;
           detail = shown;
-          if (shown) {
-            follow();
-            draw();
-          } else {
-            letGo();
-            draw();
-          }
+          follow(collaborationKey(options.store.whole.peek(), options.address));
+          draw();
         },
       };
     },

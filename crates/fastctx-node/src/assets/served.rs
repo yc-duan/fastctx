@@ -18,24 +18,26 @@ use fastctx_net::link::Caller;
 use fastctx_platform::readings::counter_of;
 use fastctx_types::access::HubId;
 use fastctx_types::asset_lines::{FRAME_BYTES, FRAMES, OBJECTS, RUN_BYTES};
-use fastctx_types::asset_peers::{Ask, Head, Permit, Told};
+use fastctx_types::asset_peers::{Ask, Head, Permit, SCOPES, Told};
 use fastctx_types::assets::{self as wire};
 use fastctx_types::ipc::Failure;
-use std::collections::HashSet;
+use fastctx_content::v2::Header;
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
+use std::time::Duration;
 
 /// How far ahead of the hub's clock the end of its word may lie: one
 /// further off was not made by a hub that gives its word for minutes.
 const FAR_AHEAD: i64 = 600_000;
+/// How long an ask waits for room while as many are given to at once as
+/// are: less than the one asking waits for an answer.
+const WAITED_FOR: Duration = Duration::from_secs(20);
 
-/// Whether `permit` is the hub's word that the device `caller` proved it is
-/// holds `scope`, standing now.
-fn permitted(assets: &Assets, hub: &HubId, caller: &Caller, permit: &Permit, scope: &str) -> Result<(), String> {
-    if !wire::of_conversation(scope) {
-        return Err(format!("{scope} is no conversation's"));
-    }
-    if !permit.granted.iter().any(|granted| granted == scope) {
-        return Err(format!("the hub's word does not name {scope}"));
+/// Whether `permit` is the hub's word for the device `caller` proved it is,
+/// standing now: checked once for all an ask names.
+fn stands(assets: &Assets, hub: &HubId, caller: &Caller, permit: &Permit) -> Result<(), String> {
+    if permit.granted.len() > SCOPES {
+        return Err(format!("the hub's word names {SCOPES} scopes at most"));
     }
     let now = assets.direct.hub_now(hub);
     if now > permit.until.saturating_add(CLOCKS_APART) {
@@ -54,6 +56,18 @@ fn permitted(assets: &Assets, hub: &HubId, caller: &Caller, permit: &Permit, sco
     Ok(())
 }
 
+/// Whether `permit` is the hub's word that the device `caller` proved it is
+/// holds `scope`, standing now.
+fn permitted(assets: &Assets, hub: &HubId, caller: &Caller, permit: &Permit, scope: &str) -> Result<(), String> {
+    if !wire::of_conversation(scope) {
+        return Err(format!("{scope} is no conversation's"));
+    }
+    if !permit.granted.iter().any(|granted| granted == scope) {
+        return Err(format!("the hub's word does not name {scope}"));
+    }
+    stands(assets, hub, caller, permit)
+}
+
 /// Says why an ask is refused.
 async fn refuse(stream: &mut Stream, why: String) -> Result<(), String> {
     stream.tell(&Told::Failed { why }).await
@@ -61,13 +75,29 @@ async fn refuse(stream: &mut Stream, why: String) -> Result<(), String> {
 
 /// Where the streams this machine orders of `scopes` stand.
 async fn heads(assets: &Assets, hub: &HubId, caller: &Caller, stream: &mut Stream, permit: Permit, scopes: Vec<String>) -> Result<(), String> {
-    let granted: Vec<String> = scopes.into_iter().filter(|scope| permitted(assets, hub, caller, &permit, scope).is_ok()).collect();
+    if scopes.len() > SCOPES {
+        return refuse(stream, format!("where streams stand is asked of {SCOPES} scopes at a time at most")).await;
+    }
+    // The word is checked once; a word that does not stand is said so, and
+    // the one asking takes another from the hub.
+    if let Err(why) = stands(assets, hub, caller, &permit) {
+        return refuse(stream, why).await;
+    }
+    let named: HashSet<&str> = permit.granted.iter().map(String::as_str).collect();
+    let granted: BTreeSet<String> =
+        scopes.into_iter().filter(|scope| wire::of_conversation(scope) && named.contains(scope.as_str())).collect();
     let device = assets.device();
     let found = blocking(&assets.library, move |library| {
         let mut heads = Vec::new();
         for scope in granted {
             let own: HashSet<String> = library.own_streams(&scope, &device)?.into_iter().collect();
+            // What the hub once refused of a stream waits for the stream's
+            // new epoch (`Library::waiting`): until it has one, the stream
+            // stands, for those that hold a copy, where it was cut.
+            let cut: HashMap<String, u64> =
+                library.waiting(&scope)?.into_iter().filter(|(_, _, renewed)| !renewed).map(|(stream, cut, _)| (stream, cut)).collect();
             for (name, next) in library.streams(&scope)? {
+                let next = cut.get(&name).map_or(next, |cut| next.min(*cut));
                 if next > 0 && own.contains(&name) && machine_orders(&name) {
                     heads.push(Head { scope: scope.clone(), stream: name, next });
                 }
@@ -107,7 +137,23 @@ async fn frames(
         if library.orderer(&scope_text, &name_text)? != Some(device) {
             return Ok(None);
         }
-        Ok(Some(library.export_within(&scope_text, &name_text, from, (most as usize).clamp(1, FRAMES), FRAME_BYTES)?))
+        // Nothing from where the hub's refusal cut it, until its new epoch
+        // is open: what stands there now is committed again in that epoch.
+        // And nothing read while that changed: what was read may be of the
+        // epoch before, cut away meanwhile; asked again, it is read anew.
+        let waits = |library: &fastctx_content::v2::Library| {
+            Ok::<_, fastctx_content::Error>(library.waiting(&scope_text)?.into_iter().find(|(stream, _, _)| *stream == name_text).map(|(_, cut, renewed)| (cut, renewed)))
+        };
+        let before = waits(library)?;
+        let mut frames = library.export_within(&scope_text, &name_text, from, (most as usize).clamp(1, FRAMES), FRAME_BYTES)?;
+        let after = waits(library)?;
+        if before != after {
+            frames.clear();
+        }
+        if let Some((cut, false)) = after {
+            frames.retain(|frame| Header::decode(&frame.header).is_ok_and(|header| header.first + u64::from(header.count) <= cut));
+        }
+        Ok(Some(frames))
     })
     .await;
     let exported = match exported {
@@ -195,17 +241,18 @@ async fn objects(
 /// connection of its call, for as long as it keeps the connection.
 pub(crate) async fn serve(node: &Arc<Node>, hub: &HubId, caller: &Caller, mut stream: Stream) -> Result<(), Failure> {
     let Some(assets) = node.assets.as_ref() else { return Err(Failure::new("the asset library is unavailable")) };
-    // As many as are given at once already: the first ask is answered so,
-    // and the asking machine comes again shortly.
-    let Ok(_giving) = assets.direct.giving.clone().try_acquire_owned() else {
-        if stream.told::<Ask>("what is asked of the streams kept here").await.is_ok() {
-            let _ = stream.tell(&Told::Busy).await;
-        }
-        return Ok(());
-    };
     loop {
         // The connection let go, however it went: nothing is owed.
         let Ok(ask) = stream.told::<Ask>("what is asked of the streams kept here").await else { return Ok(()) };
+        // Room is held while something is given, not while a line waits to
+        // be asked on: as many given to at once as are, an ask waits its
+        // turn a while, and is told to come again where none comes.
+        let Ok(Ok(_giving)) = tokio::time::timeout(WAITED_FOR, assets.direct.giving.clone().acquire_owned()).await else {
+            if stream.tell(&Told::Busy).await.is_err() {
+                return Ok(());
+            }
+            continue;
+        };
         let done = match ask {
             Ask::Heads { permit, scopes } => heads(assets, hub, caller, &mut stream, permit, scopes).await,
             Ask::Frames { permit, scope, stream: name, from, frames: most } => {

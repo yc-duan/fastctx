@@ -796,7 +796,7 @@ pub async fn run_prepared(
             if database.fault().is_none() {
                 record_database::start_upgrade(&database, log.clone()).context("pinning the World upgrade snapshot")?;
             }
-            let assets = match world::key(&world).and_then(|key| assets::Assets::open(world.assets(), key)) {
+            let assets = match world::key(&world).and_then(|key| assets::Assets::open(world.assets(), key, fastctx_root.to_path_buf())) {
                 Ok(assets) => Some(assets),
                 Err(error) => {
                     log.line(format_args!("the asset library is unavailable: {error}"));

@@ -4819,7 +4819,8 @@
                 "until": null,
                 "five_hour": 80,
                 "turns": 4,
-                "manages": false
+                "manages": false,
+                "direct": false
               },
               {
                 "machine": "gpu",
@@ -4947,7 +4948,8 @@
         "until": "2026-10-20T10:00:00Z",
         "five_hour": 90,
         "turns": 3,
-        "manages": true
+        "manages": true,
+        "direct": false
       },
       {
         "change": "assist",

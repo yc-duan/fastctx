@@ -445,7 +445,7 @@ impl Call {
                 }
             }
             Self::WatchHistory { .. } => Leaving::Stop,
-            Self::Timeline { .. } | Self::Topics { .. } | Self::RemoteTopics { .. } => Leaving::Stop,
+            Self::Timeline { .. } | Self::TimelinePreview { .. } | Self::Topics { .. } | Self::RemoteTopics { .. } => Leaving::Stop,
             Self::PrepareCopies { .. } => Leaving::Finish,
             Self::Memory(crate::memory::MemoryCall::List { .. } | crate::memory::MemoryCall::Read { .. }) => {
                 Leaving::Stop

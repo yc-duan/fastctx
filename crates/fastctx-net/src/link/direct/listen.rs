@@ -188,6 +188,11 @@ async fn connected(inner: Weak<Inner>, tcp: tokio::net::TcpStream, from: SocketA
         if member.name == me {
             return Err("it holds this machine's own key".to_string());
         }
+        // One kept from linking with this machine (`Assist::direct`) is
+        // refused though it knew where to come from before the word.
+        if view.me().is_some_and(|mine| view.directory.direct_withheld(mine, member, jiff::Timestamp::now())) {
+            return Err("its account's machines do not link with this machine directly".to_string());
+        }
         Ok(member.name.clone())
     };
     match (path.as_str(), intent) {

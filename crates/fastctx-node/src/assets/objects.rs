@@ -286,7 +286,12 @@ fn reached(assets: &Assets, hub: &HubId, object: &ObjectRef) {
 /// The hub did not give `object`: it waits before it is asked for again.
 fn unreached(assets: &Assets, hub: &HubId, object: &ObjectRef) {
     let mut unreached = assets.unreached.lock().expect("unreached");
-    let times = unreached.get(&(hub.clone(), object.hash)).map_or(0, |(_, times)| times + 1);
+    // One a machine keeps (`direct`) waits no longer each time: the hub's
+    // not having it says nothing of its machine giving it the next time.
+    let times = match assets.direct.is_kept_elsewhere(hub, &object.hash) {
+        true => 0,
+        false => unreached.get(&(hub.clone(), object.hash)).map_or(0, |(_, times)| times + 1),
+    };
     unreached.insert((hub.clone(), object.hash), (Instant::now(), times));
 }
 
@@ -438,15 +443,23 @@ async fn from_machines(
 ) -> (usize, Vec<(String, ObjectRef)>) {
     let mut rest = Vec::new();
     let mut asks: Vec<(fastctx_types::MachineName, String, Vec<ObjectRef>)> = Vec::new();
+    let mut elsewhere = Vec::new();
     for (scope, object) in wanted {
         let machine = match object.size <= MACHINE_OBJECT_BYTES {
             true => super::direct::object_source(assets, hub, link, &scope, object.hash).await,
             false => None,
         };
-        let Some(machine) = machine else {
+        let Some((machine, asked)) = machine else {
             rest.push((scope, object));
             continue;
         };
+        elsewhere.push(object.hash);
+        // Its machine left alone for now, the hub is asked: it has what
+        // went to it before conversations stayed on their machines.
+        if !asked {
+            rest.push((scope, object));
+            continue;
+        }
         match asks.iter_mut().rev().find(|(of, within, objects)| {
             *of == machine
                 && *within == scope
@@ -457,6 +470,7 @@ async fn from_machines(
             None => asks.push((machine, scope, vec![object])),
         }
     }
+    assets.direct.keeps_elsewhere(hub, elsewhere);
     let mut came = 0;
     for (machine, scope, objects) in asks {
         // Kept only while this machine has not begun since to clear what

@@ -58,7 +58,8 @@ export function collaborationTree(resident: ResidentId, machine?: string): Promi
 
 export type CollaborationPiece =
   | { kind: "tree"; tree: Tree }
-  | { kind: "interrupted"; error: string; since: number };
+  | { kind: "interrupted"; error: string; since: number }
+  | { kind: "ended"; error: string };
 
 /** Follows the collaboration: the tree now (resolved here), then after each
  *  change, until `unwatch`. */
@@ -66,6 +67,7 @@ export function watchCollaboration(
   resident: ResidentId,
   machine: string | undefined,
   onPiece: (piece: CollaborationPiece) => void,
+  onClosed?: () => void,
 ): Promise<{ id: number; tree: Tree }> {
-  return observe<CollaborationPiece, { id: number; tree: Tree }>("collaboration_watch", { resident, machine }, onPiece);
+  return observe<CollaborationPiece, { id: number; tree: Tree }>("collaboration_watch", { resident, machine }, onPiece, onClosed);
 }

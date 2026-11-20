@@ -100,6 +100,12 @@ export interface Login {
   modelsChanged?: boolean;
   /** When its windows were last read, as the page says it. */
   readAt?: string;
+  /** Whether its machine takes direct connections: the machines of those
+   *  it assists link with it directly then, each as its owner says. */
+  allowsDirect?: boolean;
+  /** Whether its machine is the reader's own, not one shared with them
+   *  whole: only its owner says whose machines link with it directly. */
+  ownMachine?: boolean;
 }
 
 export interface Grant {
@@ -117,6 +123,9 @@ export interface Grant {
   fable: number;
   until: string | null;
   paused?: boolean;
+  /** False once the login's owner said their machines do not link with its
+   *  machine directly: all between them goes through the hub then. */
+  direct?: boolean;
 }
 
 /** What holds for everyone a login assists. */
@@ -293,8 +302,9 @@ export interface Deeds {
   /** Takes the newest reset back. */
   undoReset(login: Login): Promise<void>;
   /** Gives, or changes, what a person may use of the login: their share,
-   *  until when, and, where the owner says, whether they manage it too. */
-  assist(login: Login, person: string, limit: number | null, until: Date | null, manages?: boolean): Promise<void>;
+   *  until when, and, where the owner says, whether they manage it too and
+   *  whether their machines link with its machine directly. */
+  assist(login: Login, person: string, limit: number | null, until: Date | null, manages?: boolean, direct?: boolean): Promise<void>;
   endAssist(login: Login, person: string, shown: string[]): Promise<void>;
   /** The grants the assistance of `person` is, as shown now. */
   assistGrants(login: Login, person: string): string[];

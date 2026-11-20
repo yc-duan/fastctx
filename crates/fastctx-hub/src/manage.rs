@@ -494,6 +494,7 @@ fn apply(
             turns,
             share,
             manages,
+            direct,
             purge,
             replaces,
         } => {
@@ -514,6 +515,12 @@ fn apply(
                 }
             };
             other_account(directory, &owner, &to, &machine)?;
+            // Whether an account's machines link with the machine directly
+            // is its owner's alone to say: one the machine is shared with
+            // whole holds it, and does not say where it is reached from.
+            if direct.is_some() && owner != *account {
+                return Err(format!("only the owner of {machine} says whether {to}'s machines link with it directly"));
+            }
             // A visitor gives nothing; ending an assistance on a machine it
             // holds gives nothing either (`net-sharing-and-assist`
             // 2026-10-23: 访客收到的共享一样管，只收不给).
@@ -631,6 +638,21 @@ fn apply(
                 None => None,
             };
             let also: Vec<_> = grants.collect();
+            // Whether the account's machines link with the machine directly
+            // is one word for every login of the machine that assists the
+            // account: said now, it is kept on each; not said, it stays as
+            // any of them keeps it. That they link is kept as nothing said.
+            let said = direct.is_some();
+            let direct = match direct {
+                Some(true) => None,
+                Some(false) => Some(false),
+                None => directory
+                    .assists
+                    .iter()
+                    .find(|existing| existing.machine == machine && existing.account == to)
+                    .and_then(|existing| existing.direct),
+            };
+            let (of_machine, of_account) = (machine.clone(), to.clone());
             let assist = Assist {
                 machine,
                 account: to,
@@ -643,6 +665,7 @@ fn apply(
                 turns: turns.filter(|_| assisting),
                 share: share.filter(|_| assisting),
                 manages: manages.filter(|_| assisting),
+                direct: direct.filter(|_| assisting),
                 grant,
                 also,
             };
@@ -651,6 +674,13 @@ fn apply(
                 .retain(|existing| !existing.same(&assist) && !replaced.iter().any(|replaced| existing.same(replaced)));
             if assisting {
                 directory.assists.push(Arc::new(assist));
+                if said {
+                    for existing in &mut directory.assists {
+                        if existing.machine == of_machine && existing.account == of_account && existing.direct != direct {
+                            Arc::make_mut(existing).direct = direct;
+                        }
+                    }
+                }
             } else if !purge.is_empty() {
                 // Written with the ending, in the same commit (`commit`).
                 crate::purges::begin(

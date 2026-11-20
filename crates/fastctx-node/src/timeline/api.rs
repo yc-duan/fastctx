@@ -139,7 +139,7 @@ async fn read(
             refused = Some(Failure::unsupported("this network's hub does not relay timeline pages; update the hub"));
             continue;
         }
-        let facts = link.call(&machine.name, &account, Purpose::Look, RemoteCall::Facts).await.map_err(failure)?;
+        let facts = crate::facts::declared(node, &link, &machine.name, &account).await.map_err(failure)?;
         // The files a conversation changed: never asked of a hub or a
         // machine that does not know the question; none known there.
         if matches!(request, TimelineAsk::Files { .. })

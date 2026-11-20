@@ -146,7 +146,7 @@ export function netOf(world: WorldNow | null, seen: Seen, now: Date): Net {
         if (machine.hold === "assist" && !login.lent?.manages) continue;
         const given = assistsOn(world, machine.name, agent, one).filter(({ hub, assist }) => machine.hold !== "assist" || !mine.some((own) => own.hub === hub && own.account === assist.account));
         for (const { assist } of given) {
-          grants.push({ login: login.id, person: assist.account, limit: limitOf(assist, plate ?? PLATE), used: 0, fable: 0, until: assist.until ? momentSaid(new Date(assist.until)) : null, ...(managesOf(assist) ? { manages: true } : {}) });
+          grants.push({ login: login.id, person: assist.account, limit: limitOf(assist, plate ?? PLATE), used: 0, fable: 0, until: assist.until ? momentSaid(new Date(assist.until)) : null, ...(managesOf(assist) ? { manages: true } : {}), ...(assist.direct === false ? { direct: false } : {}) });
         }
         const first = given[0]?.assist;
         if (first && (first.five_hour || first.turns)) lines[login.id] = { fiveStop: first.five_hour ?? null, turns: first.turns ?? null };
@@ -230,7 +230,12 @@ function loginOf(world: WorldNow | null, machine: Pickable, agent: string, side:
   const unread = one.limits.kind === "known" ? undefined : one.limits.reason;
   const lent = machine.hold === "assist" ? lentOf(world, machine, agent, one, plate) : undefined;
   const credits = one.limits.kind === "known" ? one.limits.value.credits : undefined;
+  // Whether the network's administrator allowed direct connections to its
+  // machine, as the accounts' view says of the machine.
+  const allowsDirect = (world?.accounts.hubs ?? []).some((hub) => hub.members.some((member) => member.name === machine.name && !!member.direct?.length));
   return {
+    ...(allowsDirect ? { allowsDirect: true } : {}),
+    ...(machine.hold === "mine" ? { ownMachine: true } : {}),
     id,
     family: agent,
     machine: machine.name,

@@ -83,12 +83,20 @@ pub(super) fn stood(assets: &Assets, hub: &HubId, owner: &str) {
     assets.taken.lock().expect("taken").remove(&(hub.as_str().to_string(), owner.to_string()));
 }
 
+/// Which streams, by scope and stream, stay on this machine with the hub
+/// of `link` (`direct`): nothing of theirs is on its way to the hub.
+fn kept_here(link: &Link) -> impl Fn(&str, &str) -> bool + Send + 'static {
+    let kept = link.asset_version() >= fastctx_types::assets::DIRECT;
+    move |scope, stream| kept && fastctx_types::assets::of_conversation(scope) && super::direct::machine_orders(stream)
+}
+
 /// What this machine says of where it stands with `hub`.
-async fn facts(assets: &Assets, hub: &HubId) -> Result<SyncReport, String> {
+async fn facts(assets: &Assets, hub: &HubId, link: &Link) -> Result<SyncReport, String> {
     let library = &assets.library;
     let (theirs, device) = (hub.as_str().to_string(), assets.device());
+    let stays = kept_here(link);
     let (feeds, unpulled, lacking, unsent) = blocking(library, move |library| {
-        Ok((library.feeds_of(&theirs)?, library.unpulled_of(&theirs)?, library.lacking_of(&theirs)?, library.unsent_of(&theirs, &device)?))
+        Ok((library.feeds_of(&theirs)?, library.unpulled_of(&theirs)?, library.lacking_of(&theirs)?, library.unsent_of(&theirs, &device, stays)?))
     })
     .await?;
     let taken = assets.taken.lock().expect("taken").clone();
@@ -125,7 +133,7 @@ fn settled(report: &SyncReport) -> bool {
 
 /// Tells `hub` where this machine stands, when that is due.
 pub(super) async fn report(assets: &Assets, hub: &HubId, link: &Arc<Link>) -> Result<(), String> {
-    let report = facts(assets, hub).await?;
+    let report = facts(assets, hub, link).await?;
     let due = match assets.reported.lock().expect("reported").get(hub) {
         None => true,
         Some((last, at)) => {
@@ -157,7 +165,8 @@ pub(crate) async fn status(
     let hub = link.membership().id;
     let (theirs, device) = (hub.as_str().to_string(), assets.device());
     // Not counted, it is said so: never as nothing to send (KK06).
-    let (unsent, unread) = match blocking(&assets.library, move |library| library.unsent_of(&theirs, &device)).await {
+    let stays = kept_here(link);
+    let (unsent, unread) = match blocking(&assets.library, move |library| library.unsent_of(&theirs, &device, stays)).await {
         Ok(unsent) => (unsent, None),
         Err(why) => ((0, 0), Some(why)),
     };

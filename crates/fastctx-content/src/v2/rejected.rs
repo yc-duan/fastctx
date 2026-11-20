@@ -237,6 +237,37 @@ impl Library {
         })?)
     }
 
+    /// Opens a new epoch of `stream` at `cut`, where it was cut back to,
+    /// under the hub's signed `descriptor`. What was committed to the stream
+    /// from `cut` on while the hub was asked goes with what the refusal took
+    /// out, in the same transaction: the new epoch begins where the hub
+    /// signed it to begin, with nothing of the epoch before left past it.
+    pub fn new_epoch_at(&self, scope: &str, stream: &str, epoch: u64, descriptor: Vec<u8>, cut: u64) -> Result<()> {
+        let (scope, stream) = (scope.to_string(), stream.to_string());
+        self.database().write_now_at(Priority::Normal, 1 << 20, move |db| {
+            let Some((scope_id, _, Some(holding))) = held(db, &scope)? else { return Err(invalid("the scope is not held here")) };
+            let found: Option<(i64, i64)> = db
+                .prepare_cached("SELECT id, next FROM streams WHERE scope = ?1 AND name = ?2")?
+                .query_row(params![scope_id, stream], |row| Ok((row.get(0)?, row.get(1)?)))
+                .optional()?;
+            let Some((stream_id, next)) = found else { return Err(invalid("the stream is not here")) };
+            if next as u64 > cut {
+                rejected_in(db, scope_id, holding, stream_id, &stream, cut)?;
+            }
+            let changed = db
+                .prepare_cached("UPDATE streams SET epoch = ?2 WHERE id = ?1 AND epoch < ?2")?
+                .execute(params![stream_id, epoch as i64])?;
+            if changed != 1 {
+                return Err(invalid("an epoch moves forward"));
+            }
+            db.prepare_cached("INSERT INTO epochs (stream, epoch, descriptor) VALUES (?1, ?2, ?3)")?
+                .execute(params![stream_id, epoch as i64, descriptor])?;
+            Ok(())
+        })?;
+        self.wrote();
+        Ok(())
+    }
+
     /// Commits the waiting records of `stream` again, in order, in its
     /// current epoch; each lets go of its place and holds in the same
     /// commit, and an operation points at where its write landed now.

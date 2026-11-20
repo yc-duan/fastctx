@@ -6,6 +6,7 @@
 // reading is asked of the desk's window.
 
 import { split, type FileChange } from "../files/model";
+import { RecentFileViews } from "../files/recent";
 import { FileView, type FileLines, type ViewTab } from "../files/view";
 import type { FilesWords } from "../files/words";
 import type { SideParts } from "./parts";
@@ -41,6 +42,8 @@ const keyOf = (machine: string, path: string) => `${machine}\n${path}`;
 
 export class FileTabs {
   private readonly read = new Map<string, { machine: string; path: string; view: FileView }>();
+  private readonly recent = new RecentFileViews();
+  private leaving = false;
 
   constructor(private readonly options: FileTabsOptions) {}
 
@@ -60,10 +63,11 @@ export class FileTabs {
   open(machine: string, path: string, tab: ViewTab | null, outside?: (machine: string, path: string) => void): boolean {
     const { options } = this;
     const side = options.side();
-    if (!side) return false;
+    if (!side || this.leaving) return false;
     const key = keyOf(machine, path);
     const { reading } = options;
-    const view = new FileView({
+    const parked = outside ? undefined : this.recent.take(key);
+    const view = parked ?? new FileView({
       words: options.words,
       seams: {
         lines: reading.lines,
@@ -82,6 +86,10 @@ export class FileTabs {
       tabbed: true,
       folders: options.folders?.(machine, path),
     });
+    if (parked) {
+      view.update(options.changes(machine, path));
+      if (tab) view.turn(tab);
+    }
     const { folder, name } = split(path);
     const opened = side.openTab({
       id: `file:${key}`,
@@ -92,12 +100,19 @@ export class FileTabs {
       page: view,
       leave: () => {
         this.read.delete(key);
-        view.leave();
+        if (this.leaving || outside) view.leave();
+        else this.recent.put(key, view);
       },
     });
     if (opened) this.read.set(key, { machine, path, view });
     else view.leave();
     return opened;
+  }
+
+  /** The owner also closes the tabs that are still open. */
+  leave(): void {
+    this.leaving = true;
+    this.recent.clear();
   }
 
   /** Their changes as the conversation now tells them. */

@@ -1469,6 +1469,7 @@ export class ConversationPage {
     this.usagePopover?.dispose();
     this.modelPanel?.dispose();
     this.jobs?.dispose();
+    this.fileTabs?.leave();
     this.side?.leave();
     this.finder.destroy();
     this.left = true;

@@ -21,6 +21,7 @@
 //! hashed into the names above.
 
 mod conversation;
+mod last_page;
 pub(crate) mod lines;
 pub(crate) mod pictures;
 
@@ -34,6 +35,7 @@ use serde::Serialize;
 use sha2::{Digest as _, Sha256};
 
 pub(crate) use conversation::{Entry, Index};
+pub use last_page::LastPageKey;
 use pictures::Pictures;
 
 /// This device's cache of the conversations it viewed.
@@ -135,6 +137,7 @@ impl Cache {
         usage.bytes = usage.pictures
             + size_of(&self.conversations())?
             + size_of(&self.root.join("blobs"))?
+            + size_of(&self.root.join("last-pages"))?
             + size_of(&self.root.join("files"))?;
         Ok(usage)
     }
@@ -152,12 +155,13 @@ impl Cache {
     /// the pictures no other conversation kept here shows.
     pub fn forget(&self, address: &Address) -> io::Result<()> {
         let mut turn = self.turn()?;
+        turn.invalidate()?;
+        self.forget_last_pages_of(address)?;
         let entry = self.entry(address);
         let (gone, blobs): (HashSet<String>, HashSet<String>) = match entry.index()? {
             Some(index) => (index.pictures.into_iter().collect(), index.blobs.into_iter().collect()),
             None => return Ok(()),
         };
-        turn.invalidate()?;
         entry.remove()?;
         let mut shown = HashSet::new();
         let mut held_blobs = HashSet::new();

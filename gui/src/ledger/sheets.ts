@@ -234,10 +234,14 @@ on("add-grant", () => {
       </div>
       <span class="as-label">期限</span>
       ${untilRow()}
+      ${login.ownMachine && login.allowsDirect ? `<span class="as-label">直连</span>${choices("as-direct", [["on", "允许"], ["off", "不允许"]], "on")}` : ""}
     </div>
     <p class="as-warn">${glyph("shield", 16)}<span>使用此登录的订阅额度。任务在本机运行，可随时查看与停止。</span></p>
     <footer class="cs-foot"><button type="button" class="sheet-go" data-do disabled>添加</button></footer>`;
   wireUntil(sheet, (value) => (until = value));
+  // Whether their machines link with this one directly, where it takes
+  // direct connections: said not, they never learn where it is reached.
+  let direct = true;
   const input = sheet.body.querySelector<HTMLInputElement>(".as-input")!;
   const names = sheet.body.querySelector<HTMLElement>(".as-names")!;
   const percents = sheet.body.querySelector<HTMLElement>(".as-percent")!;
@@ -273,7 +277,11 @@ on("add-grant", () => {
     const name = target.closest<HTMLElement>("[data-name]");
     const mode = target.closest<HTMLElement>("[data-mode]");
     const choice = target.closest<HTMLElement>("[data-act='as-limit']");
-    if (name) {
+    const linked = target.closest<HTMLElement>("[data-act='as-direct']");
+    if (linked) {
+      direct = linked.dataset.value === "on";
+      for (const one of linked.parentElement!.children) one.classList.toggle("chosen", one === linked);
+    } else if (name) {
       input.value = name.dataset.name!;
       listed();
     } else if (mode) {
@@ -294,7 +302,7 @@ on("add-grant", () => {
       if (deeds) {
         go.disabled = true;
         sheet.busy = true;
-        deeds.assist(login, person, limited ? percent : null, until?.at ?? null, limitable && !limited).then(
+        deeds.assist(login, person, limited ? percent : null, until?.at ?? null, limitable && !limited, direct ? undefined : false).then(
           () => {
             sheet.busy = false;
             sheet.close();
@@ -308,7 +316,7 @@ on("add-grant", () => {
         );
         return;
       }
-      grants.push({ login: login.id, person, limit: limited ? percent : null, used: 0, fable: 0, until: until?.said ?? null, ...(limitable && !limited ? { manages: true } : {}) });
+      grants.push({ login: login.id, person, limit: limited ? percent : null, used: 0, fable: 0, until: until?.said ?? null, ...(limitable && !limited ? { manages: true } : {}), ...(direct ? {} : { direct: false }) });
       sheet.close();
       lit(person);
     }

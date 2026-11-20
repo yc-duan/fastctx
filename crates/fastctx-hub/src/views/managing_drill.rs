@@ -41,6 +41,7 @@ fn assist(to: &str, home: Option<PathBuf>) -> Assist {
         turns: None,
         share: None,
         manages: None,
+        direct: None,
         grant: None,
         also: Vec::new(),
     }
@@ -85,6 +86,7 @@ fn network() -> Directory {
         turns: Some(3),
         share: Some(30),
         manages: Some(false),
+        direct: None,
         ..assist("bob", None)
     }));
     all.assists.push(Arc::new(assist("cat", None)));
@@ -206,4 +208,73 @@ fn one_who_manages_sees_everyone_the_login_assists() {
     let me = machine("ann-pc");
     let cut = cut_in(&x, &me, &x.acts_for(&me), &users_in(&x, &me));
     assert_eq!(cut.assists.iter().map(|assist| assist.account.clone()).collect::<Vec<_>>(), vec![name("ann")]);
+}
+
+#[test]
+fn an_account_kept_from_linking_directly_is_kept_apart_both_ways() {
+    let mut all = network();
+    let now = Timestamp::from_second(1_800_000_000).expect("a time");
+    let of = |all: &Directory, who: &str| Member::clone(all.member(&machine(&format!("{who}-pc"))).expect("a machine"));
+    // Nothing said, the machines of everyone the login assists link with it.
+    assert!(!all.direct_withheld(&of(&all, "owner"), &of(&all, "bob"), now));
+
+    // Its owner says bob's machines do not: neither way, and no other pair.
+    let bob = all.assists.iter().position(|kept| kept.account == name("bob")).expect("bob");
+    all.assists[bob] = Arc::new(Assist { direct: Some(false), ..Assist::clone(&all.assists[bob]) });
+    assert!(all.direct_withheld(&of(&all, "owner"), &of(&all, "bob"), now));
+    assert!(all.direct_withheld(&of(&all, "bob"), &of(&all, "owner"), now));
+    assert!(!all.direct_withheld(&of(&all, "owner"), &of(&all, "ann"), now));
+    assert!(!all.direct_withheld(&of(&all, "bob"), &of(&all, "ann"), now));
+
+    // A machine bob is logged in on is one of his, whoever owns it.
+    let mut shared = of(&all, "cat");
+    shared.logins.insert(name("bob"));
+    assert!(all.direct_withheld(&of(&all, "owner"), &shared, now));
+    assert!(all.direct_withheld(&shared, &of(&all, "owner"), now));
+
+    // Another machine of the owner's links with it though bob is logged in
+    // there: two machines of one owner always link.
+    let mut second = of(&all, "owner");
+    second.name = machine("owner-laptop");
+    second.logins.insert(name("bob"));
+    assert!(!all.direct_withheld(&of(&all, "owner"), &second, now));
+
+    // The super administrator, who sets where machines are reached, is
+    // kept from none.
+    let root = all.accounts.iter().position(|account| account.name == name("bob")).expect("bob's account");
+    let member_bob = Account::clone(&all.accounts[root]);
+    all.accounts[root] = Arc::new(Account { level: Level::Super, ..member_bob.clone() });
+    assert!(!all.direct_withheld(&of(&all, "owner"), &of(&all, "bob"), now));
+    all.accounts[root] = Arc::new(member_bob);
+    assert!(all.direct_withheld(&of(&all, "owner"), &of(&all, "bob"), now));
+
+    // Ended, the assistance keeps no one apart.
+    let ended = Timestamp::from_second(1_700_000_000).expect("a time");
+    all.assists[bob] = Arc::new(Assist { until: Some(ended), ..Assist::clone(&all.assists[bob]) });
+    assert!(!all.direct_withheld(&of(&all, "owner"), &of(&all, "bob"), now));
+}
+
+#[test]
+fn a_view_keeps_apart_whom_the_directory_keeps_apart() {
+    let mut all = network();
+    let bob = all.assists.iter().position(|kept| kept.account == name("bob")).expect("bob");
+    all.assists[bob] = Arc::new(Assist { direct: Some(false), ..Assist::clone(&all.assists[bob]) });
+    // A machine of cat's that bob is logged in on, too.
+    let cat = all.members.iter().position(|member| member.name == machine("cat-pc")).expect("cat's machine");
+    let mut shared = Member::clone(&all.members[cat]);
+    shared.logins.insert(name("bob"));
+    all.members[cat] = Arc::new(shared);
+    let index = Index::new(&all);
+    let x = Indexed::new(&all, &index);
+    let now = Timestamp::now();
+    for a in &all.members {
+        let apart = Apart::of(&x, &a.name);
+        for b in &all.members {
+            assert_eq!(apart.is(b), all.direct_withheld(a, b, now), "{} and {}", a.name, b.name);
+        }
+    }
+    let owner = Apart::of(&x, &machine("owner-pc"));
+    assert!(owner.is(all.member(&machine("bob-pc")).expect("bob's machine")));
+    assert!(owner.is(all.member(&machine("cat-pc")).expect("cat's machine")));
+    assert!(!owner.is(all.member(&machine("ann-pc")).expect("ann's machine")));
 }

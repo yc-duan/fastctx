@@ -673,6 +673,7 @@ pub fn assist(args: AssistArgs) -> anyhow::Result<()> {
         turns: args.turns,
         share: args.share,
         manages: Some(args.manages).filter(|_| !args.off),
+        direct: None,
         purge: args.purge,
         shown: Vec::new(),
     };

@@ -1404,7 +1404,17 @@ impl fastctx_net::link::Node for Handler {
                         .await
                         .map(|answer| RemoteReply::Book(Box::new(answer))),
                     RemoteCall::Stats { after, seen } => {
-                        crate::stats::here(&node, after, seen).await.map(|stats| RemoteReply::Stats(Box::new(stats)))
+                        // Where this machine's cards are reached is not told
+                        // to a machine kept from linking with it directly.
+                        let apart = kept_apart(&node, &hub, &caller.machine);
+                        crate::stats::here(&node, after, seen).await.map(|mut stats| {
+                            if apart {
+                                for card in &mut stats.cards {
+                                    card.addresses.clear();
+                                }
+                            }
+                            RemoteReply::Stats(Box::new(stats))
+                        })
                     }
                     RemoteCall::Inspect { inspect, evidence_of } => {
                         let scope = HubAccount { hub: hub.clone(), account: caller.account.clone() };
@@ -1419,6 +1429,9 @@ impl fastctx_net::link::Node for Handler {
                         Ok(()) => Ok(RemoteReply::Topics(node.topics.told(&request, crate::topics::WAITS).await)),
                         Err(reason) => Err(Failure::not_run(reason)),
                     },
+                    RemoteCall::Interfaces if kept_apart(&node, &hub, &caller.machine) => Err(Failure::new(
+                        "this machine's addresses are not told to a machine it does not link with directly",
+                    )),
                     RemoteCall::Interfaces => {
                         crate::hub_arrival::interfaces().map(|addresses| RemoteReply::Interfaces { addresses })
                     }
@@ -1780,6 +1793,9 @@ impl fastctx_net::link::Node for Handler {
         let (keeping, hub) = (node.clone(), self.hub.clone());
         fastctx_platform::task::spawn_blocking(move || {
             crate::admitted::notice(&keeping, &hub);
+            if swept && let Err(error) = crate::timeline::last_page::prune(&keeping, &hub) {
+                keeping.log.line(format_args!("pruning cached timeline pages: {error}"));
+            }
             // What a reader holds of its account's records follows the
             // directory — a project's ledger under the machines it may use
             // now (§29, 2.4), a project taken back, the same machines again:
@@ -1967,4 +1983,15 @@ pub fn grouped_machines(
         group.machines.sort();
     }
     (here, others, groups)
+}
+
+/// Whether `caller` is a machine kept from linking with this one directly on
+/// `hub` (`Assist::direct`): it is not told where this machine is reached.
+fn kept_apart(node: &Node, hub: &HubId, caller: &MachineName) -> bool {
+    node.link_of(hub).is_some_and(|link| {
+        let view = link.view();
+        view.me()
+            .zip(view.member(caller))
+            .is_some_and(|(mine, theirs)| view.directory.direct_withheld(mine, theirs, jiff::Timestamp::now()))
+    })
 }

@@ -157,6 +157,9 @@ export class LineViewport {
 
   setMatch(match: LineMatch | null): void { this.match = match; this.draw(); }
 
+  /** Restores layout when a retained viewport returns to the document. */
+  shown(): void { this.resize(); }
+
   private resize(): void {
     if (this.destroyed || this.element.clientHeight === 0) return;
     const top = this.lastTop;

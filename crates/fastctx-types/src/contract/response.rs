@@ -290,6 +290,7 @@ impl Call {
                 }
             }
             Self::Timeline { request, .. } => timeline(request),
+            Self::TimelinePreview { .. } => Response::Answer,
             // It waits for a change, as a timeline's `Moved` does.
             Self::Topics { .. } | Self::RemoteTopics { .. } => Response::Stream,
             Self::Data(request) => {

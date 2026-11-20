@@ -10,6 +10,7 @@ pub(crate) mod api;
 mod assets;
 mod build;
 pub(crate) mod copy;
+pub(crate) mod last_page;
 pub(crate) mod copied_changes;
 pub(crate) mod copied_records;
 pub(crate) mod records_known;

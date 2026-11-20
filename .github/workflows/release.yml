@@ -756,8 +756,11 @@ jobs:
           path: tests
           if-no-files-found: error
 
-  # In two parts at once, as on Windows (network-windows).
+  # In two parts at once, as on Windows (network-windows). Not run for now:
+  # the same drills run on Linux and on Windows, and these wait longest for
+  # a runner, with the renewal drills held up behind them.
   network-macos:
+    if: false
     needs: kernel-macos
     name: network ${{ matrix.target }} ${{ matrix.part }}
     strategy:

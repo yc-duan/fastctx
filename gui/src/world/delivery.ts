@@ -32,6 +32,7 @@ export async function observe<T, R extends Opened | null>(
   command: string,
   args: Record<string, unknown>,
   onPiece: (piece: T | Interrupted) => void,
+  onClosed?: () => void,
 ): Promise<R> {
   let id: number | null = null;
   let through = 0;
@@ -84,6 +85,7 @@ export async function observe<T, R extends Opened | null>(
       acknowledge(true);
       reader.close();
       readers.delete(push.id);
+      onClosed?.();
       return;
     }
     // A batch pushed again that ran already.

@@ -56,6 +56,7 @@ impl Link {
                 turns,
                 share,
                 manages,
+                direct,
                 purge,
                 shown,
             } => {
@@ -74,6 +75,7 @@ impl Link {
                             turns,
                             share,
                             manages,
+                            direct,
                             // The hub gives it.
                             grant: None,
                             also: Vec::new(),
@@ -180,6 +182,14 @@ impl Link {
             let hub = self.hub_name();
             return Err(format!("the hub {hub} keeps no one managing a login with its owner; upgrade it for that"));
         }
+        // A hub of before the word would keep the assistance without it,
+        // and the account's machines would go on linking.
+        if assist.direct.is_some() && !view.assist_direct {
+            let hub = self.hub_name();
+            return Err(format!(
+                "the hub {hub} does not keep which accounts' machines link with a machine directly; upgrade it for that"
+            ));
+        }
         // Ending one for good is asked only of a hub that deletes what was
         // born under it: anywhere else it would only end it.
         if purge && assisting {
@@ -212,6 +222,9 @@ impl Link {
                 turns: assist.turns,
                 share: assist.share,
                 manages: assist.manages,
+                // Only the machine's holder says whether an account's
+                // machines link with it directly.
+                direct: None,
                 purge: Vec::new(),
                 replaces: Vec::new(),
             };
@@ -294,6 +307,7 @@ impl Link {
                 turns: assist.turns,
                 share: assist.share,
                 manages: assist.manages,
+                direct: assist.direct,
                 purge: grants,
                 replaces,
             };
@@ -317,6 +331,7 @@ impl Link {
                     turns: None,
                     share: None,
                     manages: None,
+                    direct: None,
                     purge: Vec::new(),
                     replaces: Vec::new(),
                 },
@@ -336,6 +351,7 @@ impl Link {
             turns: assist.turns.filter(|_| limited),
             share: assist.share.filter(|_| limited),
             manages: assist.manages.filter(|_| limited),
+            direct: assist.direct,
             purge: Vec::new(),
             replaces: Vec::new(),
         };
@@ -490,6 +506,7 @@ impl Link {
                     turns: assist.turns,
                     share: assist.share,
                     manages: Some(assist.manages()),
+                    direct: assist.direct,
                     grants: assist.grants().cloned().collect(),
                 })
                 .collect(),

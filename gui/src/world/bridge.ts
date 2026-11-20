@@ -131,6 +131,11 @@ export async function watch(
   return observe<Piece, Watched>("watch", { residentId: who.resident, machineName: who.machine }, onPiece);
 }
 
+/** A local display page without a watch or a live cursor. */
+export function conversationPreview(who: Address): Promise<import("../conversation/replica").ReplicaPart | null> {
+  return invoke("conversation_preview", { residentId: who.resident, machineName: who.machine });
+}
+
 /** A conversation opened: the latest part of its timeline, or, from a
  *  machine of an earlier release, the window of its whole history. */
 export interface Watched {

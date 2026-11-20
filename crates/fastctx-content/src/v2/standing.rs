@@ -203,20 +203,25 @@ impl Library {
     /// The frames this device, `device`, made in `hub`'s scopes that are not
     /// sent yet: of the streams it orders, in their holding period now, from
     /// where the hub's taking goes on — the start, before the first receipt
-    /// (AO10, KK03). How many, and their bytes.
-    pub fn unsent_of(&self, hub: &str, device: &[u8; 32]) -> Result<(u64, u64)> {
+    /// (AO10, KK03). How many, and their bytes. The streams `stays` names,
+    /// by scope and stream, are kept by this device and sent nowhere: none
+    /// of theirs is counted, nor read to be.
+    pub fn unsent_of(&self, hub: &str, device: &[u8; 32], stays: impl Fn(&str, &str) -> bool) -> Result<(u64, u64)> {
         let (hub, device) = (hub.to_string(), *device);
         Ok(self.database().read_now(move |db| {
-            let scopes: Vec<(i64, i64)> = {
+            let scopes: Vec<(i64, i64, String)> = {
                 let mut statement = db.prepare_cached(
-                    "SELECT id, holding FROM scopes WHERE hub = ?1 AND state IN ('live', 'provisional') AND holding IS NOT NULL",
+                    "SELECT id, holding, key FROM scopes WHERE hub = ?1 AND state IN ('live', 'provisional') AND holding IS NOT NULL",
                 )?;
-                let rows = statement.query_map([&hub], |row| Ok((row.get(0)?, row.get(1)?)))?;
+                let rows = statement.query_map([&hub], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
                 rows.collect::<std::result::Result<_, _>>()?
             };
             let (mut count, mut bytes) = (0u64, 0u64);
-            for (scope, holding) in scopes {
-                for (stream, _, _) in super::device::own(db, scope, holding, &device)? {
+            for (scope, holding, key) in scopes {
+                for (stream, name, _) in super::device::own(db, scope, holding, &device)? {
+                    if stays(&key, &name) {
+                        continue;
+                    }
                     let uploaded: i64 = db
                         .prepare_cached("SELECT uploaded FROM outbox WHERE stream = ?1")?
                         .query_row([stream], |row| row.get(0))
