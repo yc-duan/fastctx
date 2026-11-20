@@ -2328,6 +2328,14 @@ pub(super) async fn prepare_launch(node: &Arc<Node>, id: &ResidentId) -> Result<
 fn prepare_launch_now(node: &Arc<Node>, id: &ResidentId) -> Result<Prepared, Failure> {
     let (about, town) = node.residents.about(id).ok_or_else(|| Failure::new(format!("{id} was deleted")))?;
     let Command { program, env, .. } = command(node, about.home.as_deref())?;
+    // It is born in the login its first session is started in, as that is
+    // started, waiting for a turn of its login or not (codex-d1962125).
+    if about.session.is_none() {
+        let login = crate::logins::ids::claude_started(node, &env);
+        node.residents
+            .set_born_login(&node.world, id, login)
+            .map_err(|error| Failure::new(format!("recording the login {id} is born in: {error}")))?;
+    }
     let assisting = crate::assists::host::starting(node, id, &about.acting)?;
     let options = crate::session_options::read(node, id)?;
     let directory = node.world.conversation(id);

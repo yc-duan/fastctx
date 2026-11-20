@@ -267,8 +267,8 @@ pub async fn ask_here(
     let agent = AgentName::try_from("codex").expect("a valid agent name");
     // Given its id before the colleague is kept or its login started.
     let login = {
-        let (giving, agent, home) = (node.clone(), agent.clone(), home.clone());
-        fastctx_platform::task::blocking(move || crate::logins::ids::born(&giving, &agent, home.as_deref())).await
+        let (giving, home) = (node.clone(), home.clone());
+        fastctx_platform::task::blocking(move || crate::logins::ids::codex_born(&giving, home.as_deref())).await
     };
     let id = node.residents.new_id(&agent)?;
     crate::record_migration::born(node, &id);

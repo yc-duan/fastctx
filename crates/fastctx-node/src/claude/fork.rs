@@ -85,12 +85,13 @@ pub async fn fork(
     let id = node.residents.new_id(&source.host.agent)?;
     crate::record_migration::born(node, &id);
     let target_place = Arc::new(node.places.using(id.as_str()).await);
-    // It is started in its source's login as that stands now, given its id first.
-    let login = {
-        let (giving, agent, home) = (node.clone(), source.host.agent.clone(), source.home.clone());
-        fastctx_platform::task::blocking(move || crate::logins::ids::born(&giving, &agent, home.as_deref())).await
-    };
     let launching = super::command(node, source.home.as_deref())?;
+    // It is born in the login it is started in, as it is started, given its
+    // id before it is recorded.
+    let login = {
+        let (giving, env) = (node.clone(), launching.env.clone());
+        fastctx_platform::task::blocking(move || crate::logins::ids::claude_started(&giving, &env)).await
+    };
     super::oldest::check(node, &launching).await?;
     let super::Command { program, env, .. } = launching;
     let (words, heard) =

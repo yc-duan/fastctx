@@ -1277,12 +1277,14 @@ pub async fn open_here(
     let mut options = options;
     options.mcp_off = choices.mcp_off;
     let (home, login) = {
-        // The logins on this machine are read from disk, and the one it is
-        // born in is given its id there before it is started.
+        // The logins on this machine are read from disk, and a Codex one it
+        // is born in is given its id there before it is started; a Claude
+        // Code one, as its first session is started (`claude::prepare_launch`).
         let (listing, agent, chosen) = (node.clone(), agent.clone(), choices.home.clone());
         fastctx_platform::task::blocking(move || {
             let home = crate::homes::listed(&listing, agent.as_str(), chosen.as_deref())?;
-            let login = crate::logins::ids::born(&listing, &agent, home.as_deref());
+            let login =
+                (agent.as_str() == "codex").then(|| crate::logins::ids::codex_born(&listing, home.as_deref())).flatten();
             Ok::<_, Failure>((home, login))
         })
         .await?

@@ -66,7 +66,7 @@ pub(crate) fn owners_own(node: &Node, agent: &str, arrival: &Arrival) -> io::Res
 }
 
 /// Where `agent` keeps its default login on this machine.
-pub(crate) fn default_login(node: &Node, agent: &str) -> io::Result<PathBuf> {
+fn default_login(node: &Node, agent: &str) -> io::Result<PathBuf> {
     if agent == "codex" {
         return Ok(node.codex.default().config_home().to_path_buf());
     }

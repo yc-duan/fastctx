@@ -741,6 +741,24 @@ impl Residents {
         Ok(true)
     }
 
+    /// The login `id`'s first session is started in (`About::login`), as it
+    /// is started: only until its session is known.
+    pub(crate) fn set_born_login(
+        &self,
+        world: &WorldDir,
+        id: &ResidentId,
+        login: Option<fastctx_types::logins::LoginId>,
+    ) -> io::Result<()> {
+        self.change_about(world, id, |changing| {
+            if changing.removed || changing.about.session.is_some() {
+                return false;
+            }
+            changing.about.login = login;
+            true
+        })
+        .map(|_| ())
+    }
+
     /// Persists the restoration contract before the first native resumption.
     pub(crate) fn set_native_resumed(&self, world: &WorldDir, id: &ResidentId) -> io::Result<()> {
         self.change_about(world, id, |changing| {
