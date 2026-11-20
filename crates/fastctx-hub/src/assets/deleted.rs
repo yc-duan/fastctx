@@ -175,37 +175,47 @@ impl Assets {
         }
         let keys = self.deleted_keys()?;
         let stamp = stamp(key);
-        let fresh = keys.lock().expect("deleted scopes").insert(stamp);
-        let deleted = match scopes::stored(self, key).map_err(io::Error::other)? {
-            Some(scope) => self.delete_stored(key, scope)?,
-            None => false,
-        };
-        if deleted || !fresh && self.chained(stamp)? {
-            return Ok(());
-        }
-        let sealing = self.sealing.clone();
-        let written = self.control.write_now(256, move |c| {
+        keys.lock().expect("deleted scopes").insert(stamp);
+        // In one write, after any description that passed its look at the
+        // marks before they had this one: its row, as written, deleted with
+        // what the hub's history kept of it, and the mark kept for good,
+        // once (codex-87c8bbd9).
+        let (name, sealing) = (key.to_string(), self.sealing.clone());
+        let written = self.control.write_now(1024, move |c| {
+            use fastctx_storage::rusqlite::OptionalExtension;
             super::unsealed(&sealing)?;
-            chain::append(c, KIND, &stamp)
+            let owner: Option<String> = c
+                .prepare_cached("SELECT owner FROM asset_scopes WHERE key = ?1")?
+                .query_row([&name], |row| row.get(0))
+                .optional()?;
+            if let Some(owner) = &owner {
+                c.prepare_cached("DELETE FROM asset_scopes WHERE key = ?1")?.execute([&name])?;
+                for table in ["hub_checkpoints", "hub_epoch_facts", "hub_gap_facts"] {
+                    c.prepare_cached(&format!("DELETE FROM {table} WHERE owner = ?1 AND scope = ?2"))?
+                        .execute(params![owner, name])?;
+                }
+            } else if c
+                .prepare_cached("SELECT 1 FROM hub_chain WHERE kind = ?1 AND digest = ?2")?
+                .exists(params![KIND, stamp.to_vec()])?
+            {
+                return Ok((None, None));
+            }
+            Ok((owner, Some(chain::append(c, KIND, &stamp)?)))
         });
-        match written {
-            Ok((seq, head)) => self.witness.advanced(seq, &head),
-            Err(error) => {
-                // Not kept for good: marked again as it is tried again.
-                keys.lock().expect("deleted scopes").remove(&stamp);
-                Err(io::Error::other(error))
+        // Not written: it stays marked, as one marked and not yet kept, and
+        // is tried again as a whole.
+        let (owner, appended) = written.map_err(io::Error::other)?;
+        let witnessed = match appended {
+            Some((seq, head)) => self.witness.advanced(seq, &head),
+            None => Ok(()),
+        };
+        if let Some(owner) = owner {
+            match Owner::from_key(&owner) {
+                Some(owner) => self.let_go_of_stored(key, &owner),
+                None => return Err(io::Error::other(format!("a scope of an unknown owner {owner}"))),
             }
         }
-    }
-
-    /// Whether the chain keeps the deletion `stamp` already.
-    fn chained(&self, stamp: [u8; 32]) -> io::Result<bool> {
-        self.control
-            .read_now(move |c| {
-                Ok(c.prepare_cached("SELECT 1 FROM hub_chain WHERE kind = ?1 AND digest = ?2")?
-                    .exists(params![KIND, stamp.to_vec()])?)
-            })
-            .map_err(io::Error::other)
+        witnessed
     }
 
     /// Deletes the scope `key`; whether there was one. Its machines are
@@ -261,7 +271,15 @@ impl Assets {
                 }
             }
         };
-        if let Some(scopes) = self.changed.lock().expect("changed scopes").get_mut(&scope.owner) {
+        self.let_go_of_stored(key, &scope.owner);
+        witnessed?;
+        Ok(true)
+    }
+
+    /// What follows the row of the scope `key` of `owner` deleted: its
+    /// holders told it is revoked, and its owner library let go of it.
+    fn let_go_of_stored(&self, key: &str, owner: &Owner) {
+        if let Some(scopes) = self.changed.lock().expect("changed scopes").get_mut(owner) {
             scopes.remove(key);
         }
         self.receipted.lock().expect("receipted").remove(key);
@@ -272,12 +290,10 @@ impl Assets {
             .extend(held.into_iter().map(|machine| (machine, Push::Revoked { scope: key.to_string() })));
         // The owner library holds it no more, and lets go of it in turns;
         // one not reached now is reached at a later turn.
-        match self.library(&scope.owner).and_then(|library| library.revoke(key).map_err(other)) {
-            Ok(()) => self.lets_go(&scope.owner),
-            Err(_) => self.deleted.unreached.lock().expect("scopes unreached").push((scope.owner.clone(), key.to_string())),
+        match self.library(owner).and_then(|library| library.revoke(key).map_err(other)) {
+            Ok(()) => self.lets_go(owner),
+            Err(_) => self.deleted.unreached.lock().expect("scopes unreached").push((owner.clone(), key.to_string())),
         }
-        witnessed?;
-        Ok(true)
     }
 
     /// A turn of the owner libraries at letting go of the scopes deleted
