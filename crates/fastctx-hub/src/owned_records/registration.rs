@@ -51,7 +51,8 @@ impl Birth {
     /// gives that account of a login on `born_on`, the machine it was born
     /// on; one it does not find, as one ended before the conversation was
     /// registered, is kept as still to be found, never as none. Once kept,
-    /// only an assistance still to be found may be found. A birth said of an
+    /// only the very assistance still to be found may be found; one said
+    /// with none stays so. A birth said of an
     /// account of the name other than the one now is refused: the
     /// conversation is not this account's (codex-87c8bbd9). Whether it
     /// changed, and what the hub's log says.
@@ -73,8 +74,7 @@ impl Birth {
             let found = kept.birth.assisted
                 && kept.birth.born_under.is_none()
                 && under.is_some_and(|grant| {
-                    kept.birth.claimed_under.as_ref().is_none_or(|claimed| claimed == grant)
-                        && gives(directory, &kept.account, born_on, grant)
+                    kept.birth.claimed_under.as_ref() == Some(grant) && gives(directory, &kept.account, born_on, grant)
                 });
             if !found {
                 return Ok((false, None));
@@ -105,16 +105,19 @@ impl Birth {
     }
 }
 
+/// The machine `conversation` was born on: the first it ran on.
+fn born_on(conversation: &Conversation) -> &MachineName {
+    conversation.previous.first().unwrap_or(&conversation.address.machine)
+}
+
 /// What a write of a conversation's ownership may do to what it was born as,
 /// whichever way the write comes (codex-87c8bbd9): keep it once, whole and as
 /// it holds (`Birth::kept`), and find an assistance still to be found;
 /// nothing else.
-pub(crate) fn birth_kept(
-    directory: &Directory,
-    born_on: &MachineName,
-    old: Option<&Conversation>,
-    new: &Conversation,
-) -> Result<(), String> {
+pub(crate) fn birth_kept(directory: &Directory, old: Option<&Conversation>, new: &Conversation) -> Result<(), String> {
+    // Where it was born, as kept: what a write adds to its addresses does not
+    // move it (codex-87c8bbd9).
+    let born_on = old.map_or_else(|| born_on(new), born_on);
     if old.is_some_and(|old| old.birth == new.birth) {
         return Ok(());
     }
@@ -127,8 +130,7 @@ pub(crate) fn birth_kept(
             && new.birth.generation == old.birth.generation
             && new.birth.colleague == old.birth.colleague
             && new.birth.born_under.as_ref().is_some_and(|grant| {
-                old.birth.claimed_under.as_ref().is_none_or(|claimed| claimed == grant)
-                    && gives(directory, &new.account, born_on, grant)
+                old.birth.claimed_under.as_ref() == Some(grant) && gives(directory, &new.account, born_on, grant)
             });
         return if found { Ok(()) } else { rewritten() };
     }
@@ -180,7 +182,7 @@ pub(super) async fn register(
                 // once, from the birth machine's key, when it is still missing,
                 // and what it was born as is kept once, by its birth machine.
                 let born = kept.previous.first().map_or(Some(*key), |machine| directory.member(machine).map(|m| m.key));
-                let born_on = kept.previous.first().unwrap_or(&kept.address.machine).clone();
+                let born_on = born_on(&kept).clone();
                 let mapped = match (kept.identity.is_none(), born, born_at) {
                     (true, Some(device), Some(born_at)) => {
                         kept.identity = Some(Box::new(identity(&store.hub.id, &device, &resident, born_at)));
@@ -200,6 +202,10 @@ pub(super) async fn register(
                 }) {
                     return Err("the conversation's previous address does not match its registered owner".into());
                 }
+                // What it was born as, said again by its new host, is kept as by
+                // its first, where it was born (codex-87c8bbd9).
+                let born_on = born_on(&kept).clone();
+                birth.keep(hub, directory, &born_on, &mut kept)?;
                 if !kept.previous.contains(&kept.address.machine) {
                     kept.previous.push(kept.address.machine.clone());
                 }
@@ -326,16 +332,16 @@ mod tests {
         assert!(changed && said.is_none());
         assert_eq!(kept.birth.born_under, Some(grant(GIVEN)));
         assert!(kept.birth.assisted && kept.birth.claimed_under.is_none());
-        assert!(birth_kept(&directory, &host(), Some(&conversation()), &kept).is_ok());
+        assert!(birth_kept(&directory, Some(&conversation()), &kept).is_ok());
         // Never rewritten after, by registering again or by a write.
         let (changed, _) = birth(Some(OPENED), None).kept(&directory, &host(), &mut kept).expect("kept");
         assert!(!changed && kept.birth.born_under == Some(grant(GIVEN)));
         let mut cleared = kept.clone();
         cleared.birth.born_under = None;
-        assert!(birth_kept(&directory, &host(), Some(&kept), &cleared).is_err());
+        assert!(birth_kept(&directory, Some(&kept), &cleared).is_err());
         let mut forgotten = kept.clone();
         forgotten.birth.generation = None;
-        assert!(birth_kept(&directory, &host(), Some(&kept), &forgotten).is_err());
+        assert!(birth_kept(&directory, Some(&kept), &forgotten).is_err());
         // Held by the machine: kept as such.
         let mut held = conversation();
         birth(Some(OPENED), None).kept(&directory, &host(), &mut held).expect("kept");
@@ -356,7 +362,7 @@ mod tests {
             assert!(changed && logged.is_some());
             assert!(kept.birth.assisted && kept.birth.born_under.is_none());
             assert_eq!(kept.birth.claimed_under, Some(grant(said)));
-            assert!(birth_kept(&directory, &host(), Some(&conversation()), &kept).is_ok());
+            assert!(birth_kept(&directory, Some(&conversation()), &kept).is_ok());
         }
         // Found once the hub gives it, and only that one.
         let mut kept = conversation();
@@ -369,12 +375,22 @@ mod tests {
         assert!(!changed && kept.birth.born_under.is_none());
         let (changed, _) = birth(Some(OPENED), Some(GIVEN)).kept(&directory, &host(), &mut kept).expect("kept");
         assert!(changed && kept.birth.born_under == Some(grant(GIVEN)) && kept.birth.claimed_under.is_none());
-        assert!(birth_kept(&directory, &host(), Some(&before), &kept).is_ok());
+        assert!(birth_kept(&directory, Some(&before), &kept).is_ok());
+        // One said with none, as on a hub from before grants, stays still to
+        // be found: no assistance given since is taken for it.
+        let mut unnamed = conversation();
+        unnamed.birth.generation = Some(OPENED.parse().expect("a time"));
+        unnamed.birth.assisted = true;
+        let (changed, _) = birth(Some(OPENED), Some(GIVEN)).kept(&directory, &host(), &mut unnamed).expect("kept");
+        assert!(!changed && unnamed.birth.born_under.is_none());
+        let mut taken = unnamed.clone();
+        taken.birth.born_under = Some(grant(GIVEN));
+        assert!(birth_kept(&directory, Some(&unnamed), &taken).is_err());
         // A write may not find one the hub does not give.
         let mut wrong = before.clone();
         wrong.birth.born_under = Some(grant("g-00000000000000cc"));
         wrong.birth.claimed_under = None;
-        assert!(birth_kept(&directory, &host(), Some(&before), &wrong).is_err());
+        assert!(birth_kept(&directory, Some(&before), &wrong).is_err());
     }
 
     #[test]
@@ -385,10 +401,10 @@ mod tests {
         assert!(kept.birth.generation.is_none());
         let mut written = conversation();
         written.birth.generation = Some(OTHER.parse().expect("a time"));
-        assert!(birth_kept(&directory, &host(), None, &written).is_err());
+        assert!(birth_kept(&directory, None, &written).is_err());
         // Nor is a found assistance written without it.
         let mut partial = conversation();
         partial.birth.born_under = Some(grant(GIVEN));
-        assert!(birth_kept(&directory, &host(), None, &partial).is_err());
+        assert!(birth_kept(&directory, None, &partial).is_err());
     }
 }

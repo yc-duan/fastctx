@@ -34,6 +34,7 @@ pub(super) async fn locate(
         hub: scope.hub.clone(),
         account: scope.account.clone(),
         hands: true,
+        born: None,
     };
     let Some(owner) = owner else {
         return copies::prepare(node, &asker, None, name, None).await.map(|(skill, path)| (skill, Some(path)));

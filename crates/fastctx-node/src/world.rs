@@ -1196,6 +1196,7 @@ impl fastctx_net::link::Node for Handler {
                             options,
                             attachments,
                             choices,
+                            asker.born.clone(),
                         )
                         .await?;
                         Ok(RemoteReply::Opened { resident, landed })

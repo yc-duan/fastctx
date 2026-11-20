@@ -294,9 +294,8 @@ pub(crate) async fn ask_as(
                     }
                     // What it was born as is kept once, whole and as it
                     // holds, however the write comes (`owned_records::birth_kept`).
-                    let born_on = ownership.previous.first().unwrap_or(&ownership.address.machine);
                     if before.is_none() {
-                        crate::owned_records::birth_kept(&store.book.directory, born_on, None, &ownership)?;
+                        crate::owned_records::birth_kept(&store.book.directory, None, &ownership)?;
                     }
                     if let Some(before) = before {
                         if before.metadata.deleted {
@@ -305,13 +304,15 @@ pub(crate) async fn ask_as(
                         let old: fastctx_types::owned_records::Conversation =
                             serde_json::from_value(storage::read(&slot.path(&kind, &key))?.body)
                                 .map_err(|error| error.to_string())?;
-                        crate::owned_records::birth_kept(&store.book.directory, born_on, Some(&old), &ownership)?;
+                        crate::owned_records::birth_kept(&store.book.directory, Some(&old), &ownership)?;
                         if old.account != ownership.account
                             || old.shared_on != ownership.shared_on
                             || old.born_seal != ownership.born_seal
                             || (!store.book.directory.same(&ownership.address.machine, &old.address.machine)
                                 && !ownership.previous.contains(&old.address.machine))
-                            || !old.previous.iter().all(|machine| ownership.previous.contains(machine))
+                            // Its earlier addresses stay, in order: one is
+                            // only added after them, never before.
+                            || !ownership.previous.starts_with(&old.previous)
                         {
                             return Err("a conversation's birth ownership cannot be rewritten".into());
                         }

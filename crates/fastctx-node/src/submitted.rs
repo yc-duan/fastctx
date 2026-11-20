@@ -239,6 +239,20 @@ where
     });
 }
 
+/// `register` for a family whose entrance may record what it resolved
+/// (`submit_resolving`): `doing` is given what was, none for a call asked
+/// before its entrance resolved anything, or asked by one that does not.
+pub(crate) fn register_with<C, R, T, F, Doing>(node: &Arc<Node>, family: Family, doing: F)
+where
+    C: DeserializeOwned + Send + 'static,
+    R: DeserializeOwned + Send + 'static,
+    T: Serialize + Send + 'static,
+    F: Fn(Arc<Node>, C, Option<R>) -> Doing + Send + Sync + 'static,
+    Doing: Future<Output = Result<T, Failure>> + Send + 'static,
+{
+    enlist(node, family, doing);
+}
+
 fn enlist<C, R, T, F, Doing>(node: &Arc<Node>, family: Family, doing: F)
 where
     C: DeserializeOwned + Send + 'static,

@@ -112,22 +112,29 @@ pub(crate) async fn register_at(
     if told.is_some() && node.registered.0.lock().expect("never poisoned").get(&key) == told.as_ref() {
         return Ok(());
     }
-    link.owned_records(
-        &scope.account,
-        fastctx_types::owned_records::Request::Register {
-            resident: resident.clone(),
-            shared,
-            previous,
-            born_at,
-            generation: born.as_ref().map(|born| born.generation),
-            assisted: born.as_ref().is_some_and(|born| born.assisted),
-            born_under: born.and_then(|born| born.grant),
-            colleague,
-        },
-    )
-    .await
-    .map_err(fastctx_types::ipc::Failure::new)?;
-    if let Some(told) = told {
+    let answered = link
+        .owned_records(
+            &scope.account,
+            fastctx_types::owned_records::Request::Register {
+                resident: resident.clone(),
+                shared,
+                previous,
+                born_at,
+                generation: born.as_ref().map(|born| born.generation),
+                assisted: born.as_ref().is_some_and(|born| born.assisted),
+                born_under: born.and_then(|born| born.grant),
+                colleague,
+            },
+        )
+        .await
+        .map_err(fastctx_types::ipc::Failure::new)?;
+    // What it was born as counts as told only where the hub kept it, so a hub
+    // that did not, from before it kept births, is told again
+    // (codex-87c8bbd9).
+    let kept = matches!(&answered, fastctx_types::owned_records::Response::Conversation { conversation }
+        if conversation.birth.generation.is_some());
+    if let Some(mut told) = told {
+        told.born &= kept;
         node.registered.0.lock().expect("never poisoned").insert(key, told);
     }
     Ok(())

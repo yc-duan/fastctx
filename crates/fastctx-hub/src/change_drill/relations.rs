@@ -104,8 +104,21 @@ pub(super) fn exercise(root: &Path, base: &Path, seed: u64, kind: &str, round: u
         (cut(&mut left_receivers[0]), cut(&mut right_receivers[0]))
     };
     anyhow::ensure!(cut_left == cut_right, "the same live streams cut");
-    let book_left = serde_json::to_value(&*left.store().book)?;
-    anyhow::ensure!(book_left == serde_json::to_value(&*right.store().book)?, "books equal after round {round}");
+    // Each hub gives an assistance a grant of its own at random: the books
+    // are the same but for those.
+    let without_grants = |mut book: Value| {
+        if let Some(assists) = book.get_mut("lends").and_then(Value::as_array_mut) {
+            for assist in assists.iter_mut().filter_map(Value::as_object_mut) {
+                assist.remove("grant");
+            }
+        }
+        book
+    };
+    let book_left = without_grants(serde_json::to_value(&*left.store().book)?);
+    anyhow::ensure!(
+        book_left == without_grants(serde_json::to_value(&*right.store().book)?),
+        "books equal after round {round}"
+    );
     anyhow::ensure!(
         left.store().indexed().all.shares.len() == left.store().book.directory.shares.len(),
         "the index rebuilt with the book"

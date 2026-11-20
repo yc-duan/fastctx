@@ -253,6 +253,7 @@ pub(crate) async fn prepare_for(
                 hub: scope.hub.clone(),
                 account: scope.account.clone(),
                 hands: true,
+                born: None,
             };
             Some(super::prepare_copy(node, &asker, owner, placement, resource.clone()).await?)
         } else {

@@ -64,7 +64,6 @@ pub(crate) fn born_as(
     home: Option<&std::path::Path>,
 ) -> Result<Vec<fastctx_types::residents::BornAs>, Failure> {
     let Acting::Accounts { accounts } = acting else { return Ok(Vec::new()) };
-    let here = node.machine();
     accounts
         .iter()
         .map(|account| {
@@ -79,34 +78,61 @@ pub(crate) fn born_as(
                 Err(_) if link.view().me().is_some_and(|me| me.home.as_ref() == Some(&account.account)) => link.view(),
                 Err(failure) => return Err(failure),
             };
-            let generation = view
-                .account(&account.account)
-                .ok_or_else(|| Failure::refused(format!("there is no account {} on its hub", account.account)))?
-                .opened;
-            let (assisted, grant) = if view.rights(&account.account, &here).hands {
-                (false, None)
-            } else {
-                let may = crate::homes::may_use_login(node, &view, &account.account, &here, agent, home)?;
-                match crate::homes::assistance(node, &view, &account.account, &here, agent, home)? {
-                    Some(assist) if may => (true, assist.grant),
-                    _ => {
-                        let login = home.map_or_else(|| "default".to_string(), |home| home.display().to_string());
-                        return Err(Failure::refused(format!(
-                            "the {agent} login {login} on {here} does not assist the account {}",
-                            account.account
-                        )));
-                    }
-                }
-            };
-            Ok(fastctx_types::residents::BornAs {
-                hub: account.hub.clone(),
-                account: account.account.clone(),
-                generation,
-                assisted,
-                grant,
-            })
+            born_by(node, &view, &account.hub, &account.account, agent, home)
         })
         .collect()
+}
+
+/// What `account` of `hub` is born as here in `agent`'s login `home`, as
+/// `view` says (`born_as`): read by the door as it lets a call to open one
+/// in, from the very view it lets it in by, as by `born_as` as it is born.
+pub(crate) fn born_by(
+    node: &Node,
+    view: &fastctx_net::directory::Directory,
+    hub: &fastctx_types::access::HubId,
+    account: &fastctx_types::AccountName,
+    agent: &fastctx_types::AgentName,
+    home: Option<&std::path::Path>,
+) -> Result<fastctx_types::residents::BornAs, Failure> {
+    let here = node.machine();
+    let generation = view
+        .account(account)
+        .ok_or_else(|| Failure::refused(format!("there is no account {account} on its hub")))?
+        .opened;
+    let (assisted, grant) = if view.rights(account, &here).hands {
+        (false, None)
+    } else {
+        let may = crate::homes::may_use_login(node, view, account, &here, agent, home)?;
+        match crate::homes::assistance(node, view, account, &here, agent, home)? {
+            Some(assist) if may => (true, assist.grant),
+            _ => {
+                let login = home.map_or_else(|| "default".to_string(), |home| home.display().to_string());
+                return Err(Failure::refused(format!(
+                    "the {agent} login {login} on {here} does not assist the account {account}"
+                )));
+            }
+        }
+    };
+    Ok(fastctx_types::residents::BornAs { hub: hub.clone(), account: account.clone(), generation, assisted, grant })
+}
+
+/// That a session about to be started or forked here is still born by the
+/// right it was born by, `born_as`, read again as late as can be before the
+/// host is asked anything (codex-87c8bbd9): an error otherwise, the denial
+/// of a hub that has not said again where that is why.
+pub(crate) fn still_born_as(
+    node: &Node,
+    acting: &Acting,
+    agent: &fastctx_types::AgentName,
+    home: Option<&std::path::Path>,
+    born: &[fastctx_types::residents::BornAs],
+) -> Result<(), Failure> {
+    if born_as(node, acting, agent, home)? != born {
+        return Err(Failure::refused(
+            "the right it was opened by no longer stands: the assistance or the account it was opened under has changed since",
+        ));
+    }
+    Ok(())
 }
 
 /// A session born working by an assistance is born in a login it knows by

@@ -43,6 +43,7 @@ fn request(node: &Arc<Node>, held: Arc<Held>) {
                 hub: held.account.hub.clone(),
                 account: held.account.account.clone(),
                 hands: true,
+                born: None,
             };
             match prepare(&node, &asker, None, &held.name, None).await {
                 Ok(_) => {

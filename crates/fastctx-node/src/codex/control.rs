@@ -355,6 +355,8 @@ async fn fork(
     let (spec, heard) =
         crate::colleagues::thread_spec(node, &id, &Origin::User, town.as_ref(), &source.acting, source.home.as_deref())
             .await?;
+    // Still born by that right as the fork is about to be made.
+    crate::assists::still_born_as(node, &source.acting, &source.host.agent, source.home.as_deref(), &born_as)?;
     // Until it is claimed below, reports of threads nobody claims are kept.
     let _starting = crate::codex::starting(node);
     let (fork, model) = codex.fork(thread, through.as_deref(), spec).await.map_err(|error| error.failure())?;

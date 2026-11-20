@@ -2292,8 +2292,21 @@ pub async fn open_here(
         queued::wait(node, id.clone());
         return Ok((id, queued.landed()));
     }
-    let landed = launch(node, &id).await?;
-    Ok((id, landed))
+    match launch(node, &id).await {
+        Ok(landed) => Ok((id, landed)),
+        // Its hub not having said again whether the right it was opened by
+        // stands, nothing was asked of Claude Code yet: it waits in line for
+        // that, its first words kept, rather than standing as if it had
+        // been started (codex-87c8bbd9).
+        Err(failure) if crate::authorization::view_pending(&failure) => {
+            queued::mark(&directory)
+                .map_err(|error| Failure::new(format!("keeping the first turn in line: {error}")))?;
+            queued::wait(node, id.clone());
+            let why = "its account's hub has not said again whether it may work here; it starts once it has";
+            Ok((id, Landed::Waiting { why: Some(why.to_string()), answered: true }))
+        }
+        Err(failure) => Err(failure),
+    }
 }
 
 /// Starts the session of the new conversation `id` with its first words,

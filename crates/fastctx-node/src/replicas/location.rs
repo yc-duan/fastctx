@@ -83,6 +83,7 @@ pub(crate) async fn prepare(
                 hub: account.hub.clone(),
                 account: account.account.clone(),
                 hands: true,
+                born: None,
             };
             match crate::placement::prepare_copy(node, &asker, owner.clone(), 0, resource.clone()).await {
                 Ok(location) => {

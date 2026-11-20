@@ -1346,6 +1346,9 @@ pub async fn open_here(
     let (spec, heard) =
         crate::colleagues::thread_spec(node, &id, &origin, town.as_ref(), &opened.acting, opened.home.as_deref())
             .await?;
+    // Still born by the right it was let in by, read again as the thread is
+    // about to be made (codex-87c8bbd9).
+    crate::assists::still_born_as(node, &opened.acting, &agent, opened.home.as_deref(), &opened.born_as)?;
     // Until it is claimed below, reports of threads nobody claims are kept.
     let _starting = crate::codex::starting(node);
     let (thread, model) = node
