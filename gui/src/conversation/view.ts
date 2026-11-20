@@ -3405,13 +3405,18 @@ export class ConversationView {
     const deferred = owners.filter((owner) => this.conversation.deferred(owner));
     if (deferred.length) queueMicrotask(() => {
       if (!content.isConnected || !row.contains(content)) return;
+      // A card's whole event is its raw words: the way to read it all ends
+      // them, opened from the card's foot, not a line under the card that
+      // belongs to nothing (the user, 2026-11-20: under a picture's card).
+      const raws = content.querySelectorAll<HTMLElement>(".dd-foot .fold-inner");
+      const at = raws.length === 1 ? raws[0]! : content;
       for (const owner of deferred.filter((owner) => this.conversation.deferred(owner))) {
         const button = document.createElement("button");
         button.type = "button";
         button.className = "tool-more";
         button.dataset.eventWhole = owner;
         button.textContent = this.context.words.showMore;
-        content.append(button);
+        at.append(button);
       }
     });
     if (card) {

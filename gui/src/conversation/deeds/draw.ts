@@ -350,7 +350,12 @@ function foot(words: DeedWords, raw: () => HTMLElement, ending: string): HTMLEle
   const inner = fold.querySelector<HTMLElement>(".fold-inner")!;
   button.addEventListener("click", () => {
     const open = button.getAttribute("aria-expanded") !== "true";
-    if (open && !inner.childElementCount) inner.append(raw());
+    // Drawn once, before what the row puts at its end (`view.ts`, the way to
+    // read the whole of a cut event).
+    if (open && !inner.dataset.drawn) {
+      inner.prepend(raw());
+      inner.dataset.drawn = "1";
+    }
     button.setAttribute("aria-expanded", String(open));
     fold.classList.toggle("open", open);
   });
