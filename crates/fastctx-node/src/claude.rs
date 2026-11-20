@@ -181,6 +181,19 @@ impl Claude {
         self.handed.lock().expect("never poisoned").entry(resident.clone()).or_default().push(text.to_string());
     }
 
+    /// Takes back words `handing` told of that were not handed after all.
+    fn unhanding(&self, resident: &ResidentId, text: &str) {
+        let mut handed = self.handed.lock().expect("never poisoned");
+        if let Some(texts) = handed.get_mut(resident) {
+            if let Some(at) = texts.iter().rposition(|handed| handed == text) {
+                texts.remove(at);
+            }
+            if texts.is_empty() {
+                handed.remove(resident);
+            }
+        }
+    }
+
     /// Whether the user's message `text` Claude Code reports keeping in
     /// `resident`'s session is words the World handed it as the user's. The
     /// World shows those as it heard them, so the host's own record of them
@@ -2309,6 +2322,9 @@ pub async fn open_here(
 /// go of, in line as one waiting for its login, its first words kept.
 fn back_in_line(node: &Arc<Node>, id: &ResidentId, failure: Failure) -> Result<Landed, Failure> {
     node.log.line(format_args!("lifecycle {id}: its first session waits: {}", failure.message));
+    // Marked in line first, so that a node stopped meanwhile finds it there.
+    queued::mark(&node.world.conversation(id))
+        .map_err(|error| Failure::new(format!("keeping the first turn in line: {error}")))?;
     node.residents
         .change_now(&node.world, id, |now| {
             now.activity = Activity::Idle;
@@ -2316,18 +2332,8 @@ fn back_in_line(node: &Arc<Node>, id: &ResidentId, failure: Failure) -> Result<L
         })
         .map_err(|error| Failure::new(format!("letting {id}'s first turn wait: {error}")))?;
     if let Some((about, _)) = node.residents.about(id) {
-        let end = fastctx_types::session::TurnEnd {
-            how: fastctx_types::session::TurnHow::Interrupted,
-            reason: Some(failure.message.clone()),
-            error: None,
-            duration_ms: None,
-            facts: None,
-            last_message: None,
-        };
-        crate::turn_slots::ended(node, id, &about, &end);
+        crate::turn_slots::unstarted(node, id, &about);
     }
-    queued::mark(&node.world.conversation(id))
-        .map_err(|error| Failure::new(format!("keeping the first turn in line: {error}")))?;
     queued::wait(node, id.clone());
     Ok(Landed::Waiting { why: Some(failure.message), answered: true })
 }
@@ -2400,6 +2406,17 @@ pub(super) async fn begin_launch(node: &Arc<Node>, id: &ResidentId, prepared: Pr
     // Until the World knows which session this is, a Claude session's MCP
     // connection it cannot place waits, rather than becoming someone new.
     let _birth = node.claude.births.read().await;
+    // Read again as Claude Code is about to be asked, after the waits for
+    // memory and for the births gate: nothing is asked where it may no
+    // longer be started, which goes back in line, as not asked
+    // (codex-87c8bbd9).
+    if let Some((about, _)) = node.residents.about(id)
+        && let Err(failure) = crate::assists::may_still_start(node, &about)
+    {
+        drop(_birth);
+        node.claude.unhanding(id, &text);
+        return back_in_line(node, id, failure);
+    }
     let began = first.since.unwrap_or(first.delivery.at);
     let since = move || Timestamp::now().as_millisecond().saturating_sub(began.as_millisecond());
     node.log.line(format_args!("lifecycle {id}: launching its first session, {} ms after it was opened", since()));

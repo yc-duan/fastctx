@@ -59,8 +59,10 @@ pub(super) fn wait(node: &Arc<Node>, id: ResidentId) {
             let Some((about, _)) = node.residents.about(&id) else { return };
             // Held back as any wake is: while its account is in Connect, its
             // home is away, its assistance or its project's access does not
-            // hold.
+            // hold; and while it may not be started as it was born, before it
+            // takes a turn of its login (codex-87c8bbd9).
             if crate::lifecycle::wake::check(&node, &id, &about).await.is_err()
+                || crate::assists::may_still_start(&node, &about).is_err()
                 || crate::turn_slots::admit(&node, &id, &about).is_err()
             {
                 tokio::time::sleep(ASK_AGAIN).await;
@@ -69,6 +71,8 @@ pub(super) fn wait(node: &Arc<Node>, id: ResidentId) {
             let prepared = match super::prepare_launch(&node, &id).await {
                 Ok(prepared) => prepared,
                 Err(failure) => {
+                    // The turn of its login it took goes to the next meanwhile.
+                    crate::turn_slots::unstarted(&node, &id, &about);
                     node.log.line(format_args!(
                         "preparing {id}'s first turn, which waited for its login; tried again in {} s: {}",
                         again.as_secs(),
@@ -87,6 +91,7 @@ pub(super) fn wait(node: &Arc<Node>, id: ResidentId) {
                 })
                 .and_then(|()| unmark(&directory));
             if let Err(error) = started {
+                crate::turn_slots::unstarted(&node, &id, &about);
                 node.log
                     .line(format_args!("starting {id}'s first turn, which waited for its login; tried again: {error}"));
                 tokio::time::sleep(again).await;
