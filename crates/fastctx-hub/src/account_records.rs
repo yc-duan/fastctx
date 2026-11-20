@@ -305,14 +305,19 @@ pub(crate) async fn ask_as(
                             serde_json::from_value(storage::read(&slot.path(&kind, &key))?.body)
                                 .map_err(|error| error.to_string())?;
                         crate::owned_records::birth_kept(&store.book.directory, Some(&old), &ownership)?;
+                        // Its earlier addresses are what a move makes of them
+                        // (`registration`): as they were where it stays, with
+                        // the one it leaves added after them where it moves;
+                        // where it was born is never written anew (codex-87c8bbd9).
+                        let moved = !store.book.directory.same(&ownership.address.machine, &old.address.machine);
+                        let mut previous = old.previous.clone();
+                        if moved && !previous.contains(&old.address.machine) {
+                            previous.push(old.address.machine.clone());
+                        }
                         if old.account != ownership.account
                             || old.shared_on != ownership.shared_on
                             || old.born_seal != ownership.born_seal
-                            || (!store.book.directory.same(&ownership.address.machine, &old.address.machine)
-                                && !ownership.previous.contains(&old.address.machine))
-                            // Its earlier addresses stay, in order: one is
-                            // only added after them, never before.
-                            || !ownership.previous.starts_with(&old.previous)
+                            || ownership.previous != previous
                         {
                             return Err("a conversation's birth ownership cannot be rewritten".into());
                         }

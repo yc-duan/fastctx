@@ -135,6 +135,20 @@ pub(crate) fn still_born_as(
     Ok(())
 }
 
+/// `still_born_as` as a host's last question before it is asked to make a
+/// thread or fork: what it refuses, it says in words.
+pub(crate) fn still(
+    node: &std::sync::Arc<Node>,
+    acting: &Acting,
+    agent: &fastctx_types::AgentName,
+    home: Option<&std::path::Path>,
+    born: &[fastctx_types::residents::BornAs],
+) -> impl Fn() -> Result<(), String> + Send + Sync + use<> {
+    let (node, acting, agent, home, born) =
+        (node.clone(), acting.clone(), agent.clone(), home.map(std::path::Path::to_path_buf), born.to_vec());
+    move || still_born_as(&node, &acting, &agent, home.as_deref(), &born).map_err(|failure| failure.message)
+}
+
 /// A session born working by an assistance is born in a login it knows by
 /// its id, or not at all: what it was born under is what ending the
 /// assistance takes away (design-forget-account-v2.md F0, codex-d1962125).

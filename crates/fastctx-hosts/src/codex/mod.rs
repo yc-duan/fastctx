@@ -512,9 +512,16 @@ impl CodexHost {
     /// Starts a thread without a turn, so the caller can record it before
     /// any event of its first turn. Persists the empty thread before returning
     /// its ID and model, so an idle app-server replacement can resume it.
-    pub async fn start_thread(self: &Arc<Self>, spec: ThreadSpec) -> Result<(String, Option<String>), String> {
+    /// `still` is asked last, as the thread is about to be asked for:
+    /// whatever it refuses, nothing was asked of Codex.
+    pub async fn start_thread(
+        self: &Arc<Self>,
+        spec: ThreadSpec,
+        still: impl Fn() -> Result<(), String> + Send + Sync,
+    ) -> Result<(String, Option<String>), String> {
         let server = self.server().await?;
         let effective = user_config::effective(&server, &spec, self.assisted.is_some()).await?;
+        still()?;
         let answer = server
             .request(
                 "thread/start",

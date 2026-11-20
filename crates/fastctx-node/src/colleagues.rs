@@ -303,14 +303,14 @@ pub async fn ask_here(
     let origin = Origin::Colleague { asked_by: asker.clone(), label };
     let _birth = crate::here::born(node, &id, acting.clone(), origin.clone());
     let (spec, heard) = thread_spec(node, &id, &origin, town.as_ref(), &acting, home.as_deref()).await?;
-    // Still born by that right as the thread is about to be made.
-    crate::assists::still_born_as(node, &acting, &agent, home.as_deref(), &born_as)?;
     // Until it is claimed below, reports of threads nobody claims are kept.
     let _starting = crate::codex::starting(node);
+    // Still born by that right as the thread is asked for.
+    let still = crate::assists::still(node, &acting, &agent, home.as_deref(), &born_as);
     let (thread, model) = node
         .codex
         .session(home.as_deref(), crate::assists::host::kept(node, &id)?.unwrap_or(false))?
-        .start_thread(spec)
+        .start_thread(spec, still)
         .await
         .map_err(|error| {
             Failure::new(format!("starting Codex on {}, where colleagues live: {error}", node.machine()))
