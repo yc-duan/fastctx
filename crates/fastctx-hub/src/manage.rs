@@ -1652,8 +1652,11 @@ fn delete_account(
         // gave others goes with them, ended only.
         // Those that may keep copies of what goes, as they are now, before
         // its logins are taken away (codex-d515b194).
-        let audience = crate::forget::accounts::audience(store, name);
         let directory = &store.book.directory;
+        let audience: std::collections::BTreeSet<_> = crate::forget::accounts::audience(store, name)
+            .iter()
+            .filter_map(|machine| directory.member(machine).map(|member| member.key))
+            .collect();
         let given: Vec<_> = directory
             .assists
             .iter()

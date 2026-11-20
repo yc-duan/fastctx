@@ -58,9 +58,7 @@ pub(super) async fn delete(
         .entries
         .values()
         .filter(|entry| {
-            (entry.metadata.kind == fastctx_types::plan::KIND && entry.metadata.key == resident.as_str())
-                || (entry.metadata.kind == fastctx_types::history::RECORD_KIND
-                    && entry.metadata.key.strip_prefix(resident.as_str()).is_some_and(|suffix| suffix.starts_with('/')))
+            account_records::staged::documents_of(&entry.metadata.kind, &entry.metadata.key, resident.as_str())
         })
         .map(|entry| entry.metadata.clone())
         .collect();
@@ -82,6 +80,28 @@ pub(super) async fn delete(
             .map_err(|error| error.to_string())?
             .map_err(|error| error.to_string())?;
     }
+    staged_gone(&slot, resident).await
+}
+
+/// Lets go of what of the conversation `resident`'s documents is staged in
+/// `slot` and was never published, with a file published of one the index
+/// does not keep (`staged::let_go_of`): its text, taken by the asset library
+/// or not, is on the disk all the same (codex-d515b194). Under the records'
+/// lock, none of them is staged meanwhile.
+async fn staged_gone(slot: &Arc<account_records::storage::Slot>, resident: &ResidentId) -> Result<(), String> {
+    let records = slot.records.lock().await;
+    let indexed: std::collections::BTreeSet<(String, String)> = records
+        .entries
+        .keys()
+        .filter(|(kind, key)| account_records::staged::documents_of(kind, key, resident.as_str()))
+        .cloned()
+        .collect();
+    let (held, of) = (slot.clone(), resident.to_string());
+    fastctx_platform::task::spawn_blocking(move || account_records::staged::let_go_of(&held, &of, &indexed))
+        .await
+        .map_err(|error| error.to_string())?
+        .map_err(|error| error.to_string())?;
+    drop(records);
     Ok(())
 }
 
@@ -197,9 +217,7 @@ pub(crate) async fn erase(
         .entries
         .values()
         .filter(|entry| {
-            (entry.metadata.kind == fastctx_types::plan::KIND && entry.metadata.key == resident.as_str())
-                || (entry.metadata.kind == fastctx_types::history::RECORD_KIND
-                    && entry.metadata.key.strip_prefix(resident.as_str()).is_some_and(|suffix| suffix.starts_with('/')))
+            account_records::staged::documents_of(&entry.metadata.kind, &entry.metadata.key, resident.as_str())
         })
         .map(|entry| entry.metadata.clone())
         .collect();
@@ -222,5 +240,6 @@ pub(crate) async fn erase(
             .map_err(|error| error.to_string())?
             .map_err(|error| error.to_string())?;
     }
+    staged_gone(&slot, resident).await?;
     Ok(Erased::Gone)
 }

@@ -67,9 +67,11 @@ pub(crate) struct Purge {
     pub(crate) waiting: Option<String>,
     /// The machines that may keep copies of what goes, as they were as it
     /// was ended: those logged in to the account then, which its removal
-    /// takes away (codex-d515b194).
+    /// takes away (codex-d515b194). By their keys: one renamed since is told
+    /// under its name now, and one that took the name of one gone is not
+    /// told (codex-d515b194).
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
-    pub(crate) audience: BTreeSet<MachineName>,
+    pub(crate) audience: BTreeSet<PublicKey>,
 }
 
 /// Where a purge stands.
@@ -126,17 +128,16 @@ impl Purge {
 }
 
 /// Whether the conversation `resident` that `account`, as `opened`, opened
-/// is being deleted for a purge, decided to go and not yet gone: it moves no
-/// more, as the hub would delete it from where it was (codex-87c8bbd9).
+/// was deleted for a purge, or is being: decided to go, gone, or out of the
+/// hub's reach. It moves no more, and is not registered anew, wherever it
+/// comes from, however late: the hub let go of what it keeps of it for good
+/// (codex-87c8bbd9, a copy taken elsewhere before it went, registered after
+/// its purge was done). One kept stays as it was.
 pub(crate) fn deleting(purges: &Purges, account: &AccountName, opened: Timestamp, resident: &str) -> bool {
     purges.kept.iter().any(|purge| {
-        purge.open()
-            && purge.account == *account
+        purge.account == *account
             && purge.generation == opened
-            && purge
-                .items
-                .iter()
-                .any(|(id, item)| id.as_str() == resident && matches!(item.fate, Fate::Going | Fate::GoneThere))
+            && purge.items.iter().any(|(id, item)| id.as_str() == resident && !matches!(item.fate, Fate::Kept { .. }))
     })
 }
 
@@ -157,7 +158,7 @@ pub(crate) struct Ended {
     /// The machines that may keep copies of it, frozen as it ends
     /// (`Purge::audience`); none where the account stays, as those logged in
     /// to it are found as its conversations go.
-    pub(crate) audience: BTreeSet<MachineName>,
+    pub(crate) audience: BTreeSet<PublicKey>,
 }
 
 /// Keeps the purge of the assistance `ended`, in the commit that ends it:

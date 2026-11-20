@@ -52,6 +52,58 @@ pub(crate) fn publish(
     }
 }
 
+/// Whether the record `kind` `key` is one of the conversation `resident`'s
+/// documents: its plan, or a page of its history.
+pub(crate) fn documents_of(kind: &str, key: &str, resident: &str) -> bool {
+    (kind == fastctx_types::plan::KIND && key == resident)
+        || (kind == fastctx_types::history::RECORD_KIND
+            && key.strip_prefix(resident).is_some_and(|suffix| suffix.starts_with('/')))
+}
+
+/// Lets go of each revision of the conversation `resident`'s documents
+/// staged in `slot` and never published, as the conversation is erased
+/// (`crate::owned_records::deletion::erase`): its text is on the disk
+/// whether the asset library took it or not (codex-d515b194). A file
+/// published of one the account's index does not keep, `indexed` saying
+/// which it does, goes too, with the revisions kept before it. One staged
+/// that cannot be read is not known to be the conversation's, and stays.
+/// Says how many went.
+pub(crate) fn let_go_of(
+    slot: &Slot,
+    resident: &str,
+    indexed: &std::collections::BTreeSet<(String, String)>,
+) -> std::io::Result<usize> {
+    let files = match fastctx_platform::disk::read_dir(slot.root()) {
+        Ok(files) => files,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+        Err(error) => return Err(error),
+    };
+    let gone_if_there = |path: &Path| match fastctx_platform::disk::remove_file(path) {
+        Err(error) if error.kind() != std::io::ErrorKind::NotFound => Err(error),
+        _ => Ok(()),
+    };
+    let mut gone = 0;
+    for file in files {
+        let staged = file?.path();
+        if !is_staged(&staged) {
+            continue;
+        }
+        let bytes = fastctx_platform::disk::read(&staged)?;
+        let Ok(record) = serde_json::from_slice::<Record>(&bytes) else { continue };
+        let (kind, key) = (&record.metadata.kind, &record.metadata.key);
+        if !documents_of(kind, key, resident) || path(slot, kind, key) != staged {
+            continue;
+        }
+        if !indexed.contains(&(kind.clone(), key.clone())) {
+            gone_if_there(&slot.path(kind, key))?;
+        }
+        super::history::delete(&slot.history(kind, key))?;
+        gone_if_there(&staged)?;
+        gone += 1;
+    }
+    Ok(gone)
+}
+
 /// Whether revisions of `kind` are kept beside the record.
 pub(crate) fn archived(kind: &str) -> bool {
     matches!(kind, fastctx_types::plan::KIND | fastctx_types::history::RECORD_KIND)
@@ -107,4 +159,54 @@ pub(crate) fn settle(
         },
     );
     Ok(Settled::Published)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use fastctx_types::account_records::Metadata;
+
+    fn plan(resident: &str) -> (Record, Vec<u8>) {
+        let record = Record {
+            metadata: Metadata {
+                kind: fastctx_types::plan::KIND.into(),
+                key: resident.into(),
+                version: 1,
+                by: None,
+                at: jiff::Timestamp::UNIX_EPOCH,
+                deleted: false,
+            },
+            body: serde_json::json!({ "text": "what only its conversation knows" }),
+        };
+        let bytes = serde_json::to_vec(&record).expect("json");
+        (record, bytes)
+    }
+
+    #[test]
+    fn a_conversations_staged_text_goes_with_it() {
+        let dir = super::super::storage::tests::Scratch::new("staged");
+        let directory: fastctx_net::directory::Directory =
+            serde_json::from_value(serde_json::json!({"accounts": [], "members": [], "projects": []}))
+                .expect("a directory");
+        let records = super::super::storage::Records::open(&dir.0, &directory).expect("records");
+        let slot = records.account(&"carol".parse().expect("an account"), jiff::Timestamp::UNIX_EPOCH);
+        let kind = fastctx_types::plan::KIND;
+        let (_, gone) = plan("r-0a1b");
+        let (_, stays) = plan("r-2c3d");
+        stage(&path(&slot, kind, "r-0a1b"), &gone).expect("staged");
+        stage(&path(&slot, kind, "r-2c3d"), &stays).expect("staged");
+        // Published as the library took it, the index not following.
+        fastctx_platform::disk::write(slot.path(kind, "r-0a1b"), &gone).expect("written");
+        let let_go = let_go_of(&slot, "r-0a1b", &std::collections::BTreeSet::new()).expect("let go of");
+        assert_eq!(let_go, 1);
+        assert!(!fastctx_platform::disk::is_there(path(&slot, kind, "r-0a1b")), "its staged text goes");
+        assert!(!fastctx_platform::disk::is_there(slot.path(kind, "r-0a1b")), "its file the index does not keep goes");
+        assert!(fastctx_platform::disk::is_there(path(&slot, kind, "r-2c3d")), "another conversation's stays");
+        // One the index keeps is as the deletion left it.
+        stage(&path(&slot, kind, "r-0a1b"), &gone).expect("staged");
+        fastctx_platform::disk::write(slot.path(kind, "r-0a1b"), b"tombstone").expect("written");
+        let indexed = std::collections::BTreeSet::from([(kind.to_string(), "r-0a1b".to_string())]);
+        assert_eq!(let_go_of(&slot, "r-0a1b", &indexed).expect("let go of"), 1);
+        assert!(fastctx_platform::disk::is_there(slot.path(kind, "r-0a1b")), "the file the index keeps stays");
+    }
 }

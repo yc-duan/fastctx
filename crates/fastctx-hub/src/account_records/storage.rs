@@ -104,8 +104,8 @@ impl Records {
     /// its disk where the hub let go of them since it opened, for the hub to
     /// let go of what is purged of it (`crate::purges`): a slot made anew is
     /// otherwise empty, and what it keeps would be taken for none
-    /// (codex-d515b194). One read already, or written to since it was made,
-    /// is as it stands.
+    /// (codex-d515b194). One read already is as it stands; what was written
+    /// to it since it was made stands over what its disk keeps.
     pub fn reopen(
         &self,
         name: &AccountName,
@@ -116,15 +116,16 @@ impl Records {
         if slot.loaded.load(Ordering::Acquire) {
             return Ok(());
         }
-        if !account.entries.is_empty() {
-            slot.loaded.store(true, Ordering::Release);
-            return Ok(());
-        }
         self.fill(name, opened, slot, account, false)
     }
 
     /// Reads `slot`'s records from its disk into `account`; as the hub opens,
-    /// `staging` the revisions found staged, to be settled.
+    /// `staging` the revisions found staged, to be settled. They are read
+    /// whole before any of them is taken: one that cannot be read leaves
+    /// `account` and the hub's index as they were, to be read again, and not
+    /// taken for whole as read in part (codex-87c8bbd9, codex-d515b194). What
+    /// `account` holds already, written since its slot was made, stands over
+    /// what its disk keeps.
     fn fill(
         &self,
         name: &AccountName,
@@ -133,6 +134,9 @@ impl Records {
         account: &mut Account,
         staging: bool,
     ) -> std::io::Result<()> {
+        // A skill change committed and not yet written out is written first,
+        // into what `account` holds, as each asking does.
+        crate::skill_storage::recover(slot, account).map_err(std::io::Error::other)?;
         let files = match fastctx_platform::disk::read_dir(&slot.dir) {
             Ok(files) => files,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
@@ -141,11 +145,14 @@ impl Records {
             }
             Err(error) => return Err(error),
         };
+        let mut read = Account::default();
+        let mut owned = Vec::new();
+        let mut staged = Vec::new();
         for file in files {
             let path = file?.path();
             if super::staged::is_staged(&path) {
                 if staging {
-                    self.staged.lock().expect("never poisoned").push(((name.clone(), opened), path));
+                    staged.push(((name.clone(), opened), path));
                 }
                 continue;
             }
@@ -157,27 +164,47 @@ impl Records {
             let bytes = fastctx_platform::disk::read(&path)?;
             let record: Record = serde_json::from_slice(&bytes).map_err(std::io::Error::other)?;
             let metadata = record.metadata.clone();
-            if metadata.kind == fastctx_types::owned_records::KIND && !metadata.deleted {
-                let conversation = serde_json::from_value(record.body.clone()).map_err(std::io::Error::other)?;
-                self.owners.lock().expect("never poisoned").take(name, opened, &metadata.key, Some(conversation));
-            }
             if slot.path(&metadata.kind, &metadata.key) != path {
                 return Err(std::io::Error::other(format!("unexpected record path {}", path.display())));
             }
+            if metadata.kind == fastctx_types::owned_records::KIND && !metadata.deleted {
+                let conversation: fastctx_types::owned_records::Conversation =
+                    serde_json::from_value(record.body.clone()).map_err(std::io::Error::other)?;
+                owned.push((metadata.key.clone(), conversation));
+            }
             let history = history_head(&record)?;
-            account.bytes += bytes.len();
-            account.entries.insert(
+            read.bytes += bytes.len();
+            read.entries.insert(
                 (metadata.kind.clone(), metadata.key.clone()),
                 Entry { metadata, size: bytes.len(), history, conversation: record_conversation(&record) },
             );
         }
-        crate::skill_storage::recover(slot, account).map_err(std::io::Error::other)?;
-        for entry in account.entries.values().filter(|entry| {
+        for entry in read.entries.values().filter(|entry| {
             entry.metadata.deleted
-                && matches!(entry.metadata.kind.as_str(), fastctx_types::plan::KIND | fastctx_types::history::RECORD_KIND)
+                && matches!(
+                    entry.metadata.kind.as_str(),
+                    fastctx_types::plan::KIND | fastctx_types::history::RECORD_KIND
+                )
         }) {
             super::history::delete(&slot.history(&entry.metadata.kind, &entry.metadata.key))?;
         }
+        // Read whole: taken.
+        {
+            let mut owners = self.owners.lock().expect("never poisoned");
+            for (key, conversation) in owned {
+                if !account.entries.contains_key(&(fastctx_types::owned_records::KIND.to_string(), key.clone())) {
+                    owners.take(name, opened, &key, Some(conversation));
+                }
+            }
+        }
+        self.staged.lock().expect("never poisoned").extend(staged);
+        for (identity, entry) in std::mem::take(&mut account.entries) {
+            if let Some(before) = read.entries.insert(identity, entry) {
+                read.bytes -= before.size;
+            }
+        }
+        read.bytes += account.bytes;
+        *account = read;
         slot.count.store(account.entries.len(), Ordering::Relaxed);
         slot.bytes.store(account.bytes, Ordering::Relaxed);
         slot.loaded.store(true, Ordering::Release);
@@ -234,8 +261,15 @@ impl Records {
     /// where they are.
     pub fn settle(&self, directory: &fastctx_net::directory::Directory) {
         let kept = self.owners.lock().expect("never poisoned").body_openers();
-        self.accounts.lock().expect("never poisoned").retain(|(name, opened), _| {
-            directory.account(name).is_some_and(|account| account.opened == *opened) || kept.contains(&(name.clone(), *opened))
+        self.accounts.lock().expect("never poisoned").retain(|(name, opened), slot| {
+            directory.account(name).is_some_and(|account| account.opened == *opened)
+                || kept.contains(&(name.clone(), *opened))
+                // One held still, as by the hub letting go of a removed
+                // account's own (`crate::purges`), stays the one slot of its
+                // folder: one made anew beside it would be read and written
+                // under another lock (codex-d515b194). It goes as a later
+                // change settles them, let go of then.
+                || Arc::strong_count(slot) > 1
         });
     }
 
@@ -275,5 +309,94 @@ pub(crate) fn record_conversation(record: &Record) -> Option<String> {
         "goal_text" | "goal_history" | "goal_writes" => record.body["resident"].as_str().map(str::to_owned),
         "sentinel" => record.body["definition"]["owner"]["resident"].as_str().map(str::to_owned),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+pub(crate) mod tests {
+    use super::*;
+
+    /// A folder of its own, gone with it.
+    pub(crate) struct Scratch(pub(crate) PathBuf);
+
+    impl Scratch {
+        pub(crate) fn new(name: &str) -> Self {
+            let dir = std::env::temp_dir().join(format!("hub-records-{name}-{}", std::process::id()));
+            let _ = fastctx_platform::disk::remove_dir_all(&dir);
+            fastctx_platform::disk::create_dir_all(&dir).expect("a folder");
+            Self(dir)
+        }
+    }
+
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = fastctx_platform::disk::remove_dir_all(&self.0);
+        }
+    }
+
+    fn directory() -> fastctx_net::directory::Directory {
+        serde_json::from_value(serde_json::json!({"accounts": [], "members": [], "projects": []})).expect("a directory")
+    }
+
+    fn record(key: &str, text: &str) -> Record {
+        Record {
+            metadata: Metadata {
+                kind: "note".into(),
+                key: key.into(),
+                version: 1,
+                by: None,
+                at: Timestamp::UNIX_EPOCH,
+                deleted: false,
+            },
+            body: serde_json::json!({ "text": text }),
+        }
+    }
+
+    fn write(slot: &Slot, record: &Record) {
+        fastctx_platform::disk::create_dir_all(slot.root()).expect("a folder");
+        let path = slot.path(&record.metadata.kind, &record.metadata.key);
+        fastctx_platform::disk::write(path, serde_json::to_vec(record).expect("json")).expect("written");
+    }
+
+    #[test]
+    fn a_slot_read_in_part_is_not_taken_for_whole() {
+        let dir = Scratch::new("part");
+        let records = Records::open(&dir.0, &directory()).expect("records");
+        let (name, opened): (AccountName, _) = ("carol".parse().expect("an account"), Timestamp::UNIX_EPOCH);
+        let slot = records.account(&name, opened);
+        write(&slot, &record("a", "kept"));
+        fastctx_platform::disk::write(slot.path("note", "b"), b"{").expect("written");
+        let mut account = Account::default();
+        assert!(records.reopen(&name, opened, &slot, &mut account).is_err());
+        assert!(account.entries.is_empty(), "nothing of a slot read in part is taken");
+        assert!(!slot.loaded.load(Ordering::Acquire), "a slot read in part is read again");
+        write(&slot, &record("b", "mended"));
+        // Written to since the slot was made: it stands over the disk.
+        let mut written = record("a", "newer");
+        written.metadata.version = 2;
+        account.entries.insert(
+            ("note".into(), "a".into()),
+            Entry { metadata: written.metadata.clone(), size: 7, history: None, conversation: None },
+        );
+        account.bytes = 7;
+        records.reopen(&name, opened, &slot, &mut account).expect("read whole");
+        assert_eq!(account.entries.len(), 2);
+        assert_eq!(account.entries[&("note".to_string(), "a".to_string())].metadata.version, 2);
+        let on_disk = fastctx_platform::disk::metadata(slot.path("note", "b")).expect("a file").len() as usize;
+        assert_eq!(account.bytes, 7 + on_disk);
+        assert!(slot.loaded.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn a_slot_held_stays_the_one_of_its_folder() {
+        let dir = Scratch::new("held");
+        let records = Records::open(&dir.0, &directory()).expect("records");
+        let (name, opened): (AccountName, _) = ("carol".parse().expect("an account"), Timestamp::UNIX_EPOCH);
+        let held = records.account(&name, opened);
+        records.settle(&directory());
+        assert!(Arc::ptr_eq(&held, &records.account(&name, opened)), "a slot held is not let go of");
+        drop(held);
+        records.settle(&directory());
+        assert!(records.accounts.lock().expect("never poisoned").is_empty(), "let go of once no one holds it");
     }
 }

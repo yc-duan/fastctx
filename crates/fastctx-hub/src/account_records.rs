@@ -350,11 +350,12 @@ async fn asked_of(
                             return Err("it was born under an assistance ended for good".into());
                         }
                         // Nor first registered, moved or not, under an id of
-                        // this account as opened being deleted for a purge:
-                        // the hub would delete what it needs (codex-87c8bbd9).
+                        // this account as opened deleted for a purge, or being:
+                        // the hub let go of what it would keep of it
+                        // (codex-87c8bbd9).
                         if crate::purges::deleting(&store.book.purges, &account, opened, &key) {
                             return Err(
-                                "a conversation of its id is being deleted here; register it again later".into()
+                                "a conversation of its id was deleted here with an assistance ended for good".into()
                             );
                         }
                     }

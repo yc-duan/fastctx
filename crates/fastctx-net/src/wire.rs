@@ -1221,6 +1221,12 @@ pub enum Change {
     /// Deletes an account: its machines leave the hub, what it shared and
     /// was shared and the assistance it gave and was given go, its projects
     /// are archived for the super administrator to hand on.
+    ///
+    /// Sent under a name of its own, which a hub that would delete by the
+    /// name alone does not know, and refuses, whichever hub the asking
+    /// reaches as it is sent (codex-d515b194); read under the earlier name
+    /// too, which says no opening, and is refused.
+    #[serde(rename = "delete_account_as_opened", alias = "delete_account")]
     DeleteAccount {
         name: AccountName,
         /// When the account was opened, as its deletion was asked: refused
