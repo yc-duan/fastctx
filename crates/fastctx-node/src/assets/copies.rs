@@ -360,6 +360,8 @@ pub(crate) fn settle(node: &Arc<Node>, now_rather: bool) -> Result<Arc<BTreeSet<
         held.iter().filter(|scope| paused(node, scope, None)).map(|scope| scope.key.clone()).collect();
     let owed = assets.copies.kept.lock().expect("copies").owed.clone();
     let mut released = BTreeSet::new();
+    // Those that could not be marked stay paused, and are said.
+    let mut unmarked: Option<(usize, String)> = None;
     for key in &owed {
         if !held_keys.contains(key.as_str()) || now.contains(key) {
             continue;
@@ -369,8 +371,10 @@ pub(crate) fn settle(node: &Arc<Node>, now_rather: bool) -> Result<Arc<BTreeSet<
             Ok(()) => {
                 released.insert(key.clone());
             }
-            Err(_) => {
+            Err(error) => {
                 now.insert(key.clone());
+                let (count, _) = unmarked.get_or_insert_with(|| (0, error.to_string()));
+                *count += 1;
             }
         }
     }
@@ -402,6 +406,11 @@ pub(crate) fn settle(node: &Arc<Node>, now_rather: bool) -> Result<Arc<BTreeSet<
         for link in node.links() {
             super::session::wake(node, link.hub());
         }
+    }
+    if let Some((count, first)) = unmarked {
+        return Err(format!(
+            "{count} conversations stay paused, as they could not be marked to be pulled again: {first}"
+        ));
     }
     Ok(now)
 }

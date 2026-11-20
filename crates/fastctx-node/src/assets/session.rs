@@ -299,6 +299,10 @@ async fn run(node: std::sync::Weak<Node>, hub: HubId, wake: Arc<tokio::sync::Not
 /// scope no more: not a failure.
 const REVOKED: &str = "no longer read here: ";
 
+/// What taking a stream's frames ends with when its scope was paused here
+/// meanwhile (`copies`): not a failure, nor taken whole.
+pub(super) const PAUSED: &str = "taken in here no more: ";
+
 /// Asks the hub `request` of a scope; where the hub says this machine reads
 /// the scope no more, its holding here ends (design §4.5, §6.3).
 pub(super) async fn ask(assets: &Assets, link: &Arc<Link>, request: Request) -> Result<Reply, String> {
@@ -708,7 +712,10 @@ async fn turn(
             && !why.starts_with(REVOKED)
         {
             whole_here = false;
-            failed.get_or_insert(format!("{scope}: {why}"));
+            // Paused part way, it is gone through again, and fails nothing.
+            if !why.starts_with(PAUSED) {
+                failed.get_or_insert(format!("{scope}: {why}"));
+            }
         }
     }
     // Not gone through whole, it is looked at by itself again next pass
@@ -1122,8 +1129,11 @@ async fn catch_up(
             pull_stream(assets, hub, link, key, &changed.scope, &changed.stream, holding, at, changed.next, Some(counted)).await
         }
         .await;
+        // Paused part way, it owes a whole pull already (`copies`): passed
+        // over, as one paused before it was begun.
         if let Err(why) = done
             && !why.starts_with(REVOKED)
+            && !why.starts_with(PAUSED)
         {
             failed.get_or_insert(format!("{} of {}: {why}", changed.stream, changed.scope));
         }
@@ -1921,6 +1931,11 @@ async fn pull(
             if why.starts_with(REVOKED) {
                 return Err(why);
             }
+            // Paused part way: said as it is, so it is not taken whole.
+            if why.starts_with(PAUSED) {
+                failed.get_or_insert(why);
+                continue;
+            }
             failed.get_or_insert(format!("{stream}: {why}"));
         }
     }
@@ -2055,9 +2070,10 @@ async fn pull_stream(
     let lines = link.keeps_asset_lines();
     let turn = if lines { super::lines::RECORDS_A_TURN } else { RECORDS_A_TURN };
     while at < next {
-        // Paused meanwhile, no more of it is asked for (`copies`).
+        // Paused meanwhile, no more of it is asked for (`copies`), and it is
+        // not taken as caught up.
         if assets.copies.paused_now().contains(scope) {
-            break;
+            return Err(format!("{PAUSED}{scope}"));
         }
         let frames = if lines {
             super::lines::frames(assets, link, scope, &stream, at).await?

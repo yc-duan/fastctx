@@ -311,13 +311,13 @@ pub(super) async fn fetch(assets: &Assets, hub: &HubId, link: &Arc<Link>) -> Vec
 /// Fetches `object` of `scope` under a ticket, and keeps whether the hub
 /// gave it.
 async fn fetch_alone(assets: &Assets, hub: &HubId, link: &Arc<Link>, scope: &str, object: ObjectRef) -> Result<(), String> {
+    let library = &assets.library;
+    // Kept as it comes: this machine clears nothing until it is all here.
+    let _keeping = assets.clearing.read().await;
     // Paused since it was listed, it is not asked for (`copies`).
     if assets.copies.paused_now().contains(scope) {
         return Ok(());
     }
-    let library = &assets.library;
-    // Kept as it comes: this machine clears nothing until it is all here.
-    let _keeping = assets.clearing.read().await;
     match fetch_one(library, link, scope, object).await {
         Ok(()) => {
             reached(assets, hub, &object);
@@ -436,6 +436,10 @@ async fn asked(assets: &Assets, hub: &HubId, link: &Arc<Link>, scope: &str, obje
         Ok(line) => line,
         Err(why) => return (0, vec![format!("an asset line for the objects of {scope}: {why}")]),
     };
+    // Paused while a line was waited for, nothing is asked for.
+    if assets.copies.paused_now().contains(scope) {
+        return (0, Vec::new());
+    }
     if let Err(why) = line.ask_objects(scope, &named).await {
         return (0, vec![format!("asking for the objects of {scope}: {why}")]);
     }

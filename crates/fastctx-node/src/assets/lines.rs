@@ -37,6 +37,11 @@ pub(super) async fn frames(
     let _waiting =
         fastctx_platform::doing::waiting_outside("frames coming from the hub on an asset line", EXCHANGED_WITHIN);
     let mut line = link.asset_line().await?;
+    // Paused while a line was waited for, nothing of it is asked for
+    // (`copies`), and it is not taken as caught up.
+    if assets.copies.paused_now().contains(scope) {
+        return Err(format!("{}{scope}", super::session::PAUSED));
+    }
     let reply = line.frames(scope, stream, from, FRAMES as u32).await?;
     drop(line);
     match heard(assets, link, reply).await? {
