@@ -155,3 +155,32 @@ pub(crate) async fn erase(
     }
     Ok(())
 }
+
+/// Whether the record of the conversation `resident` that `account`, as
+/// `opened`, opened is this very conversation's (`crate::purges`): the one of
+/// its id living on the machine `by` names by its key, born under one of
+/// `grants`. None where there is no record of it now.
+pub(crate) async fn verify(
+    hub: &Arc<Hub>,
+    by: (MachineName, PublicKey),
+    account: &AccountName,
+    opened: Timestamp,
+    resident: &ResidentId,
+    grants: &[fastctx_types::access::GrantId],
+) -> Result<Option<bool>, String> {
+    let request = RecordRequest::Read { kind: fastctx_types::owned_records::KIND.into(), key: resident.to_string() };
+    let Told::AccountRecords { response: RecordResponse::Read { record } } =
+        account_records::erase(hub, by.clone(), account.clone(), opened, request).await?
+    else {
+        return Err("the conversation's record was answered with something else".into());
+    };
+    let Some(record) = record.filter(|record| !record.metadata.deleted) else { return Ok(None) };
+    let conversation: Conversation = serde_json::from_value(record.body).map_err(|error| error.to_string())?;
+    let here =
+        hub.store().book.directory.member(&conversation.address.machine).is_some_and(|member| member.key == by.1);
+    let born = [&conversation.birth.born_under, &conversation.birth.claimed_under]
+        .into_iter()
+        .flatten()
+        .any(|grant| grants.contains(grant));
+    Ok(Some(here && born && conversation.previous.is_empty()))
+}

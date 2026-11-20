@@ -233,6 +233,7 @@ pub(crate) fn gone_there(
     conversation: Address,
     account: AccountName,
     ownership: Option<fastctx_types::owned_records::Conversation>,
+    scopes_gone: bool,
 ) {
     let tell = {
         let mut store = hub.edit_store();
@@ -263,7 +264,9 @@ pub(crate) fn gone_there(
                     audience,
                     waiting: BTreeSet::new(),
                     failed: BTreeMap::new(),
-                    scopes_gone: false,
+                    // Its purge deleted its scopes itself, of that account as
+                    // opened alone (`assets::deleted::purge_scopes`).
+                    scopes_gone,
                 };
                 pending.waiting = targets(&store, &pending);
                 let tell = told_now(&pending);
@@ -278,7 +281,9 @@ pub(crate) fn gone_there(
             }
         }
     };
-    crate::assets::deleted::conversation_gone(hub, &conversation);
+    if !scopes_gone {
+        crate::assets::deleted::conversation_gone(hub, &conversation);
+    }
     send(hub, tell);
     crate::afoot::settle(hub);
 }

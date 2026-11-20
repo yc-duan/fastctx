@@ -433,7 +433,7 @@ pub(crate) fn conversation_gone(hub: &crate::Hub, conversation: &Address) {
     let held = crate::moving::Moving::hold(&hub);
     fastctx_platform::task::spawn_blocking(move || {
         let _held = held;
-        let gone = delete_its_scopes(&hub, &conversation);
+        let gone = delete_its_scopes(&hub, &conversation, None);
         hub.assets.tried_conversation(&key, gone);
         if gone {
             crate::forget::scopes_went(&hub, &conversation);
@@ -451,29 +451,43 @@ pub(crate) fn purge_scopes(
     machine: fastctx_net::sign::PublicKey,
     account: &fastctx_types::AccountName,
     generation: jiff::Timestamp,
-) -> Result<(), String> {
+) -> Result<bool, String> {
     // Born by an assistance, its scope is its opener's own (`scopes::owner_of`).
     let readers = Readers::Conversation { openers: vec![account.clone()], born_on: None };
     let its_own = format!("{}{}", readers.key_prefix(hub.store().hub.id.as_str()), conversation.resident);
     let owner = Owner::Account(account.to_string(), generation.as_millisecond());
     if !hub.assets.purge_key(&its_own, &owner, &machine.to_string()).map_err(|error| error.to_string())? {
+        // Its key held by another conversation of the same id: it never had
+        // a scope here, and nothing else is looked for under its id
+        // (codex-87c8bbd9).
         hub.log.line(format_args!(
-            "the scope {its_own} is another conversation's of the same id, described by another machine: kept"
+            "the scope {its_own} is another conversation's of the same id: kept, and nothing deleted for it"
         ));
+        return Ok(false);
     }
-    if !delete_its_scopes(hub, conversation) {
+    // Any other it has, of that account as opened alone.
+    if !delete_its_scopes(hub, conversation, Some(&owner)) {
         return Err("not every scope of it could be deleted now".into());
     }
-    Ok(())
+    Ok(true)
 }
 
 /// Deletes the scopes of the conversation at `conversation`, deleted where
 /// it lived, and tells the machines holding them; whether none is left.
-fn delete_its_scopes(hub: &crate::Hub, conversation: &Address) -> bool {
+fn delete_its_scopes(hub: &crate::Hub, conversation: &Address, owned_by: Option<&Owner>) -> bool {
     let keys = {
         let store = hub.store();
         of_conversation(&hub.assets, &store.indexed(), conversation)
     };
+    // Of a purge, only those of the account as purged: another's of the same
+    // id stays (codex-87c8bbd9).
+    let keys = keys.map(|keys| match owned_by {
+        None => keys,
+        Some(owner) => keys
+            .into_iter()
+            .filter(|key| scopes::scope(&hub.assets, key).ok().flatten().is_some_and(|scope| scope.owner == *owner))
+            .collect(),
+    });
     let keys = match keys {
         Ok(keys) => keys,
         Err(error) => {
