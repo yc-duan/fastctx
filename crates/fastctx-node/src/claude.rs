@@ -2324,25 +2324,29 @@ fn back_in_line(node: &Arc<Node>, id: &ResidentId, failure: Failure) -> Result<L
     node.log.line(format_args!("lifecycle {id}: its first session waits: {}", failure.message));
     // Marked in line first, so that a node stopped meanwhile finds it there.
     // Where it cannot be, it waits all the same while the node runs, idle,
-    // its login's turn let go of, and that is said (codex-87c8bbd9's seventh
-    // look).
-    let marked = queued::mark(&node.world.conversation(id));
+    // its login's turn let go of, and that is said: it is waiting, not
+    // failed, as its opener is told, for it may still be started
+    // (codex-87c8bbd9's seventh and eighth looks).
+    let mut why = failure.message;
+    if let Err(error) = queued::mark(&node.world.conversation(id)) {
+        node.log.line(format_args!("lifecycle {id}: marking its first turn as waiting: {error}"));
+        why.push_str(&format!(
+            "; it waits while this node runs, but could not be marked as waiting, so a node stopped meanwhile would not start it: {error}"
+        ));
+    }
     let idle = node.residents.change_now(&node.world, id, |now| {
         now.activity = Activity::Idle;
         now.since = Timestamp::now();
     });
+    if let Err(error) = idle {
+        // Its line makes it idle again as it waits (`queued::wait`).
+        node.log.line(format_args!("lifecycle {id}: letting its first turn wait idle: {error}"));
+    }
     if let Some((about, _)) = node.residents.about(id) {
         crate::turn_slots::unstarted(node, id, &about);
     }
     queued::wait(node, id.clone());
-    marked.map_err(|error| {
-        Failure::new(format!(
-            "{}; its first turn waits for that, but could not be marked as waiting, so a node stopped meanwhile would not find it waiting: {error}",
-            failure.message
-        ))
-    })?;
-    idle.map_err(|error| Failure::new(format!("letting {id}'s first turn wait: {error}")))?;
-    Ok(Landed::Waiting { why: Some(failure.message), answered: true })
+    Ok(Landed::Waiting { why: Some(why), answered: true })
 }
 
 /// What starting a new conversation's session needs, read before anything is
@@ -2435,8 +2439,9 @@ pub(super) async fn begin_launch(node: &Arc<Node>, id: &ResidentId, prepared: Pr
     let began = first.since.unwrap_or(first.delivery.at);
     let since = move || Timestamp::now().as_millisecond().saturating_sub(began.as_millisecond());
     node.log.line(format_args!("lifecycle {id}: launching its first session, {} ms after it was opened", since()));
-    // Read again before Claude Code is asked once more, where it refused the
-    // first ask and made nothing (codex-87c8bbd9's seventh look).
+    // Read again in the worker, after the trust is written and just before
+    // Claude Code is asked, each time it is (codex-87c8bbd9's seventh and
+    // eighth looks).
     let handed = text.clone();
     let still = {
         let (node, id) = (node.clone(), id.clone());
@@ -2458,15 +2463,18 @@ pub(super) async fn begin_launch(node: &Arc<Node>, id: &ResidentId, prepared: Pr
         };
         let args = background::start_args(&start);
         trust(&[world.as_path(), cwd.as_path()], &env)?;
+        if let Err(refused) = still() {
+            return Ok(Err(refused));
+        }
         match background::claude(&program, &args, &cwd, &env) {
             // A Claude Code that was running can write its state back over
             // the trust a moment after it was written; a new session refused
             // for exactly that was not created, so it is started once more.
             Err(why) if why.contains(background::UNTRUSTED) => {
+                trust(&[world.as_path(), cwd.as_path()], &env)?;
                 if let Err(refused) = still() {
                     return Ok(Err(refused));
                 }
-                trust(&[world.as_path(), cwd.as_path()], &env)?;
                 background::claude(&program, &args, &cwd, &env).map(Ok)
             }
             started => started.map(Ok),
@@ -2475,8 +2483,8 @@ pub(super) async fn begin_launch(node: &Arc<Node>, id: &ResidentId, prepared: Pr
     .await
     .map_err(|error| Failure::new(format!("starting the session: {error}")))
     .and_then(|result| result.map_err(Failure::new));
-    // Not asked once more, as it may no longer be started: nothing was made
-    // of it, and it goes back in line as before it was asked.
+    // Not asked, as it may no longer be started: nothing was made of it, and
+    // it goes back in line as before it was asked.
     let printed = match asked {
         Ok(Err(refused)) => {
             drop(_birth);

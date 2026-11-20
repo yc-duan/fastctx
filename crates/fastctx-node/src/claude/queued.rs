@@ -57,6 +57,10 @@ pub(super) fn wait(node: &Arc<Node>, id: ResidentId) {
                 return;
             }
             let Some((about, _)) = node.residents.about(&id) else { return };
+            // Busy in line, where making it idle failed before, holds no turn
+            // of its login: it is made idle again, as often as it takes,
+            // before it waits for anything (codex-87c8bbd9's eighth look).
+            idle_again(&node, &id);
             // Held back as any wake is: while its account is in Connect, its
             // home is away, its assistance or its project's access does not
             // hold; and while it may not be started as it was born, before it
@@ -118,6 +122,9 @@ pub(super) fn wait(node: &Arc<Node>, id: ResidentId) {
 /// is: one marked Busy holds no turn of its login, nothing being asked of
 /// Claude Code.
 pub(super) fn idle_again(node: &Arc<Node>, id: &ResidentId) {
+    if !node.residents.now(id).is_some_and(|now| now.activity == Activity::Busy && now.turn.is_none()) {
+        return;
+    }
     let idle = node.residents.change_now(&node.world, id, |now| {
         if now.activity == Activity::Busy && now.turn.is_none() {
             now.activity = Activity::Idle;

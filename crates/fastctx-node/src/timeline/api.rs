@@ -38,20 +38,34 @@ pub(crate) async fn checked<T>(
 
 /// How long reading a page of a conversation's timeline took, by where it
 /// was read: here, from this machine's copy of it, or of the machine it
-/// lives on (`fastctx doctor readings`); so that where a page is slow to
-/// come is known rather than guessed (the user, 2026-11-20: "所以进入了加载，
-/// 然后加载本身又比较慢").
+/// lives on; and, on the machine it lives on, how long a page another
+/// machine asked of it took to read (`fastctx doctor readings`); so that
+/// where a page is slow to come is known rather than guessed (the user,
+/// 2026-11-20: "所以进入了加载，然后加载本身又比较慢").
 struct Pages {
     here: &'static fastctx_platform::readings::Timing,
     copy: &'static fastctx_platform::readings::Timing,
     remote: &'static fastctx_platform::readings::Timing,
+    served: &'static fastctx_platform::readings::Timing,
 }
 
 static PAGES: std::sync::LazyLock<Pages> = std::sync::LazyLock::new(|| Pages {
     here: fastctx_platform::readings::timing("timeline.page.here"),
     copy: fastctx_platform::readings::timing("timeline.page.copy"),
     remote: fastctx_platform::readings::timing("timeline.page.remote"),
+    served: fastctx_platform::readings::timing("timeline.page.served"),
 });
+
+/// `here`, for another machine that asked this one (`Pages::served`).
+pub(crate) async fn served(node: &Arc<Node>, request: TimelineAsk) -> Result<TimelineTold, Failure> {
+    let page = matches!(request, TimelineAsk::Page { .. });
+    let began = std::time::Instant::now();
+    let told = here(node, request).await;
+    if page {
+        PAGES.served.record(began.elapsed());
+    }
+    told
+}
 
 const HERE: u8 = 0;
 const COPY: u8 = 1;

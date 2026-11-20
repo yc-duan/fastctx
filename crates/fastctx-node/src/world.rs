@@ -1088,7 +1088,7 @@ impl fastctx_net::link::Node for Handler {
                         let mut stream =
                             stream.ok_or_else(|| Failure::new("a timeline read requires its data connection"))?;
                         let reading =
-                            crate::timeline::api::checked(&node, crate::timeline::api::here(&node, request), || {
+                            crate::timeline::api::checked(&node, crate::timeline::api::served(&node, request), || {
                                 crate::admission::admit(&node, &link, &caller, &admitted).map(|_| ())
                             });
                         tokio::select! {
