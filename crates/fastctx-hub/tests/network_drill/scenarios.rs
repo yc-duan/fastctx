@@ -438,12 +438,17 @@ pub async fn cancel(world: &World, report: &mut Report) -> anyhow::Result<()> {
 
 /// A question whose answer holds the thread it is answered on for a while,
 /// as one waiting on a lock the machine holds elsewhere does: the machine's
-/// lines go on being read meanwhile, so another call to it is answered at
-/// once, and no call is answered on the thread that keeps its lines.
+/// lines go on being read meanwhile, so another call to it is answered
+/// while the first still holds, and no call is answered on the thread that
+/// keeps its lines. Both are calls answered at once as they come, not in
+/// their turn behind a view: the way that held the lines before.
 pub async fn held_answer(world: &World, report: &mut Report) -> anyhow::Result<()> {
     /// The thread that keeps a machine's lines (`fastctx_net::threads`).
     const LINES: &str = "fastctx-link";
+    let at_once = || fastctx_platform::readings::counter("link.calls.at_once").get();
+    let in_turn = || fastctx_platform::readings::counter("link.calls.in_turn").get();
     let (alpha, beta, gamma) = (world.machine("alpha"), world.machine("beta"), world.machine("gamma"));
+    let (at_once_before, in_turn_before) = (at_once(), in_turn());
     beta.lab.hold(true);
     let held = {
         let (link, to, account) = (alpha.link(), beta.name.clone(), world.account.clone());
@@ -460,16 +465,21 @@ pub async fn held_answer(world: &World, report: &mut Report) -> anyhow::Result<(
     let still_holding = beta.lab.holding() > 0;
     beta.lab.hold(false);
     let _ = held.await;
+    let (answered_at_once, answered_in_turn) = (at_once() - at_once_before, in_turn() - in_turn_before);
     report.check(
         holding.is_some(),
         "beta took a question whose answer holds its thread",
         holding.map_or("not within 10 s".to_string(), seconds),
     );
     report.check(
+        answered_at_once >= 2 && answered_in_turn == 0,
+        "both calls were answered at once as they came, none in turn behind a view",
+        format!("{answered_at_once} at once, {answered_in_turn} in turn"),
+    );
+    report.check(
         answer.as_ref().is_ok_and(|answer| fails_with(answer, |message| message.len() == IN_A_MESSAGE))
-            && still_holding
-            && took < Duration::from_secs(2),
-        "another call to beta was answered at once while it held",
+            && still_holding,
+        "another call to beta was answered while the first still held",
         format!(
             "{} after {}, {}",
             answer.as_ref().map_or("not answered".to_string(), said),

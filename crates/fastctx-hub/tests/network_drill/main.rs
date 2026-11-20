@@ -161,7 +161,10 @@ fn drill(args: &[String]) -> anyhow::Result<bool> {
         );
     }
     stalls::watch();
-    let runtime = tokio::runtime::Builder::new_multi_thread().enable_all().build()?;
+    // Workers enough that a call whose answer holds one (`held-answer`) leaves
+    // others for the rest, however few processors the runner has.
+    let workers = std::thread::available_parallelism().map_or(4, |count| count.get().max(4));
+    let runtime = tokio::runtime::Builder::new_multi_thread().worker_threads(workers).enable_all().build()?;
     let (mut passed, mut failed, mut skipped) = (0, 0, 0);
     for name in SCENARIOS {
         if options.only.as_ref().is_some_and(|only| !only.iter().any(|wanted| wanted == name))

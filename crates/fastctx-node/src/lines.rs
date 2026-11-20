@@ -34,6 +34,9 @@ struct Source {
     state: Mutex<State>,
     /// What the state shows, published under its lock as it changes.
     shown: tokio::sync::watch::Sender<Shown>,
+    /// Told as a look fails for a passing reason, so that the watch looks
+    /// again soon whoever's look it was.
+    again: Arc<tokio::sync::Notify>,
     closed: tokio::sync::watch::Sender<bool>,
     events: tokio::sync::watch::Sender<std::result::Result<u64, String>>,
     _watcher: Mutex<fastctx_watch::Watcher>,
@@ -308,6 +311,7 @@ async fn opened_here(
         notes_record,
         state: Mutex::new(opened),
         shown: tokio::sync::watch::channel(shown).0,
+        again: Arc::default(),
         closed: tokio::sync::watch::channel(false).0,
         events,
         _watcher: Mutex::new(watcher),
@@ -323,7 +327,7 @@ async fn opened_here(
     let lease = Lease::Here { node: Arc::downgrade(node), key: key.clone(), closed: source.closed.subscribe() };
     let watching = source.closed.subscribe();
     node.line_sources.0.lock().expect("line sources").insert(key, source.clone());
-    fastctx_platform::task::spawn(monitor(Arc::downgrade(&source), event_rx, watching));
+    fastctx_platform::task::spawn(monitor(Arc::downgrade(&source), event_rx, watching, source.again.clone()));
     // Catch appends racing the initial bounded snapshot, without waiting for
     // another filesystem event to happen after the monitor starts.
     refresh(source.clone(), Some(initializing)).await?;
@@ -344,6 +348,7 @@ async fn monitor(
     source: Weak<Source>,
     mut events: tokio::sync::watch::Receiver<std::result::Result<u64, String>>,
     mut closed: tokio::sync::watch::Receiver<bool>,
+    again: Arc<tokio::sync::Notify>,
 ) {
     loop {
         if *closed.borrow() {
@@ -359,6 +364,9 @@ async fn monitor(
             event = events.changed() => if event.is_err() { break; },
             () = tokio::time::sleep(RUNNING_LOOK), if running => {}
             () = tokio::time::sleep(AGAIN), if stale => {}
+            // A look failed for a passing reason, maybe another's: looked at
+            // again once `AGAIN` has passed.
+            () = again.notified() => continue,
         }
         let Some(source) = source.upgrade() else { break };
         if refresh(source, None).await.is_err() {
@@ -447,6 +455,9 @@ async fn refresh(
             Ok(Some((length, ended, first)))
         })();
         state.stale = matches!(update, Err((_, true)));
+        if state.stale {
+            source.again.notify_one();
+        }
         match update {
             Ok(None) | Err((_, true)) => {
                 show(&source, &state, false);
@@ -577,10 +588,12 @@ pub(crate) async fn call(
     Ok(Reply { machine: node.machine(), result })
 }
 
-/// Waits for `source` to show a change after `version`. A change shown
-/// already is told at once, as a reader may hold the source as long as its
-/// lines take: the source is looked at afresh (`look`) first only while it
-/// shows none.
+/// Waits for `source` to show a change after `version`, telling what it
+/// shows last: a change shown already is told at once, as a reader may hold
+/// the source as long as its lines take, whatever the file has become since
+/// (a read looks at the file itself). While it shows none the source is
+/// looked at afresh (`look`), once; a change shown or the source closed
+/// meanwhile is told without waiting for that look.
 async fn changed(
     source: &Source,
     version: u64,
@@ -588,7 +601,8 @@ async fn changed(
 ) -> std::result::Result<Answer, Failure> {
     let mut shown = source.shown.subscribe();
     let mut closed = source.closed.subscribe();
-    let mut look = Some(look);
+    let mut look = std::pin::pin!(look);
+    let mut looking = true;
     loop {
         if *closed.borrow() {
             return Err(failed("line source closed"));
@@ -596,11 +610,14 @@ async fn changed(
         if let Some(result) = since(&mut shown, version) {
             return result;
         }
-        if let Some(look) = look.take() {
-            look.await?;
-            continue;
+        tokio::select! {
+            looked = &mut look, if looking => {
+                looked?;
+                looking = false;
+            }
+            _ = shown.changed() => {}
+            _ = closed.changed() => return Err(failed("line source closed")),
         }
-        tokio::select! { _ = shown.changed() => {}, _ = closed.changed() => return Err(failed("line source closed")) }
     }
 }
 

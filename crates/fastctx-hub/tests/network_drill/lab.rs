@@ -31,7 +31,7 @@ pub const OVER_DATA: usize = 300_000;
 /// the stream ends, as a quiet watch does.
 pub const QUIET: u64 = u64::MAX;
 /// How long a held question holds the thread it is answered on.
-pub const HELD: Duration = Duration::from_secs(6);
+pub const HELD: Duration = Duration::from_secs(8);
 
 #[derive(Clone, Debug)]
 pub struct Read {
@@ -54,7 +54,7 @@ pub struct Lab {
     holds: AtomicBool,
     holding: AtomicUsize,
     /// The thread each call was answered on, by its name.
-    threads: Mutex<Vec<String>>,
+    threads: Arc<Mutex<Vec<String>>>,
     /// Calls being answered now, and calls stopped before they were done.
     answering: Arc<AtomicUsize>,
     stopped: Arc<AtomicUsize>,
@@ -72,7 +72,7 @@ impl Lab {
             stalls: AtomicBool::new(false),
             holds: AtomicBool::new(false),
             holding: AtomicUsize::new(0),
-            threads: Mutex::new(Vec::new()),
+            threads: Arc::default(),
             answering: Arc::default(),
             stopped: Arc::default(),
             reads: Arc::default(),
@@ -134,6 +134,10 @@ pub fn read_of(bytes: u64) -> RemoteCall {
     }
 }
 
+fn thread_name() -> String {
+    std::thread::current().name().unwrap_or("unnamed").to_string()
+}
+
 /// Counts a call while it is answered, and whether it was stopped.
 struct Answering {
     answering: Arc<AtomicUsize>,
@@ -164,11 +168,15 @@ impl Node for Lab {
     }
 
     fn call(&self, _: Caller, call: RemoteCall, stream: Option<Stream>) -> BoxFuture<RemoteResult> {
-        let thread = std::thread::current().name().unwrap_or("unnamed").to_string();
-        self.threads.lock().expect("never poisoned").push(thread);
+        self.threads.lock().expect("never poisoned").push(thread_name());
         match call {
             RemoteCall::Updates { update: UpdateCall::Look } => {
-                Box::pin(async { Err(Failure::new("x".repeat(IN_A_MESSAGE))) })
+                let threads = self.threads.clone();
+                Box::pin(async move {
+                    // Where its answer runs, as well as where it was asked for.
+                    threads.lock().expect("never poisoned").push(thread_name());
+                    Err(Failure::new("x".repeat(IN_A_MESSAGE)))
+                })
             }
             RemoteCall::Updates { update: UpdateCall::State } => {
                 Box::pin(async { Err(Failure::new("y".repeat(OVER_DATA))) })
