@@ -141,20 +141,24 @@ export class TalkMenu {
    *  turning from one to the other moves nothing; projects more than its
    *  acts are tall scroll in it. As tall as the taller face, the acts stood
    *  over an empty foot where there were many projects (the user,
-   *  2026-11-20: "这下面空了一块"). Both are laid out at once, before it
-   *  is painted, the acts last. */
+   *  2026-11-20: "这下面空了一块"). The projects are as wide as their
+   *  names and the scroll bar they need at that height, so that no name
+   *  that fits is cut for it (codex-f9af46d4). Both are laid out at once,
+   *  before it is painted, the acts last. */
   private fit(): void {
     this.element.style.height = this.element.style.width = "";
     if (!this.opened || this.opened.r.removed) return;
-    let height = 0;
-    let width = 0;
-    for (const towns of [true, false]) {
-      this.towns = towns;
-      this.draw();
-      if (!towns) height = this.element.offsetHeight;
-      width = Math.max(width, this.element.offsetWidth);
-    }
+    this.towns = false;
+    this.draw();
+    const height = this.element.offsetHeight;
+    let width = this.element.offsetWidth;
+    this.towns = true;
+    this.draw();
+    const towns = this.element.offsetWidth;
     this.element.style.height = `${height}px`;
+    width = Math.max(width, towns + this.element.offsetWidth - this.element.clientWidth);
+    this.towns = false;
+    this.draw();
     if (!this.element.classList.contains("as-sheet")) this.element.style.width = `${width}px`;
   }
 
@@ -341,6 +345,8 @@ export class TalkMenu {
     const next = stepped(items, document.activeElement, event.key);
     if (next === null) return;
     event.preventDefault();
+    // Where the projects scroll, the one stepped to is brought into view.
     items[next]?.focus({ preventScroll: true });
+    items[next]?.scrollIntoView({ block: "nearest", inline: "nearest" });
   }
 }

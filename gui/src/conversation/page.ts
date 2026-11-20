@@ -818,11 +818,20 @@ export class ConversationPage {
       this.view.readerMoved();
       moved();
     }, { passive: true });
-    // The scroll bar is the region itself, not anything in it.
+    // The scroll bar is the region itself, not anything in it, and is held
+    // by a mouse or a pen: a finger put down on the region's bare part moves
+    // the region itself, the browser taking the pointer over as it does
+    // (codex-f9af46d4). Held until let go, or taken over.
     this.scroller.addEventListener("pointerdown", (event) => {
-      if (event.target === this.scroller) {
+      if (event.target === this.scroller && event.pointerType !== "touch") {
         this.pointerPaging = true;
-        window.addEventListener("pointerup", () => { this.pointerPaging = false; }, { once: true });
+        const held = new AbortController();
+        const done = () => {
+          this.pointerPaging = false;
+          held.abort();
+        };
+        window.addEventListener("pointerup", done, { signal: held.signal });
+        window.addEventListener("pointercancel", done, { signal: held.signal });
         moved();
       }
     });

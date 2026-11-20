@@ -2535,11 +2535,17 @@ export class ConversationView {
         const holder = document.createElement("div");
         holder.innerHTML = row.html();
         const fresh = holder.firstElementChild as HTMLElement;
+        // A card's raw words the reader opened stay open as it is drawn
+        // again, as when the whole of its event comes (codex-f9af46d4).
+        const feet = drawn ? openFeet(drawn.element) : [];
         if (drawn) {
           this.letGo(row.key);
           drawn.element.replaceWith(fresh);
         }
-        if (this.openRows.has(row.key)) this.fill(row.key, fresh);
+        if (this.openRows.has(row.key)) {
+          this.fill(row.key, fresh);
+          reopenFeet(fresh, feet);
+        }
         drawn = { signature: row.signature, element: fresh };
         stretch.drawn.set(row.key, drawn);
         if (fresh.classList.contains("row-agent")) this.agentRows.set(row.key, fresh);
@@ -2755,9 +2761,13 @@ export class ConversationView {
       for (const card of cardsIn(part)) this.cards.set(card.key, card);
     } else this.cards.set(part.key, part);
     const words = this.context.words;
+    // Whether its events are cut short is what it is too: the way to read
+    // them whole goes as they come whole, though nothing else of it changes.
+    const sources = part.kind === "bunch" ? cardsIn(part).flatMap((card) => card.sources) : part.sources;
+    const cut = sources.filter((source) => this.conversation.deferred(source.entry)).map((source) => source.entry);
     return {
       key: part.key,
-      signature: `line|${JSON.stringify(part)}`,
+      signature: `line|${cut.join(" ")}|${JSON.stringify(part)}`,
       html: () => lineHtml(part, { words, open: this.openRows.has(part.key), enter: this.entering(part.key) }),
       text: () => lineText(part, words),
     };
@@ -3410,7 +3420,9 @@ export class ConversationView {
       // belongs to nothing (the user, 2026-11-20: under a picture's card).
       const raws = content.querySelectorAll<HTMLElement>(".dd-foot .fold-inner");
       const at = raws.length === 1 ? raws[0]! : content;
-      for (const owner of deferred.filter((owner) => this.conversation.deferred(owner))) {
+      // Filled twice before this is told, it is put there once.
+      const there = new Set([...content.querySelectorAll<HTMLElement>("[data-event-whole]")].map((button) => button.dataset.eventWhole));
+      for (const owner of deferred.filter((owner) => this.conversation.deferred(owner) && !there.has(owner))) {
         const button = document.createElement("button");
         button.type = "button";
         button.className = "tool-more";
@@ -4249,4 +4261,28 @@ function userWords(text: string): string {
   const chip = `<span class="bubble-skill">${glyph("skill", 13)}<span>${escape(asked.name)}</span></span>`;
   const rest = plain(asked.rest);
   return rest.startsWith("<p>") ? `<p>${chip}${rest.slice(3)}` : `<p>${chip}</p>`;
+}
+
+/** Which of a row's card feet stand open, in order (`deeds/draw.ts`). */
+function openFeet(row: HTMLElement): boolean[] {
+  return [...row.querySelectorAll<HTMLElement>(".dd-foot > .dd-foot-line > .dd-raw")].map((button) => button.getAttribute("aria-expanded") === "true");
+}
+
+/** Opens again, at once, the feet of a row drawn anew that stood open
+ *  before, where it has the same feet. */
+function reopenFeet(row: HTMLElement, open: boolean[]): void {
+  if (!open.includes(true)) return;
+  const buttons = [...row.querySelectorAll<HTMLButtonElement>(".dd-foot > .dd-foot-line > .dd-raw")];
+  if (buttons.length !== open.length) return;
+  const folds: HTMLElement[] = [];
+  buttons.forEach((button, at) => {
+    const fold = button.closest(".dd-foot")?.querySelector<HTMLElement>(":scope > .fold");
+    if (!open[at] || !fold || button.getAttribute("aria-expanded") === "true") return;
+    fold.style.transition = "none";
+    folds.push(fold);
+    button.click();
+  });
+  requestAnimationFrame(() => {
+    for (const fold of folds) fold.style.transition = "";
+  });
 }

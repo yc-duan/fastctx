@@ -170,7 +170,6 @@ export class AgentsPage implements Page {
         target.click();
       }
     });
-    this.sized.observe(this.main);
     this.stop = effect(() => {
       options.store.world.get();
       this.rebuild();
@@ -201,16 +200,24 @@ export class AgentsPage implements Page {
     document.querySelector(".lg-pop")?.remove();
   }
 
-  /** The page's room changing size, the window's or as the sidebar comes
-   *  and goes: its charts are drawn for the width they have, so it is drawn
-   *  again once the room is still, the region that scrolls kept. */
+  /** The chart's room changing width, with the window, as the sidebar comes
+   *  and goes, or as the page lays its parts out otherwise: the chart is
+   *  drawn for the width it has, so it alone is drawn again once its room is
+   *  still. Nothing else of the page is, a page number being typed
+   *  included (codex-f9af46d4). */
   private readonly sized = new ResizeObserver(() => {
     window.clearTimeout(this.resized);
     this.resized = window.setTimeout(() => {
-      this.painted = "";
-      draw();
+      const holder = this.main.querySelector<HTMLElement>("[data-chart]");
+      if (!holder || Math.floor(holder.clientWidth) === this.chartWidth) return;
+      this.chartWidth = Math.floor(holder.clientWidth);
+      fillCharts(this.main);
+      this.touched.takeRecords();
     }, 120);
   });
+
+  /** The width the chart was last drawn at. */
+  private chartWidth = 0;
 
   /** What was drawn last, to draw nothing again where nothing changed. */
   private painted = "";
@@ -235,6 +242,14 @@ export class AgentsPage implements Page {
     // The sidebar's button, where the sidebar folds away (`shell.ts`).
     this.main.querySelector(".lg-head")?.insertAdjacentHTML("afterbegin", `<button class="icon-button menu-button" type="button" aria-label="${this.options.menuLabel}">${glyph("menu", 20)}</button>`);
     fillCharts(this.main, how !== "quiet");
+    // The chart drawn is watched for the room it has; a chart drawn anew
+    // for the first time says only what width it was drawn at.
+    this.sized.disconnect();
+    const holder = this.main.querySelector<HTMLElement>("[data-chart]");
+    if (holder) {
+      this.chartWidth = Math.floor(holder.clientWidth);
+      this.sized.observe(holder);
+    }
     // What drawing changed is no change of the page's own.
     this.touched.takeRecords();
   }

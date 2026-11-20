@@ -62,6 +62,10 @@ export function rise(holder: HTMLElement): void {
  *  mark to mark. A chart split into parts says each part's figure in its
  *  legend meanwhile, in place of the legend's own. */
 export function readout(holder: HTMLElement, legend: HTMLElement | null): void {
+  // A chart drawn again in the same place, for a new width, reads only
+  // what it now draws.
+  readings.get(holder)?.();
+  const hands = new AbortController();
   const read = document.createElement("p");
   read.className = "lg-read";
   holder.append(read);
@@ -75,6 +79,10 @@ export function readout(holder: HTMLElement, legend: HTMLElement | null): void {
     legend?.classList.remove("reading");
     figures.forEach((figure, index) => (figure.textContent = own[index]!));
   };
+  readings.set(holder, () => {
+    leave();
+    hands.abort();
+  });
   holder.addEventListener("pointermove", (event) => {
     const mark = (event.target as Element).closest("[data-said]");
     if (!mark) return leave();
@@ -91,9 +99,12 @@ export function readout(holder: HTMLElement, legend: HTMLElement | null): void {
       legend.classList.add("reading");
       figures.forEach((figure, index) => (figure.textContent = parts[index] ?? ""));
     }
-  });
-  holder.addEventListener("pointerleave", leave);
+  }, { signal: hands.signal });
+  holder.addEventListener("pointerleave", leave, { signal: hands.signal });
 }
+
+/** What lets go of each chart's reading, by the chart's holder. */
+const readings = new WeakMap<HTMLElement, () => void>();
 
 /** A round figure at or above `value`, for the top of an axis. */
 function roundUp(value: number): number {
