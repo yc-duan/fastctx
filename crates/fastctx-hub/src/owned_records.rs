@@ -7,6 +7,7 @@ mod plans;
 mod projection;
 pub(crate) mod record_deletions;
 mod registration;
+pub(crate) use registration::birth_kept;
 mod replicas;
 mod sentinels;
 pub(crate) mod submission;
@@ -191,8 +192,8 @@ pub(crate) async fn ask(
 ) -> Result<Told, String> {
     acts_for(hub, &from, &key, &account)?;
     let mut response = match request {
-        Request::Register { resident, shared, previous, born_at, born_under, generation, colleague } => {
-            let birth = registration::Birth { at: born_at, under: born_under, generation, colleague };
+        Request::Register { resident, shared, previous, born_at, generation, assisted, born_under, colleague } => {
+            let birth = registration::Birth { at: born_at, generation, assisted, under: born_under, colleague };
             let conversation =
                 registration::register(hub, &from, &key, &account, resident, shared, previous, birth).await?;
             Response::Conversation { conversation: Box::new(conversation) }

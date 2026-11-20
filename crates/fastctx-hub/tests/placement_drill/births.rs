@@ -12,9 +12,10 @@ pub(super) fn about(host: &Path, resident: &str) -> Value {
         .unwrap_or(Value::Null)
 }
 
-/// The grant the conversation was born working by, for its one account.
+/// The grant the conversation was born working by, for its one account,
+/// where it was born working by an assistance.
 pub(super) fn grant(about: &Value) -> Option<String> {
-    about["born_as"][0]["grant"].as_str().map(str::to_string)
+    about["born_as"][0]["grant"].as_str().filter(|_| about["born_as"][0]["assisted"] == true).map(str::to_string)
 }
 
 /// Each of `assisted` was born for its own account by an assistance, and

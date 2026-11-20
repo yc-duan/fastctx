@@ -125,8 +125,11 @@ pub struct BornAs {
     pub account: crate::AccountName,
     /// When the account was opened: which account of its name it was.
     pub generation: Timestamp,
-    /// The assistance of the login it worked by, where the account did not
-    /// hold the machine; none where it did.
+    /// It worked by an assistance of the login, not holding the machine.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub assisted: bool,
+    /// That assistance, as its hub gave it; none where it gave none (a hub
+    /// from before grants) or the account held the machine.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub grant: Option<crate::access::GrantId>,
 }

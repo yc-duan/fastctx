@@ -50,11 +50,13 @@ pub(crate) fn own_accounts(node: &Node, acting: &Acting) -> bool {
 /// `home`, is born working for, and by what right (`About::born_as`), as
 /// this machine's hubs say now: each account, which account of its name it
 /// is, and the assistance it works by where it does not hold the machine
-/// (design-forget-account-v2.md F0). An account this computer is logged in
-/// to is read as its hub last said while the hub has not said again, so its
-/// own work is not held up; another whose hub has not said yet, or that may
-/// no longer use the login here, is refused: nothing is born for it, as a
-/// call from it would be refused (`admission`).
+/// (design-forget-account-v2.md F0). The account that owns this computer is
+/// read as its hub last said while the hub has not said again, as a session
+/// working for it is let work here meanwhile (`authorization`), so its own
+/// work is not held up; another whose hub has not said yet, or that may no
+/// longer use the login here, is refused: nothing is born for it, as a call
+/// from it would be refused (`admission`). The assistance is the one the hub
+/// gave: one from a hub from before grants has none, worked by all the same.
 pub(crate) fn born_as(
     node: &Node,
     acting: &Acting,
@@ -74,19 +76,19 @@ pub(crate) fn born_as(
             })?;
             let view = match crate::authorization::current_view(&link) {
                 Ok(view) => view,
-                Err(_) if node.serves(&Acting::Here, &account.hub, &account.account) => link.view(),
+                Err(_) if link.view().me().is_some_and(|me| me.home.as_ref() == Some(&account.account)) => link.view(),
                 Err(failure) => return Err(failure),
             };
             let generation = view
                 .account(&account.account)
                 .ok_or_else(|| Failure::refused(format!("there is no account {} on its hub", account.account)))?
                 .opened;
-            let grant = if view.rights(&account.account, &here).hands {
-                None
+            let (assisted, grant) = if view.rights(&account.account, &here).hands {
+                (false, None)
             } else {
                 let may = crate::homes::may_use_login(node, &view, &account.account, &here, agent, home)?;
                 match crate::homes::assistance(node, &view, &account.account, &here, agent, home)? {
-                    Some(assist) if may => Some(assist.grant_id()),
+                    Some(assist) if may => (true, assist.grant),
                     _ => {
                         let login = home.map_or_else(|| "default".to_string(), |home| home.display().to_string());
                         return Err(Failure::refused(format!(
@@ -100,6 +102,7 @@ pub(crate) fn born_as(
                 hub: account.hub.clone(),
                 account: account.account.clone(),
                 generation,
+                assisted,
                 grant,
             })
         })
@@ -113,7 +116,7 @@ pub(crate) fn evidenced(
     born_as: &[fastctx_types::residents::BornAs],
     login: Option<&fastctx_types::logins::LoginId>,
 ) -> Result<(), Failure> {
-    if login.is_none() && born_as.iter().any(|born| born.grant.is_some()) {
+    if login.is_none() && born_as.iter().any(|born| born.assisted) {
         return Err(Failure::new(
             "the login it would be born in could not be given its id (the node's log says why), and a session working by an assistance is born only in a login known by its id",
         ));

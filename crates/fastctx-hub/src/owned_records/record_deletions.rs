@@ -67,9 +67,7 @@ impl Ownership {
                 born_seal: self.born_seal.clone(),
                 previous: Vec::new(),
                 identity: None,
-                born_under: None,
-                generation: None,
-                colleague: false,
+                birth: Default::default(),
             },
         }
     }

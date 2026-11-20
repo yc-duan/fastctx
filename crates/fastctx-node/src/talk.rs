@@ -1208,7 +1208,9 @@ pub async fn open(
     };
     match target.filter(|target| !node.is_here(target)) {
         None => {
-            let (id, landed) = open_here(node, &here, acting, agent, town, text, options, attachments, choices).await?;
+            // Opened here at once: the right it works by is read as it is born.
+            let opening = OpenHere { acting, agent, town, text, options, attachments, choices, admitted: None };
+            let (id, landed) = open_here(node, &here, opening).await?;
             Ok((Address { machine: here, resident: id }, landed))
         }
         Some(target) => {
@@ -1257,20 +1259,28 @@ pub async fn open(
     }
 }
 
+/// What a session opened on this machine is asked to be: whom it works for,
+/// of which agent, in which project, with which first words and choices, and
+/// by what right it was let in, which it is born by or not at all.
+pub struct OpenHere {
+    pub acting: Acting,
+    pub agent: AgentName,
+    pub town: Option<TownName>,
+    pub text: String,
+    pub options: fastctx_types::agents::SessionOptions,
+    pub attachments: Vec<Attachment>,
+    pub choices: Choices,
+    pub admitted: Option<Vec<fastctx_types::residents::BornAs>>,
+}
+
 /// Opens a session on this machine for the user typing on `typed_on`, with
-/// their words as its first, working for `acting`.
-#[allow(clippy::too_many_arguments)]
+/// their words as its first, working for its `acting`.
 pub async fn open_here(
     node: &Arc<Node>,
     typed_on: &MachineName,
-    acting: Acting,
-    agent: AgentName,
-    town: Option<TownName>,
-    text: String,
-    options: fastctx_types::agents::SessionOptions,
-    attachments: Vec<Attachment>,
-    choices: Choices,
+    opening: OpenHere,
 ) -> Result<(ResidentId, Landed), Failure> {
+    let OpenHere { acting, agent, town, text, options, attachments, choices, admitted } = opening;
     // The login it is born in must be in this machine's agent list, the
     // default one too (`world-agent-logins.md`); the default one is recorded
     // as none, so that it follows the user's environment.
@@ -1297,6 +1307,14 @@ pub async fn open_here(
         })
         .await?
     };
+    // Let in by one right, it is not born by another: an assistance ended
+    // and given again meanwhile, or the account of its name opened anew, is
+    // not the one it was asked under (codex-87c8bbd9).
+    if admitted.as_ref().is_some_and(|admitted| *admitted != born_as) {
+        return Err(Failure::refused(
+            "the right it was asked to be opened by no longer stands: the assistance or the account it was asked under has changed since",
+        ));
+    }
     crate::logins::workbench::may_start(node, &acting, agent.as_str(), home.as_deref())?;
     let opened = Opened { acting, focus: choices.focus, home, login, born_as, files_on: choices.files_on };
     match agent.as_str() {

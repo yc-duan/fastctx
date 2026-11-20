@@ -565,9 +565,10 @@ fn apply(
             let manages = manages.or_else(|| kept.and_then(|kept| kept.manages));
             // Which assistance it is stays while what it allows is changed;
             // one given anew is another, never one given before
-            // (design-forget-account-v2.md F0).
-            let grant = match kept {
-                Some(kept) => Some(kept.grant_id()),
+            // (design-forget-account-v2.md F0). Each kept has its own since
+            // the hub opened (`assists::grant_kept`).
+            let grant = match kept.and_then(|kept| kept.grant.clone()) {
+                Some(grant) => Some(grant),
                 None if assisting => Some(fastctx_types::access::GrantId::from_bytes(
                     fastctx_net::sign::random::<8>()
                         .map_err(|error| format!("choosing the assistance's grant: {error}"))?,

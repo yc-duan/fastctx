@@ -19,8 +19,9 @@ pub async fn register(link: &Link, account: &AccountName, resident: &ResidentId)
             shared: true,
             previous: None,
             born_at: None,
-            born_under: None,
             generation: None,
+            assisted: false,
+            born_under: None,
             colleague: false,
         },
     )

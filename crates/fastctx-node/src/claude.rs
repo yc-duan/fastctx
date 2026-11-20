@@ -2331,7 +2331,18 @@ fn prepare_launch_now(node: &Arc<Node>, id: &ResidentId) -> Result<Prepared, Fai
     let Command { program, env, .. } = command(node, about.home.as_deref())?;
     // It is born in the login its first session is started in, as that is
     // started, waiting for a turn of its login or not (codex-d1962125).
+    // It is started by the right it was born by, or not at all: one that
+    // waited for a turn of its login while its assistance was ended and given
+    // again is not started under the new one (codex-87c8bbd9).
     if about.session.is_none() {
+        if let Some(born_as) = &about.born_as {
+            let now = crate::assists::born_as(node, &about.acting, &about.host.agent, about.home.as_deref())?;
+            if now != *born_as {
+                return Err(Failure::refused(format!(
+                    "{id} was opened by a right that no longer stands: the assistance or the account it was opened under has changed since"
+                )));
+            }
+        }
         let login = crate::logins::ids::claude_started(node, &env);
         node.residents
             .set_born_login(&node.world, id, login.clone())

@@ -1,68 +1,147 @@
 //! Registration preserves birth ownership while updating a conversation's running address.
 
 use super::*;
+use fastctx_net::directory::Directory;
+use fastctx_types::AccountName;
 use fastctx_types::ResidentId;
 use fastctx_types::access::GrantId;
+use fastctx_types::owned_records::Birth as Born;
 
 /// What a host says of a conversation's birth as it registers it.
 pub(super) struct Birth {
     /// Its original birth time, from which the canonical identity is mapped.
     pub at: Option<jiff::Timestamp>,
-    /// The assistance it was born working by, for the account registering it.
-    pub under: Option<GrantId>,
-    /// When that account was opened, as it was born.
+    /// When the account registering it was opened, as it was born; none
+    /// where the host says nothing of its birth, as before it was born whole.
     pub generation: Option<jiff::Timestamp>,
+    /// It was born working by an assistance of the login.
+    pub assisted: bool,
+    /// That assistance, as the host's hub gave it.
+    pub under: Option<GrantId>,
     pub colleague: bool,
 }
 
+/// Whether the hub gives `account`, of a login on `born_on`, the assistance
+/// `grant`.
+fn gives(directory: &Directory, account: &AccountName, born_on: &MachineName, grant: &GrantId) -> bool {
+    directory.assists.iter().any(|assist| {
+        assist.account == *account && directory.same(&assist.machine, born_on) && assist.grant.as_ref() == Some(grant)
+    })
+}
+
 impl Birth {
-    /// Keeps on `kept`, once, what of the birth holds: an account opened when
-    /// it says, the account now of its name, and an assistance this hub gives
-    /// that account of a login on `born_on`, the machine it was born on. What
-    /// does not hold is let go, as the hub's log says (`dropped`). Whether it
-    /// changed.
+    /// `kept`, said in the hub's log; whether it changed.
     fn keep(
         &self,
         hub: &Hub,
-        directory: &fastctx_net::directory::Directory,
+        directory: &Directory,
         born_on: &MachineName,
         kept: &mut Conversation,
-    ) -> bool {
-        let (changed, dropped) = self.kept(directory, born_on, kept);
-        if let Some(dropped) = dropped {
-            hub.log.line(format_args!("{dropped}"));
+    ) -> Result<bool, String> {
+        let (changed, said) = self.kept(directory, born_on, kept)?;
+        if let Some(said) = said {
+            hub.log.line(format_args!("{said}"));
         }
-        changed
+        Ok(changed)
     }
 
+    /// Keeps on `kept` what its host says it was born as, once
+    /// (design-forget-account-v2.md F0): which account of its name it was
+    /// born for, whether by an assistance, and which, where the hub finds it
+    /// gives that account of a login on `born_on`, the machine it was born
+    /// on; one it does not find, as one ended before the conversation was
+    /// registered, is kept as still to be found, never as none. Once kept,
+    /// only an assistance still to be found may be found. A birth said of an
+    /// account of the name other than the one now is refused: the
+    /// conversation is not this account's (codex-87c8bbd9). Whether it
+    /// changed, and what the hub's log says.
     fn kept(
         &self,
-        directory: &fastctx_net::directory::Directory,
+        directory: &Directory,
         born_on: &MachineName,
         kept: &mut Conversation,
-    ) -> (bool, Option<String>) {
-        if kept.born_under.is_some() || kept.generation.is_some() || kept.colleague {
-            return (false, None);
+    ) -> Result<(bool, Option<String>), String> {
+        let Some(generation) = self.generation else { return Ok((false, None)) };
+        if directory.account(&kept.account).is_none_or(|account| account.opened != generation) {
+            return Err(format!(
+                "{} was born working for an account named {} that is not the one now",
+                kept.address.resident, kept.account
+            ));
         }
-        let account = &kept.account;
-        let generation =
-            self.generation.filter(|generation| directory.account(account).is_some_and(|it| it.opened == *generation));
-        let under = self.under.clone().filter(|grant| {
-            directory.assists.iter().any(|assist| {
-                assist.account == *account && directory.same(&assist.machine, born_on) && assist.grant_id() == *grant
-            })
-        });
-        let dropped = (generation != self.generation || under != self.under).then(|| {
-            format!(
-                "{} said {} was born for {account} opened {:?} under {:?}; not so here, kept as {generation:?} under {under:?}",
-                kept.address.machine, kept.address.resident, self.generation, self.under
-            )
-        });
-        kept.born_under = under;
-        kept.generation = generation;
-        kept.colleague = self.colleague;
-        (kept.born_under.is_some() || kept.generation.is_some() || kept.colleague, dropped)
+        let under = self.under.as_ref().filter(|_| self.assisted);
+        if kept.birth.generation.is_some() {
+            let found = kept.birth.assisted
+                && kept.birth.born_under.is_none()
+                && under.is_some_and(|grant| {
+                    kept.birth.claimed_under.as_ref().is_none_or(|claimed| claimed == grant)
+                        && gives(directory, &kept.account, born_on, grant)
+                });
+            if !found {
+                return Ok((false, None));
+            }
+            kept.birth.born_under = under.cloned();
+            kept.birth.claimed_under = None;
+            return Ok((true, None));
+        }
+        kept.birth.generation = Some(generation);
+        kept.birth.assisted = self.assisted;
+        kept.birth.colleague = self.colleague;
+        let mut said = None;
+        if self.assisted {
+            match under {
+                Some(grant) if gives(directory, &kept.account, born_on, grant) => {
+                    kept.birth.born_under = Some(grant.clone())
+                }
+                _ => {
+                    kept.birth.claimed_under = under.cloned();
+                    said = Some(format!(
+                        "{} said {} was born working by {under:?}, an assistance the hub does not give {} on {born_on}: kept as still to be found",
+                        kept.address.machine, kept.address.resident, kept.account
+                    ));
+                }
+            }
+        }
+        Ok((true, said))
     }
+}
+
+/// What a write of a conversation's ownership may do to what it was born as,
+/// whichever way the write comes (codex-87c8bbd9): keep it once, whole and as
+/// it holds (`Birth::kept`), and find an assistance still to be found;
+/// nothing else.
+pub(crate) fn birth_kept(
+    directory: &Directory,
+    born_on: &MachineName,
+    old: Option<&Conversation>,
+    new: &Conversation,
+) -> Result<(), String> {
+    if old.is_some_and(|old| old.birth == new.birth) {
+        return Ok(());
+    }
+    let rewritten = || Err("what a conversation was born as is kept once and never rewritten".to_string());
+    if let Some(old) = old.filter(|old| old.birth.generation.is_some()) {
+        let found = old.birth.assisted
+            && new.birth.assisted
+            && old.birth.born_under.is_none()
+            && new.birth.claimed_under.is_none()
+            && new.birth.generation == old.birth.generation
+            && new.birth.colleague == old.birth.colleague
+            && new.birth.born_under.as_ref().is_some_and(|grant| {
+                old.birth.claimed_under.as_ref().is_none_or(|claimed| claimed == grant)
+                    && gives(directory, &new.account, born_on, grant)
+            });
+        return if found { Ok(()) } else { rewritten() };
+    }
+    let Some(generation) = new.birth.generation else {
+        return if *new.birth == Born::default() { Ok(()) } else { rewritten() };
+    };
+    if directory.account(&new.account).is_none_or(|account| account.opened != generation) {
+        return Err("a conversation is kept for the account of its name it was born for".into());
+    }
+    let whole = (new.birth.assisted || (new.birth.born_under.is_none() && new.birth.claimed_under.is_none()))
+        && !(new.birth.born_under.is_some() && new.birth.claimed_under.is_some())
+        && new.birth.born_under.as_ref().is_none_or(|grant| gives(directory, &new.account, born_on, grant));
+    if whole { Ok(()) } else { rewritten() }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -109,7 +188,7 @@ pub(super) async fn register(
                     }
                     _ => false,
                 };
-                let as_born = birth.keep(hub, directory, &born_on, &mut kept);
+                let as_born = birth.keep(hub, directory, &born_on, &mut kept)?;
                 if !mapped && !as_born {
                     return Ok(kept);
                 }
@@ -146,11 +225,9 @@ pub(super) async fn register(
                 identity: device
                     .zip(born_at)
                     .map(|(device, born_at)| Box::new(identity(&store.hub.id, &device, &resident, born_at))),
-                born_under: None,
-                generation: None,
-                colleague: false,
+                birth: Default::default(),
             };
-            birth.keep(hub, &store.book.directory, &source, &mut conversation);
+            birth.keep(hub, &store.book.directory, &source, &mut conversation)?;
             conversation
         };
         let request = RecordRequest::Write {
@@ -192,9 +269,10 @@ fn identity(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fastctx_net::directory::Directory;
 
     const OPENED: &str = "2026-11-01T00:00:00Z";
+    const OTHER: &str = "2026-11-02T00:00:00Z";
+    const GIVEN: &str = "g-00000000000000aa";
 
     fn directory() -> Directory {
         serde_json::from_value(serde_json::json!({
@@ -202,70 +280,115 @@ mod tests {
             "members": [],
             "projects": [],
             "lends": [
-                {"machine": "host", "account": "carol", "agent": "codex", "grant": "g-00000000000000aa"},
-                {"machine": "host", "account": "carol", "agent": "claude"},
+                {"machine": "host", "account": "carol", "agent": "codex", "grant": GIVEN},
                 {"machine": "other", "account": "carol", "agent": "codex", "grant": "g-00000000000000bb"},
             ],
         }))
         .expect("a directory")
     }
 
+    fn host() -> MachineName {
+        "host".parse().expect("a machine")
+    }
+
     fn conversation() -> Conversation {
         Conversation {
             account: "carol".parse().expect("an account"),
-            address: Address {
-                machine: "host".parse().expect("a machine"),
-                resident: "codex-ab12".parse().expect("a resident"),
-            },
+            address: Address { machine: host(), resident: "codex-ab12".parse().expect("a resident") },
             shared_on: None,
             born_seal: None,
             previous: Vec::new(),
             identity: None,
-            born_under: None,
-            generation: None,
-            colleague: false,
+            birth: Default::default(),
         }
     }
 
-    fn birth(under: Option<&str>, generation: Option<&str>) -> Birth {
+    fn grant(text: &str) -> GrantId {
+        GrantId::try_from(text.to_string()).expect("a grant")
+    }
+
+    fn birth(generation: Option<&str>, under: Option<&str>) -> Birth {
         Birth {
             at: None,
-            under: under.map(|grant| GrantId::try_from(grant.to_string()).expect("a grant")),
             generation: generation.map(|at| at.parse().expect("a time")),
+            assisted: under.is_some(),
+            under: under.map(grant),
             colleague: false,
         }
     }
 
     #[test]
-    fn what_a_conversation_was_born_as_is_kept_once_where_it_holds() {
+    fn what_a_conversation_was_born_as_is_kept_once_as_it_holds() {
         let directory = directory();
-        let host: MachineName = "host".parse().expect("a machine");
-        // As its host says it, where it holds.
+        // Under an assistance the hub gives: found, kept, and a write may keep it.
         let mut kept = conversation();
-        let (changed, dropped) = birth(Some("g-00000000000000aa"), Some(OPENED)).kept(&directory, &host, &mut kept);
-        assert!(changed && dropped.is_none());
-        assert_eq!(kept.born_under.as_ref().map(GrantId::as_str), Some("g-00000000000000aa"));
-        assert_eq!(kept.generation, Some(OPENED.parse().expect("a time")));
-        // Never changed after.
-        let (changed, _) = birth(None, Some("2026-11-02T00:00:00Z")).kept(&directory, &host, &mut kept);
-        assert!(!changed);
-        assert_eq!(kept.born_under.as_ref().map(GrantId::as_str), Some("g-00000000000000aa"));
-        // An assistance kept before grants were is known by the grant read from it.
-        let legacy = directory.assists[1].grant_id();
-        let mut kept = conversation();
-        birth(Some(legacy.as_str()), Some(OPENED)).kept(&directory, &host, &mut kept);
-        assert_eq!(kept.born_under, Some(legacy));
-        // Another account of the name, another machine's assistance, or one
-        // the hub never gave, is let go and said.
-        for (under, generation) in [
-            (Some("g-00000000000000aa"), Some("2026-11-02T00:00:00Z")),
-            (Some("g-00000000000000bb"), Some(OPENED)),
-            (Some("g-00000000000000cc"), Some(OPENED)),
-        ] {
+        let (changed, said) = birth(Some(OPENED), Some(GIVEN)).kept(&directory, &host(), &mut kept).expect("kept");
+        assert!(changed && said.is_none());
+        assert_eq!(kept.birth.born_under, Some(grant(GIVEN)));
+        assert!(kept.birth.assisted && kept.birth.claimed_under.is_none());
+        assert!(birth_kept(&directory, &host(), Some(&conversation()), &kept).is_ok());
+        // Never rewritten after, by registering again or by a write.
+        let (changed, _) = birth(Some(OPENED), None).kept(&directory, &host(), &mut kept).expect("kept");
+        assert!(!changed && kept.birth.born_under == Some(grant(GIVEN)));
+        let mut cleared = kept.clone();
+        cleared.birth.born_under = None;
+        assert!(birth_kept(&directory, &host(), Some(&kept), &cleared).is_err());
+        let mut forgotten = kept.clone();
+        forgotten.birth.generation = None;
+        assert!(birth_kept(&directory, &host(), Some(&kept), &forgotten).is_err());
+        // Held by the machine: kept as such.
+        let mut held = conversation();
+        birth(Some(OPENED), None).kept(&directory, &host(), &mut held).expect("kept");
+        assert!(held.birth.generation.is_some() && !held.birth.assisted && held.birth.born_under.is_none());
+        // Nothing said: nothing kept.
+        let mut unsaid = conversation();
+        let (changed, _) = birth(None, None).kept(&directory, &host(), &mut unsaid).expect("kept");
+        assert!(!changed && unsaid.birth.generation.is_none());
+    }
+
+    #[test]
+    fn an_assistance_not_found_is_kept_still_to_be_found_and_found_once() {
+        let directory = directory();
+        // Of another machine, or one the hub never gave: still to be found, never none.
+        for said in ["g-00000000000000bb", "g-00000000000000cc"] {
             let mut kept = conversation();
-            let (_, dropped) = birth(under, generation).kept(&directory, &host, &mut kept);
-            assert!(dropped.is_some());
-            assert!(kept.born_under.is_none() || kept.generation.is_none());
+            let (changed, logged) = birth(Some(OPENED), Some(said)).kept(&directory, &host(), &mut kept).expect("kept");
+            assert!(changed && logged.is_some());
+            assert!(kept.birth.assisted && kept.birth.born_under.is_none());
+            assert_eq!(kept.birth.claimed_under, Some(grant(said)));
+            assert!(birth_kept(&directory, &host(), Some(&conversation()), &kept).is_ok());
         }
+        // Found once the hub gives it, and only that one.
+        let mut kept = conversation();
+        kept.birth.generation = Some(OPENED.parse().expect("a time"));
+        kept.birth.assisted = true;
+        kept.birth.claimed_under = Some(grant(GIVEN));
+        let before = kept.clone();
+        let (changed, _) =
+            birth(Some(OPENED), Some("g-00000000000000cc")).kept(&directory, &host(), &mut kept).expect("kept");
+        assert!(!changed && kept.birth.born_under.is_none());
+        let (changed, _) = birth(Some(OPENED), Some(GIVEN)).kept(&directory, &host(), &mut kept).expect("kept");
+        assert!(changed && kept.birth.born_under == Some(grant(GIVEN)) && kept.birth.claimed_under.is_none());
+        assert!(birth_kept(&directory, &host(), Some(&before), &kept).is_ok());
+        // A write may not find one the hub does not give.
+        let mut wrong = before.clone();
+        wrong.birth.born_under = Some(grant("g-00000000000000cc"));
+        wrong.birth.claimed_under = None;
+        assert!(birth_kept(&directory, &host(), Some(&before), &wrong).is_err());
+    }
+
+    #[test]
+    fn a_birth_said_of_another_account_of_the_name_is_refused() {
+        let directory = directory();
+        let mut kept = conversation();
+        assert!(birth(Some(OTHER), Some(GIVEN)).kept(&directory, &host(), &mut kept).is_err());
+        assert!(kept.birth.generation.is_none());
+        let mut written = conversation();
+        written.birth.generation = Some(OTHER.parse().expect("a time"));
+        assert!(birth_kept(&directory, &host(), None, &written).is_err());
+        // Nor is a found assistance written without it.
+        let mut partial = conversation();
+        partial.birth.born_under = Some(grant(GIVEN));
+        assert!(birth_kept(&directory, &host(), None, &partial).is_err());
     }
 }

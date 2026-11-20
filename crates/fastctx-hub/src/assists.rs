@@ -115,3 +115,23 @@ pub(crate) fn end_due(store: &mut Store, now: Timestamp) -> io::Result<bool> {
     }
     Ok(!due.is_empty())
 }
+
+/// Gives each assistance kept before grants were its own (`Assist::grant`),
+/// at random, before any member is heard: every node then reads the grant the
+/// hub keeps, which a renamed machine or an assistance given again does not
+/// change or repeat (design-forget-account-v2.md F0, codex-87c8bbd9). How
+/// many it gave.
+pub(crate) fn grant_kept(store: &mut Store) -> io::Result<usize> {
+    let mut given = 0;
+    for assist in &mut store.book.directory.assists {
+        if assist.grant.is_none() {
+            let bytes = fastctx_net::sign::random::<8>()?;
+            std::sync::Arc::make_mut(assist).grant = Some(fastctx_types::access::GrantId::from_bytes(bytes));
+            given += 1;
+        }
+    }
+    if given > 0 {
+        store.save_book()?;
+    }
+    Ok(given)
+}
