@@ -920,9 +920,9 @@ fn apply(
             }
             Ok(Told::Done)
         }
-        Change::DeleteAccount { name } => {
+        Change::DeleteAccount { name, opened } => {
             need_super()?;
-            delete_account(store, &name, account, ended)?;
+            delete_account(store, &name, opened, account, ended)?;
             Ok(Told::Done)
         }
         Change::Settings { self_registration } => {
@@ -1622,6 +1622,7 @@ pub(crate) fn left(hub: &Hub, key: &PublicKey, left: &str) {
 fn delete_account(
     store: &mut Store,
     name: &AccountName,
+    opened: Option<jiff::Timestamp>,
     by: &AccountName,
     ended: &mut Vec<(MachineName, Refusal)>,
 ) -> Result<(), String> {
@@ -1631,6 +1632,36 @@ fn delete_account(
         return Err(format!(
             "{name} is the hub's super administrator and cannot be deleted; hand that to another account first"
         ));
+    }
+    // The account asked for, as it was opened, or none: one opened again
+    // under its name since is another (codex-d515b194).
+    if let Some(opened) = opened {
+        if opened != found.opened {
+            return Err(format!("the account {name} was opened again since its deletion was asked: nothing was done"));
+        }
+        // Each assistance it was given is ended for good, in this commit:
+        // what was born under it is deleted where it lives (`purges`,
+        // design-forget-account-v2.md F4a). The assistance its own machines
+        // gave others goes with them, ended only.
+        let given: Vec<_> = directory
+            .assists
+            .iter()
+            .filter(|assist| assist.account == *name && assist.grants().next().is_some())
+            .cloned()
+            .collect();
+        for assist in given {
+            crate::purges::begin(
+                store,
+                crate::purges::Ended {
+                    grants: assist.grants().cloned().collect(),
+                    machine: assist.machine.clone(),
+                    account: assist.account.clone(),
+                    agent: assist.agent.clone(),
+                    home: assist.home.clone(),
+                    by: Some(by.clone()),
+                },
+            )?;
+        }
     }
     // Who may keep something done for it, read before its logins, shares
     // and assistances go: they let go of it once it is gone.

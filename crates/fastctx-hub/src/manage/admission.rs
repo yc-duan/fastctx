@@ -22,9 +22,14 @@ pub(super) fn check(
     let need_super =
         || if super_ { Ok(()) } else { Err(format!("the account {account} is not the hub's super administrator")) };
     match change {
-        Change::DeleteAccount { name } => {
+        Change::DeleteAccount { name, opened } => {
             need_super()?;
             let found = directory.account(name).ok_or_else(|| format!("there is no account {name}"))?;
+            if opened.is_some_and(|opened| opened != found.opened) {
+                return Err(format!(
+                    "the account {name} was opened again since its deletion was asked: nothing was done"
+                ));
+            }
             if found.level == Level::Super {
                 return Err(format!(
                     "{name} is the hub's super administrator and cannot be deleted; hand that to another account first"

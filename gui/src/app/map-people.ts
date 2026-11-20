@@ -297,11 +297,15 @@ export class MapPeople {
     const { words } = this.host;
     const machines = hub.members.filter((member) => member.home === account).map((member) => member.name);
     const projects = hub.projects.filter((project) => project.owner === account).map((project) => project.name);
+    // The account as it is shown now: one opened again under its name since
+    // is not deleted for it (codex-d515b194).
+    const opened = hub.accounts.find((found) => found.name === account)?.opened;
     this.host.confirm.ask({
       title: words.removeTitle(account),
       what: words.removeWhat(machines, projects),
       go: words.removeGo,
-      act: () => this.host.change(login, { change: "delete_account", name: account }),
+      act: () =>
+        opened ? this.host.change(login, { change: "delete_account", name: account, opened }) : Promise.reject(new Error(words.removeStale)),
       done: () => void this.host.store.refresh().then(() => this.host.redraw()),
     });
   }

@@ -139,7 +139,7 @@ fn unit(view: &View, account: &AccountName, change: &AccountChange) -> Result<(S
             AccountChange::RenameGroup { owner, from, .. } => serde_json::json!(["group", owner, from]),
             AccountChange::SetRole { name, .. }
             | AccountChange::SetAccount { name, .. }
-            | AccountChange::DeleteAccount { name } => {
+            | AccountChange::DeleteAccount { name, .. } => {
                 let opened = view.account(name).map(|found| found.opened);
                 known = opened.is_some();
                 serde_json::json!(["account", name, opened])

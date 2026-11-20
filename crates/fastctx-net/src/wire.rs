@@ -1223,6 +1223,14 @@ pub enum Change {
     /// are archived for the super administrator to hand on.
     DeleteAccount {
         name: AccountName,
+        /// When the account was opened, as its deletion was asked: refused
+        /// where the account of that name is another now; and the
+        /// assistance it was given is ended for good, what was born under it
+        /// deleted (design-forget-account-v2.md F4a). None from an earlier
+        /// sender, which deletes it by its name alone, ending nothing for
+        /// good.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        opened: Option<Timestamp>,
     },
     /// Whether anyone who reaches the hub may open an account.
     Settings {

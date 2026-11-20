@@ -20,16 +20,31 @@ const FAMILY: Family = Family {
 /// cannot be represented by this payload.
 #[derive(Serialize, Deserialize)]
 enum Work {
-    DeleteAccount { name: AccountName },
-    DeleteProject { town: TownId },
-    RenameGroup { owner: AccountName, from: String, to: Option<String> },
-    SetRole { name: AccountName, visitor: bool },
+    DeleteAccount {
+        name: AccountName,
+        /// As it was opened; none from work kept before this was, which
+        /// deletes it by its name alone, as it was asked then.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        opened: Option<jiff::Timestamp>,
+    },
+    DeleteProject {
+        town: TownId,
+    },
+    RenameGroup {
+        owner: AccountName,
+        from: String,
+        to: Option<String>,
+    },
+    SetRole {
+        name: AccountName,
+        visitor: bool,
+    },
 }
 
 impl Work {
     fn from_change(change: Change) -> Result<Self, String> {
         Ok(match change {
-            Change::DeleteAccount { name } => Self::DeleteAccount { name },
+            Change::DeleteAccount { name, opened } => Self::DeleteAccount { name, opened },
             Change::DeleteProject { town } => Self::DeleteProject { town },
             Change::RenameGroup { owner, from, to } => Self::RenameGroup { owner, from, to },
             Change::SetRole { name, visitor } => Self::SetRole { name, visitor },
@@ -39,7 +54,7 @@ impl Work {
 
     fn change(&self) -> Change {
         match self {
-            Self::DeleteAccount { name } => Change::DeleteAccount { name: name.clone() },
+            Self::DeleteAccount { name, opened } => Change::DeleteAccount { name: name.clone(), opened: *opened },
             Self::DeleteProject { town } => Change::DeleteProject { town: town.clone() },
             Self::RenameGroup { owner, from, to } => {
                 Change::RenameGroup { owner: owner.clone(), from: from.clone(), to: to.clone() }
@@ -50,7 +65,7 @@ impl Work {
 
     fn unit(&self) -> String {
         match self {
-            Self::DeleteAccount { name } | Self::SetRole { name, .. } => format!("account/{name}"),
+            Self::DeleteAccount { name, .. } | Self::SetRole { name, .. } => format!("account/{name}"),
             Self::DeleteProject { town } => format!("project/{town}"),
             Self::RenameGroup { owner, .. } => format!("groups/{owner}"),
         }
@@ -82,7 +97,7 @@ fn removes_origin(
     origin: &crate::origin::Origin,
     change: &Change,
 ) -> bool {
-    matches!(change, Change::DeleteAccount { name }
+    matches!(change, Change::DeleteAccount { name, .. }
         if directory.member(&origin.name).is_some_and(|member| member.home.as_ref() == Some(name)))
 }
 

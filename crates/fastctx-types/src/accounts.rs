@@ -302,6 +302,10 @@ pub enum AccountChange {
     },
     DeleteAccount {
         name: AccountName,
+        /// When the account was opened, as its deletion was asked: what is
+        /// deleted is that account, never one opened again under its name.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        opened: Option<Timestamp>,
     },
     Settings {
         self_registration: bool,

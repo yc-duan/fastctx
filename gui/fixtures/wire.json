@@ -5086,7 +5086,8 @@
       },
       {
         "change": "delete_account",
-        "name": "bo"
+        "name": "bo",
+        "opened": "2026-10-01T08:00:00Z"
       },
       {
         "change": "settings",

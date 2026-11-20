@@ -110,7 +110,20 @@ impl Link {
             }
             AccountChange::SetAccount { name, locked } => Change::SetAccount { name, locked },
             AccountChange::Transfer { to } => Change::Transfer { to },
-            AccountChange::DeleteAccount { name } => Change::DeleteAccount { name },
+            AccountChange::DeleteAccount { name, opened } => {
+                // Deleting an account deletes what it was given to work by: a
+                // hub that does not would delete it by its name alone.
+                if !self.view().purges {
+                    let hub = self.hub_name();
+                    return Err(format!(
+                        "the hub {hub} does not yet delete what an account deleted was given, which deleting one does now; update the hub first"
+                    ));
+                }
+                if opened.is_none() {
+                    return Err("say which account of its name is deleted, as it was opened".into());
+                }
+                Change::DeleteAccount { name, opened }
+            }
             AccountChange::Settings { self_registration } => Change::Settings { self_registration },
             AccountChange::Updates { policy } => Change::Updates { policy },
             AccountChange::Intake { rate } => Change::Intake { rate },

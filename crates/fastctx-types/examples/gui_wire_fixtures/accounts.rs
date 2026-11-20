@@ -480,7 +480,10 @@ pub fn fixtures() -> Fixtures {
             AccountChange::OpenAccount { name: "cy".parse().unwrap(), password: "fixture".into(), visitor: true },
             AccountChange::SetAccount { name: "bo".parse().unwrap(), locked: true },
             AccountChange::Transfer { to: "bo".parse().unwrap() },
-            AccountChange::DeleteAccount { name: "bo".parse().unwrap() },
+            AccountChange::DeleteAccount {
+                name: "bo".parse().unwrap(),
+                opened: Some("2026-10-01T08:00:00Z".parse().unwrap()),
+            },
             AccountChange::Settings { self_registration: false },
             AccountChange::AssetSeal { at_start: true },
             AccountChange::OpenAssets,

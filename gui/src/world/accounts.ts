@@ -447,7 +447,7 @@ export type AccountChange =
   | { change: "accept_role"; accept: boolean }
   | { change: "set_account"; name: AccountName; locked: boolean }
   | { change: "transfer"; to: AccountName }
-  | { change: "delete_account"; name: AccountName }
+  | { change: "delete_account"; name: AccountName; opened?: Timestamp }
   | { change: "settings"; self_registration: boolean }
   | { change: "updates"; policy: import("./updates").Policy }
   /** A machine away updates to `version` once it is back; none takes
