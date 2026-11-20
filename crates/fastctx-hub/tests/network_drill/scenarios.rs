@@ -436,6 +436,57 @@ pub async fn cancel(world: &World, report: &mut Report) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// A question whose answer holds the thread it is answered on for a while,
+/// as one waiting on a lock the machine holds elsewhere does: the machine's
+/// lines go on being read meanwhile, so another call to it is answered at
+/// once, and no call is answered on the thread that keeps its lines.
+pub async fn held_answer(world: &World, report: &mut Report) -> anyhow::Result<()> {
+    /// The thread that keeps a machine's lines (`fastctx_net::threads`).
+    const LINES: &str = "fastctx-link";
+    let (alpha, beta, gamma) = (world.machine("alpha"), world.machine("beta"), world.machine("gamma"));
+    beta.lab.hold(true);
+    let held = {
+        let (link, to, account) = (alpha.link(), beta.name.clone(), world.account.clone());
+        tokio::spawn(async move {
+            let who = RemoteCall::Who { all: true, town: None, since: None };
+            link.call(&to, &account, who.purpose(), who).await
+        })
+    };
+    let holding = until(Duration::from_secs(10), || beta.lab.holding() > 0).await;
+    let look = RemoteCall::Updates { update: UpdateCall::Look };
+    let (answer, took) =
+        timed(tokio::time::timeout(lab::HELD * 2, gamma.link().call(&beta.name, &world.account, look.purpose(), look)))
+            .await;
+    let still_holding = beta.lab.holding() > 0;
+    beta.lab.hold(false);
+    let _ = held.await;
+    report.check(
+        holding.is_some(),
+        "beta took a question whose answer holds its thread",
+        holding.map_or("not within 10 s".to_string(), seconds),
+    );
+    report.check(
+        answer.as_ref().is_ok_and(|answer| fails_with(answer, |message| message.len() == IN_A_MESSAGE))
+            && still_holding
+            && took < Duration::from_secs(2),
+        "another call to beta was answered at once while it held",
+        format!(
+            "{} after {}, {}",
+            answer.as_ref().map_or("not answered".to_string(), said),
+            seconds(took),
+            if still_holding { "still holding" } else { "no longer holding" }
+        ),
+    );
+    let threads = beta.lab.threads();
+    report.check(
+        !threads.is_empty() && !threads.iter().any(|name| name == LINES),
+        "beta answered no call on the thread that keeps its lines",
+        format!("{threads:?}"),
+    );
+    report.check(alpha.online() && beta.online() && gamma.online(), "all stayed connected", "");
+    Ok(())
+}
+
 /// A machine leaving and coming back, three times: the others hear of
 /// it at once; `deltas`, as each change, not only from whole directories.
 pub async fn presence(world: &World, report: &mut Report, deltas: bool) -> anyhow::Result<()> {

@@ -45,7 +45,7 @@ use report::Report;
 use world::{Program, World};
 
 /// Every scenario, in the order they run.
-const SCENARIOS: [&str; 18] = [
+const SCENARIOS: [&str; 19] = [
     "update-policy",
     "skill-folders",
     "plan-copies",
@@ -61,6 +61,7 @@ const SCENARIOS: [&str; 18] = [
     "unread-stream",
     "slow",
     "cancel",
+    "held-answer",
     "presence",
     "earlier-hub",
     "earlier-node",
@@ -320,6 +321,7 @@ async fn scenario(name: &'static str, dir: &Path, earlier: Option<&Path>) -> Rep
             "unread-stream" => scenarios::unread_stream(&world, &mut report).await,
             "slow" => scenarios::slow(&world, &mut report).await,
             "cancel" => scenarios::cancel(&world, &mut report).await,
+            "held-answer" => scenarios::held_answer(&world, &mut report).await,
             "presence" => scenarios::presence(&world, &mut report, true).await,
             "earlier-hub" => mixed::earlier_hub(&world, &mut report).await,
             "earlier-node" => {

@@ -2,7 +2,9 @@
 //! count of the letters it took, of the times its link connected, and of
 //! the calls it is answering, and answers the few calls the scenarios make:
 //! an answer that fits one control message, one too large for it, bytes
-//! over a data connection, and a question it answers only once given up.
+//! over a data connection, a question it answers only once given up, and
+//! one whose answer holds the thread it is answered on. It notes the thread
+//! each call was answered on.
 
 use std::collections::HashMap;
 use std::io::Write as _;
@@ -28,6 +30,8 @@ pub const OVER_DATA: usize = 300_000;
 /// The bytes of a read that sends nothing and keeps its stream open until
 /// the stream ends, as a quiet watch does.
 pub const QUIET: u64 = u64::MAX;
+/// How long a held question holds the thread it is answered on.
+pub const HELD: Duration = Duration::from_secs(6);
 
 #[derive(Clone, Debug)]
 pub struct Read {
@@ -44,6 +48,13 @@ pub struct Lab {
     /// Whether `Who` is answered only after ten minutes, as a question its
     /// caller gives up first.
     stalls: AtomicBool,
+    /// Whether `Who` holds the thread it is answered on for `HELD`, as an
+    /// answer waiting on a lock the machine holds elsewhere does; and how
+    /// many hold one now.
+    holds: AtomicBool,
+    holding: AtomicUsize,
+    /// The thread each call was answered on, by its name.
+    threads: Mutex<Vec<String>>,
     /// Calls being answered now, and calls stopped before they were done.
     answering: Arc<AtomicUsize>,
     stopped: Arc<AtomicUsize>,
@@ -59,6 +70,9 @@ impl Lab {
             got: Mutex::new(HashMap::new()),
             connected: AtomicUsize::new(0),
             stalls: AtomicBool::new(false),
+            holds: AtomicBool::new(false),
+            holding: AtomicUsize::new(0),
+            threads: Mutex::new(Vec::new()),
             answering: Arc::default(),
             stopped: Arc::default(),
             reads: Arc::default(),
@@ -82,6 +96,19 @@ impl Lab {
 
     pub fn stall(&self, stalls: bool) {
         self.stalls.store(stalls, Ordering::SeqCst);
+    }
+
+    pub fn hold(&self, holds: bool) {
+        self.holds.store(holds, Ordering::SeqCst);
+    }
+
+    pub fn holding(&self) -> usize {
+        self.holding.load(Ordering::SeqCst)
+    }
+
+    /// The threads the calls were answered on, by their names.
+    pub fn threads(&self) -> Vec<String> {
+        self.threads.lock().expect("never poisoned").clone()
     }
 
     pub fn answering(&self) -> usize {
@@ -137,6 +164,8 @@ impl Node for Lab {
     }
 
     fn call(&self, _: Caller, call: RemoteCall, stream: Option<Stream>) -> BoxFuture<RemoteResult> {
+        let thread = std::thread::current().name().unwrap_or("unnamed").to_string();
+        self.threads.lock().expect("never poisoned").push(thread);
         match call {
             RemoteCall::Updates { update: UpdateCall::Look } => {
                 Box::pin(async { Err(Failure::new("x".repeat(IN_A_MESSAGE))) })
@@ -178,6 +207,12 @@ impl Node for Lab {
                     answering.answered();
                     Err(Failure::new(outcome))
                 })
+            }
+            RemoteCall::Who { .. } if self.holds.load(Ordering::SeqCst) => {
+                self.holding.fetch_add(1, Ordering::SeqCst);
+                std::thread::sleep(HELD);
+                self.holding.fetch_sub(1, Ordering::SeqCst);
+                Box::pin(async { Err(Failure::new("held")) })
             }
             RemoteCall::Who { .. } if self.stalls.load(Ordering::SeqCst) => {
                 self.answering.fetch_add(1, Ordering::SeqCst);

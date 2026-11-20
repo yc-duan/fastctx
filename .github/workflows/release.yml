@@ -254,6 +254,7 @@ jobs:
           export FASTCTX_TEST_ROOT="$(cygpath -m "$RUNNER_TEMP")"
           tests/offline.exe
           tests/own_lifetime.exe
+          tests/line_sources.exe
           tests/job_lifecycle.exe
 
   windows-x64:
@@ -303,6 +304,7 @@ jobs:
           export FASTCTX_TEST_ROOT="$(cygpath -m "$RUNNER_TEMP")"
           tests/offline.exe
           tests/own_lifetime.exe
+          tests/line_sources.exe
           tests/job_lifecycle.exe
 
   install-windows-x64:
@@ -611,6 +613,7 @@ jobs:
           export FASTCTX_TEST_BASH=/bin/bash FASTCTX_TEST_ROOT="$RUNNER_TEMP"
           tests/offline
           tests/own_lifetime
+          tests/line_sources
           tests/job_lifecycle
 
   old-linux:
@@ -842,6 +845,7 @@ jobs:
           export FASTCTX_TEST_BASH=/bin/bash FASTCTX_TEST_ROOT="$RUNNER_TEMP"
           tests/offline
           tests/own_lifetime
+          tests/line_sources
           tests/job_lifecycle
 
   macos-intel:
@@ -883,6 +887,7 @@ jobs:
           export FASTCTX_TEST_BASH=/bin/bash FASTCTX_TEST_ROOT="$RUNNER_TEMP"
           tests/offline
           tests/own_lifetime
+          tests/line_sources
           tests/job_lifecycle
       - name: Open the application
         run: |

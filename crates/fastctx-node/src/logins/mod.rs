@@ -66,6 +66,8 @@ pub(crate) struct Logins {
     asking: crate::ranked::LoginAsking,
     /// The logins the workbench is open in, as last read (`workbench`).
     workbench: Mutex<workbench::Open>,
+    /// What the heartbeat tells of it (`workbench::Told`).
+    workbench_told: workbench::Told,
     /// Told when a login was connected or taken out, so that the files
     /// watched are those of the logins as they stand (`watch`).
     rewatch: Arc<tokio::sync::Notify>,

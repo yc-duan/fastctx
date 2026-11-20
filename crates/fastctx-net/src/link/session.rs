@@ -722,15 +722,12 @@ async fn connected(
             }
             // A call to take is answered on its own task at once, not after
             // letters the node is still taking in, as long as no view it may
-            // be judged by waits.
+            // be judged by waits. Answered on the node's runtime, as every
+            // other call is: what answers it may wait on the node's locks,
+            // and these lines must go on being read meanwhile.
             Down::Incoming { call, message } if views_waiting.load(std::sync::atomic::Ordering::Acquire) == 0 => {
                 let stop = inner.answers.open(inner, CallOn::Hub(generation), call);
-                fastctx_platform::task::spawn(super::answering::answer(
-                    inner.clone(),
-                    Replier::Hub(up.clone(), call),
-                    message,
-                    stop,
-                ));
+                inner.on_node(super::answering::answer(inner.clone(), Replier::Hub(up.clone(), call), message, stop));
             }
             // The rest is the node's to do, in the order it came. A node that
             // falls this far behind lets the connection go rather than hold

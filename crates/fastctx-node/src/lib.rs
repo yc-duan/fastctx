@@ -1192,6 +1192,11 @@ pub use storage_drill::{migration as record_migration_drill, run as record_drill
 #[cfg(feature = "storage-drill")]
 mod storage_drill;
 
+/// A reader holding a line source leaves the rest of it going (the release
+/// test `line_sources`).
+#[doc(hidden)]
+pub use lines::drill::run as line_source_drill;
+
 pub use conversation_store::transfer::status::ConversationImport;
 
 /// Lists durable import progress and rejected offers without modifying the node.
