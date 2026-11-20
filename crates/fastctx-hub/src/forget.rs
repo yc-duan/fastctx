@@ -243,7 +243,7 @@ pub(crate) fn gone_there(
     ownership: Option<fastctx_types::owned_records::Conversation>,
     scopes_gone: bool,
     known: BTreeSet<PublicKey>,
-) {
+) -> Result<(), String> {
     let tell = {
         let mut store = hub.edit_store();
         // The machines known to keep copies of it as it was purged, which
@@ -264,8 +264,10 @@ pub(crate) fn gone_there(
                 let mut added = false;
                 for (machine, key) in known {
                     let new = pending.audience.insert(machine.clone());
-                    if new && !pending.home {
-                        pending.keys.insert(machine.clone(), key);
+                    // Waited for already by its name alone: by its key now
+                    // (codex-d515b194).
+                    if !pending.home && (new || pending.waiting.contains(&machine)) {
+                        added |= pending.keys.insert(machine.clone(), key) != Some(key);
                         pending.waiting.insert(machine);
                     }
                     added |= new;
@@ -274,10 +276,10 @@ pub(crate) fn gone_there(
                 if home {
                     done_at_home(&mut store, index);
                 }
-                if (home || added)
-                    && let Err(error) = store.save_book()
-                {
-                    hub.log.line(format_args!("keeping that {} went: {error}", conversation.key()));
+                // Not kept, the purge asks again: it does not go on as if it
+                // were (codex-d515b194).
+                if home || added {
+                    store.save_book().map_err(|error| format!("keeping that {} went: {error}", conversation.key()))?;
                 }
                 told_now(&store.book.forgetting.pending[index])
             }
@@ -308,9 +310,8 @@ pub(crate) fn gone_there(
                 let hub_actor = Actor { account: None, authenticated: true, member: None, peer: None };
                 let action = Action::Forgotten { conversation: conversation.clone(), on: conversation.machine.clone() };
                 let directory = store.book.directory.clone();
-                if let Err(error) = crate::machine_log::keep(&mut store, &directory, hub_actor, action, Outcome::Done) {
-                    hub.log.line(format_args!("keeping that {} went: {error}", conversation.key()));
-                }
+                crate::machine_log::keep(&mut store, &directory, hub_actor, action, Outcome::Done)
+                    .map_err(|error| format!("keeping that {} went: {error}", conversation.key()))?;
                 tell
             }
         }
@@ -320,10 +321,11 @@ pub(crate) fn gone_there(
     }
     send(hub, tell);
     crate::afoot::settle(hub);
+    Ok(())
 }
 
 /// What the member `member` did with the deletion `id`.
-pub(crate) fn forgot(hub: &Hub, member: &MachineName, id: u64, outcome: Forgot) {
+pub(crate) fn forgot(hub: &Hub, member: &MachineName, key: PublicKey, id: u64, outcome: Forgot) {
     let (tell, ended) = {
         let mut store = hub.edit_store();
         let member = store.book.directory.canonical(member).clone();
@@ -334,8 +336,11 @@ pub(crate) fn forgot(hub: &Hub, member: &MachineName, id: u64, outcome: Forgot) 
         let at_home = pending.home && store.book.directory.same(&member, &pending.forgetting.conversation.machine);
         // Waited for under the name it had as it was asked, renamed since
         // (codex-d515b194).
-        let waited =
-            pending.waiting.iter().find(|waiting| is_waited(&store.book.directory, pending, waiting, &member)).cloned();
+        let waited = pending
+            .waiting
+            .iter()
+            .find(|waiting| is_waited(&store.book.directory, pending, waiting, &member, &key))
+            .cloned();
         if !at_home && (pending.home || waited.is_none()) {
             // Not asked of it now: a telling it answers late.
             return;
@@ -555,15 +560,17 @@ fn wait_for(directory: &fastctx_net::directory::Directory, pending: &mut Pending
 }
 
 /// Whether `waited`, as `pending` waits for it, is the member named
-/// `member` now: by its key where it has one (codex-d515b194).
+/// `member` now, whose session proved `key`: by the key it waits for where
+/// it has one (codex-d515b194).
 fn is_waited(
     directory: &fastctx_net::directory::Directory,
     pending: &Pending,
     waited: &MachineName,
     member: &MachineName,
+    key: &PublicKey,
 ) -> bool {
     match pending.keys.get(waited) {
-        Some(key) => directory.member(member).is_some_and(|found| found.key == *key),
+        Some(waited) => waited == key,
         None => directory.same(waited, member),
     }
 }
@@ -631,7 +638,11 @@ fn send(hub: &Hub, tell: Vec<(MachineName, Option<PublicKey>, Forgetting)>) {
             Some(key) => directory.by_key(&key).map(|found| &found.name),
             None => Some(directory.canonical(&member)),
         };
-        if let Some(session) = found.and_then(|name| sessions.get(name)).filter(|session| session.forgets) {
+        // And its session that device's own (codex-d515b194).
+        if let Some(session) = found
+            .and_then(|name| sessions.get(name))
+            .filter(|session| session.forgets && key.is_none_or(|key| session.key == key))
+        {
             let _ = session.out.send(Out::Frame(Down::Forget { forgetting }));
         }
     }

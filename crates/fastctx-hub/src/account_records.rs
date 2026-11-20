@@ -353,13 +353,7 @@ async fn asked_of(
                         // this account as opened deleted for a purge, or being:
                         // the hub let go of what it would keep of it
                         // (codex-87c8bbd9).
-                        if crate::purges::deleting(
-                            &store.book.purges,
-                            &account,
-                            opened,
-                            &key,
-                            ownership.identity.as_deref(),
-                        ) {
+                        if crate::purges::deleting(&store.book.purges, &account, opened, &key) {
                             return Err(
                                 "a conversation of its id was deleted here with an assistance ended for good".into()
                             );
@@ -381,25 +375,20 @@ async fn asked_of(
                         // Being deleted for a purge, it moves no more: the
                         // hub would delete it from where it was
                         // (codex-87c8bbd9).
-                        if moved
-                            && crate::purges::deleting(
-                                &store.book.purges,
-                                &account,
-                                opened,
-                                &key,
-                                ownership.identity.as_deref(),
-                            )
-                        {
+                        if moved && crate::purges::deleting(&store.book.purges, &account, opened, &key) {
                             return Err("it is being deleted with an assistance ended for good".into());
                         }
                         let mut previous = old.previous.clone();
                         if moved && !previous.contains(&old.address.machine) {
                             previous.push(old.address.machine.clone());
                         }
+                        // Which conversation it is, once known, is never said
+                        // anew (codex-d515b194).
                         if old.account != ownership.account
                             || old.shared_on != ownership.shared_on
                             || old.born_seal != ownership.born_seal
                             || ownership.previous != previous
+                            || (old.identity.is_some() && old.identity != ownership.identity)
                         {
                             return Err("a conversation's birth ownership cannot be rewritten".into());
                         }

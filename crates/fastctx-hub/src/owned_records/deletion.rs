@@ -111,7 +111,7 @@ async fn staged_gone(
     drop(records);
     let mut left = Vec::new();
     if let_go.foreign > 0 {
-        left.push(format!("{} of its revisions staged that another machine wrote", let_go.foreign));
+        left.push(format!("{} revisions staged under its id, not proven its own", let_go.foreign));
     }
     if let_go.unread > 0 {
         left.push(format!(
@@ -207,8 +207,9 @@ pub(crate) async fn erase(
         else {
             return Err("the conversation's erasure received an unexpected reply".into());
         };
-        // Never recorded: what the hub keeps under its id is let go of
-        // where its machine wrote it, the rest said (codex-d515b194).
+        // Never recorded: nothing the hub keeps under its id is proven its
+        // own, as who wrote it is said by a name alone; it is kept, and said
+        // (codex-d515b194, codex-87c8bbd9).
         let Some(record) = record else {
             recorded = false;
             break;
@@ -248,20 +249,14 @@ pub(crate) async fn erase(
         .map(|entry| entry.metadata.clone())
         .collect();
     drop(records);
-    let store = hub.store();
-    let host = by.1;
-    let owns: Owns = Arc::new(move |metadata: &fastctx_types::account_records::Metadata| {
-        recorded
-            || metadata
-                .by
-                .as_ref()
-                .and_then(|machine| store.book.directory.member(machine))
-                .is_some_and(|member| member.key == host)
-    });
-    let (documents, foreign): (Vec<_>, Vec<_>) = documents.into_iter().partition(|metadata| owns(metadata));
+    let owns: Owns = Arc::new(move |_| recorded);
+    let (documents, unproven): (Vec<_>, Vec<_>) = documents.into_iter().partition(|metadata| owns(metadata));
     let mut left = Vec::new();
-    if !foreign.is_empty() {
-        left.push(format!("{} of its documents another machine wrote", foreign.len()));
+    if !unproven.is_empty() {
+        left.push(format!(
+            "{} documents under its id, never recorded as its own conversation's",
+            unproven.iter().filter(|metadata| !metadata.deleted).count()
+        ));
     }
     for metadata in documents {
         if !metadata.deleted {

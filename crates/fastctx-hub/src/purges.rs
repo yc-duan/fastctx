@@ -72,10 +72,10 @@ pub(crate) struct Purge {
     /// told (codex-d515b194).
     #[serde(default, rename = "audience_keys", skip_serializing_if = "BTreeSet::is_empty")]
     pub(crate) audience: BTreeSet<PublicKey>,
-    /// As a build before kept them, by name: told by the key the name has
-    /// as they are told (codex-d515b194).
+    /// As builds before kept them: by name, or by key, under the earlier
+    /// field's name; read as either (codex-d515b194, codex-87c8bbd9).
     #[serde(default, rename = "audience", skip_serializing_if = "BTreeSet::is_empty")]
-    pub(crate) audience_named: BTreeSet<MachineName>,
+    pub(crate) audience_named: BTreeSet<String>,
 }
 
 /// Where a purge stands.
@@ -104,9 +104,8 @@ pub(crate) struct Item {
     pub(crate) previous: Vec<MachineName>,
     pub(crate) fate: Fate,
     /// Which conversation of its id it is, by where and when it was born
-    /// (`owned_records::Conversation::identity`), where known: one of the
-    /// same id born elsewhere, or at another time, is another, and is
-    /// registered (codex-87c8bbd9).
+    /// (`owned_records::Conversation::identity`), where known: kept to be
+    /// looked at; `deleting` goes by the id alone.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) identity: Option<Box<fastctx_types::sync::identity::ObjectId>>,
     /// What of it the hub found and did not let go of, not proven its own:
@@ -146,24 +145,16 @@ impl Purge {
 /// hub's reach. It moves no more, and is not registered anew, wherever it
 /// comes from, however late: the hub let go of what it keeps of it for good
 /// (codex-87c8bbd9, a copy taken elsewhere before it went, registered after
-/// its purge was done). One kept stays as it was. Another conversation of
-/// its id, `identity` saying it was born elsewhere or at another time, is
-/// not it (codex-87c8bbd9); one not known as which is taken for it.
-pub(crate) fn deleting(
-    purges: &Purges,
-    account: &AccountName,
-    opened: Timestamp,
-    resident: &str,
-    identity: Option<&fastctx_types::sync::identity::ObjectId>,
-) -> bool {
+/// its purge was done). One kept stays as it was. By its id alone, as the
+/// account's records keep every conversation by its id alone: what a host
+/// says of where and when it was born is not proof it is another
+/// (codex-d515b194), and two machines' ids meet as rarely here as anywhere
+/// in those records.
+pub(crate) fn deleting(purges: &Purges, account: &AccountName, opened: Timestamp, resident: &str) -> bool {
     purges.kept.iter().any(|purge| {
         purge.account == *account
             && purge.generation == opened
-            && purge.items.iter().any(|(id, item)| {
-                id.as_str() == resident
-                    && !matches!(item.fate, Fate::Kept { .. })
-                    && item.identity.as_deref().zip(identity).is_none_or(|(deleted, this)| deleted == this)
-            })
+            && purge.items.iter().any(|(id, item)| id.as_str() == resident && !matches!(item.fate, Fate::Kept { .. }))
     })
 }
 
@@ -439,7 +430,7 @@ fn decide(
                 Some((conversation, _)) if conversation.birth.colleague => kept("a colleague's conversation"),
                 Some((conversation, _))
                     if !directory.same(&conversation.address.machine, &purge.machine)
-                        || !conversation.previous.is_empty() =>
+                        || conversation.previous.iter().any(|old| !directory.same(old, &purge.machine)) =>
                 {
                     kept("it moved since it was born")
                 }
@@ -600,13 +591,16 @@ async fn settle_one(
     let forgetting = account.clone();
     let mut audience = purge.audience.clone();
     {
-        let store = hub.store();
-        let directory = &store.book.directory;
+        // A name kept then is not proof which device it was: it is not
+        // told (codex-d515b194).
         audience.extend(
-            purge.audience_named.iter().filter_map(|machine| directory.member(machine)).map(|member| member.key),
+            purge
+                .audience_named
+                .iter()
+                .filter_map(|said| serde_json::from_value::<PublicKey>(serde_json::Value::String(said.clone())).ok()),
         );
     }
-    hub.blocking(move |hub| crate::forget::gone_there(&hub, address, forgetting, ownership, true, audience)).await;
+    hub.blocking(move |hub| crate::forget::gone_there(&hub, address, forgetting, ownership, true, audience)).await?;
     let resident = resident.clone();
     hub.blocking(move |hub| gone(&hub, id, &resident, left)).await;
     Ok(())

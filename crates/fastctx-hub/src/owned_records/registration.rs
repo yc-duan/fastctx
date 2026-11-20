@@ -223,13 +223,16 @@ pub(super) async fn register(
                     Some((member.name.clone(), fastctx_net::record_ownership::seal(member)?))
                 })
                 .flatten();
-            let device = if source == *from { Some(*key) } else { store.book.directory.member(&source).map(|m| m.key) };
+            // Its own machine under another of its names is where it was
+            // born, not a machine it came from (codex-87c8bbd9).
+            let here = store.book.directory.same(&source, from);
+            let device = if here { Some(*key) } else { store.book.directory.member(&source).map(|m| m.key) };
             let mut conversation = Conversation {
                 account: account.clone(),
                 address: Address { machine: from.clone(), resident: resident.clone() },
                 shared_on: born.as_ref().map(|(machine, _)| machine.clone()),
                 born_seal: born.map(|(_, key)| key),
-                previous: if source != *from { vec![source.clone()] } else { Vec::new() },
+                previous: if here { Vec::new() } else { vec![source.clone()] },
                 identity: device
                     .zip(born_at)
                     .map(|(device, born_at)| Box::new(identity(&store.hub.id, &device, &resident, born_at))),
