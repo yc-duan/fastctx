@@ -57,6 +57,7 @@ impl Link {
                 share,
                 manages,
                 purge,
+                shown,
             } => {
                 return self
                     .assist(
@@ -79,6 +80,7 @@ impl Link {
                         },
                         assisting,
                         purge,
+                        shown,
                     )
                     .await
                     .map(|()| None);
@@ -154,6 +156,7 @@ impl Link {
         mut assist: Assist,
         assisting: bool,
         purge: bool,
+        shown: Vec<fastctx_types::access::GrantId>,
     ) -> Result<(), String> {
         // One who manages the login with its owner names the assistance as
         // the hub keeps it, and the hub alone says what of it they change:
@@ -168,6 +171,15 @@ impl Link {
         // born under it: anywhere else it would only end it.
         if purge && assisting {
             return Err("an assistance is ended for good, not given so".into());
+        }
+        // Bound to what its giver was shown as they asked: one given again
+        // since is another (codex-87c8bbd9).
+        if purge && !shown.is_empty() {
+            let now: std::collections::BTreeSet<_> =
+                view.assists.iter().filter(|entry| entry.same(&assist)).flat_map(|entry| entry.grants()).collect();
+            if now != shown.iter().collect() {
+                return Err("the assistance is not as it was shown; look at it again before ending it".into());
+            }
         }
         if purge && !view.purges {
             let hub = self.hub_name();
@@ -466,6 +478,7 @@ impl Link {
                     turns: assist.turns,
                     share: assist.share,
                     manages: Some(assist.manages()),
+                    grants: assist.grants().cloned().collect(),
                 })
                 .collect(),
             plans: view

@@ -184,6 +184,11 @@ pub enum AccountChange {
         /// where it does not, rather than only ending it.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         purge: bool,
+        /// Ending it for good: the grants it was shown with as that was
+        /// asked (`AssistSeen::grants`), so one given again since is not
+        /// the one ended; refused where it is other grants now.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        shown: Vec<crate::access::GrantId>,
     },
     /// The plan shown for one login of an agent on `machine`, set by the
     /// hub's super administrator on a login that names none (a Claude Code
@@ -749,6 +754,10 @@ pub struct AssistSeen {
     /// node that knows no such word.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub manages: Option<bool>,
+    /// Every grant the assistance is, as its hub gave them: what ending it
+    /// for good is bound to as it is asked (`AccountChange::Assist::shown`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub grants: Vec<crate::access::GrantId>,
 }
 
 /// A plan a login names none of, as the hub's super administrator set it

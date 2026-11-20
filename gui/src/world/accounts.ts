@@ -134,6 +134,9 @@ export interface ShareSeen {
 
 /** One login of an agent on a machine, assisting an account. */
 export interface AssistSeen {
+  /** Every grant the assistance is: what ending it for good is bound to as
+   *  it is asked. */
+  grants?: string[];
   machine: MachineName;
   account: AccountName;
   agent: string;
@@ -415,7 +418,7 @@ export interface Dissolution {
 /** A change made as an account (`fastctx_types::accounts::AccountChange`). */
 export type AccountChange =
   | { change: "share"; machine: MachineName; to: AccountName; shared: boolean; jobs?: number }
-  | { change: "assist"; machine: MachineName; to: AccountName; agent: string; home?: string; assisting: boolean; until?: Timestamp; weekly?: number; daily?: number; five_hour?: number; turns?: number; share?: number; manages?: boolean; purge?: boolean }
+  | { change: "assist"; machine: MachineName; to: AccountName; agent: string; home?: string; assisting: boolean; until?: Timestamp; weekly?: number; daily?: number; five_hour?: number; turns?: number; share?: number; manages?: boolean; purge?: boolean; shown?: string[] }
   | { change: "plan"; machine: MachineName; agent: string; home?: string; plan: PlanLabel | null; ultra?: boolean }
   | { change: "stop_acting"; machine: MachineName }
   /** The administrator's change: the server checks it reaches the machine

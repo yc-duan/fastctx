@@ -80,6 +80,7 @@ pub(super) async fn exercise(
         share: None,
         manages: None,
         purge: false,
+        shown: Vec::new(),
     };
     let choices = fastctx_types::agents::Choices { home: Some(home.to_path_buf()), ..Default::default() };
     let open = |words: &'static str| {

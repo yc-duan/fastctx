@@ -295,7 +295,9 @@ export interface Deeds {
   /** Gives, or changes, what a person may use of the login: their share,
    *  until when, and, where the owner says, whether they manage it too. */
   assist(login: Login, person: string, limit: number | null, until: Date | null, manages?: boolean): Promise<void>;
-  endAssist(login: Login, person: string): Promise<void>;
+  endAssist(login: Login, person: string, shown: string[]): Promise<void>;
+  /** The grants the assistance of `person` is, as shown now. */
+  assistGrants(login: Login, person: string): string[];
   line(login: Login, line: Line): Promise<void>;
   say(text: string): void;
 }

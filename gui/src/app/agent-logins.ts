@@ -596,8 +596,8 @@ export class AgentLoginsPage implements Page {
     this.assistSheet.open({
       title: options.access.assistTitle(label, machineName),
       assistances: this.assistancesOf(found.machine, found.login, options.store.world.peek()),
-      assist: async (to, terms) => {
-        await options.change_(owner, assistChange(machineName, agent, home, to, terms));
+      assist: async (to, terms, shown) => {
+        await options.change_(owner, assistChange(machineName, agent, home, to, terms, shown));
         await options.store.refresh();
         const again = this.find(machineName, dir);
         return again?.login ? this.assistancesOf(again.machine, again.login, options.store.world.peek()) : [];

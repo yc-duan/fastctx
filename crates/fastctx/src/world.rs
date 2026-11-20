@@ -674,6 +674,7 @@ pub fn assist(args: AssistArgs) -> anyhow::Result<()> {
         share: args.share,
         manages: Some(args.manages).filter(|_| !args.off),
         purge: args.purge,
+        shown: Vec::new(),
     };
     self::change(args.hub, owner, change)?;
     if args.off {

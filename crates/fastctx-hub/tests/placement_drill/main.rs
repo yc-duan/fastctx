@@ -432,6 +432,7 @@ async fn main() -> Result<()> {
                 share: None,
                 manages: None,
                 purge: false,
+                shown: Vec::new(),
             },
         )
         .await

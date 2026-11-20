@@ -348,11 +348,13 @@ on("grant-end", (button) => {
     // Asked once, and not undone: what was born under it is deleted (the
     // user, 2026-11-20: 「「结束协助」直接删数据，同时去掉撤销，改成弹确认框」).
     const live = deeds;
+    // Bound to the assistance as it is shown now (codex-87c8bbd9).
+    const shown = live.assistGrants(login, person);
     const sheet = new Sheet("lg-end-assist");
     sheet.body.innerHTML = `${sheet.head(`结束对 ${person} 的协助`, "关闭")}<p class="confirm-what">结束后 ${person} 不能再用这个登录。${person} 借这个登录开过的会话，会从这台机器和中枢上删除，无法撤销。同事会话、和别人共用的会话会保留，并列出来供你处理。</p><footer class="cs-foot"><button type="button" class="sheet-go danger" data-do>结束并删除</button></footer>`;
     sheet.body.querySelector("[data-do]")!.addEventListener("click", () => {
       sheet.close();
-      live.endAssist(login, person).then(
+      live.endAssist(login, person, shown).then(
         () => {
           state.editing = null;
           draw();

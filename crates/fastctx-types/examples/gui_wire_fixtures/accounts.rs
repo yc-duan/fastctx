@@ -276,6 +276,7 @@ fn hub() -> HubAccounts {
                 turns: Some(4),
                 share: None,
                 manages: Some(false),
+                grants: vec![],
             },
             AssistSeen {
                 machine: "gpu".parse().unwrap(),
@@ -289,6 +290,7 @@ fn hub() -> HubAccounts {
                 turns: None,
                 share: None,
                 manages: Some(true),
+                grants: vec![fastctx_types::access::GrantId::try_from("g-00000000000000aa".to_string()).unwrap()],
             },
         ],
         plans: vec![PlanSeen {
@@ -392,6 +394,7 @@ pub fn fixtures() -> Fixtures {
                 share: None,
                 manages: Some(true),
                 purge: false,
+                shown: vec![],
             },
             AccountChange::Assist {
                 machine: machine(),
@@ -407,6 +410,7 @@ pub fn fixtures() -> Fixtures {
                 share: None,
                 manages: None,
                 purge: true,
+                shown: vec![fastctx_types::access::GrantId::try_from("g-00000000000000aa".to_string()).unwrap()],
             },
             AccountChange::Plan {
                 machine: "gpu".parse().unwrap(),

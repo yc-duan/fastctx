@@ -552,10 +552,17 @@ export class AgentsPage implements Page {
         if (!to) return Promise.reject(new Error("无权管理该机器的登录"));
         return accounts(assisted(login, to, limit, until, manages), login);
       },
-      endAssist: (login, person) => {
+      endAssist: (login, person, shown) => {
         const { machine, agent, home } = this.recordOf(login);
-        // Ended for good, as the sheet asked: what was born under it is deleted.
-        return accounts({ change: "assist", machine, to: person, agent, ...(home ? { home } : {}), assisting: false, purge: true }, login);
+        // Ended for good, as the sheet asked: what was born under it is
+        // deleted, the assistance as it was shown then.
+        return accounts({ change: "assist", machine, to: person, agent, ...(home ? { home } : {}), assisting: false, purge: true, ...(shown.length ? { shown } : {}) }, login);
+      },
+      assistGrants: (login, person) => {
+        const { machine, agent, home } = this.recordOf(login);
+        const world = options.store.world.peek();
+        const seen = world?.accounts.hubs.flatMap((hub) => hub.assists).find((one) => one.account === person && one.machine === machine && one.agent === agent && sameHome(one.home, home));
+        return seen?.grants ?? [];
       },
       line: async (login, line) => {
         const world = options.store.world.peek();

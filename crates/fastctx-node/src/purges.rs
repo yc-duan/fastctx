@@ -325,6 +325,19 @@ fn recorded(node: &Node, hub: &HubId, id: u64, resident: &ResidentId) -> Result<
 /// directory, with the deletion's intent or the original its forks still
 /// need (`forks::RETAINED_HOST`), is left until it is wholly gone.
 fn left_here(node: &Node, resident: &ResidentId) -> Result<Option<String>, Failure> {
+    // Its records' deletion not yet finished, its directory gone or not.
+    let name = resident.to_string();
+    let unfinished = node
+        .database
+        .read_now(move |db| {
+            Ok(db
+                .prepare("SELECT 1 FROM node_conversation_deletions WHERE name = ?1 AND finished = 0")?
+                .exists([&name])?)
+        })
+        .map_err(|error| Failure::new(format!("reading whether {resident}'s deletion finished: {error}")))?;
+    if unfinished {
+        return Ok(Some("its deletion is still being finished here".into()));
+    }
     let directory = node.world.conversation(resident);
     let left = |path: std::path::PathBuf| {
         fastctx_platform::disk::exists(&path).map_err(|error| Failure::new(format!("{}: {error}", path.display())))
@@ -359,10 +372,23 @@ fn kept_whole(node: &Node, about: &About, hub: &HubId, purging: &Purging) -> Res
     if others {
         return Ok(Some("it works for another account as well"));
     }
+    // Deleted already, its original kept for its forks: what is left of it
+    // goes as they let it, its host as it was (`forks`).
+    if node.residents.about(&about.id).is_none() {
+        return Ok(None);
+    }
     if a_bodys(node, about)? {
         return Ok(Some("a body's conversation"));
     }
-    if about.session.is_some() && crate::assists::host::kept(node, &about.id)? != Some(true) {
+    // Born on a machine shared whole, or where that is not known, it may be
+    // a body's, its scope not described yet (codex-87c8bbd9).
+    if about.born_shared.get(hub.as_str()) != Some(&None) {
+        return Ok(Some("it may be a body's: whether this machine was shared whole as it was born is not known"));
+    }
+    // Its host as it was made, started or not: one not kept apart holds
+    // the login's own.
+    let isolated = crate::assists::host::kept(node, &about.id)?;
+    if isolated == Some(false) || (about.session.is_some() && isolated != Some(true)) {
         return Ok(Some("its host was not kept apart from its login's own"));
     }
     Ok(None)
@@ -383,7 +409,9 @@ fn about_of(node: &Node, resident: &ResidentId) -> Result<Option<About>, Failure
 async fn go_on(node: &Arc<Node>, resident: &ResidentId) -> Result<PurgeResult, Failure> {
     if node.residents.about(resident).is_some() {
         return Ok(match crate::forget::purge_home(node, resident).await {
-            Ok(_) => match left_here(node, resident)? {
+            // What its deletion said it is still finishing is not done.
+            Ok(Some(why)) => PurgeResult::Finishing { why },
+            Ok(None) => match left_here(node, resident)? {
                 None => PurgeResult::Deleted,
                 Some(why) => PurgeResult::Finishing { why },
             },
@@ -391,8 +419,22 @@ async fn go_on(node: &Arc<Node>, resident: &ResidentId) -> Result<PurgeResult, F
         });
     }
     if left_here(node, resident)?.is_some() {
-        match crate::data::delete::delete_one(node, resident.as_str()).await {
-            Ok(_) | Err(crate::data::delete::Stop::Nothing(_)) => {}
+        let name = resident.to_string();
+        match crate::data::delete::delete_one(node, &name).await {
+            Ok(gone) => {
+                if let Some(why) = gone.finishing {
+                    return Ok(PurgeResult::Finishing { why });
+                }
+            }
+            // Nothing of it kept here but its deletion's last records, as a
+            // node starting again finishes them (`data::delete`).
+            Err(crate::data::delete::Stop::Nothing(_)) => {
+                let finished = crate::record_migration::archive::delete_conversation(node.world.path(), &name)
+                    .and_then(|()| crate::conversation_store::finished(&node.database, name));
+                if let Err(error) = finished {
+                    return Ok(PurgeResult::Finishing { why: error.to_string() });
+                }
+            }
             Err(stop) => return Ok(PurgeResult::Finishing { why: stop.why() }),
         }
     }

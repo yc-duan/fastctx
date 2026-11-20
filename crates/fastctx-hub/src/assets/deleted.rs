@@ -390,6 +390,18 @@ pub(crate) fn conversation_gone(hub: &crate::Hub, conversation: &Address) {
     });
 }
 
+/// Deletes the scopes of the conversation at `conversation`, purged where it
+/// lived (`crate::purges`), at once, then marks `its_own` deleted whether
+/// it was described or not, so one on its way is refused after: in that
+/// order, as a scope marked is one the hub reads no more. An error where
+/// not every one went, to be tried again.
+pub(crate) fn purge_scopes(hub: &crate::Hub, conversation: &Address, its_own: &str) -> Result<(), String> {
+    if !delete_its_scopes(hub, conversation) {
+        return Err("not every scope of it could be deleted now".into());
+    }
+    hub.assets.bury(its_own).map_err(|error| error.to_string())
+}
+
 /// Deletes the scopes of the conversation at `conversation`, deleted where
 /// it lived, and tells the machines holding them; whether none is left.
 fn delete_its_scopes(hub: &crate::Hub, conversation: &Address) -> bool {

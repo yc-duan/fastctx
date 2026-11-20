@@ -715,13 +715,17 @@ export class MachinesPage implements Page {
         const agent = button.dataset.agent ?? "";
         const home = button.dataset.home ? { home: button.dataset.home } : {};
         // Ended for good, once asked: what was born under it is deleted, and
-        // there is nothing to undo.
+        // there is nothing to undo; bound to the assistance as shown now.
+        const seen = login
+          ? this.hubOf(login)?.assists.find((one) => one.machine === machine && one.account === to && one.agent === agent && (one.home ?? null) === (button.dataset.home ?? null))
+          : undefined;
+        const shown = seen?.grants?.length ? { shown: seen.grants } : {};
         if (login)
           endAssist(
             this.options.confirm,
             this.options.words,
             to,
-            () => this.options.change(login, { change: "assist", machine: machine, to, agent, ...home, assisting: false, purge: true }),
+            () => this.options.change(login, { change: "assist", machine: machine, to, agent, ...home, assisting: false, purge: true, ...shown }),
             () => void this.options.store.refresh(),
           );
         return;
@@ -1194,8 +1198,8 @@ export class MachinesPage implements Page {
     this.assistSheet.open({
       title: options.access.assistTitle(name, machine),
       assistances: assistances(),
-      assist: async (to, terms) => {
-        await options.change(login, assistChange(machine, agent, home, to, terms));
+      assist: async (to, terms, shown) => {
+        await options.change(login, assistChange(machine, agent, home, to, terms, shown));
         await options.store.refresh();
         this.redraw();
         return assistances();

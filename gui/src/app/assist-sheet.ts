@@ -37,6 +37,8 @@ export interface Terms {
 /** One account the login assists, on its terms. */
 export interface Assistance {
   to: string;
+  /** Its grants, as the hub gave them (`AssistSeen::grants`). */
+  grants: string[];
   until: string | null;
   daily: number | null;
   weekly: number | null;
@@ -46,7 +48,7 @@ export interface Assistance {
 
 /** Lets the login assist `to` on `terms`, or no longer when there are
  *  none; answers the assistances as they are then. */
-export type Assist = (to: string, terms: Terms | null) => Promise<Assistance[]>;
+export type Assist = (to: string, terms: Terms | null, shown?: string[]) => Promise<Assistance[]>;
 
 /** What the sheet opens on. */
 export interface AssistOpening {
@@ -71,7 +73,7 @@ const dollars = (micro: number | undefined) => (micro ? micro / 1_000_000 : null
 export function assistancesIn(assists: AssistSeen[], machine: string, agent: string, home: string | null): Assistance[] {
   return assists
     .filter((assist) => assist.machine === machine && assist.agent === agent && (assist.home ?? null) === home)
-    .map((assist) => ({ to: assist.account, until: assist.until ?? null, daily: dollars(assist.daily), weekly: dollars(assist.weekly), fiveHour: assist.five_hour ?? null, turns: assist.turns ?? null }));
+    .map((assist) => ({ to: assist.account, grants: assist.grants ?? [], until: assist.until ?? null, daily: dollars(assist.daily), weekly: dollars(assist.weekly), fiveHour: assist.five_hour ?? null, turns: assist.turns ?? null }));
 }
 
 /** The terms an assistance the hub keeps was given on. */
@@ -98,7 +100,7 @@ export function endAssist(confirm: Confirm, words: EndAssistWords, to: string, a
 }
 
 /** The change that has the login assist `to` on `terms`, or no longer. */
-export function assistChange(machine: string, agent: string, home: string | null, to: string, terms: Terms | null): AccountChange {
+export function assistChange(machine: string, agent: string, home: string | null, to: string, terms: Terms | null, shown: string[] = []): AccountChange {
   return {
     change: "assist",
     machine,
@@ -106,8 +108,9 @@ export function assistChange(machine: string, agent: string, home: string | null
     agent,
     ...(home ? { home } : {}),
     assisting: !!terms,
-    // Ended for good: what was born under it is deleted (`endAssist`).
-    ...(terms ? {} : { purge: true }),
+    // Ended for good: what was born under it is deleted (`endAssist`), the
+    // assistance as it was shown as that was asked.
+    ...(terms ? {} : { purge: true, ...(shown.length ? { shown } : {}) }),
     ...(terms?.until ? { until: terms.until.toISOString() } : {}),
     ...(terms?.weekly ? { weekly: Math.round(terms.weekly * 1_000_000) } : {}),
     ...(terms?.daily ? { daily: Math.round(terms.daily * 1_000_000) } : {}),
@@ -152,7 +155,9 @@ export class AssistSheet {
       if (!button || button.disabled) return;
       if (button.dataset.takeBack) {
         const to = button.dataset.takeBack;
-        endAssist(this.ending, words, to, () => this.change(to, null), () => {});
+        // Bound to the assistance as it is shown now (codex-87c8bbd9).
+        const shown = this.assistances.find((one) => one.to === to)?.grants ?? [];
+        endAssist(this.ending, words, to, () => this.change(to, null, shown), () => {});
       }
       else if (button.dataset.change) this.edit(button.dataset.change);
       else if (button.hasAttribute("data-window")) this.editWindow();
@@ -396,10 +401,10 @@ export class AssistSheet {
   }
 
   /** Has the login assist `to` on `terms`, or no longer. */
-  private async change(to: string, terms: Terms | null): Promise<void> {
+  private async change(to: string, terms: Terms | null, shown: string[] = []): Promise<void> {
     if (terms?.until && terms.until <= new Date()) return this.say(this.words.untilPassed);
     const wasNew = !!terms && !(this.editing?.kind === "one" && this.editing.to === to);
-    await this.run(() => this.opening.assist(to, terms), wasNew);
+    await this.run(() => this.opening.assist(to, terms, shown), wasNew);
   }
 
   /** Sets what holds for the whole login, the share of its five-hour

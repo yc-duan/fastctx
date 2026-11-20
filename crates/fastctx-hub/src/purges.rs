@@ -267,10 +267,9 @@ fn tell_of(hub: &crate::Hub, member: Option<&MachineName>, id: Option<u64>) {
 pub(crate) fn purged(hub: &crate::Hub, member: &MachineName, id: u64, round: u64, outcome: fastctx_net::wire::Purged) {
     use fastctx_net::wire::{PurgeResult, Purged};
     // Not taken while the hub is frozen to hand itself over: asked again by
-    // the hub that takes over.
-    if hub.moving.frozen() {
-        return;
-    }
+    // the hub that takes over. Counted until written, so freezing waits.
+    let Some(arc) = hub.this.get().and_then(std::sync::Weak::upgrade) else { return };
+    let Some(_entered) = crate::moving::Moving::enter(&arc) else { return };
     let (went, advanced) = {
         let mut store = hub.edit_store();
         let Some(key) = store.book.directory.member(member).map(|found| found.key) else { return };
@@ -430,9 +429,10 @@ pub(crate) fn settle(hub: &crate::Hub) {
     static SETTLING: std::sync::LazyLock<Mutex<BTreeSet<(u64, ResidentId)>>> =
         std::sync::LazyLock::new(Default::default);
     let Some(hub) = hub.this.get().and_then(std::sync::Weak::upgrade) else { return };
-    if hub.moving.frozen() {
-        return;
-    }
+    // Counted as the records may change from here, before anything is read:
+    // a hub freezing to hand itself over waits for it, or it does nothing
+    // (codex-87c8bbd9).
+    let Some(_entered) = crate::moving::Moving::enter(&hub) else { return };
     let went: Vec<(u64, ResidentId, MachineName, PublicKey, AccountName, Timestamp)> = {
         let store = hub.store();
         store
@@ -460,7 +460,10 @@ pub(crate) fn settle(hub: &crate::Hub) {
         }
         let hub = hub.clone();
         // It changes the records: a hub moving waits for it (`moving`).
-        let held = crate::moving::Moving::hold(&hub);
+        let Some(held) = crate::moving::Moving::enter(&hub) else {
+            SETTLING.lock().expect("never poisoned").remove(&(id, resident));
+            return;
+        };
         fastctx_platform::task::spawn(async move {
             let _held = held;
             let ownership = hub
@@ -470,17 +473,22 @@ pub(crate) fn settle(hub: &crate::Hub) {
                 .expect("never poisoned")
                 .opened(&account, generation, resident.as_str())
                 .map(|(conversation, _)| conversation.clone());
-            // Its scope, described or not: one on its way is refused after
+            let address = fastctx_types::Address { machine: machine.clone(), resident: resident.clone() };
+            // Its scopes: those described deleted, and its own marked deleted
+            // whether described or not, so one on its way is refused after;
+            // tried again as purges are looked at again where not all went
             // (codex-87c8bbd9). Born by an assistance, it is the opener's own.
             let readers =
                 fastctx_types::assets::Readers::Conversation { openers: vec![account.clone()], born_on: None };
             let scope = format!("{}{resident}", readers.key_prefix(hub.store().hub.id.as_str()));
-            if let Err(error) = hub.blocking(move |hub| hub.assets.bury(&scope)).await {
-                hub.log.line(format_args!("marking the scope of {resident}, purged ({id}), deleted: {error}"));
+            let scopes = address.clone();
+            if let Err(error) =
+                hub.blocking(move |hub| crate::assets::deleted::purge_scopes(&hub, &scopes, &scope)).await
+            {
+                hub.log.line(format_args!("deleting the scopes of {resident}, purged ({id}): {error}"));
                 SETTLING.lock().expect("never poisoned").remove(&(id, resident));
                 return;
             }
-            let address = fastctx_types::Address { machine: machine.clone(), resident: resident.clone() };
             let forgetting = account.clone();
             hub.blocking(move |hub| crate::forget::gone_there(&hub, address, forgetting, ownership)).await;
             let erased =
@@ -575,7 +583,9 @@ pub(crate) async fn again(hub: std::sync::Weak<crate::Hub>) {
         tokio::time::sleep(AGAIN).await;
         let Some(hub) = hub.upgrade() else { return };
         hub.blocking(|hub| {
-            if !hub.moving.frozen() && hub.store().book.purges.kept.iter().any(|purge| purge.open()) {
+            // Counted until its last write, so freezing waits, or nothing.
+            let Some(_entered) = crate::moving::Moving::enter(&hub) else { return };
+            if hub.store().book.purges.kept.iter().any(|purge| purge.open()) {
                 let mut store = hub.edit_store();
                 if prune(&mut store) {
                     store.book_edit = crate::store::BookEdit::Full;
