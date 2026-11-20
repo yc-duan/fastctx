@@ -703,32 +703,40 @@ async fn begin(assets: &Assets, hub: &HubId, link: &Arc<Link>, key: &PublicKey, 
         return Err("the hub began another stream than the one asked for".into());
     }
     let signed = Signed { fact: descriptor.fact.0, signature: descriptor.word.0 };
-    let scope_text = scope.to_string();
-    // Another descriptor of the epoch kept here already — the hub put back
-    // and signing it anew — leaves the one kept; kept neither way, the hub
-    // is told nothing of the stream yet, and it is begun again next time.
-    // Its first epoch is the one the stream is written in here already. A
-    // later one of this machine's — handed to it, and what it kept since
-    // set back to before — is opened here as a takeover opens it, so what
-    // is committed from then on is of that epoch (`session::succession`).
-    let (stream_text, later) = (stream.to_string(), fact.epoch > 0);
-    let (known, opened) = blocking(&assets.library, move |library| {
-        let opened = match later {
-            true => library.take_over(&scope_text, signed, &Trusted).is_ok_and(|taken| taken == fastctx_content::v2::Taken::Opened),
-            false => {
-                let _ = library.accept_epoch(&scope_text, signed, &Trusted);
-                false
+    let (scope_text, stream_text, device) = (scope.to_string(), stream.to_string(), assets.device());
+    let (epoch, start) = (fact.epoch, fact.start);
+    // The epoch this machine writes the stream in is the one the hub has it
+    // ordering in: its word is kept here. Another descriptor of the epoch
+    // kept already — the hub put back, and signing it anew — leaves the one
+    // kept. A later epoch of this machine's — handed to it, or what it
+    // kept set back to before it — is opened here as a takeover opens it
+    // (`session::succession`), and only where the stream ends here exactly
+    // where that epoch begins: what stands short of it, or goes past it in
+    // the epoch before, is not this machine's to go on from, and the hub is
+    // told nothing of the stream until that is put right.
+    let (known, opened, stands) = blocking(&assets.library, move |library| {
+        let own = library.releasable(&scope_text, &device)?.into_iter().find(|own| own.stream == stream_text);
+        let (here, next) = own.map_or((0, 0), |own| (own.epoch, own.next));
+        let mut opened = false;
+        if epoch > here {
+            if next == start {
+                opened = library.take_over(&scope_text, signed, &Trusted).is_ok_and(|taken| taken == fastctx_content::v2::Taken::Opened);
             }
-        };
-        Ok((library.known_last_epoch(&scope_text, &stream_text)?, opened))
+        } else {
+            let _ = library.accept_epoch(&scope_text, signed, &Trusted);
+        }
+        Ok((library.known_last_epoch(&scope_text, &stream_text)?, opened, (here, next)))
     })
     .await?;
     if opened {
         assets.taken_over.lock().expect("taken over").push(scope.to_string());
     }
     match known {
-        Some(_) => Ok(()),
-        None => Err("the hub's word on the stream's epoch could not be kept here".into()),
+        Some(known) if known >= epoch => Ok(()),
+        _ => Err(format!(
+            "the hub has this machine ordering it in epoch {epoch}, from {start}; here it is written in epoch {} and stands at {}: the hub's word on it is not kept here",
+            stands.0, stands.1
+        )),
     }
 }
 
