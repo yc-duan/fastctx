@@ -248,6 +248,11 @@ const GATHERING_TRIES = 12;
  *  view is theirs: nothing keeps it at the newest meanwhile. */
 const READING_MS = 150;
 
+/** How many times running a gap read that fills none of it is asked again,
+ *  and how much further apart each time. */
+const GAP_TRIES = 3;
+const GAP_AGAIN_MS = 400;
+
 /** How far below the top of the view words just sent are put, the answer
  *  coming in beneath them. */
 const SENT_AT = 24;
@@ -956,7 +961,35 @@ export class ConversationPage {
     this.paging = gap.paged === true;
     try { await this.options.conversation.fill(gap, side, into); }
     finally { this.paging = false; }
+    // A read that filled none of the gap, its answer empty, of a reading
+    // since replaced, or failed, left the gap asked for good: the view stood
+    // empty where the reader was until they went to the newest
+    // (codex-0fe83e04). It is asked again, a few times and further apart,
+    // while the reader is near it. One another reading of it holds is asked
+    // again once that ends, if it leaves the gap still.
+    const still = this.options.conversation.gaps().find((one) => one.key === gap.key);
+    if (!still) this.gapMisses.delete(gap.key);
+    else if (still.loading) this.view.retryGap(gap.key);
+    else this.missedGap(gap.key);
     this.update({ read: true });
+  }
+
+  /** How many reads of each gap filled none of it, in a row. */
+  private readonly gapMisses = new Map<string, number>();
+
+  private missedGap(key: string): void {
+    if (this.gapMisses.size > 64) this.gapMisses.clear();
+    const misses = (this.gapMisses.get(key) ?? 0) + 1;
+    this.gapMisses.set(key, misses);
+    if (misses > GAP_TRIES) {
+      if (misses === GAP_TRIES + 1) this.say(this.options.words.english ? "This part of the conversation could not be read for now: go to the newest, or come back to it later." : "这段内容暂时读不到：可以回到最新，稍后再来看。");
+      return;
+    }
+    window.setTimeout(() => {
+      if (!this.element.isConnected || this.left) return;
+      this.view.retryGap(key);
+      this.update({ read: true });
+    }, GAP_AGAIN_MS * misses);
   }
 
   /** `bound` for a page out of view, which has nothing measured to go by:
@@ -1169,7 +1202,10 @@ export class ConversationPage {
       this.render();
       if (!this.element.isConnected) return;
       if (this.following) this.scroller.scrollTop = this.scroller.scrollHeight;
-      else if (this.place && !this.view.restore(this.place)) this.toLatest();
+      // A reader whose view held nothing read as it was left has no place
+      // to go back to: they come to the newest, as where it is no longer
+      // held (codex-0fe83e04).
+      else if (!this.place || !this.view.restore(this.place)) this.toLatest();
     });
   }
 
@@ -1223,7 +1259,11 @@ export class ConversationPage {
   private restoreReading(place: { key: string; offset: number }, position: import("./conversation").TimelinePosition | null): void {
     const failed = () => this.say(this.options.words.english ? "This position could not be restored. Search the content again." : "暂时无法恢复这个位置，请重新查找这段内容。");
     if (this.restoringPosition) return;
-    if (!position) return failed();
+    if (!position) {
+      failed();
+      this.update({ read: true });
+      return;
+    }
     this.restoringPosition = true;
     const asked = { readAt: this.readAt, latest: this.latestRead };
     void this.options.conversation.reachPosition(position).then((reached) => {
