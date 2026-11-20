@@ -252,6 +252,8 @@ const READING_MS = 150;
  *  and how much further apart each time. */
 const GAP_TRIES = 3;
 const GAP_AGAIN_MS = 400;
+/** Past which it is asked again no further apart: every few seconds. */
+const GAP_SLOWEST = 12;
 
 /** How far below the top of the view words just sent are put, the answer
  *  coming in beneath them. */
@@ -901,6 +903,7 @@ export class ConversationPage {
   private toLatest(): void {
     this.latestRead += 1;
     this.following = true;
+    this.shownAgain();
     this.dropRoom();
     // The latest part is always held: there is nothing to read first.
     this.render();
@@ -958,38 +961,90 @@ export class ConversationPage {
       this.view.retryGap(gap.key);
       return;
     }
+    const conversation = this.options.conversation;
+    const epoch = conversation.readEpoch;
+    // A gap whose reads filled none of it waits its turn to be read again,
+    // however often the reader's moving asks for it meanwhile
+    // (codex-0fe83e04's look at 2277448d1).
+    const tried = this.gapTries.get(gap.key);
+    if (tried && tried.epoch === epoch && Date.now() < tried.next) {
+      this.waitGap(gap.key);
+      return;
+    }
     this.paging = gap.paged === true;
-    try { await this.options.conversation.fill(gap, side, into); }
+    try { await conversation.fill(gap, side, into); }
     finally { this.paging = false; }
+    // A read finished under a timeline since read anew says nothing of the
+    // gap of that name now.
+    if (conversation.readEpoch !== epoch) {
+      this.update({ read: true });
+      return;
+    }
     // A read that filled none of the gap, its answer empty, of a reading
     // since replaced, or failed, left the gap asked for good: the view stood
     // empty where the reader was until they went to the newest
-    // (codex-0fe83e04). It is asked again, a few times and further apart,
-    // while the reader is near it. One another reading of it holds is asked
-    // again once that ends, if it leaves the gap still.
-    const still = this.options.conversation.gaps().find((one) => one.key === gap.key);
-    if (!still) this.gapMisses.delete(gap.key);
+    // (codex-0fe83e04). It is asked again, further apart each time, while
+    // the reader is near it. One another reading of it holds is asked again
+    // once that ends, if it leaves the gap still.
+    const still = conversation.gaps().find((one) => one.key === gap.key);
+    if (!still) this.filledGap(gap.key);
     else if (still.loading) this.view.retryGap(gap.key);
-    else this.missedGap(gap.key);
+    else this.missedGap(gap.key, epoch);
     this.update({ read: true });
   }
 
-  /** How many reads of each gap filled none of it, in a row. */
-  private readonly gapMisses = new Map<string, number>();
+  /** The reads of each gap that filled none of it, in a row, under one
+   *  timeline: how many, when it may be read again, and what reads it then. */
+  private readonly gapTries = new Map<string, { epoch: string; misses: number; next: number; timer: number }>();
 
-  private missedGap(key: string): void {
-    if (this.gapMisses.size > 64) this.gapMisses.clear();
-    const misses = (this.gapMisses.get(key) ?? 0) + 1;
-    this.gapMisses.set(key, misses);
-    if (misses > GAP_TRIES) {
-      if (misses === GAP_TRIES + 1) this.say(this.options.words.english ? "This part of the conversation could not be read for now: go to the newest, or come back to it later." : "这段内容暂时读不到：可以回到最新，稍后再来看。");
-      return;
-    }
-    window.setTimeout(() => {
+  /** What the page said of a place it could not show, said no more once
+   *  what is near the reader is read. */
+  private notShown: string | null = null;
+
+  private missedGap(key: string, epoch: string): void {
+    if (this.gapTries.size > 64) this.forgetGaps();
+    const before = this.gapTries.get(key);
+    if (before) window.clearTimeout(before.timer);
+    const misses = before && before.epoch === epoch ? before.misses + 1 : 1;
+    this.gapTries.set(key, { epoch, misses, next: Date.now() + GAP_AGAIN_MS * Math.min(misses, GAP_SLOWEST), timer: 0 });
+    if (misses === GAP_TRIES + 1) this.sayNotShown(this.options.words.english ? "This part of the conversation could not be read for now: go to the newest, or come back to it later." : "这段内容暂时读不到：可以回到最新，稍后再来看。");
+    this.waitGap(key);
+  }
+
+  /** Reads the gap `key` again once its turn comes, once however often asked. */
+  private waitGap(key: string): void {
+    const tried = this.gapTries.get(key);
+    if (!tried || tried.timer) return;
+    tried.timer = window.setTimeout(() => {
+      tried.timer = 0;
       if (!this.element.isConnected || this.left) return;
       this.view.retryGap(key);
       this.update({ read: true });
-    }, GAP_AGAIN_MS * misses);
+    }, Math.max(0, tried.next - Date.now()));
+  }
+
+  private filledGap(key: string): void {
+    const tried = this.gapTries.get(key);
+    if (tried) window.clearTimeout(tried.timer);
+    this.gapTries.delete(key);
+    this.shownAgain();
+  }
+
+  /** What is near the reader is shown again: what was said of a place that
+   *  could not be is said no more. */
+  private shownAgain(): void {
+    if (this.notShown !== null && this.note.textContent === this.notShown) this.say("");
+    this.notShown = null;
+  }
+
+  private forgetGaps(): void {
+    for (const tried of this.gapTries.values()) window.clearTimeout(tried.timer);
+    this.gapTries.clear();
+  }
+
+  private sayNotShown(text: string): void {
+    this.say(text);
+    this.notShown = text;
   }
 
   /** `bound` for a page out of view, which has nothing measured to go by:
@@ -1257,7 +1312,7 @@ export class ConversationPage {
   /** The reader's place read again where the conversation pages its turns
    *  and it is no longer held, the reader staying where they were. */
   private restoreReading(place: { key: string; offset: number }, position: import("./conversation").TimelinePosition | null): void {
-    const failed = () => this.say(this.options.words.english ? "This position could not be restored. Search the content again." : "暂时无法恢复这个位置，请重新查找这段内容。");
+    const failed = () => this.sayNotShown(this.options.words.english ? "This position could not be restored. Search the content again." : "暂时无法恢复这个位置，请重新查找这段内容。");
     if (this.restoringPosition) return;
     if (!position) {
       failed();
@@ -1363,6 +1418,7 @@ export class ConversationPage {
     this.side?.leave();
     this.finder.destroy();
     this.left = true;
+    this.forgetGaps();
     document.removeEventListener("keydown", this.findKey);
     document.fonts.removeEventListener("loadingdone", this.facesCame);
     this.stopDrops?.();

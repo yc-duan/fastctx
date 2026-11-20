@@ -151,6 +151,9 @@ export class Conversation {
   searchVersion = 0;
   private searchSource = 0;
   get searchIdentity(): string { return this.source?.identity?.() ?? String(this.searchSource); }
+  /** What a read is a read of: its source and the generation of its
+   *  timeline, which a read finished under another no longer speaks to. */
+  get readEpoch(): string { return `${this.searchIdentity}#${this.generation}`; }
   search(request: import("./timeline-find").SearchRequest): Promise<import("./timeline-find").SearchReply> {
     if (!this.source?.search) return Promise.reject(new Error("this source cannot search the complete history"));
     return this.source.search(request);
