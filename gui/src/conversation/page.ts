@@ -936,7 +936,7 @@ export class ConversationPage {
   private paging = false;
   private async fillGap(gap: Gap, side: "end" | "start", _explicit = false, into?: import("./conversation").Into): Promise<void> {
     // One part read at a time: what the view is in by then is asked next.
-    if (gap.paged && (this.paging || this.findingPosition)) {
+    if (gap.paged && (this.paging || this.restoringPosition || this.findingPosition)) {
       this.view.retryGap(gap.key);
       return;
     }
@@ -1160,13 +1160,22 @@ export class ConversationPage {
     });
   }
 
-  /** What is held is read again (`conversation.ts`): the reader stays where
-   *  they were while what they read is still held; where the conversation
-   *  pages its turns and it is not, they are at the newest, as when the
-   *  page is shown again (`resume`). */
+  /** What is held is read again (`conversation.ts`): the reader stays
+   *  where they were, the turns they read read again where they are no
+   *  longer held. */
+  private restoringPosition = false;
   reopened(apply: () => void): void {
+    // Out of view, where the reader stands is the page's to say as it is
+    // shown again (`resume`).
+    if (this.suspended) {
+      apply();
+      this.update({ read: true });
+      if (this.wantedTurn) this.bringTurn();
+      return;
+    }
     const place = this.following ? null : this.view.anchor();
     const turn = place ? this.turnOf(place.key) : null;
+    const position = place ? this.options.conversation.positionOf(place.key) : null;
     apply();
     this.update({ read: true });
     if (this.findingPosition) { this.render(); return; }
@@ -1176,7 +1185,7 @@ export class ConversationPage {
     this.render();
     if (this.view.restore(place)) return;
     if (this.options.conversation.paged) {
-      this.toLatest();
+      this.restoreReading(place, position);
       return;
     }
     if (!turn) return;
@@ -1184,6 +1193,21 @@ export class ConversationPage {
       this.render();
       if (!reached || !this.view.restore(place)) this.say(this.options.words.english ? "The requested position could not be found." : "暂时找不到请求的位置。");
     });
+  }
+
+  /** The reader's place read again where the conversation pages its turns
+   *  and it is no longer held, the reader staying where they were. */
+  private restoreReading(place: { key: string; offset: number }, position: import("./conversation").TimelinePosition | null): void {
+    const failed = () => this.say(this.options.words.english ? "This position could not be restored. Search the content again." : "暂时无法恢复这个位置，请重新查找这段内容。");
+    if (this.restoringPosition) return;
+    if (!position) return failed();
+    this.restoringPosition = true;
+    void this.options.conversation.reachPosition(position).then((reached) => {
+      this.render();
+      // Gone to the newest meanwhile, the reader stays there.
+      if (this.following) return;
+      if (!reached || !this.view.restore(place)) failed();
+    }).catch((error) => this.say(String(error))).finally(() => { this.restoringPosition = false; });
   }
 
   /** A turn asked for from elsewhere, as a request in its login's usage,

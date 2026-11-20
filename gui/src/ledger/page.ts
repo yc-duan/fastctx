@@ -121,11 +121,17 @@ export class AgentsPage implements Page {
   private readonly legacyCalls = new Set<string>();
   /** The logins whose node reckons their week: it keeps a reset of one. */
   private readonly reckoning = new Set<string>();
+  /** Changes made to the page but by drawing it, as a field put where a
+   *  button stood: the page is no longer what was drawn last. */
+  private readonly touched = new MutationObserver(() => {
+    this.painted = "";
+  });
 
   constructor(private readonly options: AgentsPageOptions, place: AppPlace) {
     this.element.className = "page lg-app";
     this.element.innerHTML = `<main class="lg-main"></main>`;
     this.main = this.element.querySelector<HTMLElement>(".lg-main")!;
+    this.touched.observe(this.main, { childList: true, subtree: true, characterData: true });
     this.sheet = new AgentChangeSheet(options.changeWords, {
       preview: (target) => options.preview(target.machine, target.agent, target.dir, target.into, !!target.takeBack, target.workbench),
       change: (target, raise, expected) => options.change(target.machine, target.agent, target.dir, target.into, raise, !!target.takeBack, expected, target.workbench),
@@ -184,6 +190,7 @@ export class AgentsPage implements Page {
   }
 
   leave(): void {
+    this.touched.disconnect();
     this.stop();
     this.following?.();
     window.removeEventListener("resize", this.onResize);
@@ -205,8 +212,13 @@ export class AgentsPage implements Page {
     // finger on it, its glide and where it stands go on (the user,
     // 2026-11-20: as the agents' windows came in, a phone's page would not
     // scroll and went back to its top). Where nothing changed nothing is
-    // drawn at all.
-    if (how === "quiet" && html === this.painted) return;
+    // drawn but the charts, which show what the page's words do not, at the
+    // width they now have.
+    if (how === "quiet" && html === this.painted) {
+      fillCharts(this.main, false);
+      this.touched.takeRecords();
+      return;
+    }
     this.painted = html;
     const kept = this.main.querySelector<HTMLElement>(".lg-sheet")?.scrollTop ?? 0;
     this.main.dataset.coming = how;
@@ -217,6 +229,8 @@ export class AgentsPage implements Page {
     // The sidebar's button, where the sidebar folds away (`shell.ts`).
     this.main.querySelector(".lg-head")?.insertAdjacentHTML("afterbegin", `<button class="icon-button menu-button" type="button" aria-label="${this.options.menuLabel}">${glyph("menu", 20)}</button>`);
     fillCharts(this.main, how !== "quiet");
+    // What drawing changed is no change of the page's own.
+    this.touched.takeRecords();
   }
 
   private click(event: MouseEvent): void {

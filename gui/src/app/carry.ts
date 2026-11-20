@@ -25,8 +25,8 @@ const ACROSS = ".transcript, .starting-scroller > *";
 const SCROLLERS = ".talk-scroller, .starting-scroller";
 
 /** What is under way, one glide at a time: each part's and region's inline
- *  style to put back, and when the glide ends. */
-let carrying: { styles: [HTMLElement, string, string][]; timer: number } | null = null;
+ *  style to put back, and how it ends. */
+let carrying: { styles: [HTMLElement, string, string][]; timer: number; waiting: ResizeObserver | null } | null = null;
 
 /** Makes `change` to `desk`'s room at once, and carries what stands on the
  *  desk from where it stood to where the change puts it. A glide under way
@@ -34,7 +34,7 @@ let carrying: { styles: [HTMLElement, string, string][]; timer: number } | null 
 export function carry(desk: HTMLElement, change: () => void): void {
   const glide = reducedMotion() ? 0 : msOf(getComputedStyle(desk).getPropertyValue("--glide"));
   if (!glide) {
-    letGo();
+    stopCarrying();
     change();
     return;
   }
@@ -45,9 +45,35 @@ export function carry(desk: HTMLElement, change: () => void): void {
   ].filter(({ part }) => shown(part));
   const scrollers = [...desk.querySelectorAll<HTMLElement>(SCROLLERS)].filter(shown);
   const before = new Map([...parts.map(({ part }) => part), ...scrollers].map((element) => [element, element.getBoundingClientRect()]));
-  letGo();
+  stopCarrying();
   change();
+  // Where the change puts each part is measured once what it sets off has
+  // been said: the side's width for the room the desk now has, the room a
+  // head keeps beside it, each told by an observer of sizes as the page is
+  // next laid out. Observers are told in the order they were made, after the
+  // page is laid out and before it is painted: one made now is told last,
+  // and nothing is painted between.
   const styles: [HTMLElement, string, string][] = [];
+  const waiting = new ResizeObserver(() => {
+    waiting.disconnect();
+    if (carrying?.waiting !== waiting) return;
+    carrying.waiting = null;
+    land(desk, glide, parts, scrollers, before, styles);
+  });
+  carrying = { styles, timer: window.setTimeout(stopCarrying, glide + 1000), waiting };
+  waiting.observe(desk);
+}
+
+/** Carries each part from where it was seen, `before`, to where it stands. */
+function land(
+  desk: HTMLElement,
+  glide: number,
+  parts: { part: HTMLElement; across: boolean }[],
+  scrollers: HTMLElement[],
+  before: Map<HTMLElement, DOMRect>,
+  styles: [HTMLElement, string, string][],
+): void {
+  const shown = (element: HTMLElement) => element.isConnected && element.getClientRects().length > 0;
   const set = (element: HTMLElement, name: string, value: string) => {
     styles.push([element, name, element.style.getPropertyValue(name)]);
     element.style.setProperty(name, value);
@@ -55,8 +81,8 @@ export function carry(desk: HTMLElement, change: () => void): void {
   // Each region that scrolls reaches where it stood as well as where it now
   // stands, what it holds where it is.
   for (const scroller of scrollers) {
+    if (!shown(scroller)) continue;
     const was = before.get(scroller)!;
-    if (!scroller.isConnected || !shown(scroller)) continue;
     const now = scroller.getBoundingClientRect();
     const left = Math.max(0, now.left - was.left);
     const right = Math.max(0, was.right - now.right);
@@ -69,34 +95,41 @@ export function carry(desk: HTMLElement, change: () => void): void {
   }
   const moved: { part: HTMLElement; x: number; y: number }[] = [];
   for (const { part, across } of parts) {
-    if (!part.isConnected || !shown(part)) continue;
+    if (!shown(part)) continue;
     const was = before.get(part)!;
     const now = part.getBoundingClientRect();
     const x = was.left - now.left;
     const y = across ? 0 : was.top - now.top;
     if (Math.abs(x) >= 0.5 || Math.abs(y) >= 0.5) moved.push({ part, x, y });
   }
-  if (!moved.length) {
-    for (const [element, name, value] of styles.reverse()) element.style.setProperty(name, value);
-    return;
-  }
-  for (const { part, x, y } of moved) {
-    set(part, "transition", "none");
-    set(part, "transform", `translate(${x}px, ${y}px)`);
-  }
+  // Each is moved on top of how it stands of itself, and what else of it
+  // eases goes on easing.
+  const own = moved.map(({ part }) => {
+    const style = getComputedStyle(part);
+    return { transform: style.transform === "none" ? "" : ` ${style.transform}`, transition: style.transition };
+  });
+  moved.forEach(({ part, x, y }, at) => {
+    set(part, "transition", `${own[at]!.transition}, transform 0s`);
+    set(part, "transform", `translate(${x}px, ${y}px)${own[at]!.transform}`);
+  });
   void desk.offsetWidth;
-  for (const { part } of moved) {
-    part.style.transition = `transform ${glide}ms var(--glide-easing)`;
-    part.style.transform = "";
+  moved.forEach(({ part }, at) => {
+    part.style.transition = `${own[at]!.transition}, transform ${glide}ms var(--glide-easing)`;
+    part.style.transform = `translate(0px, 0px)${own[at]!.transform}`;
+  });
+  if (carrying) {
+    window.clearTimeout(carrying.timer);
+    carrying.timer = window.setTimeout(stopCarrying, glide + 50);
   }
-  carrying = { styles, timer: window.setTimeout(letGo, glide + 50) };
 }
 
-/** What is carried back where the page has it, carried no further. */
-function letGo(): void {
+/** What is carried back where the page has it, carried no further: as a
+ *  glide ends, or as the desk is laid out otherwise under it. */
+export function stopCarrying(): void {
   const under = carrying;
   if (!under) return;
   window.clearTimeout(under.timer);
+  under.waiting?.disconnect();
   carrying = null;
   for (const [element, name, value] of under.styles.reverse()) {
     if (value) element.style.setProperty(name, value);

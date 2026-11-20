@@ -12,6 +12,13 @@
 .sp-host {
   --side-width: 0px;
   --side-height: 0px;
+  /* How wide the side stands now, beside the conversations: its room
+     changes at once (`carry.ts`), so it is its width while it is open. */
+  --side-now: 0px;
+}
+
+.sp-host.sp-shown {
+  --side-now: var(--side-width);
 }
 
 
