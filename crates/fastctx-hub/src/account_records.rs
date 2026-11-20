@@ -358,6 +358,12 @@ async fn asked_of(
                         // the one it leaves added after them where it moves;
                         // where it was born is never written anew (codex-87c8bbd9).
                         let moved = !store.book.directory.same(&ownership.address.machine, &old.address.machine);
+                        // Being deleted for a purge, it moves no more: the
+                        // hub would delete it from where it was
+                        // (codex-87c8bbd9).
+                        if moved && crate::purges::deleting(&store.book.purges, &account, opened, &key) {
+                            return Err("it is being deleted with an assistance ended for good".into());
+                        }
                         let mut previous = old.previous.clone();
                         if moved && !previous.contains(&old.address.machine) {
                             previous.push(old.address.machine.clone());

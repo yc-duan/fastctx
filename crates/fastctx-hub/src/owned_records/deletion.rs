@@ -116,6 +116,33 @@ fn its_own(
     here && born && conversation.previous.is_empty()
 }
 
+/// Whether the record of the conversation `resident` that `account`, as
+/// `opened`, opened is the purged conversation's (`Gone`, also where it was
+/// deleted already), another's or of one moved since (`Another`), or there
+/// is none (`Unrecorded`): read before anything of it on the hub is let go
+/// of, which a move would leave the conversation without (codex-87c8bbd9).
+pub(crate) async fn judge(
+    hub: &Arc<Hub>,
+    by: (MachineName, PublicKey),
+    account: &AccountName,
+    opened: Timestamp,
+    resident: &ResidentId,
+    grants: &[fastctx_types::access::GrantId],
+) -> Result<Erased, String> {
+    let request = RecordRequest::Read { kind: fastctx_types::owned_records::KIND.into(), key: resident.to_string() };
+    let Told::AccountRecords { response: RecordResponse::Read { record } } =
+        account_records::erase(hub, by.clone(), account.clone(), opened, request).await?
+    else {
+        return Err("the conversation's record was answered with something else".into());
+    };
+    let Some(record) = record else { return Ok(Erased::Unrecorded) };
+    if record.metadata.deleted {
+        return Ok(Erased::Gone);
+    }
+    let conversation: Conversation = serde_json::from_value(record.body).map_err(|error| error.to_string())?;
+    Ok(if its_own(hub, &conversation, &by.1, grants) { Erased::Gone } else { Erased::Another })
+}
+
 /// Deletes, as the hub itself, the record of the conversation `resident`
 /// that `account`, as `opened`, opened, and its plan and history: for a
 /// conversation purged, gone where it lived, whose machine `by` may no longer

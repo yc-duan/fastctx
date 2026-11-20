@@ -120,6 +120,21 @@ impl Purge {
     }
 }
 
+/// Whether the conversation `resident` that `account`, as `opened`, opened
+/// is being deleted for a purge, decided to go and not yet gone: it moves no
+/// more, as the hub would delete it from where it was (codex-87c8bbd9).
+pub(crate) fn deleting(purges: &Purges, account: &AccountName, opened: Timestamp, resident: &str) -> bool {
+    purges.kept.iter().any(|purge| {
+        purge.open()
+            && purge.account == *account
+            && purge.generation == opened
+            && purge
+                .items
+                .iter()
+                .any(|(id, item)| id.as_str() == resident && matches!(item.fate, Fate::Going | Fate::GoneThere))
+    })
+}
+
 /// The grants purged, done or not: a conversation that says it was born
 /// under one is registered no more.
 pub(crate) fn closed(purges: &Purges) -> BTreeSet<&GrantId> {
@@ -484,6 +499,17 @@ async fn settle_one(
     grants: &[GrantId],
 ) -> Result<(), String> {
     let address = fastctx_types::Address { machine: by.0.clone(), resident: resident.clone() };
+    use crate::owned_records::deletion::Erased;
+    // Whose its record is, before anything of it on the hub is let go of: a
+    // conversation moved since keeps all it has here (codex-87c8bbd9).
+    if crate::owned_records::deletion::judge(hub, by.clone(), account, generation, resident, grants).await?
+        == Erased::Another
+    {
+        let resident = resident.clone();
+        let why = "its record on the hub is another conversation's of the same id, or it moved";
+        hub.blocking(move |hub| kept_on_hub(&hub, id, &resident, why)).await;
+        return Ok(());
+    }
     // Its scopes: its own deleted for good, described or not, so one on its
     // way is refused after, and every other it has of that account as
     // opened. Its key held by another conversation of the same id, nothing
@@ -508,7 +534,6 @@ async fn settle_one(
         .map(|(conversation, _)| conversation.clone());
     // Its record, each version let go of only where it is this very
     // conversation's (codex-87c8bbd9).
-    use crate::owned_records::deletion::Erased;
     let erased = crate::owned_records::deletion::erase(hub, by, account, generation, resident, grants).await?;
     if erased == Erased::Another {
         let resident = resident.clone();
