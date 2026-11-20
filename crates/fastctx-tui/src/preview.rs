@@ -83,6 +83,7 @@ fn resident(
             focus: Default::default(),
             home: None,
             login: None,
+            born_as: None,
             callee: None,
             born_shared: Default::default(),
         },

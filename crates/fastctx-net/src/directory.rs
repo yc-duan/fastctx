@@ -247,9 +247,39 @@ pub struct Assist {
     /// assistance kept before this was: see [`Assist::manages`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub manages: Option<bool>,
+    /// Which assistance this is (`GrantId`), as the hub gave it; none in one
+    /// kept before grants were: see [`Assist::grant_id`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grant: Option<fastctx_types::access::GrantId>,
 }
 
 impl Assist {
+    /// Which assistance this is: as the hub gave it, or, for one kept before
+    /// grants were, one read from which login it is and whom it assists, the
+    /// same wherever it is read, which the hub keeps as it is next changed.
+    /// An assistance given anew is given a grant at random, so that one
+    /// ended and given again is never this one.
+    pub fn grant_id(&self) -> fastctx_types::access::GrantId {
+        if let Some(grant) = &self.grant {
+            return grant.clone();
+        }
+        use sha2::Digest as _;
+        let mut digest = sha2::Sha256::new();
+        digest.update(b"fastctx-assist-grant/1\0");
+        for part in [self.machine.as_str(), self.account.as_str(), self.agent.as_str()] {
+            digest.update(part.as_bytes());
+            digest.update([0]);
+        }
+        if let Some(home) = &self.home {
+            digest.update([1]);
+            digest.update(home.to_string_lossy().as_bytes());
+        }
+        let digest = digest.finalize();
+        let mut bytes = [0_u8; 8];
+        bytes.copy_from_slice(&digest[..8]);
+        fastctx_types::access::GrantId::from_bytes(bytes)
+    }
+
     /// Whether the account manages the login with its owner: only a Claude
     /// Code login's, the one whose week is reckoned in shares. An assistance
     /// that says neither is one of before the word was kept: it managed
@@ -1074,5 +1104,35 @@ impl std::ops::Deref for View {
 
     fn deref(&self) -> &Directory {
         &self.directory
+    }
+}
+
+#[cfg(test)]
+mod grant_tests {
+    use super::Assist;
+
+    fn assist(machine: &str, account: &str, agent: &str, home: Option<&str>) -> Assist {
+        serde_json::from_value(serde_json::json!({
+            "machine": machine, "account": account, "agent": agent, "home": home,
+        }))
+        .expect("an assistance")
+    }
+
+    #[test]
+    fn an_assistance_kept_before_grants_is_known_by_one_read_from_it() {
+        let one = assist("host", "carol", "codex", None);
+        assert_eq!(one.grant_id(), assist("host", "carol", "codex", None).grant_id());
+        for other in [
+            assist("other", "carol", "codex", None),
+            assist("host", "dave", "codex", None),
+            assist("host", "carol", "claude", None),
+            assist("host", "carol", "codex", Some("/logins/a")),
+            assist("host", "carol", "codex", Some("")),
+        ] {
+            assert_ne!(other.grant_id(), one.grant_id());
+        }
+        let given = Assist { grant: Some(fastctx_types::access::GrantId::from_bytes([7; 8])), ..one.clone() };
+        assert_eq!(given.grant_id(), fastctx_types::access::GrantId::from_bytes([7; 8]));
+        assert!(one.grant_id().as_str().starts_with("g-"));
     }
 }

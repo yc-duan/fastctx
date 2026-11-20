@@ -563,6 +563,17 @@ fn apply(
             // owner: that stays as kept, an assistance it makes anew being
             // one of before the word (`Assist::manages`).
             let manages = manages.or_else(|| kept.and_then(|kept| kept.manages));
+            // Which assistance it is stays while what it allows is changed;
+            // one given anew is another, never one given before
+            // (design-forget-account-v2.md F0).
+            let grant = match kept {
+                Some(kept) => Some(kept.grant_id()),
+                None if assisting => Some(fastctx_types::access::GrantId::from_bytes(
+                    fastctx_net::sign::random::<8>()
+                        .map_err(|error| format!("choosing the assistance's grant: {error}"))?,
+                )),
+                None => None,
+            };
             let assist = Assist {
                 machine,
                 account: to,
@@ -575,6 +586,7 @@ fn apply(
                 turns: turns.filter(|_| assisting),
                 share: share.filter(|_| assisting),
                 manages: manages.filter(|_| assisting),
+                grant,
             };
             directory.assists.retain(|existing| !existing.same(&assist));
             if assisting {

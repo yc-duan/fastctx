@@ -33,6 +33,8 @@ pub(super) struct Stored {
     #[serde(default)]
     login: Option<crate::logins::LoginId>,
     #[serde(default)]
+    born_as: Option<Vec<super::BornAs>>,
+    #[serde(default)]
     callee: Option<String>,
     #[serde(default)]
     born_shared: std::collections::BTreeMap<String, Option<String>>,
@@ -67,6 +69,7 @@ impl TryFrom<Stored> for About {
             mcp_off: stored.mcp_off,
             home: stored.home,
             login: stored.login,
+            born_as: stored.born_as,
             callee: stored.callee,
             born_shared: stored.born_shared,
         })

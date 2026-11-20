@@ -2224,6 +2224,7 @@ pub async fn open_here(
         focus: opened.focus,
         home: opened.home,
         login: opened.login,
+        born_as: Some(opened.born_as),
         callee: None,
         born_shared: crate::timeline::born_shared::now(node),
     };
@@ -2333,8 +2334,9 @@ fn prepare_launch_now(node: &Arc<Node>, id: &ResidentId) -> Result<Prepared, Fai
     if about.session.is_none() {
         let login = crate::logins::ids::claude_started(node, &env);
         node.residents
-            .set_born_login(&node.world, id, login)
+            .set_born_login(&node.world, id, login.clone())
             .map_err(|error| Failure::new(format!("recording the login {id} is born in: {error}")))?;
+        crate::assists::evidenced(about.born_as.as_deref().unwrap_or_default(), login.as_ref())?;
     }
     let assisting = crate::assists::host::starting(node, id, &about.acting)?;
     let options = crate::session_options::read(node, id)?;

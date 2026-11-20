@@ -83,7 +83,15 @@ pub(crate) async fn register_at(
         None => matches!(acting, Acting::Here),
     };
     let previous = node.residents.birth_machine(resident);
-    let born_at = node.residents.about(resident).map(|(about, _)| about.born_at);
+    let about = node.residents.about(resident).map(|(about, _)| about);
+    let born_at = about.as_ref().map(|about| about.born_at);
+    // What it was born as, for this account, which the hub keeps once
+    // (design-forget-account-v2.md F0).
+    let born = about.as_ref().and_then(|about| {
+        about.born_as.as_ref()?.iter().find(|born| born.hub == scope.hub && born.account == scope.account).cloned()
+    });
+    let colleague =
+        about.as_ref().is_some_and(|about| matches!(about.origin, fastctx_types::residents::Origin::Colleague { .. }));
     let key = (scope.hub.clone(), resident.clone());
     let told = match link.status() {
         fastctx_net::link::Status::Online { since, .. } => {
@@ -96,7 +104,15 @@ pub(crate) async fn register_at(
     }
     link.owned_records(
         &scope.account,
-        fastctx_types::owned_records::Request::Register { resident: resident.clone(), shared, previous, born_at },
+        fastctx_types::owned_records::Request::Register {
+            resident: resident.clone(),
+            shared,
+            previous,
+            born_at,
+            born_under: born.as_ref().and_then(|born| born.grant.clone()),
+            generation: born.map(|born| born.generation),
+            colleague,
+        },
     )
     .await
     .map_err(fastctx_types::ipc::Failure::new)?;

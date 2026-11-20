@@ -1276,21 +1276,29 @@ pub async fn open_here(
     // as none, so that it follows the user's environment.
     let mut options = options;
     options.mcp_off = choices.mcp_off;
-    let (home, login) = {
+    let (home, login, born_as) = {
         // The logins on this machine are read from disk, and a Codex one it
         // is born in is given its id there before it is started; a Claude
         // Code one, as its first session is started (`claude::prepare_launch`).
-        let (listing, agent, chosen) = (node.clone(), agent.clone(), choices.home.clone());
+        // Whom it is born working for, and by what right, is read as it is
+        // born (`assists::born_as`).
+        let (listing, agent, chosen, working) = (node.clone(), agent.clone(), choices.home.clone(), acting.clone());
         fastctx_platform::task::blocking(move || {
             let home = crate::homes::listed(&listing, agent.as_str(), chosen.as_deref())?;
-            let login =
-                (agent.as_str() == "codex").then(|| crate::logins::ids::codex_born(&listing, home.as_deref())).flatten();
-            Ok::<_, Failure>((home, login))
+            let born_as = crate::assists::born_as(&listing, &working, &agent, home.as_deref())?;
+            let login = if agent.as_str() == "codex" {
+                let login = crate::logins::ids::codex_born(&listing, home.as_deref());
+                crate::assists::evidenced(&born_as, login.as_ref())?;
+                login
+            } else {
+                None
+            };
+            Ok::<_, Failure>((home, login, born_as))
         })
         .await?
     };
     crate::logins::workbench::may_start(node, &acting, agent.as_str(), home.as_deref())?;
-    let opened = Opened { acting, focus: choices.focus, home, login, files_on: choices.files_on };
+    let opened = Opened { acting, focus: choices.focus, home, login, born_as, files_on: choices.files_on };
     match agent.as_str() {
         "codex" => {}
         "claude" => return crate::claude::open_here(node, typed_on, opened, town, text, options, attachments).await,
@@ -1346,6 +1354,7 @@ pub async fn open_here(
         focus: opened.focus,
         home: opened.home,
         login: opened.login,
+        born_as: Some(opened.born_as),
         callee: None,
         born_shared: crate::timeline::born_shared::now(node),
     };
@@ -1766,6 +1775,8 @@ pub struct Opened {
     pub home: Option<std::path::PathBuf>,
     /// The login it is born in, `home` or the default one (`About::login`).
     pub login: Option<fastctx_types::logins::LoginId>,
+    /// Whom it is born working for, and by what right (`About::born_as`).
+    pub born_as: Vec<fastctx_types::residents::BornAs>,
     /// Where the files attached to its first words go, other than images,
     /// when the user chose.
     pub files_on: Option<Written>,

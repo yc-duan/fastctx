@@ -72,6 +72,8 @@ impl Link {
                             turns,
                             share,
                             manages,
+                            // The hub gives it.
+                            grant: None,
                         },
                         assisting,
                     )

@@ -191,10 +191,11 @@ pub(crate) async fn ask(
 ) -> Result<Told, String> {
     acts_for(hub, &from, &key, &account)?;
     let mut response = match request {
-        Request::Register { resident, shared, previous, born_at } => {
+        Request::Register { resident, shared, previous, born_at, born_under, generation, colleague } => {
+            let birth = registration::Birth { at: born_at, under: born_under, generation, colleague };
             let conversation =
-                registration::register(hub, &from, &key, &account, resident, shared, previous, born_at).await?;
-            Response::Conversation { conversation }
+                registration::register(hub, &from, &key, &account, resident, shared, previous, birth).await?;
+            Response::Conversation { conversation: Box::new(conversation) }
         }
         Request::PrepareDeletion { conversation } => {
             let (from, account) = (from.clone(), account.clone());
@@ -257,7 +258,7 @@ pub(crate) async fn ask(
             Response::Conversations { conversations }
         }
         Request::Resolve { conversation } => match resolve(hub, &account, &conversation) {
-            Ok((access, _)) => Response::Conversation { conversation: access.conversation },
+            Ok((access, _)) => Response::Conversation { conversation: Box::new(access.conversation) },
             // A machine from before the records registered none: its
             // conversations' records are their account's, as before them.
             Err(_) if !registered(hub, &conversation.machine) => Response::Unregistered,

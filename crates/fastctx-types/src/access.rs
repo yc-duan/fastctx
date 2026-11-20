@@ -53,6 +53,56 @@ impl std::fmt::Debug for TownId {
     }
 }
 
+/// One assistance of a login as a hub gave it (`Assist` in the network's
+/// directory): chosen at random when the login is made to assist the
+/// account, kept while what it allows is changed, and never given again
+/// once it ends:
+/// an assistance ended and given again is another. What a session was born
+/// working by is kept by it (design-forget-account-v2.md F0). Written `g-`
+/// and sixteen hex digits.
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
+pub struct GrantId(String);
+
+impl GrantId {
+    pub fn from_bytes(bytes: [u8; 8]) -> Self {
+        Self(format!("g-{}", bytes.iter().map(|byte| format!("{byte:02x}")).collect::<String>()))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl TryFrom<String> for GrantId {
+    type Error = String;
+
+    fn try_from(text: String) -> Result<Self, String> {
+        let ok = text.len() == 18
+            && text.starts_with("g-")
+            && text[2..].bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b));
+        if ok { Ok(Self(text)) } else { Err(format!("{text:?} is not an assistance's grant")) }
+    }
+}
+
+impl From<GrantId> for String {
+    fn from(id: GrantId) -> String {
+        id.0
+    }
+}
+
+impl std::fmt::Display for GrantId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::fmt::Debug for GrantId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Debug::fmt(&self.0, f)
+    }
+}
+
 /// Which hub: chosen when the hub is made, and named in everything said
 /// through it, so nothing meant for one hub is taken by another. Written
 /// `w-` and sixteen hex digits, as the network's third version wrote the

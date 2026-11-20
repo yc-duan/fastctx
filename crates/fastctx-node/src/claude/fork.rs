@@ -87,10 +87,23 @@ pub async fn fork(
     let target_place = Arc::new(node.places.using(id.as_str()).await);
     let launching = super::command(node, source.home.as_deref())?;
     // It is born in the login it is started in, as it is started, given its
-    // id before it is recorded.
-    let login = {
-        let (giving, env) = (node.clone(), launching.env.clone());
-        fastctx_platform::task::blocking(move || crate::logins::ids::claude_started(&giving, &env)).await
+    // id before it is recorded, working for its source's accounts by the
+    // right they have now.
+    let (login, born_as) = {
+        let (giving, env, working, agent, home) = (
+            node.clone(),
+            launching.env.clone(),
+            source.acting.clone(),
+            source.host.agent.clone(),
+            source.home.clone(),
+        );
+        fastctx_platform::task::blocking(move || {
+            let born_as = crate::assists::born_as(&giving, &working, &agent, home.as_deref())?;
+            let login = crate::logins::ids::claude_started(&giving, &env);
+            crate::assists::evidenced(&born_as, login.as_ref())?;
+            Ok::<_, Failure>((login, born_as))
+        })
+        .await?
     };
     super::oldest::check(node, &launching).await?;
     let super::Command { program, env, .. } = launching;
@@ -121,6 +134,7 @@ pub async fn fork(
         focus: source.focus,
         home: source.home,
         login,
+        born_as: Some(born_as),
         callee: None,
         born_shared: crate::timeline::born_shared::now(node),
     };

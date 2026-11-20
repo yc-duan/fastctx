@@ -100,6 +100,14 @@ pub struct About {
     /// release on; one the user opened, or born before, has none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub login: Option<crate::logins::LoginId>,
+    /// Whom it was born working for, and by what right, as this machine's
+    /// hubs said as it was born (design-forget-account-v2.md F0): each
+    /// account, with which of the accounts of its name it was, and the
+    /// assistance it worked by where it did not hold the machine. Empty for
+    /// a session born for those logged in on its computer; none for one born
+    /// before this was kept, of which nothing is known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub born_as: Option<Vec<BornAs>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub callee: Option<String>,
     /// What the machine it was born on was on each network as it was born,
@@ -108,6 +116,19 @@ pub struct About {
     /// was kept.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub born_shared: std::collections::BTreeMap<String, Option<String>>,
+}
+
+/// An account a session was born working for (`About::born_as`).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BornAs {
+    pub hub: crate::access::HubId,
+    pub account: crate::AccountName,
+    /// When the account was opened: which account of its name it was.
+    pub generation: Timestamp,
+    /// The assistance of the login it worked by, where the account did not
+    /// hold the machine; none where it did.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grant: Option<crate::access::GrantId>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

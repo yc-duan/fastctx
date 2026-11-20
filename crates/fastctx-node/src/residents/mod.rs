@@ -586,6 +586,8 @@ impl Residents {
             home: hints.home,
             // A session the user opened: which login it runs in, the World did not choose.
             login: None,
+            // For those logged in on this computer.
+            born_as: Some(Vec::new()),
             callee: None,
             born_shared: Default::default(),
         };

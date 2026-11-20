@@ -41,6 +41,7 @@ fn assist(to: &str, home: Option<PathBuf>) -> Assist {
         turns: None,
         share: None,
         manages: None,
+        grant: None,
     }
 }
 

@@ -46,6 +46,81 @@ pub(crate) fn own_accounts(node: &Node, acting: &Acting) -> bool {
     })
 }
 
+/// Whom a session the World starts here for `acting`, in `agent`'s login
+/// `home`, is born working for, and by what right (`About::born_as`), as
+/// this machine's hubs say now: each account, which account of its name it
+/// is, and the assistance it works by where it does not hold the machine
+/// (design-forget-account-v2.md F0). An account this computer is logged in
+/// to is read as its hub last said while the hub has not said again, so its
+/// own work is not held up; another whose hub has not said yet, or that may
+/// no longer use the login here, is refused: nothing is born for it, as a
+/// call from it would be refused (`admission`).
+pub(crate) fn born_as(
+    node: &Node,
+    acting: &Acting,
+    agent: &fastctx_types::AgentName,
+    home: Option<&std::path::Path>,
+) -> Result<Vec<fastctx_types::residents::BornAs>, Failure> {
+    let Acting::Accounts { accounts } = acting else { return Ok(Vec::new()) };
+    let here = node.machine();
+    accounts
+        .iter()
+        .map(|account| {
+            let link = node.link_of(&account.hub).ok_or_else(|| {
+                Failure::from(fastctx_types::authorization::Denial::new(
+                    fastctx_types::authorization::DenialReason::ViewUnavailable,
+                    "the account it works for is no longer connected; it waits for authority",
+                ))
+            })?;
+            let view = match crate::authorization::current_view(&link) {
+                Ok(view) => view,
+                Err(_) if node.serves(&Acting::Here, &account.hub, &account.account) => link.view(),
+                Err(failure) => return Err(failure),
+            };
+            let generation = view
+                .account(&account.account)
+                .ok_or_else(|| Failure::refused(format!("there is no account {} on its hub", account.account)))?
+                .opened;
+            let grant = if view.rights(&account.account, &here).hands {
+                None
+            } else {
+                let may = crate::homes::may_use_login(node, &view, &account.account, &here, agent, home)?;
+                match crate::homes::assistance(node, &view, &account.account, &here, agent, home)? {
+                    Some(assist) if may => Some(assist.grant_id()),
+                    _ => {
+                        let login = home.map_or_else(|| "default".to_string(), |home| home.display().to_string());
+                        return Err(Failure::refused(format!(
+                            "the {agent} login {login} on {here} does not assist the account {}",
+                            account.account
+                        )));
+                    }
+                }
+            };
+            Ok(fastctx_types::residents::BornAs {
+                hub: account.hub.clone(),
+                account: account.account.clone(),
+                generation,
+                grant,
+            })
+        })
+        .collect()
+}
+
+/// A session born working by an assistance is born in a login it knows by
+/// its id, or not at all: what it was born under is what ending the
+/// assistance takes away (design-forget-account-v2.md F0, codex-d1962125).
+pub(crate) fn evidenced(
+    born_as: &[fastctx_types::residents::BornAs],
+    login: Option<&fastctx_types::logins::LoginId>,
+) -> Result<(), Failure> {
+    if login.is_none() && born_as.iter().any(|born| born.grant.is_some()) {
+        return Err(Failure::new(
+            "the login it would be born in could not be given its id (the node's log says why), and a session working by an assistance is born only in a login known by its id",
+        ));
+    }
+    Ok(())
+}
+
 /// Whether this account may still use the conversation's login, without applying usage limits.
 pub(crate) fn permitted(
     node: &Node,

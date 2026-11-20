@@ -131,6 +131,7 @@ fn network() -> Directory {
             turns: None,
             share: None,
             manages: None,
+            grant: None,
         }));
     }
     for _ in 0..1000 {
