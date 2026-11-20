@@ -913,6 +913,10 @@ export class ConversationPage {
   private toLatest(): void {
     this.latestRead += 1;
     this.following = true;
+    // A view held still while the reader's place is read again is let go
+    // first, so the newest is drawn in the same frame as it is scrolled to,
+    // rather than the held view scrolled to its empty end (codex-0fe83e04).
+    this.unhold();
     this.shownAgain();
     this.dropRoom();
     // The latest part is always held: there is nothing to read first.
@@ -1372,11 +1376,16 @@ export class ConversationPage {
 
   /** Lets the view held still go, and draws it as the conversation stands. */
   private letGo(): void {
-    if (!this.holdingView) return;
+    if (this.unhold()) this.render();
+  }
+
+  /** Lets the view held still go without drawing it; whether it was held. */
+  private unhold(): boolean {
+    if (!this.holdingView) return false;
     window.clearTimeout(this.holdingView);
     this.holdingView = 0;
     this.view.hold(false);
-    this.render();
+    return true;
   }
 
   /** A turn asked for from elsewhere, as a request in its login's usage,
