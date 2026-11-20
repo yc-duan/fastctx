@@ -195,6 +195,10 @@ pub(super) fn recover(node: &Arc<Node>, records: &[crate::residents::OnRecord]) 
         // A first turn that waited for its login when the node stopped waits
         // on: no session was asked for.
         if about.session.is_none() && super::queued::marked(&directory) {
+            // One the node stopped as it went back in line, or as it was
+            // taken out of it, is idle as it waits: it holds no turn of its
+            // login (codex-87c8bbd9's seventh look).
+            super::queued::idle_again(node, &about.id);
             super::queued::wait(node, about.id.clone());
             continue;
         }

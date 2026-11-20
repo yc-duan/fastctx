@@ -62,7 +62,9 @@ pub(super) fn wait(node: &Arc<Node>, id: ResidentId) {
             // hold; and while it may not be started as it was born, before it
             // takes a turn of its login (codex-87c8bbd9).
             if crate::lifecycle::wake::check(&node, &id, &about).await.is_err()
-                || crate::assists::may_still_start(&node, &about).is_err()
+                || crate::assists::host::kept(&node, &id)
+                    .and_then(|isolated| crate::assists::may_still_start(&node, &about, isolated))
+                    .is_err()
                 || crate::turn_slots::admit(&node, &id, &about).is_err()
             {
                 tokio::time::sleep(ASK_AGAIN).await;
@@ -89,7 +91,11 @@ pub(super) fn wait(node: &Arc<Node>, id: ResidentId) {
                     now.activity = Activity::Busy;
                     now.since = jiff::Timestamp::now();
                 })
-                .and_then(|()| unmark(&directory));
+                .and_then(|()| {
+                    // Still in line, it is not busy: idle again, as it waits
+                    // (codex-87c8bbd9's seventh look).
+                    unmark(&directory).inspect_err(|_| idle_again(&node, &id))
+                });
             if let Err(error) = started {
                 crate::turn_slots::unstarted(&node, &id, &about);
                 node.log
@@ -106,4 +112,19 @@ pub(super) fn wait(node: &Arc<Node>, id: ResidentId) {
             return;
         }
     });
+}
+
+/// A first turn still in line made idle again, as one waiting for its login
+/// is: one marked Busy holds no turn of its login, nothing being asked of
+/// Claude Code.
+pub(super) fn idle_again(node: &Arc<Node>, id: &ResidentId) {
+    let idle = node.residents.change_now(&node.world, id, |now| {
+        if now.activity == Activity::Busy && now.turn.is_none() {
+            now.activity = Activity::Idle;
+            now.since = jiff::Timestamp::now();
+        }
+    });
+    if let Err(error) = idle {
+        node.log.line(format_args!("letting {id}'s first turn wait idle: {error}"));
+    }
 }

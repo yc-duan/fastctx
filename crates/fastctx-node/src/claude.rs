@@ -2323,18 +2323,25 @@ pub async fn open_here(
 fn back_in_line(node: &Arc<Node>, id: &ResidentId, failure: Failure) -> Result<Landed, Failure> {
     node.log.line(format_args!("lifecycle {id}: its first session waits: {}", failure.message));
     // Marked in line first, so that a node stopped meanwhile finds it there.
-    queued::mark(&node.world.conversation(id))
-        .map_err(|error| Failure::new(format!("keeping the first turn in line: {error}")))?;
-    node.residents
-        .change_now(&node.world, id, |now| {
-            now.activity = Activity::Idle;
-            now.since = Timestamp::now();
-        })
-        .map_err(|error| Failure::new(format!("letting {id}'s first turn wait: {error}")))?;
+    // Where it cannot be, it waits all the same while the node runs, idle,
+    // its login's turn let go of, and that is said (codex-87c8bbd9's seventh
+    // look).
+    let marked = queued::mark(&node.world.conversation(id));
+    let idle = node.residents.change_now(&node.world, id, |now| {
+        now.activity = Activity::Idle;
+        now.since = Timestamp::now();
+    });
     if let Some((about, _)) = node.residents.about(id) {
         crate::turn_slots::unstarted(node, id, &about);
     }
     queued::wait(node, id.clone());
+    marked.map_err(|error| {
+        Failure::new(format!(
+            "{}; its first turn waits for that, but could not be marked as waiting, so a node stopped meanwhile would not find it waiting: {error}",
+            failure.message
+        ))
+    })?;
+    idle.map_err(|error| Failure::new(format!("letting {id}'s first turn wait: {error}")))?;
     Ok(Landed::Waiting { why: Some(failure.message), answered: true })
 }
 
@@ -2369,10 +2376,13 @@ fn prepare_launch_now(node: &Arc<Node>, id: &ResidentId) -> Result<Prepared, Fai
     // its login or not: one opened under an assistance since ended is that
     // assistance's, and goes with it as it ends (design-forget-account-v2.md
     // F2/F3, its first turn queued or not).
-    if about.session.is_none() {
+    let unstarted = about.session.is_none();
+    if unstarted {
         // It is started only while the account it was opened for may still
-        // start it here, and is still that account (codex-87c8bbd9).
-        crate::assists::may_still_start(node, &about)?;
+        // start it here, and is still that account (codex-87c8bbd9), and by
+        // an assistance only in a host kept apart, as its host was made
+        // where that is decided already, before it is decided now.
+        crate::assists::may_still_start(node, &about, crate::assists::host::kept(node, id)?)?;
         let login = crate::logins::ids::claude_started(node, &env);
         node.residents
             .set_born_login(&node.world, id, login.clone())
@@ -2380,6 +2390,11 @@ fn prepare_launch_now(node: &Arc<Node>, id: &ResidentId) -> Result<Prepared, Fai
         crate::assists::evidenced(about.born_as.as_deref().unwrap_or_default(), login.as_ref())?;
     }
     let assisting = crate::assists::host::starting(node, id, &about.acting)?;
+    // And as its host is made, which the account's right may have changed
+    // since it was read (codex-87c8bbd9's seventh look).
+    if unstarted {
+        crate::assists::may_still_start(node, &about, Some(assisting))?;
+    }
     let options = crate::session_options::read(node, id)?;
     let directory = node.world.conversation(id);
     let mcp = crate::profile::session::claude(node, id, true)?;
@@ -2411,7 +2426,7 @@ pub(super) async fn begin_launch(node: &Arc<Node>, id: &ResidentId, prepared: Pr
     // longer be started, which goes back in line, as not asked
     // (codex-87c8bbd9).
     if let Some((about, _)) = node.residents.about(id)
-        && let Err(failure) = crate::assists::may_still_start(node, &about)
+        && let Err(failure) = crate::assists::may_still_start(node, &about, Some(assisting))
     {
         drop(_birth);
         node.claude.unhanding(id, &text);
@@ -2420,7 +2435,17 @@ pub(super) async fn begin_launch(node: &Arc<Node>, id: &ResidentId, prepared: Pr
     let began = first.since.unwrap_or(first.delivery.at);
     let since = move || Timestamp::now().as_millisecond().saturating_sub(began.as_millisecond());
     node.log.line(format_args!("lifecycle {id}: launching its first session, {} ms after it was opened", since()));
-    let started = fastctx_platform::task::spawn_blocking(fastctx_platform::doing::carried(move || {
+    // Read again before Claude Code is asked once more, where it refused the
+    // first ask and made nothing (codex-87c8bbd9's seventh look).
+    let handed = text.clone();
+    let still = {
+        let (node, id) = (node.clone(), id.clone());
+        move || match node.residents.about(&id) {
+            Some((about, _)) => crate::assists::may_still_start(&node, &about, Some(assisting)),
+            None => Ok(()),
+        }
+    };
+    let asked = fastctx_platform::task::spawn_blocking(fastctx_platform::doing::carried(move || {
         let start = background::Start {
             plugin: &plugin,
             settings: &settings,
@@ -2438,16 +2463,30 @@ pub(super) async fn begin_launch(node: &Arc<Node>, id: &ResidentId, prepared: Pr
             // the trust a moment after it was written; a new session refused
             // for exactly that was not created, so it is started once more.
             Err(why) if why.contains(background::UNTRUSTED) => {
+                if let Err(refused) = still() {
+                    return Ok(Err(refused));
+                }
                 trust(&[world.as_path(), cwd.as_path()], &env)?;
-                background::claude(&program, &args, &cwd, &env)
+                background::claude(&program, &args, &cwd, &env).map(Ok)
             }
-            started => started,
+            started => started.map(Ok),
         }
     }))
     .await
     .map_err(|error| Failure::new(format!("starting the session: {error}")))
-    .and_then(|result| result.map_err(Failure::new))
-    .and_then(|printed| {
+    .and_then(|result| result.map_err(Failure::new));
+    // Not asked once more, as it may no longer be started: nothing was made
+    // of it, and it goes back in line as before it was asked.
+    let printed = match asked {
+        Ok(Err(refused)) => {
+            drop(_birth);
+            node.claude.unhanding(id, &handed);
+            return back_in_line(node, id, refused);
+        }
+        Ok(Ok(printed)) => Ok(printed),
+        Err(failure) => Err(failure),
+    };
+    let started = printed.and_then(|printed| {
         background::started(&printed).ok_or_else(|| {
             Failure::new(format!(
                 "Claude Code started a session without saying which, so the World cannot follow it; it printed: {}",

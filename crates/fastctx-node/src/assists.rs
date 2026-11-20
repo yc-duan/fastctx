@@ -205,9 +205,13 @@ impl Still {
 /// here, by whatever right (an assistance ended and given again is right
 /// enough: what it was born as stays what it was born as), but not by an
 /// assistance where it was born holding the machine: its host was made not
-/// kept apart, which an assistance asks for (codex-87c8bbd9). An error
-/// otherwise, the denial of a hub that has not said again where that is why.
-pub(crate) fn may_still_start(node: &Node, about: &About) -> Result<(), Failure> {
+/// kept apart, which an assistance asks for (codex-87c8bbd9); nor, by an
+/// assistance, where its host was made not kept apart, `isolated` saying how
+/// its host was made where that is decided already: what it was born as does
+/// not say so of a host made before its right changed (codex-87c8bbd9's
+/// seventh look). An error otherwise, the denial of a hub that has not said
+/// again where that is why.
+pub(crate) fn may_still_start(node: &Node, about: &About, isolated: Option<bool>) -> Result<(), Failure> {
     let Some(born) = &about.born_as else { return Ok(()) };
     let now = born_as(node, &about.acting, &about.host.agent, about.home.as_deref())?;
     for was in born {
@@ -222,6 +226,12 @@ pub(crate) fn may_still_start(node: &Node, about: &About) -> Result<(), Failure>
         if is.assisted && !was.assisted {
             return Err(Failure::refused(format!(
                 "the account {} no longer holds this machine, only an assistance of its login, and the session was opened not kept apart",
+                was.account
+            )));
+        }
+        if is.assisted && isolated == Some(false) {
+            return Err(Failure::refused(format!(
+                "the account {} holds this machine no longer, only an assistance of its login, and the session's host was made not kept apart",
                 was.account
             )));
         }
