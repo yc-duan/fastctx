@@ -169,7 +169,7 @@ impl Assets {
     /// one crossing this is turned away as it is written; then its row, if
     /// one was written before, deleted as any scope is, its holders told; or,
     /// with none, its mark kept for good. Call on a thread that may block.
-    pub(crate) fn purge_key(&self, key: &str) -> io::Result<()> {
+    pub(crate) fn purge_key(&self, key: &str, owner: &Owner) -> io::Result<()> {
         if let Some(why) = self.sealed() {
             return Err(io::Error::other(why));
         }
@@ -202,18 +202,19 @@ impl Assets {
             }
             Ok((owner, Some(chain::append(c, KIND, &stamp)?)))
         });
-        // Not written: it stays marked, as one marked and not yet kept, and
-        // is tried again as a whole.
-        let (owner, appended) = written.map_err(io::Error::other)?;
+        // Not written, or not known to be: it stays marked, and is tried
+        // again as a whole.
+        let (stored, appended) = written.map_err(io::Error::other)?;
         let witnessed = match appended {
             Some((seq, head)) => self.witness.advanced(seq, &head),
             None => Ok(()),
         };
-        if let Some(owner) = owner {
-            match Owner::from_key(&owner) {
-                Some(owner) => self.let_go_of_stored(key, &owner),
-                None => return Err(io::Error::other(format!("a scope of an unknown owner {owner}"))),
-            }
+        // Its holders told and its library let go of it, whether its row went
+        // now or in a write whose answer was lost: by the owner it was
+        // purged as, and by its row's where that was another (codex-87c8bbd9).
+        self.let_go_of_stored(key, owner);
+        if let Some(stored) = stored.and_then(|stored| Owner::from_key(&stored)).filter(|stored| stored != owner) {
+            self.let_go_of_stored(key, &stored);
         }
         witnessed
     }
@@ -431,8 +432,17 @@ pub(crate) fn conversation_gone(hub: &crate::Hub, conversation: &Address) {
 /// lived (`crate::purges`), at once: its own for good, described or not,
 /// so one on its way is refused after (`Assets::purge_key`), and every other
 /// it has. An error where not every one went, to be tried again.
-pub(crate) fn purge_scopes(hub: &crate::Hub, conversation: &Address, its_own: &str) -> Result<(), String> {
-    hub.assets.purge_key(its_own).map_err(|error| error.to_string())?;
+pub(crate) fn purge_scopes(
+    hub: &crate::Hub,
+    conversation: &Address,
+    account: &fastctx_types::AccountName,
+    generation: jiff::Timestamp,
+) -> Result<(), String> {
+    // Born by an assistance, its scope is its opener's own (`scopes::owner_of`).
+    let readers = Readers::Conversation { openers: vec![account.clone()], born_on: None };
+    let its_own = format!("{}{}", readers.key_prefix(hub.store().hub.id.as_str()), conversation.resident);
+    let owner = Owner::Account(account.to_string(), generation.as_millisecond());
+    hub.assets.purge_key(&its_own, &owner).map_err(|error| error.to_string())?;
     if !delete_its_scopes(hub, conversation) {
         return Err("not every scope of it could be deleted now".into());
     }

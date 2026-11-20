@@ -474,16 +474,13 @@ pub(crate) fn settle(hub: &crate::Hub) {
                 .opened(&account, generation, resident.as_str())
                 .map(|(conversation, _)| conversation.clone());
             let address = fastctx_types::Address { machine: machine.clone(), resident: resident.clone() };
-            // Its scopes: those described deleted, and its own marked deleted
-            // whether described or not, so one on its way is refused after;
-            // tried again as purges are looked at again where not all went
-            // (codex-87c8bbd9). Born by an assistance, it is the opener's own.
-            let readers =
-                fastctx_types::assets::Readers::Conversation { openers: vec![account.clone()], born_on: None };
-            let scope = format!("{}{resident}", readers.key_prefix(hub.store().hub.id.as_str()));
-            let scopes = address.clone();
+            // Its scopes: its own deleted for good, described or not, so one
+            // on its way is refused after, and every other it has; tried
+            // again as purges are looked at again where not all went
+            // (codex-87c8bbd9).
+            let (scopes, opener) = (address.clone(), account.clone());
             if let Err(error) =
-                hub.blocking(move |hub| crate::assets::deleted::purge_scopes(&hub, &scopes, &scope)).await
+                hub.blocking(move |hub| crate::assets::deleted::purge_scopes(&hub, &scopes, &opener, generation)).await
             {
                 hub.log.line(format_args!("deleting the scopes of {resident}, purged ({id}): {error}"));
                 SETTLING.lock().expect("never poisoned").remove(&(id, resident));
