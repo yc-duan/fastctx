@@ -57,6 +57,11 @@ pub(crate) struct Pending {
     /// What each member last said it could not do yet, recorded once.
     #[serde(default)]
     failed: BTreeMap<MachineName, String>,
+    /// The device each member waited for is, by its key, as it was asked
+    /// of: one that took the name since is neither told nor heard
+    /// (codex-d515b194). Without one, as kept before this was, by name.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    keys: BTreeMap<MachineName, PublicKey>,
     /// The hub deleted the conversation's scopes once the machine it lived
     /// on deleted it (`assets::deleted::conversation_gone`). Until then the
     /// deletion is kept, and that is tried again, whatever its members did:
@@ -155,11 +160,13 @@ fn ask_inner(
                     audience,
                     waiting: BTreeSet::new(),
                     failed: BTreeMap::new(),
+                    keys: BTreeMap::new(),
                     scopes_gone: false,
                 };
                 if by_home {
                     pending.home = false;
-                    pending.waiting = targets(&store, &pending);
+                    let waiting = targets(&store, &pending);
+                    wait_for(&store.book.directory, &mut pending, waiting);
                 }
                 let tell = told_now(&pending);
                 let actor = Actor {
@@ -241,8 +248,11 @@ pub(crate) fn gone_there(
         let mut store = hub.edit_store();
         // The machines known to keep copies of it as it was purged, which
         // the directory may no longer say, under their names now.
-        let known: BTreeSet<MachineName> =
-            known.iter().filter_map(|key| store.book.directory.by_key(key)).map(|member| member.name.clone()).collect();
+        let known: Vec<(MachineName, PublicKey)> = known
+            .iter()
+            .filter_map(|key| store.book.directory.by_key(key))
+            .map(|member| (member.name.clone(), member.key))
+            .collect();
         let kept = store.book.forgetting.pending.iter().position(|pending| {
             pending.forgetting.conversation == conversation && pending.forgetting.account == account
         });
@@ -252,9 +262,10 @@ pub(crate) fn gone_there(
                 // (codex-d515b194).
                 let pending = std::sync::Arc::make_mut(&mut store.book.forgetting.pending[index]);
                 let mut added = false;
-                for machine in known {
+                for (machine, key) in known {
                     let new = pending.audience.insert(machine.clone());
                     if new && !pending.home {
+                        pending.keys.insert(machine.clone(), key);
                         pending.waiting.insert(machine);
                     }
                     added |= new;
@@ -275,7 +286,7 @@ pub(crate) fn gone_there(
                 let forgetting =
                     Forgetting { id: store.book.forgetting.last, conversation: conversation.clone(), account };
                 let mut audience = ownership::targets(&store, &forgetting, ownership.as_ref());
-                audience.extend(known);
+                audience.extend(known.into_iter().map(|(machine, _)| machine));
                 let mut pending = Pending {
                     forgetting,
                     asked_by: conversation.machine.clone(),
@@ -285,11 +296,13 @@ pub(crate) fn gone_there(
                     audience,
                     waiting: BTreeSet::new(),
                     failed: BTreeMap::new(),
+                    keys: BTreeMap::new(),
                     // Its purge deleted its scopes itself, of that account as
                     // opened alone (`assets::deleted::purge_scopes`).
                     scopes_gone,
                 };
-                pending.waiting = targets(&store, &pending);
+                let waiting = targets(&store, &pending);
+                wait_for(&store.book.directory, &mut pending, waiting);
                 let tell = told_now(&pending);
                 store.book.forgetting.pending.push(std::sync::Arc::new(pending));
                 let hub_actor = Actor { account: None, authenticated: true, member: None, peer: None };
@@ -321,7 +334,8 @@ pub(crate) fn forgot(hub: &Hub, member: &MachineName, id: u64, outcome: Forgot) 
         let at_home = pending.home && store.book.directory.same(&member, &pending.forgetting.conversation.machine);
         // Waited for under the name it had as it was asked, renamed since
         // (codex-d515b194).
-        let waited = pending.waiting.iter().find(|waiting| store.book.directory.same(waiting, &member)).cloned();
+        let waited =
+            pending.waiting.iter().find(|waiting| is_waited(&store.book.directory, pending, waiting, &member)).cloned();
         if !at_home && (pending.home || waited.is_none()) {
             // Not asked of it now: a telling it answers late.
             return;
@@ -344,7 +358,9 @@ pub(crate) fn forgot(hub: &Hub, member: &MachineName, id: u64, outcome: Forgot) 
                     done_at_home(&mut store, index);
                     tell = told_now(&store.book.forgetting.pending[index]);
                 } else if let Some(waited) = &waited {
-                    std::sync::Arc::make_mut(&mut store.book.forgetting.pending[index]).waiting.remove(waited);
+                    let pending = std::sync::Arc::make_mut(&mut store.book.forgetting.pending[index]);
+                    pending.waiting.remove(waited);
+                    pending.keys.remove(waited);
                 }
                 // The log keeps that the machine it lived on deleted it, and
                 // where it could not be; that each other machine did its part
@@ -387,7 +403,7 @@ pub(crate) fn forgot(hub: &Hub, member: &MachineName, id: u64, outcome: Forgot) 
 /// Tells the member `name`, whose session just opened, of each deletion
 /// it has a part in now.
 pub(crate) fn opened(hub: &Hub, name: &MachineName) {
-    let tell: Vec<(MachineName, Forgetting)> = {
+    let tell: Vec<(MachineName, Option<PublicKey>, Forgetting)> = {
         let store = hub.store();
         store
             .book
@@ -395,7 +411,10 @@ pub(crate) fn opened(hub: &Hub, name: &MachineName) {
             .pending
             .iter()
             .flat_map(|pending| told_now(pending))
-            .filter(|(member, _)| store.book.directory.same(member, name))
+            .filter(|(member, key, _)| match key {
+                Some(key) => store.book.directory.member(name).is_some_and(|found| found.key == *key),
+                None => store.book.directory.same(member, name),
+            })
             .collect()
     };
     send(hub, tell);
@@ -415,8 +434,16 @@ pub(crate) fn prune(hub: &Hub) {
         let before = book.forgetting.pending.len();
         let mut changed = false;
         book.forgetting.pending.retain_mut(|pending| {
-            if pending.waiting.iter().any(|member| directory.member(member).is_none()) {
-                std::sync::Arc::make_mut(pending).waiting.retain(|member| directory.member(member).is_some());
+            let view: &Pending = pending;
+            if view.waiting.iter().any(|member| !still_there(directory, view, member)) {
+                let pending = std::sync::Arc::make_mut(pending);
+                let view: &Pending = pending;
+                let left: Vec<MachineName> =
+                    view.waiting.iter().filter(|member| !still_there(directory, view, member)).cloned().collect();
+                for member in left {
+                    pending.waiting.remove(&member);
+                    pending.keys.remove(&member);
+                }
                 changed = true;
             }
             let gone = pending.home && directory.member(&pending.forgetting.conversation.machine).is_none();
@@ -513,9 +540,40 @@ fn deleted_by_asker(store: &mut Store, asker: &MachineName, forgetting: &Forgett
 /// something of it is to delete that now.
 fn done_at_home(store: &mut Store, index: usize) {
     let waiting = targets(store, &store.book.forgetting.pending[index]);
+    let directory = store.book.directory.clone();
     let pending = std::sync::Arc::make_mut(&mut store.book.forgetting.pending[index]);
     pending.home = false;
+    wait_for(&directory, pending, waiting);
+}
+
+/// Sets whom `pending` waits for: `waiting`, each with the key of the member
+/// that has the name now (`Pending::keys`).
+fn wait_for(directory: &fastctx_net::directory::Directory, pending: &mut Pending, waiting: BTreeSet<MachineName>) {
+    pending.keys =
+        waiting.iter().filter_map(|name| directory.member(name).map(|member| (name.clone(), member.key))).collect();
     pending.waiting = waiting;
+}
+
+/// Whether `waited`, as `pending` waits for it, is the member named
+/// `member` now: by its key where it has one (codex-d515b194).
+fn is_waited(
+    directory: &fastctx_net::directory::Directory,
+    pending: &Pending,
+    waited: &MachineName,
+    member: &MachineName,
+) -> bool {
+    match pending.keys.get(waited) {
+        Some(key) => directory.member(member).is_some_and(|found| found.key == *key),
+        None => directory.same(waited, member),
+    }
+}
+
+/// Whether the member `pending` waits for as `waited` is in the hub still.
+fn still_there(directory: &fastctx_net::directory::Directory, pending: &Pending, waited: &MachineName) -> bool {
+    match pending.keys.get(waited) {
+        Some(key) => directory.by_key(key).is_some(),
+        None => directory.member(waited).is_some(),
+    }
 }
 
 /// Ends the deletion at `index` when no member is left to do its part;
@@ -546,25 +604,34 @@ fn targets(store: &crate::store::Snapshot, pending: &Pending) -> BTreeSet<Machin
 }
 
 /// Whom a deletion is to be told to now, and what.
-fn told_now(pending: &Pending) -> Vec<(MachineName, Forgetting)> {
+fn told_now(pending: &Pending) -> Vec<(MachineName, Option<PublicKey>, Forgetting)> {
     if pending.home {
-        vec![(pending.forgetting.conversation.machine.clone(), pending.forgetting.clone())]
+        vec![(pending.forgetting.conversation.machine.clone(), None, pending.forgetting.clone())]
     } else {
-        pending.waiting.iter().map(|member| (member.clone(), pending.forgetting.clone())).collect()
+        pending
+            .waiting
+            .iter()
+            .map(|member| (member.clone(), pending.keys.get(member).copied(), pending.forgetting.clone()))
+            .collect()
     }
 }
 
 /// Tells each member connected now whose session says it forgets.
-fn send(hub: &Hub, tell: Vec<(MachineName, Forgetting)>) {
+fn send(hub: &Hub, tell: Vec<(MachineName, Option<PublicKey>, Forgetting)>) {
     if tell.is_empty() {
         return;
     }
     let sessions = hub.sessions();
     let store = hub.store();
-    for (member, forgetting) in tell {
-        // Under its name now, renamed since it was asked (codex-d515b194).
-        let member = store.book.directory.canonical(&member);
-        if let Some(session) = sessions.get(member).filter(|session| session.forgets) {
+    for (member, key, forgetting) in tell {
+        // The device it was asked of, under its name now: one that took the
+        // name since is not it (codex-d515b194).
+        let directory = &store.book.directory;
+        let found = match key {
+            Some(key) => directory.by_key(&key).map(|found| &found.name),
+            None => Some(directory.canonical(&member)),
+        };
+        if let Some(session) = found.and_then(|name| sessions.get(name)).filter(|session| session.forgets) {
             let _ = session.out.send(Out::Frame(Down::Forget { forgetting }));
         }
     }

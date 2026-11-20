@@ -353,7 +353,13 @@ async fn asked_of(
                         // this account as opened deleted for a purge, or being:
                         // the hub let go of what it would keep of it
                         // (codex-87c8bbd9).
-                        if crate::purges::deleting(&store.book.purges, &account, opened, &key) {
+                        if crate::purges::deleting(
+                            &store.book.purges,
+                            &account,
+                            opened,
+                            &key,
+                            ownership.identity.as_deref(),
+                        ) {
                             return Err(
                                 "a conversation of its id was deleted here with an assistance ended for good".into()
                             );
@@ -375,7 +381,15 @@ async fn asked_of(
                         // Being deleted for a purge, it moves no more: the
                         // hub would delete it from where it was
                         // (codex-87c8bbd9).
-                        if moved && crate::purges::deleting(&store.book.purges, &account, opened, &key) {
+                        if moved
+                            && crate::purges::deleting(
+                                &store.book.purges,
+                                &account,
+                                opened,
+                                &key,
+                                ownership.identity.as_deref(),
+                            )
+                        {
                             return Err("it is being deleted with an assistance ended for good".into());
                         }
                         let mut previous = old.previous.clone();

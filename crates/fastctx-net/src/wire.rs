@@ -697,6 +697,11 @@ pub struct BornUnder {
     /// It works for another account as well.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub others: bool,
+    /// When it was born, as its machine keeps it: with the machine's key,
+    /// which conversation of its id it is
+    /// (`owned_records::Conversation::identity`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub born_at: Option<Timestamp>,
 }
 
 /// How deleting one conversation went (`Purged::Deleted`).

@@ -259,7 +259,7 @@ pub(super) async fn register(
 
 /// The canonical conversation a host's birth facts name: this hub, the birth
 /// machine's device key, the resident and its original birth time.
-fn identity(
+pub(crate) fn identity(
     hub: &fastctx_types::access::HubId,
     device: &PublicKey,
     resident: &ResidentId,

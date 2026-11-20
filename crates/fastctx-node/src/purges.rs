@@ -280,7 +280,8 @@ async fn close(node: &Arc<Node>, hub: &HubId, purging: &Purging) -> Result<Purge
         .filter(|resident| born_under(&resident.about, hub, purging))
         .map(|resident| {
             let (colleague, others) = keeps(&resident.about, hub, purging);
-            BornUnder { resident: resident.id, colleague, others }
+            let born_at = Some(resident.about.born_at);
+            BornUnder { resident: resident.id, colleague, others, born_at }
         })
         .collect::<Vec<_>>();
     // And those deleted whose original is kept for their forks: what is
@@ -295,7 +296,7 @@ async fn close(node: &Arc<Node>, hub: &HubId, purging: &Purging) -> Result<Purge
             && born_under(&about, hub, purging)
         {
             let (colleague, others) = keeps(&about, hub, purging);
-            born.push(BornUnder { resident: id.clone(), colleague, others });
+            born.push(BornUnder { resident: id.clone(), colleague, others, born_at: Some(about.born_at) });
         }
     }
     Ok(Purged::Closed { born })

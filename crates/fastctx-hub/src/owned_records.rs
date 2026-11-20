@@ -8,6 +8,7 @@ mod projection;
 pub(crate) mod record_deletions;
 mod registration;
 pub(crate) use registration::birth_kept;
+pub(crate) use registration::identity as conversation_identity;
 mod replicas;
 mod sentinels;
 pub(crate) mod submission;
