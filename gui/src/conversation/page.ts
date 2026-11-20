@@ -843,7 +843,10 @@ export class ConversationPage {
       this.element.classList.toggle("scrolled", scrollTop > 0);
       const resized = clientHeight !== sized.client || scrollHeight !== sized.content;
       // The reader drags the scroll bar: wherever it stops is read.
-      if (this.pointerPaging && scrollTop !== sized.top) this.view.readerMoved();
+      if (this.pointerPaging && scrollTop !== sized.top) {
+        reading();
+        this.view.readerMoved();
+      }
       sized = { client: clientHeight, content: scrollHeight, top: scrollTop };
       if (resized && !this.reading()) {
         if (this.following) this.scroller.scrollTop = scrollHeight;
@@ -1217,7 +1220,7 @@ export class ConversationPage {
       this.render();
       // The reader moved the view meanwhile, or went to the newest: they
       // stay where they are.
-      if (this.following || this.readAt !== asked.readAt || this.latestRead !== asked.latest) return;
+      if (this.following || this.pointerPaging || this.readAt !== asked.readAt || this.latestRead !== asked.latest) return;
       if (!reached || !this.view.restore(place)) failed();
     }).catch((error) => this.say(String(error))).finally(() => {
       this.restoringPosition = false;

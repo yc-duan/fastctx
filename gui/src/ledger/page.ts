@@ -170,7 +170,7 @@ export class AgentsPage implements Page {
         target.click();
       }
     });
-    window.addEventListener("resize", this.onResize);
+    this.sized.observe(this.main);
     this.stop = effect(() => {
       options.store.world.get();
       this.rebuild();
@@ -196,19 +196,21 @@ export class AgentsPage implements Page {
     this.touched.disconnect();
     this.stop();
     this.following?.();
-    window.removeEventListener("resize", this.onResize);
+    this.sized.disconnect();
+    window.clearTimeout(this.resized);
     document.querySelector(".lg-pop")?.remove();
   }
 
-  private readonly onResize = () => {
+  /** The page's room changing size, the window's or as the sidebar comes
+   *  and goes: its charts are drawn for the width they have, so it is drawn
+   *  again once the room is still, the region that scrolls kept. */
+  private readonly sized = new ResizeObserver(() => {
     window.clearTimeout(this.resized);
-    // Its charts are drawn for the width they have: drawn again, with the
-    // region that scrolls kept.
     this.resized = window.setTimeout(() => {
       this.painted = "";
       draw();
     }, 120);
-  };
+  });
 
   /** What was drawn last, to draw nothing again where nothing changed. */
   private painted = "";
