@@ -37,6 +37,10 @@ const HOSTED_AGAIN: Duration = Duration::from_secs(10);
 /// And at the latest this long after, whatever changed.
 const HOSTED_AT_MOST: Duration = Duration::from_secs(60);
 
+/// What is paused is worked out again at a pass no sooner than this after
+/// the last time; at once as an account's word is set.
+const SETTLE_AGAIN: Duration = Duration::from_secs(30);
+
 /// Whether an account's copies are taken in here.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -104,8 +108,8 @@ pub(crate) struct Copies {
     /// What is taken in here no more, as last settled; what was owed as the
     /// node starts, before that.
     paused: Mutex<Arc<BTreeSet<String>>>,
-    /// One settling at a time.
-    settling: Mutex<()>,
+    /// One settling at a time, and when the last one was.
+    settling: Mutex<Option<Instant>>,
 }
 
 impl Copies {
@@ -127,7 +131,7 @@ impl Copies {
             broken,
             hosted: Mutex::new(None),
             paused: Mutex::new(paused),
-            settling: Mutex::new(()),
+            settling: Mutex::new(None),
         }
     }
 
@@ -280,18 +284,23 @@ fn read_by(scope: &HeldScope, account: &str, opened: i64) -> bool {
     readers(scope).iter().any(|(one, at)| one == account && *at == opened)
 }
 
-/// The readers of `scope` the hub listed that are logged in here now.
+/// The readers of `scope` the hub listed that are logged in here now, each
+/// the account opened when it was listed.
 fn readers_here(node: &Node, scope: &HeldScope) -> Vec<(String, i64)> {
     let Some(link) = node.links().into_iter().find(|link| Some(link.membership().id.as_str()) == scope.hub.as_deref())
     else {
         return Vec::new();
     };
-    let logins: BTreeSet<String> = node
+    let view = link.view();
+    let logins: std::collections::BTreeMap<String, i64> = node
         .accounts_on(&link, &fastctx_types::access::Acting::Here)
         .into_iter()
-        .map(|account| account.to_string())
+        .filter_map(|account| {
+            let opened = view.directory.account(&account)?.opened.as_millisecond();
+            Some((account.to_string(), opened))
+        })
         .collect();
-    readers(scope).into_iter().filter(|(account, _)| logins.contains(account)).collect()
+    readers(scope).into_iter().filter(|(account, opened)| logins.get(account) == Some(opened)).collect()
 }
 
 /// Whether nothing of `scope` is to be taken in here now: a conversation's,
@@ -334,24 +343,32 @@ fn paused(node: &Node, scope: &HeldScope, only: Option<&fastctx_types::AccountNa
 /// a scope paused now owes a whole pull; one owing it that is taken in again
 /// is marked not pulled whole, then read here no more as a copy until it is
 /// pulled whole again, each stream from where it stands here; one not held
-/// any more owes nothing. The scopes paused, as published. Call on a thread
-/// that may block.
-pub(crate) fn settle(node: &Arc<Node>) -> Arc<BTreeSet<String>> {
-    let Some(assets) = node.assets.as_ref() else { return Default::default() };
-    let _one = assets.copies.settling.lock().expect("settling");
-    let Ok(held) = assets.library.held_scopes() else { return assets.copies.paused_now() };
+/// any more owes nothing. What is owed is kept on disk before what is
+/// paused is published: where it cannot be, what was published stays, and
+/// why is said. The scopes paused, as published. Call on a thread that may
+/// block.
+pub(crate) fn settle(node: &Arc<Node>, now_rather: bool) -> Result<Arc<BTreeSet<String>>, String> {
+    let Some(assets) = node.assets.as_ref() else { return Ok(Default::default()) };
+    let mut last = assets.copies.settling.lock().expect("settling");
+    if !now_rather && last.is_some_and(|at| at.elapsed() < SETTLE_AGAIN) {
+        return Ok(assets.copies.paused_now());
+    }
+    *last = Some(Instant::now());
+    let held = assets.library.held_scopes().map_err(|error| format!("listing the scopes held here: {error}"))?;
     let held_keys: BTreeSet<&str> = held.iter().map(|scope| scope.key.as_str()).collect();
     let mut now: BTreeSet<String> =
         held.iter().filter(|scope| paused(node, scope, None)).map(|scope| scope.key.clone()).collect();
     let owed = assets.copies.kept.lock().expect("copies").owed.clone();
-    let mut released = Vec::new();
+    let mut released = BTreeSet::new();
     for key in &owed {
         if !held_keys.contains(key.as_str()) || now.contains(key) {
             continue;
         }
         // Taken in again: not read here before it is pulled whole again.
         match assets.library.forget_pulled_of(key) {
-            Ok(()) => released.push(key.clone()),
+            Ok(()) => {
+                released.insert(key.clone());
+            }
             Err(_) => {
                 now.insert(key.clone());
             }
@@ -364,17 +381,16 @@ pub(crate) fn settle(node: &Arc<Node>) -> Arc<BTreeSet<String>> {
         let mut kept = assets.copies.kept.lock().expect("copies");
         let mut next = kept.clone();
         next.owed = next_owed;
-        if assets.copies.write(&next).is_ok() {
-            *kept = next;
-        }
+        // Not kept, nothing newly paused is published: a scope passed by
+        // while what it owes was not kept would be read whole after.
+        assets.copies.write(&next).map_err(|error| format!("keeping what the copies here owe: {error}"))?;
+        *kept = next;
     }
     let now = Arc::new(now);
-    let changed = {
-        let mut paused = assets.copies.paused.lock().expect("paused");
-        let changed = **paused != *now;
-        *paused = now.clone();
-        changed
-    };
+    // Swapped alone under the lock; compared, and the last let go, outside.
+    let was = std::mem::replace(&mut *assets.copies.paused.lock().expect("paused"), now.clone());
+    let changed = *was != *now;
+    drop(was);
     if !released.is_empty() {
         let mut relook = assets.relook.lock().expect("relook");
         relook.extend(released.iter().cloned());
@@ -387,7 +403,7 @@ pub(crate) fn settle(node: &Arc<Node>) -> Arc<BTreeSet<String>> {
             super::session::wake(node, link.hub());
         }
     }
-    now
+    Ok(now)
 }
 
 /// Whether nothing of `scope` is taken in here now, for a reader on
@@ -482,7 +498,8 @@ pub(crate) fn set_here(
         return Err(format!("{account} on {hub} was made again since"));
     }
     let set = assets.copies.set(hub, account, now, state, source).map_err(|error| error.to_string())?;
-    settle(node);
+    // Kept; what follows is settled again at every pass should it not be now.
+    settle(node, true).map_err(|error| format!("kept, but what follows is not settled yet: {error}"))?;
     Ok(set)
 }
 

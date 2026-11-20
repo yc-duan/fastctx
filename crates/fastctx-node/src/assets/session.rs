@@ -387,12 +387,6 @@ async fn pass(node: &Arc<Node>, hub: &HubId, link: &Arc<Link>, network: &Network
     // This hub's scopes alone: another hub's go to no other.
     let theirs = hub.as_str().to_string();
     let held = blocking(library, move |library| library.live_scopes_of(&theirs)).await?;
-    // Not pulled whole in its holding period yet — installed, held anew,
-    // described otherwise, or its pull cut short — a scope is looked at by
-    // itself until it is: no change number after this machine's need show
-    // its streams' past (design §28.1, E01).
-    let theirs = hub.as_str().to_string();
-    let unpulled = blocking(library, move |library| library.unpulled_of(&theirs)).await?;
     // What this machine takes nothing of in now (`copies`), settled again:
     // its turn sends up and gives back as ever, and takes nothing down; it
     // is not pulled by itself for being new, nor caught up by its changes.
@@ -400,10 +394,23 @@ async fn pass(node: &Arc<Node>, hub: &HubId, link: &Arc<Link>, network: &Network
     // through all the same: whether it may be held still is asked as of any.
     let paused = {
         let settling = node.clone();
-        fastctx_platform::task::spawn_blocking(move || super::copies::settle(&settling))
-            .await
-            .unwrap_or_else(|_| assets.copies.paused_now())
+        match fastctx_platform::task::spawn_blocking(move || super::copies::settle(&settling, false)).await {
+            Ok(Ok(paused)) => paused,
+            Ok(Err(why)) => {
+                node.log.line(format_args!("assets with {hub}: what is taken in here no more: {why}"));
+                assets.copies.paused_now()
+            }
+            Err(_) => assets.copies.paused_now(),
+        }
     };
+    // Not pulled whole in its holding period yet — installed, held anew,
+    // described otherwise, its pull cut short, or taken in again after it
+    // was paused — a scope is looked at by itself until it is: no change
+    // number after this machine's need show its streams' past (design
+    // §28.1, E01). Read once what is paused is settled, so one taken in
+    // again just now is pulled by itself this very pass.
+    let theirs = hub.as_str().to_string();
+    let unpulled = blocking(library, move |library| library.unpulled_of(&theirs)).await?;
     // Every scope is looked at whole when the driver begins, a day after
     // it last was, after the hub was put back, and while a share of this
     // machine waits for it to clear; otherwise only those that call for it
@@ -2048,6 +2055,10 @@ async fn pull_stream(
     let lines = link.keeps_asset_lines();
     let turn = if lines { super::lines::RECORDS_A_TURN } else { RECORDS_A_TURN };
     while at < next {
+        // Paused meanwhile, no more of it is asked for (`copies`).
+        if assets.copies.paused_now().contains(scope) {
+            break;
+        }
         let frames = if lines {
             super::lines::frames(assets, link, scope, &stream, at).await?
         } else {

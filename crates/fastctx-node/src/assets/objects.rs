@@ -311,6 +311,10 @@ pub(super) async fn fetch(assets: &Assets, hub: &HubId, link: &Arc<Link>) -> Vec
 /// Fetches `object` of `scope` under a ticket, and keeps whether the hub
 /// gave it.
 async fn fetch_alone(assets: &Assets, hub: &HubId, link: &Arc<Link>, scope: &str, object: ObjectRef) -> Result<(), String> {
+    // Paused since it was listed, it is not asked for (`copies`).
+    if assets.copies.paused_now().contains(scope) {
+        return Ok(());
+    }
     let library = &assets.library;
     // Kept as it comes: this machine clears nothing until it is all here.
     let _keeping = assets.clearing.read().await;
@@ -417,6 +421,10 @@ async fn round(node: &Arc<Node>, hub: &HubId, link: &Arc<Link>) -> (usize, Vec<S
 /// how many came, and what did not and why. A line that breaks leaves the
 /// rest to be asked for again at once, as none of them was refused.
 async fn asked(assets: &Assets, hub: &HubId, link: &Arc<Link>, scope: &str, objects: Vec<ObjectRef>) -> (usize, Vec<String>) {
+    // Paused since it was listed, nothing of it is asked for (`copies`).
+    if assets.copies.paused_now().contains(scope) {
+        return (0, Vec::new());
+    }
     let library = &assets.library;
     let named: Vec<wire::ObjectRef> = objects.iter().map(|object| wire::ObjectRef { hash: object.hash.into(), size: object.size }).collect();
     let _coming = fastctx_platform::doing::waiting_outside(format!("{} objects of {scope} coming from the hub on an asset line", objects.len()), SENT_WITHIN);
