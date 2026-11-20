@@ -1011,6 +1011,7 @@ impl fastctx_net::link::Node for Handler {
                     }
                     RemoteCall::Ask { asker: resident, requester_turn, town, label, prompt, started } => {
                         let acting = Acting::one(hub.clone(), caller.account.clone());
+                        let born = asker.born.clone();
                         let asker = Address { machine: from, resident };
                         let (colleague, waiting) = crate::talk::submission::ask_here(
                             &node,
@@ -1020,6 +1021,7 @@ impl fastctx_net::link::Node for Handler {
                             label,
                             prompt,
                             started,
+                            born,
                         )
                         .await?;
                         Ok(RemoteReply::Asked { colleague, waiting })

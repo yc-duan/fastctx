@@ -136,17 +136,67 @@ pub(crate) fn still_born_as(
 }
 
 /// `still_born_as` as a host's last question before it is asked to make a
-/// thread or fork: what it refuses, it says in words.
+/// thread or fork (`Still`).
 pub(crate) fn still(
     node: &std::sync::Arc<Node>,
     acting: &Acting,
     agent: &fastctx_types::AgentName,
     home: Option<&std::path::Path>,
     born: &[fastctx_types::residents::BornAs],
-) -> impl Fn() -> Result<(), String> + Send + Sync + use<> {
-    let (node, acting, agent, home, born) =
-        (node.clone(), acting.clone(), agent.clone(), home.map(std::path::Path::to_path_buf), born.to_vec());
-    move || still_born_as(&node, &acting, &agent, home.as_deref(), &born).map_err(|failure| failure.message)
+) -> Still {
+    Still {
+        node: node.clone(),
+        acting: acting.clone(),
+        agent: agent.clone(),
+        home: home.map(std::path::Path::to_path_buf),
+        born: born.to_vec(),
+        refused: Default::default(),
+    }
+}
+
+/// What a host asks last before it is asked to make a thread or fork
+/// (`ask`): whether the session is still born by the right it was born by.
+/// What it refused is kept whole, its kind with it, for the failure the
+/// host's words come back as (`failure`; codex-87c8bbd9).
+pub(crate) struct Still {
+    node: std::sync::Arc<Node>,
+    acting: Acting,
+    agent: fastctx_types::AgentName,
+    home: Option<std::path::PathBuf>,
+    born: Vec<fastctx_types::residents::BornAs>,
+    refused: std::sync::Arc<std::sync::Mutex<Option<Failure>>>,
+}
+
+impl Still {
+    /// The question, as the host asks it.
+    pub(crate) fn ask(&self) -> impl Fn() -> Result<(), String> + Send + Sync + use<> {
+        let (node, acting, agent, home, born, refused) = (
+            self.node.clone(),
+            self.acting.clone(),
+            self.agent.clone(),
+            self.home.clone(),
+            self.born.clone(),
+            self.refused.clone(),
+        );
+        move || {
+            still_born_as(&node, &acting, &agent, home.as_deref(), &born).map_err(|failure| {
+                let message = failure.message.clone();
+                *refused.lock().expect("never poisoned") = Some(failure);
+                message
+            })
+        }
+    }
+
+    /// What this refused, whole, where that is why the host asked nothing.
+    pub(crate) fn refused(&self) -> Option<Failure> {
+        self.refused.lock().expect("never poisoned").take()
+    }
+
+    /// The failure the host's `error` stands for: what this refused, where
+    /// it did; else the host's own.
+    pub(crate) fn failure(&self, error: impl Into<String>) -> Failure {
+        self.refused().unwrap_or_else(|| Failure::new(error.into()))
+    }
 }
 
 /// A session born working by an assistance is born in a login it knows by

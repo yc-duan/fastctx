@@ -36,7 +36,8 @@ pub struct Asker {
     /// Whether the account may work on this machine: it sees the machine's
     /// agents and pages, never a conversation that works for another (`seen`).
     pub hands: bool,
-    /// Of a call to open a conversation here: what it is born as, by the
+    /// Of a call to open a conversation here, or ask a colleague here: what
+    /// it is born as, by the
     /// right the call is let in by, read from the very view it is let in by
     /// (`assists::born_by`; design-forget-account-v2.md F0, codex-87c8bbd9).
     pub born: Option<fastctx_types::residents::BornAs>,
@@ -288,6 +289,10 @@ fn admit_inner(
     let born = match call {
         RemoteCall::Open { agent, home, .. } => {
             Some(crate::assists::born_by(node, &view, &hub, &caller.account, agent, home.as_deref())?)
+        }
+        RemoteCall::Ask { started, .. } => {
+            let login = &started.callee.login;
+            Some(crate::assists::born_by(node, &view, &hub, &caller.account, &login.agent, login.home.as_deref())?)
         }
         _ => None,
     };

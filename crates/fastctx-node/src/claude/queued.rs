@@ -37,11 +37,6 @@ pub(super) fn marked(directory: &ConversationDir) -> bool {
     fastctx_platform::disk::is_file(directory.path().join(MARK))
 }
 
-/// `unmark`, for a first turn that waits no more.
-pub(super) fn unmark_now(directory: &ConversationDir) -> std::io::Result<()> {
-    unmark(directory)
-}
-
 fn unmark(directory: &ConversationDir) -> std::io::Result<()> {
     match fastctx_platform::disk::remove_file(directory.path().join(MARK)) {
         Err(error) if error.kind() != std::io::ErrorKind::NotFound => Err(error),
@@ -73,13 +68,6 @@ pub(super) fn wait(node: &Arc<Node>, id: ResidentId) {
             }
             let prepared = match super::prepare_launch(&node, &id).await {
                 Ok(prepared) => prepared,
-                // Refused, as where the right it was opened by no longer
-                // stands: asking again will not change that, and it waits no
-                // more, its first words kept (codex-87c8bbd9).
-                Err(failure) if failure.is_refused() && !crate::authorization::view_pending(&failure) => {
-                    super::waits_no_more(&node, &id, failure);
-                    return;
-                }
                 Err(failure) => {
                     node.log.line(format_args!(
                         "preparing {id}'s first turn, which waited for its login; tried again in {} s: {}",

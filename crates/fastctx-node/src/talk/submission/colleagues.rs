@@ -38,6 +38,12 @@ enum Asked {
 struct Resolved {
     town: Option<TownName>,
     turn: Option<String>,
+    /// Whom the colleague is born working for, and by what right, as the
+    /// door let the asking in (`admission::Asker::born`): it is born only by
+    /// that right (design-forget-account-v2.md F0, codex-87c8bbd9). None in
+    /// one asked before this was kept, or asked here.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    born_as: Option<Vec<fastctx_types::residents::BornAs>>,
 }
 #[derive(Serialize, Deserialize)]
 struct Answer {
@@ -81,6 +87,7 @@ pub(super) fn register(node: &Arc<Node>) {
                         label,
                         prompt,
                         *started,
+                        resolved.born_as.clone(),
                     )
                     .await?;
                     (Address { machine: node.machine(), resident }, waiting)
@@ -123,7 +130,7 @@ pub(crate) async fn ask(
             .town_of(&asker)
             .ok_or_else(|| Failure::not_run(format!("no resident {asker} lives on {}", node.machine())))?;
         let turn = node.residents.now(&asker).and_then(|now| now.turn);
-        Ok((asker.to_string(), Resolved { town, turn }))
+        Ok((asker.to_string(), Resolved { town, turn, born_as: None }))
     })
     .await?;
     check_route(node, &asker, &answer.resolved)?;
@@ -131,6 +138,7 @@ pub(crate) async fn ask(
     Ok(crate::colleagues::Born { colleague, waiting })
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn ask_here(
     node: &Arc<Node>,
     requester: crate::colleagues::Requester,
@@ -139,6 +147,7 @@ pub(crate) async fn ask_here(
     label: String,
     prompt: String,
     started: Started,
+    admitted: Option<fastctx_types::residents::BornAs>,
 ) -> Result<(ResidentId, Option<u32>), Failure> {
     if !node.is_me(&started.callee.login.machine) {
         return Err(Failure::not_run("the configured callee lives on another machine"));
@@ -155,7 +164,8 @@ pub(crate) async fn ask_here(
     };
     let answer: Answer = crate::submitted::submit_resolving(node, &FAMILY, &asked, || async {
         let Asked::Here { requester, town, turn, .. } = &asked else { unreachable!("local recording") };
-        Ok((unit(requester), Resolved { town: town.clone(), turn: turn.clone() }))
+        let born_as = admitted.map(|born| vec![born]);
+        Ok((unit(requester), Resolved { town: town.clone(), turn: turn.clone(), born_as }))
     })
     .await?;
     if let Some(town) = &answer.resolved.town {

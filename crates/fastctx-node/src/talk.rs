@@ -1355,9 +1355,9 @@ pub async fn open_here(
     let (thread, model) = node
         .codex
         .session(opened.home.as_deref(), crate::assists::host::kept(node, &id)?.unwrap_or(false))?
-        .start_thread(spec, still)
+        .start_thread(spec, still.ask())
         .await
-        .map_err(Failure::new)?;
+        .map_err(|error| still.failure(error))?;
     let born_at = Timestamp::now();
     let about = About {
         side: false,

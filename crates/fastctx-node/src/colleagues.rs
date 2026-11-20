@@ -159,6 +159,8 @@ async fn ask_for_account(
             request.label,
             request.prompt,
             started,
+            // Asked here at once: the right it works by is read as it is born.
+            None,
         )
         .await?;
         return Ok(Born { colleague: Address { machine: here, resident: id }, waiting });
@@ -234,6 +236,7 @@ async fn troubled(node: &Arc<Node>, id: &ResidentId, text: String) -> Result<(),
     .map_err(|error| Failure::new(error.to_string()))
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn ask_here(
     node: &Arc<Node>,
     requester: Requester,
@@ -242,6 +245,7 @@ pub async fn ask_here(
     label: String,
     prompt: String,
     started: fastctx_types::collab::Started,
+    admitted: Option<Vec<fastctx_types::residents::BornAs>>,
 ) -> Result<(ResidentId, Option<u32>), Failure> {
     let goal = crate::goals::colleagues::offered();
     if goal {
@@ -277,6 +281,12 @@ pub async fn ask_here(
         })
         .await?
     };
+    // Let in by one right, it is not born by another (codex-87c8bbd9).
+    if admitted.as_ref().is_some_and(|admitted| *admitted != born_as) {
+        return Err(Failure::refused(
+            "the right the colleague was asked by no longer stands: the assistance or the account it was asked under has changed since",
+        ));
+    }
     let id = node.residents.new_id(&agent)?;
     crate::record_migration::born(node, &id);
     node.codex.home(home.as_deref())?.require_login().await.map_err(|error| {
@@ -310,10 +320,12 @@ pub async fn ask_here(
     let (thread, model) = node
         .codex
         .session(home.as_deref(), crate::assists::host::kept(node, &id)?.unwrap_or(false))?
-        .start_thread(spec, still)
+        .start_thread(spec, still.ask())
         .await
         .map_err(|error| {
-            Failure::new(format!("starting Codex on {}, where colleagues live: {error}", node.machine()))
+            still.refused().unwrap_or_else(|| {
+                Failure::new(format!("starting Codex on {}, where colleagues live: {error}", node.machine()))
+            })
         })?;
     let born_at = Timestamp::now();
     let about = About {

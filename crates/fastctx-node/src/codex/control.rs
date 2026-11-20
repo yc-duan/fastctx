@@ -359,7 +359,10 @@ async fn fork(
     let _starting = crate::codex::starting(node);
     // Still born by that right as the fork is asked for.
     let still = crate::assists::still(node, &source.acting, &source.host.agent, source.home.as_deref(), &born_as);
-    let (fork, model) = codex.fork(thread, through.as_deref(), spec, still).await.map_err(|error| error.failure())?;
+    let (fork, model) = codex
+        .fork(thread, through.as_deref(), spec, still.ask())
+        .await
+        .map_err(|error| still.refused().unwrap_or_else(|| error.failure()))?;
     let at = Timestamp::now();
     let about = About {
         forked_from: Some(Address { machine: node.machine(), resident: parent.clone() }),
