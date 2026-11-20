@@ -936,7 +936,7 @@ export class ConversationPage {
   private paging = false;
   private async fillGap(gap: Gap, side: "end" | "start", _explicit = false, into?: import("./conversation").Into): Promise<void> {
     // One part read at a time: what the view is in by then is asked next.
-    if (gap.paged && (this.paging || this.restoringPosition || this.findingPosition)) {
+    if (gap.paged && (this.paging || this.findingPosition)) {
       this.view.retryGap(gap.key);
       return;
     }
@@ -1132,17 +1132,18 @@ export class ConversationPage {
 
   /** The page goes out of view and stays alive, its conversation still
    *  followed. */
-  private suspendedPosition: import("./conversation").TimelinePosition | null = null;
   suspend(): void {
     this.suspended = true;
-    if (this.element.isConnected) {
-      this.place = this.following ? null : this.view.anchor();
-      this.suspendedPosition = this.place ? this.options.conversation.positionOf(this.place.key) : null;
-    }
+    if (this.element.isConnected) this.place = this.following ? null : this.view.anchor();
   }
 
   /** The page is shown again, as it was left and as the conversation now
-   *  stands. */
+   *  stands: where the reader was, if what they read is still held, else at
+   *  the newest. What they read is not read again first: the page stood
+   *  empty meanwhile, as long as that took, and a reader who had just sent
+   *  words was back in that wait each time they came (the user, 2026-11-20:
+   *  "每次进入一个会话…一直显示这个白屏…点一下这个滚动到最下方的这个按钮，
+   *  它里面内容一会马上出来…最简单的一个逻辑就是进入之后直接到最下面"). */
   resume(): void {
     if (this.suspended) {
       this.suspended = false;
@@ -1155,21 +1156,17 @@ export class ConversationPage {
       this.render();
       if (!this.element.isConnected) return;
       if (this.following) this.scroller.scrollTop = this.scroller.scrollHeight;
-      else if (this.place && !this.view.restore(this.place)) {
-        if (this.options.conversation.paged) this.restoreReading(this.place, this.suspendedPosition);
-        else this.toLatest();
-      }
+      else if (this.place && !this.view.restore(this.place)) this.toLatest();
     });
   }
 
-  /** What is held is read again (`conversation.ts`): the reader stays
-   *  where they were, the turns they read read again where they are no
-   *  longer held. */
-  private restoringPosition = false;
+  /** What is held is read again (`conversation.ts`): the reader stays where
+   *  they were while what they read is still held; where the conversation
+   *  pages its turns and it is not, they are at the newest, as when the
+   *  page is shown again (`resume`). */
   reopened(apply: () => void): void {
     const place = this.following ? null : this.view.anchor();
     const turn = place ? this.turnOf(place.key) : null;
-    const position = place ? this.options.conversation.positionOf(place.key) : null;
     apply();
     this.update({ read: true });
     if (this.findingPosition) { this.render(); return; }
@@ -1179,7 +1176,7 @@ export class ConversationPage {
     this.render();
     if (this.view.restore(place)) return;
     if (this.options.conversation.paged) {
-      this.restoreReading(place, position);
+      this.toLatest();
       return;
     }
     if (!turn) return;
@@ -1191,16 +1188,6 @@ export class ConversationPage {
 
   /** A turn asked for from elsewhere, as a request in its login's usage,
    *  until it is brought into view. */
-  private restoreReading(place: { key: string; offset: number }, position: import("./conversation").TimelinePosition | null): void {
-    const failed = () => this.say(this.options.words.english ? "This position could not be restored. Search the content again." : "暂时无法恢复这个位置，请重新查找这段内容。");
-    if (this.restoringPosition) return;
-    if (!position) return failed();
-    this.restoringPosition = true;
-    void this.options.conversation.reachPosition(position).then((reached) => {
-      this.render();
-      if (!reached || !this.view.restore(place)) failed();
-    }).catch((error) => this.say(String(error))).finally(() => { this.restoringPosition = false; });
-  }
   private wantedTurn: string | null = null;
 
   /** Brings `turn` into view, read first where it is not held; a page
