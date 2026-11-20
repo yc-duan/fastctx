@@ -13,6 +13,7 @@
 // away, and is all that is left of the side while it is folded.
 
 import { layerOpened, type Layer } from "../app/back";
+import { carry } from "../app/carry";
 import { makeGrip } from "../app/grip";
 import { glyph } from "../conversation/glyphs";
 import type { Address } from "../world/wire";
@@ -395,17 +396,25 @@ export class SideFrame implements PartsFrame {
     if (this.host.style.getPropertyValue(name) !== value) this.host.style.setProperty(name, value);
   }
 
-  /** The switch, and the desk opening or shutting by the side: opening, the
-   *  desk is laid out shut first, so the side comes from nothing and pushes
-   *  the conversations aside as it comes. Seen open, what was new about
-   *  the conversation in focus is no longer new. */
+  /** The switch, and the desk opening or shutting by the side. Beside the
+   *  conversations the desk has its new room at once, and the side's sheet
+   *  and what stands on the desk are carried to where it puts them
+   *  (`carry.ts`): the sheet comes from the desk's edge as the conversations
+   *  give way. Over the page, laid out shut first, it slides in over it.
+   *  Seen open, what was new about the conversation in focus is no longer
+   *  new. */
   private drawSwitch(): void {
     const open = this.pane.open;
     const was = this.host.classList.contains("sp-shown");
-    if (open && !was) void this.host.offsetWidth;
-    if (open && !was && this.placed === "over" && !ALONE) layerOpened(this.layer);
-    this.host.classList.toggle("sp-shown", open);
-    this.host.classList.toggle("sp-visible", !this.pane.element.hidden);
+    const over = this.placed === "over";
+    if (open && !was && over) void this.host.offsetWidth;
+    if (open && !was && over && !ALONE) layerOpened(this.layer);
+    const change = () => {
+      this.host.classList.toggle("sp-shown", open);
+      this.host.classList.toggle("sp-visible", !this.pane.element.hidden);
+    };
+    if (open !== was && !over && !ALONE) carry(this.host, change);
+    else change();
     if (open && this.parts) this.parts.fresh = false;
     this.opener.setAttribute("aria-pressed", String(open));
     this.historyMark.setAttribute("aria-pressed", String(!!this.parts?.history && this.pane.visible === this.parts.history.part));
