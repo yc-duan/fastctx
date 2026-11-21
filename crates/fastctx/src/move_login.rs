@@ -192,7 +192,11 @@ pub(crate) mod linux {
             }
             if let Some(hub) = &args.hub {
                 let plain = !hub.is_empty() && hub.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_'));
-                if !plain || !fs::metadata(here.world.net().join(hub)).is_ok_and(|found| found.is_dir()) {
+                // On that network still: one the hub ended this machine's
+                // place on — its name given to another since — is not it.
+                let place = here.world.net().join(hub);
+                let on = plain && fs::metadata(&place).is_ok_and(|found| found.is_dir()) && !place.join("ended.json").exists();
+                if !on {
                     bail!("this machine is not {meant} of the network meant (hub {hub}): nothing is done here");
                 }
             }
@@ -1007,6 +1011,13 @@ pub(crate) mod linux {
         // Looked at again just before: nothing changed while it was gone through.
         if !still_led(here, &record)? {
             bail!("{} no longer leads to the copy the move made; the original set aside is not deleted", record.login.display());
+        }
+        let again = fs::symlink_metadata(&record.backup).with_context(|| format!("looking at {}", record.backup.display()))?;
+        if !again.is_dir() || (Identity { device: again.dev(), inode: again.ino() }) != record.source_identity {
+            bail!("{} is not the original this move set aside any more; it is not deleted", record.backup.display());
+        }
+        if let Some(point) = mounted_in(&record.backup)?.first() {
+            bail!("a filesystem is mounted at {}, in the original set aside; it is not deleted", point.display());
         }
         fastctx_platform::owned_directory::delete(&record.backup).with_context(|| format!("deleting {}", record.backup.display()))?;
         record.backup_deleted = true;

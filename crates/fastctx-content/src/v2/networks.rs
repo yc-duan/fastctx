@@ -358,6 +358,27 @@ impl Library {
         Ok(holding)
     }
 
+    /// Installs a scope of `network` a hub listed, as `install_on` does,
+    /// but not one this device proposed and no hub described yet — judged
+    /// in the same transaction: that one is described by this device as it
+    /// began it (`None`).
+    pub fn install_listed(&self, network: &Network, key: &str, description: Vec<u8>, acl_revision: i64) -> Result<Option<i64>> {
+        let (network, key) = (network.clone(), key.to_string());
+        let holding = self.database().write_now_at(Priority::Normal, 256 + description.len(), move |db| {
+            under(db, &network)?;
+            if let Some((_, state, Some(_))) = super::scopes::held(db, &key)?
+                && state == "provisional"
+            {
+                return Ok(None);
+            }
+            install_in(db, &key, &network.hub, description, acl_revision).map(Some)
+        })?;
+        if holding.is_some() {
+            self.wrote();
+        }
+        Ok(holding)
+    }
+
     /// Installs a scope of `network` under its hub-signed description as
     /// `install` does, only while the machine is on the network under the
     /// term it was asked under.

@@ -603,6 +603,13 @@ async fn connected(
     // and when it was asked.
     let mut checking: Option<Instant> = None;
     let mut asked = Instant::now();
+    // Questions going unanswered while the hub is heard: the session is
+    // taken for stalled and dialled anew, a few times an hour at most
+    // (`Questions::stalled`, `Inner::may_renew`).
+    let began = fastctx_platform::awake::Sample::now().map(|sample| sample.awake).unwrap_or_default();
+    inner.asks.watch_anew();
+    let mut looking = tokio::time::interval(Duration::from_secs(10));
+    looking.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
     let ended = loop {
         let next = tokio::select! {
@@ -639,6 +646,17 @@ async fn connected(
                     let health = inner.view().health.then(fastctx_platform::health::summary);
                     let workbench = inner.node.workbench();
                     let _ = up.send_first(Up::Ping { n: 0, paths, took: Some(pulse.taken()), held, health, workbench });
+                }
+                continue;
+            },
+            _ = looking.tick() => {
+                if let Some((unanswered, quiet)) = inner.asks.stalled(began)
+                    && inner.may_renew()
+                {
+                    break Ended::Retry(format!(
+                        "{unanswered} questions went unanswered for {} s while the hub was heard: the session is dialled anew",
+                        quiet.as_secs()
+                    ));
                 }
                 continue;
             },

@@ -65,7 +65,7 @@ pub const BEGUN_FOR_ANOTHER: &str = "begun for an earlier account of the name of
 /// How far a machine's clock and its hub's may differ, in milliseconds, as
 /// a scope is judged begun before an account was opened (`Request::Describe`'s
 /// `begun`): an account opened later than that past this did not begin it.
-pub const BEGUN_CLOCKS: i64 = 60 * 60 * 1000;
+pub const BEGUN_CLOCKS: i64 = 5 * 60 * 1000;
 
 /// The version from which a device vouches to the hub for the objects it
 /// holds of the conversation streams it orders (`Request::Vouch`): the hub

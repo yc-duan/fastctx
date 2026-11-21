@@ -49,28 +49,37 @@ pub(crate) fn run() {
     assert!(matches!(taken, Received::Applied { .. }), "{taken:?}");
     let (epoch, key) = hub.last_epoch(scope, "timeline").unwrap().expect("its first epoch, the device's");
     let longest = 64 << 20;
-    let count = |longest: u64| hub.reclaim_vouched(None, 100, longest, false).unwrap().1;
+    let everyone = || hub.vouchers(None, 100).unwrap();
+    let count = |longest: u64| hub.reclaim_vouched(None, 100, longest, false, everyone()).unwrap().1;
+    // Read back whole where it was made.
+    assert!(producer.verify_object(&blob.object.hash).unwrap(), "whole");
+    assert!(!producer.verify_object(&[3; 32]).unwrap(), "not here");
     // Leased as it was put: kept.
     assert_eq!(count(longest).objects, 0);
     assert!(count(longest).kept.keys().any(|why| why.contains("sent or fetched")), "{:?}", count(longest));
     hub.release(lease).unwrap();
     // Not vouched for: kept.
     assert!(count(longest).kept.keys().any(|why| why.contains("not vouched")), "{:?}", count(longest));
-    // Vouched for under another key: kept.
-    assert_eq!(hub.vouch(scope, "timeline", epoch, &[9; 32], &[blob.object.hash]).unwrap(), 1);
-    assert!(count(longest).kept.keys().any(|why| why.contains("not the stream's now")), "{:?}", count(longest));
+    // Vouched for under another key, or in another epoch: not taken.
+    assert_eq!(hub.vouch(scope, "timeline", epoch, &[9; 32], &[blob.object.hash]).unwrap(), None);
+    assert_eq!(hub.vouch(scope, "timeline", epoch + 1, &key, &[blob.object.hash]).unwrap(), None);
+    assert!(count(longest).kept.keys().any(|why| why.contains("not vouched")), "{:?}", count(longest));
     // An object no frame of the stream refers to is passed by.
-    assert_eq!(hub.vouch(scope, "timeline", epoch, &key, &[[7; 32]]).unwrap(), 0);
+    assert_eq!(hub.vouch(scope, "timeline", epoch, &key, &[[7; 32]]).unwrap(), Some(0));
     // Vouched for by the device ordering it now: may go, but for one longer
-    // than the machines take from one another.
-    assert_eq!(hub.vouch(scope, "timeline", epoch, &key, &[blob.object.hash]).unwrap(), 1);
+    // than the machines take from one another, or where that device may not
+    // hold its conversation now.
+    assert_eq!(hub.vouch(scope, "timeline", epoch, &key, &[blob.object.hash]).unwrap(), Some(1));
     assert!(count(50 * 1024).kept.keys().any(|why| why.contains("longer")), "{:?}", count(50 * 1024));
+    let nobody = hub.reclaim_vouched(None, 100, longest, false, Default::default()).unwrap().1;
+    assert!(nobody.kept.keys().any(|why| why.contains("may not hold")), "{nobody:?}");
     let counted = count(longest);
     assert_eq!((counted.objects, counted.bytes), (1, bytes.len() as u64), "{counted:?}");
     assert!(hub.size(&blob.object.hash).unwrap().is_some(), "counted, not let go");
-    let (next, gone) = hub.reclaim_vouched(None, 100, longest, true).unwrap();
-    assert_eq!((next, gone.objects), (None, 1));
+    let (next, gone) = hub.reclaim_vouched(None, 100, longest, true, everyone()).unwrap();
+    assert_eq!((next, gone.objects, gone.freed, gone.stuck), (None, 1, bytes.len() as u64, 0));
     assert!(hub.size(&blob.object.hash).unwrap().is_none(), "let go");
+    assert_eq!(hub.settle_tombstones(10).unwrap(), (0, 0, 0), "no tombstone left");
     assert!(hub.item(scope, "timeline", b"a").unwrap().is_some(), "its frame stays");
     // Put again, it is taken as new.
     let again = hub.put(&mut bytes.as_slice(), "again", LEASE).unwrap();

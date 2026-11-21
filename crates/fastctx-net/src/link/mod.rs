@@ -427,6 +427,8 @@ pub(crate) struct Inner {
     /// The session on now is to be asked at once whether the hub still
     /// hears it (`session::run`).
     check: Notify,
+    /// When sessions were last dialled anew for stalling (`may_renew`).
+    renewed: Mutex<std::collections::VecDeque<std::time::Instant>>,
     /// How many of those checks the hub answered.
     checks: watch::Sender<u64>,
     /// What this machine tells with its heartbeat changed: it is told at
@@ -615,6 +617,7 @@ impl Link {
             clock: Mutex::default(),
             reconnect: Notify::new(),
             check: Notify::new(),
+            renewed: Mutex::new(std::collections::VecDeque::new()),
             tell: Notify::new(),
             checks: watch::channel(0).0,
             rerouted: Notify::new(),
@@ -1070,6 +1073,21 @@ impl Link {
 }
 
 impl Inner {
+    /// Whether the session on may be dialled anew for stalling now: three
+    /// times an hour at most; past that it is left to its own endings.
+    pub(super) fn may_renew(&self) -> bool {
+        let mut renewed = self.renewed.lock().expect("never poisoned");
+        let hour = std::time::Duration::from_secs(60 * 60);
+        while renewed.front().is_some_and(|at| at.elapsed() >= hour) {
+            renewed.pop_front();
+        }
+        if renewed.len() >= 3 {
+            return false;
+        }
+        renewed.push_back(std::time::Instant::now());
+        true
+    }
+
     fn view(&self) -> Arc<View> {
         self.view.lock().expect("never poisoned").clone()
     }

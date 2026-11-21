@@ -1153,12 +1153,11 @@ pub(crate) fn ask_in(
             let kept = held(assets, directory, machine, &scope, &stream)?;
             let library = scopes::library(assets, &kept)?;
             // Only the device ordering the stream, in its epoch now, vouches
-            // for what its frames refer to.
-            let last = library.last_epoch(&scope, &stream).map_err(|error| error.to_string())?;
-            if last.is_none_or(|(at, device)| at != epoch || &device != key.as_bytes()) {
-                return Err("only the device ordering the stream, in its epoch now, vouches for its objects".into());
-            }
+            // for what its frames refer to: judged as it is kept.
             let kept = library.vouch(&scope, &stream, epoch, key.as_bytes(), &hashes).map_err(|error| error.to_string())?;
+            let Some(kept) = kept else {
+                return Err("only the device ordering the stream, in its epoch now, vouches for its objects".into());
+            };
             Ok(Reply::Vouched { kept: kept as u32 })
         }
         Request::Permits { scopes } => {

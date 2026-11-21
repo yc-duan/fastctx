@@ -352,6 +352,11 @@ pub(super) const REVOKED: &str = "no longer read here: ";
 /// meanwhile (`copies`): not a failure, nor taken whole.
 pub(super) const PAUSED: &str = "taken in here no more: ";
 
+/// What a pull says of a stream its machine keeps that the machine gave
+/// nothing of just now: taken from the hub as far as the hub holds it, it
+/// is not taken for pulled whole, and fails nothing.
+const UNREACHED_NOW: &str = "its machine gave nothing now: ";
+
 /// Asks the hub `request` of a scope; where the hub says this machine reads
 /// the scope no more, its holding here ends (design §4.5, §6.3).
 pub(super) async fn ask(assets: &Assets, link: &Arc<Link>, request: Request) -> Result<Reply, String> {
@@ -650,12 +655,9 @@ async fn pass(node: &Arc<Node>, hub: &HubId, link: &Arc<Link>, network: &Network
     if let Err(why) = super::standing::report(assets, hub, link).await {
         node.log.line(format_args!("assets with {hub}: telling where this machine stands: {why}"));
     }
-    // What it holds of the conversation streams it orders is vouched for:
-    // the hub may let go of its own copies (`vouch`).
-    let _step = phase(hub, "vouching for what this machine holds");
-    if let Err(why) = super::vouch::tell(assets, hub, link).await {
-        node.log.line(format_args!("assets with {hub}: vouching for what this machine holds: {why}"));
-    }
+    // What it holds of the conversation streams it orders is vouched for,
+    // beside the passes: the hub may let go of its own copies (`vouch`).
+    super::vouch::start(node, hub, link);
     failed.map_or(Ok(()), Err)
 }
 
@@ -699,7 +701,6 @@ async fn turn(
     let Some(assets) = node.assets.as_ref() else {
         return Turned { scope, failed: Some("the asset library is unavailable".into()), short: true };
     };
-    let library = &assets.library;
     let mut failed: Option<String> = None;
     let turning = assets.turn_of(&scope);
     let _turn = turning.lock().await;
@@ -776,8 +777,13 @@ async fn turn(
     // Holding what the hub has of them, the streams to be ordered here are
     // taken over (design §8).
     let step = phase(hub, &format!("taking over the streams of {scope}"));
+    // A machine away just now holds up no takeover: what is to be ordered
+    // here may be its very streams.
     let checked = match (&pulled, checked) {
         (Ok((_, None)), Ok(())) => super::takeover::run(node, assets, hub, link, key, scope).await,
+        (Ok((_, Some(why))), Ok(())) if why.starts_with(UNREACHED_NOW) => {
+            super::takeover::run(node, assets, hub, link, key, scope).await
+        }
         (_, checked) => checked,
     };
     drop(step);
@@ -790,16 +796,19 @@ async fn turn(
         && matches!(&pulled, Ok((_, None)))
         && checked.is_ok()
         && !assets.copies.paused_now().contains(scope)
-        && assets.copies.release_mark(scope) == released_at
     {
-        let key_text = scope.clone();
-        match blocking(library, move |library| library.pulled(&key_text, holding)).await {
+        // Taken in again since the turn began, it is marked by a later one.
+        let (marking, key_text) = (node.clone(), scope.clone());
+        let marked = fastctx_platform::task::blocking(move || {
+            let assets = marking.assets.as_ref().ok_or("the asset library is unavailable")?;
+            assets.copies.mark_pulled(&assets.library, &key_text, holding, released_at)
+        })
+        .await;
+        match marked {
             // Pulled whole, its copy is read here from now: what the
             // interface lists of conversations is made again (plan 3-5).
-            Ok(_) => {
-                assets.copies.pulled_since(scope, released_at);
-                assets.metadata_moved.send_modify(|count| *count = count.wrapping_add(1));
-            }
+            Ok(true) => assets.metadata_moved.send_modify(|count| *count = count.wrapping_add(1)),
+            Ok(false) => {}
             Err(why) => {
                 failed.get_or_insert(why);
             }
@@ -812,8 +821,9 @@ async fn turn(
             && !why.starts_with(REVOKED)
         {
             whole_here = false;
-            // Paused part way, it is gone through again, and fails nothing.
-            if !why.starts_with(PAUSED) {
+            // Paused part way, or its machine away just now, it is gone
+            // through again, and fails nothing.
+            if !why.starts_with(PAUSED) && !why.starts_with(UNREACHED_NOW) {
                 failed.get_or_insert(format!("{scope}: {why}"));
             }
         }
@@ -1434,15 +1444,14 @@ async fn describe(
         let Some(proposal) = proposal else { continue };
         // A conversation not on record here — deleted, or being — is never
         // described: what of it is here goes with it, not to its hub. One
-        // deleted, or whose place here is gone, is let go now.
+        // deleted here is let go now; one merely not found — its place not
+        // to be seen just now — is left as it is.
         if wire::of_conversation(&scope)
             && let Some(id) = scope.rsplit('/').next().and_then(|id| fastctx_types::ResidentId::try_from(id).ok())
         {
             let deleting = node.residents.is_deleting(&id);
             if !deleting && node.residents.about(&id).is_none() {
-                let gone = node.residents.deleted(&id).is_some()
-                    || !fastctx_platform::disk::exists(node.world.conversation(&id).path()).unwrap_or(true);
-                if gone {
+                if node.residents.deleted(&id).is_some() {
                     let key = scope.clone();
                     if blocking(library, move |library| library.revoke_proposed(&key)).await? && never.contains_key(&scope) {
                         let (dir, key) = (dir.clone(), scope.clone());
@@ -1474,11 +1483,22 @@ async fn describe(
             };
             let borns: Vec<(fastctx_types::AccountName, Option<i64>)> =
                 openers.into_iter().map(|opener| { let born = born.or_else(|| born_under(node, &scope, hub, &opener)); (opener, born) }).collect();
-            // When it was begun here: an opener who it was begun for is not
-            // known of is judged by it (`BEGUN_CLOCKS`).
+            // When it was begun: an opener who it was begun for is not known
+            // of is judged by it (`BEGUN_CLOCKS`) — the earlier of when its
+            // conversation was born and when its scope was first held here.
             let begun_of = scope.clone();
             let begun = if wire::of_conversation(&scope) {
-                blocking(library, move |library| library.first_held(&begun_of)).await?
+                let held = blocking(library, move |library| library.first_held(&begun_of)).await?;
+                let born = scope
+                    .rsplit('/')
+                    .next()
+                    .and_then(|id| fastctx_types::ResidentId::try_from(id).ok())
+                    .and_then(|id| node.residents.about(&id))
+                    .map(|(about, _)| about.born_at.as_millisecond());
+                match (held, born) {
+                    (Some(held), Some(born)) => Some(held.min(born)),
+                    (held, born) => held.or(born),
+                }
             } else {
                 None
             };
@@ -2103,8 +2123,14 @@ async fn renew(
     }
     let (scope_text, stream_text) = (scope.to_string(), stream.to_string());
     // What was committed from the cut on while the hub was asked is cut
-    // away with the epoch's opening, so the epoch begins where it was signed.
-    blocking(library, move |library| library.new_epoch_at(&scope_text, &stream_text, fact.epoch, descriptor.fact.0, cut)).await
+    // away with the epoch's opening, so the epoch begins where it was signed
+    // — on the chain value it was signed to follow, checked in the same
+    // transaction.
+    let follows = fact.follows;
+    blocking(library, move |library| {
+        library.new_epoch_following(&scope_text, &stream_text, fact.epoch, descriptor.fact.0, cut, Some(follows))
+    })
+    .await
 }
 
 /// Commits what waits of `stream` again, in its current epoch.
@@ -2271,7 +2297,11 @@ async fn pull(
             if own.contains(&stream) {
                 continue;
             }
-            pull_kept(assets, hub, link, key, scope, &stream, holding, at, next, &mut kept).await
+            match pull_kept(assets, hub, link, key, scope, &stream, holding, at, next, &mut kept).await {
+                Ok(true) => Ok(()),
+                Ok(false) => Err(format!("{UNREACHED_NOW}{stream}")),
+                Err(why) => Err(why),
+            }
         } else {
             pull_stream(assets, hub, link, key, scope, &stream, holding, at, next, None, None).await
         };
@@ -2279,8 +2309,9 @@ async fn pull(
             if why.starts_with(REVOKED) {
                 return Err(why);
             }
-            // Paused part way: said as it is, so it is not taken whole.
-            if why.starts_with(PAUSED) {
+            // Paused part way, or its machine away just now: said as it is,
+            // so it is not taken whole.
+            if why.starts_with(PAUSED) || why.starts_with(UNREACHED_NOW) {
                 failed.get_or_insert(why);
                 continue;
             }
@@ -2325,8 +2356,11 @@ async fn pull_kept(
     at: u64,
     hub_next: u64,
     kept: &mut Kept,
-) -> Result<(), String> {
+) -> Result<bool, String> {
     let library = &assets.library;
+    // Whether its machine was heard as far as it stands: away, what the hub
+    // holds is taken, and the stream is not taken for whole.
+    let mut reached = true;
     // Who orders it is known by its epochs, which the hub signs.
     let (scope_text, stream_text) = (scope.to_string(), stream.to_string());
     if blocking(library, move |library| library.known_last_epoch(&scope_text, &stream_text)).await?.is_none() {
@@ -2340,6 +2374,9 @@ async fn pull_kept(
                 machine.clone(),
                 heads.ok().map(|heads| heads.into_iter().filter(|head| head.scope == scope).map(|head| (head.stream, head.next)).collect()),
             );
+        }
+        if matches!(kept.get(&machine), Some(None)) {
+            reached = false;
         }
         // Standing no further there than here, what the hub still holds
         // past here is taken below all the same.
@@ -2355,7 +2392,7 @@ async fn pull_kept(
                 Err(why) if why.starts_with(REVOKED) || why.starts_with(PAUSED) || why.starts_with(GOES_ON) => return Err(why),
                 // Its machine gave nothing now: taken from the hub below as
                 // far as the hub holds it; the rest waits for its machine.
-                Err(why) if why.starts_with(super::direct::UNREACHED) => {}
+                Err(why) if why.starts_with(super::direct::UNREACHED) => reached = false,
                 // What its machine gave could not be kept: said, as what the
                 // hub gives that cannot be kept is.
                 Err(why) => return Err(why),
@@ -2369,9 +2406,9 @@ async fn pull_kept(
         .find(|(name, _)| *name == stream_text)
         .map_or(0, |(_, next)| next);
     if at >= hub_next {
-        return Ok(());
+        return Ok(reached);
     }
-    pull_stream(assets, hub, link, key, scope, stream, holding, at, hub_next, None, None).await
+    pull_stream(assets, hub, link, key, scope, stream, holding, at, hub_next, None, None).await.map(|()| reached)
 }
 
 /// Takes the hub's signed epochs and gap facts of `stream` of `scope`.

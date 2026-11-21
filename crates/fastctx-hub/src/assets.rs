@@ -1420,11 +1420,11 @@ pub(crate) async fn checkpoints(hub: Weak<crate::Hub>) {
         loop {
             tokio::time::sleep(std::time::Duration::from_secs(60)).await;
             let Some(running) = reclaiming.upgrade() else { return };
-            let (assets, log) = (running.assets.clone(), running.log.clone());
+            let (assets, store, log) = (running.assets.clone(), running.store(), running.log.clone());
             drop(running);
             let hub = reclaiming.clone();
             let enter = move || hub.upgrade().and_then(|hub| crate::moving::Moving::enter(&hub));
-            match fastctx_platform::task::spawn_blocking(move || assets.reclaim_round(&enter)).await {
+            match fastctx_platform::task::spawn_blocking(move || assets.reclaim_round(&store.indexed(), &enter)).await {
                 Ok(Ok(None)) => {}
                 Ok(Ok(Some(said))) => log.line(format_args!("{said}")),
                 Ok(Err(error)) => log.line(format_args!("letting go vouched objects: {error}")),

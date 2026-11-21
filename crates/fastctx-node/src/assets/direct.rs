@@ -703,39 +703,25 @@ async fn begin(assets: &Assets, hub: &HubId, link: &Arc<Link>, key: &PublicKey, 
         return Err("the hub began another stream than the one asked for".into());
     }
     let signed = Signed { fact: descriptor.fact.0, signature: descriptor.word.0 };
-    let (scope_text, stream_text, device) = (scope.to_string(), stream.to_string(), assets.device());
+    let scope_text = scope.to_string();
     let (epoch, start) = (fact.epoch, fact.start);
     // The epoch this machine writes the stream in is the one the hub has it
-    // ordering in: its word is kept here. Another descriptor of the epoch
-    // kept already — the hub put back, and signing it anew — leaves the one
-    // kept. A later epoch of this machine's — handed to it, or what it
-    // kept set back to before it — is opened here as a takeover opens it
-    // (`session::succession`), and only where the stream ends here exactly
-    // where that epoch begins: what stands short of it, or goes past it in
-    // the epoch before, is not this machine's to go on from, and the hub is
-    // told nothing of the stream until that is put right.
-    let (known, opened, stands) = blocking(&assets.library, move |library| {
-        let own = library.releasable(&scope_text, &device)?.into_iter().find(|own| own.stream == stream_text);
-        let (here, next) = own.map_or((0, 0), |own| (own.epoch, own.next));
-        let mut opened = false;
-        if epoch > here {
-            if next == start {
-                opened = library.take_over(&scope_text, signed, &Trusted).is_ok_and(|taken| taken == fastctx_content::v2::Taken::Opened);
-            }
-        } else {
-            let _ = library.accept_epoch(&scope_text, signed, &Trusted);
+    // ordering in, under the very descriptor the hub signed; a later epoch
+    // of this machine's — handed to it, or what it kept set back to before
+    // it — is opened here only where the stream stands exactly where that
+    // epoch begins, chained to what it follows: what stands short of it,
+    // goes past it, or came to it by another chain is not this machine's to
+    // go on from, and the hub is told nothing of the stream until that is
+    // put right. Looked at and opened in one transaction (`begin_epoch`).
+    let begun = blocking(&assets.library, move |library| library.begin_epoch(&scope_text, signed, &Trusted)).await?;
+    match begun {
+        fastctx_content::v2::Begun::InForce => Ok(()),
+        fastctx_content::v2::Begun::Opened => {
+            assets.taken_over.lock().expect("taken over").push(scope.to_string());
+            Ok(())
         }
-        Ok((library.known_last_epoch(&scope_text, &stream_text)?, opened, (here, next)))
-    })
-    .await?;
-    if opened {
-        assets.taken_over.lock().expect("taken over").push(scope.to_string());
-    }
-    match known {
-        Some(known) if known >= epoch => Ok(()),
-        _ => Err(format!(
-            "the hub has this machine ordering it in epoch {epoch}, from {start}; here it is written in epoch {} and stands at {}: the hub's word on it is not kept here",
-            stands.0, stands.1
+        fastctx_content::v2::Begun::Refused(why) => Err(format!(
+            "the hub has this machine ordering it in epoch {epoch}, from {start}, but {why}: the hub's word on it is not taken here"
         )),
     }
 }
@@ -766,8 +752,10 @@ pub(super) async fn announce(assets: &Assets, hub: &HubId, link: &Arc<Link>, key
             continue;
         }
         let stirred = || Request::Stirred { scope: scope.to_string(), stream: stream.clone(), next };
+        // The epoch it is written in here, not merely some epoch of it, known
+        // by the hub's word: where it is not, it is begun there first.
         let (scope_text, stream_text) = (scope.to_string(), stream.clone());
-        let known = blocking(&assets.library, move |library| library.known_last_epoch(&scope_text, &stream_text)).await?.is_some();
+        let known = blocking(&assets.library, move |library| library.epoch_in_force(&scope_text, &stream_text)).await?;
         let mut said = match known {
             true => ask(assets, link, stirred()).await,
             false => Err("its epoch is not known here by the hub's word yet".to_string()),

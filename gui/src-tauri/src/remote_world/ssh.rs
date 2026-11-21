@@ -567,6 +567,17 @@ pub struct Moved {
 /// What `fastctx move-login` says first of the move a run is.
 const MOVE_SAID: &str = "fastctx-move: ";
 
+/// Whether `op` is in a move's shape: `YYYYMMDDTHHMMSS-` and eight hex digits.
+fn move_op(op: &str) -> bool {
+    let bytes = op.as_bytes();
+    bytes.len() == 24
+        && bytes[..8].iter().all(u8::is_ascii_digit)
+        && bytes[8] == b'T'
+        && bytes[9..15].iter().all(u8::is_ascii_digit)
+        && bytes[15] == b'-'
+        && bytes[16..].iter().all(|byte| byte.is_ascii_hexdigit())
+}
+
 /// Signs in to the server whose key was confirmed and has its Fastctx move
 /// one of its logins' directories to another disk, or finish or look at a
 /// move, what it writes told as it comes. Run over SSH, from outside the
@@ -625,13 +636,17 @@ pub async fn move_login(
         };
         let records = list().await?;
         let op = match &ask {
+            // Said at a line's start, in a move's own shape: no path a line
+            // of output names is taken for it.
             MoveAsk::Move { .. } | MoveAsk::Resume => said
                 .lock()
                 .expect("said")
                 .lines()
-                .filter_map(|line| line.trim().strip_prefix(MOVE_SAID))
+                .filter_map(|line| line.strip_prefix(MOVE_SAID))
+                .map(str::trim)
+                .filter(|op| move_op(op))
                 .next_back()
-                .map(|op| op.trim().to_string()),
+                .map(str::to_string),
             MoveAsk::DropBackup { op, .. } => Some(op.clone()),
             MoveAsk::Status => None,
         };

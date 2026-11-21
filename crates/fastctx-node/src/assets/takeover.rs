@@ -279,6 +279,8 @@ async fn take_over(assets: &Assets, hub: &HubId, link: &Arc<Link>, key: &PublicK
                 Taken::Opened => Ok(true),
                 Taken::History => Ok(false),
                 Taken::Behind => Err(format!("{stream} of {scope} here ends before the epoch handed over begins: it catches up first")),
+                Taken::Ahead => Err(format!("{stream} of {scope} here goes on past where the epoch handed over begins: it is not opened")),
+                Taken::Forked => Err(format!("{stream} of {scope} here reaches where the epoch handed over begins by another chain: it is not opened")),
             }
         }
         Reply::HandedOn { epochs } => {

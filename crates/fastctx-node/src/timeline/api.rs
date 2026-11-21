@@ -119,17 +119,18 @@ async fn read(
             if marked {
                 return Ok(super::copy::anew(&request));
             }
-            let told = from_copy(&held, request.clone()).await?;
-            // An object the copy has no bytes of — not fetched yet, or let go
-            // by the hub — is asked of the machine the conversation lives on;
-            // not had there either, it is said not to be here, as the copy
-            // says.
-            if !matches!(told, TimelineTold::Object { base64: None }) {
-                return Ok(told);
+            let object = matches!(request, TimelineAsk::Object { .. });
+            let told = from_copy(&held, request.clone()).await;
+            // An object the copy has no bytes of — not fetched yet, let go by
+            // the hub, or its file gone — is asked of the machine the
+            // conversation lives on; not had there either, it is answered as
+            // the copy answered.
+            if !object || !matches!(&told, Ok(TimelineTold::Object { base64: None }) | Err(_)) {
+                return told;
             }
             return match Box::pin(elsewhere(node, machine, request, marked, way)).await {
                 Ok(TimelineTold::Object { base64: Some(bytes) }) => Ok(TimelineTold::Object { base64: Some(bytes) }),
-                _ => Ok(told),
+                _ => told,
             };
         }
     }

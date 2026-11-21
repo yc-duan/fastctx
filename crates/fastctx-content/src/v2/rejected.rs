@@ -243,6 +243,22 @@ impl Library {
     /// out, in the same transaction: the new epoch begins where the hub
     /// signed it to begin, with nothing of the epoch before left past it.
     pub fn new_epoch_at(&self, scope: &str, stream: &str, epoch: u64, descriptor: Vec<u8>, cut: u64) -> Result<()> {
+        self.new_epoch_following(scope, stream, epoch, descriptor, cut, None)
+    }
+
+    /// `new_epoch_at`, the epoch's first frame to follow `follows` where
+    /// given: cut back, the stream must stand at `cut` on that chain value,
+    /// or nothing is done — it moved while the epoch was asked for, and is
+    /// asked again.
+    pub fn new_epoch_following(
+        &self,
+        scope: &str,
+        stream: &str,
+        epoch: u64,
+        descriptor: Vec<u8>,
+        cut: u64,
+        follows: Option<[u8; 32]>,
+    ) -> Result<()> {
         let (scope, stream) = (scope.to_string(), stream.to_string());
         self.database().write_now_at(Priority::Normal, 1 << 20, move |db| {
             let Some((scope_id, _, Some(holding))) = held(db, &scope)? else { return Err(invalid("the scope is not held here")) };
@@ -253,6 +269,18 @@ impl Library {
             let Some((stream_id, next)) = found else { return Err(invalid("the stream is not here")) };
             if next as u64 > cut {
                 rejected_in(db, scope_id, holding, stream_id, &stream, cut)?;
+            }
+            if let Some(follows) = follows {
+                let (next, head): (i64, Option<Vec<u8>>) = db
+                    .prepare_cached("SELECT next, head FROM streams WHERE id = ?1")?
+                    .query_row([stream_id], |row| Ok((row.get(0)?, row.get(1)?)))?;
+                let head: [u8; 32] = match head {
+                    None => [0; 32],
+                    Some(head) => head.try_into().map_err(|_| invalid("a malformed chain value"))?,
+                };
+                if next as u64 != cut || head != follows {
+                    return Err(invalid("the stream does not stand where its new epoch begins; it is asked for again"));
+                }
             }
             let changed = db
                 .prepare_cached("UPDATE streams SET epoch = ?2 WHERE id = ?1 AND epoch < ?2")?

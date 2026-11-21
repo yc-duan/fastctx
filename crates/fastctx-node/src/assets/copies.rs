@@ -176,6 +176,26 @@ impl Copies {
         true
     }
 
+    /// Marks `scope` pulled whole in `holding` (`Library::pulled`), its pull
+    /// begun at `mark`, unless it was taken in again since: judged and marked
+    /// under the lock taking in again holds, so neither goes between the
+    /// other's looking and doing. Whether it was marked.
+    pub(crate) fn mark_pulled(
+        &self,
+        library: &fastctx_content::v2::Library,
+        scope: &str,
+        holding: i64,
+        mark: Option<u64>,
+    ) -> Result<bool, String> {
+        let _settling = self.settling.lock().expect("settling");
+        if self.release_mark(scope) != mark {
+            return Ok(false);
+        }
+        library.pulled(scope, holding).map_err(|error| error.to_string())?;
+        self.pulled_since(scope, mark);
+        Ok(true)
+    }
+
     fn mark_released(&self, scope: &str) {
         let mark = self.releases.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
         self.released.lock().expect("released").insert(scope.to_string(), mark);
@@ -585,23 +605,31 @@ pub(crate) fn hold_listed(
     if stays_cleared(node, hub, scope, readers) {
         return Ok(false);
     }
-    if assets.library.is_proposed(scope).map_err(|error| error.to_string())? {
-        return Ok(false);
-    }
+    // A conversation of this machine's deleted here, or being: not held anew.
     if let Some(id) = conversation_of(scope)
+        && born_here(node, scope)
         && (node.residents.is_deleting(&id) || node.residents.deleted(&id).is_some())
     {
         return Ok(false);
     }
     let here = assets.library.held_listing(scope).map_err(|error| error.to_string())?;
-    if here.as_ref().map(|listing| listing.description.as_slice()) != Some(description.as_slice()) {
-        assets.library.install_on(network, scope, description, revision).map_err(|error| error.to_string())?;
+    if here.as_ref().map(|listing| listing.description.as_slice()) != Some(description.as_slice())
+        && assets.library.install_listed(network, scope, description, revision).map_err(|error| error.to_string())?.is_none()
+    {
+        return Ok(false);
     }
     let listed = here.as_ref().map(|listing| (listing.allowed.as_deref(), listing.readers.as_deref()));
     if listed != Some((Some(holds), Some(said))) {
         assets.library.allow(scope, holds, said).map_err(|error| error.to_string())?;
     }
     Ok(true)
+}
+
+/// Whether `scope` is of a conversation born on this machine (`c/hub/machine/id`).
+fn born_here(node: &Node, scope: &str) -> bool {
+    let mut parts = scope.split('/');
+    let (Some("c"), Some(_), Some(machine)) = (parts.next(), parts.next(), parts.next()) else { return false };
+    node.machine().as_str() == machine
 }
 
 /// The conversation a conversation's scope is of, by the end of its key.
@@ -682,34 +710,34 @@ pub(crate) fn clear(
                 None => chosen.push(scope),
             }
         }
-        let keys: Vec<String> = chosen.iter().map(|scope| scope.key.clone()).collect();
         let held = |scope: &HeldScope| fastctx_types::data::CopyHeld { scope: scope.key.clone(), holding: scope.holding };
         // The room letting them go gives back: their frames, and the objects
         // nothing else here refers to, holds or leases.
         let freed = |size: fastctx_content::v2::CopySize| size.frames + size.objects;
-        let all = assets.library.copies_freed(&keys).map_err(|error| error.to_string())?;
         if !apply {
+            let keys: Vec<String> = chosen.iter().map(|scope| scope.key.clone()).collect();
+            let all = assets.library.copies_freed(&keys).map_err(|error| error.to_string())?;
             cleared.scopes = keys.len() as u64;
             cleared.bytes = freed(all);
             cleared.keys = chosen.iter().map(held).collect();
             return Ok(cleared);
         }
-        let mut each = BTreeMap::new();
-        for key in &keys {
-            each.insert(key.clone(), assets.library.copies_freed(std::slice::from_ref(key)).map_or(0, freed));
-        }
-        let mut gone = Vec::new();
+        // Judged again before any goes: one whose conversation came to live
+        // here, or that a reader here took in again meanwhile, stays.
+        let mut going = Vec::new();
         for scope in chosen {
-            // Judged again as it goes: one whose conversation came to live
-            // here, or that a reader here took in again meanwhile, stays.
             if lives_here(node, &scope.key) {
                 cleared.kept.push((scope.key.clone(), "its conversation lives here now".into()));
-                continue;
-            }
-            if !paused(node, &scope, None) {
+            } else if !paused(node, &scope, None) {
                 cleared.kept.push((scope.key.clone(), "a reader here takes it in now".into()));
-                continue;
+            } else {
+                going.push(scope);
             }
+        }
+        let keys: Vec<String> = going.iter().map(|scope| scope.key.clone()).collect();
+        let all = assets.library.copies_freed(&keys).map_err(|error| error.to_string())?;
+        let mut gone = Vec::new();
+        for scope in going {
             let readers: Vec<String> = readers(&scope).into_iter().map(|(one, at)| format!("{one}@{at}")).collect();
             // Failed, whether it stays kept as let go though it was not.
             let step = (|| -> Result<Option<String>, (String, bool)> {
@@ -740,13 +768,13 @@ pub(crate) fn clear(
                 }
             }
         }
-        // All of them gone, what they gave back together; some, at least what
-        // each of those gave back alone.
-        cleared.bytes = if gone.len() == keys.len() {
-            freed(all)
-        } else {
-            gone.iter().map(|one| each.get(&one.scope).copied().unwrap_or(0)).sum()
-        };
+        // All of them gone, what they gave back together; some, not told —
+        // what they shared with those kept stays — and said so.
+        if gone.len() == keys.len() {
+            cleared.bytes = freed(all);
+        } else if !gone.is_empty() && cleared.failed.is_none() {
+            cleared.failed = Some("some were kept as they were let go: the room given back is told once all go".into());
+        }
         cleared.scopes = gone.len() as u64;
         cleared.keys = gone;
     }
@@ -791,9 +819,8 @@ pub(crate) fn asked(
         CopiesAsk::Report => Ok(CopiesAnswer::Report { accounts: reported() }),
         CopiesAsk::Set { hub, account, on } => {
             within(&hub)?;
-            still()?;
             let state = if on { State::On } else { State::Paused };
-            set_here(node, &hub, &account, None, state, Source::Owner)?;
+            set_here_as(node, &hub, &account, None, state, Source::Owner, Some(&still))?;
             Ok(CopiesAnswer::Report { accounts: reported() })
         }
         CopiesAsk::Clear { hub, account, apply, only } => {
@@ -907,6 +934,20 @@ pub(crate) fn set_here(
     state: State,
     source: Source,
 ) -> Result<Set, String> {
+    set_here_as(node, hub, account, opened, state, source, None)
+}
+
+/// `set_here`, whoever asked from afar asked still as its turn comes
+/// (`still`), under the lock a clearing holds.
+fn set_here_as(
+    node: &Arc<Node>,
+    hub: &str,
+    account: &str,
+    opened: Option<i64>,
+    state: State,
+    source: Source,
+    still: Option<&dyn Fn() -> Result<(), String>>,
+) -> Result<Set, String> {
     let Some(assets) = node.assets.as_ref() else { return Err("the asset library is unavailable".into()) };
     let link = node
         .links()
@@ -931,6 +972,9 @@ pub(crate) fn set_here(
         // Not while copies are let go: one that found the account paused
         // lets none go after it is taken in again.
         let _clearing = assets.copies.clearing.lock().expect("clearing");
+        if let Some(still) = still {
+            still()?;
+        }
         assets.copies.set(hub, account, now, state, source).map_err(|error| error.to_string())?
     };
     // Kept; what follows is settled again at every pass should it not be now.

@@ -74,6 +74,33 @@ pub enum Taken {
     /// here yet, and the stream is followed as a replica's until it reaches
     /// that start (AP03).
     Behind,
+    /// The stream here goes on past where the epoch, a successor's, begins:
+    /// what this device wrote from there on is no frame of it, and nothing
+    /// of it is opened — opened, the stream would have two histories there.
+    Ahead,
+    /// The stream here reaches where the epoch begins by another chain than
+    /// the one the epoch follows: nothing of it is opened.
+    Forked,
+}
+
+/// A stream's chain value as kept: none before its first frame.
+fn chain_value(head: Option<Vec<u8>>) -> fastctx_storage::Result<[u8; 32]> {
+    match head {
+        None => Ok([0; 32]),
+        Some(head) => head.try_into().map_err(|_| invalid("a malformed chain value")),
+    }
+}
+
+/// What came of taking the hub's word on the epoch this device orders a
+/// stream in (`Library::begin_epoch`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Begun {
+    /// It is the epoch written in here, under the descriptor the hub signed.
+    InForce,
+    /// Opened here now, the stream standing where it begins.
+    Opened,
+    /// Not taken, and why: the stream here is not where the epoch has it.
+    Refused(String),
 }
 
 /// How a signature by a device key is checked: the key, what is signed,
@@ -327,9 +354,23 @@ impl Library {
             // here: one that begins further on waits until what comes before
             // it is here, and is not known here before, lest this device
             // order a stream it has not caught up with.
-            let next: i64 = db.prepare_cached("SELECT next FROM streams WHERE id = ?1")?.query_row([stream], |row| row.get(0))?;
+            let (next, head, current): (i64, Option<Vec<u8>>, i64) = db
+                .prepare_cached("SELECT next, head, epoch FROM streams WHERE id = ?1")?
+                .query_row([stream], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
             if !later && (next as u64) < fact.start {
                 return Ok(Taken::Behind);
+            }
+            // A successor's epoch opened here begins exactly where the stream
+            // stands, chained to what stands: one this device wrote past, or
+            // came to by another chain, is not opened (checked and opened in
+            // this one transaction).
+            if !later && (current.max(0) as u64) < fact.epoch && fact.predecessor.is_some() {
+                if next as u64 != fact.start {
+                    return Ok(Taken::Ahead);
+                }
+                if chain_value(head)? != fact.follows {
+                    return Ok(Taken::Forked);
+                }
             }
             match known_epoch(db, stream, fact.epoch)? {
                 Some(kept) if kept != fact => return Err(invalid("another descriptor for that epoch is here")),
@@ -350,6 +391,87 @@ impl Library {
                     .execute(params![stream, fact.epoch as i64, signed.fact])?;
             }
             Ok(Taken::Opened)
+        })?)
+    }
+
+    /// Takes the hub's word, `signed`, on the epoch this device orders a
+    /// stream of `scope` in, in one transaction: the epoch written in here,
+    /// it is kept as the hub signed it — refused where another descriptor of
+    /// it is kept or written in here; a later one is opened only where the
+    /// stream stands exactly where it begins, chained to what it follows
+    /// (but for a stream's first epoch, which begins at its start); an
+    /// earlier one is refused.
+    pub fn begin_epoch(&self, scope: &str, signed: Signed, verifier: &dyn HubVerifier) -> Result<Begun> {
+        if !verifier.verify(&signed.fact, &signed.signature) {
+            return Err(Error::Invalid("the epoch's descriptor is not the hub's".into()));
+        }
+        let fact = EpochFact::decode(&signed.fact).map_err(Error::Invalid)?;
+        if fact.scope != scope {
+            return Err(Error::Invalid("the epoch is of another scope".into()));
+        }
+        let scope = scope.to_string();
+        Ok(self.database().write_now_at(Priority::Normal, 512 + signed.fact.len(), move |db| {
+            let Some((scope_id, _, Some(_))) = held(db, &scope)? else { return Err(invalid("the scope is not held here")) };
+            let stream = stream_of(db, scope_id, &fact.stream)?;
+            let (next, head, current): (i64, Option<Vec<u8>>, i64) = db
+                .prepare_cached("SELECT next, head, epoch FROM streams WHERE id = ?1")?
+                .query_row([stream], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
+            let current = current.max(0) as u64;
+            if let Some(kept) = known_epoch(db, stream, fact.epoch)?
+                && kept != fact
+            {
+                return Ok(Begun::Refused(format!("another descriptor of epoch {} is kept here", fact.epoch)));
+            }
+            let written: Option<Vec<u8>> = db
+                .prepare_cached("SELECT descriptor FROM epochs WHERE stream = ?1 AND epoch = ?2")?
+                .query_row(params![stream, fact.epoch as i64], |row| row.get(0))
+                .optional()?;
+            if written.is_some_and(|written| EpochFact::decode(&written).ok().as_ref() != Some(&fact)) {
+                return Ok(Begun::Refused(format!("epoch {} is written in here under another descriptor", fact.epoch)));
+            }
+            let opening = match fact.epoch.cmp(&current) {
+                std::cmp::Ordering::Less => {
+                    return Ok(Begun::Refused(format!("it is written in here in a later epoch, {current}")));
+                }
+                std::cmp::Ordering::Equal => false,
+                std::cmp::Ordering::Greater => {
+                    if fact.predecessor.is_some() {
+                        if next as u64 != fact.start {
+                            return Ok(Begun::Refused(format!("it stands at {next} here, not where the epoch begins")));
+                        }
+                        if chain_value(head)? != fact.follows {
+                            return Ok(Begun::Refused("it reaches where the epoch begins by another chain here".into()));
+                        }
+                    }
+                    true
+                }
+            };
+            if known_epoch(db, stream, fact.epoch)?.is_none() {
+                db.prepare_cached("INSERT INTO known_epochs (stream, epoch, predecessor, fact, signature) VALUES (?1, ?2, ?3, ?4, ?5)")?
+                    .execute(params![stream, fact.epoch as i64, fact.predecessor.map(|epoch| epoch as i64), signed.fact, signed.signature])?;
+            }
+            if !opening {
+                return Ok(Begun::InForce);
+            }
+            db.prepare_cached("UPDATE streams SET epoch = ?2 WHERE id = ?1")?.execute(params![stream, fact.epoch as i64])?;
+            db.prepare_cached("INSERT OR REPLACE INTO epochs (stream, epoch, descriptor) VALUES (?1, ?2, ?3)")?
+                .execute(params![stream, fact.epoch as i64, signed.fact])?;
+            Ok(Begun::Opened)
+        })?)
+    }
+
+    /// Whether the epoch `stream` of `scope` is written in here is one the
+    /// hub's signed word on is kept here: not merely some epoch of it.
+    pub fn epoch_in_force(&self, scope: &str, stream: &str) -> Result<bool> {
+        let (scope, stream) = (scope.to_string(), stream.to_string());
+        Ok(self.database().read_now(move |db| {
+            let Some((scope_id, _, _)) = held(db, &scope)? else { return Ok(false) };
+            Ok(db
+                .prepare_cached(
+                    "SELECT EXISTS (SELECT 1 FROM streams s JOIN known_epochs k ON k.stream = s.id AND k.epoch = s.epoch
+                     WHERE s.scope = ?1 AND s.name = ?2)",
+                )?
+                .query_row(params![scope_id, stream], |row| row.get::<_, bool>(0))?)
         })?)
     }
 

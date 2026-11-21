@@ -348,7 +348,8 @@ impl Library {
         Ok(removed)
     }
 
-    /// Whether `path` is the file of a present or preparing life.
+    /// Whether `path` is the file of a present or preparing life, or of a
+    /// tombstone, whose bytes its own path deletes (`startup`).
     fn owned(&self, path: &Path) -> Result<bool> {
         let Some(name) = path.file_name().and_then(|name| name.to_str()) else { return Ok(false) };
         let Some((name, life)) = name.split_once('.') else { return Ok(false) };
@@ -358,7 +359,7 @@ impl Library {
         }
         Ok(self.database().read_now(move |db| {
             Ok(db
-                .prepare_cached("SELECT 1 FROM objects WHERE hash = ?1 AND life = ?2 AND state IN (0, 1)")?
+                .prepare_cached("SELECT 1 FROM objects WHERE hash = ?1 AND life = ?2 AND state IN (0, 1, 2)")?
                 .query_row(params![&hash[..], life], |_| Ok(()))
                 .optional()?
                 .is_some())
