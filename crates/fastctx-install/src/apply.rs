@@ -37,6 +37,7 @@ mod agents;
 mod homes;
 mod identity;
 pub mod kernel;
+pub mod moved;
 mod preview;
 mod progress;
 mod recovery;
@@ -127,6 +128,15 @@ impl Places {
 
     fn lock(&self) -> PathBuf {
         self.root.join("apply.lock")
+    }
+
+    /// The apply lock, taken: while a login's directory is being moved
+    /// (`moved`), which holds it throughout, nothing is applied, and after a
+    /// move cut short nothing is until it is finished.
+    fn locked(&self) -> Result<FileLock, Error> {
+        let lock = FileLock::acquire(&self.lock()).map_err(io("taking the apply lock"))?;
+        moved::settled(&self.world)?;
+        Ok(lock)
     }
 
     fn journal(&self) -> PathBuf {
@@ -290,7 +300,7 @@ pub fn consent_claude_at(places: &Places, home: &Path, accept: bool) -> Result<b
 /// itself, so the edit is published only if it is still as it was read.
 pub fn consent_claude(places: &Places, accept: bool) -> Result<bool, Error> {
     crate::disk::ensure_private_dir(&places.root).map_err(io("making fastctx's directory"))?;
-    let _lock = FileLock::acquire(&places.lock()).map_err(io("taking the apply lock"))?;
+    let _lock = places.locked()?;
     let settings = Snapshot::read(places.claude_home.join("settings.json"))?;
     let Some(bytes) = crate::claude::consent::set(settings.bytes(), accept).map_err(Error::Claude)? else {
         return Ok(false);
@@ -421,7 +431,7 @@ fn placing(error: anyhow::Error) -> Error {
 pub fn place_executable(places: &Places) -> Result<(PathBuf, Report), Error> {
     let installed = crate::placement::ensure(&places.root, &places.fastctx).map_err(placing)?;
     crate::disk::ensure_private_dir(&places.root).map_err(io("making fastctx's directory"))?;
-    let _lock = FileLock::acquire(&places.lock()).map_err(io("taking the apply lock"))?;
+    let _lock = places.locked()?;
     let mut report = recovery::before(places)?;
     report.messages.push(format!("World program: {}", installed.display()));
     Ok((installed, report))
@@ -509,7 +519,7 @@ fn apply_made(
         return Ok(report);
     }
     crate::disk::ensure_private_dir(&places.root).map_err(io("making fastctx's directory"))?;
-    let _lock = FileLock::acquire(&places.lock()).map_err(io("taking the apply lock"))?;
+    let _lock = places.locked()?;
     if places.root.join("uninstalled.json").try_exists().map_err(io("checking uninstall state"))? {
         return Err(Error::Io("this World is being uninstalled".into()));
     }
@@ -813,7 +823,7 @@ fn unapply_made(
         return Ok(report);
     }
     crate::disk::ensure_private_dir(&places.root).map_err(io("making fastctx's directory"))?;
-    let _lock = FileLock::acquire(&places.lock()).map_err(io("taking the apply lock"))?;
+    let _lock = places.locked()?;
     let mut report = recovery::before(places)?;
     if let Some((host, expected)) = expected {
         unmoved(places, host, expected)?;

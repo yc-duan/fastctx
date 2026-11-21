@@ -5,7 +5,7 @@ use super::*;
 /// Forwards the host's selected login directory, without embedding a local
 /// path in configurations shared across machines. Edited servers are reported.
 pub fn forward_login_identity(places: &Places) -> Result<Report, Error> {
-    let _lock = FileLock::acquire(&places.lock()).map_err(io("taking the apply lock"))?;
+    let _lock = places.locked()?;
     if places.journal().try_exists().map_err(io("checking pending apply"))? {
         return Err(Error::Io("login identity upgrade waits for the pending apply operation to complete".into()));
     }

@@ -1312,8 +1312,10 @@ dependencies = [
  "fastctx-update",
  "getrandom 0.3.4",
  "jiff",
+ "libc",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "tikv-jemallocator",
  "tokio",
 ]

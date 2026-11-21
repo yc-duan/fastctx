@@ -77,6 +77,8 @@ mod gates;
 mod gather;
 mod goals;
 pub mod handoff;
+/// The records of moves of logins' directories (`fastctx move-login`).
+pub use logins::moves as login_moves;
 mod held_history;
 mod here;
 mod history;
@@ -681,6 +683,28 @@ pub async fn run_prepared(
             fastctx_platform::task::blocking(move || FileLock::try_acquire(&lock))
                 .await?
                 .ok_or_else(|| AlreadyServed(world.path().to_path_buf()))?
+        }
+    };
+    // A login's directory moved with this node stopped may stand between its
+    // two places while the move is unfinished (`logins::moves`): the node
+    // takes nothing up, lets the World go to whoever finishes it, and looks
+    // again each minute, rather than ending to be started at once again.
+    let _lock = {
+        let mut lock = _lock;
+        let mut told = false;
+        loop {
+            let looking = world.path().to_path_buf();
+            let Some(why) = fastctx_platform::task::blocking(move || logins::moves::unsettled(&looking)).await else {
+                break lock;
+            };
+            if !told {
+                eprintln!("fastctx node: {why}; waiting for it");
+                told = true;
+            }
+            drop(lock);
+            tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+            let taking = world.node_lock();
+            lock = fastctx_platform::task::spawn_blocking(move || FileLock::acquire(&taking)).await??;
         }
     };
     if renewal.successor && {

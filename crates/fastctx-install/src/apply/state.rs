@@ -69,6 +69,28 @@ pub(super) fn receipt(places: &Places) -> Result<(Snapshot, Option<Receipt>), Er
     Ok((file, receipt))
 }
 
+/// The entry receipt kept in `record`, of a home moved from `from` to `to`:
+/// found by `to` where it was found by `from` (`super::moved`). Whether it
+/// changed.
+pub(super) fn moved(record: &std::path::Path, from: &std::path::Path, to: &std::path::Path) -> Result<bool, Error> {
+    let bytes = match fastctx_platform::disk::read(record) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(Error::Io(format!("reading {}: {error}", record.display()))),
+    };
+    let mut kept: Kept =
+        serde_json::from_slice(&bytes).map_err(|error| Error::Io(format!("reading {}: {error}", record.display())))?;
+    if kept.version != VERSION {
+        return Err(Error::Io(format!("{}: unsupported entry record version {}", record.display(), kept.version)));
+    }
+    if !kept.entry.moved(from, to) {
+        return Ok(false);
+    }
+    let bytes = serde_json::to_vec_pretty(&kept).map_err(|error| Error::Io(error.to_string()))?;
+    crate::disk::publish_private(record, &bytes).map_err(|error| Error::Io(format!("keeping {}: {error}", record.display())))?;
+    Ok(true)
+}
+
 /// The change that keeps `receipt` in its file, or takes the file away
 /// with none; nothing where there is no file to take away.
 pub(super) fn keep(file: Snapshot, receipt: Option<&Receipt>) -> Result<Option<FileChange>, Error> {

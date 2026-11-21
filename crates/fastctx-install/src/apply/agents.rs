@@ -7,7 +7,6 @@
 
 use std::path::{Path, PathBuf};
 
-use fastctx_platform::FileLock;
 use fastctx_types::AgentName;
 use fastctx_types::logins::{ChangePreview, Kept};
 use serde::{Deserialize, Serialize};
@@ -269,7 +268,7 @@ fn made(
     expected: Option<&str>,
 ) -> Result<Report, Error> {
     crate::disk::ensure_private_dir(&places.root).map_err(io("making fastctx's directory"))?;
-    let _lock = FileLock::acquire(&places.lock()).map_err(io("taking the apply lock"))?;
+    let _lock = places.locked()?;
     if places.root.join("uninstalled.json").try_exists().map_err(io("checking uninstall state"))? {
         return Err(Error::Io("this World is being uninstalled".into()));
     }
