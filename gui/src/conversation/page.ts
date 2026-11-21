@@ -853,6 +853,36 @@ export class ConversationPage {
         moved();
       }
     });
+    // A middle button pressed anywhere in the region starts the browser's
+    // own scroll, where it has one: held and dragged, or let go and steered
+    // until the next press or key. It moves the view at every frame with no
+    // wheel event, over whatever the pointer was on, so nothing above said
+    // the reader moved: the view went on following the foot, drew nothing
+    // where the reader went, and read none of the turns they passed.
+    this.scroller.addEventListener(
+      "pointerdown",
+      (event) => {
+        if (event.pointerType !== "mouse") return;
+        const steering = event.button === 1 && !this.steering;
+        this.steering = steering;
+        if (!steering) return;
+        const from = this.scroller.scrollTop;
+        const held = new AbortController();
+        const done = (ended: PointerEvent) => {
+          if (ended.pointerId !== event.pointerId) return;
+          held.abort();
+          // Let go after dragging it, the scroll is over; let go where it
+          // was pressed, the browser steers on until the next press.
+          if (this.scroller.scrollTop !== from) this.steering = false;
+        };
+        window.addEventListener("pointerup", done, { signal: held.signal });
+        window.addEventListener("pointercancel", done, { signal: held.signal });
+      },
+      { capture: true, passive: true },
+    );
+    for (const kind of ["wheel", "touchstart", "keydown"] as const) {
+      this.scroller.addEventListener(kind, () => (this.steering = false), { capture: true, passive: true });
+    }
     this.scroller.addEventListener("keydown", (event) => {
       if ((event.target as Element).closest("input, textarea, select, [contenteditable]")) return;
       if (event.key === "PageUp" || event.key === "ArrowUp" || event.key === "Home") {
@@ -865,19 +895,35 @@ export class ConversationPage {
     // follow: one that comes with the region or its content changing size
     // (the browser keeping the view anchored) does not.
     let sized = { client: 0, content: 0, top: 0 };
+    let steeredAt = -Infinity;
     this.scroller.addEventListener("scroll", () => {
       const { scrollTop, clientHeight, scrollHeight } = this.scroller;
       this.element.classList.toggle("scrolled", scrollTop > 0);
       const resized = clientHeight !== sized.client || scrollHeight !== sized.content;
+      const went = scrollTop - sized.top;
       // The reader drags the scroll bar: wherever it stops is read.
-      if (this.pointerPaging && scrollTop !== sized.top) {
+      if (this.pointerPaging && went) {
         reading();
         this.view.readerMoved();
+      }
+      // The browser's own scroll steers the view: the reader's, as a wheel.
+      if (this.steering && went) {
+        const now = performance.now();
+        if (now - steeredAt > 200) this.view.readerMoved();
+        steeredAt = now;
+        if (went < 0) up(); else moved();
       }
       sized = { client: clientHeight, content: scrollHeight, top: scrollTop };
       if (resized && !this.reading()) {
         if (this.following) this.scroller.scrollTop = scrollHeight;
         return;
+      }
+      // Whatever else moved it — a gesture or a tool of the system's that
+      // sends no wheel — a view that follows the foot never stands half a
+      // screen above it by itself: the reader went up.
+      if (this.following && went < 0 && this.room.offsetTop - scrollTop - clientHeight > clientHeight / 2) {
+        this.view.readerMoved();
+        up();
       }
       // The room goes once it is wholly below the view: nothing seen moves.
       if (this.roomFor && this.room.offsetTop >= scrollTop + clientHeight) this.dropRoom();
@@ -968,6 +1014,8 @@ export class ConversationPage {
 
   /** Reads the turns of a gap the reader came near, then draws them. */
   private pointerPaging = false;
+  /** The browser's own scroll, begun by the middle button, steers the view. */
+  private steering = false;
   private paging = false;
   private async fillGap(gap: Gap, side: "end" | "start", _explicit = false, into?: import("./conversation").Into): Promise<void> {
     // One part read at a time: what the view is in by then is asked next.

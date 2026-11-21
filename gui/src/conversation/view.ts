@@ -208,10 +208,19 @@ const SEARCH_TEXT_CHARS = 16 * 1024 * 1024;
  *  newest comes in and a reader going down, back to it, goes faster. */
 const ABOVE = 1;
 const BELOW = 2;
+/** How far beyond the view a part not read yet is read ahead of a reader
+ *  who moves, in screens: going up fast, they come to what was read while
+ *  they came, not to a wait at each part. */
+const AHEAD = 4;
 
 /** How far from what is drawn a block the reader has focus or a selection
  *  in may be and still be kept drawn, in blocks. */
 const HOLD = 200;
+
+/** How long after the view last scrolled the browser may still be gliding
+ *  it: a wheel's notch is glided over about this long, and a middle-button
+ *  scroll or a dragged scroll bar moves it at every frame. */
+const GLIDE_MS = 250;
 
 /** How many of its latest rows a stretch opens on, and how many more each
  *  ask for the earlier brings: three screens of rows. */
@@ -378,6 +387,23 @@ export class ConversationView {
   private readonly below: HTMLElement;
   private spaceAbove = -1;
   private spaceBelow = -1;
+  /** How far below where the heights put them the blocks drawn stand, the
+   *  space above taller by as much. While the reader scrolls, a change of
+   *  the room above them — blocks drawn there turning out taller or
+   *  shorter than they were taken to be, a part read in above — is taken
+   *  up here, and the position the browser is scrolling is left alone:
+   *  setting it ends the browser's own glide of a scroll, and the reader
+   *  feels each one as a twitch. A short conversation, all of it measured,
+   *  never set it; a long one did at nearly every block that came into
+   *  view. It is given back to the position once the scroll rests
+   *  (`giveBack`). */
+  private shift = 0;
+  /** The space above as it was last given its height: `spaceAbove` and
+   *  `shift` then. */
+  private spaced = { above: -1, shift: 0 };
+  /** When the view last scrolled, and what settles it once it rests. */
+  private scrolledAt = -Infinity;
+  private settling = 0;
   private readonly sizes: ResizeObserver;
   private laying = 0;
   /** Gaps asked to be read, so a gap near the reader is asked once. */
@@ -610,6 +636,10 @@ export class ConversationView {
     const pinned = this.pin;
     this.pin = null;
     const anchor = following || moved ? null : (pinned ?? this.anchorNow());
+    // Following the foot, or put somewhere, nothing is owed to where the
+    // blocks stood.
+    if (following || moved) this.shift = 0;
+    const gliding = !following && !moved && this.gliding();
     // An agent's box grows with what it holds, up to a height: it is laid
     // out for the tallest it can be, not for how tall it is so far.
     const view = this.context.nested ? Math.max(scroller.clientHeight, innerHeight) : scroller.clientHeight || innerHeight;
@@ -618,9 +648,11 @@ export class ConversationView {
     const at = anchor ? this.heights.index(anchor.slot.key) : undefined;
     if (anchor && at !== undefined) {
       // Laid out as the heights now say, the reader's block is here: the
-      // view goes there first, and is set right once it is drawn.
+      // view goes there first, and is set right once it is drawn. While
+      // the reader scrolls, the blocks come to the view instead.
       top = this.heights.top(at) - (anchor.top - scroller.getBoundingClientRect().top);
-      scroller.scrollTop = origin + top;
+      if (gliding) this.shift -= origin + top - scroller.scrollTop;
+      else scroller.scrollTop = origin + top;
     }
     let first = n ? this.heights.find(Math.max(0, top - view * ABOVE)) : 0;
     let last = n ? this.heights.find(top + view * (1 + BELOW)) : -1;
@@ -661,17 +693,18 @@ export class ConversationView {
     this.shown = wanted;
     const above = n ? this.heights.top(first) : 0;
     const below = n ? this.heights.total() - this.heights.top(last + 1) : 0;
-    if (above !== this.spaceAbove) {
-      this.above.style.height = `${above}px`;
-      this.spaceAbove = above;
-    }
+    this.spaceAbove = above;
+    this.space();
     if (below !== this.spaceBelow) {
       this.below.style.height = `${below}px`;
       this.spaceBelow = below;
     }
     if (anchor) {
       const moved = anchor.slot.element.isConnected ? anchor.slot.element.getBoundingClientRect().top - anchor.top : 0;
-      if (moved) this.keepStill(moved);
+      if (moved) {
+        if (gliding) this.takeUp(moved);
+        else this.keepStill(moved);
+      }
       // The reader's block was kept by where it stands on the page, with
       // what was drawn above it as tall as it is: those heights are taken
       // now, so the sizes' own report of them moves the view no second time.
@@ -700,6 +733,19 @@ export class ConversationView {
       this.asked.add(block.key);
       this.context.near?.(block, index <= reader ? "end" : "start");
     }
+    // Further off than what is drawn, a part not read yet in a moving
+    // reader's way is read ahead of them, from the end they come to first.
+    if (!following && n) {
+      const from = this.heights.find(Math.max(0, top - view * AHEAD));
+      const to = this.heights.find(top + view * (1 + AHEAD));
+      for (let index = from; index <= to; index += 1) {
+        if (index >= first && index <= last) continue;
+        const block = this.blocks[index]!;
+        if (block.kind !== "gap" || block.loading || this.asked.has(block.key)) continue;
+        this.asked.add(block.key);
+        this.context.near?.(block, index < first ? "end" : "start");
+      }
+    }
     this.weigh();
     return drawn;
   }
@@ -715,14 +761,71 @@ export class ConversationView {
   retryGap(key: string): void { this.asked.delete(key); }
 
   private scrolled = (): void => {
+    this.scrolledAt = performance.now();
+    if (!this.settling) this.settling = window.setTimeout(this.rested, GLIDE_MS);
     if (this.laying) return;
     this.laying = requestAnimationFrame(() => {
       this.laying = 0;
       const readerMoved = this.readerLayout;
       this.readerLayout = false;
-      if (this.root.isConnected && (readerMoved || this.scrollNeedsLayout())) this.lay();
+      if (!this.root.isConnected) return;
+      // Near the top there is no room left to owe the position anything
+      // in: it is given back before the reader gets there.
+      const scroller = this.context.scroller;
+      if (this.shift && scroller.scrollTop < Math.abs(this.shift) + (scroller.clientHeight || innerHeight)) this.giveBack();
+      if (readerMoved || this.scrollNeedsLayout()) this.lay();
     });
   };
+
+  /** Whether the view scrolled a moment ago: the browser may still be
+   *  gliding it. */
+  private gliding(): boolean {
+    return performance.now() - this.scrolledAt < GLIDE_MS;
+  }
+
+  /** The scroll rested: what was taken up in the space above while it went
+   *  is given back to the position. */
+  private rested = (): void => {
+    this.settling = 0;
+    const left = GLIDE_MS - (performance.now() - this.scrolledAt);
+    if (left > 0) {
+      this.settling = window.setTimeout(this.rested, left);
+      return;
+    }
+    if (this.root.isConnected) this.giveBack();
+  };
+
+  /** Puts the blocks drawn back where the heights have them and the view
+   *  with them: nothing the reader sees moves. */
+  private giveBack(): void {
+    if (!this.shift) return;
+    const by = this.shift;
+    this.shift = 0;
+    this.space();
+    this.keepStill(-by);
+  }
+
+  /** What is kept in view moved `by` pixels down the screen while the
+   *  reader scrolls: the blocks drawn come back up by as much, the view
+   *  left where the browser has it. */
+  private takeUp(by: number): void {
+    this.shift -= by;
+    this.space();
+  }
+
+  /** Gives the space above its height: as tall as the blocks above those
+   *  drawn, and what the position is owed. Owed more than it is tall, it
+   *  draws the blocks up past the page's top by the rest: what goes out of
+   *  reach there is the head of what is drawn, a screen and more above the
+   *  reader, and comes back as the position is given what it is owed
+   *  (`scrolled`, before the reader gets near it). */
+  private space(): void {
+    if (this.spaced.above === this.spaceAbove && this.spaced.shift === this.shift) return;
+    const height = this.spaceAbove + this.shift;
+    this.above.style.height = `${Math.max(0, height)}px`;
+    this.above.style.marginTop = height < 0 ? `${height}px` : "";
+    this.spaced = { above: this.spaceAbove, shift: this.shift };
+  }
 
   /** Scrolling inside the mounted range changes no blocks or spacing. A
    * changed range or spacer still takes the full anchored layout path. */
@@ -784,7 +887,10 @@ export class ConversationView {
       if (went) this.keepStill(went);
       return;
     }
-    if (moved) this.keepStill(moved);
+    if (moved) {
+      if (this.gliding()) this.takeUp(moved);
+      else this.keepStill(moved);
+    }
   }
 
   /** Following, the foot stays where it is on the screen: the page scrolls
@@ -953,8 +1059,11 @@ export class ConversationView {
 
   /** Where the first block would begin, in the scroll region's terms. */
   private origin(): number {
+    // Where the heights begin on the page: the foot of the space above,
+    // less the blocks it stands for. What the position is owed (`shift`)
+    // is in where that foot stands.
     const scroller = this.context.scroller;
-    return this.above.getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop;
+    return this.above.getBoundingClientRect().bottom - scroller.getBoundingClientRect().top + scroller.scrollTop - Math.max(0, this.spaceAbove);
   }
 
   /** Whether the reader has focus or a selection in a slot. */
