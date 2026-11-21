@@ -157,10 +157,14 @@ pub fn unsettled(world: &Path) -> Option<String> {
     }
 }
 
-/// A finished move: the directory it took away, a link left there, and
-/// where it put the copy, as that directory was once published.
+/// The most moves one login is followed through.
+pub const MOST_MOVES: usize = 1024;
+
+/// A finished move: the directory it took away, as it was, a link left
+/// there, and where it put the copy, as that directory was once published.
 pub struct Finished {
     pub source: PathBuf,
+    pub source_identity: Identity,
     pub target: PathBuf,
     pub target_identity: Option<Identity>,
 }
@@ -170,19 +174,33 @@ pub fn finished(world: &Path) -> io::Result<Vec<Finished>> {
     Ok(records(world)?
         .into_iter()
         .filter(|(_, record)| record.phase == Phase::Done)
-        .map(|(_, record)| Finished { source: record.source, target: record.target, target_identity: record.target_identity })
+        .map(|(_, record)| Finished {
+            source: record.source,
+            source_identity: record.source_identity,
+            target: record.target,
+            target_identity: record.target_identity,
+        })
         .collect())
 }
 
 /// Whether the directory `from` was moved, by one finished move or one after
-/// another, to `real`, the very directory a move published there.
+/// another, to `real`, the very directory a move published there: each move
+/// after the first took the very directory the one before it published.
 pub fn led_to(finished: &[Finished], from: &Path, real: &Path) -> bool {
     let mut at = from.to_path_buf();
-    for _ in 0..16 {
-        let Some(move_) = finished.iter().find(|move_| move_.source == at) else { return false };
+    let mut published: Option<Identity> = None;
+    for _ in 0..MOST_MOVES {
+        let Some(move_) = finished
+            .iter()
+            .find(|move_| move_.source == at && published.is_none_or(|published| published == move_.source_identity))
+        else {
+            return false;
+        };
         if move_.target == real {
             return move_.target_identity.is_none_or(|identity| identity_of(real).is_ok_and(|now| now == identity));
         }
+        let Some(identity) = move_.target_identity else { return false };
+        published = Some(identity);
         at = move_.target.clone();
     }
     false
@@ -225,7 +243,10 @@ pub(crate) fn finished_for_test(world: &Path, source: &Path, target: &Path) {
         agent: "claude".into(),
         login: source.to_path_buf(),
         source: source.to_path_buf(),
-        source_identity: Identity { device: 0, inode: 0 },
+        source_identity: finished(world)
+            .ok()
+            .and_then(|done| done.into_iter().find(|move_| move_.target == source).and_then(|move_| move_.target_identity))
+            .unwrap_or(Identity { device: 0, inode: 0 }),
         target: fastctx_platform::disk::canonicalize(target).expect("a target"),
         target_identity: Some(identity_of(target).expect("a target")),
         staging: target.with_extension("staging"),

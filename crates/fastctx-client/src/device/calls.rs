@@ -642,6 +642,20 @@ impl Device {
                 view.admits(&session.link.membership().name, &chosen.account, &machine, purpose).map_err(failed)?;
                 chosen.account
             }
+            // Only a machine's owner manages its copies: asked as the owner
+            // where this device is logged in to that account, not as the
+            // first account that may use the machine.
+            None if matches!(&remote, RemoteCall::Copies { .. }) => {
+                let view = session.link.view();
+                let owner = view.directory.member(&machine).and_then(|member| member.home.clone());
+                match owner.filter(|owner| view.me().is_some_and(|me| me.logins.contains(owner))) {
+                    Some(owner) => owner,
+                    None => {
+                        drop(view);
+                        session.account_for(&machine, purpose)?
+                    }
+                }
+            }
             None => session.account_for(&machine, purpose)?,
         };
         if matches!(&remote, RemoteCall::Timeline { .. }) {

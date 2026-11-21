@@ -103,13 +103,15 @@ pub(crate) async fn answer(node: &Arc<Node>, call: DataCall) -> Result<DataReply
             .map_err(|error| Failure::new(format!("clearing this machine's cache: {error}")))?;
             Ok(DataReply::CacheCleared { bytes })
         }
-        DataCall::ClearCopies { hub, account, apply } => {
+        DataCall::ClearCopies { hub, account, apply, only } => {
             let clearing = node.clone();
-            let cleared =
-                fastctx_platform::task::spawn_blocking(move || crate::assets::copies::clear(&clearing, &hub, &account, apply))
-                    .await
-                    .map_err(|error| Failure::new(error.to_string()))?
-                    .map_err(Failure::not_run)?;
+            let only: Option<std::collections::BTreeSet<String>> = only.map(|keys| keys.into_iter().collect());
+            let cleared = fastctx_platform::task::spawn_blocking(move || {
+                crate::assets::copies::clear(&clearing, &hub, &account, apply, only.as_ref())
+            })
+            .await
+            .map_err(|error| Failure::new(error.to_string()))?
+            .map_err(Failure::not_run)?;
             Ok(DataReply::Cleared(cleared))
         }
         DataCall::Undescribed => {

@@ -633,8 +633,8 @@ pub(crate) fn ask_in(
     }
     match request {
         Request::Open { version, seen, reported, pinned, lineage } => open(assets, directory, machine, key, version, seen, reported, pinned, lineage),
-        Request::Describe { scope, readers, classes } => {
-            Ok(Reply::Described { descriptor: scopes::describe(assets, directory, machine, &scope, readers, classes)? })
+        Request::Describe { scope, readers, classes, born } => {
+            Ok(Reply::Described { descriptor: scopes::describe(assets, directory, machine, &scope, readers, classes, &born)? })
         }
         Request::Answer { scope, header, signature } => {
             let kept = gated(assets, directory, machine, &scope)?;

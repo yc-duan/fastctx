@@ -47,6 +47,9 @@ pub enum DataCall {
         account: String,
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         apply: bool,
+        /// Only these, where given: those a count said (`Cleared::keys`).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        only: Option<Vec<String>>,
     },
     /// The application was opened here as `account` of the hub `hub`,
     /// opened at `opened` (milliseconds): it takes in its copies here from
@@ -105,6 +108,9 @@ pub enum CopiesAsk {
         account: String,
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         apply: bool,
+        /// Only these, where given: those a count said (`Cleared::keys`).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        only: Option<Vec<String>>,
     },
 }
 
@@ -129,6 +135,14 @@ pub struct Cleared {
     /// Those kept, each with why.
     #[serde(default)]
     pub kept: Vec<(String, String)>,
+    /// The scopes let go, or that would be: what letting go after a count
+    /// is limited to.
+    #[serde(default)]
+    pub keys: Vec<String>,
+    /// Why letting go stopped short after some were let go: those are
+    /// said above, the rest left as they were.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failed: Option<String>,
 }
 
 /// A scope its hub will never describe (`DataCall::Undescribed`).

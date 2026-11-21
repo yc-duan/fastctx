@@ -57,7 +57,7 @@ export interface LoginMoveWords {
 export interface LoginMoveOptions {
   words: LoginMoveWords;
   probe(host: string, port: number): Promise<RemoteKey>;
-  move(server: RemoteServer, ask: MoveAsk, told: (piece: string) => void): Promise<Moved>;
+  move(server: RemoteServer, machine: string, ask: MoveAsk, told: (piece: string) => void): Promise<Moved>;
 }
 
 type Stage = "form" | "key" | "running" | "done";
@@ -87,9 +87,17 @@ export class LoginMoveSheet {
     this.sheet.body.addEventListener("change", (event) => this.picked(event));
   }
 
-  /** Opens it for `machine`, its logins' directories offered. */
+  /** Opens it for `machine`, by its name in the World, its logins'
+   *  directories offered. Another machine than last time starts from
+   *  nothing typed: no address, way in or key of one is used for another. */
   open(machine: string, logins: string[]): void {
-    if (machine !== this.machine) this.probed = null;
+    if (machine !== this.machine) {
+      this.probed = null;
+      this.typed = { host: "", port: "22", user: "root", by: "password", login: "", target: "", stopAgents: false };
+      this.secret = { password: "", passphrase: "", sudo: "" };
+      this.key = null;
+      this.wantsSudo = false;
+    }
     this.machine = machine;
     this.logins = logins;
     this.stage = "form";
@@ -186,7 +194,7 @@ export class LoginMoveSheet {
     this.sheet.busy = true;
     this.draw();
     try {
-      this.moved = await this.options.move(this.server(), ask, (piece) => {
+      this.moved = await this.options.move(this.server(), this.machine, ask, (piece) => {
         this.output += piece;
         this.tail();
       });
@@ -215,13 +223,11 @@ export class LoginMoveSheet {
     pre.scrollTop = pre.scrollHeight;
   }
 
-  /** The move this sheet made or finished, as the server records it: the
-   *  latest of the login asked about, else the latest of all. */
+  /** The move this asking was of, as the server records it now; none
+   *  where it left none (refused before anything was recorded). */
   private record(): MoveRecord | null {
-    const records = this.moved?.records ?? [];
-    const login = this.typed.login.trim();
-    const mine = records.filter((one) => one.login === login || one.source === login);
-    return (mine.length ? mine : records).reduce<MoveRecord | null>((latest, one) => (!latest || one.at > latest.at ? one : latest), null);
+    const op = this.moved?.op;
+    return op ? (this.moved?.records.find((one) => one.op === op) ?? null) : null;
   }
 
   private draw(): void {

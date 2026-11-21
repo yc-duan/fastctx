@@ -46,7 +46,7 @@ export interface CopiesOf {
 export type CopiesAsk =
   | { do: "report" }
   | { do: "set"; hub: string; account: string; on: boolean }
-  | { do: "clear"; hub: string; account: string; apply?: boolean };
+  | { do: "clear"; hub: string; account: string; apply?: boolean; only?: string[] };
 
 /** What letting go an account's copies came to, or would. */
 export interface Cleared {
@@ -54,6 +54,11 @@ export interface Cleared {
   scopes: number;
   bytes: number;
   kept: [string, string][];
+  /** The copies let go, or that would be: what letting go after a count is
+   *  limited to. */
+  keys?: string[];
+  /** Why letting go stopped short after some went. */
+  failed?: string | null;
 }
 
 export type CopiesAnswer = { copies: "report"; accounts: CopiesOf[] } | ({ copies: "cleared" } & Cleared);

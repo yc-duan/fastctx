@@ -57,6 +57,13 @@ pub(crate) async fn apply(node: &Arc<Node>, id: &ResidentId) -> Result<(), Failu
         .map_err(failure)?;
     let Some(account) = account else { return Ok(()) };
     let resident = Address { machine: node.machine(), resident: id.clone() };
+    // An account gone from its network took its records with it: none is
+    // left to forget, and its hub would refuse to be asked of them.
+    if node.link_of(&account.hub).is_some_and(|link| link.view().directory.account(&account.account).is_none()) {
+        node.goals.views.lock().expect("goal views").remove(id);
+        crate::sentinels::goal_seams::retire(node, account, resident);
+        return Ok(());
+    }
     super::past::forget(node, &account, &resident).await?;
     for _ in 0..3 {
         let (current, _) = operations::by_id(node, id, &account).await?;

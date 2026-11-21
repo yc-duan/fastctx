@@ -538,9 +538,12 @@ fn owner_of(directory: &Indexed<'_>, readers: &Readers) -> Result<Owner, String>
 
 /// Describes the scope `key` that a device of `machine` begins (design
 /// §2.1): one of the accounts it acts for must be among its readers, and a
-/// conversation's openers among those accounts. The descriptor is signed,
-/// kept as a control fact and witnessed before it is answered; the same
-/// description again is answered with the descriptor kept.
+/// conversation's openers among those accounts; each opener who it was as
+/// the scope was begun, where `said` says (`fastctx_types::assets::BORN`).
+/// The descriptor is signed, kept as a control fact and witnessed before it
+/// is answered; the same description again is answered with the descriptor
+/// kept.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn describe(
     assets: &Assets,
     directory: &Indexed<'_>,
@@ -548,6 +551,7 @@ pub(crate) fn describe(
     key: &str,
     readers: Readers,
     classes: Vec<StreamClass>,
+    said: &BTreeMap<String, String>,
 ) -> Result<Fact, String> {
     if key.len() > 128 {
         return Err("a scope's key is at most 128 bytes".into());
@@ -593,6 +597,11 @@ pub(crate) fn describe(
     }
     let principal = principal(directory, machine);
     let born = identities(directory, &readers)?;
+    // Begun for an account of a name opened again since: described for no
+    // later account of that name.
+    if let Some((opener, _)) = said.iter().find(|(opener, was)| born.get(*opener).is_some_and(|now| now != *was)) {
+        return Err(format!("{}{opener}", fastctx_types::assets::BEGUN_FOR_ANOTHER));
+    }
     if let Readers::Conversation { openers, .. } = &readers
         && !openers.iter().all(|opener| principal.contains(opener))
     {

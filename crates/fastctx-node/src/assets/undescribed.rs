@@ -1,8 +1,10 @@
-//! The scopes of conversations begun here that their hub will never
+//! The scopes of conversations begun here that their hub said it will never
 //! describe: the account they were begun for is gone from it, or another
 //! account of that name stands there now. Kept in `undescribed.json` beside
 //! the asset library, they are asked no more — no pass fails for them, and
-//! none is described later for an account of that name opened since — and
+//! none is described later for an account of that name opened since — but
+//! once a day where the hub judges which account each was begun for, which
+//! then describes it for that one alone (`fastctx_types::assets::BORN`); and
 //! go with their conversation (`let_go`).
 
 use std::collections::BTreeMap;
@@ -58,9 +60,29 @@ pub(crate) fn keep(dir: &Path, scope: &str, why: &str) -> io::Result<()> {
     })
 }
 
+/// `scope` was described after all: no longer kept as never to be.
+pub(crate) fn forget(dir: &Path, scope: &str) -> io::Result<()> {
+    change(dir, |scopes| {
+        scopes.remove(scope);
+    })
+}
+
+/// How long a scope kept as never to be described goes unasked.
+const RECHECK_SECONDS: i64 = 24 * 60 * 60;
+
+/// Whether what was kept of a scope as never to be described is old enough
+/// to be asked again, where it may be.
+pub(crate) fn due(kept: &Undescribed) -> bool {
+    jiff::Timestamp::now().as_second().saturating_sub(kept.at.as_second()) >= RECHECK_SECONDS
+}
+
 /// Lets go, with the conversation `id` as it is deleted, the scopes begun
 /// here for it that no hub described: nothing of them went anywhere, and
-/// none would ever be asked to go. Says how many went.
+/// none would ever be asked to go. Each is let go only while it is so still
+/// (`Library::revoke_proposed`); one described meanwhile goes with the
+/// deletion as any described does. Says how many went. What this leaves —
+/// cut short — the driver lets go once the conversation is gone
+/// (`session::describe`).
 pub(crate) async fn let_go(node: &crate::Node, id: &str) -> Result<usize, String> {
     let Some(assets) = node.assets.as_ref() else { return Ok(0) };
     let library = assets.library.clone();
@@ -68,8 +90,10 @@ pub(crate) async fn let_go(node: &crate::Node, id: &str) -> Result<usize, String
     let gone = fastctx_platform::task::blocking(move || -> Result<Vec<String>, String> {
         let mut gone = Vec::new();
         for (key, _) in library.provisionals().map_err(|error| error.to_string())? {
-            if fastctx_types::assets::of_conversation(&key) && key.rsplit('/').next() == Some(id.as_str()) {
-                library.revoke(&key).map_err(|error| error.to_string())?;
+            if fastctx_types::assets::of_conversation(&key)
+                && key.rsplit('/').next() == Some(id.as_str())
+                && library.revoke_proposed(&key).map_err(|error| error.to_string())?
+            {
                 gone.push(key);
             }
         }

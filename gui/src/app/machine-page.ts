@@ -1203,8 +1203,8 @@ export class MachinePage implements Page {
     this.moveSheet ??= new LoginMoveSheet(moving);
     const sheet = this.moveSheet;
     void moving.dirs(machine.written).then(
-      (dirs) => sheet.open(machine.written, dirs),
-      () => sheet.open(machine.written, []),
+      (dirs) => sheet.open(machine.name, dirs),
+      () => sheet.open(machine.name, []),
     );
   }
 

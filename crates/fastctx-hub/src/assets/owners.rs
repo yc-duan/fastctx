@@ -132,8 +132,10 @@ impl Owners {
             };
             for entry in entries {
                 let entry = entry?;
+                // What is thrown away is set aside in the root, not here: a
+                // name here is an owner's, whatever it begins with.
                 let name = entry.file_name().to_string_lossy().into_owned();
-                if name.starts_with(DISCARDED) || !entry.file_type()?.is_dir() {
+                if !entry.file_type()?.is_dir() {
                     continue;
                 }
                 found.extend(Owner::of_directory(kind, &name));

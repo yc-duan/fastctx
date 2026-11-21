@@ -205,7 +205,7 @@ pub(super) fn prune(node: &Node, connected: &[(&str, PathBuf)]) {
             .iter()
             .filter(|(agent, dir)| {
                 fastctx_platform::disk::metadata(dir).is_ok_and(|found| found.is_dir())
-                    && !connected.iter().any(|(name, home)| name == agent && crate::homes::same_dir(home, dir))
+                    && !connected.iter().any(|(name, home)| name == agent && crate::homes::same_dir_now(home, dir))
             })
             .cloned()
             .collect()

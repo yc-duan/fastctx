@@ -22,8 +22,10 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error};
 /// second brings proofs of holding by challenge (design §28.45); the third,
 /// frames of a stream taken several at a time (`MANY`); the fourth, asset
 /// lines (`LINES`); the fifth, a conversation's streams kept by the machine
-/// that orders them and taken from it (`DIRECT`).
-pub const VERSION: u32 = 5;
+/// that orders them and taken from it (`DIRECT`); the sixth, a
+/// conversation's scope described for the account of each opener's name it
+/// was begun for alone (`BORN`).
+pub const VERSION: u32 = 6;
 
 /// The oldest version a side still speaks.
 pub const OLDEST: u32 = 1;
@@ -47,6 +49,17 @@ pub const LINES: u32 = 4;
 /// its frames and objects from it, and the hub keeps who orders each stream
 /// and who may read it, and none of what the streams hold.
 pub const DIRECT: u32 = 5;
+
+/// The version from which a device says, describing a conversation's scope,
+/// which account of each opener's name it was begun for
+/// (`Request::Describe`'s `born`), and the hub describes it for no other
+/// (`BEGUN_FOR_ANOTHER`).
+pub const BORN: u32 = 6;
+
+/// What a hub says refusing to describe a scope begun for an earlier
+/// account of an opener's name than the one there now; the opener's key
+/// (`account:NAME`) follows.
+pub const BEGUN_FOR_ANOTHER: &str = "begun for an earlier account of the name of ";
 
 /// The most frames one `TakeMany` carries.
 pub const FRAMES_A_TAKE: usize = 16;
@@ -459,8 +472,17 @@ pub enum Request {
         limit: u32,
     },
     /// Describes a scope this device begins (§2.1): the hub signs its
-    /// descriptor, or answers the one it has.
-    Describe { scope: String, readers: Readers, classes: Vec<StreamClass> },
+    /// descriptor, or answers the one it has. From version `BORN` on, `born`
+    /// says who each opener of a conversation's scope was as it was begun —
+    /// `account:NAME` to when that account was opened, in milliseconds — and
+    /// a hub describing it anew describes it for no later account of a name.
+    Describe {
+        scope: String,
+        readers: Readers,
+        classes: Vec<StreamClass>,
+        #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+        born: std::collections::BTreeMap<String, String>,
+    },
     /// The streams of a scope this device holds, each with the sequence the
     /// hub's applied prefix reaches next (§6.6).
     Streams { scope: String },

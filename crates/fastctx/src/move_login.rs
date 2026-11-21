@@ -58,6 +58,11 @@ pub struct MoveLoginArgs {
     /// With --status: as JSON.
     #[arg(long, requires = "status")]
     json: bool,
+    /// The machine this is meant for, by its name in the World: refused
+    /// where this machine's World is another's (the machine page asks so
+    /// over SSH).
+    #[arg(long, hide = true)]
+    machine: Option<String>,
 }
 
 pub fn run(args: MoveLoginArgs) -> anyhow::Result<()> {
@@ -169,17 +174,21 @@ pub(crate) mod linux {
 
     pub fn run(args: MoveLoginArgs) -> anyhow::Result<()> {
         let here = Here::find()?;
+        if let Some(meant) = &args.machine {
+            let file = fs::read(here.world.machine_file()).context("reading this machine's name in the World")?;
+            let name = serde_json::from_slice::<serde_json::Value>(&file)
+                .ok()
+                .and_then(|file| file.get("name").and_then(|name| name.as_str()).map(str::to_string))
+                .ok_or_else(|| anyhow!("this machine's name in the World cannot be read"))?;
+            if name != *meant {
+                bail!("this machine is {name} in the World, not {meant}: nothing is done here");
+            }
+        }
         if args.status {
             return status(&here, args.json);
         }
         outside_fastctx()?;
-        let records = here.records();
-        fastctx_platform::ensure_private_dir(&records)?;
-        here.own(&records)?;
-        let lock = records.join(".lock");
-        let _alone =
-            FileLock::try_acquire(&lock)?.ok_or_else(|| anyhow!("another `fastctx move-login` runs on this World"))?;
-        here.own(&lock)?;
+        let _alone = alone(&here)?;
         if let Some(op) = &args.drop_backup {
             return drop_backup(&here, op, args.anyway);
         }
@@ -194,6 +203,9 @@ pub(crate) mod linux {
         }
         if let Some((path, _)) = moves::records(here.world.path())?.into_iter().find(|(_, record)| moves::pending(record)) {
             bail!("a move is unfinished ({}); finish it with `fastctx move-login --resume`", path.display());
+        }
+        if there(&crate::compact::linux::record(&here))? {
+            bail!("a compaction was cut short; `fastctx data compact --resume` puts the node's service back first");
         }
         let moved = start(&here, &login, &target, args.unmounted_at_boot_ok, args.stop_agents);
         if moved.is_err() && unfinished(&here) {
@@ -359,15 +371,49 @@ pub(crate) mod linux {
     /// let go first.
     fn restore(here: &Here, record: &mut Record, held: Option<Held>) -> anyhow::Result<()> {
         drop(held);
-        if let (Some(service), Some(before)) = (&here.service, &record.service) {
-            if before.enabled {
-                service.release().context("starting the node's service again")?;
-            } else {
-                println!("the node's service was held before the move; it is left held");
-            }
-        }
+        put_service_back(here, record.service.as_ref())?;
         record.service_restored = true;
         keep(here, record)
+    }
+
+    /// Puts the node's service back as `before` says it stood: enabled, it is
+    /// enabled and started again — its check would start it anyway — and
+    /// held, it is left held; one held yet running then is said, not started.
+    pub(crate) fn put_service_back(here: &Here, before: Option<&ServiceBefore>) -> anyhow::Result<()> {
+        let (Some(service), Some(before)) = (&here.service, before) else { return Ok(()) };
+        if before.enabled {
+            service.release().context("starting the node's service again")?;
+        } else if before.active {
+            println!(
+                "the node's service ran though it was held (disabled) before; it is left stopped: `systemctl start {}` starts it as it was",
+                before.name
+            );
+        } else {
+            println!("the node's service was held before; it is left held");
+        }
+        Ok(())
+    }
+
+    /// The lock of the maintenance done one at a time on this World — a
+    /// login's move, the library's compaction — taken at once, or refused.
+    pub(crate) fn alone(here: &Here) -> anyhow::Result<FileLock> {
+        let records = here.records();
+        fastctx_platform::ensure_private_dir(&records)?;
+        here.own(&records)?;
+        let lock = records.join(".lock");
+        let alone = FileLock::try_acquire(&lock)?
+            .ok_or_else(|| anyhow!("another `fastctx move-login` or `fastctx data compact` runs on this World"))?;
+        here.own(&lock)?;
+        Ok(alone)
+    }
+
+    /// Whether anything is at `path`; an error where that cannot be told.
+    pub(crate) fn there(path: &Path) -> anyhow::Result<bool> {
+        match fs::symlink_metadata(path) {
+            Ok(_) => Ok(true),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+            Err(error) => Err(error).with_context(|| format!("looking at {}", path.display())),
+        }
     }
 
     /// What an apply left unfinished, or a receipt in the way of the Claude
@@ -640,9 +686,11 @@ pub(crate) mod linux {
             if found.is_empty() {
                 return Ok(());
             }
-            if stop_agents && rounds < 3 && found.iter().any(|occupant| occupant.agent) {
+            // Only what is shown to use it: one that cannot be looked at is
+            // said, never stopped on a guess.
+            if stop_agents && rounds < 3 && found.iter().any(|occupant| occupant.agent && occupant.proven) {
                 rounds += 1;
-                for occupant in found.iter().filter(|occupant| occupant.agent) {
+                for occupant in found.iter().filter(|occupant| occupant.agent && occupant.proven) {
                     println!("stopping {}", occupant.said());
                     occupants::stop(occupant).map_err(|error| anyhow!("{} could not be stopped: {error}", occupant.said()))?;
                 }
@@ -776,10 +824,14 @@ pub(crate) mod linux {
         match record.phase {
             // Settled: the service is left to put back.
             Phase::Aborted => return restore(here, &mut record, None),
+            // Done but for the service: put back only where the login leads
+            // to the copy still, as the move left it.
             Phase::Done => {
-                if identity(&record.target).ok() == record.target_identity {
-                    unmark(&record)?;
+                let standing = Standing::of(&record);
+                if !(standing.source_is_link && standing.target_is_ours) {
+                    return Err(cannot_tell(&record));
                 }
+                unmark(&record)?;
                 return restore(here, &mut record, None);
             }
             _ => {}
@@ -787,16 +839,25 @@ pub(crate) mod linux {
         let held = hold(here)?;
         let standing = Standing::of(&record);
         match record.phase {
+            // Before the original was set aside: it stands where it was, or
+            // nothing of this move's is taken away.
             Phase::Stopping | Phase::Checking | Phase::Copying | Phase::Verifying | Phase::Published => {
-                taken_back(abort(here, &mut record, Some(held), "it was cut short before the original was set aside"))
+                if standing.source_is_original && standing.backup.is_none() {
+                    taken_back(abort(here, &mut record, Some(held), "it was cut short before the original was set aside"))
+                } else {
+                    drop(held);
+                    Err(cannot_tell(&record))
+                }
             }
             Phase::Swapping => {
                 if standing.source_is_original && standing.backup.is_none() {
                     taken_back(abort(here, &mut record, Some(held), "it was cut short before the original was set aside"))
                 } else if standing.source_gone && standing.backup_is_original(&record) && standing.target_is_ours {
+                    settle_names(&record)?;
                     link(here, &record)?;
                     forward(here, &mut record, held)
                 } else if standing.source_is_link && standing.backup_is_original(&record) && standing.target_is_ours {
+                    settle_names(&record)?;
                     forward(here, &mut record, held)
                 } else {
                     drop(held);
@@ -805,6 +866,7 @@ pub(crate) mod linux {
             }
             Phase::Linked => {
                 if standing.source_is_link && standing.backup_is_original(&record) && standing.target_is_ours {
+                    settle_names(&record)?;
                     forward(here, &mut record, held)
                 } else {
                     drop(held);
@@ -813,6 +875,43 @@ pub(crate) mod linux {
             }
             Phase::Done | Phase::Aborted => unreachable!("settled"),
         }
+    }
+
+    /// Puts on disk the directories that hold the move's names — the source
+    /// and its backup, the target — as a rename cut short may have left them
+    /// not yet there, before anything after it is kept.
+    fn settle_names(record: &Record) -> anyhow::Result<()> {
+        for path in [&record.source, &record.backup, &record.target] {
+            let parent = path.parent().ok_or_else(|| anyhow!("{} has no directory", path.display()))?;
+            fastctx_platform::durable_file::sync_directory(parent).with_context(|| format!("putting {} on disk", parent.display()))?;
+        }
+        Ok(())
+    }
+
+    /// Whether the login of `record` leads still, through this move's link and
+    /// those of the moves after it, to the copy the last of them made.
+    fn still_led(here: &Here, record: &Record) -> anyhow::Result<bool> {
+        let finished = moves::finished(here.world.path())?;
+        let (mut source, mut target, mut published) = (record.source.clone(), record.target.clone(), record.target_identity);
+        for _ in 0..moves::MOST_MOVES {
+            if fs::read_link(&source).ok().as_ref() != Some(&target) {
+                return Ok(false);
+            }
+            let Ok(metadata) = fs::symlink_metadata(&target) else { return Ok(false) };
+            if metadata.is_dir() {
+                let real = fs::canonicalize(&record.login).ok();
+                return Ok(Some(Identity { device: metadata.dev(), inode: metadata.ino() }) == published
+                    && real.is_some()
+                    && real == fs::canonicalize(&target).ok());
+            }
+            // Moved on since: the next move took this very directory.
+            let Some(next) = finished.iter().find(|next| next.source == target && Some(next.source_identity) == published)
+            else {
+                return Ok(false);
+            };
+            (source, target, published) = (next.source.clone(), next.target.clone(), next.target_identity);
+        }
+        Ok(false)
     }
 
     fn describe(path: &Path) -> String {
@@ -841,6 +940,14 @@ pub(crate) mod linux {
         if record.backup_deleted {
             println!("the original of the move {op} was deleted already");
             return Ok(());
+        }
+        if !still_led(here, &record)? {
+            bail!(
+                "{} no longer leads to the copy the move made ({} is {}); the original set aside is not deleted",
+                record.login.display(),
+                record.source.display(),
+                describe(&record.source)
+            );
         }
         let metadata = fs::symlink_metadata(&record.backup).with_context(|| format!("looking at {}", record.backup.display()))?;
         if !metadata.is_dir() || (Identity { device: metadata.dev(), inode: metadata.ino() }) != record.source_identity {

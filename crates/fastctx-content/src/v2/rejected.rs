@@ -347,9 +347,14 @@ impl Library {
                 // the same: written to or cut back meanwhile, it is looked at
                 // again.
                 if let Some((at, head)) = &at {
+                    // The frame it landed in: of the batch's holding, in the
+                    // stream's latest epoch.
                     let previous = db
-                        .prepare_cached("SELECT f.header FROM frames f JOIN streams s ON s.id = f.stream JOIN scopes c ON c.id = s.scope WHERE c.key = ?1 AND s.name = ?2 AND f.first = ?3")?
-                        .query_row(params![scope_key, stream_name, landed as i64], |row| row.get::<_, Vec<u8>>(0))
+                        .prepare_cached(
+                            "SELECT f.header FROM frames f JOIN streams s ON s.id = f.stream JOIN scopes c ON c.id = s.scope
+                             WHERE c.key = ?1 AND s.name = ?2 AND f.first = ?3 AND f.holding = ?4 ORDER BY f.epoch DESC LIMIT 1",
+                        )?
+                        .query_row(params![scope_key, stream_name, landed as i64, holding], |row| row.get::<_, Vec<u8>>(0))
                         .optional()?
                         .and_then(|header| Header::decode(&header).ok())
                         .map(|header| header.previous);

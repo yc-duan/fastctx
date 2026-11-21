@@ -130,7 +130,7 @@ pub fn run(args: DataArgs) -> anyhow::Result<()> {
                 return Ok(());
             }
             if scopes.is_empty() {
-                println!("every conversation begun here is one its hub takes");
+                println!("no conversation begun here is kept as one its hub will never take");
                 return Ok(());
             }
             for scope in &scopes {
@@ -196,7 +196,9 @@ fn hub_of(accounts: &[CopiesOf], account: &str, hub: Option<String>) -> anyhow::
 fn clear_copies(account: String, hub: Option<String>, apply: bool, json: bool) -> anyhow::Result<()> {
     let accounts = copied(call(DataCall::Copies)?)?;
     let hub = hub_of(&accounts, &account, hub)?;
-    let Reply::Data(DataReply::Cleared(cleared)) = call(DataCall::ClearCopies { hub, account: account.clone(), apply })? else {
+    let Reply::Data(DataReply::Cleared(cleared)) =
+        call(DataCall::ClearCopies { hub, account: account.clone(), apply, only: None })?
+    else {
         anyhow::bail!("the node answered something other than what it let go");
     };
     if json {
@@ -215,6 +217,9 @@ fn clear_copies(account: String, hub: Option<String>, apply: bool, json: bool) -
     }
     for (scope, why) in &cleared.kept {
         println!("  kept {scope}: {why}");
+    }
+    if let Some(why) = &cleared.failed {
+        println!("then it stopped, the rest left as they were: {why}");
     }
     Ok(())
 }

@@ -27,6 +27,9 @@ export interface Moved {
   /** The command's exit; none where only the records were read. */
   status: number | null;
   records: MoveRecord[];
+  /** The move this asking was of: begun, finished, or its backup deleted;
+   *  none where it left none. */
+  op: string | null;
 }
 
 /** Whether a move leaves something to do there: its directory between its

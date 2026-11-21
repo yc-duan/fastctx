@@ -1396,16 +1396,40 @@ async fn describe(
         .await?;
     }
     // Each is described apart: one the hub will not describe holds up none
-    // after it, and one it will never describe — begun for an account gone
-    // from it since, or for an earlier account of a name — is kept as such
-    // and asked no more (`undescribed`). The pass reports the first that
-    // failed otherwise.
-    let never = super::undescribed::read(&node.world.assets());
+    // after it, and one it said it will never describe — begun for an
+    // account gone from it since, or for an earlier account of a name — is
+    // kept as such and asked no more but as `undescribed` says. The pass
+    // reports the first that failed otherwise.
+    let dir = node.world.assets();
+    let never = super::undescribed::read(&dir);
+    // A hub that judges which account of a name a conversation was begun for
+    // (`BORN`) is told it, and describes it for that one alone.
+    let judged = link.asset_version() >= wire::BORN;
     let mut failed: Option<String> = None;
     for (scope, proposal) in blocking(library, |library| library.provisionals()).await? {
         let Some(proposal) = proposal else { continue };
-        if never.contains_key(&scope) {
-            continue;
+        // A conversation not on record here — deleted, or being — is never
+        // described: what of it is here goes with it, not to its hub. One
+        // whose deletion left it is let go now.
+        if wire::of_conversation(&scope)
+            && let Some(id) = scope.rsplit('/').next().and_then(|id| fastctx_types::ResidentId::try_from(id).ok())
+        {
+            let deleting = node.residents.is_deleting(&id);
+            if !deleting && node.residents.about(&id).is_none() {
+                if node.residents.deleted(&id).is_some() {
+                    let key = scope.clone();
+                    if blocking(library, move |library| library.revoke_proposed(&key)).await? && never.contains_key(&scope) {
+                        let (dir, key) = (dir.clone(), scope.clone());
+                        if let Err(error) = fastctx_platform::task::blocking(move || super::undescribed::forget(&dir, &key)).await {
+                            node.log.line(format_args!("forgetting {scope}, let go with its conversation: {error}"));
+                        }
+                    }
+                }
+                continue;
+            }
+            if deleting {
+                continue;
+            }
         }
         let done: Result<(), String> = async {
             let Proposal { hub: meant, readers, classes, born } =
@@ -1414,26 +1438,58 @@ async fn describe(
                 return Ok(());
             }
             // Begun for an account of its name opened before the one there
-            // now: never described, so never the later one's.
-            if let Readers::Conversation { openers, .. } = &readers {
-                for opener in openers {
-                    let born = born.or_else(|| born_under(node, &scope, hub, opener));
+            // now: never described, so never the later one's — the hub told
+            // which one it was begun for, where it judges that (`BORN`), and
+            // judged here again as the hub described it, below.
+            let openers: Vec<fastctx_types::AccountName> = match &readers {
+                Readers::Conversation { openers, .. } => openers.clone(),
+                Readers::Body { opener, .. } => vec![opener.clone()],
+                _ => Vec::new(),
+            };
+            let borns: Vec<(fastctx_types::AccountName, Option<i64>)> =
+                openers.into_iter().map(|opener| { let born = born.or_else(|| born_under(node, &scope, hub, &opener)); (opener, born) }).collect();
+            // Kept as never to be described: asked again once a day only
+            // where the hub judges which account it was begun for, each
+            // known — a later account of a name is refused then, never given
+            // it.
+            if let Some(kept) = never.get(&scope) {
+                let judgeable = judged && !borns.is_empty() && borns.iter().all(|(_, born)| born.is_some());
+                if !judgeable || !super::undescribed::due(kept) {
+                    return Ok(());
+                }
+            }
+            // A hub that does not judge it is not asked while this machine
+            // sees another account of an opener's name; nor is it kept as
+            // never described for a directory perhaps not caught up yet.
+            if !judged {
+                for (opener, born) in &borns {
                     let now = link.view().directory.account(opener).map(|found| found.opened.as_millisecond());
                     if let (Some(born), Some(now)) = (born, now)
-                        && born != now
+                        && *born != now
                     {
-                        return Err(format!("{GONE}it was begun for an earlier account named {opener}"));
+                        return Ok(());
                     }
                 }
             }
+            let said: std::collections::BTreeMap<String, String> = if judged {
+                borns
+                    .iter()
+                    .filter_map(|(opener, born)| Some((format!("account:{opener}"), born.as_ref()?.to_string())))
+                    .collect()
+            } else {
+                Default::default()
+            };
             let conversation = scope.starts_with("c/");
-            let described = match ask(assets, link, Request::Describe { scope: scope.clone(), readers, classes }).await {
+            // The hub's own words for an opener it has not, or not as it was.
+            let never_to_be = |why: &str| why.contains("there is no account:") || why.contains(wire::BEGUN_FOR_ANOTHER);
+            let asked = Request::Describe { scope: scope.clone(), readers, classes, born: said };
+            let described = match ask(assets, link, asked).await {
                 Ok(described) => described,
                 // Revoked: its holding here ended (`heard`).
                 Err(why) if why.starts_with(REVOKED) => return Ok(()),
-                // The hub has no account it was begun for: no hub will ever
-                // describe it.
-                Err(why) if conversation && why.contains("there is no account") => return Err(format!("{GONE}{why}")),
+                // The hub has no account it was begun for, or another of its
+                // name: no hub will ever describe it for that one.
+                Err(why) if wire::of_conversation(&scope) && never_to_be(&why) => return Err(format!("{GONE}{why}")),
                 // A scope the hub does not describe for this machine that is
                 // no conversation's — a project's, an account's, a log's: no
                 // account here reads it any more — holds up no conversation's.
@@ -1450,9 +1506,27 @@ async fn describe(
             if read.scope != scope || read.hub != hub.as_str() {
                 return Err(format!("the hub described another scope than {scope}"));
             }
-            let (network, scope) = (network.clone(), scope.clone());
-            blocking(library, move |library| library.install_on(&network, &scope, descriptor.fact.0, read.seq as i64))
-                .await?;
+            // Described for a later account of an opener's name than the one
+            // it was begun for: not installed, so never that one's.
+            for (opener, born) in &borns {
+                let described = read.born.get(&format!("account:{opener}")).and_then(|opened| opened.parse::<i64>().ok());
+                if let (Some(born), Some(described)) = (born, described)
+                    && *born != described
+                {
+                    return Err(format!("{GONE}the hub described it for a later account named {opener}"));
+                }
+            }
+            let (network, key) = (network.clone(), scope.clone());
+            let installed =
+                blocking(library, move |library| library.install_proposed(&network, &key, descriptor.fact.0, read.seq as i64))
+                    .await?;
+            // Let go meanwhile, its conversation deleted: not held anew.
+            if installed.is_some() && never.contains_key(&scope) {
+                let (dir, key) = (dir.clone(), scope.clone());
+                fastctx_platform::task::blocking(move || super::undescribed::forget(&dir, &key))
+                    .await
+                    .map_err(|error| format!("keeping that {scope} was described: {error}"))?;
+            }
             Ok(())
         }
         .await;
@@ -1556,19 +1630,15 @@ async fn discover(
                 return Err(format!("the hub listed another scope than {}", held.scope));
             }
             listed_all.insert(held.scope.clone());
-            // Let go here at its owner's word: not held anew while every
-            // reader of it here stays paused (`copies::clear`).
-            let (staying, scope, readers, hub_text) = (node.clone(), held.scope.clone(), held.readers.clone(), hub.to_string());
-            if fastctx_platform::task::blocking(move || super::copies::stays_cleared(&staying, &hub_text, &scope, &readers)).await {
-                continue;
-            }
-            let (scope, fact) = (held.scope.clone(), held.descriptor.fact.0);
-            let here = blocking(library, move |library| library.held_listing(&scope)).await?;
-            let described = here.as_ref().map(|listing| listing.description.clone());
-            if described.as_deref() != Some(fact.as_slice()) {
-                let (network, scope, revision) = (network.clone(), held.scope.clone(), read.seq as i64);
-                blocking(library, move |library| library.install_on(&network, &scope, fact, revision)).await?;
-            }
+            // Let go here at its owner's word, it is not held anew while
+            // every reader of it here stays paused (`copies::clear`).
+            let (asker, scope, readers, hub_text) = (node.clone(), held.scope.clone(), held.readers.clone(), hub.to_string());
+            let (network, fact, revision) = (network.clone(), held.descriptor.fact.0, read.seq as i64);
+            let held_now = fastctx_platform::task::blocking(move || {
+                super::copies::hold_listed(&asker, &hub_text, &scope, &readers, &network, fact, revision)
+            })
+            .await?;
+            let Some(here) = held_now else { continue };
             // What it may hold of the scope changed with nothing else of it:
             // pulled whole again, its streams each judged anew (HH04).
             // Who logged in here reads it rides along: a copy is read here
@@ -2006,8 +2076,6 @@ async fn renew(
 
 /// Commits what waits of `stream` again, in its current epoch.
 async fn resubmit(assets: &Assets, scope: &str, stream: &str) -> Result<(), String> {
-    // A stream written to as fast as what waits is looked at goes on the
-    // next pass, not this one for good.
     for _ in 0..RESUBMIT_ROUNDS {
         let (scope_text, stream_text, signer) = (scope.to_string(), stream.to_string(), assets.signer());
         let committed =
@@ -2016,7 +2084,10 @@ async fn resubmit(assets: &Assets, scope: &str, stream: &str) -> Result<(), Stri
             return Ok(());
         }
     }
-    Ok(())
+    // A stream written to as fast as what waits is looked at goes on the
+    // next pass, not this one for good: failed, the scope stays among those
+    // to go up (`turn`).
+    Err(format!("more of {stream} waits to be committed again than one pass commits; the next pass goes on"))
 }
 
 /// The most rounds of committing again one stream's waiting records a pass

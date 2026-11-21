@@ -391,6 +391,11 @@ impl Watchers {
         }
         let at = Mark { epoch: session.told.epoch, sequence: session.told.sequence };
         drop(session);
+        // Deleted as it was opened: `ended` may have gone through the cell
+        // before this sender was in it.
+        if self.gone.lock().expect("never poisoned").contains(id) {
+            sender.finish();
+        }
         self.changed.tell(id);
         let changed = self.changed.clone();
         let (registry, id, kept) = (Arc::downgrade(&self.watching), id.clone(), self.kept.clone());

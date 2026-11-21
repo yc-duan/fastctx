@@ -338,6 +338,26 @@ impl Library {
         })?)
     }
 
+    /// Installs a scope this device proposed as `install_on` does, only
+    /// while it is held as proposed still, or installed since: one let go
+    /// meanwhile — its conversation deleted — is not held anew (`None`).
+    pub fn install_proposed(&self, network: &Network, key: &str, description: Vec<u8>, acl_revision: i64) -> Result<Option<i64>> {
+        let (network, key) = (network.clone(), key.to_string());
+        let holding = self.database().write_now_at(Priority::Normal, 256 + description.len(), move |db| {
+            under(db, &network)?;
+            match super::scopes::held(db, &key)? {
+                Some((_, state, Some(_))) if state == "provisional" || state == "live" => {
+                    install_in(db, &key, &network.hub, description, acl_revision).map(Some)
+                }
+                _ => Ok(None),
+            }
+        })?;
+        if holding.is_some() {
+            self.wrote();
+        }
+        Ok(holding)
+    }
+
     /// Installs a scope of `network` under its hub-signed description as
     /// `install` does, only while the machine is on the network under the
     /// term it was asked under.

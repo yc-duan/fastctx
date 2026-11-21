@@ -28,6 +28,8 @@ pub struct Occupant {
     /// The agent itself, or a process the agent started — what
     /// `--stop-agents` stops — and not what this command runs in.
     pub agent: bool,
+    /// Shown to use the directory, not taken to for being unreadable.
+    pub proven: bool,
 }
 
 impl Occupant {
@@ -129,6 +131,7 @@ pub fn of(directory: &Path, agent: &str, default: bool, user: u32) -> Vec<Occupa
                 command: Vec::new(),
                 why: format!("the processes cannot be listed ({error}), so none can be known not to use it"),
                 agent: false,
+                proven: false,
             }];
         }
     };
@@ -139,16 +142,16 @@ pub fn of(directory: &Path, agent: &str, default: bool, user: u32) -> Vec<Occupa
             continue;
         }
         let at = PathBuf::from(format!("/proc/{pid}"));
-        let why = match uses(&at, directory, agent, default && process.owner == user, process) {
-            Ok(Some(why)) => why,
+        let (why, proven) = match uses(&at, directory, agent, default && process.owner == user, process) {
+            Ok(Some(why)) => (why, true),
             Ok(None) => continue,
-            Err(why) if process.owner == user => format!("cannot be looked at: {why}"),
+            Err(why) if process.owner == user => (format!("cannot be looked at: {why}"), false),
             Err(_) => continue,
         };
         let inside = mine.contains(pid);
         let agent = !inside && lineage(&all, *pid).iter().any(|one| all.get(one).is_some_and(|process| runs(process, agent)));
         let why = if inside { format!("{why}; this command runs inside it") } else { why };
-        found.push(Occupant { pid: *pid, started: process.started, command: process.command.clone(), why, agent });
+        found.push(Occupant { pid: *pid, started: process.started, command: process.command.clone(), why, agent, proven });
     }
     found.sort_by_key(|occupant| occupant.pid);
     found

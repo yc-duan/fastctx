@@ -88,6 +88,11 @@ pub fn moved(root: &Path, from: &Path, to: &Path) -> Result<Vec<String>, Error> 
         let old = receipt(root, kind, from)?;
         let new = receipt(root, kind, to)?;
         if !there(&old)? {
+            // Renamed by a run cut short: put on disk all the same.
+            if there(&new)? {
+                fastctx_platform::durable_file::sync_directory(new.parent().expect("a receipt's directory"))
+                    .map_err(|error| Error::Io(format!("keeping {}: {error}", new.display())))?;
+            }
             continue;
         }
         if there(&new)? {

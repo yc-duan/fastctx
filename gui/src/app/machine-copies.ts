@@ -31,6 +31,8 @@ export interface CopiesWords {
   confirm(account: string, count: number, size: string, machine: string): string;
   cleared(count: number, size: string): string;
   kept(count: number): string;
+  /** Letting go stopped short after some went. */
+  stopped(why: string): string;
   /** Where its room comes back. */
   compact: string;
   asking: string;
@@ -46,7 +48,9 @@ export interface CopiesOptions {
 }
 
 export class CopiesBlock {
-  private name: string | null = null;
+  /** The machine it is of, as the World writes it: one of each network's
+   *  of a name is another machine. */
+  private shown: string | null = null;
   private machine: Machine | null = null;
   private accounts: CopiesOf[] | null = null;
   private problem: string | null = null;
@@ -58,8 +62,8 @@ export class CopiesBlock {
 
   /** The machine it is of, and whether it is in view: asked once shown. */
   show(machine: Machine | null, shown: boolean): void {
-    if ((machine?.name ?? null) !== this.name) {
-      this.name = machine?.name ?? null;
+    if ((machine?.written ?? null) !== this.shown) {
+      this.shown = machine?.written ?? null;
       this.accounts = null;
       this.problem = null;
       this.outcome.clear();
@@ -81,7 +85,7 @@ export class CopiesBlock {
     this.options.changed();
     try {
       const answer = await this.options.ask(machine.written, ask);
-      if (machine.name !== this.name) return;
+      if (machine.written !== this.shown) return;
       if (answer.copies === "report") {
         this.accounts = answer.accounts;
         this.problem = null;
@@ -131,7 +135,7 @@ export class CopiesBlock {
         }
       }
       const done = outcome?.applied
-        ? `<dd class="fx-status"><span>${escape(words.cleared(outcome.scopes, bytesSaid(outcome.bytes)))}${outcome.kept.length ? ` ${escape(words.kept(outcome.kept.length))}` : ""}</span></dd><dd class="fx-status fx-quiet"><span>${escape(words.compact)}</span></dd>`
+        ? `<dd class="fx-status"><span>${escape(words.cleared(outcome.scopes, bytesSaid(outcome.bytes)))}${outcome.kept.length ? ` ${escape(words.kept(outcome.kept.length))}` : ""}${outcome.failed ? ` ${escape(words.stopped(outcome.failed))}` : ""}</span></dd><dd class="fx-status fx-quiet"><span>${escape(words.compact)}</span></dd>`
         : "";
       return `<dt>${escape(name)}</dt><dd class="fx-facts"><span>${escape(state)}${held ? `<span class="sep"></span>${escape(held)}` : ""}</span></dd><dd class="fx-status">${turn}${clear}</dd>${done}`;
     });
@@ -164,7 +168,9 @@ export class CopiesBlock {
           title: words.confirmTitle,
           what: words.confirm(account, counted.scopes, bytesSaid(counted.bytes), machine.name),
           go: words.clear(counted.scopes),
-          act: () => this.run({ do: "clear", hub, account, apply: true }),
+          // Only what the count said: one made a copy since is not let go
+          // unseen.
+          act: () => this.run({ do: "clear", hub, account, apply: true, ...(counted.keys ? { only: counted.keys } : {}) }),
           done: () => this.options.changed(),
         });
         return true;

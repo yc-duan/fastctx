@@ -56,7 +56,7 @@ fn sentinel_runs_begun_by_a_home() {
     let conv = format!("c/{}/m1/conv-1", assets.id);
     let conv = conv.as_str();
     let readers = Readers::Conversation { openers: vec![root.clone()], born_on: Some(m1.clone()) };
-    let describe = Request::Describe { scope: conv.into(), readers, classes: fastctx_types::assets::conversation_classes() };
+    let describe = Request::Describe { scope: conv.into(), readers, classes: fastctx_types::assets::conversation_classes(), born: Default::default() };
     let Reply::Described { descriptor } = ask(&store, &m1, &k1, describe).unwrap() else { panic!("described") };
     let (seq0, head0) = heard_word(&assets.public(), &descriptor.fact.0, &descriptor.word.0).unwrap();
     let genesis = fastctx_types::assets::Seen { seq: seq0, head: head0.into(), statement: descriptor.fact.0.clone().into(), word: descriptor.word.0.clone().into() };

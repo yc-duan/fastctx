@@ -44,8 +44,13 @@ pub(crate) async fn remote_probe(host: String, port: u16) -> Result<Probed, Stri
 /// (`fastctx move-login` there; the user, 2026-11-21: "让用户可以从前端进行
 /// SSH传一个命令的迁移"): what it writes is told as it comes.
 #[fastctx_gui_command::command]
-pub(crate) async fn remote_move_login(server: Server, ask: ssh::MoveAsk, told: Channel<String>) -> Result<ssh::Moved, String> {
-    ssh::move_login(&server, ask, &move |piece| {
+pub(crate) async fn remote_move_login(
+    server: Server,
+    machine: String,
+    ask: ssh::MoveAsk,
+    told: Channel<String>,
+) -> Result<ssh::Moved, String> {
+    ssh::move_login(&server, &machine, ask, &move |piece| {
         let _ = told.send(piece);
     })
     .await

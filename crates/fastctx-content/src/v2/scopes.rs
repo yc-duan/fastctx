@@ -105,6 +105,24 @@ impl Library {
         Ok(())
     }
 
+    /// Lets go a scope this device proposed that no hub described, as
+    /// `revoke` does, only while it is so still: whether it was let go. One
+    /// described meanwhile is left as it is.
+    pub fn revoke_proposed(&self, key: &str) -> Result<bool> {
+        let key = key.to_string();
+        let revoked = self.database().write_now_at(Priority::Control, 128, move |db| match held(db, &key)? {
+            Some((_, state, Some(_))) if state == "provisional" => {
+                revoke_in(db, &key)?;
+                Ok(true)
+            }
+            _ => Ok(false),
+        })?;
+        if revoked {
+            self.wrote();
+        }
+        Ok(revoked)
+    }
+
     /// One pass of every purge: an ended period's frames, references and
     /// cursors go; its index rows go too, or become revision floors while
     /// the scope has a newer period.

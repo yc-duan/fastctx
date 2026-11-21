@@ -160,7 +160,8 @@ export const zhManage: ManageWords = {
     confirm: (account, count, size, machine) =>
       `清掉 ${machine} 上 ${account} 的 ${count} 段会话副本（约 ${size}）？会话本身留在它们所在的机器上；以后在这台机器恢复接收，会整段重新取回。`,
     cleared: (count, size) => `已清掉 ${count} 段，约 ${size}。`,
-    kept: (count) => `${count} 段保留（这台机器写过，或正在用）。`,
+    kept: (count) => `${count} 段保留（这台机器写过、正在用，或存着分叉前的旧记录）。`,
+    stopped: (why) => `之后中途停了，其余没动：${why}`,
     compact: "要在那台机器上压缩之后才还出磁盘：fastctx data compact --yes（会中断那台机器上的会话几分钟）",
     asking: "正在问…",
     noAccount: "这台机器上没有登录的账号",
@@ -246,7 +247,8 @@ export const enManage: ManageWords = {
     confirm: (account, count, size, machine) =>
       `Let go ${count} copies of ${account}'s conversations on ${machine} (about ${size})? The conversations stay where they live; taken in again here, they come down whole.`,
     cleared: (count, size) => `${count} let go, about ${size}.`,
-    kept: (count) => `${count} kept (written here, or in use).`,
+    kept: (count) => `${count} kept (written here, in use, or keeping an earlier branch aside).`,
+    stopped: (why) => `Then it stopped; the rest are as they were: ${why}`,
     compact: "The disk gets the room back once that machine's library is compacted there: fastctx data compact --yes (stops its conversations for a few minutes)",
     asking: "Asking…",
     noAccount: "No account is logged in on this machine",
