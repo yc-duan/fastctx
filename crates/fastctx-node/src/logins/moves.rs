@@ -235,7 +235,7 @@ pub fn keep(path: &Path, record: &Record) -> io::Result<()> {
     Ok(())
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 pub(crate) fn finished_for_test(world: &Path, source: &Path, target: &Path) {
     let op = format!("test-{}", records(world).map(|records| records.len()).unwrap_or(0));
     let record = Record {

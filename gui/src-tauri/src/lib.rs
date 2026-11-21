@@ -16,7 +16,6 @@ mod composer;
 mod composer_documents;
 mod composer_legacy_input;
 mod connection;
-#[cfg(desktop)]
 mod data;
 #[cfg(desktop)]
 mod doctor;

@@ -1,7 +1,11 @@
-//! The settings page's local data requests, without a network destination.
+//! The settings page's local data requests, without a network destination,
+//! on a computer; and what a machine's owner asks of its copies, from any
+//! device.
 
 use fastctx_types::{Call, Reply};
-use fastctx_types::data::{CopiesAnswer, CopiesAsk, DataCall, DataReply};
+use fastctx_types::data::{CopiesAnswer, CopiesAsk};
+#[cfg(desktop)]
+use fastctx_types::data::{DataCall, DataReply};
 
 use crate::Shell;
 
