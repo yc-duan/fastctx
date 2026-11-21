@@ -57,6 +57,13 @@ pub(crate) struct Window {
     /// record ids before the seam (`prefix_ids` is empty), with what put
     /// the objects of its events as they were read.
     pub held: Option<(kept::Placed, Option<Early>)>,
+    /// A place inside what lies past the seam that the record is read
+    /// through (`follow::Tail::read`), with what the rows between the seam
+    /// and it leave for those after them (`TailStore::read_past`, each by
+    /// its digest, `key`): the record is read on from there while nothing
+    /// past it refers back (`onward`). None where the record was not read
+    /// into a store or shows no such place.
+    pub read: Option<(Seam, Vec<u64>)>,
 }
 
 /// Where a reading of the record from its start is kept rather than held
@@ -96,6 +103,65 @@ impl PrefixIds {
 /// A session's record file as it stood: the session, its length, and when
 /// it last changed.
 pub(crate) type Stamp = (String, u64, i128);
+
+/// What a row leaves for those after it (`follow::KEY_ROW` and the like),
+/// as it is held of the rows a record is read on past: its digest. Two
+/// alike by chance only read a record from its seam once more.
+pub(crate) fn key(text: &str) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    text.hash(&mut hasher);
+    hasher.finish()
+}
+
+/// The session of a resident's that is followed, as it stands: the last
+/// it has been, the sessions before it and their files' stamps, where
+/// Claude Code keeps its record, and whether its process is gone.
+struct Standing {
+    id: String,
+    began: Timestamp,
+    kept: Option<String>,
+    ended: bool,
+    earlier: Vec<Stamp>,
+    before: Vec<Session>,
+    path: std::path::PathBuf,
+}
+
+/// `resident`'s session followed as it stands now; none where it is not
+/// followed: none read, an earlier one's file not told, turns cut back.
+async fn standing(node: &Arc<Node>, resident: &ResidentId) -> Result<Option<Standing>, String> {
+    let (mut sessions, problems) = {
+        let (reading, whose) = (node.clone(), resident.clone());
+        fastctx_platform::task::blocking(move || sessions(&reading, &whose)).await
+    };
+    let Some(Session { id, began, kept, process }) = sessions.pop().filter(|_| problems.is_empty()) else { return Ok(None) };
+    // Its process gone, a last row without its line's end will never get one.
+    let ended = process.as_ref().is_some_and(|process| fastctx_platform::has_ended(process).unwrap_or(false));
+    // The sessions before the last as their files stand: unchanged since the
+    // seam, they stay as written; else all is read again.
+    let earlier = {
+        let (reading, before) = (node.clone(), std::mem::take(&mut sessions));
+        let (stamped, before) = fastctx_platform::task::blocking(move || (stamps(&reading, &before), before)).await;
+        sessions = before;
+        match stamped {
+            Some(stamped) => stamped,
+            None => return Ok(None),
+        }
+    };
+    let directory = exchange::sessions(node.world.path()).join(&id);
+    let (cuts, path) = fastctx_platform::task::blocking(move || {
+        let cuts = crate::claude::rewind::cuts(&directory).map_err(|error| error.to_string())?;
+        let path = exchange::transcript(&directory)
+            .map_err(|error| format!("where it is kept could not be read: {error}"))?
+            .ok_or("the World's plugin never said where Claude Code keeps it")?;
+        Ok::<_, String>((cuts, path))
+    })
+    .await?;
+    if !cuts.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(Standing { id, began, kept, ended, earlier, before: sessions, path }))
+}
 
 /// The stamps of `sessions`' record files, none where one cannot be told.
 fn stamps(node: &Node, sessions: &[Session]) -> Option<Vec<Stamp>> {
@@ -184,37 +250,8 @@ pub(crate) async fn window(
     prefix: Arc<PrefixIds>,
     keep: Option<Keep>,
 ) -> Result<Option<Window>, String> {
-    let (mut sessions, problems) = {
-        let (reading, whose) = (node.clone(), resident.clone());
-        fastctx_platform::task::blocking(move || sessions(&reading, &whose)).await
-    };
-    let Some(Session { id, began, kept, process }) = sessions.pop().filter(|_| problems.is_empty()) else { return Ok(None) };
-    // Its process gone, a last row without its line's end will never get one.
-    let ended = process.as_ref().is_some_and(|process| fastctx_platform::has_ended(process).unwrap_or(false));
-    // The sessions before the last as their files stand: unchanged since the
-    // seam, they stay as written; else all is read again.
-    let earlier = {
-        let (reading, before) = (node.clone(), std::mem::take(&mut sessions));
-        let (stamped, before) = fastctx_platform::task::blocking(move || (stamps(&reading, &before), before)).await;
-        sessions = before;
-        match stamped {
-            Some(stamped) => stamped,
-            None => return Ok(None),
-        }
-    };
+    let Some(Standing { id, began, kept, ended, earlier, before: mut sessions, path }) = standing(node, resident).await? else { return Ok(None) };
     let from = from.filter(|(_, _, stood)| *stood == earlier).map(|(session, seam, _)| (session, seam));
-    let directory = exchange::sessions(node.world.path()).join(&id);
-    let (cuts, path) = fastctx_platform::task::blocking(move || {
-        let cuts = crate::claude::rewind::cuts(&directory).map_err(|error| error.to_string())?;
-        let path = exchange::transcript(&directory)
-            .map_err(|error| format!("where it is kept could not be read: {error}"))?
-            .ok_or("the World's plugin never said where Claude Code keeps it")?;
-        Ok::<_, String>((cuts, path))
-    })
-    .await?;
-    if !cuts.is_empty() {
-        return Ok(None);
-    }
     let mut seam = from.filter(|(session, _)| *session == id).map(|(_, seam)| seam).unwrap_or_default();
     // Read from its start, the last session shows what it copied from the
     // earlier ones only there (`continuing`): by their records' ids, read
@@ -257,7 +294,7 @@ pub(crate) async fn window(
     let turns = Arc::new(Accepting::of(&world.lock().unwrap_or_else(std::sync::PoisonError::into_inner).turn_spans()));
     let asked: Vec<String> = kept.iter().cloned().collect();
     let mut unsteady = 0;
-    let (tail, mut prefix_ids, read_kept) = loop {
+    let (tail, mut prefix_ids, passed, read_kept) = loop {
         // Kept where it can be, past a seam too (design §28.51 ⑤-7b): a
         // seam that cannot move leaves a window as long as the record.
         if reading.is_none() {
@@ -280,7 +317,9 @@ pub(crate) async fn window(
                         Ok(uuids.iter().zip(&digests).filter(|(_, digest)| held.contains(digest)).map(|(uuid, _)| uuid.clone()).collect())
                     };
                     // The record ids the seam moves past kept in the store
-                    // by their digests, not held.
+                    // by their digests, not held; what the rows before the
+                    // place read through leave, held by its digests.
+                    let mut passed = Vec::new();
                     let read = held.lock().expect("never poisoned").tail(
                         &path,
                         &from,
@@ -290,8 +329,12 @@ pub(crate) async fn window(
                         &asked,
                         &PrefixIds::digest,
                         &mut |event| crate::user_images::claude(&node, &whose, event),
+                        &mut |left| {
+                            passed.push(key(left));
+                            Ok(())
+                        },
                     );
-                    read.map(|read| read.map(|tail| (tail, Vec::new())))
+                    read.map(|read| read.map(|tail| (tail, Vec::new(), passed)))
                 })
                 .await
             }
@@ -304,7 +347,7 @@ pub(crate) async fn window(
                     read.map(|read| {
                         read.map(|tail| {
                             let digests = tail.prefix_ids.iter().map(|id| PrefixIds::digest(id)).collect();
-                            (tail, digests)
+                            (tail, digests, Vec::new())
                         })
                     })
                 })
@@ -312,7 +355,7 @@ pub(crate) async fn window(
             }
         };
         match read {
-            Ok(Ok((tail, digests))) => break (tail, digests, read_kept),
+            Ok(Ok((tail, digests, passed))) => break (tail, digests, passed, read_kept),
             Ok(Err(Restart::Unsteady)) if unsteady < UNSTEADY_MOST => {
                 unsteady += 1;
                 tokio::time::sleep(Duration::from_millis(100) * unsteady).await;
@@ -346,7 +389,8 @@ pub(crate) async fn window(
     let since = if whole { Timestamp::MIN } else { tail.since.unwrap_or(Timestamp::MAX) };
     let settled = tail.seam_at.unwrap_or(since);
     let next = tail.seam.clone().unwrap_or(seam);
-    let follow::Tail { transcript, .. } = tail;
+    let follow::Tail { transcript, read, .. } = tail;
+    let read = read.map(|read| (read, passed));
     // Read from its start after earlier sessions, their record ids are kept
     // with those before the seam: one of them the last session copies late,
     // past the seam, reads all whole, as a whole reading leaves it out
@@ -396,7 +440,7 @@ pub(crate) async fn window(
         })
         .await?;
         let told = held.0.told.clone();
-        return Ok(Some(Window { session: id, events: Vec::new(), told, whole, since, seam: next, settled, kept, kept_here, earlier, prefix_ids, held: Some(held) }));
+        return Ok(Some(Window { session: id, events: Vec::new(), told, whole, since, seam: next, settled, kept, kept_here, earlier, prefix_ids, held: Some(held), read }));
     }
     let (events, problem) = session_events(node, resident, &id, began, title.clone(), transcript.events, (&transcript.problems, transcript.problems_omitted));
     before.extend(events);
@@ -412,7 +456,153 @@ pub(crate) async fn window(
     };
     let events = place(before, &recorded);
     let told = events.iter().filter(|event| told(event, began, title.as_deref(), problem.as_deref())).cloned().collect();
-    Ok(Some(Window { session: id, events, told, whole, since, seam: next, settled, kept, kept_here, earlier, prefix_ids, held: None }))
+    Ok(Some(Window { session: id, events, told, whole, since, seam: next, settled, kept, kept_here, earlier, prefix_ids, held: None, read: None }))
+}
+
+/// The most of a record read on from a place inside a turn at one look:
+/// more lies past it only where it could not move for long, and the record
+/// is read from its seam into a store as ever.
+const ONWARD_MOST: u64 = 16 << 20;
+
+/// What a record read on from a place inside a turn shows (`onward`).
+pub(crate) struct Onward {
+    /// The events of the rows from the place on, as the record tells them,
+    /// the user's images found: neither placed nor shown yet.
+    pub events: Vec<SessionEvent>,
+    /// Where the record is read through next, where the place moved, and
+    /// what the rows it moved past leave (`key`).
+    pub next: Option<Seam>,
+    pub passed: Vec<u64>,
+    /// The session's title as the record tells it now.
+    pub title: Option<String>,
+    /// The last record the session's mod saw kept, and whether it is among
+    /// the rows read.
+    pub kept: Option<String>,
+    pub kept_here: bool,
+    /// The record's file, and where the rows read whole end in it.
+    pub path: std::path::PathBuf,
+    pub end: u64,
+}
+
+/// Why a record is not read on from a place inside a turn, of `restart`.
+fn why_not(restart: &Restart) -> &'static str {
+    match restart {
+        Restart::Replaced => "another file at the record's path",
+        Restart::Truncated => "a record shorter than the place",
+        Restart::Rewritten => "a record changed before the place",
+        Restart::Unsteady => "a record changing as it is read",
+        Restart::Unsupported(why) => why,
+    }
+}
+
+/// What a record read on from a place inside a turn gave (`read_on`): what
+/// the reading found, the events of the rows from the place on, and what
+/// the rows the place moved past leave (`key`).
+pub(crate) type ReadOn = (follow::Tail, Vec<SessionEvent>, Vec<u64>);
+
+/// The record at `path` read on once from `from`, a place inside a turn an
+/// earlier reading read it through (`Window::read`): only the rows from
+/// there on, held in memory, none kept. `held` is what the rows between the
+/// seam and the place leave (`key`); `seen`, where the record ids before
+/// the seam are kept; `asked` and `ended` as `follow::tail_kept` takes
+/// them; each event first through `images`. Why not, where more lies past
+/// the place than is read at one look. Call on a thread that may block.
+pub(crate) fn read_on(
+    path: &std::path::Path,
+    from: &Seam,
+    held: &HashSet<u64>,
+    seen: Option<&(fastctx_content::v2::Library, String, u64)>,
+    asked: &[String],
+    ended: bool,
+    images: &mut dyn FnMut(&mut SessionEvent),
+) -> std::io::Result<Result<Result<ReadOn, Restart>, &'static str>> {
+    let length = fastctx_platform::disk::metadata(path)?.len();
+    if length.saturating_sub(from.offset) > ONWARD_MOST {
+        return Ok(Err("much past the place"));
+    }
+    // A record id of a row before the seam, or of one between the seam and
+    // the place.
+    let seen = |uuids: &[String]| -> std::io::Result<HashSet<String>> {
+        let mut before: HashSet<String> = uuids.iter().filter(|uuid| held.contains(&key(&format!("{}{uuid}", follow::KEY_ROW)))).cloned().collect();
+        if let Some((library, name, generation)) = seen {
+            let digests: Vec<u64> = uuids.iter().map(|uuid| PrefixIds::digest(uuid)).collect();
+            let kept = library.digests_among(name, *generation, &digests).map_err(std::io::Error::other)?;
+            before.extend(uuids.iter().zip(&digests).filter(|(_, digest)| kept.contains(digest)).map(|(uuid, _)| uuid.clone()));
+        }
+        Ok(before)
+    };
+    let before = |keys: &[String]| -> std::io::Result<HashSet<String>> { Ok(keys.iter().filter(|left| held.contains(&key(left))).cloned().collect()) };
+    let mut rows = follow::HeldRows::default();
+    let (mut events, mut passed) = (Vec::new(), Vec::new());
+    let tail = follow::tail_kept(
+        path,
+        from,
+        &|_| Ok(false),
+        // The seam itself moves only at a reading from it.
+        &|_| false,
+        ended,
+        &seen,
+        follow::TailStore {
+            rows: &mut rows,
+            events: &mut |mut event| {
+                images(&mut event);
+                events.push(event);
+                Ok(())
+            },
+            moved_past: &mut |_| Ok(()),
+            asked,
+            read_on: Some(&before),
+            read_past: Some(&mut |left| {
+                passed.push(key(left));
+                Ok(())
+            }),
+        },
+    )?;
+    Ok(Ok(tail.map(|tail| (tail, events, passed))))
+}
+
+/// `resident`'s record read on from `read` (`read_on`) while it is still
+/// the session `session` after the sessions that `stood`. Why not, where it
+/// is not to be read on: another session, a tail that refers back before
+/// the place, a record changed before it — all a reading from the seam
+/// judges.
+pub(crate) async fn onward(
+    node: &Arc<Node>,
+    resident: &ResidentId,
+    session: &str,
+    stood: &[Stamp],
+    read: &Seam,
+    held: Arc<HashSet<u64>>,
+    seen: Option<(fastctx_content::v2::Library, String, u64)>,
+) -> Result<Result<Onward, &'static str>, String> {
+    let Some(Standing { id, kept, ended, earlier, path, .. }) = standing(node, resident).await? else { return Ok(Err("a record not followed")) };
+    if id != session || earlier != stood {
+        return Ok(Err("sessions not as they stood"));
+    }
+    let asked: Vec<String> = kept.iter().cloned().collect();
+    let mut unsteady = 0;
+    let (tail, events, passed) = loop {
+        let (reading, from, node, whose, asked, held, seen) = (path.clone(), read.clone(), node.clone(), resident.clone(), asked.clone(), held.clone(), seen.clone());
+        let read = fastctx_platform::task::blocking(move || {
+            read_on(&reading, &from, &held, seen.as_ref(), &asked, ended, &mut |event| crate::user_images::claude(&node, &whose, event))
+        })
+        .await;
+        match read {
+            Ok(Ok(Ok(read))) => break read,
+            Ok(Ok(Err(Restart::Unsteady))) if unsteady < 3 => {
+                unsteady += 1;
+                tokio::time::sleep(Duration::from_millis(50) * unsteady).await;
+            }
+            Ok(Ok(Err(why))) => return Ok(Err(why_not(&why))),
+            Ok(Err(why)) => return Ok(Err(why)),
+            Err(error) => return Err(format!("{}: {error}", path.display())),
+        }
+    };
+    if tail.transcript.refused.is_some() {
+        return Ok(Err("a line larger than World reads"));
+    }
+    let kept_here = kept.as_ref().is_some_and(|kept| tail.transcript.uuids.contains(kept));
+    Ok(Ok(Onward { events, next: tail.seam, passed, title: tail.transcript.title, kept, kept_here, path, end: tail.end }))
 }
 
 /// Whether `event`, as placed, is one a session's reading tells again at

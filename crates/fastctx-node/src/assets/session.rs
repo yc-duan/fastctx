@@ -259,10 +259,34 @@ async fn taken_at_once(assets: &Assets, hub: &HubId, link: &Arc<Link>, key: &Pub
     pull_stream(assets, hub, link, key, scope, stream, holding, at, next, None, source.as_ref()).await
 }
 
+/// How long after records went up by themselves the driver comes round for
+/// them (`committed`): what a conversation at work commits several times a
+/// second is one round of the driver, not a round for each.
+const ROUND_AFTER: Duration = Duration::from_secs(3);
+
+/// Brings the driver of `hub` round `ROUND_AFTER` from now, once for all
+/// that ask meanwhile.
+fn wake_later(node: &Arc<Node>, hub: &HubId) {
+    let Some(assets) = node.assets.as_ref() else { return };
+    if !assets.rounds_later.lock().expect("rounds later").insert(hub.clone()) {
+        return;
+    }
+    let (node, hub) = (Arc::downgrade(node), hub.clone());
+    fastctx_platform::task::spawn(async move {
+        tokio::time::sleep(ROUND_AFTER).await;
+        let Some(node) = node.upgrade() else { return };
+        if let Some(assets) = node.assets.as_ref() {
+            assets.rounds_later.lock().expect("rounds later").remove(&hub);
+        }
+        wake(&node, &hub);
+    });
+}
+
 /// This machine committed records of its own to `scope`: with a hub that
 /// keeps asset lines they go up at once, by themselves, a pass under way
 /// with other scopes holding them up no longer. The driver comes round all
-/// the same.
+/// the same: at once for what did not go up so, a little later
+/// (`ROUND_AFTER`) for what did — its objects, and what else a round does.
 pub(crate) fn committed(node: &Arc<Node>, hub: &HubId, scope: &str) {
     let Some(assets) = node.assets.as_ref() else { return };
     assets.lively(scope);
@@ -279,7 +303,9 @@ pub(crate) fn committed(node: &Arc<Node>, hub: &HubId, scope: &str) {
                 && let Ok(_turn) = turning.try_lock()
             {
                 // What does not go up now is left to the pass, which says why.
-                let _ = upload(assets, &hub, &link, &key, session, &scope).await;
+                if upload(assets, &hub, &link, &key, session, &scope).await.is_ok() {
+                    return wake_later(&node, &hub);
+                }
             }
         }
         wake(&node, &hub);
@@ -909,6 +935,9 @@ async fn cleared(
     // ended, its objects put and its leases let go; what one left behind is
     // taken away here, and while it cannot be, this waits.
     let _held_off = crate::timeline::spill::hold_off();
+    // What a timeline written on from inside a turn stands on is held in
+    // memory: let go, each is made again by a reading from its seam.
+    crate::timeline::forget_windows();
     if crate::timeline::spill::kept() > 0 {
         node.log.line(format_args!("whole access to this machine through {hub} waits: a reading is kept on disk"));
         return Ok(());

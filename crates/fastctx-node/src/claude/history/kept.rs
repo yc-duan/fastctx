@@ -155,7 +155,9 @@ impl Reading {
     /// the seam. The record id of each row the seam moved past is kept in
     /// the store by its `digest` (`Spill::push_moved`, not held); of
     /// `asked`, those the record holds are in the transcript's `uuids`. A
-    /// row a session accepted before holds gives no events.
+    /// row a session accepted before holds gives no events. What the rows
+    /// before the place the record is read through leave (`Tail::read`,
+    /// `TailStore::read_past`) is handed to `read_past`.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn tail(
         &mut self,
@@ -167,6 +169,7 @@ impl Reading {
         asked: &[String],
         digest: &dyn Fn(&str) -> u64,
         images: &mut dyn FnMut(&mut SessionEvent),
+        read_past: &mut dyn FnMut(&str) -> std::io::Result<()>,
     ) -> std::io::Result<Result<follow::Tail, Restart>> {
         self.begin_attempt()?;
         let (spill, spots, refs, trying) = (&self.spill, &mut self.spots, &mut self.refs, &mut self.trying);
@@ -174,7 +177,7 @@ impl Reading {
         let mut lines = Lines(spill);
         let mut events = |event| keep(spill, spots, refs, trying, images, event);
         let mut moved_past = |uuid: &str| spill.borrow_mut().push_moved(digest(uuid)).map_err(std::io::Error::other);
-        follow::tail_kept(path, seam, &earlier, accept, ended, seen, TailStore { rows: &mut lines, events: &mut events, moved_past: &mut moved_past, asked })
+        follow::tail_kept(path, seam, &earlier, accept, ended, seen, TailStore { rows: &mut lines, events: &mut events, moved_past: &mut moved_past, asked, read_on: None, read_past: Some(read_past) })
     }
 
     /// Lets go what an attempt before took, and holds the place of the

@@ -214,6 +214,15 @@ impl Library {
         Ok(dropped)
     }
 
+    /// Whether this library knows a scope keyed `key`, in any state: one of
+    /// `keys_ending`, asked by its key alone.
+    pub fn has_key(&self, key: &str) -> Result<bool> {
+        let key = key.to_string();
+        Ok(self.database().read_now(move |db| {
+            Ok(db.prepare_cached("SELECT EXISTS (SELECT 1 FROM scopes WHERE key = ?1)")?.query_row(params![key], |row| row.get(0))?)
+        })?)
+    }
+
     /// The keys of every scope this library knows, in any state, ending
     /// with `tail`.
     pub fn keys_ending(&self, tail: &str) -> Result<Vec<String>> {

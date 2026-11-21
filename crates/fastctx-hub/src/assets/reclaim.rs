@@ -3,7 +3,8 @@
 //! (`fastctx_content::v2::Library::reclaim_vouched`; design cleanup v3, 1).
 //! A file named `SWITCH` in the hub's directory saying `count` has them
 //! counted, owner library by owner library, into `SWITCH.json`; saying
-//! `go`, let go a batch at a time. A round done is kept as done in the
+//! `go`, let go a batch at a time — which this version does not take
+//! (`GO_WAITS`): it counts only. A round done is kept as done in the
 //! report: the file is not gone by again until it is written anew. Taken
 //! away — or written anew — a round stops; without it nothing is let go.
 //! Both are hidden files, which a move of the hub leaves behind. A library
@@ -22,6 +23,15 @@ use super::Assets;
 
 /// The operator's file, in the hub's directory.
 pub(crate) const SWITCH: &str = ".reclaim-vouched-objects";
+
+/// Why `go` lets nothing go yet. A device's word for an object stands for
+/// days, and still stands where the device's holding of the conversation
+/// ended and began again within one membership of the network — its
+/// account locked and unlocked, assistance turned off and on, a login taken
+/// away offline — though what it kept went with the holding that ended
+/// (codex-15695bc9 on 1faaee1). Until a holding begun anew takes its
+/// device's words back at the hub, the hub's copy may be the last.
+const GO_WAITS: &str = "`go` is not taken by this version: a device that let a conversation go and took it up again within one membership still vouches for what it no longer keeps; `count` tells what may be let go";
 
 /// How many large objects one batch goes through.
 const BATCH: usize = 256;
@@ -148,7 +158,10 @@ impl Assets {
         };
         let apply = match first.said.as_str() {
             "count" => false,
-            "go" => true,
+            "go" => {
+                report.failed.push(GO_WAITS.into());
+                return finish(&mut report);
+            }
             _ => {
                 report.failed.push("the file says neither `count` nor `go`".into());
                 return finish(&mut report);

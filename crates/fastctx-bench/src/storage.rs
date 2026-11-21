@@ -73,6 +73,7 @@ pub(crate) fn run(row: &str, dir: &Path, scale: Scale) -> Result<bool, String> {
         "claude-place-stopped" => crate::claude::place_stopped(dir, scale),
         "claude-follow" => crate::claude::follow(dir, scale),
         "claude-follow-window" => crate::claude::follow_window(dir, scale),
+        "claude-follow-on" => crate::claude::follow_on(dir, scale),
         "claude-follow-world" => crate::claude::follow_world(dir, scale),
         "claude-world-alone" => crate::claude::world_alone(dir, scale),
         other => Err(format!("no row {other}")),

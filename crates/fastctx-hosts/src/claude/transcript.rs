@@ -2237,6 +2237,8 @@ mod tests {
                             Ok(())
                         },
                         asked: &asked,
+                        read_on: None,
+                        read_past: None,
                     },
                 );
                 let next_seam = match &held {
@@ -2282,6 +2284,208 @@ mod tests {
         }
         let _ = std::fs::remove_dir_all(&dir);
         assert!(met.iter().all(|count| *count > 20), "{met:?}");
+    }
+
+    /// A round of a long piece of work: an answer that calls a tool, its
+    /// words and its call each a row of one message as Claude Code writes
+    /// them, then the tool's answer; now and then two calls at once, a
+    /// thought first, or a row of any kind after.
+    fn work(choices: &mut Choices, n: &mut usize, at: &mut u64) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        let mut push = |row: Value| {
+            bytes.extend(serde_json::to_vec(&row).unwrap());
+            bytes.push(b'\n');
+        };
+        let mut time = |choices: &mut Choices| {
+            *at += 1 + choices.pick(3);
+            json!(format!("2026-11-12T{:02}:{:02}:{:02}.000Z", *at / 3600 % 24, *at / 60 % 60, *at % 60))
+        };
+        *n += 1;
+        let (message, round) = (format!("wm{n}"), *n);
+        let usage = json!({"input_tokens": round, "output_tokens": 1});
+        let answer = |block: Value, part: usize, at: Value| {
+            json!({"type": "assistant", "uuid": format!("wa{round}-{part}"), "timestamp": at,
+                   "message": {"id": message, "role": "assistant", "model": "x", "usage": usage, "content": [block]}})
+        };
+        let mut part = 0;
+        if choices.pick(3) == 0 {
+            push(answer(json!({"type": "thinking", "thinking": "hm", "signature": "s"}), part, time(choices)));
+            part += 1;
+        }
+        if choices.pick(2) == 0 {
+            push(answer(json!({"type": "text", "text": "next"}), part, time(choices)));
+            part += 1;
+        }
+        let calls: Vec<String> = (0..1 + choices.pick(4) / 3).map(|call| format!("wk{round}-{call}")).collect();
+        for call in &calls {
+            push(answer(json!({"type": "tool_use", "id": call, "name": "Bash", "input": {"command": "ls"}}), part, time(choices)));
+            part += 1;
+        }
+        for (index, call) in calls.iter().enumerate() {
+            push(json!({"type": "user", "uuid": format!("wr{round}-{index}"), "timestamp": time(choices), "sourceToolAssistantUUID": format!("wa{round}-{}", part - calls.len() + index),
+                        "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": call, "content": "out"}]}}));
+        }
+        let _ = push;
+        if choices.pick(12) == 0 {
+            bytes.extend(line(choices));
+        }
+        bytes
+    }
+
+    /// One reading into a store past `seam`: what it found, the events it
+    /// handed on, and the keys of the rows a place read through moved past
+    /// (`follow::TailStore::read_past`, where `places`). `held`: read on
+    /// from a place inside a turn whose keys these are.
+    fn read_kept(
+        path: &Path,
+        seam: &follow::Seam,
+        accept: &dyn Fn(Timestamp) -> bool,
+        held: Option<&HashSet<String>>,
+        places: bool,
+    ) -> (io::Result<Result<follow::Tail, follow::Restart>>, Vec<SessionEvent>, Vec<String>) {
+        let mut lines = Lines::default();
+        let (mut events, mut passed) = (Vec::new(), Vec::new());
+        let among = |keys: &[String]| -> io::Result<HashSet<String>> {
+            Ok(keys.iter().filter(|key| held.is_some_and(|held| held.contains(*key))).cloned().collect())
+        };
+        // A record id is of a row before the place where the place's keys say so.
+        let seen = |ids: &[String]| -> io::Result<HashSet<String>> {
+            Ok(ids.iter().filter(|id| held.is_some_and(|held| held.contains(&format!("{}{id}", follow::KEY_ROW)))).cloned().collect())
+        };
+        let mut past = |key: &str| {
+            passed.push(key.to_string());
+            Ok(())
+        };
+        let read = follow::tail_kept(
+            path,
+            seam,
+            &|_| Ok(false),
+            accept,
+            false,
+            &seen,
+            follow::TailStore {
+                rows: &mut lines,
+                events: &mut |event| {
+                    events.push(event);
+                    Ok(())
+                },
+                moved_past: &mut |_| Ok(()),
+                asked: &[],
+                read_on: held.map(|_| &among as follow::Before<'_>),
+                read_past: places.then_some(&mut past as &mut dyn FnMut(&str) -> io::Result<()>),
+            },
+        );
+        (read, events, passed)
+    }
+
+    /// A record read on from a place inside a turn (`follow::Tail::read`)
+    /// shows, after what was shown of the rows before the place, what a
+    /// reading from the seam shows — the same events, title and problems —
+    /// or says it cannot (`Restart`), and is read from the seam: over one
+    /// long piece of work growing a round at a time, and over exchanges and
+    /// rows of every kind, with tool calls made again, rows taken back,
+    /// compactions and agents told of beside the record.
+    #[test]
+    fn a_record_read_on_inside_a_turn_is_the_record_read_from_its_seam() {
+        let dir = std::env::temp_dir().join(format!("fastctx-read-on-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut choices = Choices(0x9e37_79b9_7f4a_7c15);
+        // How often: read on, the place moved, a tail that refers back,
+        // a place taken from a reading from the seam.
+        let mut met = [0usize; 4];
+        let shown = |events: &[SessionEvent]| serde_json::to_value(events).unwrap();
+        for round in 0..400 {
+            let path = dir.join(format!("record-{round}.jsonl"));
+            let long = choices.pick(3) != 0;
+            let (mut bytes, mut at, mut next, mut worked) = (Vec::new(), 0u64, 0usize, 0usize);
+            bytes.extend(exchange(&mut choices, next, &mut at));
+            next += 1;
+            std::fs::write(&path, &bytes).unwrap();
+            // The seam: the record read once from its start, where it stays
+            // (no turn of it ends).
+            let (first, _, _) = read_kept(&path, &follow::Seam::default(), &|_| false, None, false);
+            let Ok(Ok(first)) = first else { continue };
+            let seam = first.seam.expect("a seam at the start");
+            // The place read through, its keys, and what was shown of the
+            // rows before it.
+            let mut state: Option<(follow::Seam, HashSet<String>, Vec<SessionEvent>)> = None;
+            for step in 0..14 {
+                for _ in 0..1 + choices.pick(3) {
+                    if long {
+                        bytes.extend(work(&mut choices, &mut worked, &mut at));
+                    } else if choices.pick(3) == 0 {
+                        bytes.extend(line(&mut choices));
+                    } else {
+                        bytes.extend(exchange(&mut choices, next, &mut at));
+                        next += 1;
+                    }
+                }
+                std::fs::write(&path, &bytes).unwrap();
+                if choices.pick(9) == 0 {
+                    let agents = path.with_extension("").join("subagents");
+                    std::fs::create_dir_all(&agents).unwrap();
+                    let call = if long { format!("wk{}-0", 1 + choices.pick(worked.max(1) as u64)) } else { format!("k{}", choices.pick(6)) };
+                    std::fs::write(agents.join(format!("agent-x{}.meta.json", choices.pick(3))), json!({"toolUseId": call, "agentType": "general"}).to_string()).unwrap();
+                }
+                let (judge, whole, judge_keys) = read_kept(&path, &seam, &|_| false, None, true);
+                let Ok(Ok(judge)) = judge else {
+                    state = None;
+                    continue;
+                };
+                let mut seed = state.is_none();
+                if let Some((place, keys, before)) = state.as_mut() {
+                    let (read, events, passed) = read_kept(&path, place, &|_| true, Some(keys), true);
+                    match read {
+                        Ok(Ok(tail)) => {
+                            met[0] += 1;
+                            let on: Vec<SessionEvent> = before.iter().cloned().chain(events.iter().cloned()).collect();
+                            let told = (&tail.transcript.title, &tail.transcript.problems, tail.transcript.problems_omitted);
+                            let wanted = (&judge.transcript.title, &judge.transcript.problems, judge.transcript.problems_omitted);
+                            if shown(&on) != shown(&whole) || told != wanted {
+                                panic!(
+                                    "round {round}, step {step}, read on from {} of {}: {} then {} against {}; {told:?} against {wanted:?}; of {}",
+                                    place.offset,
+                                    bytes.len(),
+                                    shown(before),
+                                    shown(&events),
+                                    shown(&whole),
+                                    String::from_utf8_lossy(&bytes)
+                                );
+                            }
+                            if let Some(moved) = tail.seam {
+                                let mut all = keys.clone();
+                                all.extend(passed);
+                                let (past, after, _) = read_kept(&path, &moved, &|_| true, Some(&all), false);
+                                if matches!(past, Ok(Ok(_))) {
+                                    before.extend(events[..events.len() - after.len()].iter().cloned());
+                                    (*place, *keys) = (moved, all);
+                                    met[1] += 1;
+                                }
+                            }
+                        }
+                        Ok(Err(_)) => {
+                            met[2] += 1;
+                            seed = true;
+                        }
+                        Err(error) => panic!("round {round}, step {step}: {error}"),
+                    }
+                }
+                if seed {
+                    state = None;
+                    if let Some(place) = judge.read.clone() {
+                        let keys: HashSet<String> = judge_keys.into_iter().collect();
+                        let (past, after, _) = read_kept(&path, &place, &|_| true, Some(&keys), false);
+                        if matches!(past, Ok(Ok(_))) {
+                            state = Some((place, keys, whole[..whole.len() - after.len()].to_vec()));
+                            met[3] += 1;
+                        }
+                    }
+                }
+            }
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(met.iter().all(|count| *count > 50), "{met:?}");
     }
 
     /// A row the store fails to give fails the reading — here one only the

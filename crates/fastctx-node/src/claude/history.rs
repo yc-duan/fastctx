@@ -9,7 +9,9 @@ use std::collections::HashSet;
 mod follow;
 pub(crate) mod kept;
 pub(crate) mod placement;
-pub(crate) use follow::{Accepting, Keep, PrefixIds, Stamp, window};
+pub(crate) use follow::{Accepting, Keep, Onward, PrefixIds, Stamp, key as left_key, onward, window};
+#[cfg(any(test, feature = "bench"))]
+pub(crate) use follow::read_on;
 #[cfg(test)]
 pub(crate) use follow::turns;
 pub(crate) use placement::place;

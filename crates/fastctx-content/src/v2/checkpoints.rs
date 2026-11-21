@@ -110,6 +110,26 @@ impl Library {
         })?)
     }
 
+    /// Puts `kept` in place of `gone` among the items the producer `name`
+    /// holds under `generation`, in one write, the rest left as they are:
+    /// what a window written on from a place inside it changes of what it
+    /// holds, under the generation its checkpoint names already. Settled
+    /// before it returns, as `stage_held` is.
+    pub fn restage_held(&self, name: &str, generation: u64, gone: Vec<HeldItem>, kept: Vec<HeldItem>) -> Result<()> {
+        let name = name.to_string();
+        Ok(self.database().write_now_settled_at(Priority::Normal, 64 + (gone.len() + kept.len()) * 40, move |db| {
+            let mut delete = db.prepare_cached("DELETE FROM checkpoint_held WHERE name = ?1 AND generation = ?2 AND second = ?3 AND nanos = ?4 AND key = ?5")?;
+            for (second, nanos, key) in gone {
+                delete.execute(params![name, generation as i64, second, nanos, key.to_be_bytes().as_slice()])?;
+            }
+            let mut insert = db.prepare_cached("INSERT OR IGNORE INTO checkpoint_held (name, generation, second, nanos, key) VALUES (?1, ?2, ?3, ?4, ?5)")?;
+            for (second, nanos, key) in kept {
+                insert.execute(params![name, generation as i64, second, nanos, key.to_be_bytes().as_slice()])?;
+            }
+            Ok(())
+        })?)
+    }
+
     /// The highest order key of the items the producer `name` holds under
     /// `generation` from before `second` and `nanos`; none where none is.
     pub fn held_before(&self, name: &str, generation: u64, second: i64, nanos: i32) -> Result<Option<u64>> {

@@ -463,6 +463,14 @@ impl World {
         self.starts.iter().map(|start| (start.at, ends.get(start.turn.as_str()).copied())).collect()
     }
 
+    /// The turn a host's event later than all it records is placed in
+    /// (`placement::decide`): of the turns under way, the last begun — the
+    /// later told of those begun at one moment; none where none is.
+    pub(crate) fn running(&self) -> Option<String> {
+        let ends = self.ends_by_turn();
+        self.starts.iter().filter(|start| !ends.contains_key(start.turn.as_str())).max_by_key(|start| start.at).map(|start| start.turn.clone())
+    }
+
     /// Each turn's end: the last told of it.
     fn ends_by_turn(&self) -> HashMap<&str, Timestamp> {
         let mut ends = HashMap::new();

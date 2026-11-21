@@ -547,8 +547,10 @@ fn scope_for(
     // (AT11).
     if let Some(assets) = node.assets.as_ref() {
         let tail = format!("/{id}");
-        let keys = assets.library.keys_ending(&tail).map_err(|error| Failure::new(error.to_string()))?;
-        if keys.contains(&conversation_key) {
+        // Asked by its key: every look at a timeline asks this, and the
+        // scopes are not gone through for it.
+        let known = |key: &str| assets.library.has_key(key).map_err(|error| Failure::new(error.to_string()));
+        if known(&conversation_key)? {
             return Ok((conversation, conversation_key));
         }
         // A body's this account opened, as the hub described it, and only
@@ -570,6 +572,21 @@ fn scope_for(
                 Some(super::born_shared::body_here(node, hub).into_iter().collect())
             }
             None => None,
+        };
+        // The scopes of its id: of the bodies it may be of, each asked by
+        // its key; of any body, where none is known, all that end so.
+        let keys: Vec<String> = match &mine {
+            Some(mine) => {
+                let mut keys = Vec::new();
+                for body in mine.iter().filter(|body| !body.contains('/')) {
+                    let key = format!("b/{body}{tail}");
+                    if known(&key)? {
+                        keys.push(key);
+                    }
+                }
+                keys
+            }
+            None => assets.library.keys_ending(&tail).map_err(|error| Failure::new(error.to_string()))?,
         };
         let bodies: Vec<&str> = keys
             .iter()

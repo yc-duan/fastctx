@@ -29,6 +29,10 @@ use std::collections::BTreeMap;
 
 /// Entries asked for at a time, reading back from the newest.
 const PAGE: u32 = 128;
+/// Item entries asked for at a time: the most Codex gives (0.160), four
+/// times what it gives unasked — a long turn's items are listed in a
+/// quarter of the exchanges.
+const ITEMS_PAGE: u32 = 100;
 /// Entries taken back at a time from where a whole reading is kept.
 const KEPT_AT_ONCE: usize = 256;
 
@@ -209,7 +213,7 @@ async fn once(
         let at = rotation % seam.settled.len();
         let (turn, digest) = &seam.settled[at];
         let from = seam.paging.as_ref();
-        let mut params = json!({"threadId": thread, "turnId": turn, "sortDirection": "asc"});
+        let mut params = json!({"threadId": thread, "turnId": turn, "sortDirection": "asc", "limit": ITEMS_PAGE});
         if let Some(from) = from {
             params["cursor"] = json!(from.cursor);
         }
@@ -231,7 +235,7 @@ async fn once(
             // page at a time — a turn whose cursors outlive no reading is
             // compared all the same, and the turns after it in their turn.
             Err(Unanswered::Rpc { .. }) if from.is_some() => {
-                let whole = history::pages(server, "thread/items/list", json!({"threadId": thread, "turnId": turn, "sortDirection": "asc"}))
+                let whole = history::pages(server, "thread/items/list", json!({"threadId": thread, "turnId": turn, "sortDirection": "asc", "limit": ITEMS_PAGE}))
                     .await
                     .map_err(|error| error.to_string())?;
                 if whole.iter().fold(0, fold) != *digest {
@@ -333,7 +337,7 @@ async fn kept_entries(server: &AppServer, thread: &str, keeping: &mut dyn Keepin
     let mut whole_items = false;
     loop {
         let mut digests: BTreeMap<String, u64> = BTreeMap::new();
-        history::each_page(server, "thread/items/list", json!({"threadId": thread, "sortDirection": "asc"}), &mut |entry| {
+        history::each_page(server, "thread/items/list", json!({"threadId": thread, "sortDirection": "asc", "limit": ITEMS_PAGE}), &mut |entry| {
             if let Some(turn) = entry["turnId"].as_str() {
                 let running = digests.entry(turn.to_string()).or_insert(0);
                 *running = fold(*running, &entry);
@@ -423,7 +427,7 @@ async fn whole_entries(server: &AppServer, thread: &str) -> Result<Option<Read>,
         }
         Err(error) => return Err(error.to_string()),
     };
-    let items = history::pages(server, "thread/items/list", json!({"threadId": thread, "sortDirection": "asc"}))
+    let items = history::pages(server, "thread/items/list", json!({"threadId": thread, "sortDirection": "asc", "limit": ITEMS_PAGE}))
         .await
         .map_err(|error| error.to_string())?;
     let (mut timeline, voice) = match history::pages_with_voice(server, "thread/timeline/list", json!({"threadId": thread})).await {
@@ -527,7 +531,7 @@ fn turns_of(timeline: &[Value]) -> Vec<String> {
 
 /// Every item entry of `turn`, in order.
 async fn turn_items(server: &AppServer, thread: &str, turn: &str) -> Result<Vec<Value>, String> {
-    history::pages(server, "thread/items/list", json!({"threadId": thread, "turnId": turn, "sortDirection": "asc"}))
+    history::pages(server, "thread/items/list", json!({"threadId": thread, "turnId": turn, "sortDirection": "asc", "limit": ITEMS_PAGE}))
         .await
         .map_err(|error| error.to_string())
 }

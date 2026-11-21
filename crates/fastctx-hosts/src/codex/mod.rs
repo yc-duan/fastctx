@@ -865,7 +865,10 @@ impl CodexHost {
 
     /// What the thread is like now, as Codex says without reading its turns:
     /// it changes whenever the thread does, so equal stamps mean its history
-    /// is as it was. A turn this host runs in it is part of it.
+    /// is as it was. A turn this host runs in it is part of it; so is where
+    /// its timeline ends, where Codex lists one: Codex tells when a thread
+    /// last changed to the second, and what is added within the second of
+    /// the reading before would else be read only once something more is.
     pub async fn stamp(self: &Arc<Self>, thread: &str) -> Result<String, String> {
         let server = self.server().await?;
         let asking = json!({"threadId": thread, "includeTurns": false});
@@ -877,7 +880,12 @@ impl CodexHost {
             }
             answer => answer?,
         };
-        Ok(format!("{}|{:?}", answer["thread"], self.running_turn(thread)))
+        let end = match server.ask("thread/timeline/list", json!({"threadId": thread, "limit": 1})).await {
+            Ok(page) => page["data"].as_array().and_then(|data| data.iter().filter_map(|entry| entry["position"].as_u64()).max()),
+            // A Codex without it, or one refusing it for this thread.
+            Err(_) => None,
+        };
+        Ok(format!("{}|{:?}|{end:?}", answer["thread"], self.running_turn(thread)))
     }
 
     /// The rollout belongs to this host's thread. Only this host chooses

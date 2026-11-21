@@ -176,6 +176,9 @@ pub(crate) struct Assets {
     /// (`session::committed`): a few scopes at once, the rest left to the
     /// pass, so that what waits for a line holds no frames meanwhile.
     pub(crate) quick: Arc<tokio::sync::Semaphore>,
+    /// The hubs whose driver comes round a little later for what went up by
+    /// itself (`session::committed`): asked again meanwhile, it is one round.
+    pub(crate) rounds_later: Mutex<std::collections::BTreeSet<HubId>>,
     /// Whether each account's copies of conversations living elsewhere are
     /// taken in here (`copies`).
     pub(crate) copies: copies::Copies,
@@ -293,6 +296,7 @@ impl Assets {
             clearing: tokio::sync::RwLock::new(()),
             cleared_times: std::sync::atomic::AtomicU64::new(0),
             quick: Arc::new(tokio::sync::Semaphore::new(2)),
+            rounds_later: Mutex::new(std::collections::BTreeSet::new()),
             copies: copies::Copies::open(&dir),
             direct: direct::Direct::default(),
             vouched: Default::default(),
