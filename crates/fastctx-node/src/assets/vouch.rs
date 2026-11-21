@@ -1,12 +1,15 @@
 //! Vouching to a hub for the objects this machine holds of the conversation
 //! streams it orders (`fastctx_types::assets::VOUCH`): the hub may let go of
 //! its own copies of them, this machine keeping them. Only what is read back
-//! whole here — every byte, of its length, hashing to it — is vouched for.
-//! Looked at once in a while, a page of streams at a time and so many bytes
-//! read back at most, beside the passes, never holding one up; each stream's
-//! objects told again only when they or its epoch changed, or once what was
-//! told grows old (the hub counts a vouch a week); one the hub took not all
-//! of, or not all of which was read back yet, is told again at a later look.
+//! whole here — every byte, of its length, hashing to it — is vouched for,
+//! with how long ago it was read back: the hub counts it from then. Looked
+//! at once in a while, a page of streams at a time and so many bytes read
+//! back at most, beside the passes, never holding one up. A stream is told
+//! from its start, what is told replacing what was told of it before: again
+//! when its objects, its epoch or its holding changed, or once what was told
+//! grows old — what is not here whole any more goes from what the hub counts
+//! with it. One the hub took not all of, or not all of which was read back
+//! yet, is told again at a later look.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
@@ -17,7 +20,7 @@ use fastctx_types::access::HubId;
 use fastctx_types::assets::{self as wire, Reply, Request};
 use sha2::{Digest, Sha256};
 
-use super::session::{REVOKED, ask, blocking};
+use super::session::blocking;
 
 /// How often what this machine holds is looked at for each hub.
 const LOOK_EVERY: Duration = Duration::from_secs(10 * 60);
@@ -25,25 +28,36 @@ const LOOK_EVERY: Duration = Duration::from_secs(10 * 60);
 const STREAMS_A_LOOK: usize = 64;
 /// The most bytes one look reads back.
 const READ_A_LOOK: u64 = 512 << 20;
-/// How long what was told stands before it is told again.
-const TOLD_FOR: Duration = Duration::from_secs(2 * 24 * 60 * 60);
+/// How long what was told of a stream stands before it is told again: well
+/// within how long the hub counts what was read back (three days).
+const TOLD_FOR: Duration = Duration::from_secs(24 * 60 * 60);
 /// How long an object read back whole is taken as whole before it is read
 /// back again.
-const READ_FOR: Duration = Duration::from_secs(7 * 24 * 60 * 60);
+const READ_FOR: Duration = Duration::from_secs(2 * 24 * 60 * 60);
 
 /// What was told each hub, and how far it was looked through.
 #[derive(Default)]
 pub(crate) struct Vouching {
-    /// What each stream's objects and epoch came to as they were told, and
-    /// when, by hub, scope and stream.
+    /// What each stream's objects, epoch and holding came to as they were
+    /// told, and when, by hub, scope and stream.
     told: HashMap<(String, String, String), ([u8; 32], Instant)>,
     looked: HashMap<String, Instant>,
     /// Where the last look of each hub stopped: the stream gone through last.
     after: HashMap<String, (String, String)>,
-    /// The objects read back whole here lately, and when.
-    read: HashMap<[u8; 32], Instant>,
+    /// The objects read back whole here lately: the life of each read, and
+    /// when.
+    read: HashMap<[u8; 32], (i64, Instant)>,
     /// The hubs a look goes on for now.
     looking: HashSet<String>,
+}
+
+impl Vouching {
+    /// What was told `hub` is forgotten: each stream is told it anew, from
+    /// its start.
+    pub(crate) fn forget(&mut self, hub: &str) {
+        self.told.retain(|(told, ..), _| told != hub);
+        self.after.remove(hub);
+    }
 }
 
 pub(crate) type Vouched = Mutex<Vouching>;
@@ -79,8 +93,14 @@ pub(super) fn start(node: &Arc<crate::Node>, hub: &HubId, link: &Arc<Link>) {
 async fn tell(node: &Arc<crate::Node>, hub: &HubId, link: &Arc<Link>) -> Result<usize, String> {
     let Some(assets) = node.assets.as_ref() else { return Ok(0) };
     let (hub_text, device) = (hub.to_string(), assets.device());
-    let after = assets.vouched.lock().expect("vouched").after.get(hub.as_str()).cloned();
-    let found = blocking(&assets.library, move |library| library.vouchable(&hub_text, &device, after, STREAMS_A_LOOK)).await?;
+    let after = {
+        let mut vouching = assets.vouched.lock().expect("vouched");
+        vouching.read.retain(|_, (_, at)| at.elapsed() < READ_FOR);
+        vouching.after.get(hub.as_str()).cloned()
+    };
+    let longest = fastctx_types::asset_peers::OBJECT_BYTES;
+    let found =
+        blocking(&assets.library, move |library| library.vouchable(&hub_text, &device, after, STREAMS_A_LOOK, longest)).await?;
     let to_the_end = found.len() < STREAMS_A_LOOK;
     let (mut told, mut failed, mut budget) = (0, None, READ_A_LOOK);
     let mut through: Option<(String, String)> = None;
@@ -89,8 +109,10 @@ async fn tell(node: &Arc<crate::Node>, hub: &HubId, link: &Arc<Link>) -> Result<
         let digest: [u8; 32] = {
             let mut hasher = Sha256::new();
             hasher.update(one.epoch.to_be_bytes());
-            for hash in &one.hashes {
-                hasher.update(hash);
+            hasher.update(one.holding.to_be_bytes());
+            for object in &one.objects {
+                hasher.update(object.hash);
+                hasher.update(object.life.to_be_bytes());
             }
             hasher.finalize().into()
         };
@@ -101,39 +123,62 @@ async fn tell(node: &Arc<crate::Node>, hub: &HubId, link: &Arc<Link>) -> Result<
             through = Some((one.scope.clone(), one.stream.clone()));
             continue;
         }
-        // Read back whole here lately, or now, as far as this look reads.
-        let mut whole = Vec::new();
+        // Read back whole lately, in the life of it here now, or now, as far
+        // as this look reads: each with when it was read back.
+        let mut whole: Vec<([u8; 32], Instant)> = Vec::new();
         let mut all = true;
-        for hash in &one.hashes {
-            if assets.vouched.lock().expect("vouched").read.get(hash).is_some_and(|at| at.elapsed() < READ_FOR) {
-                whole.push(*hash);
+        for object in &one.objects {
+            let lately = assets
+                .vouched
+                .lock()
+                .expect("vouched")
+                .read
+                .get(&object.hash)
+                .filter(|(life, at)| *life == object.life && at.elapsed() < READ_FOR)
+                .map(|(_, at)| *at);
+            if let Some(at) = lately {
+                whole.push((object.hash, at));
                 continue;
             }
-            if budget == 0 {
-                all = false;
+            // Past what this look reads, the stream waits for the next look,
+            // which goes on from it.
+            if object.size > budget {
                 cut = true;
                 break;
             }
-            let wanted = *hash;
-            let size = blocking(&assets.library, move |library| library.size(&wanted)).await?.unwrap_or(0);
+            let wanted = object.hash;
             let read_back = blocking(&assets.library, move |library| library.verify_object(&wanted)).await?;
-            budget = budget.saturating_sub(size.max(1));
+            budget -= object.size;
             if read_back {
-                assets.vouched.lock().expect("vouched").read.insert(*hash, Instant::now());
-                whole.push(*hash);
+                let at = Instant::now();
+                assets.vouched.lock().expect("vouched").read.insert(object.hash, (object.life, at));
+                whole.push((object.hash, at));
             } else {
+                assets.vouched.lock().expect("vouched").read.remove(&object.hash);
                 all = false;
                 failed.get_or_insert(format!("{} {}: an object of it is not here whole, and is not vouched for", one.scope, one.stream));
             }
         }
-        for batch in whole.chunks(wire::VOUCHED_A_TIME) {
+        if cut {
+            break;
+        }
+        // Told from its start: the first batch sets aside what was told of it
+        // before, so what is not here whole any more goes with it — told
+        // even where nothing of it is whole.
+        let batches: Vec<&[([u8; 32], Instant)]> = if whole.is_empty() { vec![&[]] } else { whole.chunks(wire::VOUCHED_A_TIME).collect() };
+        for (n, batch) in batches.into_iter().enumerate() {
+            let read_ago = batch.iter().map(|(_, at)| at.elapsed().as_millis()).max().unwrap_or(0);
             let request = Request::Vouch {
                 scope: one.scope.clone(),
                 stream: one.stream.clone(),
                 epoch: one.epoch,
-                hashes: batch.iter().map(|hash| wire::Bytes::from(*hash)).collect(),
+                hashes: batch.iter().map(|(hash, _)| wire::Bytes::from(*hash)).collect(),
+                read_ago: u64::try_from(read_ago).unwrap_or(u64::MAX),
+                anew: n == 0,
             };
-            match ask(assets, link, request).await {
+            // Asked as it is: what the hub says of the scope besides is the
+            // passes' to act on, each scope under its own turn.
+            match link.assets(request).await {
                 // Taken in part — the hub not holding yet what refers to the
                 // rest — it is told again later.
                 Ok(Reply::Vouched { kept }) => {
@@ -142,6 +187,15 @@ async fn tell(node: &Arc<crate::Node>, hub: &HubId, link: &Arc<Link>) -> Result<
                         all = false;
                     }
                 }
+                Ok(Reply::Revoked { .. }) => {
+                    all = false;
+                    break;
+                }
+                Ok(Reply::Sealed { .. }) => {
+                    all = false;
+                    cut = true;
+                    break;
+                }
                 Ok(_) => {
                     all = false;
                     failed.get_or_insert(format!("{} {}: the hub answered something else", one.scope, one.stream));
@@ -149,9 +203,7 @@ async fn tell(node: &Arc<crate::Node>, hub: &HubId, link: &Arc<Link>) -> Result<
                 }
                 Err(why) => {
                     all = false;
-                    if !why.starts_with(REVOKED) {
-                        failed.get_or_insert(format!("{} {}: {why}", one.scope, one.stream));
-                    }
+                    failed.get_or_insert(format!("{} {}: {why}", one.scope, one.stream));
                     break;
                 }
             }

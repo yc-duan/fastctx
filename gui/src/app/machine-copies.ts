@@ -141,10 +141,12 @@ export class CopiesBlock {
           clear = `<span class="fx-quiet">${escape(words.none)}</span>`;
         }
       }
+      // Each line past the first under no name of its own, as the page's
+      // other rows go.
       const done = outcome?.applied
-        ? `<dd class="fx-status"><span>${escape(words.cleared(outcome.scopes, bytesSaid(outcome.bytes)))}${outcome.kept.length ? ` ${escape(words.kept(outcome.kept.length))}` : ""}${outcome.failed ? ` ${escape(words.stopped(outcome.failed))}` : ""}</span></dd><dd class="fx-status fx-quiet"><span>${escape(words.compact)}</span></dd>`
+        ? `<dt></dt><dd class="fx-status"><span>${escape(words.cleared(outcome.scopes, bytesSaid(outcome.bytes)))}${outcome.kept.length ? ` ${escape(words.kept(outcome.kept.length))}` : ""}${outcome.failed ? ` ${escape(words.stopped(outcome.failed))}` : ""}</span></dd><dt></dt><dd class="fx-status"><span class="fx-quiet">${escape(words.compact)}</span></dd>`
         : "";
-      return `<dt>${escape(name)}</dt><dd class="fx-facts"><span>${escape(state)}${held ? `<span class="sep"></span>${escape(held)}` : ""}</span></dd><dd class="fx-status">${turn}${clear}</dd>${done}`;
+      return `<dt>${escape(name)}</dt><dd class="fx-facts"><span>${escape(state)}${held ? `<span class="sep"></span>${escape(held)}` : ""}</span></dd><dt></dt><dd class="fx-status">${turn}${clear}</dd>${done}`;
     });
     return `${head}<dl class="mp-rows">${rows.join("")}</dl>`;
   }

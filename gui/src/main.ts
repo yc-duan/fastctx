@@ -168,6 +168,8 @@ import { talksOf } from "./app/talk-row";
 import { ProjectsPage, enProjects, zhProjects } from "./app/projects-page";
 import "./app/projects.css";
 import { specimenCache, specimenData } from "./specimen/data";
+import { specimenCopies } from "./specimen/copies";
+import { specimenLoginMove } from "./specimen/login-move";
 import { ReaderPage } from "./app/reader";
 import { Shell, pageHead, type Page } from "./app/shell";
 import { deferredPage } from "./app/deferred-page";
@@ -445,6 +447,10 @@ if (specimen) {
 }
 const store = createStore(import.meta.env.DEV ? () => ({ world: specimen!.world, now: specimen!.now }) : undefined);
 const live = !import.meta.env.DEV || store.live;
+/** What a specimen machine answers of its copies and of moving its login
+ *  directories, kept while the page is open. */
+let specimenCopiesAsk: ReturnType<typeof specimenCopies> | undefined;
+let specimenMoves: ReturnType<typeof specimenLoginMove> | undefined;
 configureTopics(live);
 keepLoginsFor(() => store.world.peek()?.accounts);
 // `?slowlogins=<ms>`: a machine's logins come from a node that takes that
@@ -3086,7 +3092,7 @@ function show(next: Place): void {
           view: english ? enUpdateView : zhUpdateView,
         },
         manage: english ? enManage : zhManage,
-        copies: live ? machineCopies : undefined,
+        copies: live ? machineCopies : (specimenCopiesAsk ??= specimenCopies()),
         moveLogin: live
           ? {
               words: english ? enLoginMove : zhLoginMove,
@@ -3100,7 +3106,11 @@ function show(next: Place): void {
                 );
               },
             }
-          : undefined,
+          : {
+              words: english ? enLoginMove : zhLoginMove,
+              section: (english ? enLoginMove : zhLoginMove).section,
+              ...(specimenMoves ??= specimenLoginMove()),
+            },
         ...(live ? { allowPrivacy: () => void allowPrivacy().catch((error: unknown) => console.error("opening the Mac's privacy settings", error)) } : {}),
       });
       });

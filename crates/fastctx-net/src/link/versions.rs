@@ -306,7 +306,7 @@ impl Link {
             Question::Package { version: version.to_string(), target: target.to_string(), progress: reports };
         let id = self.inner.next_id();
         let (answer, answered) = tokio::sync::oneshot::channel();
-        self.inner.asks.insert(id, connection.generation, answer, progress);
+        self.inner.asks.insert(id, connection.generation, answer, progress, true);
         let interest = PackageInterest { inner: self.inner.clone(), connection, id, reports };
         interest.connection.up.send(Up::Ask { id, question, submission: None }).map_err(|_| "the connection to the hub ended")?;
         let answer = fastctx_platform::doing::outside(

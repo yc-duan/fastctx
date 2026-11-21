@@ -1344,6 +1344,8 @@ async fn open(assets: &Assets, hub: &HubId, link: &Arc<Link>, session: u64) -> R
         // whole look this very pass.
         assets.looked.lock().expect("looked").remove(hub);
         assets.direct.put_back(hub);
+        // What was vouched for there is told again, from each stream's start.
+        assets.vouched.lock().expect("vouched").forget(hub.as_str());
         assets.forget_seen(hub).map_err(|error| error.to_string())?;
         let scopes: std::collections::BTreeSet<String> = reported.iter().map(|(scope, _)| scope.clone()).collect();
         for scope in scopes {
@@ -2366,7 +2368,16 @@ async fn pull_kept(
     if blocking(library, move |library| library.known_last_epoch(&scope_text, &stream_text)).await?.is_none() {
         succession(assets, hub, link, key, scope, stream).await?;
     }
-    if let Some(machine) = super::direct::source(assets, hub, link, scope, stream).await {
+    let machine = match super::direct::source_now(assets, hub, link, scope, stream).await {
+        super::direct::Source::From(machine) => Some(machine),
+        super::direct::Source::Hub => None,
+        // Not asked now: it may stand further than the hub holds.
+        super::direct::Source::Away => {
+            reached = false;
+            None
+        }
+    };
+    if let Some(machine) = machine {
         if !kept.contains_key(&machine) {
             let heads = super::direct::heads(assets, hub, link, &machine, vec![scope.to_string()]).await;
             // Of this scope alone: a machine's word on another is not heard.
@@ -2375,7 +2386,9 @@ async fn pull_kept(
                 heads.ok().map(|heads| heads.into_iter().filter(|head| head.scope == scope).map(|head| (head.stream, head.next)).collect()),
             );
         }
-        if matches!(kept.get(&machine), Some(None)) {
+        // Not heard, or heard without a word of this stream: where it stands
+        // there is not known.
+        if !matches!(kept.get(&machine), Some(Some(theirs)) if theirs.contains_key(stream)) {
             reached = false;
         }
         // Standing no further there than here, what the hub still holds
@@ -2433,10 +2446,12 @@ async fn succession(assets: &Assets, hub: &HubId, link: &Arc<Link>, key: &Public
         // reaches where it begins; until then nothing of it is known here,
         // and the stream is followed as a replica's (AP03).
         if index == last && EpochFact::decode(&signed.fact).is_ok_and(|fact| fact.device == device) {
-            if blocking(library, move |library| library.take_over(&scope_text, signed, &Trusted)).await?
-                == fastctx_content::v2::Taken::Opened
-            {
-                assets.taken_over.lock().expect("taken over").push(scope.to_string());
+            match blocking(library, move |library| library.take_over(&scope_text, signed, &Trusted)).await? {
+                fastctx_content::v2::Taken::Opened => assets.taken_over.lock().expect("taken over").push(scope.to_string()),
+                fastctx_content::v2::Taken::History | fastctx_content::v2::Taken::Behind => {}
+                // Written here by another history than the epoch follows:
+                // said, and asked again the next pass.
+                refused => return Err(super::takeover::not_taken(scope, stream, refused).unwrap_or_default()),
             }
             continue;
         }

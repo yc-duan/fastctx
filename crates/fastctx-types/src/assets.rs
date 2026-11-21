@@ -588,16 +588,46 @@ pub enum Request {
     Begin { scope: String, stream: String },
     /// `stream`, which this device orders and keeps, reaches `next`: the
     /// machines that hold the scope are told it moved. From version `DIRECT`
-    /// on.
-    Stirred { scope: String, stream: String, next: u64 },
+    /// on. `epoch`, the epoch it is written in here, where it begins and the
+    /// chain value it follows: the hub takes it only where its own last
+    /// epoch of the stream is that one (none from a device before 1.0.1-beta.23).
+    Stirred {
+        scope: String,
+        stream: String,
+        next: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        epoch: Option<StirredIn>,
+    },
     /// The hub's word on which of `scopes` this device holds, for the
     /// machines that keep their streams to give them by. From version
     /// `DIRECT` on.
     Permits { scopes: Vec<String> },
     /// This device, ordering `stream` of the conversation scope `scope` in
     /// `epoch`, holds whole each object of `hashes` (at most
-    /// `VOUCHED_A_TIME`) its frames refer to. From version `VOUCH` on.
-    Vouch { scope: String, stream: String, epoch: u64, hashes: Vec<Bytes> },
+    /// `VOUCHED_A_TIME`) its frames refer to, the oldest of them read back
+    /// whole `read_ago` milliseconds ago. `anew`, what it vouched for of the
+    /// stream before is set aside first: it tells the stream from its start.
+    /// From version `VOUCH` on.
+    Vouch {
+        scope: String,
+        stream: String,
+        epoch: u64,
+        hashes: Vec<Bytes>,
+        #[serde(default)]
+        read_ago: u64,
+        #[serde(default)]
+        anew: bool,
+    },
+}
+
+/// The epoch a stream is written in on the device that orders it, as
+/// `Request::Stirred` says it: its number, where it begins, and the chain
+/// value its first frame follows.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StirredIn {
+    pub epoch: u64,
+    pub start: u64,
+    pub follows: Bytes,
 }
 
 /// How a proof of holding by challenge stands (design §28.45).

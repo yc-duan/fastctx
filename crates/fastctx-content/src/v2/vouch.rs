@@ -18,13 +18,18 @@ use fastctx_storage::Priority;
 use fastctx_storage::rusqlite::{Connection, OptionalExtension, params};
 use std::collections::{BTreeMap, BTreeSet};
 
-/// How long what a device vouched for counts: past it, it is vouched for
-/// again or kept.
-pub const VOUCHED_FOR: std::time::Duration = std::time::Duration::from_secs(7 * 24 * 60 * 60);
+/// How long what a device vouched for counts, from when it read the object
+/// back whole: past it, it is vouched for again or kept.
+pub const VOUCHED_FOR: std::time::Duration = std::time::Duration::from_secs(3 * 24 * 60 * 60);
 
 /// A scope and the key of a device vouching for objects of it, as a hub
 /// judges whether that device may hold the scope now (`Library::vouchers`).
 pub type Voucher = (String, [u8; 32]);
+
+/// Of the vouchers that may hold their scopes now, when each device came to
+/// the network as it is now, in milliseconds: what it read back before then
+/// was read back in a holding that ended (`Library::reclaim_vouched`).
+pub type Able = BTreeMap<Voucher, i64>;
 
 /// What going through the large objects here came to: those let go, or
 /// that may be, those kept, by why, and of those let go, the bytes given
@@ -40,6 +45,17 @@ pub struct Reclaimed {
     /// Of those let go, how many are tombstones still, their bytes not
     /// deleted yet (`Library::settle_tombstones`).
     pub stuck: u64,
+}
+
+/// What settling tombstones came to (`Library::settle_tombstones`): how many
+/// went and their bytes, how many could not, and where the next call goes on
+/// from, none once all were gone through.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Settled {
+    pub gone: u64,
+    pub bytes: u64,
+    pub stuck: u64,
+    pub next: Option<([u8; 32], i64)>,
 }
 
 /// Whether a scope's key is a conversation's: a machine's, or a body's but
@@ -97,8 +113,9 @@ fn voucher(db: &Connection, stream: i64, hash: &[u8]) -> fastctx_storage::Result
 /// Why the object `hash` may not go here, if it may not: something but the
 /// frames and index rows of conversations' streams machines order holds it,
 /// one of those streams' devices ordering it now did not vouch for it in its
-/// epoch now, did so too long ago, or may not hold the scope now (`able`).
-fn kept_why(db: &Connection, hash: &[u8], able: &BTreeSet<Voucher>) -> fastctx_storage::Result<Option<&'static str>> {
+/// epoch now, read it back too long ago, may not hold the scope now, or read
+/// it back before it came to the network as it is now (`able`).
+fn kept_why(db: &Connection, hash: &[u8], able: &Able) -> fastctx_storage::Result<Option<&'static str>> {
     for (table, why) in [
         ("parked_objects", "a frame waiting for it refers to it"),
         ("refused_objects", "a refused frame refers to it"),
@@ -128,34 +145,56 @@ fn kept_why(db: &Connection, hash: &[u8], able: &BTreeSet<Voucher>) -> fastctx_s
             Err(why) => return Ok(Some(why)),
         };
         if when < lately {
-            return Ok(Some("vouched for too long ago"));
+            return Ok(Some("read back too long ago"));
         }
-        if !able.contains(&voucher) {
+        let Some(added) = able.get(&voucher) else {
             return Ok(Some("the device that vouched for it may not hold its conversation now"));
+        };
+        if when < *added {
+            return Ok(Some("read back before its device came to the network as it is now"));
         }
     }
     Ok(None)
 }
 
 /// A stream this device orders and the large objects here its frames refer
-/// to, to be vouched for (`Library::vouchable`).
+/// to, to be vouched for (`Library::vouchable`), in the holding period its
+/// scope is held in.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Vouchable {
     pub scope: String,
     pub stream: String,
     pub epoch: u64,
-    pub hashes: Vec<[u8; 32]>,
+    pub holding: i64,
+    pub objects: Vec<VouchableObject>,
+}
+
+/// A large object to be vouched for: its hash, the life of it here, and its
+/// size.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct VouchableObject {
+    pub hash: [u8; 32],
+    pub life: i64,
+    pub size: u64,
 }
 
 impl Library {
     /// On a machine, up to `limit` of the conversation streams of the scopes
     /// of the hub `hub` that `device` orders, a machine's to order, after
     /// `after` (scope and stream, in order), each with its epoch now and the
-    /// large objects present here its frames in the holding period now refer
-    /// to — none where there are none.
-    pub fn vouchable(&self, hub: &str, device: &[u8; 32], after: Option<(String, String)>, limit: usize) -> Result<Vec<Vouchable>> {
+    /// large objects present here, no longer than `longest`, its frames in
+    /// the holding period now refer to — none where there are none.
+    pub fn vouchable(
+        &self,
+        hub: &str,
+        device: &[u8; 32],
+        after: Option<(String, String)>,
+        limit: usize,
+        longest: u64,
+    ) -> Result<Vec<Vouchable>> {
         let (hub, device) = (hub.to_string(), *device);
         let row_bytes = super::ROW_BYTES as i64;
+        let longest = i64::try_from(longest).unwrap_or(i64::MAX);
         Ok(self.database().read_now(move |db| {
             let scopes: Vec<(i64, String, i64)> = {
                 let mut statement = db.prepare_cached(
@@ -177,24 +216,27 @@ impl Library {
                     }
                     let epoch: i64 =
                         db.prepare_cached("SELECT epoch FROM streams WHERE id = ?1")?.query_row([stream_id], |row| row.get(0))?;
-                    let hashes: Vec<[u8; 32]> = {
+                    let objects: Vec<VouchableObject> = {
                         let mut statement = db.prepare_cached(
-                            "SELECT DISTINCT f.hash FROM frame_objects f
-                             WHERE f.stream = ?1 AND f.holding = ?2
-                               AND EXISTS (SELECT 1 FROM objects o WHERE o.hash = f.hash AND o.state = 1 AND o.size > ?3)
-                             ORDER BY f.hash",
+                            "SELECT o.hash, o.life, o.size FROM objects o
+                             WHERE o.state = 1 AND o.size > ?3 AND o.size <= ?4
+                               AND o.hash IN (SELECT f.hash FROM frame_objects f WHERE f.stream = ?1 AND f.holding = ?2)
+                             ORDER BY o.hash",
                         )?;
-                        let rows = statement.query_map(params![stream_id, holding, row_bytes], |row| row.get::<_, Vec<u8>>(0))?;
-                        let mut hashes = Vec::new();
+                        let rows = statement.query_map(params![stream_id, holding, row_bytes, longest], |row| {
+                            Ok((row.get::<_, Vec<u8>>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?))
+                        })?;
+                        let mut objects = Vec::new();
                         for row in rows {
-                            if let Ok(hash) = <[u8; 32]>::try_from(row?.as_slice()) {
-                                hashes.push(hash);
+                            let (hash, life, size) = row?;
+                            if let Ok(hash) = <[u8; 32]>::try_from(hash.as_slice()) {
+                                objects.push(VouchableObject { hash, life, size: size.max(0) as u64 });
                             }
                         }
-                        hashes
+                        objects
                     };
-                    if !hashes.is_empty() {
-                        found.push(Vouchable { scope: key.clone(), stream: name, epoch: epoch.max(0) as u64, hashes });
+                    if !objects.is_empty() {
+                        found.push(Vouchable { scope: key.clone(), stream: name, epoch: epoch.max(0) as u64, holding, objects });
                         if found.len() >= limit {
                             return Ok(found);
                         }
@@ -206,12 +248,26 @@ impl Library {
     }
 
     /// On a hub, keeps that the device of `key`, ordering `stream` of `scope`
-    /// in `epoch`, holds whole each object of `hashes` that the stream's
-    /// frames here refer to; the others are passed by. Done only while that
-    /// device orders it in that epoch, as the hub signed it — judged in the
-    /// same transaction: how many were kept, none where it does not.
-    pub fn vouch(&self, scope: &str, stream: &str, epoch: u64, key: &[u8; 32], hashes: &[[u8; 32]]) -> Result<Option<usize>> {
+    /// in `epoch`, read back whole `read_ago` milliseconds ago each object of
+    /// `hashes` that the stream's frames here refer to; the others are passed
+    /// by. `anew`, what was vouched for of the stream before goes first: what
+    /// a device tells of a stream from its start replaces what it told.
+    /// Done only while that device orders it in that epoch, as the hub signed
+    /// it — judged in the same transaction: how many were kept, none where it
+    /// does not.
+    #[allow(clippy::too_many_arguments)]
+    pub fn vouch(
+        &self,
+        scope: &str,
+        stream: &str,
+        epoch: u64,
+        key: &[u8; 32],
+        hashes: &[[u8; 32]],
+        read_ago: u64,
+        anew: bool,
+    ) -> Result<Option<usize>> {
         let (scope, stream, key, hashes) = (scope.to_string(), stream.to_string(), *key, hashes.to_vec());
+        let read_at = now().saturating_sub(i64::try_from(read_ago).unwrap_or(i64::MAX));
         let kept = self.database().write_now_at(Priority::Normal, 64 * hashes.len() + 64, move |db| {
             let Some((scope_id, _, Some(_))) = held(db, &scope)? else { return Ok(None) };
             let Some(stream_id) = db
@@ -232,6 +288,9 @@ impl Library {
             if !now_ordering {
                 return Ok(None);
             }
+            if anew {
+                db.prepare_cached("DELETE FROM vouched WHERE stream = ?1")?.execute([stream_id])?;
+            }
             let mut kept = 0;
             let mut keep = db.prepare_cached(
                 "INSERT INTO vouched (stream, hash, epoch, key, at)
@@ -239,7 +298,7 @@ impl Library {
                  ON CONFLICT (stream, hash) DO UPDATE SET epoch = excluded.epoch, key = excluded.key, at = excluded.at",
             )?;
             for hash in &hashes {
-                kept += keep.execute(params![stream_id, &hash[..], epoch as i64, &key[..], now()])?;
+                kept += keep.execute(params![stream_id, &hash[..], epoch as i64, &key[..], read_at])?;
             }
             Ok(Some(kept))
         })?;
@@ -285,7 +344,7 @@ impl Library {
         limit: usize,
         longest: u64,
         apply: bool,
-        able: BTreeSet<Voucher>,
+        able: Able,
     ) -> Result<(Option<[u8; 32]>, Reclaimed)> {
         let row_bytes = super::ROW_BYTES as i64;
         let longest = i64::try_from(longest).unwrap_or(i64::MAX);
@@ -335,27 +394,38 @@ impl Library {
         Ok((next, found))
     }
 
-    /// Deletes the bytes and rows of up to `limit` tombstones here, as a
-    /// start does: those a deletion cut short or could not finish. How many
-    /// went and their bytes, and how many could not.
-    pub fn settle_tombstones(&self, limit: usize) -> Result<(u64, u64, u64)> {
+    /// Deletes the bytes and rows of up to `limit` tombstones here after
+    /// `after` (hash and life, in order), as a start does: those a deletion
+    /// cut short or could not finish. How many went and their bytes, how many
+    /// could not, and where the next call goes on from — none when all were
+    /// gone through.
+    pub fn settle_tombstones(&self, after: Option<([u8; 32], i64)>, limit: usize) -> Result<Settled> {
+        let (start, start_life) = after.map_or((Vec::new(), i64::MIN), |(hash, life)| (hash.to_vec(), life));
         let tombstones: Vec<(Vec<u8>, i64, i64)> = self.database().read_now(move |db| {
-            let mut statement = db.prepare_cached("SELECT hash, life, size FROM objects WHERE state = ?1 LIMIT ?2")?;
-            let rows = statement.query_map(params![TOMBSTONE, limit as i64], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
+            let mut statement = db.prepare_cached(
+                "SELECT hash, life, size FROM objects WHERE state = ?1 AND (hash > ?2 OR (hash = ?2 AND life > ?3))
+                 ORDER BY hash, life LIMIT ?4",
+            )?;
+            let rows = statement
+                .query_map(params![TOMBSTONE, start, start_life, limit as i64], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
             Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
         })?;
-        let (mut gone, mut bytes, mut stuck) = (0, 0, 0);
+        let full = tombstones.len() == limit;
+        let mut settled = Settled::default();
         for (hash, life, size) in tombstones {
             let Ok(hash) = <[u8; 32]>::try_from(hash.as_slice()) else { continue };
             match self.delete_life(&hash, life, size.max(0) as u64) {
                 Ok(()) => {
-                    gone += 1;
-                    bytes += size.max(0) as u64;
+                    settled.gone += 1;
+                    settled.bytes += size.max(0) as u64;
                 }
-                Err(_) => stuck += 1,
+                Err(_) => settled.stuck += 1,
+            }
+            if full {
+                settled.next = Some((hash, life));
             }
         }
-        Ok((gone, bytes, stuck))
+        Ok(settled)
     }
 
     /// Whether the present object `hash` is here whole: every byte of it read

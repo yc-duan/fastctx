@@ -665,8 +665,14 @@ pub(super) fn rejected_in(
         .optional()?;
     db.prepare_cached("UPDATE streams SET next = ?2, head = ?3 WHERE id = ?1")?
         .execute(params![stream_id, first as i64, before])?;
-    db.prepare_cached("UPDATE cursors SET sequence = ?3, head = ?4 WHERE stream = ?1 AND holding = ?2")?
-        .execute(params![stream_id, holding, first as i64 - 1, before])?;
+    // Cut back to its start, nothing of it is applied here: no cursor, as a
+    // stream begun anew has none.
+    if first == 0 {
+        db.prepare_cached("DELETE FROM cursors WHERE stream = ?1 AND holding = ?2")?.execute(params![stream_id, holding])?;
+    } else {
+        db.prepare_cached("UPDATE cursors SET sequence = ?3, head = ?4 WHERE stream = ?1 AND holding = ?2")?
+            .execute(params![stream_id, holding, first as i64 - 1, before])?;
+    }
     db.prepare_cached("UPDATE outbox SET uploaded = MIN(uploaded, ?2) WHERE stream = ?1")?
         .execute(params![stream_id, first as i64])?;
     rebuild(db, Applying { scope: scope_id, stream: stream_id, holding })?;

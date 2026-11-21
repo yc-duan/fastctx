@@ -625,11 +625,21 @@ pub(crate) fn hold_listed(
     Ok(true)
 }
 
-/// Whether `scope` is of a conversation born on this machine (`c/hub/machine/id`).
+/// Whether `scope` may be of a conversation born on this machine: under its
+/// name now or one it had on that network (`c/hub/machine/id`), or one born
+/// on no machine named (`c/hub/-/account/id`), whose account and id another
+/// machine's meets no more than it meets this one's.
 fn born_here(node: &Node, scope: &str) -> bool {
     let mut parts = scope.split('/');
-    let (Some("c"), Some(_), Some(machine)) = (parts.next(), parts.next(), parts.next()) else { return false };
-    node.machine().as_str() == machine
+    let (Some("c"), Some(hub), Some(machine)) = (parts.next(), parts.next(), parts.next()) else { return false };
+    if machine == "-" || node.machine().as_str() == machine {
+        return true;
+    }
+    node.links().into_iter().filter(|link| link.hub().as_str() == hub).any(|link| {
+        let me = link.membership().name.clone();
+        me.as_str() == machine
+            || link.view().directory.member(&me).is_some_and(|member| member.was.iter().any(|was| was.as_str() == machine))
+    })
 }
 
 /// The conversation a conversation's scope is of, by the end of its key.
@@ -738,6 +748,17 @@ pub(crate) fn clear(
         let all = assets.library.copies_freed(&keys).map_err(|error| error.to_string())?;
         let mut gone = Vec::new();
         for scope in going {
+            // And once more just as it goes: one whose conversation came to
+            // live here while those before it went, or that a reader took in
+            // again, stays.
+            if lives_here(node, &scope.key) {
+                cleared.kept.push((scope.key.clone(), "its conversation lives here now".into()));
+                continue;
+            }
+            if !paused(node, &scope, None) {
+                cleared.kept.push((scope.key.clone(), "a reader here takes it in now".into()));
+                continue;
+            }
             let readers: Vec<String> = readers(&scope).into_iter().map(|(one, at)| format!("{one}@{at}")).collect();
             // Failed, whether it stays kept as let go though it was not.
             let step = (|| -> Result<Option<String>, (String, bool)> {
@@ -805,8 +826,8 @@ pub(crate) fn asked(
     };
     // Asked from afar, as the machine's owner: so still as it is done.
     let still = || match through {
-        Some((hub, caller)) if !owned_by(node, hub, caller) => Err(format!("this machine is no longer {caller}'s")),
-        _ => Ok(()),
+        Some((hub, caller)) => owned_by(node, hub, caller),
+        None => Ok(()),
     };
     let reported = || {
         let mut accounts = report(node);
@@ -832,12 +853,21 @@ pub(crate) fn asked(
 }
 
 /// Whether this machine is `caller`'s on the network of `hub`, as its
-/// directory says now.
-fn owned_by(node: &Node, hub: &fastctx_types::access::HubId, caller: &fastctx_types::AccountName) -> bool {
-    node.links().into_iter().find(|link| link.hub() == hub).is_some_and(|link| {
-        let me = link.membership().name.clone();
-        link.view().directory.member(&me).is_some_and(|member| member.home.as_ref() == Some(caller))
-    })
+/// directory says now, and why not: a view from before the link was last
+/// made again is no word on it.
+fn owned_by(node: &Node, hub: &fastctx_types::access::HubId, caller: &fastctx_types::AccountName) -> Result<(), String> {
+    let Some(link) = node.links().into_iter().find(|link| link.hub() == hub) else {
+        return Err("this machine is not on that network now".into());
+    };
+    if !link.view_current() {
+        return Err("this machine is connecting to its hub again: ask again in a moment".into());
+    }
+    let me = link.membership().name.clone();
+    if link.view().directory.member(&me).is_some_and(|member| member.home.as_ref() == Some(caller)) {
+        Ok(())
+    } else {
+        Err(format!("this machine is no longer {caller}'s"))
+    }
 }
 
 /// The same of `machine`, this one or another of the network's: there,

@@ -194,8 +194,11 @@ pub(crate) mod linux {
                 let plain = !hub.is_empty() && hub.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_'));
                 // On that network still: one the hub ended this machine's
                 // place on — its name given to another since — is not it.
+                // Not to be told is no word that it did not end.
                 let place = here.world.net().join(hub);
-                let on = plain && fs::metadata(&place).is_ok_and(|found| found.is_dir()) && !place.join("ended.json").exists();
+                let on = plain
+                    && fs::metadata(&place).is_ok_and(|found| found.is_dir())
+                    && matches!(place.join("ended.json").try_exists(), Ok(false));
                 if !on {
                     bail!("this machine is not {meant} of the network meant (hub {hub}): nothing is done here");
                 }

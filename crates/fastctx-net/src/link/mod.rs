@@ -1433,7 +1433,7 @@ impl Inner {
         let frames = crate::question_parts::frames(id, question, submission, self.view().ledger_parts)?;
         let multipart = frames.len() > 1;
         let (answer, answered) = oneshot::channel();
-        self.asks.insert(id, connection.generation, answer, None);
+        self.asks.insert(id, connection.generation, answer, None, within > std::time::Duration::from_secs(60));
         struct Waiting<'a>(&'a Inner, u64, Option<outgoing::Outgoing>);
         impl Drop for Waiting<'_> {
             fn drop(&mut self) {

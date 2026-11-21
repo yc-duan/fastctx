@@ -372,6 +372,16 @@ impl Library {
                     return Ok(Taken::Forked);
                 }
             }
+            // Written in here already under another descriptor of that epoch
+            // — one this device opened as a refusal was settled, say — it is
+            // another history: not taken.
+            let written: Option<Vec<u8>> = db
+                .prepare_cached("SELECT descriptor FROM epochs WHERE stream = ?1 AND epoch = ?2")?
+                .query_row(params![stream, fact.epoch as i64], |row| row.get(0))
+                .optional()?;
+            if written.is_some_and(|written| EpochFact::decode(&written).ok().as_ref() != Some(&fact)) {
+                return Ok(Taken::Forked);
+            }
             match known_epoch(db, stream, fact.epoch)? {
                 Some(kept) if kept != fact => return Err(invalid("another descriptor for that epoch is here")),
                 Some(_) => {}
@@ -460,18 +470,29 @@ impl Library {
         })?)
     }
 
-    /// Whether the epoch `stream` of `scope` is written in here is one the
-    /// hub's signed word on is kept here: not merely some epoch of it.
-    pub fn epoch_in_force(&self, scope: &str, stream: &str) -> Result<bool> {
+    /// The epoch `stream` of `scope` is written in here, as the hub's signed
+    /// word on it kept here says it — not merely some epoch of it, and the
+    /// very descriptor it was written in under, where that is kept: none
+    /// where there is no such word.
+    pub fn epoch_in_force(&self, scope: &str, stream: &str) -> Result<Option<EpochFact>> {
         let (scope, stream) = (scope.to_string(), stream.to_string());
         Ok(self.database().read_now(move |db| {
-            let Some((scope_id, _, _)) = held(db, &scope)? else { return Ok(false) };
-            Ok(db
+            let Some((scope_id, _, _)) = held(db, &scope)? else { return Ok(None) };
+            let found: Option<(Vec<u8>, Option<Vec<u8>>)> = db
                 .prepare_cached(
-                    "SELECT EXISTS (SELECT 1 FROM streams s JOIN known_epochs k ON k.stream = s.id AND k.epoch = s.epoch
-                     WHERE s.scope = ?1 AND s.name = ?2)",
+                    "SELECT k.fact, e.descriptor FROM streams s
+                     JOIN known_epochs k ON k.stream = s.id AND k.epoch = s.epoch
+                     LEFT JOIN epochs e ON e.stream = s.id AND e.epoch = s.epoch
+                     WHERE s.scope = ?1 AND s.name = ?2",
                 )?
-                .query_row(params![scope_id, stream], |row| row.get::<_, bool>(0))?)
+                .query_row(params![scope_id, stream], |row| Ok((row.get(0)?, row.get(1)?)))
+                .optional()?;
+            let Some((known, written)) = found else { return Ok(None) };
+            let Ok(known) = EpochFact::decode(&known) else { return Ok(None) };
+            if written.is_some_and(|written| EpochFact::decode(&written).ok().as_ref() != Some(&known)) {
+                return Ok(None);
+            }
+            Ok(Some(known))
         })?)
     }
 

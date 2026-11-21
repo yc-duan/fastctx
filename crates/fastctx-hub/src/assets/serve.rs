@@ -1120,13 +1120,23 @@ pub(crate) fn ask_in(
                 }
             }
         }
-        Request::Stirred { scope, stream, next } => {
+        Request::Stirred { scope, stream, next, epoch } => {
             let kept = held(assets, directory, machine, &scope, &stream)?;
             let library = scopes::library(assets, &kept)?;
-            // Only the device that orders the stream says where it stands.
-            let last = library.last_epoch(&scope, &stream).map_err(|error| error.to_string())?;
-            if last.is_none_or(|(_, device)| &device != key.as_bytes()) {
+            // Only the device that orders the stream says where it stands, in
+            // the very epoch signed here last where it says which: written in
+            // there under another, it is begun again.
+            let last = library.last_epoch_bounds(&scope, &stream).map_err(|error| error.to_string())?;
+            let Some(last) = last.filter(|last| &last.key == key.as_bytes()) else {
                 return Err("only the device that orders the stream says it moved".into());
+            };
+            if let Some(said) = epoch
+                && (said.epoch != last.epoch || said.start != last.start || said.follows.0 != last.follows)
+            {
+                return Err(format!(
+                    "the stream is written in epoch {} from {} there, by another chain or epoch than the hub's last, epoch {} from {}",
+                    said.epoch, said.start, last.epoch, last.start
+                ));
             }
             // A machine says again where all it keeps stands as it starts:
             // those that hold the scope are told only of what moved on.
@@ -1135,7 +1145,7 @@ pub(crate) fn ask_in(
             }
             Ok(Reply::Noted)
         }
-        Request::Vouch { scope, stream, epoch, hashes } => {
+        Request::Vouch { scope, stream, epoch, hashes, read_ago, anew } => {
             // Through the hub, a conversation's streams are the hub's to keep.
             if assets.sync_version() < wire::VOUCH {
                 return Err("conversations come through this hub: nothing is vouched for".into());
@@ -1154,7 +1164,8 @@ pub(crate) fn ask_in(
             let library = scopes::library(assets, &kept)?;
             // Only the device ordering the stream, in its epoch now, vouches
             // for what its frames refer to: judged as it is kept.
-            let kept = library.vouch(&scope, &stream, epoch, key.as_bytes(), &hashes).map_err(|error| error.to_string())?;
+            let kept =
+                library.vouch(&scope, &stream, epoch, key.as_bytes(), &hashes, read_ago, anew).map_err(|error| error.to_string())?;
             let Some(kept) = kept else {
                 return Err("only the device ordering the stream, in its epoch now, vouches for its objects".into());
             };

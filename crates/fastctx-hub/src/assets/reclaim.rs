@@ -3,17 +3,20 @@
 //! (`fastctx_content::v2::Library::reclaim_vouched`; design cleanup v3, 1).
 //! A file named `SWITCH` in the hub's directory saying `count` has them
 //! counted, owner library by owner library, into `SWITCH.json`; saying
-//! `go`, let go a batch at a time. The file goes when a round is done, or
-//! is taken away — or written anew — to stop one; without it nothing is let
-//! go. Both are hidden files, which a move of the hub leaves behind; a batch
-//! is let go under the seal, as a grant commits, and as work the hub counts:
-//! sealed for a recovery, or stopping to move, nothing more goes.
+//! `go`, let go a batch at a time. A round done is kept as done in the
+//! report: the file is not gone by again until it is written anew. Taken
+//! away — or written anew — a round stops; without it nothing is let go.
+//! Both are hidden files, which a move of the hub leaves behind. A library
+//! is opened, and what of it is let go deleted, only as work the hub counts:
+//! stopping to move, nothing more goes; a batch is let go under the seal, as
+//! a grant commits: sealed for a recovery, nothing more goes.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::io;
+use std::sync::Arc;
 use std::time::Duration;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use super::Assets;
 
@@ -23,8 +26,8 @@ pub(crate) const SWITCH: &str = ".reclaim-vouched-objects";
 /// How many large objects one batch goes through.
 const BATCH: usize = 256;
 
-/// How many tombstones a round settles of each library before its batches.
-const SETTLED_A_ROUND: usize = 1024;
+/// How many tombstones are settled at a time.
+const SETTLED_A_TIME: usize = 1024;
 
 /// How long letting go waits between two batches: the library's writer is
 /// the hub's, and the hub's work goes first.
@@ -39,11 +42,14 @@ struct Report {
     /// The owner libraries gone through.
     owners: usize,
     done: bool,
+    /// The asking the round was of, once done: it is not gone by again.
+    finished: Option<Finished>,
     /// Let go, or that may be: how many, and their bytes.
     objects: u64,
     bytes: u64,
-    /// Of those let go, the bytes given back to the disk, and how many are
-    /// tombstones still, their bytes not deleted yet.
+    /// Of those let go, and of what earlier rounds let go, the bytes given
+    /// back to the disk, and how many are tombstones still, their bytes not
+    /// deleted yet.
     freed: u64,
     stuck: u64,
     /// Kept, by why: how many, and their bytes.
@@ -51,11 +57,35 @@ struct Report {
     failed: Vec<String>,
 }
 
+/// An asking a round went by to its end: what the file said, and when it was
+/// written, in nanoseconds.
+#[derive(Serialize, Deserialize, PartialEq, Clone)]
+struct Finished {
+    said: String,
+    written: Option<u128>,
+}
+
+/// What a report says was done, read back.
+#[derive(Deserialize)]
+struct Done {
+    #[serde(default)]
+    finished: Option<Finished>,
+}
+
 /// The operator's file as it was read: what it said, and when it was written.
 #[derive(PartialEq)]
 struct Asked {
     said: String,
     written: Option<std::time::SystemTime>,
+}
+
+impl Asked {
+    fn finished(&self) -> Finished {
+        Finished {
+            said: self.said.clone(),
+            written: self.written.and_then(|at| at.duration_since(std::time::UNIX_EPOCH).ok()).map(|since| since.as_nanos()),
+        }
+    }
 }
 
 fn asked(switch: &std::path::Path) -> io::Result<Option<Asked>> {
@@ -68,39 +98,43 @@ fn asked(switch: &std::path::Path) -> io::Result<Option<Asked>> {
     Ok(Some(Asked { said: String::from_utf8_lossy(&bytes).trim().to_string(), written }))
 }
 
+/// The asking the report beside the file says was gone by to its end.
+fn finished(report: &std::path::Path) -> Option<Finished> {
+    let bytes = fastctx_platform::disk::read(report).ok()?;
+    serde_json::from_slice::<Done>(&bytes).ok()?.finished
+}
+
 impl Assets {
-    /// One round of what the operator's file asks, where it is there: what it
-    /// came to, said, or nothing where the file is not. The devices that
-    /// vouched for an object count only where they may hold its conversation
-    /// in `directory` now. Each batch goes as work the hub counts while it
-    /// runs (`enter`, none once the hub stops taking anything). Call on a
-    /// thread that may block.
+    /// One round of what the operator's file asks, where it is there and was
+    /// not gone by to its end already: what it came to, said, or nothing.
+    /// The devices that vouched for an object count only where they may hold
+    /// its conversation in the hub's directory as it stands as each batch is
+    /// judged (`directory`, none once the hub is gone), and read it back
+    /// since they came to the network as they are now. Each library is
+    /// opened, and each batch goes, as work the hub counts while it runs
+    /// (`enter`, none once the hub stops taking anything). Call on a thread
+    /// that may block.
     pub(crate) fn reclaim_round(
         &self,
-        directory: &fastctx_net::directory_index::Indexed<'_>,
+        directory: &dyn Fn() -> Option<Arc<crate::store::Snapshot>>,
         enter: &dyn Fn() -> Option<crate::moving::Active>,
     ) -> io::Result<Option<String>> {
         let switch = self.root.join(SWITCH);
         let Some(first) = asked(&switch)? else { return Ok(None) };
         let path = self.root.join(format!("{SWITCH}.json"));
+        if finished(&path).as_ref() == Some(&first.finished()) {
+            return Ok(None);
+        }
         let mut report = Report { asked: first.said.clone(), began: Some(jiff::Timestamp::now()), ..Report::default() };
         let keep = |report: &mut Report| -> io::Result<()> {
             report.at = Some(jiff::Timestamp::now());
             let bytes = serde_json::to_vec_pretty(report).map_err(io::Error::other)?;
             fastctx_platform::publish(&path, &bytes, fastctx_platform::Permissions::Private)
         };
-        // Done, the file is taken away only where it is the one this round
-        // went by: one written anew meanwhile is the next round's.
         let finish = |report: &mut Report| -> io::Result<Option<String>> {
             report.done = true;
+            report.finished = Some(first.finished());
             keep(report)?;
-            if asked(&switch)?.as_ref() == Some(&first) {
-                match fastctx_platform::disk::remove_file(&switch) {
-                    Ok(()) => {}
-                    Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-                    Err(error) => return Err(error),
-                }
-            }
             Ok(Some(format!(
                 "vouched objects ({}): {} objects, {} bytes{}, {} bytes given back, {} not deleted yet{}",
                 report.asked,
@@ -131,23 +165,29 @@ impl Assets {
             return finish(&mut report);
         }
         keep(&mut report)?;
-        // Who may hold a scope now, as the directory says: asked once a round.
-        let mut judged: BTreeMap<(String, [u8; 32]), bool> = BTreeMap::new();
-        let mut may_hold = |voucher: &(String, [u8; 32])| -> bool {
-            if let Some(known) = judged.get(voucher) {
-                return *known;
+        // Taken away or written anew, the hub sealed or moving: stopped
+        // there, said so.
+        let stopped = |report: &mut Report, why: String| -> io::Result<Option<String>> {
+            report.failed.push(format!("stopped: {why}"));
+            keep(report)?;
+            Ok(Some(format!("vouched objects ({}): stopped: {why}", first.said)))
+        };
+        let go_on = || -> io::Result<Result<crate::moving::Active, String>> {
+            if asked(&switch)?.as_ref() != Some(&first) {
+                return Ok(Err("the file was taken away or written anew".into()));
             }
-            let (scope, key) = voucher;
-            let able = directory.all.members.iter().find(|member| member.key.as_bytes() == key).is_some_and(|member| {
-                super::scopes::scope(self, scope)
-                    .ok()
-                    .flatten()
-                    .is_some_and(|kept| super::scopes::readable(directory, &member.name, &kept))
-            });
-            judged.insert(voucher.clone(), able);
-            able
+            if let Some(why) = self.sealed() {
+                return Ok(Err(format!("the hub is sealed for a recovery: {why}")));
+            }
+            Ok(enter().ok_or_else(|| "the hub takes nothing now".to_string()))
         };
         for owner in self.owners.on_disk()? {
+            // Opened, and what earlier rounds could not finish deleting
+            // deleted, as work the hub counts.
+            let active = match go_on()? {
+                Ok(active) => active,
+                Err(why) => return stopped(&mut report, why),
+            };
             let library = match self.library(&owner) {
                 Ok(library) => library,
                 Err(error) => {
@@ -155,47 +195,71 @@ impl Assets {
                     continue;
                 }
             };
-            // What an earlier round could not finish deleting goes first.
             if apply {
-                match library.settle_tombstones(SETTLED_A_ROUND) {
-                    Ok((_, bytes, stuck)) => {
-                        report.freed += bytes;
-                        report.stuck += stuck;
+                let mut after = None;
+                loop {
+                    let seal = self.seal_held();
+                    if let Some(why) = seal.as_ref() {
+                        let why = format!("the hub is sealed for a recovery: {why}");
+                        drop(seal);
+                        return stopped(&mut report, why);
                     }
-                    Err(error) => report.failed.push(format!("{}: settling what was let go: {error}", owner.key())),
+                    match library.settle_tombstones(after, SETTLED_A_TIME) {
+                        Ok(settled) => {
+                            report.freed += settled.bytes;
+                            report.stuck += settled.stuck;
+                            after = settled.next;
+                        }
+                        Err(error) => {
+                            report.failed.push(format!("{}: settling what was let go: {error}", owner.key()));
+                            after = None;
+                        }
+                    }
+                    drop(seal);
+                    if after.is_none() {
+                        break;
+                    }
                 }
             }
+            drop(active);
             let mut after = None;
             loop {
-                // Taken away or written anew, the hub sealed or moving:
-                // stopped here.
-                let stop = if asked(&switch)?.as_ref() != Some(&first) {
-                    Some("the file was taken away or written anew".to_string())
-                } else {
-                    self.sealed().map(|why| format!("the hub is sealed for a recovery: {why}"))
+                let active = match go_on()? {
+                    Ok(active) => active,
+                    Err(why) => return stopped(&mut report, why),
                 };
-                let active = if stop.is_none() { enter() } else { None };
-                if stop.is_some() || active.is_none() {
-                    report.failed.push(format!("stopped: {}", stop.unwrap_or_else(|| "the hub takes nothing now".into())));
-                    keep(&mut report)?;
-                    return Ok(Some(format!("vouched objects ({}): stopped", first.said)));
-                }
-                let able: BTreeSet<(String, [u8; 32])> = match library.vouchers(after, BATCH) {
-                    Ok(vouchers) => vouchers.into_iter().filter(|voucher| may_hold(voucher)).collect(),
+                // Who may hold each scope, as the directory stands as this
+                // batch is judged, and since when each device is on the
+                // network as it is now.
+                let Some(now) = directory() else { return stopped(&mut report, "the hub is gone".into()) };
+                let able: fastctx_content::v2::Able = match library.vouchers(after, BATCH) {
+                    Ok(vouchers) => {
+                        let indexed = now.indexed();
+                        vouchers
+                            .into_iter()
+                            .filter_map(|voucher| {
+                                let (scope, key) = &voucher;
+                                let member = indexed.all.members.iter().find(|member| member.key.as_bytes() == key)?;
+                                let kept = super::scopes::scope(self, scope).ok().flatten()?;
+                                super::scopes::readable(&indexed, &member.name, &kept)
+                                    .then(|| (voucher.clone(), member.added.as_millisecond()))
+                            })
+                            .collect()
+                    }
                     Err(error) => {
                         report.failed.push(format!("{}: {error}", owner.key()));
                         break;
                     }
                 };
+                drop(now);
                 // Under the seal, as a grant commits: the hub seals for a
                 // recovery only once nothing of this batch is let go.
                 let batch = {
                     let seal = self.seal_held();
                     if let Some(why) = seal.as_ref() {
-                        report.failed.push(format!("stopped: the hub is sealed for a recovery: {why}"));
+                        let why = format!("the hub is sealed for a recovery: {why}");
                         drop(seal);
-                        keep(&mut report)?;
-                        return Ok(Some(format!("vouched objects ({}): stopped", first.said)));
+                        return stopped(&mut report, why);
                     }
                     library.reclaim_vouched(after, BATCH, fastctx_types::asset_peers::OBJECT_BYTES, apply, able)
                 };

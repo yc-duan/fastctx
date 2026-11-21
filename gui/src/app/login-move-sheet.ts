@@ -274,7 +274,7 @@ export class LoginMoveSheet {
           ${this.wantsSudo ? `<label class="field"><span class="field-label">${escape(words.sudoPassword)}</span><input name="sudo" type="password" autocomplete="off" value="${escape(this.secret.sudo)}"></label>` : ""}
           <label class="field"><span class="field-label">${escape(words.login)}</span><input name="login" class="mono" list="lm-logins" spellcheck="false" autocapitalize="off" value="${escape(this.typed.login)}"><datalist id="lm-logins">${logins}</datalist></label>
           <label class="field"><span class="field-label">${escape(words.target)}</span><input name="target" class="mono" spellcheck="false" autocapitalize="off" placeholder="/data/claude" value="${escape(this.typed.target)}"><span class="field-hint">${escape(words.targetHint)}</span></label>
-          <label class="field check-field" title="${escape(words.stopAgentsWhat)}"><input name="stopAgents" type="checkbox"${this.typed.stopAgents ? " checked" : ""}><span>${escape(words.stopAgents)}</span></label>
+          <label class="lm-stop"><input name="stopAgents" type="checkbox"${this.typed.stopAgents ? " checked" : ""}><span>${escape(words.stopAgents)}<span class="field-hint">${escape(words.stopAgentsWhat)}</span></span></label>
           ${note}<footer class="welcome-foot"><span class="login-ways"></span><button class="sheet-go" type="submit"${busy}>${escape(this.sheet.busy ? words.looking : words.next)}</button></footer>`;
         break;
       }

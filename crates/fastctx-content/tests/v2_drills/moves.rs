@@ -142,7 +142,7 @@ pub(crate) fn run() {
         fastctx_content::v2::Begun::InForce,
         "the epoch written in, as signed"
     );
-    assert!(b_lib.epoch_in_force("s", "t").unwrap(), "known by the hub's word");
+    assert!(b_lib.epoch_in_force("s", "t").unwrap().is_some(), "known by the hub's word");
     b_lib.accept_epoch("s", to_c_epoch, &Fake).unwrap();
     let stale = fastctx_content::v2::Signed { fact: descriptor.fact.clone(), signature: descriptor.signature.clone() };
     assert_eq!(b_lib.take_over("s", stale, &Fake).unwrap(), Taken::History, "handed on since: history alone");

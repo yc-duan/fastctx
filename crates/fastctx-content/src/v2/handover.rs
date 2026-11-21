@@ -449,6 +449,41 @@ impl Library {
             Ok(epoch_of(db, stream_id, last as u64)?.map(|epoch| (epoch.epoch, epoch.key)))
         })?)
     }
+
+    /// On a hub, the last epoch of `stream` of `scope` it signed.
+    pub fn last_epoch_bounds(&self, scope: &str, stream: &str) -> Result<Option<EpochBounds>> {
+        let (scope, stream) = (scope.to_string(), stream.to_string());
+        Ok(self.database().read_now(move |db| {
+            let Some((scope_id, _, _)) = held(db, &scope)? else { return Ok(None) };
+            let Some(stream_id) = db
+                .prepare_cached("SELECT id FROM streams WHERE scope = ?1 AND name = ?2")?
+                .query_row(params![scope_id, stream], |row| row.get::<_, i64>(0))
+                .optional()?
+            else {
+                return Ok(None);
+            };
+            let last: Option<i64> =
+                db.prepare_cached("SELECT MAX(epoch) FROM hub_epochs WHERE stream = ?1")?.query_row([stream_id], |row| row.get(0))?;
+            let Some(last) = last else { return Ok(None) };
+            Ok(epoch_of(db, stream_id, last as u64)?.map(|epoch| EpochBounds {
+                epoch: epoch.epoch,
+                key: epoch.key,
+                start: epoch.start,
+                follows: epoch.follows,
+            }))
+        })?)
+    }
+}
+
+/// An epoch a hub signed, as `Library::last_epoch_bounds` gives it: its
+/// number, the key of the device ordering it, where it begins, and the chain
+/// value its first frame follows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct EpochBounds {
+    pub epoch: u64,
+    pub key: [u8; 32],
+    pub start: u64,
+    pub follows: [u8; 32],
 }
 
 /// Hands `stream` over at `cutoff` in the transaction `db` is in, the checks

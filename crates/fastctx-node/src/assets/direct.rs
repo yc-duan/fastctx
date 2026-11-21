@@ -283,6 +283,30 @@ pub(super) async fn source(assets: &Assets, hub: &HubId, link: &Link, scope: &st
     (!assets.direct.is_left_alone(hub, &machine)).then_some(machine)
 }
 
+/// Where `stream` of `scope` is to be taken from now, as a pull judges
+/// whether it took all there is (`Source`).
+pub(super) enum Source {
+    /// No machine keeps it — the hub does, or the machine that ordered it
+    /// is no longer of the network: what the hub holds is all there is.
+    Hub,
+    From(MachineName),
+    /// The machine that keeps it is left alone now, or which one does could
+    /// not be told: it may stand further than the hub.
+    Away,
+}
+
+pub(super) async fn source_now(assets: &Assets, hub: &HubId, link: &Link, scope: &str, stream: &str) -> Source {
+    if !stays(link, scope, stream) {
+        return Source::Hub;
+    }
+    match orderer(assets, link, scope, stream).await {
+        Ok(None) => Source::Hub,
+        Ok(Some(machine)) if assets.direct.is_left_alone(hub, &machine) => Source::Away,
+        Ok(Some(machine)) => Source::From(machine),
+        Err(_) => Source::Away,
+    }
+}
+
 /// An account logged in here that may ask `to` of the conversations it
 /// reads there.
 fn speaker(link: &Link, to: &MachineName) -> Option<AccountName> {
@@ -751,18 +775,30 @@ pub(super) async fn announce(assets: &Assets, hub: &HubId, link: &Arc<Link>, key
         if assets.direct.told.lock().expect("told").get(&place).is_some_and(|said| *said >= next) {
             continue;
         }
-        let stirred = || Request::Stirred { scope: scope.to_string(), stream: stream.clone(), next };
-        // The epoch it is written in here, not merely some epoch of it, known
-        // by the hub's word: where it is not, it is begun there first.
-        let (scope_text, stream_text) = (scope.to_string(), stream.clone());
-        let known = blocking(&assets.library, move |library| library.epoch_in_force(&scope_text, &stream_text)).await?;
-        let mut said = match known {
-            true => ask(assets, link, stirred()).await,
-            false => Err("its epoch is not known here by the hub's word yet".to_string()),
+        // Said with the epoch it is written in here, not merely some epoch of
+        // it, as the hub's word on it kept here says it: the hub takes it
+        // only where that is its own last. Where it is not known here, or the
+        // hub takes it not, it is begun there first.
+        let in_force = || {
+            let (scope_text, stream_text) = (scope.to_string(), stream.clone());
+            blocking(&assets.library, move |library| library.epoch_in_force(&scope_text, &stream_text))
+        };
+        let stirred = |fact: EpochFact| Request::Stirred {
+            scope: scope.to_string(),
+            stream: stream.clone(),
+            next,
+            epoch: Some(wire::StirredIn { epoch: fact.epoch, start: fact.start, follows: wire::Bytes::from(fact.follows) }),
+        };
+        let mut said = match in_force().await? {
+            Some(fact) => ask(assets, link, stirred(fact)).await,
+            None => Err("its epoch is not known here by the hub's word yet".to_string()),
         };
         if said.as_ref().is_err_and(|why| !why.starts_with(REVOKED)) {
             said = match begin(assets, hub, link, key, scope, &stream).await {
-                Ok(()) => ask(assets, link, stirred()).await,
+                Ok(()) => match in_force().await? {
+                    Some(fact) => ask(assets, link, stirred(fact)).await,
+                    None => Err("its epoch is not known here by the hub's word after it was begun".to_string()),
+                },
                 Err(why) => Err(why),
             };
         }
