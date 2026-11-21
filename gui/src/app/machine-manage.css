@@ -177,3 +177,44 @@
   font-size: var(--size-text);
   overflow-wrap: anywhere;
 }
+
+/* Moving a login directory over SSH (`login-move-sheet.ts`): stopping the
+   agents still at work in it, a box and its words with what it does under
+   them; and what the server's command writes, as it comes, wrapped within
+   the sheet and scrolled once long. */
+.lm-stop {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+  font-size: var(--size-text);
+  line-height: var(--leading-ui);
+  color: var(--text);
+}
+
+.lm-stop input {
+  flex: none;
+  margin: 4px 0 0;
+}
+
+.lm-stop .field-hint {
+  display: block;
+  margin-top: 2px;
+}
+
+.lm-output {
+  max-height: 18em;
+  min-height: 3em;
+  overflow: auto;
+  margin: 0;
+  padding: var(--space-3);
+  border-radius: var(--radius-m);
+  background: var(--field);
+  color: var(--text-2);
+  font-family: var(--font-code);
+  font-variation-settings: var(--code-axes);
+  font-size: var(--size-code);
+  line-height: var(--leading-ui);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

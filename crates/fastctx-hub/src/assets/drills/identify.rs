@@ -130,7 +130,7 @@ fn found_out_only_by_receipts() {
     store.save_book().unwrap();
     let conv = format!("c/{}/m1/conv-1", assets.id);
     let readers = Readers::Conversation { openers: vec![root.clone()], born_on: Some(m1.clone()) };
-    let describe = Request::Describe { scope: conv.clone(), readers, classes: fastctx_types::assets::conversation_classes() };
+    let describe = Request::Describe { scope: conv.clone(), readers, classes: fastctx_types::assets::conversation_classes(), born: Default::default(), begun: None };
     let Reply::Described { descriptor } = ask(&store, &assets, describe).unwrap() else { panic!("described") };
 
     // The producer, m1: frame 0 taken and checkpointed.

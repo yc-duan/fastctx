@@ -87,6 +87,10 @@ struct State<T> {
     bytes: usize,
     receiver: bool,
     lagged: bool,
+    /// The senders have nothing more to send (`Sender::finish`): the
+    /// receiver takes what is queued, then hears the queue end, however many
+    /// senders are still held.
+    finished: bool,
 }
 struct Entry<T> {
     value: T,
@@ -114,6 +118,7 @@ pub fn channel<T>(
             bytes: 0,
             receiver: true,
             lagged: false,
+            finished: false,
         }),
         next: Notify::new(),
         space: Notify::new(),
@@ -155,6 +160,11 @@ impl<T> Sender<T> {
         if !state.receiver {
             return Err(Lagged);
         }
+        // Ended: nothing more is queued, and nothing is lost the receiver
+        // was to hear.
+        if state.finished {
+            return Ok(());
+        }
         if let Some(previous) = key.as_ref().and_then(|key| state.keys.remove(key))
             && let Some(entry) = state.entries.remove(&previous)
         {
@@ -192,7 +202,7 @@ impl<T> Sender<T> {
     pub fn try_send_measured(&self, value: T, size: usize, key: Option<String>) -> Result<(), TrySendError<T>> {
         let size = size.saturating_add(256).saturating_add(key.as_ref().map_or(0, String::len));
         let mut state = self.0.state.lock().expect("never poisoned");
-        if !state.receiver {
+        if !state.receiver || state.finished {
             return Err(TrySendError::Closed(value));
         }
         let Some(old_bytes) = self.fits(&state, size, key.as_deref()) else {
@@ -332,6 +342,12 @@ impl<T> Sender<T> {
     pub fn is_closed(&self) -> bool {
         !self.0.state.lock().expect("never poisoned").receiver
     }
+    /// Ends the queue for every sender of it: the receiver takes what is
+    /// queued and then hears it end, as when the last sender goes.
+    pub fn finish(&self) {
+        self.0.state.lock().expect("never poisoned").finished = true;
+        self.0.next.notify_one();
+    }
     pub fn same_channel(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.0, &other.0)
     }
@@ -362,7 +378,7 @@ impl<T> Receiver<T> {
             self.0.space.notify_waiters();
             return Ok(entry.value);
         }
-        if !state.receiver || self.0.senders.load(Ordering::Acquire) == 0 {
+        if !state.receiver || state.finished || self.0.senders.load(Ordering::Acquire) == 0 {
             Err(TryRecvError::Disconnected)
         } else {
             Err(TryRecvError::Empty)
@@ -394,5 +410,25 @@ impl<T> Drop for Receiver<T> {
         drop(state);
         self.0.space.notify_waiters();
         self.0.closed.notify_waiters();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_finished_queue_ends_though_senders_are_held() {
+        let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().expect("a runtime");
+        runtime.block_on(async {
+            let (sender, mut receiver) = channel(16, 1 << 20, 1 << 20, Budget::new(1 << 20), |_: &u32| (8, None));
+            let held = sender.clone();
+            sender.send(1).expect("queued");
+            held.finish();
+            assert_eq!(receiver.recv().await.ok(), Some(Some(1)), "what was queued is taken first");
+            assert_eq!(receiver.recv().await.ok(), Some(None), "then the queue ends");
+            assert!(sender.send(2).is_ok(), "a send after the end is let go");
+            assert_eq!(receiver.recv().await.ok(), Some(None));
+        });
     }
 }

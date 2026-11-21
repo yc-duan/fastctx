@@ -45,6 +45,21 @@ impl Beside {
         self.by_call.iter().map(|(call, meta)| (meta.id.as_str(), call.as_str()))
     }
 
+    /// What the file of the agent the call `call` started tells, as a seam
+    /// keeps it (`follow::Seam::told`): the agent, the call, and a digest of
+    /// what the file says of the agent, so that a file that comes to say
+    /// otherwise of an agent told of before is found. The agent and call
+    /// alone for a call no file names.
+    pub fn told_of(&self, call: &str) -> String {
+        match self.by_call.get(call) {
+            Some(meta) => {
+                let said = format!("{:?}\u{1f}{:?}\u{1f}{}", meta.kind, meta.task, meta.background);
+                format!("{}@{call}#{:016x}", meta.id, xxhash_rust::xxh3::xxh3_64(said.as_bytes()))
+            }
+            None => format!("@{call}"),
+        }
+    }
+
     /// The meta files' sizes and times, which change as agents start.
     pub fn len(&self) -> usize {
         self.by_call.len()

@@ -29,6 +29,24 @@ pub(crate) fn same_dir(a: &Path, b: &Path) -> bool {
     }
 }
 
+/// Whether two directories are the same home as found on disk now, not as
+/// last resolved: for a judgment that closes something on the answer.
+pub(crate) fn same_dir_now(a: &Path, b: &Path) -> bool {
+    if normal(a) == normal(b) {
+        return true;
+    }
+    // Resolved here and compared as found, what was found kept for others.
+    let found = |path: &Path| {
+        let found = fastctx_platform::disk::canonicalize(path).ok();
+        RESOLVED.lock().expect("never poisoned").insert(path.to_path_buf(), (found.clone(), std::time::Instant::now()));
+        found
+    };
+    match (found(a), found(b)) {
+        (Some(a), Some(b)) => normal(&a) == normal(&b),
+        _ => false,
+    }
+}
+
 /// The directories a home's path was last resolved to on disk. Homes are
 /// few and seldom moved, and comparing them is asked for with every turn
 /// and under the hosts' locks: each path is resolved once in a while, not

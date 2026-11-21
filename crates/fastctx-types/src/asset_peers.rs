@@ -16,6 +16,12 @@ use serde::{Deserialize, Serialize};
 /// The most scopes one `Ask::Heads` names, and one permit grants.
 pub const SCOPES: usize = 256;
 
+/// The longest object a machine takes whole from the machine that keeps a
+/// conversation's frames, held in memory until it is seen to be the object;
+/// a longer one is asked of the hub, or read where the conversation lives
+/// as it is opened. A hub keeps its copy of a longer one (`assets::VOUCH`).
+pub const OBJECT_BYTES: u64 = 64 << 20;
+
 /// The hub's word that a device holds scopes (`crate::assets::Reply::Permits`).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Permit {

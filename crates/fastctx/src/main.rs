@@ -16,7 +16,9 @@ mod claude_session_directory;
 mod claude_subagents;
 mod command_guard;
 mod copy;
+mod compact;
 mod data;
+mod move_login;
 mod doctor;
 mod first_program;
 mod host_change;
@@ -362,6 +364,9 @@ enum Command {
     /// What fastctx keeps on this machine, conversation by conversation,
     /// and deleting it; how long command output is kept.
     Data(data::DataArgs),
+    /// Move a login's directory — Claude Code's or Codex's — to another
+    /// disk, leaving a link where it was. The node stops while it moves.
+    MoveLogin(move_login::MoveLoginArgs),
     /// Bring this machine's World program up to the newest release on its
     /// channel, from GitHub or through the network; set how it updates.
     Update(self_update::UpdateArgs),
@@ -450,6 +455,7 @@ fn main() -> ExitCode {
             | Command::Node { .. }
             | Command::Renew(_)
             | Command::Service(_)
+            | Command::MoveLogin(_)
             | Command::Server(_)
             | Command::Hub(world::HubCommand::Serve { .. })
             | Command::Mcp(_)
@@ -584,6 +590,7 @@ fn main() -> ExitCode {
         Command::Token(command) => world::token(command),
         Command::Accounts => world::accounts(),
         Command::Data(args) => data::run(args),
+        Command::MoveLogin(args) => move_login::run(args),
         Command::Update(args) => self_update::run(args),
         Command::Share(args) => world::share(args),
         Command::Assist(args) => world::assist(args),
@@ -616,9 +623,10 @@ fn print_licenses() -> ExitCode {
 
 /// The commands a person runs on a machine: its node, joining and managing
 /// the World, talking to residents, the TUI.
-const PEOPLE_ONLY: [&str; 26] = [
+const PEOPLE_ONLY: [&str; 27] = [
     "ui",
     "data",
+    "move-login",
     "node",
     "renew",
     "service",

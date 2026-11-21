@@ -6,6 +6,7 @@
 
 pub use super::follow::{Keeping, Restart, Seam, Tail, Timing};
 pub use super::server::AppServer;
+pub use tokio_tungstenite::tungstenite;
 use super::server::Inbound;
 use jiff::Timestamp;
 use std::ffi::OsString;
@@ -45,4 +46,14 @@ pub async fn tail(
 /// (`held_history::version`): read without its turns.
 pub async fn read(server: &AppServer, thread: &str) -> Result<serde_json::Value, String> {
     server.ask("thread/read", serde_json::json!({"threadId": thread, "includeTurns": false})).await.map_err(|error| error.to_string())
+}
+
+/// Reads a judge window while the named turn is running.
+pub async fn tail_running(server: &AppServer, thread: &str, running: Option<&str>, seam: &Seam) -> Result<Result<Tail, Restart>, String> {
+    super::follow::tail(server, thread, running, None, seam, &|_| true, None).await
+}
+
+/// Reads the durable suffix after an in-memory judge boundary.
+pub async fn onward(server: &AppServer, thread: &str, running: Option<&str>, through: &super::follow::onward::Through) -> Result<Result<super::follow::onward::Delta, &'static str>, String> {
+    super::follow::onward::read(server, thread, running, None, through).await
 }

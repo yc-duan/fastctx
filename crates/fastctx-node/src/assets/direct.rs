@@ -84,6 +84,9 @@ struct Stall {
     times: u32,
 }
 
+/// Where a stream stood as the hub was told, and in which epoch.
+type Stood = (u64, u64);
+
 /// What this machine keeps of taking from, and giving to, other machines.
 pub(crate) struct Direct {
     /// The hub's word that this machine holds a scope, by hub and scope.
@@ -94,8 +97,9 @@ pub(crate) struct Direct {
     lines: Mutex<HashMap<(HubId, MachineName), Vec<Line>>>,
     /// How far each hub's clock is ahead of this machine's, in milliseconds.
     clocks: Mutex<HashMap<HubId, i64>>,
-    /// Where each stream kept here stood as the hub was last told.
-    told: Mutex<HashMap<(HubId, String, String), u64>>,
+    /// Where each stream kept here stood as the hub was last told, and in
+    /// which epoch.
+    told: Mutex<HashMap<(HubId, String, String), Stood>>,
     /// Where streams held here were said to stand on the machines that keep
     /// them, each with when it was last said to stand further: what a scope
     /// is gone through again for until its streams are there.
@@ -281,6 +285,41 @@ async fn keeper(assets: &Assets, link: &Link, scope: &str, stream: &str) -> Opti
 pub(super) async fn source(assets: &Assets, hub: &HubId, link: &Link, scope: &str, stream: &str) -> Option<MachineName> {
     let machine = keeper(assets, link, scope, stream).await?;
     (!assets.direct.is_left_alone(hub, &machine)).then_some(machine)
+}
+
+/// Where `stream` of `scope` is to be taken from now, as a pull judges
+/// whether it took all there is (`Source`).
+pub(super) enum Source {
+    /// No machine keeps it — the hub does, or the machine that ordered it
+    /// is no longer of the network: what the hub holds is all there is.
+    Hub,
+    From(MachineName),
+    /// The machine that keeps it is left alone now, or which one does could
+    /// not be told: it may stand further than the hub.
+    Away,
+}
+
+pub(super) async fn source_now(assets: &Assets, hub: &HubId, link: &Link, scope: &str, stream: &str) -> Source {
+    if !stays(link, scope, stream) {
+        return Source::Hub;
+    }
+    let (scope_text, stream_text) = (scope.to_string(), stream.to_string());
+    let device = match blocking(&assets.library, move |library| library.orderer(&scope_text, &stream_text)).await {
+        Ok(Some(device)) => device,
+        Ok(None) => return Source::Hub,
+        Err(_) => return Source::Away,
+    };
+    if device == assets.device() {
+        return Source::Hub;
+    }
+    match link.view().by_key(&PublicKey::from_bytes(device)).map(|member| member.name.clone()) {
+        Some(machine) if assets.direct.is_left_alone(hub, &machine) => Source::Away,
+        Some(machine) => Source::From(machine),
+        // Not of the roster as last given: gone from the network where that
+        // roster is current, not known yet where it is not.
+        None if link.view_current() => Source::Hub,
+        None => Source::Away,
+    }
 }
 
 /// An account logged in here that may ask `to` of the conversations it
@@ -703,39 +742,25 @@ async fn begin(assets: &Assets, hub: &HubId, link: &Arc<Link>, key: &PublicKey, 
         return Err("the hub began another stream than the one asked for".into());
     }
     let signed = Signed { fact: descriptor.fact.0, signature: descriptor.word.0 };
-    let (scope_text, stream_text, device) = (scope.to_string(), stream.to_string(), assets.device());
+    let scope_text = scope.to_string();
     let (epoch, start) = (fact.epoch, fact.start);
     // The epoch this machine writes the stream in is the one the hub has it
-    // ordering in: its word is kept here. Another descriptor of the epoch
-    // kept already — the hub put back, and signing it anew — leaves the one
-    // kept. A later epoch of this machine's — handed to it, or what it
-    // kept set back to before it — is opened here as a takeover opens it
-    // (`session::succession`), and only where the stream ends here exactly
-    // where that epoch begins: what stands short of it, or goes past it in
-    // the epoch before, is not this machine's to go on from, and the hub is
-    // told nothing of the stream until that is put right.
-    let (known, opened, stands) = blocking(&assets.library, move |library| {
-        let own = library.releasable(&scope_text, &device)?.into_iter().find(|own| own.stream == stream_text);
-        let (here, next) = own.map_or((0, 0), |own| (own.epoch, own.next));
-        let mut opened = false;
-        if epoch > here {
-            if next == start {
-                opened = library.take_over(&scope_text, signed, &Trusted).is_ok_and(|taken| taken == fastctx_content::v2::Taken::Opened);
-            }
-        } else {
-            let _ = library.accept_epoch(&scope_text, signed, &Trusted);
+    // ordering in, under the very descriptor the hub signed; a later epoch
+    // of this machine's — handed to it, or what it kept set back to before
+    // it — is opened here only where the stream stands exactly where that
+    // epoch begins, chained to what it follows: what stands short of it,
+    // goes past it, or came to it by another chain is not this machine's to
+    // go on from, and the hub is told nothing of the stream until that is
+    // put right. Looked at and opened in one transaction (`begin_epoch`).
+    let begun = blocking(&assets.library, move |library| library.begin_epoch(&scope_text, signed, &Trusted)).await?;
+    match begun {
+        fastctx_content::v2::Begun::InForce => Ok(()),
+        fastctx_content::v2::Begun::Opened => {
+            assets.taken_over.lock().expect("taken over").push(scope.to_string());
+            Ok(())
         }
-        Ok((library.known_last_epoch(&scope_text, &stream_text)?, opened, (here, next)))
-    })
-    .await?;
-    if opened {
-        assets.taken_over.lock().expect("taken over").push(scope.to_string());
-    }
-    match known {
-        Some(known) if known >= epoch => Ok(()),
-        _ => Err(format!(
-            "the hub has this machine ordering it in epoch {epoch}, from {start}; here it is written in epoch {} and stands at {}: the hub's word on it is not kept here",
-            stands.0, stands.1
+        fastctx_content::v2::Begun::Refused(why) => Err(format!(
+            "the hub has this machine ordering it in epoch {epoch}, from {start}, but {why}: the hub's word on it is not taken here"
         )),
     }
 }
@@ -762,25 +787,45 @@ pub(super) async fn announce(assets: &Assets, hub: &HubId, link: &Arc<Link>, key
             continue;
         }
         let place = (hub.clone(), scope.to_string(), stream.clone());
-        if assets.direct.told.lock().expect("told").get(&place).is_some_and(|said| *said >= next) {
+        // Said with the epoch it is written in here, not merely some epoch of
+        // it, as the hub's word on it kept here says it: the hub takes it
+        // only where that is its own last. Where it is not known here, or the
+        // hub takes it not, it is begun there first. Told already as far in
+        // that very epoch, it is not told again.
+        let in_force = || {
+            let (scope_text, stream_text) = (scope.to_string(), stream.clone());
+            blocking(&assets.library, move |library| library.epoch_in_force(&scope_text, &stream_text))
+        };
+        let epoch_now = in_force().await?.map(|fact| fact.epoch);
+        if let Some(epoch) = epoch_now
+            && assets.direct.told.lock().expect("told").get(&place).is_some_and(|(said, in_epoch)| *said >= next && *in_epoch == epoch)
+        {
             continue;
         }
-        let stirred = || Request::Stirred { scope: scope.to_string(), stream: stream.clone(), next };
-        let (scope_text, stream_text) = (scope.to_string(), stream.clone());
-        let known = blocking(&assets.library, move |library| library.known_last_epoch(&scope_text, &stream_text)).await?.is_some();
-        let mut said = match known {
-            true => ask(assets, link, stirred()).await,
-            false => Err("its epoch is not known here by the hub's word yet".to_string()),
+        let stirred = |fact: EpochFact| Request::Stirred {
+            scope: scope.to_string(),
+            stream: stream.clone(),
+            next,
+            epoch: Some(wire::StirredIn { epoch: fact.epoch, start: fact.start, follows: wire::Bytes::from(fact.follows) }),
+        };
+        let mut said = match in_force().await? {
+            Some(fact) => ask(assets, link, stirred(fact)).await,
+            None => Err("its epoch is not known here by the hub's word yet".to_string()),
         };
         if said.as_ref().is_err_and(|why| !why.starts_with(REVOKED)) {
             said = match begin(assets, hub, link, key, scope, &stream).await {
-                Ok(()) => ask(assets, link, stirred()).await,
+                Ok(()) => match in_force().await? {
+                    Some(fact) => ask(assets, link, stirred(fact)).await,
+                    None => Err("its epoch is not known here by the hub's word after it was begun".to_string()),
+                },
                 Err(why) => Err(why),
             };
         }
         match said {
             Ok(Reply::Noted) => {
-                assets.direct.told.lock().expect("told").insert(place, next);
+                if let Some(epoch) = in_force().await?.map(|fact| fact.epoch) {
+                    assets.direct.told.lock().expect("told").insert(place, (next, epoch));
+                }
             }
             Ok(_) => {
                 failed.get_or_insert(format!("{stream}: the hub did not note where it stands"));

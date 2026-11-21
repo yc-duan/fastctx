@@ -77,7 +77,7 @@ pub(super) fn proposed(node: &Node, hub: &HubId, readers: Readers, name: &str) -
     let Some(network) = crate::assets::membership::network(node, hub) else { return Ok(None) };
     // Proposed with its kind's classes, as the hub describes it (AS09).
     let classes = fastctx_types::assets::classes_for(&readers, &key);
-    let proposal = Proposal { hub: hub.to_string(), readers, classes };
+    let proposal = Proposal { hub: hub.to_string(), readers, classes, born: None };
     let proposal = serde_json::to_vec(&proposal).map_err(|error| error.to_string())?;
     library.propose_on(&network, &key, proposal).map_err(error)?;
     Ok(None)

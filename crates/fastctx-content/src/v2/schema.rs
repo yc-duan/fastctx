@@ -642,4 +642,14 @@ CREATE TABLE IF NOT EXISTS intents (
     body BLOB NOT NULL,
     done BLOB NOT NULL
 ) WITHOUT ROWID;
+-- What the device ordering a conversation's stream vouched it holds of
+-- the objects the stream's frames refer to, in which epoch, under which key.
+CREATE TABLE IF NOT EXISTS vouched (
+    stream INTEGER NOT NULL,
+    hash BLOB NOT NULL,
+    epoch INTEGER NOT NULL,
+    key BLOB NOT NULL,
+    at INTEGER NOT NULL,
+    PRIMARY KEY (stream, hash)
+) WITHOUT ROWID;
 ";

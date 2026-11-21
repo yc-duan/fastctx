@@ -83,6 +83,8 @@ fn a_scope_goes_with_its_conversation() {
         scope: key.into(),
         readers: Readers::Conversation { openers: vec![opener.clone()], born_on: Some(born.clone()) },
         classes: classes.clone(),
+        born: Default::default(),
+        begun: None,
     };
     let Reply::Described { descriptor } = ask(&assets, &store, &m1, &k1, describe(&conv1, &root, &m1)).unwrap() else { panic!("described") };
     assert!(matches!(ask(&assets, &store, &m2, &k2, describe(&conv2, &bob, &m2)).unwrap(), Reply::Described { .. }));

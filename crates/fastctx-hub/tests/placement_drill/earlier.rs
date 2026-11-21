@@ -142,9 +142,20 @@ async fn project(base: &Path, world: &World, old: &Path) -> Result<TownName> {
         json!(null),
     );
 
-    let edited = command(old, &old.join("bin/fastctx"))
+    // An earlier machine edits once a try: a ledger entry come before its
+    // objects fails that try, and its user tries again — as this does.
+    let mut edited = command(old, &old.join("bin/fastctx"))
         .args(["project", "edit", town.as_str(), "--what", "EARLIER_EDIT"])
         .output()?;
+    for _ in 0..5 {
+        if edited.status.success() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        edited = command(old, &old.join("bin/fastctx"))
+            .args(["project", "edit", town.as_str(), "--what", "EARLIER_EDIT"])
+            .output()?;
+    }
     let said = format!("{}{}", String::from_utf8_lossy(&edited.stdout), String::from_utf8_lossy(&edited.stderr));
     let alice = base.join("alice-pc");
     record(

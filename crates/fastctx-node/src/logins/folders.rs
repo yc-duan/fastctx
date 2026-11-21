@@ -215,6 +215,11 @@ fn run(node: &Arc<Node>, dir: &Path, key: &str, searching: &Arc<Searching>) -> R
         for agent in AGENTS {
             for (login, _) in super::dirs(node, &context, &known, agent).map_err(|failure| failure.message)? {
                 skip.insert(walk::key(&login));
+                // Nor where it really is: a login moved to another disk is a
+                // link to it, and is not found there again as another.
+                if let Ok(real) = fastctx_platform::disk::canonicalize(&login) {
+                    skip.insert(walk::key(&real));
+                }
             }
         }
         // Nor is any place a filesystem is mounted inside the folder: one

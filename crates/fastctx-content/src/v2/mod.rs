@@ -59,16 +59,18 @@ mod timeline;
 mod transfers;
 mod unaccepted;
 mod view;
+mod vouch;
 mod window;
 
 pub use checkpoints::HeldItem;
 pub use collect::{Collected, Started};
 pub use commit::{Commit, Committed};
-pub use copies::HeldScope;
+pub use copies::{CopySize, Dropped, HeldScope};
+pub use vouch::{Able, Marked, Reclaimed, Settled, VOUCHED_FOR, Voucher, Vouchable, VouchableObject};
 pub use exchange::{Holder, Imported, RawFrame, Verifier};
 pub use frame::{FORMAT, Header, KindRecord, Signer, open};
 pub use facts::{EpochFact, EpochKind, GapFact};
-pub use handover::{Cutoff, Signed, Successor};
+pub use handover::{Cutoff, EpochBounds, Signed, Successor};
 pub use heads::Head;
 pub use kind::{Actor, Deletion, Holding, Import, Kind, Kinds, Write, Writer};
 pub use timeline::{EVENT, OVERSIZED, Timeline};
@@ -102,7 +104,7 @@ pub use backfill::{Backfill, Backfilled};
 pub use snapshot::{Covered, Installed, OLDER_BYTES, Older, OlderTaken, WINDOW_BYTES, WINDOW_ITEMS, Window};
 pub use view::{ViewChange, ViewChanges, ViewPage, view_sequence};
 pub use standing::{Fed, StreamBytes, Totals, running_logs};
-pub use moves::{Authority, KeyCheck, Moved, Releasable, Release, Taken};
+pub use moves::{Authority, Begun, KeyCheck, Moved, Releasable, Release, Taken};
 pub use networks::{Listing, Network};
 pub use scopes::Purged;
 pub use succession::{ENDS_AT_ONCE, HubVerifier, Standing};
@@ -120,6 +122,19 @@ pub const FILE: &str = "assets.sqlite3";
 pub const BYTES_FILE: &str = "asset-bytes.sqlite3";
 /// The objects that are files, each `<hh>/<hex>.<life>`.
 pub const OBJECTS_DIRECTORY: &str = "asset-objects";
+
+/// Compacts the databases of the library in `directory`, none of them open
+/// in any process: each by its file's name with what it came to, up to the
+/// first that failed.
+pub fn compact(directory: &Path) -> fastctx_storage::Result<Vec<(&'static str, fastctx_storage::Compacted)>> {
+    [FILE, BYTES_FILE]
+        .into_iter()
+        .map(|name| match fastctx_storage::compact(&directory.join(name)) {
+            Ok(compacted) => Ok((name, compacted)),
+            Err(error) => Err(fastctx_storage::Error::with_kind(error.kind(), format!("{name}: {error}"))),
+        })
+        .collect()
+}
 
 /// One machine's asset library. Cloning it shares the library.
 #[derive(Clone)]

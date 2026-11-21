@@ -18,7 +18,7 @@ use std::path::PathBuf;
 
 const USAGE: &str = "usage: fastctx-bench <row|storage> --dir <scratch directory> [--small]
 rows: first-screen hub-frames replica-catch-up object-loop durable-word durable-attachment commit-to-readable
-follower rows: advance-small advance-large first-import large-value codex-advance codex-relist codex-kept-same codex-relist-held claude-relist claude-relist-large claude-place claude-place-large claude-place-stopped claude-follow claude-follow-window claude-follow-world claude-world-alone
+follower rows: advance-small advance-large first-import large-value codex-advance codex-relist codex-kept-same codex-relist-held claude-relist claude-relist-large claude-place claude-place-large claude-place-stopped claude-follow claude-follow-window claude-follow-on claude-follow-world claude-world-alone
 diagnostic rows: replica-catch-up-parts first-screen-cold (Linux, as root)";
 
 fn main() {

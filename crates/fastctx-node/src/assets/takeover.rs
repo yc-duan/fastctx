@@ -275,10 +275,9 @@ async fn take_over(assets: &Assets, hub: &HubId, link: &Arc<Link>, key: &PublicK
             let scope_text = scope.to_string();
             let taken = blocking(library, move |library| library.take_over(&scope_text, signed, &super::session::Trusted)).await?;
             drop(leases);
-            match taken {
-                Taken::Opened => Ok(true),
-                Taken::History => Ok(false),
-                Taken::Behind => Err(format!("{stream} of {scope} here ends before the epoch handed over begins: it catches up first")),
+            match not_taken(scope, stream, taken) {
+                Some(why) => Err(why),
+                None => Ok(taken == Taken::Opened),
             }
         }
         Reply::HandedOn { epochs } => {
@@ -291,10 +290,14 @@ async fn take_over(assets: &Assets, hub: &HubId, link: &Arc<Link>, key: &PublicK
                 }
                 let scope_text = scope.to_string();
                 // Handed back to this device since: its own last epoch is
-                // opened as a takeover opens it (AQ01).
+                // opened as a takeover opens it (AQ01); not opened, the
+                // takeover is asked again, said why.
                 if index == last && EpochFact::decode(&signed.fact).is_ok_and(|fact| fact.device == device) {
-                    opened |= blocking(library, move |library| library.take_over(&scope_text, signed, &super::session::Trusted)).await?
-                        == Taken::Opened;
+                    let taken = blocking(library, move |library| library.take_over(&scope_text, signed, &super::session::Trusted)).await?;
+                    if let Some(why) = not_taken(scope, stream, taken) {
+                        return Err(why);
+                    }
+                    opened |= taken == Taken::Opened;
                     continue;
                 }
                 blocking(library, move |library| library.accept_epoch(&scope_text, signed, &super::session::Trusted)).await?;
@@ -302,6 +305,20 @@ async fn take_over(assets: &Assets, hub: &HubId, link: &Arc<Link>, key: &PublicK
             Ok(opened)
         }
         _ => Err("the hub did not hand the stream over".into()),
+    }
+}
+
+/// Why an epoch of `stream` of `scope` handed over to this device was not
+/// opened here, taking it having come to `taken`: none where it was opened,
+/// or is history here.
+pub(super) fn not_taken(scope: &str, stream: &str, taken: Taken) -> Option<String> {
+    match taken {
+        Taken::Opened | Taken::History => None,
+        Taken::Behind => Some(format!("{stream} of {scope} here ends before the epoch handed over begins: it catches up first")),
+        Taken::Ahead => Some(format!("{stream} of {scope} here goes on past where the epoch handed over begins: it is not opened")),
+        Taken::Forked => Some(format!(
+            "{stream} of {scope} here is written by another history than the epoch handed over follows: it is not opened"
+        )),
     }
 }
 

@@ -863,6 +863,27 @@ impl CodexHost {
         }
     }
 
+    /// What the thread's running turn shows past a place inside it that a
+    /// reading from its seam read it through (`follow::onward::Through`):
+    /// only the entries listed after that place. Why not, where what lies
+    /// there cannot be shown alone — the turn ended, words steered into it,
+    /// an entry not done, the place gone — or the turn it runs changed as it
+    /// was read.
+    pub async fn read_onward(
+        self: &Arc<Self>,
+        thread: &str,
+        owner: &fastctx_types::Address,
+        through: &follow::onward::Through,
+    ) -> Result<Result<follow::onward::Delta, &'static str>, String> {
+        let server = self.server().await?;
+        let running = self.running_turn(thread);
+        let answer = follow::onward::read(&server, thread, running.as_deref(), Some(owner), through).await?;
+        if self.running_turn(thread) != running {
+            return Ok(Err("the running turn changed during the read"));
+        }
+        Ok(answer)
+    }
+
     /// What the thread is like now, as Codex says without reading its turns:
     /// it changes whenever the thread does, so equal stamps mean its history
     /// is as it was. A turn this host runs in it is part of it.

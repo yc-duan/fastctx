@@ -18,7 +18,11 @@ import { msOf, reducedMotion } from "../motion";
 /** What is carried: the parts of a conversation's page that stand where the
  *  room around them puts them, and the side's sheet. A column the page
  *  scrolls is carried across only: what its lines set again moves it up or
- *  down, which the scroll keeps where the reader was. */
+ *  down, which the scroll keeps where the reader was. It is carried by
+ *  where its words begin, inside its margin: the margin is narrower beside
+ *  the side (`side.css`), and carried by its own edge the words leapt by
+ *  what the margin lost before they went (the user, 2026-11-21: "正文内容，
+ *  会轻微左下瞬移一小段，然后再进入滑动动画"). */
 const CARRIED = ".page-head-title, .page-head-actions, .composer-dock > *, .sp-sheet";
 const ACROSS = ".transcript, .starting-scroller > *";
 /** The regions that scroll what is carried across. */
@@ -30,8 +34,18 @@ let carrying: {
   styles: [HTMLElement, string, string][];
   timer: number;
   waiting: ResizeObserver | null;
-  before: Map<HTMLElement, DOMRect>;
+  before: Map<HTMLElement, Stood>;
 } | null = null;
+
+/** Where a part was seen: its box, and for a column carried across, where
+ *  its words began. */
+type Stood = { box: DOMRect; words: number };
+
+/** Where `part` stands now. */
+function stands(part: HTMLElement, across: boolean): Stood {
+  const box = part.getBoundingClientRect();
+  return { box, words: across ? box.left + (parseFloat(getComputedStyle(part).paddingLeft) || 0) : box.left };
+}
 
 /** Makes `change` to `desk`'s room at once, and carries what stands on the
  *  desk from where it stood to where the change puts it. A glide under way
@@ -52,9 +66,10 @@ export function carry(desk: HTMLElement, change: () => void): void {
   // Where each was last seen: before a change not yet painted, where it
   // stood before that one.
   const unpainted = carrying?.waiting ? carrying.before : null;
-  const before = new Map(
-    [...parts.map(({ part }) => part), ...scrollers].map((element) => [element, unpainted?.get(element) ?? element.getBoundingClientRect()]),
-  );
+  const before = new Map<HTMLElement, Stood>([
+    ...parts.map(({ part, across }): [HTMLElement, Stood] => [part, unpainted?.get(part) ?? stands(part, across)]),
+    ...scrollers.map((scroller): [HTMLElement, Stood] => [scroller, unpainted?.get(scroller) ?? stands(scroller, false)]),
+  ]);
   stopCarrying();
   change();
   // Where the change puts each part is measured once what it sets off has
@@ -80,7 +95,7 @@ function land(
   glide: number,
   parts: { part: HTMLElement; across: boolean }[],
   scrollers: HTMLElement[],
-  before: Map<HTMLElement, DOMRect>,
+  before: Map<HTMLElement, Stood>,
   styles: [HTMLElement, string, string][],
 ): void {
   const shown = (element: HTMLElement) => element.isConnected && element.getClientRects().length > 0;
@@ -88,29 +103,50 @@ function land(
     styles.push([element, name, element.style.getPropertyValue(name)]);
     element.style.setProperty(name, value);
   };
-  // Each region that scrolls reaches where it stood as well as where it now
-  // stands, what it holds where it is.
+  // Where everything stands is read before anything is set: a region
+  // widened one side at a time, read between, was laid out as wide as it
+  // had been for a moment, and a view at the foot of lines that had
+  // wrapped anew was put back above it, a frame's leap down the page.
+  const widened: { scroller: HTMLElement; left: number; right: number; margins: [number, number]; paddings: [number, number] }[] = [];
   for (const scroller of scrollers) {
     if (!shown(scroller)) continue;
-    const was = before.get(scroller)!;
+    const was = before.get(scroller)!.box;
     const now = scroller.getBoundingClientRect();
     const left = Math.max(0, now.left - was.left);
     const right = Math.max(0, was.right - now.right);
     if (left < 0.5 && right < 0.5) continue;
     const style = getComputedStyle(scroller);
-    set(scroller, "margin-left", `${parseFloat(style.marginLeft) - left}px`);
-    set(scroller, "padding-left", `${parseFloat(style.paddingLeft) + left}px`);
-    set(scroller, "margin-right", `${parseFloat(style.marginRight) - right}px`);
-    set(scroller, "padding-right", `${parseFloat(style.paddingRight) + right}px`);
+    widened.push({
+      scroller,
+      left,
+      right,
+      margins: [parseFloat(style.marginLeft), parseFloat(style.marginRight)],
+      paddings: [parseFloat(style.paddingLeft), parseFloat(style.paddingRight)],
+    });
   }
   const moved: { part: HTMLElement; x: number; y: number }[] = [];
   for (const { part, across } of parts) {
     if (!shown(part)) continue;
     const was = before.get(part)!;
-    const now = part.getBoundingClientRect();
-    const x = was.left - now.left;
-    const y = across ? 0 : was.top - now.top;
+    const now = stands(part, across);
+    const x = was.words - now.words;
+    const y = across ? 0 : was.box.top - now.box.top;
     if (Math.abs(x) >= 0.5 || Math.abs(y) >= 0.5) moved.push({ part, x, y });
+  }
+  // What is carried across a region may reach past its edge as it goes, a
+  // column wider than it was past the edge it grows towards: the region
+  // scrolls no way across for it, or its bar across came for a part of the
+  // glide and took the bar's height from a view kept at its foot.
+  for (const scroller of scrollers) {
+    if (shown(scroller)) set(scroller, "overflow-x", "hidden");
+  }
+  // Each region that scrolls reaches where it stood as well as where it now
+  // stands, what it holds where it is.
+  for (const { scroller, left, right, margins, paddings } of widened) {
+    set(scroller, "margin-left", `${margins[0] - left}px`);
+    set(scroller, "padding-left", `${paddings[0] + left}px`);
+    set(scroller, "margin-right", `${margins[1] - right}px`);
+    set(scroller, "padding-right", `${paddings[1] + right}px`);
   }
   // Each is moved on top of how it stands of itself, and what else of it
   // eases goes on easing.

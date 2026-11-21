@@ -145,6 +145,8 @@ import { ProjectForm } from "./app/project-form";
 import { fileLink, link, placeOf, talkLink, type Place } from "./app/places";
 import { enMachinePage, zhMachinePage } from "./app/machine-page-words";
 import { enManage, zhManage } from "./app/machine-manage-words";
+import { enLoginMove, zhLoginMove } from "./app/login-move-words";
+import type { MachineName } from "./world/events";
 import { enBatch, zhBatch } from "./app/machine-batch-words";
 import { enTroubles, zhTroubles } from "./app/trouble-words";
 import { enNameSaid, zhNameSaid } from "./app/name-words";
@@ -166,6 +168,8 @@ import { talksOf } from "./app/talk-row";
 import { ProjectsPage, enProjects, zhProjects } from "./app/projects-page";
 import "./app/projects.css";
 import { specimenCache, specimenData } from "./specimen/data";
+import { specimenCopies } from "./specimen/copies";
+import { specimenLoginMove } from "./specimen/login-move";
 import { ReaderPage } from "./app/reader";
 import { Shell, pageHead, type Page } from "./app/shell";
 import { deferredPage } from "./app/deferred-page";
@@ -322,6 +326,7 @@ import {
   remoteLook,
   remoteOpen,
   remoteProbe,
+  remoteMoveLogin,
   remoteWithdraw,
   projectEdit,
   projectNew,
@@ -350,6 +355,7 @@ import {
   machineLog,
   machineStats,
   machineMemoryRoom,
+  machineCopies,
   renameHere,
   agentActivity,
 } from "./world/bridge";
@@ -441,6 +447,10 @@ if (specimen) {
 }
 const store = createStore(import.meta.env.DEV ? () => ({ world: specimen!.world, now: specimen!.now }) : undefined);
 const live = !import.meta.env.DEV || store.live;
+/** What a specimen machine answers of its copies and of moving its login
+ *  directories, kept while the page is open. */
+let specimenCopiesAsk: ReturnType<typeof specimenCopies> | undefined;
+let specimenMoves: ReturnType<typeof specimenLoginMove> | undefined;
 configureTopics(live);
 keepLoginsFor(() => store.world.peek()?.accounts);
 // `?slowlogins=<ms>`: a machine's logins come from a node that takes that
@@ -3082,6 +3092,25 @@ function show(next: Place): void {
           view: english ? enUpdateView : zhUpdateView,
         },
         manage: english ? enManage : zhManage,
+        copies: live ? machineCopies : (specimenCopiesAsk ??= specimenCopies()),
+        moveLogin: live
+          ? {
+              words: english ? enLoginMove : zhLoginMove,
+              section: (english ? enLoginMove : zhLoginMove).section,
+              probe: remoteProbe,
+              move: remoteMoveLogin,
+              dirs: async (machine) => {
+                const heard = await agentLogins(machine as MachineName);
+                return heard.machines.flatMap((one) =>
+                  one.kind === "answered" ? [...one.logins.claude.listed, ...one.logins.codex.listed].map((login) => login.dir) : [],
+                );
+              },
+            }
+          : {
+              words: english ? enLoginMove : zhLoginMove,
+              section: (english ? enLoginMove : zhLoginMove).section,
+              ...(specimenMoves ??= specimenLoginMove()),
+            },
         ...(live ? { allowPrivacy: () => void allowPrivacy().catch((error: unknown) => console.error("opening the Mac's privacy settings", error)) } : {}),
       });
       });

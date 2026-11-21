@@ -62,6 +62,12 @@ pub(crate) struct Pending {
     /// (codex-d515b194). Without one, as kept before this was, by name.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     keys: BTreeMap<MachineName, PublicKey>,
+    /// The device of the machine the conversation lives on, by its key, as
+    /// it was asked of: told and heard as that device alone, so one that
+    /// took the machine's name since is neither (codex-d515b194). Without
+    /// one, as kept before this was, by name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    home_key: Option<PublicKey>,
     /// The hub deleted the conversation's scopes once the machine it lived
     /// on deleted it (`assets::deleted::conversation_gone`). Until then the
     /// deletion is kept, and that is tried again, whatever its members did:
@@ -132,6 +138,8 @@ fn ask_inner(
             return Err("this account no longer owns that conversation".into());
         }
         let by_home = !preparing && store.book.directory.same(asker, &conversation.machine);
+        // The device the conversation lives on now, by its key.
+        let home_key = store.book.directory.member(&conversation.machine).map(|member| member.key);
         let kept = store.book.forgetting.pending.iter().position(|pending| {
             pending.forgetting.conversation == conversation && pending.forgetting.account == account
         });
@@ -139,6 +147,8 @@ fn ask_inner(
             // Asked again: those still to do their part are told again,
             // its machine past its part when it asks itself.
             Some(index) => {
+                let asked_home = store.book.forgetting.pending[index].home_key;
+                let by_home = by_home && asked_home.is_none_or(|key| Some(key) == home_key);
                 if by_home && store.book.forgetting.pending[index].home {
                     done_at_home(&mut store, index);
                     let forgetting = store.book.forgetting.pending[index].forgetting.clone();
@@ -161,6 +171,7 @@ fn ask_inner(
                     waiting: BTreeSet::new(),
                     failed: BTreeMap::new(),
                     keys: BTreeMap::new(),
+                    home_key,
                     scopes_gone: false,
                 };
                 if by_home {
@@ -299,6 +310,7 @@ pub(crate) fn gone_there(
                     waiting: BTreeSet::new(),
                     failed: BTreeMap::new(),
                     keys: BTreeMap::new(),
+                    home_key: None,
                     // Its purge deleted its scopes itself, of that account as
                     // opened alone (`assets::deleted::purge_scopes`).
                     scopes_gone,
@@ -333,7 +345,13 @@ pub(crate) fn forgot(hub: &Hub, member: &MachineName, key: PublicKey, id: u64, o
             return;
         };
         let pending = &store.book.forgetting.pending[index];
-        let at_home = pending.home && store.book.directory.same(&member, &pending.forgetting.conversation.machine);
+        // The machine it lives on, by the key it was asked of where kept
+        // (codex-d515b194); by name as before otherwise.
+        let at_home = pending.home
+            && match pending.home_key {
+                Some(home) => home == key,
+                None => store.book.directory.same(&member, &pending.forgetting.conversation.machine),
+            };
         // Waited for under the name it had as it was asked, renamed since
         // (codex-d515b194).
         let waited = pending
@@ -451,7 +469,13 @@ pub(crate) fn prune(hub: &Hub) {
                 }
                 changed = true;
             }
-            let gone = pending.home && directory.member(&pending.forgetting.conversation.machine).is_none();
+            // The device it was asked of left the hub, by its key where kept
+            // (codex-d515b194).
+            let gone = pending.home
+                && match pending.home_key {
+                    Some(key) => directory.by_key(&key).is_none(),
+                    None => directory.member(&pending.forgetting.conversation.machine).is_none(),
+                };
             !gone && (pending.home || !pending.waiting.is_empty() || !pending.scopes_gone)
         });
         let ended = before != book.forgetting.pending.len();
@@ -520,7 +544,11 @@ pub(crate) fn hidden(store: &crate::store::Snapshot) -> HashMap<MachineName, BTr
     let mut hidden: HashMap<MachineName, BTreeSet<ResidentId>> = HashMap::new();
     for pending in &store.book.forgetting.pending {
         let conversation = &pending.forgetting.conversation;
-        let machine = store.book.directory.canonical(&conversation.machine).clone();
+        // Under the name the device it lives on has now, by its key where kept.
+        let machine = match pending.home_key.and_then(|key| store.book.directory.by_key(&key)) {
+            Some(member) => member.name.clone(),
+            None => store.book.directory.canonical(&conversation.machine).clone(),
+        };
         hidden.entry(machine).or_default().insert(conversation.resident.clone());
     }
     hidden
@@ -613,7 +641,7 @@ fn targets(store: &crate::store::Snapshot, pending: &Pending) -> BTreeSet<Machin
 /// Whom a deletion is to be told to now, and what.
 fn told_now(pending: &Pending) -> Vec<(MachineName, Option<PublicKey>, Forgetting)> {
     if pending.home {
-        vec![(pending.forgetting.conversation.machine.clone(), None, pending.forgetting.clone())]
+        vec![(pending.forgetting.conversation.machine.clone(), pending.home_key, pending.forgetting.clone())]
     } else {
         pending
             .waiting

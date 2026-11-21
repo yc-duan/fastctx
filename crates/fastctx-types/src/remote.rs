@@ -279,6 +279,11 @@ pub enum RemoteCall {
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         cursors: Vec<Option<String>>,
     },
+    /// What the machine's owner asks of the copies held there of
+    /// conversations living elsewhere: only its owner's to ask.
+    Copies {
+        ask: crate::data::CopiesAsk,
+    },
     /// The user's word on Claude Code's bypass-permissions consent there.
     ClaudeConsent {
         accept: bool,
@@ -740,6 +745,7 @@ impl RemoteCall {
             | RemoteCall::Place { .. }
             | RemoteCall::PipeOut { .. }
             | RemoteCall::ClaudeConsent { .. }
+            | RemoteCall::Copies { .. }
             | RemoteCall::Homes { .. }
             | RemoteCall::ScanAgents { .. }
             | RemoteCall::AddAgentLogin { .. }
@@ -845,6 +851,7 @@ pub enum RemoteReply {
         accepted: bool,
         changed: bool,
     },
+    Copies(crate::data::CopiesAnswer),
     AttachmentPlaces(crate::attachments::AttachmentPlaces),
     Uploaded(crate::attachments::Attachment),
     Run(Box<RunReply>),
@@ -951,7 +958,9 @@ impl RemoteCall {
         use crate::sync::transfer::Purpose;
         match self {
             Self::Timeline { .. } | Self::Topics { .. } => Some(Purpose::Observation),
-            Self::Assets => Some(Purpose::AssetSync),
+            // The asset lines, and what a machine's owner asks of the copies its
+            // library holds.
+            Self::Assets | Self::Copies { .. } => Some(Purpose::AssetSync),
             Self::SetAgentWeek { .. } | Self::ResetAgentUsage { .. } => Some(Purpose::ExecutionControl),
             Self::AddAgentLogin { .. }
             | Self::AgentActivity { .. }
@@ -1051,6 +1060,7 @@ impl RemoteReply {
         use crate::sync::transfer::Purpose;
         match self {
             Self::Timeline { .. } | Self::Topics { .. } => Some(Purpose::Observation),
+            Self::Copies { .. } => Some(Purpose::AssetSync),
             Self::AgentActivity { .. }
             | Self::AgentCalls { .. }
             | Self::AgentChangePreview { .. }

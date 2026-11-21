@@ -5,6 +5,9 @@ retry = 10
 
 # The bundled SQLite has its pre-update hook, through which a database's
 # writer keeps its rules on every row it changes (`fastctx-storage`, guard).
+# It keeps no count of the memory it uses: counting takes one lock of the
+# whole process at every allocation and release, which every connection on
+# every thread then waits for (`fastctx-storage`, tests/built.rs).
 [env]
-LIBSQLITE3_FLAGS = "-DSQLITE_ENABLE_PREUPDATE_HOOK"
+LIBSQLITE3_FLAGS = "-DSQLITE_ENABLE_PREUPDATE_HOOK -DSQLITE_DEFAULT_MEMSTATUS=0"
 

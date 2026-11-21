@@ -16,7 +16,6 @@ mod composer;
 mod composer_documents;
 mod composer_legacy_input;
 mod connection;
-#[cfg(desktop)]
 mod data;
 #[cfg(desktop)]
 mod doctor;
@@ -1247,6 +1246,8 @@ pub fn run() {
             #[cfg(desktop)]
             remote_world::remote_probe,
             #[cfg(desktop)]
+            remote_world::remote_move_login,
+            #[cfg(desktop)]
             remote_world::remote_look,
             #[cfg(desktop)]
             remote_world::remote_hub,
@@ -1317,6 +1318,7 @@ pub fn run() {
             features::features_watch,
             #[cfg(desktop)]
             data::data,
+            data::machine_copies,
             #[cfg(desktop)]
             doctor::doctor_readings,
             sync_status::sync_status,

@@ -14,6 +14,7 @@ pub(crate) mod ids;
 pub(crate) mod kept;
 pub(crate) mod limits;
 pub(crate) mod models;
+pub mod moves;
 mod others;
 mod program;
 mod read_limits;

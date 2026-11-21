@@ -30,6 +30,7 @@ pub mod recovery;
 pub(crate) mod objects;
 mod owners;
 pub(crate) mod proving;
+mod reclaim;
 mod scopes;
 mod sentinel_homes;
 pub(crate) mod serve;
@@ -153,6 +154,8 @@ pub(crate) struct Assets {
     /// The hub's id, which each descriptor names (design §2.1): a scope of
     /// one hub is no other's.
     pub(crate) id: String,
+    /// The hub's directory, where its operator's files are (`reclaim`).
+    root: std::path::PathBuf,
     /// Whether conversations' streams come through the hub as before
     /// `DIRECT`: a file named `THROUGH_HUB` stood in the hub's directory as
     /// it opened. What the machines kept since goes up from where the hub
@@ -235,6 +238,7 @@ impl Assets {
         let owners = owners::Owners::new(dir.join("assets"), incarnation);
         let assets = Self {
             id: id.to_string(),
+            root: dir.to_path_buf(),
             through_hub: fastctx_platform::disk::is_there(dir.join(THROUGH_HUB)),
             stirred: Mutex::new(BTreeMap::new()),
             keys,
@@ -341,6 +345,24 @@ impl Assets {
                 if self.sweep_owner(directory, &owner, now)? {
                     dropped += 1;
                 }
+            }
+        }
+        // A library all of whose scopes went is the owner of none: found on
+        // the disk, it is judged as any other — none reads what it does not
+        // hold — and goes once unread as long.
+        let named: std::collections::HashSet<String> = self
+            .control
+            .read_now(|c| {
+                let mut statement =
+                    c.prepare_cached("SELECT DISTINCT owner FROM asset_scopes UNION SELECT owner FROM asset_deleting")?;
+                let rows = statement.query_map([], |row| row.get(0))?;
+                Ok(rows.collect::<std::result::Result<_, _>>()?)
+            })
+            .map_err(io::Error::other)?;
+        for owner in self.owners.on_disk()? {
+            let key = owner.key();
+            if !named.contains(&key) && self.sweep_owner(directory, &key, now)? {
+                dropped += 1;
             }
         }
         self.finish_deleting()?;
@@ -1391,6 +1413,26 @@ impl Assets {
 pub(crate) async fn checkpoints(hub: Weak<crate::Hub>) {
     let mut rounds = 0u32;
     let sweeping = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    // What the operator asks of the vouched objects, looked for every minute,
+    // one round at a time (`reclaim`).
+    let reclaiming = hub.clone();
+    fastctx_platform::task::spawn(async move {
+        loop {
+            tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+            let Some(running) = reclaiming.upgrade() else { return };
+            let (assets, log) = (running.assets.clone(), running.log.clone());
+            drop(running);
+            let (hub, judging) = (reclaiming.clone(), reclaiming.clone());
+            let enter = move || hub.upgrade().and_then(|hub| crate::moving::Moving::enter(&hub));
+            let directory = move || judging.upgrade().map(|hub| hub.store());
+            match fastctx_platform::task::spawn_blocking(move || assets.reclaim_round(&directory, &enter)).await {
+                Ok(Ok(None)) => {}
+                Ok(Ok(Some(said))) => log.line(format_args!("{said}")),
+                Ok(Err(error)) => log.line(format_args!("letting go vouched objects: {error}")),
+                Err(error) => log.line(format_args!("letting go vouched objects: {error}")),
+            }
+        }
+    });
     // What the hub's records hold goes into the asset library once after it
     // starts (design §28.17).
     if let Some(running) = hub.upgrade() {

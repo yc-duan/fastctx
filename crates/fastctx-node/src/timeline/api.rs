@@ -116,9 +116,37 @@ async fn read(
         })?;
         if let Some(held) = copy {
             way.store(COPY, std::sync::atomic::Ordering::Relaxed);
-            return if marked { Ok(super::copy::anew(&request)) } else { from_copy(&held, request).await };
+            if marked {
+                return Ok(super::copy::anew(&request));
+            }
+            let object = matches!(request, TimelineAsk::Object { .. });
+            let told = from_copy(&held, request.clone()).await;
+            // An object the copy has no bytes of — not fetched yet, let go by
+            // the hub, or its file gone — is asked of the machine the
+            // conversation lives on; not had there either, it is answered as
+            // the copy answered.
+            if !object || !matches!(&told, Ok(TimelineTold::Object { base64: None }) | Err(_)) {
+                return told;
+            }
+            return match Box::pin(elsewhere(node, machine, request, marked, way)).await {
+                Ok(TimelineTold::Object { base64: Some(bytes) }) => Ok(TimelineTold::Object { base64: Some(bytes) }),
+                _ => told,
+            };
         }
     }
+    elsewhere(node, machine, request, marked, way).await
+}
+
+/// Reads the timeline of a conversation this machine has no copy of to read
+/// it in: of the machine it lives on, or here where that is this one.
+async fn elsewhere(
+    node: &Arc<Node>,
+    machine: Option<Written>,
+    request: TimelineAsk,
+    marked: bool,
+    way: &std::sync::atomic::AtomicU8,
+) -> Result<TimelineTold, Failure> {
+    let read_here = || way.store(HERE, std::sync::atomic::Ordering::Relaxed);
     let machine = match machine {
         Some(machine) => machine,
         None => crate::talk::locate(node, request.resident()).await?,

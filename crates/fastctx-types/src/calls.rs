@@ -857,6 +857,12 @@ pub enum Call {
     UpdateMachine {
         machine: crate::access::Written,
     },
+    /// What the owner of `machine`, this one or another of the network's,
+    /// asks of the copies it holds of conversations living elsewhere.
+    MachineCopies {
+        machine: crate::access::Written,
+        ask: crate::data::CopiesAsk,
+    },
     /// New versions of Fastctx on `machine`, this one or another of the
     /// network's (`crate::update::UpdateCall`); answered with how updates
     /// stand there.
@@ -1230,6 +1236,7 @@ pub enum Reply {
     },
     Data(crate::data::DataReply),
     Update(Box<crate::update::State>),
+    MachineCopies(crate::data::CopiesAnswer),
     NetworkUpdates(crate::update::ViewReply),
     ClaudeSessionDirectory {
         path: String,
@@ -1627,6 +1634,8 @@ impl Call {
             }
             // Takes over the streams the lost device ordered (design §28.10).
             Self::AdoptConversation { .. } => Some(Purpose::AssetSync),
+            // What a machine's owner asks of the copies its library holds.
+            Self::MachineCopies { .. } => Some(Purpose::AssetSync),
             // Sets what a login's assistances and its Fable line are held to.
             Self::SetAgentWeek { .. } | Self::ResetAgentUsage { .. } => Some(Purpose::ExecutionControl),
         }
@@ -1731,7 +1740,7 @@ impl Reply {
             | Self::Who { .. }
             | Self::WorldNow { .. }
             | Self::Written { .. } => None,
-            Self::Timeline(_) => Some(Purpose::AssetSync),
+            Self::Timeline(_) | Self::MachineCopies { .. } => Some(Purpose::AssetSync),
             Self::Topics(_) | Self::RemoteTopics(_) | Self::SyncStatus { .. } => Some(Purpose::Observation),
         }
     }

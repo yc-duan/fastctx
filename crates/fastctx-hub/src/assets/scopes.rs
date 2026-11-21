@@ -114,6 +114,22 @@ fn identities(directory: &Indexed<'_>, readers: &Readers) -> Result<BTreeMap<Str
         .collect()
 }
 
+/// The opener, by its key (`account:NAME`), a scope was begun for another
+/// account of the name of than `born` names, if any: as `said` says who each
+/// was as it was begun, or, said nothing of, as an account opened later than
+/// the scope was begun, `begun`, past the clocks' leeway, did not begin it.
+fn begun_for_another(born: &BTreeMap<String, String>, said: &BTreeMap<String, String>, begun: Option<i64>) -> Option<String> {
+    born.iter().filter(|(key, _)| key.starts_with("account:")).find_map(|(key, now)| {
+        let other = match said.get(key) {
+            Some(was) => was != now,
+            None => begun.zip(now.parse::<i64>().ok()).is_some_and(|(begun, opened)| {
+                opened > begun.saturating_add(fastctx_types::assets::BEGUN_CLOCKS)
+            }),
+        };
+        other.then(|| key.clone())
+    })
+}
+
 /// Whether `key` is now who it was when the scope was described.
 fn same(directory: &Indexed<'_>, born: &BTreeMap<String, String>, key: &str) -> bool {
     born.get(key).is_some_and(|was| identity(directory, key).as_ref() == Some(was))
@@ -538,9 +554,13 @@ fn owner_of(directory: &Indexed<'_>, readers: &Readers) -> Result<Owner, String>
 
 /// Describes the scope `key` that a device of `machine` begins (design
 /// §2.1): one of the accounts it acts for must be among its readers, and a
-/// conversation's openers among those accounts. The descriptor is signed,
-/// kept as a control fact and witnessed before it is answered; the same
-/// description again is answered with the descriptor kept.
+/// conversation's openers among those accounts; each opener who it was as
+/// the scope was begun, as `said` says it, or as when it was begun does
+/// (`begun_for_another`, `fastctx_types::assets::BORN`). The descriptor is
+/// signed, kept as a control fact and witnessed before it is answered; the
+/// same description again is answered with the descriptor kept, to a device
+/// that began it for those it was described for.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn describe(
     assets: &Assets,
     directory: &Indexed<'_>,
@@ -548,6 +568,7 @@ pub(crate) fn describe(
     key: &str,
     readers: Readers,
     classes: Vec<StreamClass>,
+    (said, begun): (&BTreeMap<String, String>, Option<i64>),
 ) -> Result<Fact, String> {
     if key.len() > 128 {
         return Err("a scope's key is at most 128 bytes".into());
@@ -577,6 +598,11 @@ pub(crate) fn describe(
             return Err(format!("none of this machine's accounts reads the scope {key}"));
         }
         if kept.descriptor.readers == readers && kept.descriptor.classes == classes {
+            // Described for another account of an opener's name than the one
+            // it was begun for: not given to this one.
+            if let Some(opener) = begun_for_another(&kept.descriptor.born, said, begun) {
+                return Err(format!("{}{opener}", fastctx_types::assets::BEGUN_FOR_ANOTHER));
+            }
             // Answered again only once its chain head is outside the
             // directory, as the first answer was to be.
             assets.catch_up().map_err(|error| error.to_string())?;
@@ -593,6 +619,11 @@ pub(crate) fn describe(
     }
     let principal = principal(directory, machine);
     let born = identities(directory, &readers)?;
+    // Begun for an account of a name opened again since: described for no
+    // later account of that name.
+    if let Some(opener) = begun_for_another(&born, said, begun) {
+        return Err(format!("{}{opener}", fastctx_types::assets::BEGUN_FOR_ANOTHER));
+    }
     if let Readers::Conversation { openers, .. } = &readers
         && !openers.iter().all(|opener| principal.contains(opener))
     {

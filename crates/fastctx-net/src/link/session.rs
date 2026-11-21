@@ -603,6 +603,13 @@ async fn connected(
     // and when it was asked.
     let mut checking: Option<Instant> = None;
     let mut asked = Instant::now();
+    // Questions going unanswered while the hub is heard: the session is
+    // taken for stalled once two looks in a row find it so, and dialled
+    // anew, a few times an hour at most (`Questions::stalled`,
+    // `Inner::may_renew`).
+    let mut looking = tokio::time::interval(Duration::from_secs(10));
+    looking.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let (mut stalled_before, mut stall_told) = (false, false);
 
     let ended = loop {
         let next = tokio::select! {
@@ -640,6 +647,23 @@ async fn connected(
                     let workbench = inner.node.workbench();
                     let _ = up.send_first(Up::Ping { n: 0, paths, took: Some(pulse.taken()), held, health, workbench });
                 }
+                continue;
+            },
+            _ = looking.tick() => {
+                let stalled = inner.asks.stalled(generation);
+                if let Some((unanswered, quiet)) = stalled
+                    && stalled_before
+                {
+                    let said = format!("{unanswered} questions had nothing of an answer for {} s while the hub was heard", quiet.as_secs());
+                    if inner.may_renew() {
+                        break Ended::Retry(format!("{said}: the session is dialled anew"));
+                    }
+                    if !stall_told {
+                        stall_told = true;
+                        inner.node.log(format!("{said}; dialled anew three times this hour already, it is left as it is"));
+                    }
+                }
+                stalled_before = stalled.is_some();
                 continue;
             },
             _ = &mut writer_stopped => break Ended::Retry("writing to the hub failed".to_string()),

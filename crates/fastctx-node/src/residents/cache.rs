@@ -24,11 +24,25 @@ pub(super) struct Cache {
     cold: HashSet<ResidentId>,
     /// Of those, the ones changed since their copy was last put aside.
     changed: HashSet<ResidentId>,
-    /// A resident was put in, taken out or handed out to be changed since
+    /// The residents put in, taken out or handed out to be changed since
     /// this was last asked (`take_touched`).
-    touched: bool,
+    touched: HashSet<ResidentId>,
+    /// Where the count of changes stood as each resident was last put in,
+    /// taken out or handed out to be changed (`stamp`), and the residents
+    /// by that count, so that those changed since a count are found
+    /// without going through all.
+    stamps: HashMap<ResidentId, u64>,
+    stamped: std::collections::BTreeMap<u64, Vec<ResidentId>>,
+    /// The residents gone, in the order they went, with the count each
+    /// went at: the latest `GONE_KEPT` are told of as changed; one who asks
+    /// from before the last let go (`forgotten`) is told all may have.
+    gone: std::collections::VecDeque<(u64, ResidentId)>,
+    forgotten: u64,
     putting: Arc<Aside>,
 }
+
+/// How many residents gone are still told of as changed (`Cache::stamp`).
+const GONE_KEPT: usize = 1024;
 
 /// A resident put aside, to be read back outside the residents' lock
 /// (`Cache::aside`, `Cache::install`).
@@ -76,7 +90,11 @@ impl Cache {
             dirty: HashSet::new(),
             cold: HashSet::new(),
             changed: HashSet::new(),
-            touched: false,
+            touched: HashSet::new(),
+            stamps: HashMap::new(),
+            stamped: std::collections::BTreeMap::new(),
+            gone: std::collections::VecDeque::new(),
+            forgotten: 0,
             putting: Arc::new(Aside::new("resident-cache", "a resident's state")),
         })
     }
@@ -90,7 +108,7 @@ impl Cache {
     }
 
     pub fn insert(&mut self, id: ResidentId, live: Live) {
-        self.touched = true;
+        self.touched.insert(id.clone());
         self.cold.remove(&id);
         self.dirty.insert(id.clone());
         self.entries.insert(id, live);
@@ -104,7 +122,7 @@ impl Cache {
         if !self.load(id) {
             return None;
         }
-        self.touched = true;
+        self.touched.insert(id.clone());
         self.cold.remove(id);
         self.dirty.insert(id.clone());
         self.entries.get_mut(id)
@@ -171,14 +189,59 @@ impl Cache {
         true
     }
 
-    /// Whether a resident may have changed since this was last asked.
-    pub fn take_touched(&mut self) -> bool {
+    /// The residents that may have changed since this was last asked.
+    pub fn take_touched(&mut self) -> HashSet<ResidentId> {
         std::mem::take(&mut self.touched)
+    }
+
+    /// `residents` may have changed as the count of changes came to `at`.
+    pub fn stamp(&mut self, residents: HashSet<ResidentId>, at: u64) {
+        for id in residents {
+            if let Some(before) = self.stamps.insert(id.clone(), at)
+                && let Some(alike) = self.stamped.get_mut(&before)
+            {
+                alike.retain(|other| *other != id);
+                if alike.is_empty() {
+                    self.stamped.remove(&before);
+                }
+            }
+            if !self.contains_key(&id) {
+                self.gone.push_back((at, id.clone()));
+            }
+            self.stamped.entry(at).or_default().push(id);
+        }
+        // A resident gone is told of to those who ask in time; its stamp
+        // is not kept for ever.
+        while self.gone.len() > GONE_KEPT {
+            let Some((went, id)) = self.gone.pop_front() else { break };
+            // Here again since, under a later stamp: that one stands.
+            if self.stamps.get(&id) != Some(&went) || self.contains_key(&id) {
+                continue;
+            }
+            self.stamps.remove(&id);
+            if let Some(alike) = self.stamped.get_mut(&went) {
+                alike.retain(|other| *other != id);
+                if alike.is_empty() {
+                    self.stamped.remove(&went);
+                }
+            }
+            self.forgotten = self.forgotten.max(went);
+        }
+    }
+
+    /// The residents that may have changed since the count of changes
+    /// stood at `seen`: one gone since is among them. None where one gone
+    /// since is no longer kept: all may have.
+    pub fn stamped_since(&self, seen: u64) -> Option<Vec<ResidentId>> {
+        if seen < self.forgotten {
+            return None;
+        }
+        Some(self.stamped.range(seen.saturating_add(1)..).flat_map(|(_, alike)| alike.iter().cloned()).collect())
     }
 
     /// Forgets `id` altogether, here and on disk.
     pub fn remove(&mut self, id: &ResidentId) {
-        self.touched = true;
+        self.touched.insert(id.clone());
         self.entries.remove(id);
         self.dirty.remove(id);
         self.cold.remove(id);

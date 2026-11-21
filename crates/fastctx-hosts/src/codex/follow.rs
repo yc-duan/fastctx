@@ -18,6 +18,8 @@
 //! next page that Codex no longer takes lists that turn from its first page
 //! again, and nothing is concluded from a summary.
 
+pub mod onward;
+
 pub use super::history::Timing;
 use super::history::{self, TurnSpan};
 use super::server::{AppServer, Unanswered};
@@ -29,6 +31,10 @@ use std::collections::BTreeMap;
 
 /// Entries asked for at a time, reading back from the newest.
 const PAGE: u32 = 128;
+/// Item entries asked for at a time: the most Codex gives (0.160), four
+/// times what it gives unasked — a long turn's items are listed in a
+/// quarter of the exchanges.
+const ITEMS_PAGE: u32 = 100;
 /// Entries taken back at a time from where a whole reading is kept.
 const KEPT_AT_ONCE: usize = 256;
 
@@ -133,6 +139,7 @@ pub struct Tail {
     /// Read whole with somewhere to keep it: the events went there, none
     /// are here.
     pub kept: bool,
+    pub through: Option<onward::Through>,
 }
 
 /// Reads `thread` past `seam` (from its start when the seam has no turn).
@@ -198,9 +205,9 @@ async fn once(
             None => return Ok(Err(Restart::Moved)),
         },
     };
-    let Some(Read { timeline, items, voice }) = read else {
+    let Some(read) = read else {
         // Not begun yet: nothing but its title.
-        return Ok(Ok(Tail { events: history::title(metadata), whole, since: None, seam: Seam::default(), settled: None, kept: false }));
+        return Ok(Ok(Tail { events: history::title(metadata), whole, since: None, seam: Seam::default(), settled: None, kept: false, through: None }));
     };
     // One page of a settled turn listed again, the turns in turn; a turn is
     // compared once its last page is in.
@@ -209,7 +216,7 @@ async fn once(
         let at = rotation % seam.settled.len();
         let (turn, digest) = &seam.settled[at];
         let from = seam.paging.as_ref();
-        let mut params = json!({"threadId": thread, "turnId": turn, "sortDirection": "asc"});
+        let mut params = json!({"threadId": thread, "turnId": turn, "sortDirection": "asc", "limit": ITEMS_PAGE});
         if let Some(from) = from {
             params["cursor"] = json!(from.cursor);
         }
@@ -231,7 +238,7 @@ async fn once(
             // page at a time — a turn whose cursors outlive no reading is
             // compared all the same, and the turns after it in their turn.
             Err(Unanswered::Rpc { .. }) if from.is_some() => {
-                let whole = history::pages(server, "thread/items/list", json!({"threadId": thread, "turnId": turn, "sortDirection": "asc"}))
+                let whole = history::pages(server, "thread/items/list", json!({"threadId": thread, "turnId": turn, "sortDirection": "asc", "limit": ITEMS_PAGE}))
                     .await
                     .map_err(|error| error.to_string())?;
                 if whole.iter().fold(0, fold) != *digest {
@@ -243,15 +250,16 @@ async fn once(
         }
     }
     let created = super::seconds(metadata.get("createdAt"));
-    let projected = history::project_timeline(&timeline, &items, running, owner, created);
+    let projected = history::project_timeline(&read.timeline, &read.items, running, owner, created);
+    let through = onward::seed(metadata, &read, projected.running, projected.events.iter().map(|event| event.at).max());
     // As a whole reading has it: a voice session open at the thread's start.
-    let mut events = voice.into_iter().map(|session| history::voice(created, session)).collect::<Vec<_>>();
+    let mut events = read.voice.into_iter().map(|session| history::voice(created, session)).collect::<Vec<_>>();
     events.extend(projected.events);
     events.extend(history::title(metadata));
-    let digests = digests(&items);
+    let digests = digests(&read.items);
     let (next, settled) = advance(seam, &projected.turns, &digests, running, accept, whole);
     let since = if whole { None } else { projected.turns.first().map(|span| span.start) };
-    Ok(Ok(Tail { events, whole, since, seam: Seam { rotation, paging, ..next }, settled, kept: false }))
+    Ok(Ok(Tail { events, whole, since, seam: Seam { rotation, paging, ..next }, settled, kept: false, through }))
 }
 
 /// A whole reading, kept in `keeping` as it is read and its events handed
@@ -274,7 +282,7 @@ async fn kept(
         for event in history::title(metadata) {
             keeping.event(event)?;
         }
-        return Ok(Ok(Tail { events: Vec::new(), whole: true, since: None, seam: Seam::default(), settled: None, kept: true }));
+        return Ok(Ok(Tail { events: Vec::new(), whole: true, since: None, seam: Seam::default(), settled: None, kept: true, through: None }));
     };
     let created = super::seconds(metadata.get("createdAt"));
     // As a whole reading has it: a voice session open at the thread's start.
@@ -302,7 +310,7 @@ async fn kept(
         keeping.event(event)?;
     }
     let (next, settled) = advance(seam, &turns, &digests, running, accept, true);
-    Ok(Ok(Tail { events: Vec::new(), whole: true, since: None, seam: Seam { rotation: seam.rotation, paging: None, ..next }, settled, kept: true }))
+    Ok(Ok(Tail { events: Vec::new(), whole: true, since: None, seam: Seam { rotation: seam.rotation, paging: None, ..next }, settled, kept: true, through: None }))
 }
 
 /// What `whole_entries` lists, kept in `keeping` as it comes: when each item
@@ -333,7 +341,7 @@ async fn kept_entries(server: &AppServer, thread: &str, keeping: &mut dyn Keepin
     let mut whole_items = false;
     loop {
         let mut digests: BTreeMap<String, u64> = BTreeMap::new();
-        history::each_page(server, "thread/items/list", json!({"threadId": thread, "sortDirection": "asc"}), &mut |entry| {
+        history::each_page(server, "thread/items/list", json!({"threadId": thread, "sortDirection": "asc", "limit": ITEMS_PAGE}), &mut |entry| {
             if let Some(turn) = entry["turnId"].as_str() {
                 let running = digests.entry(turn.to_string()).or_insert(0);
                 *running = fold(*running, &entry);
@@ -406,6 +414,7 @@ async fn ordinary_kept(server: &AppServer, turns: Value, keeping: &mut dyn Keepi
 /// Timeline entries in order, the item entries of their turns, and the
 /// voice session a whole timeline says was open at its start.
 struct Read {
+    canonical: bool,
     timeline: Vec<Value>,
     items: Vec<Value>,
     voice: Option<String>,
@@ -423,16 +432,16 @@ async fn whole_entries(server: &AppServer, thread: &str) -> Result<Option<Read>,
         }
         Err(error) => return Err(error.to_string()),
     };
-    let items = history::pages(server, "thread/items/list", json!({"threadId": thread, "sortDirection": "asc"}))
+    let items = history::pages(server, "thread/items/list", json!({"threadId": thread, "sortDirection": "asc", "limit": ITEMS_PAGE}))
         .await
         .map_err(|error| error.to_string())?;
-    let (mut timeline, voice) = match history::pages_with_voice(server, "thread/timeline/list", json!({"threadId": thread})).await {
-        Ok(timeline) => timeline,
-        Err(Unanswered::Rpc { code: -32600 | -32601, .. }) => (history::ordinary_timeline(&turns, &items), None),
+    let (mut timeline, voice, canonical) = match history::pages_with_voice(server, "thread/timeline/list", json!({"threadId": thread})).await {
+        Ok((timeline, voice)) => (timeline, voice, true),
+        Err(Unanswered::Rpc { code: -32600 | -32601, .. }) => (history::ordinary_timeline(&turns, &items), None, false),
         Err(error) => return Err(error.to_string()),
     };
-    timeline.sort_by_key(|entry| entry["position"].as_u64());
-    Ok(Some(Read { timeline, items, voice }))
+    onward::canonical(&mut timeline);
+    Ok(Some(Read { timeline, items, voice, canonical }))
 }
 
 /// The timeline from the start of `turn` on, read back from the newest
@@ -465,7 +474,7 @@ async fn window_entries(server: &AppServer, thread: &str, turn: &str, position: 
         return Ok(None);
     }
     timeline.retain(|entry| entry["position"].as_u64().is_some_and(|at| at >= begins));
-    timeline.sort_by_key(|entry| entry["position"].as_u64());
+    onward::canonical(&mut timeline);
     // The items of each turn the window names, an earlier turn's late item
     // among them, listed by turn: the thread's items are not kept a turn
     // at a time in their order (C1).
@@ -473,7 +482,7 @@ async fn window_entries(server: &AppServer, thread: &str, turn: &str, position: 
     for turn in turns_of(&timeline) {
         items.extend(turn_items(server, thread, &turn).await?);
     }
-    Ok(Some(Some(Read { timeline, items, voice: None })))
+    Ok(Some(Some(Read { timeline, items, voice: None, canonical: true })))
 }
 
 /// The window as the turns and items say, for a Codex without the timeline
@@ -510,7 +519,7 @@ async fn ordinary_window(server: &AppServer, thread: &str, turn: &str) -> Result
     for entry in &mut timeline {
         entry["position"] = Value::Null;
     }
-    Ok(Some(Some(Read { timeline, items, voice: None })))
+    Ok(Some(Some(Read { timeline, items, voice: None, canonical: false })))
 }
 
 /// The turns `timeline`'s entries are of, each once, in order of first
@@ -527,7 +536,7 @@ fn turns_of(timeline: &[Value]) -> Vec<String> {
 
 /// Every item entry of `turn`, in order.
 async fn turn_items(server: &AppServer, thread: &str, turn: &str) -> Result<Vec<Value>, String> {
-    history::pages(server, "thread/items/list", json!({"threadId": thread, "turnId": turn, "sortDirection": "asc"}))
+    history::pages(server, "thread/items/list", json!({"threadId": thread, "turnId": turn, "sortDirection": "asc", "limit": ITEMS_PAGE}))
         .await
         .map_err(|error| error.to_string())
 }

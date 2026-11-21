@@ -68,7 +68,9 @@ pub fn walk(root: &Path, skip: &HashSet<String>, stop: &AtomicBool, counters: &C
     #[cfg(unix)]
     let device = {
         use std::os::unix::fs::MetadataExt as _;
-        match std::fs::symlink_metadata(root) {
+        // Through a link to it: a login moved to another disk leaves a link
+        // where it was, and is searched where it is.
+        match std::fs::metadata(root) {
             Ok(metadata) => metadata.dev(),
             Err(_) => {
                 counters.unreadable.fetch_add(1, Ordering::Relaxed);
@@ -105,7 +107,7 @@ pub fn walk(root: &Path, skip: &HashSet<String>, stop: &AtomicBool, counters: &C
             };
             let directory = kind.is_dir();
             entries.push((name.to_string_lossy().into_owned(), directory));
-            if directory && walkable(&entry, device) && !recycled(&name) {
+            if directory && walkable(&entry, device) && !recycled(&name) && !traces::moving(&name.to_string_lossy()) {
                 below.push(name);
             }
         }

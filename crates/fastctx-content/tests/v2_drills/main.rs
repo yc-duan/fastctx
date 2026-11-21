@@ -8,6 +8,7 @@
 mod aside;
 mod changes;
 mod commit;
+mod copies;
 mod defer;
 mod exchange;
 mod faults;
@@ -24,13 +25,15 @@ mod snapshot;
 mod succession;
 mod transfer;
 mod unaccepted;
+mod vouch;
 mod window;
 
 fn main() {
-    let drills: [(&str, fn()); 20] = [
+    let drills: [(&str, fn()); 22] = [
         ("aside", aside::run as fn()),
         ("changes", changes::run as fn()),
         ("commit", commit::run as fn()),
+        ("copies", copies::run as fn()),
         ("defer", defer::run as fn()),
         ("exchange", exchange::run as fn()),
         ("faults", faults::run as fn()),
@@ -47,6 +50,7 @@ fn main() {
         ("succession", succession::run as fn()),
         ("transfer", transfer::run as fn()),
         ("unaccepted", unaccepted::run as fn()),
+        ("vouch", vouch::run as fn()),
         ("window", window::run as fn()),
     ];
     let mut failed = Vec::new();

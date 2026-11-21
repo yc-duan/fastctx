@@ -414,7 +414,14 @@ fn failed(error: impl std::fmt::Display) -> String {
 /// A place as `Keeping::entries` orders it, as bytes: none before any,
 /// then each big-endian, so that bytes compare as the places do.
 fn place_of(entry: &Value) -> Vec<u8> {
-    entry["position"].as_u64().map(|position| position.to_be_bytes().to_vec()).unwrap_or_default()
+    let Some((position, kind, id)) = fastctx_hosts::codex::follow::onward::order(entry) else {
+        return entry["position"].as_u64().map(|position| position.to_be_bytes().to_vec()).unwrap_or_default();
+    };
+    let mut key = Vec::with_capacity(9 + id.len());
+    key.extend_from_slice(&position.to_be_bytes());
+    key.push(kind);
+    key.extend_from_slice(id.as_bytes());
+    key
 }
 
 impl Spill {
@@ -669,8 +676,7 @@ impl Spill {
         self.line(Row::Entry { position: place_of(entry), turn, id, body: pack(entry) })
     }
 
-    /// The timeline entries kept, ordered by position as a stable sort of
-    /// them in the order listed has them, from the `from`th on, at most
+    /// The timeline entries kept, ordered by rollout position, entry kind and ID, from the `from`th on, at most
     /// `limit` and about `READ_BYTES` (at least one while any are left);
     /// `from` goes up by what each call gave.
     pub fn entries(&mut self, from: usize, limit: usize) -> Result<Vec<Value>, String> {

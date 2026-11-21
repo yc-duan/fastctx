@@ -16,6 +16,13 @@ pub type Entry = (String, bool);
 /// usual name.
 pub const AGENTS: [(&str, &str); 2] = [("codex", ".codex"), ("claude", ".claude")];
 
+/// Whether a directory named `name` is one `fastctx move-login` leaves: a
+/// login's original set aside, the copy being made beside its target, the
+/// link about to take a login's place. None is a login of its own.
+pub fn moving(name: &str) -> bool {
+    name.contains(".fastctx-moved-") || name.starts_with(".fastctx-move-") || name.starts_with(".fastctx-link-")
+}
+
 fn has(entries: &[Entry], name: &str, directory: bool) -> bool {
     entries.iter().any(|(entry, is_dir)| *is_dir == directory && entry == name)
 }

@@ -326,24 +326,37 @@ pub(crate) async fn delete(node: &Arc<Node>, about: &About) -> Result<(), Failur
         if !link.view().conversation_plans {
             continue;
         }
-        if link.view().shared_records {
-            link.owned_records(
-                &scope.account,
-                fastctx_types::owned_records::Request::Delete { resident: about.id.clone() },
-            )
-            .await
-            .map_err(Failure::new)?;
-            continue;
+        let deleted: Result<(), String> = async {
+            if link.view().shared_records {
+                link.owned_records(
+                    &scope.account,
+                    fastctx_types::owned_records::Request::Delete { resident: about.id.clone() },
+                )
+                .await
+                .map_err(|error| error.to_string())?;
+                return Ok(());
+            }
+            // Another conversation's of the same short name stays.
+            let page = link.plan_read(&scope.account, about.id.clone()).await.map_err(|error| error.to_string())?;
+            if link
+                .plan_of_another(&page, &Address { machine: about.machine.clone(), resident: about.id.clone() })
+                .is_some()
+            {
+                return Ok(());
+            }
+            link.plan_delete(&scope.account, &about.id).await.map_err(|error| error.to_string())
         }
-        // Another conversation's of the same short name stays.
-        let page = link.plan_read(&scope.account, about.id.clone()).await.map_err(Failure::new)?;
-        if link
-            .plan_of_another(&page, &Address { machine: about.machine.clone(), resident: about.id.clone() })
-            .is_some()
-        {
-            continue;
+        .await;
+        match deleted {
+            Ok(()) => {}
+            // An account the hub has no more, or one this machine may not act
+            // for now — another of the name — keeps nothing there of this
+            // machine's to delete.
+            Err(why) if why.contains("there is no account") || why.contains(" may not act for the account ") => {
+                node.log.line(format_args!("the plan of {} at {}: {why}; nothing is left there to delete", about.id, scope.account));
+            }
+            Err(why) => return Err(Failure::new(why)),
         }
-        link.plan_delete(&scope.account, &about.id).await.map_err(Failure::new)?;
     }
     Ok(())
 }

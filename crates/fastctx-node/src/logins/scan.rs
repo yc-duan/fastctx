@@ -198,7 +198,9 @@ fn in_home(home: &Path, agent: &str, unreadable: &mut Vec<String>) -> Vec<PathBu
     };
     for entry in entries.flatten() {
         let name = entry.file_name().to_string_lossy().into_owned();
-        if !entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+        // A login moved to another disk is a link to where it went
+        // (`fastctx move-login`), and what the move set aside is no login.
+        if traces::moving(&name) || !fastctx_platform::disk::metadata(entry.path()).is_ok_and(|found| found.is_dir()) {
             continue;
         }
         let names = match fastctx_platform::disk::read_dir(entry.path()) {

@@ -995,6 +995,13 @@ pub async fn serve_watch(
 struct Told {
     resident: ResidentId,
     changes: Option<tokio::sync::watch::Receiver<u64>>,
+    /// Where the residents' changes stood when it last asked which changed.
+    seen: u64,
+    /// When it looks again for the changes of residents other than its own.
+    others: Option<tokio::time::Instant>,
+    /// Its state is to be read: a wait that ended is not waited again where
+    /// the reading after it was dropped part way.
+    due: bool,
     last: Option<NowTold>,
 }
 
@@ -1004,7 +1011,14 @@ type NowTold = (bool, Option<String>, Vec<fastctx_types::session::KeptWords>, Op
 
 impl Told {
     fn new(node: &Node, resident: &ResidentId, asked: bool) -> Self {
-        Self { resident: resident.clone(), changes: asked.then(|| node.residents.changes()), last: None }
+        Self {
+            resident: resident.clone(),
+            changes: asked.then(|| node.residents.changes()),
+            seen: 0,
+            others: None,
+            due: false,
+            last: None,
+        }
     }
 
     /// The resident's state as its first telling, when asked for.
@@ -1014,22 +1028,47 @@ impl Told {
         None
     }
 
-    /// The next telling: waits for a change of any resident, and is `Some`
-    /// once this one's state is not what was told last. Never ready when
-    /// the viewer did not ask.
+    /// The next telling: waits for a change of this resident, and is `Some`
+    /// once its state is not what was told last. Never ready when the
+    /// viewer did not ask.
     async fn changed(&mut self, node: &Arc<Node>) -> Option<Watched> {
         let Some(changes) = &mut self.changes else { return std::future::pending().await };
-        if self.last.is_some() {
+        if self.last.is_some() && !self.due {
             // A change of words kept moves no resident: while some are kept
             // or it works, it is looked at again every few seconds too.
             let unsettled = self.last.as_ref().is_some_and(|(busy, _, kept, _)| *busy || !kept.is_empty());
             let again =
                 async { if unsettled { tokio::time::sleep(LOOK_AGAIN).await } else { std::future::pending().await } };
+            let others = self.others;
+            let rest = async {
+                match others {
+                    Some(at) => tokio::time::sleep_until(at).await,
+                    None => std::future::pending().await,
+                }
+            };
             tokio::select! {
-                changed = changes.changed() => if changed.is_err() { return std::future::pending().await },
+                changed = changes.changed() => {
+                    if changed.is_err() {
+                        return std::future::pending().await;
+                    }
+                    // Another resident's change alone: read at each of them,
+                    // every watch read its inbox for every change on the
+                    // machine. Words kept for this one move no resident, so
+                    // it is still looked at, a moment later and once for
+                    // all that changes meanwhile.
+                    let moved = node.residents.changed_since(self.seen);
+                    self.seen = moved.at;
+                    if !moved.has(&self.resident) {
+                        self.others.get_or_insert(tokio::time::Instant::now() + OTHERS_AFTER);
+                        return None;
+                    }
+                }
                 () = again => {}
+                () = rest => {}
             }
         }
+        self.due = true;
+        self.others = None;
         let (busy, turn) = node.residents.now(&self.resident).map_or((false, None), |now| {
             (now.activity == fastctx_types::residents::Activity::Busy || now.turn.is_some(), now.turn)
         });
@@ -1037,6 +1076,7 @@ impl Told {
         let kept = fastctx_platform::task::blocking(move || kept(&reading, &resident)).await;
         let halted = crate::composer::stopped_turn(node, &self.resident).filter(|halted| turn.as_ref() == Some(halted));
         let state = (busy, turn, kept, halted);
+        self.due = false;
         if self.last.as_ref() == Some(&state) {
             return None;
         }
@@ -1053,6 +1093,8 @@ const KEPT_SHOWN: usize = 4096;
 /// While a resident works or words are kept for it, how often a watch that
 /// tells it looks again.
 const LOOK_AGAIN: std::time::Duration = std::time::Duration::from_secs(5);
+/// How long after another resident changed a watch looks at its own again.
+const OTHERS_AFTER: std::time::Duration = std::time::Duration::from_secs(1);
 
 /// The words kept for `resident` here that no turn has taken yet, and how far
 /// each came.

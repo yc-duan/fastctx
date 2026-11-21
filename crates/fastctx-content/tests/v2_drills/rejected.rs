@@ -84,6 +84,21 @@ pub(crate) fn run() {
     let epoch: i64 = db.query_row("SELECT epoch FROM frames WHERE first = ?1", params![cut as i64], |r| r.get(0)).unwrap();
     assert_eq!(epoch, 2, "committed again in the new epoch, from the cut");
     assert!(library.item("s", "t", b"e").unwrap().is_some() && library.item("s", "t", b"f").unwrap().is_some());
+    // Written again in the new epoch while what was cut away waited: what
+    // was written later stands, and what waited is let go rather than
+    // committed over it (codex-15695bc9 #6). Another item that waited with
+    // it is committed again as before.
+    let cut = library
+        .raw_commit(c(vec![rec("g", State::Is { body: b"g-old".to_vec(), objects: vec![] }), rec("h", State::Is { body: b"h".to_vec(), objects: vec![] })], vec![], None), signer.clone())
+        .unwrap()
+        .first;
+    library.rejected("s", "t", cut).unwrap();
+    library.new_epoch_at("s", "t", 3, b"epoch-3".to_vec(), cut).unwrap();
+    library.raw_commit(c(vec![rec("g", State::Is { body: b"g-new".to_vec(), objects: vec![] })], vec![], None), signer.clone()).unwrap();
+    while library.resubmit("s", "t", 8, signer.clone()).unwrap() > 0 {}
+    assert!(library.resubmits("s", "t", 1000).unwrap().is_empty(), "nothing waits");
+    assert_eq!(library.item("s", "t", b"g").unwrap().unwrap().body, b"g-new".to_vec(), "what was written later stands");
+    assert_eq!(library.item("s", "t", b"h").unwrap().unwrap().body, b"h".to_vec(), "the other is committed again");
     println!("v2 rejected drill: ok");
     let _ = std::fs::remove_dir_all(&dir);
 }

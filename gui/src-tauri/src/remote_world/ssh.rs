@@ -485,6 +485,16 @@ impl Ran {
 /// Runs one command, writing its input while reading its output, since a
 /// full output buffer would otherwise stop the input.
 async fn run(handle: &Handle<Checked>, command: &str, input: impl Into<Upload>) -> Result<Ran, String> {
+    run_telling(handle, command, input, &|_| {}).await
+}
+
+/// `run`, each piece of what the command writes told as it comes.
+async fn run_telling(
+    handle: &Handle<Checked>,
+    command: &str,
+    input: impl Into<Upload>,
+    tell: &(dyn Fn(String) + Sync),
+) -> Result<Ran, String> {
     let channel = handle.channel_open_session().await.map_err(|error| error.to_string())?;
     channel.exec(true, command).await.map_err(|error| error.to_string())?;
     let (mut reading, writing) = channel.split();
@@ -504,8 +514,14 @@ async fn run(handle: &Handle<Checked>, command: &str, input: impl Into<Upload>) 
         let mut ran = Ran { status: None, out: Vec::new(), err: Vec::new() };
         while let Some(message) = reading.wait().await {
             match message {
-                ChannelMsg::Data { data } => ran.out.extend_from_slice(&data),
-                ChannelMsg::ExtendedData { data, ext: 1 } => ran.err.extend_from_slice(&data),
+                ChannelMsg::Data { data } => {
+                    tell(String::from_utf8_lossy(&data).into_owned());
+                    ran.out.extend_from_slice(&data);
+                }
+                ChannelMsg::ExtendedData { data, ext: 1 } => {
+                    tell(String::from_utf8_lossy(&data).into_owned());
+                    ran.err.extend_from_slice(&data);
+                }
                 ChannelMsg::ExitStatus { exit_status } => ran.status = Some(exit_status),
                 _ => {}
             }
@@ -515,6 +531,130 @@ async fn run(handle: &Handle<Checked>, command: &str, input: impl Into<Upload>) 
     let (written, ran) = tokio::join!(write, read);
     written?;
     Ok(ran)
+}
+
+/// What is asked of a login's directory on a server: `fastctx move-login`
+/// there.
+#[derive(Deserialize)]
+#[serde(tag = "do", rename_all = "snake_case")]
+pub enum MoveAsk {
+    Move {
+        login: String,
+        target: String,
+        #[serde(default)]
+        stop_agents: bool,
+    },
+    Resume,
+    DropBackup {
+        op: String,
+        #[serde(default)]
+        anyway: bool,
+    },
+    Status,
+}
+
+/// How it came out: the command's exit, none where nothing was run but
+/// the look; the moves recorded there after it, as `fastctx move-login
+/// --status --json` gives them; and the one this asking was of — the move
+/// it began, finished or whose backup it deleted — none where it left none.
+#[derive(Serialize)]
+pub struct Moved {
+    pub status: Option<u32>,
+    pub records: serde_json::Value,
+    pub op: Option<String>,
+}
+
+/// What `fastctx move-login` says first of the move a run is.
+const MOVE_SAID: &str = "fastctx-move: ";
+
+/// Whether `op` is in a move's shape: `YYYYMMDDTHHMMSS-` and eight hex digits.
+fn move_op(op: &str) -> bool {
+    let bytes = op.as_bytes();
+    bytes.len() == 24
+        && bytes[..8].iter().all(u8::is_ascii_digit)
+        && bytes[8] == b'T'
+        && bytes[9..15].iter().all(u8::is_ascii_digit)
+        && bytes[15] == b'-'
+        && bytes[16..].iter().all(|byte| byte.is_ascii_hexdigit())
+}
+
+/// Signs in to the server whose key was confirmed and has its Fastctx move
+/// one of its logins' directories to another disk, or finish or look at a
+/// move, what it writes told as it comes. Run over SSH, from outside the
+/// World there, which stops while a directory moves: the World is the
+/// signed-in user's, as a server made from here is (`open`), and root is
+/// had through sudo where that user is not root, with the password given
+/// here when sudo wants one.
+pub async fn move_login(
+    server: &Server,
+    machine: &str,
+    hub: &str,
+    ask: MoveAsk,
+    tell: &(dyn Fn(String) + Sync),
+) -> Result<Moved, String> {
+    let (_, handle) = sign_in(server).await?;
+    let done = async {
+        let uid = run(&handle, "id -u", Vec::new()).await?.ok("looking at the server")?;
+        let sudo = if String::from_utf8_lossy(&uid).trim() == "0" {
+            Sudo::Root
+        } else if run(&handle, "sudo -n true", Vec::new()).await?.status == Some(0) {
+            Sudo::Free
+        } else {
+            Sudo::Password(server.sudo.clone().ok_or_else(|| SUDO_WANTED.to_string())?)
+        };
+        // Only the machine meant, of the network meant: the World there says
+        // which it is.
+        let program = format!(r#""$HOME/.fastctx/bin/fastctx" move-login --machine {} --hub {}"#, quote(machine), quote(hub));
+        let line = |words: &str| match &sudo {
+            Sudo::Root => format!("{program} {words}"),
+            Sudo::Free => format!(r#"sudo -n env FASTCTX_HOME="$HOME/.fastctx" {program} {words}"#),
+            Sudo::Password(_) => format!(r#"sudo -S -p '' env FASTCTX_HOME="$HOME/.fastctx" {program} {words}"#),
+        };
+        let list = || async {
+            let listed = run(&handle, &line("--status --json"), sudo.line().into_bytes()).await?.ok("reading the moves recorded there")?;
+            serde_json::from_slice::<serde_json::Value>(&listed).map_err(|error| format!("reading the moves recorded there: {error}"))
+        };
+        let words = match &ask {
+            MoveAsk::Move { login, target, stop_agents } => {
+                format!("{} {} --yes{}", quote(login), quote(target), if *stop_agents { " --stop-agents" } else { "" })
+            }
+            MoveAsk::Resume => "--resume".to_string(),
+            MoveAsk::DropBackup { op, anyway } => format!("--drop-backup {}{}", quote(op), if *anyway { " --anyway" } else { "" }),
+            MoveAsk::Status => String::new(),
+        };
+        // What the run says of the move it is (`MOVE_SAID`), as it goes: a run
+        // that made none, refused before it began, says none.
+        let said = std::sync::Mutex::new(String::new());
+        let telling = |piece: String| {
+            said.lock().expect("said").push_str(&piece);
+            tell(piece);
+        };
+        let status = if matches!(ask, MoveAsk::Status) {
+            None
+        } else {
+            run_telling(&handle, &format!("{} 2>&1", line(&words)), sudo.line().into_bytes(), &telling).await?.status
+        };
+        let records = list().await?;
+        let op = match &ask {
+            // Said at a line's start, in a move's own shape: no path a line
+            // of output names is taken for it.
+            MoveAsk::Move { .. } | MoveAsk::Resume => said
+                .lock()
+                .expect("said")
+                .lines()
+                .filter_map(|line| line.strip_prefix(MOVE_SAID))
+                .map(str::trim)
+                .filter(|op| move_op(op))
+                .next_back()
+                .map(str::to_string),
+            MoveAsk::DropBackup { op, .. } => Some(op.clone()),
+            MoveAsk::Status => None,
+        };
+        Ok(Moved { status, records, op })
+    };
+    let moved = done.await;
+    let _ = handle.disconnect(Disconnect::ByApplication, "", "").await;
+    moved
 }
 
 /// A word for a POSIX shell, single-quoted.

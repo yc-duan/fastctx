@@ -209,6 +209,13 @@ fn admit_inner(
     if agents_here {
         view.authorize(&caller.account, fastctx_net::authorization::Action::Hold(&here)).map_err(Failure::from)?;
     }
+    // What a machine holds of conversations living elsewhere is its owner's
+    // to manage: the account it is the home of, no one it is shared with.
+    if matches!(call, RemoteCall::Copies { .. })
+        && view.directory.member(&here).is_none_or(|member| member.home.as_ref() != Some(&caller.account))
+    {
+        return Err(refuse(format!("only {here}'s owner manages the copies it holds")));
+    }
     // Updates use general machine management authority (`world-upgrade.md`, 谁来更新).
     if matches!(call, RemoteCall::UpdateWorld | RemoteCall::Updates { .. }) && !view.may_update(&caller.account, &here)
     {

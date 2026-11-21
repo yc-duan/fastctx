@@ -197,11 +197,15 @@ pub(super) fn prune(node: &Node, connected: &[(&str, PathBuf)]) {
         if !state.seeded {
             return;
         }
+        // A login whose directory is not there now — the disk it was moved
+        // to not mounted — cannot be told apart from another: what is open in
+        // it stays until it is back.
         state
             .dirs
             .iter()
             .filter(|(agent, dir)| {
-                !connected.iter().any(|(name, home)| name == agent && crate::homes::same_dir(home, dir))
+                fastctx_platform::disk::metadata(dir).is_ok_and(|found| found.is_dir())
+                    && !connected.iter().any(|(name, home)| name == agent && crate::homes::same_dir_now(home, dir))
             })
             .cloned()
             .collect()

@@ -33,6 +33,16 @@ pub fn refresh(places: &Places, host: Host) -> Result<Refresh, Error> {
         Host::Codex => &places.codex_home,
         Host::Claude => &places.claude_home,
     };
+    // Keeping a login up to date never makes one: a login whose directory is
+    // not there — the disk it was moved to not mounted (`fastctx
+    // move-login`), or taken away — is said, and nothing is written in its
+    // place.
+    if !std::fs::metadata(home).is_ok_and(|found| found.is_dir()) {
+        return Ok(Refresh::Changed {
+            location: home.display().to_string(),
+            reason: "the login's directory is not there (is the disk it is on mounted?); nothing is written".into(),
+        });
+    }
     if status_at(places, host, home)? != Standing::In {
         return Ok(Refresh::Out);
     }

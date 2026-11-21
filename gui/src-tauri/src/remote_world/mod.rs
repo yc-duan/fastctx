@@ -39,6 +39,24 @@ pub(crate) async fn remote_probe(host: String, port: u16) -> Result<Probed, Stri
     ssh::probe(&host, port).await
 }
 
+/// Has the Fastctx of a server signed in to over SSH move one of its
+/// logins' directories to another disk, or finish or look at a move
+/// (`fastctx move-login` there; the user, 2026-11-21: "让用户可以从前端进行
+/// SSH传一个命令的迁移"): what it writes is told as it comes.
+#[fastctx_gui_command::command]
+pub(crate) async fn remote_move_login(
+    server: Server,
+    machine: String,
+    hub: String,
+    ask: ssh::MoveAsk,
+    told: Channel<String>,
+) -> Result<ssh::Moved, String> {
+    ssh::move_login(&server, &machine, &hub, ask, &move |piece| {
+        let _ = told.send(piece);
+    })
+    .await
+}
+
 /// What the server showed once signed in to: the name it would take in the
 /// World, made from its host name; the ports taken there; the hub of a
 /// World it keeps already, if it does; and whether it is a machine of one.

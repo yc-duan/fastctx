@@ -77,6 +77,8 @@ mod gates;
 mod gather;
 mod goals;
 pub mod handoff;
+/// The records of moves of logins' directories (`fastctx move-login`).
+pub use logins::moves as login_moves;
 mod held_history;
 mod here;
 mod history;
@@ -683,6 +685,28 @@ pub async fn run_prepared(
                 .ok_or_else(|| AlreadyServed(world.path().to_path_buf()))?
         }
     };
+    // A login's directory moved with this node stopped may stand between its
+    // two places while the move is unfinished (`logins::moves`): the node
+    // takes nothing up, lets the World go to whoever finishes it, and looks
+    // again each minute, rather than ending to be started at once again.
+    let _lock = {
+        let mut lock = _lock;
+        let mut told = false;
+        loop {
+            let looking = world.path().to_path_buf();
+            let Some(why) = fastctx_platform::task::blocking(move || logins::moves::unsettled(&looking)).await else {
+                break lock;
+            };
+            if !told {
+                eprintln!("fastctx node: {why}; waiting for it");
+                told = true;
+            }
+            drop(lock);
+            tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+            let taking = world.node_lock();
+            lock = fastctx_platform::task::spawn_blocking(move || FileLock::acquire(&taking)).await??;
+        }
+    };
     if renewal.successor && {
         let root = fastctx_root.to_path_buf();
         fastctx_platform::task::blocking(move || fastctx_install::renewal::read(&root))
@@ -1203,6 +1227,24 @@ mod storage_drill;
 pub use lines::drill::run as line_source_drill;
 
 pub use conversation_store::transfer::status::ConversationImport;
+
+/// Compacts the asset library in `directory` while this machine's node is
+/// stopped and its lock held (`fastctx data compact`): a line for each of
+/// its databases, saying what it came to.
+pub fn compact_library(directory: &std::path::Path) -> std::io::Result<Vec<String>> {
+    use fastctx_storage::Compacted;
+    let compacted = fastctx_content::v2::compact(directory).map_err(std::io::Error::other)?;
+    Ok(compacted
+        .into_iter()
+        .map(|(name, compacted)| match compacted {
+            Compacted::Absent => format!("{name}: not there"),
+            Compacted::NoRoom { free, needed } => {
+                format!("{name}: left as it is, {} MiB free where {} MiB are needed", free >> 20, needed >> 20)
+            }
+            Compacted::Done { before, after } => format!("{name}: {} MiB -> {} MiB", before >> 20, after >> 20),
+        })
+        .collect())
+}
 
 /// Lists durable import progress and rejected offers without modifying the node.
 pub fn conversation_imports(root: &std::path::Path) -> std::io::Result<Vec<ConversationImport>> {

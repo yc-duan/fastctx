@@ -186,12 +186,32 @@ pub(crate) fn last_action(
     let directory = directory(path)?;
     prepare(&directory, "actions")?;
     records::read(&directory, |rows| {
-        let from = from.map_or([0; 16], |at| (at.as_nanosecond() ^ i128::MIN).to_be_bytes());
-        let until = until.map_or([255; 16], |at| (at.as_nanosecond() ^ i128::MIN).to_be_bytes());
-        let body:Option<Vec<u8>>=rows.connection().query_row("SELECT body FROM conversation_records WHERE conversation=?1 AND family='actions' AND arrival>=?2 AND arrival<?3 ORDER BY position DESC LIMIT 1",params![rows.conversation(),from.as_slice(),until.as_slice()],|row|row.get(0)).optional()?;
+        let body: Option<Vec<u8>> = if from.is_none() && until.is_none() {
+            rows.connection().query_row(LAST_ACTION, [rows.conversation()], |row| row.get(0)).optional()?
+        } else {
+            let from = from.map_or([0; 16], |at| (at.as_nanosecond() ^ i128::MIN).to_be_bytes());
+            let until = until.map_or([255; 16], |at| (at.as_nanosecond() ^ i128::MIN).to_be_bytes());
+            rows.connection()
+                .query_row(LAST_ACTION_WITHIN, params![rows.conversation(), from.as_slice(), until.as_slice()], |row| row.get(0))
+                .optional()?
+        };
         body.as_deref().map(records::decode).transpose()
     })
 }
+
+/// The last action written: the end of the family's order, one row read.
+/// Asked with a span of arrivals too, SQLite walked every action of the
+/// conversation by arrival and sorted them with their bodies to find it.
+const LAST_ACTION: &str = "SELECT body FROM conversation_records INDEXED BY conversation_records_order \
+    WHERE conversation=?1 AND family='actions' ORDER BY position DESC LIMIT 1";
+/// The last action written of those that arrived in a span of time: the
+/// family's order gone back from its end to the first that arrived in the
+/// span — an action that happened earlier may be written later, and two
+/// may arrive at one moment, so the span's end by arrival is not it
+/// (codex-15695bc9). No row is sorted; those written after the span are
+/// passed one at a time.
+const LAST_ACTION_WITHIN: &str = "SELECT body FROM conversation_records INDEXED BY conversation_records_order \
+    WHERE conversation=?1 AND family='actions' AND arrival>=?2 AND arrival<?3 ORDER BY position DESC LIMIT 1";
 pub(crate) fn recent_actions(directory: &ConversationDir, limit: usize) -> io::Result<(Vec<Action>, usize)> {
     prepare(directory, "actions")?;
     records::read(directory, |rows| {
@@ -237,3 +257,6 @@ pub(crate) fn asked(path: &Path, target: Option<&str>) -> io::Result<Vec<Action>
             .collect()
     })
 }
+
+#[cfg(test)]
+mod tests;

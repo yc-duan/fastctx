@@ -1622,6 +1622,10 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
                 .await
                 .map(|state| Reply::Update(Box::new(state)))
         }
+        Call::MachineCopies { machine, ask } => {
+            users_voice(node, peer)?;
+            crate::assets::copies::machine(node, machine, ask).await.map(Reply::MachineCopies)
+        }
         Call::MachineUpdates { machine, update } => {
             users_voice(node, peer)?;
             let acting = crate::around::acting_of(node, &caller::of(node, peer)?);

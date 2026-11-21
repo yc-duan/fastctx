@@ -9,7 +9,9 @@
 //! disk before the session records it. An id once given stays the
 //! directory's: nothing is taken out, and a record that cannot be read, or
 //! does not hold together, is never written over, so that no login is ever
-//! given a second id.
+//! given a second id. A login moved to another disk leaves a link where its
+//! directory was (`fastctx login move`): the directory kept for its id then
+//! resolves to where it went, and the id goes with it.
 
 use std::ffi::OsString;
 use std::io;
@@ -89,6 +91,31 @@ fn given(world: &Path, agent: &AgentName, dir: &Path, bytes_at_most: usize) -> i
     if let Some(known) = registry.logins.iter().find(|known| known.agent == *agent && known.dir == real) {
         return Ok(known.id.clone());
     }
+    // Moved: finished moves took the directory kept for one id to this one,
+    // the very directory one of them published (`super::moves`). A link put
+    // there by other hands, or one pointed elsewhere since, leads to another
+    // login. Only where one alone is, and the record says where it is from
+    // here on.
+    // Records that cannot be read give no id: that would be a second one if
+    // a move they hold took this directory's login here.
+    let finished = super::moves::finished(world)?;
+    let moved: Vec<usize> = registry
+        .logins
+        .iter()
+        .enumerate()
+        .filter(|(_, known)| known.agent == *agent && super::moves::led_to(&finished, &known.dir, &real))
+        .map(|(index, _)| index)
+        .collect();
+    match moved[..] {
+        [index] => {
+            registry.logins[index].dir = real;
+            let id = registry.logins[index].id.clone();
+            keep(world, &registry, bytes_at_most)?;
+            return Ok(id);
+        }
+        [] => {}
+        _ => return Err(invalid(format!("{} could be the directory of more than one login moved here", real.display()))),
+    }
     let id = loop {
         let mut bytes = [0_u8; 8];
         getrandom::fill(&mut bytes).map_err(io::Error::other)?;
@@ -104,14 +131,18 @@ fn given(world: &Path, agent: &AgentName, dir: &Path, bytes_at_most: usize) -> i
         written: dir.to_path_buf(),
         at: Timestamp::now(),
     });
-    let mut bytes = serde_json::to_vec_pretty(&registry).map_err(io::Error::other)?;
+    keep(world, &registry, bytes_at_most)?;
+    Ok(id)
+}
+
+fn keep(world: &Path, registry: &Registry, bytes_at_most: usize) -> io::Result<()> {
+    let mut bytes = serde_json::to_vec_pretty(registry).map_err(io::Error::other)?;
     bytes.push(b'\n');
     // Never more than is read back.
     if bytes.len() > bytes_at_most {
         return Err(invalid(format!("would exceed {bytes_at_most} bytes")));
     }
-    publish(&path(world), &bytes, Permissions::Private)?;
-    Ok(id)
+    publish(&path(world), &bytes, Permissions::Private)
 }
 
 /// `of`, or none where it could not be read or kept, which the node's log
@@ -202,6 +233,59 @@ mod tests {
         let of_b = given(world.path(), &agent("claude"), &link, RECORD_BYTES).expect("an id");
         assert_ne!(of_b, of_a);
         assert_eq!(given(world.path(), &agent("claude"), &b, RECORD_BYTES).expect("an id"), of_b);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_moved_login_keeps_its_id() {
+        let world = tempfile::tempdir().expect("a directory");
+        let home = login(world.path(), "claude-home");
+        let first = given(world.path(), &agent("claude"), &home, RECORD_BYTES).expect("an id");
+        // Moved as `fastctx login move` moves it: copied, the original set
+        // aside, a link left where it was.
+        let disk = login(world.path(), "disk");
+        let went = disk.join("claude-home");
+        let real = fastctx_platform::disk::canonicalize(&home).expect("resolved");
+        fastctx_platform::disk::rename(&home, world.path().join("claude-home.moved")).expect("set aside");
+        fastctx_platform::disk::create_dir_all(&went).expect("copied");
+        std::os::unix::fs::symlink(&went, &home).expect("a link");
+        // Not yet known to have been moved: another login.
+        let unproven = tempfile::tempdir().expect("a directory");
+        fastctx_platform::disk::copy(path(world.path()), path(unproven.path())).expect("the record");
+        assert_ne!(given(unproven.path(), &agent("claude"), &home, RECORD_BYTES).expect("an id"), first);
+        super::super::moves::finished_for_test(world.path(), &real, &went);
+        assert_eq!(given(world.path(), &agent("claude"), &home, RECORD_BYTES).expect("an id"), first);
+        // The link a move left pointed elsewhere afterwards leads to another
+        // login: the id stays with the directory the move put there.
+        let other = tempfile::tempdir().expect("a directory");
+        let home2 = login(other.path(), "claude-home");
+        let second = given(other.path(), &agent("claude"), &home2, RECORD_BYTES).expect("an id");
+        let real2 = fastctx_platform::disk::canonicalize(&home2).expect("resolved");
+        let went2 = login(other.path(), "went");
+        fastctx_platform::disk::rename(&home2, other.path().join("claude-home.moved")).expect("set aside");
+        std::os::unix::fs::symlink(&went2, &home2).expect("a link");
+        super::super::moves::finished_for_test(other.path(), &real2, &went2);
+        let elsewhere = login(other.path(), "elsewhere");
+        fastctx_platform::disk::remove_file(&home2).expect("unlinked");
+        std::os::unix::fs::symlink(&elsewhere, &home2).expect("a link");
+        assert_ne!(given(other.path(), &agent("claude"), &home2, RECORD_BYTES).expect("an id"), second);
+        assert_eq!(given(other.path(), &agent("claude"), &went2, RECORD_BYTES).expect("an id"), second);
+        assert_eq!(given(world.path(), &agent("claude"), &went, RECORD_BYTES).expect("an id"), first);
+        let record = read(world.path()).expect("the record");
+        assert_eq!(record.logins.len(), 1);
+        assert_eq!(record.logins[0].dir, fastctx_platform::disk::canonicalize(&went).expect("resolved"));
+        // Moved again: a link left where it went.
+        let further = disk.join("again");
+        let then = fastctx_platform::disk::canonicalize(&went).expect("resolved");
+        fastctx_platform::disk::rename(&went, disk.join("claude-home.moved")).expect("set aside");
+        fastctx_platform::disk::create_dir_all(&further).expect("copied");
+        std::os::unix::fs::symlink(&further, &went).expect("a link");
+        super::super::moves::finished_for_test(world.path(), &then, &further);
+        assert_eq!(given(world.path(), &agent("claude"), &home, RECORD_BYTES).expect("an id"), first);
+        // Its disk not there: no id, and nothing given anew.
+        fastctx_platform::disk::rename(&further, disk.join("away")).expect("away");
+        assert!(given(world.path(), &agent("claude"), &home, RECORD_BYTES).is_err());
+        assert_eq!(read(world.path()).expect("the record").logins.len(), 1);
     }
 
     #[test]

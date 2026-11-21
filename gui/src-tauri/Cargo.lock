@@ -1868,7 +1868,7 @@ checksum = "c6e8948ce679d00a02a94739ea185595dca7118ed04feb991127e443bd3d761f"
 
 [[package]]
 name = "fastctx-client"
-version = "1.0.1-beta.22"
+version = "1.0.1-beta.23"
 dependencies = [
  "base64 0.22.1",
  "fastctx-content",
@@ -1887,7 +1887,7 @@ dependencies = [
 
 [[package]]
 name = "fastctx-content"
-version = "1.0.1-beta.22"
+version = "1.0.1-beta.23"
 dependencies = [
  "fastctx-platform",
  "fastctx-storage",
@@ -1899,7 +1899,7 @@ dependencies = [
 
 [[package]]
 name = "fastctx-gui"
-version = "1.0.1-beta.22"
+version = "1.0.1-beta.23"
 dependencies = [
  "ashpd",
  "base64 0.22.1",
@@ -1938,7 +1938,7 @@ dependencies = [
 
 [[package]]
 name = "fastctx-gui-command"
-version = "1.0.1-beta.22"
+version = "1.0.1-beta.23"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1947,7 +1947,7 @@ dependencies = [
 
 [[package]]
 name = "fastctx-hands"
-version = "1.0.1-beta.22"
+version = "1.0.1-beta.23"
 dependencies = [
  "aho-corasick",
  "base64 0.22.1",
@@ -1976,7 +1976,7 @@ dependencies = [
 
 [[package]]
 name = "fastctx-hosts"
-version = "1.0.1-beta.22"
+version = "1.0.1-beta.23"
 dependencies = [
  "base64 0.22.1",
  "fastctx-platform",
@@ -2000,7 +2000,7 @@ dependencies = [
 
 [[package]]
 name = "fastctx-hub"
-version = "1.0.1-beta.22"
+version = "1.0.1-beta.23"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -2035,7 +2035,7 @@ dependencies = [
 
 [[package]]
 name = "fastctx-install"
-version = "1.0.1-beta.22"
+version = "1.0.1-beta.23"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -2073,7 +2073,7 @@ dependencies = [
 
 [[package]]
 name = "fastctx-jobs"
-version = "1.0.1-beta.22"
+version = "1.0.1-beta.23"
 dependencies = [
  "fastctx-platform",
  "fastctx-storage",
@@ -2086,7 +2086,7 @@ dependencies = [
 
 [[package]]
 name = "fastctx-net"
-version = "1.0.1-beta.22"
+version = "1.0.1-beta.23"
 dependencies = [
  "argon2 0.5.3",
  "base64 0.22.1",
@@ -2126,7 +2126,7 @@ dependencies = [
 
 [[package]]
 name = "fastctx-office"
-version = "1.0.1-beta.22"
+version = "1.0.1-beta.23"
 dependencies = [
  "anyhow",
  "num-bigint 0.4.8",
@@ -2138,7 +2138,7 @@ dependencies = [
 
 [[package]]
 name = "fastctx-pdf"
-version = "1.0.1-beta.22"
+version = "1.0.1-beta.23"
 dependencies = [
  "fontdb",
  "hayro",
@@ -2154,7 +2154,7 @@ dependencies = [
 
 [[package]]
 name = "fastctx-platform"
-version = "1.0.1-beta.22"
+version = "1.0.1-beta.23"
 dependencies = [
  "async-io",
  "fastctx-types",
@@ -2168,7 +2168,7 @@ dependencies = [
 
 [[package]]
 name = "fastctx-ripgrep"
-version = "1.0.1-beta.22"
+version = "1.0.1-beta.23"
 dependencies = [
  "fastctx-platform",
  "flate2",
@@ -2178,7 +2178,7 @@ dependencies = [
 
 [[package]]
 name = "fastctx-storage"
-version = "1.0.1-beta.22"
+version = "1.0.1-beta.23"
 dependencies = [
  "fastctx-platform",
  "rusqlite",
@@ -2187,7 +2187,7 @@ dependencies = [
 
 [[package]]
 name = "fastctx-sync"
-version = "1.0.1-beta.22"
+version = "1.0.1-beta.23"
 dependencies = [
  "fastctx-platform",
  "fastctx-storage",
@@ -2198,7 +2198,7 @@ dependencies = [
 
 [[package]]
 name = "fastctx-types"
-version = "1.0.1-beta.22"
+version = "1.0.1-beta.23"
 dependencies = [
  "base64 0.22.1",
  "icu_casemap",
@@ -2217,7 +2217,7 @@ dependencies = [
 
 [[package]]
 name = "fastctx-update"
-version = "1.0.1-beta.22"
+version = "1.0.1-beta.23"
 dependencies = [
  "base64 0.22.1",
  "fastctx-net",

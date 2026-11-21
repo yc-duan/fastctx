@@ -427,6 +427,7 @@ impl Device {
             }
             Call::UpdateMachine { machine } => (machine, RemoteCall::UpdateWorld, None),
             Call::MachineUpdates { machine, update } => (machine, RemoteCall::Updates { update }, None),
+            Call::MachineCopies { machine, ask } => (machine, RemoteCall::Copies { ask }, None),
             Call::Thumbnail { machine, request } => {
                 let machine = machine.ok_or_else(|| failed("choose the machine holding the image"))?;
                 (machine, RemoteCall::Thumbnail { request }, None)
@@ -641,6 +642,20 @@ impl Device {
                 view.admits(&session.link.membership().name, &chosen.account, &machine, purpose).map_err(failed)?;
                 chosen.account
             }
+            // Only a machine's owner manages its copies: asked as the owner
+            // where this device is logged in to that account, not as the
+            // first account that may use the machine.
+            None if matches!(&remote, RemoteCall::Copies { .. }) => {
+                let view = session.link.view();
+                let owner = view.directory.member(&machine).and_then(|member| member.home.clone());
+                match owner.filter(|owner| view.me().is_some_and(|me| me.logins.contains(owner))) {
+                    Some(owner) => owner,
+                    None => {
+                        drop(view);
+                        session.account_for(&machine, purpose)?
+                    }
+                }
+            }
             None => session.account_for(&machine, purpose)?,
         };
         if matches!(&remote, RemoteCall::Timeline { .. }) {
@@ -777,6 +792,7 @@ impl Device {
             (RemoteCall::Stats { .. }, RemoteReply::Stats(stats)) => Reply::Stats(stats),
             (RemoteCall::Book { .. }, RemoteReply::Book(answer)) => Reply::Book(answer),
             (RemoteCall::UpdateWorld | RemoteCall::Updates { .. }, RemoteReply::Update(state)) => Reply::Update(state),
+            (RemoteCall::Copies { .. }, RemoteReply::Copies(answer)) => Reply::MachineCopies(answer),
             (RemoteCall::Thumbnail { .. }, RemoteReply::Thumbnail(reply)) => Reply::Thumbnail(reply),
             (RemoteCall::AttachmentThumbnail { .. }, RemoteReply::Thumbnail(reply)) => Reply::Thumbnail(reply),
             (RemoteCall::Lines { .. }, RemoteReply::Lines(reply)) => Reply::Lines(reply),

@@ -22,8 +22,11 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error};
 /// second brings proofs of holding by challenge (design §28.45); the third,
 /// frames of a stream taken several at a time (`MANY`); the fourth, asset
 /// lines (`LINES`); the fifth, a conversation's streams kept by the machine
-/// that orders them and taken from it (`DIRECT`).
-pub const VERSION: u32 = 5;
+/// that orders them and taken from it (`DIRECT`); the sixth, a
+/// conversation's scope described for the account of each opener's name it
+/// was begun for alone (`BORN`); the seventh, the objects a machine holds of
+/// the conversation streams it orders vouched for to the hub (`VOUCH`).
+pub const VERSION: u32 = 7;
 
 /// The oldest version a side still speaks.
 pub const OLDEST: u32 = 1;
@@ -47,6 +50,31 @@ pub const LINES: u32 = 4;
 /// its frames and objects from it, and the hub keeps who orders each stream
 /// and who may read it, and none of what the streams hold.
 pub const DIRECT: u32 = 5;
+
+/// The version from which a device says, describing a conversation's scope,
+/// which account of each opener's name it was begun for
+/// (`Request::Describe`'s `born`), and the hub describes it for no other
+/// (`BEGUN_FOR_ANOTHER`).
+pub const BORN: u32 = 6;
+
+/// What a hub says refusing to describe a scope begun for an earlier
+/// account of an opener's name than the one there now; the opener's key
+/// (`account:NAME`) follows.
+pub const BEGUN_FOR_ANOTHER: &str = "begun for an earlier account of the name of ";
+
+/// How far a machine's clock and its hub's may differ, in milliseconds, as
+/// a scope is judged begun before an account was opened (`Request::Describe`'s
+/// `begun`): an account opened later than that past this did not begin it.
+pub const BEGUN_CLOCKS: i64 = 5 * 60 * 1000;
+
+/// The version from which a device vouches to the hub for the objects it
+/// holds of the conversation streams it orders (`Request::Vouch`): the hub
+/// may let go of its own copy of an object every reference of which is so
+/// vouched for, the machine the conversation lives on keeping it.
+pub const VOUCH: u32 = 7;
+
+/// The most objects one `Vouch` names.
+pub const VOUCHED_A_TIME: usize = 512;
 
 /// The most frames one `TakeMany` carries.
 pub const FRAMES_A_TAKE: usize = 16;
@@ -459,8 +487,22 @@ pub enum Request {
         limit: u32,
     },
     /// Describes a scope this device begins (§2.1): the hub signs its
-    /// descriptor, or answers the one it has.
-    Describe { scope: String, readers: Readers, classes: Vec<StreamClass> },
+    /// descriptor, or answers the one it has. From version `BORN` on, `born`
+    /// says who each opener of a conversation's scope was as it was begun —
+    /// `account:NAME` to when that account was opened, in milliseconds — and
+    /// a hub describing it anew describes it for no later account of a name.
+    Describe {
+        scope: String,
+        readers: Readers,
+        classes: Vec<StreamClass>,
+        #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+        born: std::collections::BTreeMap<String, String>,
+        /// When the device began the scope, in its milliseconds: an opener
+        /// `born` says nothing of is judged by it (`BEGUN_CLOCKS`). From
+        /// version `BORN` on.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        begun: Option<i64>,
+    },
     /// The streams of a scope this device holds, each with the sequence the
     /// hub's applied prefix reaches next (§6.6).
     Streams { scope: String },
@@ -546,12 +588,46 @@ pub enum Request {
     Begin { scope: String, stream: String },
     /// `stream`, which this device orders and keeps, reaches `next`: the
     /// machines that hold the scope are told it moved. From version `DIRECT`
-    /// on.
-    Stirred { scope: String, stream: String, next: u64 },
+    /// on. `epoch`, the epoch it is written in here, where it begins and the
+    /// chain value it follows: the hub takes it only where its own last
+    /// epoch of the stream is that one (none from a device before 1.0.1-beta.23).
+    Stirred {
+        scope: String,
+        stream: String,
+        next: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        epoch: Option<StirredIn>,
+    },
     /// The hub's word on which of `scopes` this device holds, for the
     /// machines that keep their streams to give them by. From version
     /// `DIRECT` on.
     Permits { scopes: Vec<String> },
+    /// This device, ordering `stream` of the conversation scope `scope` in
+    /// `epoch`, holds whole each object of `hashes` (at most
+    /// `VOUCHED_A_TIME`) its frames refer to, the oldest of them read back
+    /// whole `read_ago` milliseconds ago. `anew`, what it vouched for of the
+    /// stream before is set aside first: it tells the stream from its start.
+    /// From version `VOUCH` on.
+    Vouch {
+        scope: String,
+        stream: String,
+        epoch: u64,
+        hashes: Vec<Bytes>,
+        #[serde(default)]
+        read_ago: u64,
+        #[serde(default)]
+        anew: bool,
+    },
+}
+
+/// The epoch a stream is written in on the device that orders it, as
+/// `Request::Stirred` says it: its number, where it begins, and the chain
+/// value its first frame follows.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StirredIn {
+    pub epoch: u64,
+    pub start: u64,
+    pub follows: Bytes,
 }
 
 /// How a proof of holding by challenge stands (design §28.45).
@@ -733,6 +809,7 @@ impl Request {
             Self::Begin { .. } => "begin",
             Self::Stirred { .. } => "stirred",
             Self::Permits { .. } => "permits",
+            Self::Vouch { .. } => "vouch",
         }
     }
 
@@ -766,7 +843,8 @@ impl Request {
             | Self::Proof { .. }
             | Self::Begin { .. }
             | Self::Stirred { .. }
-            | Self::Permits { .. } => Purpose::AssetSync,
+            | Self::Permits { .. }
+            | Self::Vouch { .. } => Purpose::AssetSync,
         }
     }
 }
@@ -1002,6 +1080,9 @@ pub enum Reply {
     /// The scopes, of those asked after, this device holds until `until`, the
     /// hub's milliseconds, and the hub's word on it (`permit_statement`).
     Permits { until: i64, granted: Vec<String>, word: Bytes },
+    /// How many of the objects vouched for the stream's frames here refer
+    /// to, and are kept as vouched for.
+    Vouched { kept: u32 },
 }
 
 /// What the hub tells a device unasked.

@@ -193,8 +193,8 @@ async fn delete_inner(node: &Arc<Node>, name: &str) -> Result<Gone, Stop> {
         None
     };
     let Some(resident) = node.residents.on_record(id) else {
-        crate::goals::lifecycle::prepare_delete(node, id).await.map_err(|error| Stop::Failed(error.message))?;
-        crate::goals::lifecycle::delete(node, id).await.map_err(|error| Stop::Failed(error.message))?;
+        // Its identity record there but unread: refused before anything of
+        // it is begun to be deleted.
         let directory = node.world.conversation(id);
         if fastctx_platform::disk::exists(directory.about()).map_err(|error| Stop::Failed(error.to_string()))?
             && !fastctx_platform::disk::exists(directory.path().join("host-deleted"))
@@ -203,6 +203,13 @@ async fn delete_inner(node: &Arc<Node>, name: &str) -> Result<Gone, Stop> {
             return Err(Stop::Refused(
                 "its identity record cannot be read; its host record cannot be identified".into(),
             ));
+        }
+        crate::goals::lifecycle::prepare_delete(node, id).await.map_err(|error| Stop::Failed(error.message))?;
+        crate::goals::lifecycle::delete(node, id).await.map_err(|error| Stop::Failed(error.message))?;
+        // What it began that no hub described goes with it, where a deletion
+        // cut short left it: only now that it is known to be going.
+        if let Err(error) = crate::assets::undescribed::let_go(node, id.as_str()).await {
+            node.log.line(format_args!("letting go the undescribed scopes of {id}: {error}"));
         }
         let mut host_kept = 0;
         if let Some(about) = crate::forks::retained(&directory).map_err(|error| Stop::Failed(error.to_string()))? {
@@ -275,6 +282,14 @@ async fn delete_inner(node: &Arc<Node>, name: &str) -> Result<Gone, Stop> {
     };
     // From here it is deleted: what fails now is finished by the node.
     node.residents.condemn(id);
+    // Whoever waits on it hears that it went, not nothing (a `talk` waiting
+    // for the end of a turn its deletion stopped).
+    node.watchers.ended(id);
+    // What it began that no hub described goes with it: nothing of it went
+    // anywhere, and no hub would ever be asked to let it go.
+    if let Err(error) = crate::assets::undescribed::let_go(node, id.as_str()).await {
+        node.log.line(format_args!("letting go the undescribed scopes of {id}: {error}"));
+    }
     match records(node, id, name, &resident, &measured).await {
         Ok((retained, database_bytes)) => Ok(Gone {
             bytes: bytes.saturating_sub(retained + host_kept).saturating_add(database_bytes),

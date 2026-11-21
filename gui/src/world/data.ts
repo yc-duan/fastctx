@@ -37,7 +37,37 @@ export interface CopiesOf {
   source?: string;
   at?: Timestamp;
   paused_scopes: number;
+  /** About how many bytes those take there. */
+  paused_bytes?: number;
 }
+
+/** What a machine's owner asks from afar of the copies it holds
+ *  (`RemoteCall::Copies`). */
+export type CopiesAsk =
+  | { do: "report" }
+  | { do: "set"; hub: string; account: string; on: boolean }
+  | { do: "clear"; hub: string; account: string; apply?: boolean; only?: CopyHeld[] };
+
+/** A copy held on a machine: its scope, in the holding period it is held in. */
+export interface CopyHeld {
+  scope: string;
+  holding: number;
+}
+
+/** What letting go an account's copies came to, or would. */
+export interface Cleared {
+  applied: boolean;
+  scopes: number;
+  bytes: number;
+  kept: [string, string][];
+  /** The copies let go, or that would be: what letting go after a count is
+   *  limited to. */
+  keys?: CopyHeld[];
+  /** Why letting go stopped short after some went. */
+  failed?: string | null;
+}
+
+export type CopiesAnswer = { copies: "report"; accounts: CopiesOf[] } | ({ copies: "cleared" } & Cleared);
 
 /** The days full command output may be kept for, to choose from. */
 export const OUTPUT_DAYS = [1, 3, 7, 14, 30];

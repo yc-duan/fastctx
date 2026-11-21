@@ -17,6 +17,7 @@ mod goals;
 #[allow(unused_imports)]
 mod held_events;
 mod history;
+mod hub_move;
 mod lifecycle;
 mod read_scale;
 mod release_colleague;
@@ -354,6 +355,9 @@ async fn main() -> Result<()> {
     }
     if std::env::args().any(|argument| argument == "--scale") {
         return scale::run(&base).await;
+    }
+    if std::env::args().any(|argument| argument == "--hub-move") {
+        return hub_move::run(&base).await;
     }
     let mock_configuration = std::fs::read(base.join("codex/config.toml"))?;
     let listener = std::net::TcpListener::bind("127.0.0.1:0")?;

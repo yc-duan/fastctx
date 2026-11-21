@@ -166,7 +166,7 @@ fn first(base: &Path, dir: &Path) {
     let opened = store.book.directory.account(&root()).unwrap().opened;
     let conv = format!("c/{}/m1/conv-1", assets.id);
     let readers = Readers::Conversation { openers: vec![root()], born_on: Some(machine()) };
-    let describe = Request::Describe { scope: conv.clone(), readers, classes: fastctx_types::assets::conversation_classes() };
+    let describe = Request::Describe { scope: conv.clone(), readers, classes: fastctx_types::assets::conversation_classes(), born: Default::default(), begun: None };
     let Reply::Described { .. } = serve::ask(&assets, &store.indexed(), &String::new, &machine(), &key.public(), describe).unwrap() else { panic!("described") };
     // The plan's first version, kept where the hub keeps account records
     // and written into the conversation's scope.

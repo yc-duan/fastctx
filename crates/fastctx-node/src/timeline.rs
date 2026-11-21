@@ -44,6 +44,7 @@ mod tail;
 pub use tail::bench;
 pub(crate) use assets::Early;
 pub(crate) use tail::told_again;
+pub(crate) use tail::{LEFT_MOST, forget_windows};
 pub(crate) mod timers;
 
 use fastctx_content::StreamKey;
@@ -101,7 +102,7 @@ pub(crate) fn asset_checkpoints(conversation: &str) -> [String; 2] {
 /// The facts of a run `resident` tells of changed: its asset timeline is
 /// brought to them, whatever else moves it (DD06).
 pub(crate) fn runs_changed(node: &crate::Node, resident: &ResidentId) {
-    tail::wanted(node, resident);
+    tail::wanted_history(node, resident);
 }
 
 /// A network joined under a new term: every conversation here is brought to

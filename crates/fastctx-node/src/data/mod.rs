@@ -103,6 +103,30 @@ pub(crate) async fn answer(node: &Arc<Node>, call: DataCall) -> Result<DataReply
             .map_err(|error| Failure::new(format!("clearing this machine's cache: {error}")))?;
             Ok(DataReply::CacheCleared { bytes })
         }
+        DataCall::ClearCopies { hub, account, apply, only } => {
+            let clearing = node.clone();
+            let only: Option<std::collections::BTreeSet<(String, i64)>> =
+                only.map(|held| held.into_iter().map(|one| (one.scope, one.holding)).collect());
+            let cleared = fastctx_platform::task::spawn_blocking(move || {
+                crate::assets::copies::clear(&clearing, &hub, &account, apply, only.as_ref(), None)
+            })
+            .await
+            .map_err(|error| Failure::new(error.to_string()))?
+            .map_err(Failure::not_run)?;
+            Ok(DataReply::Cleared(cleared))
+        }
+        DataCall::Undescribed => {
+            let scopes = crate::assets::undescribed::read(&node.world.assets())
+                .into_iter()
+                .map(|(scope, never)| {
+                    let conversation = scope.rsplit('/').next().unwrap_or_default().to_string();
+                    let kept = fastctx_types::ResidentId::try_from(conversation.as_str())
+                        .is_ok_and(|id| node.residents.on_record(&id).is_some());
+                    fastctx_types::data::Undescribed { scope, conversation, kept, why: never.why, at: never.at }
+                })
+                .collect();
+            Ok(DataReply::Undescribed { scopes })
+        }
         DataCall::Copies => {
             let node = node.clone();
             let accounts = fastctx_platform::task::spawn_blocking(move || crate::assets::copies::report(&node))

@@ -429,7 +429,7 @@ async fn round(node: &Arc<Node>, hub: &HubId, link: &Arc<Link>) -> (usize, Vec<S
 /// The longest object taken from the machine that keeps a conversation's
 /// frames: it comes whole, held in memory until it is seen to be the object.
 /// A longer one is read where the conversation lives as it is opened.
-const MACHINE_OBJECT_BYTES: u64 = 64 << 20;
+const MACHINE_OBJECT_BYTES: u64 = fastctx_types::asset_peers::OBJECT_BYTES;
 
 /// Takes from the machines that keep them the objects, of those `wanted`,
 /// that conversations' frames refer to (`direct`): how many came, and those

@@ -37,11 +37,31 @@ pub enum DataCall {
     /// the machine's owner would: taken in again, what passed it by comes
     /// down; paused, what is here stays, read here no more.
     SetCopies { hub: String, account: String, on: bool },
+    /// Lets go, as the machine's owner would, the copies here `account` of
+    /// the hub `hub` reads that may be let go — every reader of each here
+    /// paused, none living here, nothing of it written here — or, without
+    /// `apply`, counts them. Their room comes back once the library is
+    /// compacted (`fastctx data compact`).
+    ClearCopies {
+        hub: String,
+        account: String,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        apply: bool,
+        /// Only these, where given: those a count said (`Cleared::keys`).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        only: Option<Vec<CopyHeld>>,
+    },
     /// The application was opened here as `account` of the hub `hub`,
     /// opened at `opened` (milliseconds): it takes in its copies here from
     /// now on, unless the machine's owner paused them. Sent by the
     /// application alone, never by a command.
     AppOpened { hub: String, account: String, opened: i64 },
+    /// The conversations' scopes this machine began that their hub will
+    /// never describe — begun for an account gone from it, or for an earlier
+    /// account of its name — each with its conversation (`fastctx data
+    /// undescribed`): what of a removed account is left here, to look at and
+    /// delete.
+    Undescribed,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -64,6 +84,85 @@ pub enum DataReply {
     Copies {
         accounts: Vec<CopiesOf>,
     },
+    Undescribed {
+        scopes: Vec<Undescribed>,
+    },
+    Cleared(Cleared),
+}
+
+/// What a machine's owner asks from afar of the copies the machine holds of
+/// conversations living elsewhere (`RemoteCall::Copies`, the machine page's
+/// 会话副本): as `DataCall::Copies`, `SetCopies` and `ClearCopies` ask of
+/// this machine.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "do")]
+pub enum CopiesAsk {
+    Report,
+    Set {
+        hub: String,
+        account: String,
+        on: bool,
+    },
+    Clear {
+        hub: String,
+        account: String,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        apply: bool,
+        /// Only these, where given: those a count said (`Cleared::keys`).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        only: Option<Vec<CopyHeld>>,
+    },
+}
+
+/// A copy held here: its scope, in the holding period it is held in — one
+/// held anew since is another copy.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CopyHeld {
+    pub scope: String,
+    pub holding: i64,
+}
+
+/// What a machine answers its owner of its copies.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "copies")]
+pub enum CopiesAnswer {
+    Report { accounts: Vec<CopiesOf> },
+    Cleared(Cleared),
+}
+
+/// What letting go an account's copies here came to, or would
+/// (`DataCall::ClearCopies`).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Cleared {
+    /// They were let go; only counted otherwise.
+    pub applied: bool,
+    /// How many copies were let go, or would be.
+    pub scopes: u64,
+    /// About how many bytes they took.
+    pub bytes: u64,
+    /// Those kept, each with why.
+    #[serde(default)]
+    pub kept: Vec<(String, String)>,
+    /// The copies let go, or that would be: what letting go after a count
+    /// is limited to.
+    #[serde(default)]
+    pub keys: Vec<CopyHeld>,
+    /// Why letting go stopped short after some were let go: those are
+    /// said above, the rest left as they were.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failed: Option<String>,
+}
+
+/// A scope its hub will never describe (`DataCall::Undescribed`).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Undescribed {
+    pub scope: String,
+    /// The conversation it is of, by the name `List` and `Delete` know it by.
+    pub conversation: String,
+    /// The conversation is still kept here.
+    pub kept: bool,
+    pub why: String,
+    pub at: Timestamp,
 }
 
 /// Whether an account logged in here takes in its copies of conversations
@@ -84,6 +183,9 @@ pub struct CopiesOf {
     pub at: Option<Timestamp>,
     /// The conversations' scopes it reads held here and taken in no more.
     pub paused_scopes: u64,
+    /// About how many bytes those take here.
+    #[serde(default)]
+    pub paused_bytes: u64,
 }
 
 /// The days full command output may be kept for: what the user chooses from.

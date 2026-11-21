@@ -1,0 +1,106 @@
+// The words of moving a server's login directory to another disk over SSH
+// (`login-move-sheet.ts`), and of its place in the machine page's 「管理」.
+
+import type { LoginMoveWords } from "./login-move-sheet";
+
+export interface LoginMoveSection {
+  title: string;
+  what: string;
+  open: string;
+}
+
+export const zhLoginMove: LoginMoveWords & { section: LoginMoveSection } = {
+  section: {
+    title: "登录目录",
+    what: "把这台机器上 Claude Code 或 Codex 的登录目录搬到另一块盘：整个目录复制过去、核对一致，原位置留一个链接，原目录留作备份。搬的时候这台机器上的会话会暂停几分钟。",
+    open: "经 SSH 搬迁…",
+  },
+  title: "搬迁登录目录",
+  what: "经 SSH 登录这台机器，让它的 Fastctx 把登录目录搬到另一块盘（fastctx move-login）。在这台机器的 fastctx 之外执行，搬的时候它的节点会停下。",
+  server: "服务器地址",
+  sshPort: "SSH 端口",
+  user: "用户名",
+  signInBy: "登录方式",
+  password: "密码",
+  keyFile: "私钥文件",
+  chooseKey: "选择私钥文件",
+  keyPassword: "私钥密码",
+  optional: "（可选）",
+  sudoPassword: "sudo 密码",
+  sudoWanted: "这个用户不是 root，sudo 需要密码：请填上 sudo 密码再试。",
+  login: "要搬的登录目录",
+  target: "搬到",
+  targetHint: "另一块盘上一个还不存在的目录，比如 /data/claude；这块盘要开机自动挂载。",
+  stopAgents: "强行停掉仍在用这个目录的 Claude Code / Codex",
+  stopAgentsWhat: "不勾选时，等它们自己结束，最多 60 秒，仍有就不搬并列出来；勾选后会终止这些进程及其子进程，正在进行的那一轮会中断。",
+  next: "下一步",
+  looking: "正在连接…",
+  firstTime: "第一次连接这台服务器，请核对它的密钥指纹",
+  changed: "这台服务器的密钥和本机记录的不同，请确认没有被冒充",
+  trust: "信任并开始搬迁",
+  back: "返回",
+  running: "正在搬迁，下面是那台机器上的输出：",
+  close: "关闭",
+  moved: (login, target, backup) => `已搬好：${login} → ${target}。原目录留作备份：${backup}。请先确认旧会话能接着用、插件和 MCP 正常、用量照常，再删备份。`,
+  notMoved: (why) => `没有搬：${why}`,
+  unfinished: (login, phase) => `${login} 的搬迁没有完成（停在 ${phase}）。可以继续，它会接着做完或者退回原样。`,
+  ended: (code) => (code === 0 ? "完成。" : code === null ? "已读取那台机器上的搬迁记录。" : `命令以 ${code} 结束，见下面的输出。`),
+  resume: "继续未完成的搬迁",
+  dropBackup: "删除备份",
+  dropSure: (backup) => `确认删除 ${backup}`,
+  backupGone: (backup) => `备份已删除：${backup}`,
+  wanting: {
+    host: "请填写服务器地址",
+    login: "要搬的登录目录要写完整路径，比如 /root/.claude",
+    target: "搬到的位置要写完整路径，比如 /data/claude",
+    key: "请选择私钥文件",
+  },
+};
+
+export const enLoginMove: LoginMoveWords & { section: LoginMoveSection } = {
+  section: {
+    title: "Login directories",
+    what: "Move a Claude Code or Codex login directory on this machine to another disk: copied whole and checked, a link left where it was, the original kept as a backup. Its conversations pause for a few minutes meanwhile.",
+    open: "Move over SSH…",
+  },
+  title: "Move a login directory",
+  what: "Signs in to this machine over SSH and has its Fastctx move a login directory to another disk (fastctx move-login), from outside the World there, whose node stops while it moves.",
+  server: "Server address",
+  sshPort: "SSH port",
+  user: "User",
+  signInBy: "Sign in by",
+  password: "Password",
+  keyFile: "Key file",
+  chooseKey: "Choose a key file",
+  keyPassword: "Key passphrase",
+  optional: " (optional)",
+  sudoPassword: "sudo password",
+  sudoWanted: "This user is not root and sudo wants a password: fill in the sudo password and try again.",
+  login: "Login directory to move",
+  target: "Move it to",
+  targetHint: "A directory not there yet on the other disk, such as /data/claude; that disk must be mounted at boot.",
+  stopAgents: "Stop the Claude Code / Codex still using it",
+  stopAgentsWhat: "Unticked, they are waited for, at most 60 seconds, and the move stops if any remain; ticked, they and what they started are stopped, cutting their turn short.",
+  next: "Next",
+  looking: "Connecting…",
+  firstTime: "The first connection to this server: check its key's fingerprint",
+  changed: "This server shows another key than this computer knows: make sure it is not an impostor",
+  trust: "Trust it and move",
+  back: "Back",
+  running: "Moving; what the machine writes:",
+  close: "Close",
+  moved: (login, target, backup) => `Moved: ${login} → ${target}. The original is kept at ${backup}: check that old conversations go on, plugins and MCP servers work and usage counts before deleting it.`,
+  notMoved: (why) => `Not moved: ${why}`,
+  unfinished: (login, phase) => `The move of ${login} is unfinished (at ${phase}). Going on finishes it or takes it back.`,
+  ended: (code) => (code === 0 ? "Done." : code === null ? "The moves recorded there were read." : `The command ended with ${code}; see what it wrote.`),
+  resume: "Finish the move",
+  dropBackup: "Delete the backup",
+  dropSure: (backup) => `Delete ${backup}`,
+  backupGone: (backup) => `The backup was deleted: ${backup}`,
+  wanting: {
+    host: "Fill in the server's address",
+    login: "Write the login directory in full, such as /root/.claude",
+    target: "Write where it goes in full, such as /data/claude",
+    key: "Choose a key file",
+  },
+};

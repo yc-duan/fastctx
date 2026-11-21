@@ -23,6 +23,8 @@ def arguments():
     parser.add_argument("--root", type=Path)
     parser.add_argument("--earlier", type=Path, help="the earlier release's kernel, to mix job progress between versions")
     parser.add_argument("--scale", action="store_true", help="measure 300 conversations replicated to 20 real nodes")
+    parser.add_argument("--hub-move", action="store_true", help="move the hub to another machine of its super administrator's, alone")
+    parser.add_argument("--hub-move-rate", help="with --hub-move, every connection held to this rate (tc, as 10mbit)")
     parser.add_argument("--inside", action="store_true", help=argparse.SUPPRESS)
     return parser.parse_args()
 
@@ -114,6 +116,9 @@ def inside(args):
     mount_file(base, "passwd", "/etc/passwd", "\n".join(passwd) + "\n")
     mount_file(base, "environment", "/etc/environment", f"PATH={path}\nLANG=C.UTF-8\n")
     mount_file(base, "profile", "/etc/profile", f"export PATH={path}\n")
+    if args.hub_move:
+        hub_move(args, base, path)
+        return
     mock = Mock()
     goal = GoalMock()
     (base / "codex/config.toml").write_text(
@@ -161,6 +166,26 @@ def inside(args):
         print("ARTIFACTS", base, flush=True)
 
 
+def hub_move(args, base, path):
+    """The hub moved, with no model: every connection on loopback held to the rate asked, as the
+    hub's own link holds a move's records and every machine's sessions together."""
+    if args.hub_move_rate:
+        # Packets as long as a real link's, queued as a provider's shaper queues them.
+        subprocess.run(["ip", "link", "set", "lo", "mtu", "1500"], check=False)
+        shaped = subprocess.run(["tc", "qdisc", "add", "dev", "lo", "root", "tbf", "rate", args.hub_move_rate,
+                                 "burst", "32kb", "latency", "400ms"], capture_output=True, text=True)
+        print("RATE", args.hub_move_rate, "held" if shaped.returncode == 0 else "not held: " + shaped.stderr.strip(), flush=True)
+    environment = {"PATH": path, "HOME": str(base / "user"), "LANG": "C.UTF-8", "TMPDIR": str(base),
+                   "FASTCTX_HOME": str(base / "driver-world"), "FASTCTX_PREVIEW": "1"}
+    for name in ("FASTCTX_STRICT_ROLES", "FASTCTX_TRACE_ROLES", "FASTCTX_DRILL_HUB_MOVE_MB", "FASTCTX_DRILL_HUB_MOVE_BIND"):
+        if os.environ.get(name):
+            environment[name] = os.environ[name]
+    try:
+        subprocess.run([str(args.drill), str(base), str(args.kernel), "-", "--hub-move"], check=True, timeout=3600, env=environment)
+    finally:
+        print("ARTIFACTS", base, flush=True)
+
+
 def main():
     args = arguments()
     for name in ("kernel", "drill", "codex", "earlier"):
@@ -184,6 +209,10 @@ def main():
             command.extend(["--" + name, str(getattr(args, name))])
     if args.scale:
         command.append("--scale")
+    if args.hub_move:
+        command.append("--hub-move")
+        if args.hub_move_rate:
+            command.extend(["--hub-move-rate", args.hub_move_rate])
     subprocess.run(([] if os.geteuid() == 0 else ["sudo"]) + command, check=True)
 
 

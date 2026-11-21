@@ -268,8 +268,10 @@ pub async fn freeze(world: &World, report: &mut Report) -> anyhow::Result<()> {
     let stopped = until(Duration::from_secs(15), || beta.lab.answering() == 0).await;
     beta.lab.stall(false);
     let deadline = who.contract().within.expect("a question waits so long");
+    // A timer may fire a tick early where the clock it waits by is coarse
+    // (Windows): within a quarter of a second of the deadline is at it.
     report.check(
-        answer.is_err() && took >= deadline && took <= deadline + NOTICED,
+        answer.is_err() && took + Duration::from_millis(250) >= deadline && took <= deadline + NOTICED,
         "a question beta never answered was given up at the time its caller waits",
         format!("{} after {}", said(&answer), seconds(took)),
     );
