@@ -140,6 +140,12 @@ fn settled(report: &SyncReport) -> bool {
 
 /// Tells `hub` where this machine stands, when that is due.
 pub(super) async fn report(assets: &Assets, hub: &HubId, link: &Arc<Link>) -> Result<(), String> {
+    // Told a moment ago, nothing is told yet whatever it says, so nothing
+    // is worked out either: where it stands is four passes through the
+    // library, and a pass ends each time a timeline is written.
+    if assets.reported.lock().expect("reported").get(hub).is_some_and(|(_, at)| at.elapsed() < SPACING) {
+        return Ok(());
+    }
     let report = facts(assets, hub, link).await?;
     let due = match assets.reported.lock().expect("reported").get(hub) {
         None => true,

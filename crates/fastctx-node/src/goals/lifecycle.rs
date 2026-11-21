@@ -56,6 +56,10 @@ pub(crate) async fn hold(node: &Arc<Node>, id: &ResidentId) -> std::io::Result<O
     .map_err(std::io::Error::other)?
 }
 
+/// How long after some conversation changed the lifecycles of the goals of
+/// those that did not are looked at again.
+const OTHERS_AFTER: Duration = Duration::from_secs(5);
+
 pub(crate) fn start(node: &Arc<Node>) {
     let node = node.clone();
     fastctx_platform::task::spawn(async move {
@@ -63,16 +67,31 @@ pub(crate) fn start(node: &Arc<Node>) {
         let mut views = node.views.subscribe();
         let mut goals = node.goals.changed.subscribe();
         let mut every = tokio::time::interval(Duration::from_secs(30));
+        // As the goals' engine does (`engine::start`): a goal's lifecycle is
+        // looked at when its own conversation changes, and with every other
+        // a few seconds after some conversation did.
+        let (mut seen, mut all) = (0u64, true);
+        let mut others: Option<tokio::time::Instant> = None;
         loop {
+            let moved = node.residents.changed_since(seen);
+            seen = moved.at;
+            let everyone = all || moved.everyone;
             let candidates: Vec<_> = node
                 .goals
                 .views
                 .lock()
                 .expect("goal views")
                 .iter()
-                .filter(|(_, view)| view.goal.as_ref().is_some_and(|goal| goal.retired.is_none()))
+                .filter(|(id, view)| {
+                    (everyone || moved.has(id)) && view.goal.as_ref().is_some_and(|goal| goal.retired.is_none())
+                })
                 .map(|(id, _)| id.clone())
                 .collect();
+            if everyone {
+                others = None;
+            } else if moved.any() && others.is_none() {
+                others = Some(tokio::time::Instant::now() + OTHERS_AFTER);
+            }
             for id in candidates {
                 if !node.goals.lifecycle.lock().expect("goal lifecycle").insert(id.clone()) {
                     continue;
@@ -85,12 +104,19 @@ pub(crate) fn start(node: &Arc<Node>) {
                     node.goals.lifecycle.lock().expect("goal lifecycle").remove(&id);
                 });
             }
-            tokio::select! {
-                result = residents.changed() => { if result.is_err() { return; } },
-                result = views.changed() => { if result.is_err() { return; } },
-                result = goals.changed() => { if result.is_err() { return; } },
-                _ = every.tick() => {},
-            }
+            let rest = async {
+                match others {
+                    Some(at) => tokio::time::sleep_until(at).await,
+                    None => std::future::pending().await,
+                }
+            };
+            all = tokio::select! {
+                result = residents.changed() => { if result.is_err() { return; } false },
+                result = views.changed() => { if result.is_err() { return; } true },
+                result = goals.changed() => { if result.is_err() { return; } true },
+                _ = every.tick() => true,
+                () = rest => true,
+            };
         }
     });
 }

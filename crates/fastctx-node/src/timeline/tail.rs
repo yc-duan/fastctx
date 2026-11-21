@@ -76,7 +76,27 @@ static LATE_REST_UNTIL: LazyLock<Mutex<Option<Instant>>> = LazyLock::new(Mutex::
 /// When each history's check was last asked for, in this run of the node.
 static CHECK_ASKED: LazyLock<Mutex<HashMap<ResidentId, Instant>>> = LazyLock::new(Mutex::default);
 
-static BROUGHT: LazyLock<Mutex<HashMap<ResidentId, Instant>>> = LazyLock::new(Mutex::default);
+/// When each timeline was last brought by its job, and how long that took.
+static BROUGHT: LazyLock<Mutex<HashMap<ResidentId, (Instant, Duration)>>> = LazyLock::new(Mutex::default);
+/// A timeline rests after it was brought for as many times as long as the
+/// bringing took, and for no longer than its most: while a turn runs, each
+/// look reads all of the turn so far again and compares every item of it,
+/// and a long turn looked at whenever its host said it grew took whole
+/// cores for looks no one saw. Viewed by someone, a conversation's looks
+/// take a third of a core at most; viewed by no one, a tenth — a viewer
+/// that comes brings it at once (`viewed::brought`).
+const REST_VIEWED: (u32, Duration) = (2, Duration::from_secs(10));
+const REST_UNVIEWED: (u32, Duration) = (9, Duration::from_secs(60));
+
+/// How long `resident`'s timeline still rests before its job brings it
+/// again: `APART` at least after it was brought.
+fn resting(node: &Node, resident: &ResidentId) -> Option<Duration> {
+    let (at, took) = *BROUGHT.lock().expect("brought timelines").get(resident)?;
+    let (times, most) = if node.watchers.viewed(resident) { REST_VIEWED } else { REST_UNVIEWED };
+    let apart = took.saturating_mul(times).min(most).max(APART);
+    let since = at.elapsed();
+    (since < apart).then(|| apart - since)
+}
 /// The asset timeline's builds, one per conversation at a time.
 pub(super) static PRODUCING: super::serial::Serial = super::serial::Serial::new();
 
@@ -1569,11 +1589,8 @@ async fn run(node: &Arc<Node>, resident: &ResidentId) -> Outcome {
     if node.residents.about(resident).is_none() {
         return Outcome::Done;
     }
-    let since = BROUGHT.lock().expect("brought timelines").get(resident).map(Instant::elapsed);
-    if let Some(since) = since
-        && since < APART
-    {
-        return Outcome::Again { after: APART - since };
+    if let Some(rest) = resting(node, resident) {
+        return Outcome::Again { after: rest };
     }
     let begun = Instant::now();
     let produced = produce(node, resident, false).await;
@@ -1640,7 +1657,17 @@ async fn run(node: &Arc<Node>, resident: &ResidentId) -> Outcome {
             node.log.line(format_args!("{resident}'s file changes: {error}"));
         }
     }
-    BROUGHT.lock().expect("brought timelines").insert(resident.clone(), Instant::now());
+    BROUGHT.lock().expect("brought timelines").insert(resident.clone(), (Instant::now(), begun.elapsed()));
+    // Looked at again no sooner than it rests.
+    match brought(node, resident, begun, produced, beside_failed) {
+        Outcome::Again { after } => Outcome::Again { after: resting(node, resident).map_or(after, |rest| rest.max(after)) },
+        outcome => outcome,
+    }
+}
+
+/// What the job does next once `resident`'s timeline was brought as
+/// `produced` says, in the look begun at `begun`.
+fn brought(node: &Arc<Node>, resident: &ResidentId, begun: Instant, produced: Result<Produced, Failure>, beside_failed: bool) -> Outcome {
     match produced {
         Ok(produced) if produced.handing => Outcome::Again { after: HANDING_AGAIN },
         Ok(produced) => {
@@ -1747,13 +1774,7 @@ pub(super) fn wanted(node: &Node, resident: &ResidentId) {
         return;
     }
     let job = Job { kind: KIND, key: resident.to_string(), unit: resident.to_string(), payload: Vec::new() };
-    let pause = BROUGHT
-        .lock()
-        .expect("brought timelines")
-        .get(resident)
-        .map(Instant::elapsed)
-        .filter(|since| *since < APART)
-        .map_or(Duration::ZERO, |since| APART - since);
+    let pause = resting(node, resident).unwrap_or(Duration::ZERO);
     let (database, jobs, log) = (node.database.clone(), node.durable_jobs.clone(), node.log.clone());
     fastctx_platform::task::spawn(async move {
         let bytes = job.key.len() * 2 + 64;

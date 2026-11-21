@@ -48,6 +48,9 @@ pub struct Residents {
     /// Moves whenever a resident may have changed: came, went, or changed
     /// in what is kept of it (`changes`).
     changed: tokio::sync::watch::Sender<u64>,
+    /// Where `changed` stood when it last moved for no resident's own
+    /// change: what is shown of every one may have changed then.
+    everyone: std::sync::atomic::AtomicU64,
     /// This machine's name now, which every resident living here is told as
     /// living on, whatever the machine was called when it was born.
     here: std::sync::RwLock<Option<fastctx_types::MachineName>>,
@@ -147,9 +150,40 @@ impl Drop for StateGuard<'_> {
         if !std::thread::panicking() {
             self.0.live.release();
         }
-        if self.0.live.take_touched() {
-            self.1.send_modify(|changes| *changes = changes.wrapping_add(1));
+        // Said under the lock, each with where the count came to: who asks
+        // which of them changed (`changed_since`) waits for the lock, and
+        // finds every one told so far.
+        let touched = self.0.live.take_touched();
+        if !touched.is_empty() {
+            let live = &mut self.0.live;
+            self.1.send_modify(|changes| {
+                *changes = changes.wrapping_add(1);
+                live.stamp(touched, *changes);
+            });
         }
+    }
+}
+
+/// Which residents may have changed since `changes` stood somewhere
+/// (`Residents::changed_since`).
+pub(crate) struct Changed {
+    /// Where `changes` stands now: what to ask from next.
+    pub at: u64,
+    /// What is shown of every resident may have changed, not of some alone.
+    pub everyone: bool,
+    /// Those that may have changed, where not everyone.
+    pub residents: Vec<ResidentId>,
+}
+
+impl Changed {
+    /// Whether `id` may have changed.
+    pub(crate) fn has(&self, id: &ResidentId) -> bool {
+        self.everyone || self.residents.contains(id)
+    }
+
+    /// Whether anything did.
+    pub(crate) fn any(&self) -> bool {
+        self.everyone || !self.residents.is_empty()
     }
 }
 
@@ -357,6 +391,7 @@ impl Residents {
             Self {
                 state: Mutex::new(state),
                 changed: tokio::sync::watch::channel(0).0,
+                everyone: Default::default(),
                 here: Default::default(),
                 speaking: Default::default(),
                 departed,
@@ -507,10 +542,28 @@ impl Residents {
         self.changed.subscribe()
     }
 
+    /// Which residents may have changed since `changes` stood at `seen`,
+    /// and where it stands now: what one who follows `changes` asks, so
+    /// that it looks again only at those. `seen` 0 asks of all there are.
+    pub(crate) fn changed_since(&self, seen: u64) -> Changed {
+        let state = self.state.lock().expect("never poisoned");
+        let at = *self.changed.borrow();
+        let everyone = seen == 0 || self.everyone.load(std::sync::atomic::Ordering::SeqCst) > seen;
+        let residents = if everyone { Vec::new() } else { state.live.stamped_since(seen) };
+        Changed { at, everyone, residents }
+    }
+
     /// Moves `changes` though no resident changed: what is shown of them
     /// did, as when the workbench opened or closed in their login.
     pub(crate) fn touch(&self) {
-        self.changed.send_modify(|changes| *changes = changes.wrapping_add(1));
+        self.moved_for_everyone();
+    }
+
+    fn moved_for_everyone(&self) {
+        self.changed.send_modify(|changes| {
+            *changes = changes.wrapping_add(1);
+            self.everyone.store(*changes, std::sync::atomic::Ordering::SeqCst);
+        });
     }
 
     /// Reconnects a known session or admits one the local user opened without a World identity.
@@ -840,7 +893,7 @@ impl Residents {
     /// This machine is called `name` now (`world-network.md`, 机器的名字).
     pub fn set_here(&self, name: fastctx_types::MachineName) {
         *self.here.write().expect("never poisoned") = Some(name);
-        self.changed.send_modify(|changes| *changes = changes.wrapping_add(1));
+        self.moved_for_everyone();
     }
 
     /// `about` of a resident living here, on this machine as it is called

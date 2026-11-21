@@ -24,9 +24,12 @@ pub(super) struct Cache {
     cold: HashSet<ResidentId>,
     /// Of those, the ones changed since their copy was last put aside.
     changed: HashSet<ResidentId>,
-    /// A resident was put in, taken out or handed out to be changed since
+    /// The residents put in, taken out or handed out to be changed since
     /// this was last asked (`take_touched`).
-    touched: bool,
+    touched: HashSet<ResidentId>,
+    /// Where the count of changes stood as each resident was last put in,
+    /// taken out or handed out to be changed (`stamp`).
+    stamps: HashMap<ResidentId, u64>,
     putting: Arc<Aside>,
 }
 
@@ -76,7 +79,8 @@ impl Cache {
             dirty: HashSet::new(),
             cold: HashSet::new(),
             changed: HashSet::new(),
-            touched: false,
+            touched: HashSet::new(),
+            stamps: HashMap::new(),
             putting: Arc::new(Aside::new("resident-cache", "a resident's state")),
         })
     }
@@ -90,7 +94,7 @@ impl Cache {
     }
 
     pub fn insert(&mut self, id: ResidentId, live: Live) {
-        self.touched = true;
+        self.touched.insert(id.clone());
         self.cold.remove(&id);
         self.dirty.insert(id.clone());
         self.entries.insert(id, live);
@@ -104,7 +108,7 @@ impl Cache {
         if !self.load(id) {
             return None;
         }
-        self.touched = true;
+        self.touched.insert(id.clone());
         self.cold.remove(id);
         self.dirty.insert(id.clone());
         self.entries.get_mut(id)
@@ -171,14 +175,27 @@ impl Cache {
         true
     }
 
-    /// Whether a resident may have changed since this was last asked.
-    pub fn take_touched(&mut self) -> bool {
+    /// The residents that may have changed since this was last asked.
+    pub fn take_touched(&mut self) -> HashSet<ResidentId> {
         std::mem::take(&mut self.touched)
+    }
+
+    /// `residents` may have changed as the count of changes came to `at`.
+    pub fn stamp(&mut self, residents: HashSet<ResidentId>, at: u64) {
+        for id in residents {
+            self.stamps.insert(id, at);
+        }
+    }
+
+    /// The residents that may have changed since the count of changes
+    /// stood at `seen`: one gone since is among them.
+    pub fn stamped_since(&self, seen: u64) -> Vec<ResidentId> {
+        self.stamps.iter().filter(|(_, at)| **at > seen).map(|(id, _)| id.clone()).collect()
     }
 
     /// Forgets `id` altogether, here and on disk.
     pub fn remove(&mut self, id: &ResidentId) {
-        self.touched = true;
+        self.touched.insert(id.clone());
         self.entries.remove(id);
         self.dirty.remove(id);
         self.cold.remove(id);

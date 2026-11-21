@@ -146,6 +146,7 @@ pub(crate) async fn directory(
                     Ok(_) => {}
                     Err(error) if error.kind() == io::ErrorKind::NotFound => {
                         publish_new(&path, &serde_json::to_vec(&id).map_err(io::Error::other)?, Permissions::Private)?;
+                        node.claude.aliases.named(&registration.session, &id);
                     }
                     Err(error) => return Err(error),
                 }
@@ -357,7 +358,7 @@ pub(super) fn resident(
             Err(error) => return Err(error),
         }
         match publish_new(&path, &bytes, Permissions::Private) {
-            Ok(()) => {}
+            Ok(()) => node.claude.aliases.named(&registration.session, &id),
             Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
                 let held: ResidentId =
                     serde_json::from_slice(&fastctx_platform::disk::read(&path)?).map_err(io::Error::other)?;

@@ -308,6 +308,13 @@ impl Watchers {
             }
         }
     }
+    /// Whether anyone views `id`'s conversation now: a watch of it that is
+    /// not a quiet one is open.
+    pub(crate) fn viewed(&self, id: &ResidentId) -> bool {
+        self.get(id).is_some_and(|session| {
+            session.lock().expect("never poisoned").senders.iter().any(|sender| !sender.is_closed())
+        })
+    }
     pub fn watch(&self, id: &ResidentId) -> Events {
         self.subscribe(id, false)
     }

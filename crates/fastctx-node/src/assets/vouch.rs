@@ -26,8 +26,9 @@ use super::session::blocking;
 
 /// How often what this machine holds is looked at for each hub.
 const LOOK_EVERY: Duration = Duration::from_secs(10 * 60);
-/// How many streams one look goes through.
-const STREAMS_A_LOOK: usize = 64;
+/// How many streams one look goes through: most hold no large object, and
+/// are passed without a word.
+const STREAMS_A_LOOK: usize = 512;
 /// The most bytes one look reads back.
 const READ_A_LOOK: u64 = 512 << 20;
 /// How long what was told of a stream stands before it is told again: well
@@ -36,6 +37,10 @@ const TOLD_FOR: Duration = Duration::from_secs(24 * 60 * 60);
 /// How long an object read back whole is taken as whole before it is read
 /// back again.
 const READ_FOR: Duration = Duration::from_secs(2 * 24 * 60 * 60);
+/// How long an object found not whole is taken as not whole before it is
+/// read back again: read at every look, the ones not whole took the look's
+/// reading from every stream after them.
+const UNREAD_FOR: Duration = Duration::from_secs(6 * 60 * 60);
 
 /// What was told of a stream: what its objects, epoch and holding came to,
 /// when, and whether any object was vouched for.
@@ -59,6 +64,8 @@ pub(crate) struct Vouching {
     /// The objects read back whole here lately: the life of each read, and
     /// when.
     read: HashMap<[u8; 32], (i64, Instant)>,
+    /// The objects found not whole here lately, as `read`.
+    unread: HashMap<[u8; 32], (i64, Instant)>,
     /// The hubs a look goes on for now.
     looking: HashSet<String>,
     /// Counted up as what was told a hub is forgotten: a look begun before
@@ -119,8 +126,11 @@ enum Said {
 /// Tells the hub what this machine holds whole of `stream` of `scope`, in
 /// `epoch`, from the stream's start: `whole`, each with when it was read
 /// back, replacing whatever was told of it — nothing told withdraws it all.
+/// Nothing is asked once `still` says the look no longer stands: the hub
+/// was put back since it began, or is one that takes no vouching now.
 async fn say(
     link: &Arc<Link>,
+    still: &(dyn Fn() -> bool + Sync),
     (scope, stream, epoch): (&str, &str, u64),
     whole: &[([u8; 32], Instant)],
     told: &mut usize,
@@ -138,6 +148,9 @@ async fn say(
             read_ago: u64::try_from(read_ago).unwrap_or(u64::MAX),
             anew: n == 0,
         };
+        if !still() {
+            return Said::Part;
+        }
         // Asked as it is: what the hub says of the scope besides is the
         // passes' to act on, each scope under its own turn.
         match link.assets(request).await {
@@ -171,6 +184,7 @@ async fn tell(node: &Arc<crate::Node>, hub: &HubId, link: &Arc<Link>) -> Result<
     let (after, forgotten) = {
         let mut vouching = assets.vouched.lock().expect("vouched");
         vouching.read.retain(|_, (_, at)| at.elapsed() < READ_FOR);
+        vouching.unread.retain(|_, (_, at)| at.elapsed() < UNREAD_FOR);
         let after = vouching.after.get(hub.as_str()).cloned();
         if after.is_none() {
             vouching.passed.remove(hub.as_str());
@@ -180,6 +194,7 @@ async fn tell(node: &Arc<crate::Node>, hub: &HubId, link: &Arc<Link>) -> Result<
     // What this look heard is kept only where nothing was forgotten since
     // it began.
     let current = |vouching: &Vouching| vouching.forgotten.get(hub.as_str()).copied().unwrap_or(0) == forgotten;
+    let still = || link.asset_version() >= wire::VOUCH && current(&assets.vouched.lock().expect("vouched"));
     let longest = fastctx_types::asset_peers::OBJECT_BYTES;
     let found =
         blocking(&assets.library, move |library| library.vouchable(&hub_text, &device, after, STREAMS_A_LOOK, longest)).await?;
@@ -207,10 +222,12 @@ async fn tell(node: &Arc<crate::Node>, hub: &HubId, link: &Arc<Link>) -> Result<
             hasher.finalize().into()
         };
         let before = assets.vouched.lock().expect("vouched").told.get(&key).copied();
-        // None of its objects here now: told withdrawn where some were told.
+        // None of its objects here now: told withdrawn where some were told
+        // — or may have been before this node last started, which keeps
+        // nothing of what it told.
         if one.objects.is_empty() {
-            if before.is_some_and(|told| told.any) {
-                match say(link, (&one.scope, &one.stream, one.epoch), &[], &mut told, &mut failed).await {
+            if before.is_none_or(|told| told.any) {
+                match say(link, &still, (&one.scope, &one.stream, one.epoch), &[], &mut told, &mut failed).await {
                     Said::Whole => {
                         let mut vouching = assets.vouched.lock().expect("vouched");
                         if current(&vouching) {
@@ -248,6 +265,17 @@ async fn tell(node: &Arc<crate::Node>, hub: &HubId, link: &Arc<Link>) -> Result<
                 whole.push((object.hash, at));
                 continue;
             }
+            let not_whole = assets
+                .vouched
+                .lock()
+                .expect("vouched")
+                .unread
+                .get(&object.hash)
+                .is_some_and(|(life, at)| *life == object.life && at.elapsed() < UNREAD_FOR);
+            if not_whole {
+                (all, lost) = (false, true);
+                continue;
+            }
             // Past what this look reads, the stream waits for the next look,
             // which goes on from it.
             if object.size > budget {
@@ -262,7 +290,11 @@ async fn tell(node: &Arc<crate::Node>, hub: &HubId, link: &Arc<Link>) -> Result<
                 assets.vouched.lock().expect("vouched").read.insert(object.hash, (object.life, at));
                 whole.push((object.hash, at));
             } else {
-                assets.vouched.lock().expect("vouched").read.remove(&object.hash);
+                {
+                    let mut vouching = assets.vouched.lock().expect("vouched");
+                    vouching.read.remove(&object.hash);
+                    vouching.unread.insert(object.hash, (object.life, Instant::now()));
+                }
                 (all, lost) = (false, true);
                 failed.get_or_insert(format!("{} {}: an object of it is not here whole, and is not vouched for", one.scope, one.stream));
             }
@@ -273,7 +305,7 @@ async fn tell(node: &Arc<crate::Node>, hub: &HubId, link: &Arc<Link>) -> Result<
         if cut && !lost {
             break;
         }
-        let said = say(link, (&one.scope, &one.stream, one.epoch), &whole, &mut told, &mut failed).await;
+        let said = say(link, &still, (&one.scope, &one.stream, one.epoch), &whole, &mut told, &mut failed).await;
         match said {
             Said::Whole if all && !cut => {
                 let mut vouching = assets.vouched.lock().expect("vouched");
@@ -320,12 +352,18 @@ async fn tell(node: &Arc<crate::Node>, hub: &HubId, link: &Arc<Link>) -> Result<
                 let (scope, stream) = (scope.clone(), stream.clone());
                 blocking(&assets.library, move |library| library.known_last_epoch(&scope, &stream)).await.ok().flatten()
             };
-            if let Some(epoch) = epoch {
-                let mut quiet = None;
-                let _ = say(link, (&scope, &stream, epoch), &[], &mut told, &mut quiet).await;
-            }
+            // Forgotten once the hub took the withdrawal, or where no epoch
+            // of it is known here to withdraw it in; told withdrawn again at
+            // a later round otherwise.
+            let withdrawn = match epoch {
+                Some(epoch) => {
+                    let mut quiet = None;
+                    matches!(say(link, &still, (&scope, &stream, epoch), &[], &mut told, &mut quiet).await, Said::Whole)
+                }
+                None => true,
+            };
             let mut vouching = assets.vouched.lock().expect("vouched");
-            if current(&vouching) {
+            if withdrawn && current(&vouching) {
                 vouching.told.remove(&(hub.to_string(), scope, stream));
             }
         }

@@ -136,22 +136,38 @@ pub(crate) async fn timing(node: &Node, id: &ResidentId, view: &View) -> Result<
     Ok(())
 }
 
+/// How long after some conversation changed the goals of those that did
+/// not are driven again. A goal is driven at once when its own conversation
+/// changes, when a goal does, and every half minute; driven again at every
+/// change of any conversation on the machine, each goal read its inbox, its
+/// controls and its composer many times a second for changes not its own.
+const OTHERS_AFTER: Duration = Duration::from_secs(5);
+
 pub(crate) fn start(node: &Arc<Node>) {
     let node = node.clone();
     fastctx_platform::task::spawn(async move {
         let mut changed = node.goals.changed.subscribe();
         let mut residents = node.residents.changes();
         let mut tick = tokio::time::interval(Duration::from_secs(30));
+        // Where the residents' changes stood when last looked at, whether
+        // every goal is driven this round, and when those of conversations
+        // that did not change are driven next.
+        let (mut seen, mut all) = (0u64, true);
+        let mut others: Option<tokio::time::Instant> = None;
         loop {
             node.goals.engine.uptime.read();
+            let moved = node.residents.changed_since(seen);
+            seen = moved.at;
+            let everyone = all || moved.everyone;
             let ids: Vec<_> = node
                 .goals
                 .views
                 .lock()
                 .expect("goal views")
                 .iter()
-                .filter(|(_, view)| {
-                    view.pending.is_none()
+                .filter(|(id, view)| {
+                    (everyone || moved.has(id))
+                        && view.pending.is_none()
                         && view.goal.as_ref().is_some_and(|goal| {
                             goal.retired.is_none()
                                 && (goal.active() || goal.claim.is_some() || goal.runtime.pending.is_some())
@@ -162,11 +178,23 @@ pub(crate) fn start(node: &Arc<Node>) {
             for id in ids {
                 schedule(&node, id);
             }
-            tokio::select! {
-                result = changed.changed() => if result.is_err() { return; },
-                result = residents.changed() => if result.is_err() { return; },
-                _ = tick.tick() => {},
+            if everyone {
+                others = None;
+            } else if moved.any() && others.is_none() {
+                others = Some(tokio::time::Instant::now() + OTHERS_AFTER);
             }
+            let rest = async {
+                match others {
+                    Some(at) => tokio::time::sleep_until(at).await,
+                    None => std::future::pending().await,
+                }
+            };
+            all = tokio::select! {
+                result = changed.changed() => { if result.is_err() { return; } true },
+                result = residents.changed() => { if result.is_err() { return; } false },
+                _ = tick.tick() => true,
+                () = rest => true,
+            };
         }
     });
 }

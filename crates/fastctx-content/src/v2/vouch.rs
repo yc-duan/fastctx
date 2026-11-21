@@ -18,6 +18,85 @@ use fastctx_storage::Priority;
 use fastctx_storage::rusqlite::{Connection, OptionalExtension, params};
 use std::collections::{BTreeMap, BTreeSet};
 
+/// Where a write stands for the one that asked for it and waits for its end
+/// (`to_its_end`).
+enum Stage<T> {
+    Waiting,
+    GivenUp,
+    Begun,
+    Ended(Option<T>),
+}
+
+/// Says a write ended without committing where nothing said it committed:
+/// dropped with what the writer was to call once it had.
+struct Ends<T>(std::sync::Arc<(std::sync::Mutex<Stage<T>>, std::sync::Condvar)>);
+
+impl<T> Drop for Ends<T> {
+    fn drop(&mut self) {
+        let (stage, moved) = &*self.0;
+        let mut stage = stage.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if !matches!(*stage, Stage::Ended(_)) {
+            *stage = Stage::Ended(None);
+        }
+        moved.notify_all();
+    }
+}
+
+/// Commits `write` as one transaction of `database` and comes back only
+/// once it is known to stand or known never to. A writer that does not
+/// answer in time leaves an ordinary write unknown: it may still commit
+/// after the caller went on. Here one not begun by then is told not to
+/// begin, and one begun is waited for to its end, however long: what the
+/// caller holds while it judges (`Library::mark_vouched`) is still held when
+/// the transaction commits.
+fn to_its_end<T: Clone + Send + 'static>(
+    database: &fastctx_storage::Database,
+    priority: Priority,
+    bytes: usize,
+    write: impl FnOnce(&Connection) -> fastctx_storage::Result<T> + Send + 'static,
+) -> fastctx_storage::Result<T> {
+    use std::sync::{Arc, Condvar, Mutex, PoisonError};
+    let shared: Arc<(Mutex<Stage<T>>, Condvar)> = Arc::new((Mutex::new(Stage::Waiting), Condvar::new()));
+    let (begins, ends) = (shared.clone(), Ends(shared.clone()));
+    let result = database.write_now_then_at(
+        priority,
+        bytes,
+        move |db| {
+            {
+                let mut stage = begins.0.lock().unwrap_or_else(PoisonError::into_inner);
+                if matches!(*stage, Stage::GivenUp) {
+                    return Err(fastctx_storage::Error::new("given up before it began"));
+                }
+                *stage = Stage::Begun;
+            }
+            write(db)
+        },
+        move |value: &T| {
+            let (stage, moved) = &*ends.0;
+            *stage.lock().unwrap_or_else(PoisonError::into_inner) = Stage::Ended(Some(value.clone()));
+            moved.notify_all();
+        },
+    );
+    let error = match result {
+        Ok(value) => return Ok(value),
+        Err(error) => error,
+    };
+    let (stage, moved) = &*shared;
+    let mut stage = stage.lock().unwrap_or_else(PoisonError::into_inner);
+    loop {
+        match &*stage {
+            Stage::Waiting => {
+                *stage = Stage::GivenUp;
+                return Err(error);
+            }
+            Stage::GivenUp => return Err(error),
+            Stage::Ended(Some(value)) => return Ok(value.clone()),
+            Stage::Ended(None) => return Err(error),
+            Stage::Begun => stage = moved.wait(stage).unwrap_or_else(PoisonError::into_inner),
+        }
+    }
+}
+
 /// How long what a device vouched for counts, from when it read the object
 /// back whole: past it, it is vouched for again or kept.
 pub const VOUCHED_FOR: std::time::Duration = std::time::Duration::from_secs(3 * 24 * 60 * 60);
@@ -364,7 +443,7 @@ impl Library {
     pub fn mark_vouched(&self, after: Option<[u8; 32]>, limit: usize, longest: u64, apply: bool, able: Able) -> Result<Marked> {
         let row_bytes = super::ROW_BYTES as i64;
         let longest = i64::try_from(longest).unwrap_or(i64::MAX);
-        let (next, found, doomed) = self.database().write_now_at(Priority::Normal, 1024, move |db| {
+        let (next, found, doomed) = to_its_end(self.database(), Priority::Normal, 1024, move |db| {
             let start = after.map(|hash| hash.to_vec()).unwrap_or_default();
             let large: Vec<(Vec<u8>, i64, i64)> = {
                 let mut statement = db.prepare_cached(

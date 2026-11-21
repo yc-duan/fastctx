@@ -489,47 +489,22 @@ struct Session {
 
 /// The sessions the resident has been, the oldest first: found on disk
 /// without the Claude state, which is asked only what its mod last saw.
+/// Which directories are its own is kept in memory (`aliases`): only those
+/// are read.
 fn sessions(node: &Node, resident: &ResidentId) -> (Vec<Session>, Vec<String>) {
     let mut sessions = Vec::new();
-    let mut problems = Vec::new();
-    let scanned = (|| -> std::io::Result<()> {
-        for entry in fastctx_platform::disk::read_dir(exchange::sessions(node.world.path()))? {
-            let directory = match entry {
-                Ok(entry) => entry.path(),
-                Err(error) => {
-                    problems.push(format!("reading a Claude session directory: {error}"));
-                    continue;
-                }
-            };
-            let read = (|| -> std::io::Result<Option<Session>> {
-                let alias = match fastctx_platform::disk::read(directory.join("resident.json")) {
-                    Ok(bytes) => serde_json::from_slice::<ResidentId>(&bytes).map_err(std::io::Error::other)?,
-                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-                    Err(error) => return Err(error),
-                };
-                if &alias != resident {
-                    return Ok(None);
-                }
-                if let Some(registration) = exchange::registration(&directory)? {
-                    return Ok(Some(Session {
-                        kept: None,
-                        id: registration.session,
-                        began: registration.at.unwrap_or_default(),
-                        process: registration.process,
-                    }));
-                }
-                Ok(None)
-            })();
-            match read {
-                Ok(Some(session)) => sessions.push(session),
-                Ok(None) => {}
-                Err(error) => problems.push(format!("reading {}: {error}", directory.display())),
-            }
+    let (directories, mut problems) = node.claude.aliases.of(&exchange::sessions(node.world.path()), resident);
+    for directory in directories {
+        match exchange::registration(&directory) {
+            Ok(Some(registration)) => sessions.push(Session {
+                kept: None,
+                id: registration.session,
+                began: registration.at.unwrap_or_default(),
+                process: registration.process,
+            }),
+            Ok(None) => {}
+            Err(error) => problems.push(format!("reading {}: {error}", directory.display())),
         }
-        Ok(())
-    })();
-    if let Err(error) = scanned {
-        problems.push(format!("reading {resident}'s Claude sessions: {error}"));
     }
     let state = node.claude.state.lock().expect("never poisoned");
     for session in &mut sessions {

@@ -17,6 +17,7 @@
 //!
 //! Run with Claude Code 2.1.289.
 
+mod aliases;
 mod assisting_place;
 pub(crate) mod calls;
 mod catalog;
@@ -119,6 +120,8 @@ pub struct Claude {
     /// The loopback channel its sessions' mods reach this node by, once it
     /// listens (`channel`).
     channel: std::sync::OnceLock<Arc<channel::Channel>>,
+    /// Which conversation each session's directory names.
+    aliases: aliases::Aliases,
 }
 
 /// How many sessions' reports are read and applied at once.
@@ -173,6 +176,7 @@ impl Claude {
             looks: Arc::new(tokio::sync::Semaphore::new(LOOKS)),
             receipts: Default::default(),
             markers: Default::default(),
+            aliases: Default::default(),
         }
     }
 
