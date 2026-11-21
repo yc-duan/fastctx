@@ -514,7 +514,13 @@ pub(super) fn placed(node: &Node, about: &About) -> Result<Option<Placed>, Failu
     let born_shared = about.born_shared.get(account.hub.as_str()).cloned();
     let (readers, scope) = scope_for(node, &account.hub, &account.account, born_on, &about.id, born_shared)?;
     let classes = fastctx_types::assets::classes_for(&readers, &scope);
-    Ok(Some(Placed { scope, hub: account.hub.clone(), proposal: Proposal { hub: account.hub.to_string(), readers, classes }, network }))
+    // Which account of its name it was begun for: described for that one alone.
+    let born = about
+        .born_as
+        .as_ref()
+        .and_then(|born| born.iter().find(|one| one.hub == account.hub && one.account == account.account))
+        .map(|one| one.generation.as_millisecond());
+    Ok(Some(Placed { scope, hub: account.hub.clone(), proposal: Proposal { hub: account.hub.to_string(), readers, classes, born }, network }))
 }
 
 /// The readers and key of the scope of the conversation `id` of `account`
@@ -1509,7 +1515,7 @@ pub(super) mod tests {
         let hub = HubId::from_bytes(*b"testhub0");
         let network = library.join(&hub.to_string(), &[1; 32], false).unwrap();
         let readers = Readers::Conversation { openers: Vec::new(), born_on: None };
-        let proposal = crate::assets::Proposal { hub: hub.to_string(), readers, classes: Vec::new() };
+        let proposal = crate::assets::Proposal { hub: hub.to_string(), readers, classes: Vec::new(), born: None };
         let placed = Placed { scope: "s".into(), hub, proposal, network };
         let signer: Arc<dyn fastctx_content::v2::Signer> = Arc::new(Device);
         let resident: ResidentId = "claude-a0a0".parse().unwrap();
@@ -1688,7 +1694,7 @@ pub(super) mod tests {
         let hub = HubId::from_bytes(*b"testhub0");
         let network = library.join(&hub.to_string(), &[1; 32], false).unwrap();
         let readers = Readers::Conversation { openers: Vec::new(), born_on: None };
-        let proposal = crate::assets::Proposal { hub: hub.to_string(), readers, classes: Vec::new() };
+        let proposal = crate::assets::Proposal { hub: hub.to_string(), readers, classes: Vec::new(), born: None };
         (library, Placed { scope: "s".into(), hub, proposal, network })
     }
 

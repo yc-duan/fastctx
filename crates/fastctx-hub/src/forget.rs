@@ -469,7 +469,13 @@ pub(crate) fn prune(hub: &Hub) {
                 }
                 changed = true;
             }
-            let gone = pending.home && directory.member(&pending.forgetting.conversation.machine).is_none();
+            // The device it was asked of left the hub, by its key where kept
+            // (codex-d515b194).
+            let gone = pending.home
+                && match pending.home_key {
+                    Some(key) => directory.by_key(&key).is_none(),
+                    None => directory.member(&pending.forgetting.conversation.machine).is_none(),
+                };
             !gone && (pending.home || !pending.waiting.is_empty() || !pending.scopes_gone)
         });
         let ended = before != book.forgetting.pending.len();
@@ -538,7 +544,11 @@ pub(crate) fn hidden(store: &crate::store::Snapshot) -> HashMap<MachineName, BTr
     let mut hidden: HashMap<MachineName, BTreeSet<ResidentId>> = HashMap::new();
     for pending in &store.book.forgetting.pending {
         let conversation = &pending.forgetting.conversation;
-        let machine = store.book.directory.canonical(&conversation.machine).clone();
+        // Under the name the device it lives on has now, by its key where kept.
+        let machine = match pending.home_key.and_then(|key| store.book.directory.by_key(&key)) {
+            Some(member) => member.name.clone(),
+            None => store.book.directory.canonical(&conversation.machine).clone(),
+        };
         hidden.entry(machine).or_default().insert(conversation.resident.clone());
     }
     hidden

@@ -1814,7 +1814,7 @@ pub mod bench {
             let hub = fastctx_types::access::HubId::from_bytes(*b"benchhub");
             let network = library.join(&hub.to_string(), &signer.device(), false).map_err(|error| error.to_string())?;
             let readers = fastctx_types::assets::Readers::Conversation { openers: Vec::new(), born_on: None };
-            let proposal = crate::assets::Proposal { hub: hub.to_string(), readers, classes: Vec::new() };
+            let proposal = crate::assets::Proposal { hub: hub.to_string(), readers, classes: Vec::new(), born: None };
             let placed = assets::Placed { scope: scope.to_string(), hub, proposal, network };
             let resident: ResidentId = "codex-be0c".parse().map_err(|error| format!("{error}"))?;
             Ok(Self { library, signer, resident, placed })

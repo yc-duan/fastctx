@@ -35,16 +35,6 @@ impl Receipt {
     pub fn configured(&self) -> Option<&OsStr> {
         self.configured.as_deref().map(Path::as_os_str)
     }
-
-    /// Of a home moved from `from` to `to` (`apply::moved`): the state found
-    /// by `from` is found by `to`. Whether it was found by `from`.
-    pub fn moved(&mut self, from: &Path, to: &Path) -> bool {
-        if self.configured.as_deref() != Some(from) {
-            return false;
-        }
-        self.configured = Some(to.to_path_buf());
-        true
-    }
 }
 
 /// The entry for the server `command` that serves fastctx's directory

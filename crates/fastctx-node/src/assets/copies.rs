@@ -19,12 +19,18 @@
 //! What is kept is by hub, account and when the account was opened, in
 //! `copies.json` beside the library: one made again under the same name
 //! starts as a new one would.
+//!
+//! At its owner's word a machine lets go the copies it holds that every
+//! reader here paused and that hold nothing of its own (`clear`): their
+//! holdings end, their purge takes them, and while every reader here stays
+//! paused none is held anew; one of them taking it in again takes it whole
+//! from where it lives.
 
 use crate::Node;
 use fastctx_content::v2::HeldScope;
 use fastctx_types::update::Kind;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -81,6 +87,11 @@ struct Kept {
     /// The scopes paused here since they were last pulled whole.
     #[serde(default)]
     owed: BTreeSet<String>,
+    /// The copies let go here at the owner's word (`clear`), each with who
+    /// read it here then, `account@opened`: none is held anew while every
+    /// reader here is paused.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    cleared: BTreeMap<String, Vec<String>>,
 }
 
 /// What was asked of an account's copies here, and what came of it.
@@ -222,6 +233,39 @@ impl Copies {
         self.write(&next)?;
         *kept = next;
         Ok(if was.is_some_and(|was| was.state == state) { Set::Unchanged } else { Set::Changed })
+    }
+
+    /// Whether the copy of `scope` was let go here at the owner's word.
+    pub(crate) fn is_cleared(&self, scope: &str) -> bool {
+        self.kept.lock().expect("copies").cleared.contains_key(scope)
+    }
+
+    /// Keeps that the copy of `scope`, read here by `readers`, is let go,
+    /// or no longer (`readers` none); on disk before it holds.
+    fn mark_cleared(&self, scope: &str, readers: Option<Vec<String>>) -> std::io::Result<()> {
+        if self.broken {
+            return Err(std::io::Error::other(format!("{} could not be read", self.path.display())));
+        }
+        let mut kept = self.kept.lock().expect("copies");
+        let mut next = kept.clone();
+        match readers {
+            Some(readers) => {
+                next.cleared.insert(scope.to_string(), readers);
+            }
+            None => {
+                if next.cleared.remove(scope).is_none() {
+                    return Ok(());
+                }
+            }
+        }
+        self.write(&next)?;
+        *kept = next;
+        Ok(())
+    }
+
+    /// What was found living here is found anew at the next look.
+    fn forget_hosted(&self) {
+        *self.hosted.lock().expect("hosted") = None;
     }
 
     fn write(&self, kept: &Kept) -> std::io::Result<()> {
@@ -422,6 +466,141 @@ pub(crate) fn paused_here(node: &Node, scope: &HeldScope) -> bool {
     node.assets.as_ref().is_some_and(|assets| assets.copies.paused_now().contains(&scope.key))
 }
 
+/// Whether the copy of `scope`, listed by the hub of `hub` as read here by
+/// `readers` (`account@opened`), stays let go: it was let go here at the
+/// owner's word and every reader of it logged in here is paused. One of them
+/// taking it in again, it is no longer kept as let go, and is held anew.
+/// Call on a thread that may block.
+pub(crate) fn stays_cleared(node: &Node, hub: &str, scope: &str, readers: &[String]) -> bool {
+    let Some(assets) = node.assets.as_ref() else { return false };
+    if !assets.copies.is_cleared(scope) {
+        return false;
+    }
+    let Some(link) = node.links().into_iter().find(|link| link.hub().as_str() == hub) else { return true };
+    let here: BTreeMap<String, i64> = {
+        let view = link.view();
+        node.accounts_on(&link, &fastctx_types::access::Acting::Here)
+            .into_iter()
+            .filter_map(|account| Some((account.to_string(), view.directory.account(&account)?.opened.as_millisecond())))
+            .collect()
+    };
+    let kind = crate::updates::install_kind(node);
+    let taken = readers.iter().filter_map(|one| one.rsplit_once('@')).any(|(account, opened)| {
+        opened.parse::<i64>().is_ok_and(|opened| {
+            here.get(account) == Some(&opened) && assets.copies.state(hub, account, opened, kind) == State::On
+        })
+    });
+    if taken && assets.copies.mark_cleared(scope, None).is_ok() {
+        return false;
+    }
+    true
+}
+
+/// Lets go, as the machine's owner asked, the copies here `account` of
+/// `hub` reads that every reader here paused and that live elsewhere —
+/// found anew, not as last found — or, without `apply`, counts them. Each
+/// is kept as let go before it is, so no pass holds it anew while its
+/// readers here stay paused, and is let go in the library only where
+/// nothing of it is this machine's (`Library::drop_copy`), kept otherwise
+/// and said. What is let go goes with the purge. Call on a thread that may
+/// block.
+pub(crate) fn clear(node: &Arc<Node>, hub: &str, account: &str, apply: bool) -> Result<fastctx_types::data::Cleared, String> {
+    let assets = node.assets.as_ref().ok_or("the asset library is unavailable")?;
+    let link = node
+        .links()
+        .into_iter()
+        .find(|link| link.hub().as_str() == hub)
+        .ok_or_else(|| format!("this machine is on no network of the hub {hub}"))?;
+    let name = fastctx_types::AccountName::try_from(account.to_string()).map_err(|error| error.to_string())?;
+    let opened = link
+        .view()
+        .directory
+        .account(&name)
+        .map(|found| found.opened.as_millisecond())
+        .ok_or_else(|| format!("there is no account {account} on {hub}"))?;
+    let mut cleared = fastctx_types::data::Cleared { applied: apply, scopes: 0, bytes: 0, kept: Vec::new() };
+    {
+        // One at a time, and none while what is paused is worked out.
+        let _settling = assets.copies.settling.lock().expect("settling");
+        assets.copies.forget_hosted();
+        let held = assets.library.held_scopes().map_err(|error| format!("listing the scopes held here: {error}"))?;
+        for scope in held {
+            if scope.hub.as_deref() != Some(hub) || !read_by(&scope, account, opened) || !paused(node, &scope, None) {
+                continue;
+            }
+            let size = assets.library.copy_size(&scope.key).map_err(|error| error.to_string())?;
+            if !apply {
+                cleared.scopes += 1;
+                cleared.bytes += size.frames + size.objects;
+                continue;
+            }
+            let readers: Vec<String> = readers(&scope).into_iter().map(|(one, at)| format!("{one}@{at}")).collect();
+            assets.copies.mark_cleared(&scope.key, Some(readers)).map_err(|error| format!("keeping what is let go: {error}"))?;
+            match assets.library.drop_copy(&scope.key, scope.holding, &assets.device()) {
+                Ok(fastctx_content::v2::Dropped::Gone) => {
+                    cleared.scopes += 1;
+                    cleared.bytes += size.frames + size.objects;
+                }
+                Ok(fastctx_content::v2::Dropped::Kept(why)) => {
+                    assets.copies.mark_cleared(&scope.key, None).map_err(|error| format!("keeping what is let go: {error}"))?;
+                    cleared.kept.push((scope.key.clone(), why));
+                }
+                Err(error) => {
+                    let _ = assets.copies.mark_cleared(&scope.key, None);
+                    return Err(format!("letting go {}: {error}", scope.key));
+                }
+            }
+        }
+    }
+    if apply && cleared.scopes > 0 {
+        settle(node, true).map_err(|error| format!("let go, but what follows is not settled yet: {error}"))?;
+        super::upkeep::wake(node);
+    }
+    Ok(cleared)
+}
+
+/// What the machine's owner asks of the copies here (`RemoteCall::Copies`,
+/// or the user here by `Call::MachineCopies`). Call on a thread that may
+/// block.
+pub(crate) fn asked(node: &Arc<Node>, ask: fastctx_types::data::CopiesAsk) -> Result<fastctx_types::data::CopiesAnswer, String> {
+    use fastctx_types::data::{CopiesAnswer, CopiesAsk};
+    match ask {
+        CopiesAsk::Report => Ok(CopiesAnswer::Report { accounts: report(node) }),
+        CopiesAsk::Set { hub, account, on } => {
+            let state = if on { State::On } else { State::Paused };
+            set_here(node, &hub, &account, None, state, Source::Owner)?;
+            Ok(CopiesAnswer::Report { accounts: report(node) })
+        }
+        CopiesAsk::Clear { hub, account, apply } => clear(node, &hub, &account, apply).map(CopiesAnswer::Cleared),
+    }
+}
+
+/// The same of `machine`, this one or another of the network's: there,
+/// only its owner is answered (`admission`).
+pub(crate) async fn machine(
+    node: &Arc<Node>,
+    machine: fastctx_types::access::Written,
+    ask: fastctx_types::data::CopiesAsk,
+) -> Result<fastctx_types::data::CopiesAnswer, fastctx_types::ipc::Failure> {
+    use fastctx_types::ipc::Failure;
+    if node.is_here(&machine) {
+        let asking = node.clone();
+        return fastctx_platform::task::spawn_blocking(move || asked(&asking, ask))
+            .await
+            .map_err(|error| Failure::new(error.to_string()))?
+            .map_err(Failure::not_run);
+    }
+    let call = fastctx_types::remote::RemoteCall::Copies { ask };
+    match node
+        .call(&fastctx_types::access::Acting::Here, &machine, fastctx_types::access::Purpose::Hands, call)
+        .await
+        .map_err(|error| Failure::new(error.to_string()))??
+    {
+        fastctx_types::remote::RemoteReply::Copies(answer) => Ok(answer),
+        _ => Err(Failure::new(format!("{machine} answered something other than its copies"))),
+    }
+}
+
 /// Each account logged in here, on each hub: whether it takes in its copies,
 /// and how many of the scopes it reads are taken in here no more. Call on a
 /// thread that may block.
@@ -445,11 +624,17 @@ pub(crate) fn report(node: &Node) -> Vec<fastctx_types::data::CopiesOf> {
                 .entries()
                 .into_iter()
                 .find(|entry| entry.hub == hub && entry.account == account.as_str() && entry.opened == opened);
-            let paused_scopes = held
+            let paused_here: Vec<&HeldScope> = held
                 .iter()
                 .filter(|scope| scope.hub.as_deref() == Some(hub.as_str()) && paused.contains(&scope.key))
                 .filter(|scope| read_by(scope, account.as_str(), opened))
-                .count();
+                .collect();
+            let paused_scopes = paused_here.len();
+            let paused_bytes: u64 = paused_here
+                .iter()
+                .filter_map(|scope| assets.library.copy_size(&scope.key).ok())
+                .map(|size| size.frames + size.objects)
+                .sum();
             found.push(fastctx_types::data::CopiesOf {
                 hub: hub.clone(),
                 account: account.to_string(),
@@ -465,6 +650,7 @@ pub(crate) fn report(node: &Node) -> Vec<fastctx_types::data::CopiesOf> {
                 }),
                 at: entry.map(|entry| entry.at),
                 paused_scopes: paused_scopes as u64,
+                paused_bytes,
             });
         }
     }
@@ -558,7 +744,7 @@ mod tests {
     #[test]
     fn what_is_owed_is_paused_as_the_node_starts() {
         let dir = dir("owed");
-        let kept = Kept { accounts: Vec::new(), owed: ["c/h/m/r".to_string()].into_iter().collect() };
+        let kept = Kept { accounts: Vec::new(), owed: ["c/h/m/r".to_string()].into_iter().collect(), cleared: BTreeMap::new() };
         fastctx_platform::disk::write(dir.join(FILE), serde_json::to_vec(&kept).unwrap()).unwrap();
         let copies = Copies::open(&dir);
         assert!(copies.paused_now().contains("c/h/m/r"));

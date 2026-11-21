@@ -3,7 +3,8 @@
 //! from it, or started with it as its agent's directory; for a login an
 //! agent finds by default, any of that agent's processes of the login's user
 //! started without naming another. A process of the login's user whose state
-//! cannot be read counts as one. Nothing here proves no process will use the
+//! cannot be read counts as one, and so does every process where the
+//! processes cannot be listed. Nothing here proves no process will use the
 //! directory a moment later: the move looks again before the original is set
 //! aside, and checks the original against what was copied before it is
 //! deleted.
@@ -24,8 +25,8 @@ pub struct Occupant {
     started: u64,
     command: Vec<String>,
     why: String,
-    /// The agent itself, or a process it started — what `--stop-agents`
-    /// stops — and not what this command runs in.
+    /// The agent itself, or a process the agent started — what
+    /// `--stop-agents` stops — and not what this command runs in.
     pub agent: bool,
 }
 
@@ -70,34 +71,36 @@ pub fn program(pid: u32) -> Option<PathBuf> {
     Some(PathBuf::from(text.strip_suffix(" (deleted)").unwrap_or(&text)))
 }
 
-fn processes() -> HashMap<u32, Process> {
+fn processes() -> io::Result<HashMap<u32, Process>> {
     let mut found = HashMap::new();
-    let Ok(entries) = fs::read_dir("/proc") else { return found };
-    for entry in entries.flatten() {
+    for entry in fs::read_dir("/proc")? {
+        let entry = entry?;
         let Some(pid) = entry.file_name().to_str().and_then(|name| name.parse::<u32>().ok()) else { continue };
         let Some((parent, started)) = stat(pid) else { continue };
         let owner = fs::metadata(entry.path()).map(|metadata| metadata.uid()).unwrap_or(u32::MAX);
         found.insert(pid, Process { parent, started, owner, command: command(pid), exe: program(pid) });
     }
-    found
+    Ok(found)
 }
 
-/// Whether the process runs `agent` itself: its program, or the script its
-/// interpreter runs, is the agent's.
+/// Whether the process is `agent` itself: its program is the agent's — by
+/// its name, or where the agent installs its versions — or an interpreter
+/// running the agent's package. A program merely named like it is not.
 fn runs(process: &Process, agent: &str) -> bool {
-    let named = |part: &str| {
-        let name = Path::new(part).file_name().map(|name| name.to_string_lossy().to_lowercase()).unwrap_or_default();
-        name == agent || name.starts_with(&format!("{agent}-")) || name.starts_with(&format!("{agent}."))
+    let name = |path: &str| Path::new(path).file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default();
+    let named = |name: &str| {
+        name == agent || (agent == "codex" && (name.starts_with("codex-x86_64-") || name.starts_with("codex-aarch64-")))
     };
+    let first = process.command.first().map(|first| name(first)).unwrap_or_default();
+    let exe = process.exe.as_ref().map(|exe| exe.to_string_lossy().into_owned()).unwrap_or_default();
     let package = match agent {
-        "claude" => "@anthropic-ai/claude-code",
-        _ => "@openai/codex",
+        "claude" => "@anthropic-ai/claude-code/",
+        _ => "@openai/codex/",
     };
-    process.command.iter().take(2).any(|part| named(part))
-        || process.command.iter().take(3).any(|part| part.contains(package))
-        || process.exe.as_ref().is_some_and(|exe| {
-            named(&exe.to_string_lossy()) || exe.to_string_lossy().contains(&format!("/{agent}/versions/"))
-        })
+    named(&first)
+        || named(&name(&exe))
+        || (agent == "claude" && exe.contains("/claude/versions/"))
+        || ((first == "node" || name(&exe) == "node") && process.command.get(1).is_some_and(|script| script.contains(package)))
 }
 
 /// The process `pid` and those it was started by, up to the first.
@@ -117,7 +120,18 @@ fn lineage(all: &HashMap<u32, Process>, pid: u32) -> Vec<u32> {
 /// Each process using `directory`, said with why; `user` is the login's.
 pub fn of(directory: &Path, agent: &str, default: bool, user: u32) -> Vec<Occupant> {
     let me = std::process::id();
-    let all = processes();
+    let all = match processes() {
+        Ok(all) => all,
+        Err(error) => {
+            return vec![Occupant {
+                pid: 0,
+                started: 0,
+                command: Vec::new(),
+                why: format!("the processes cannot be listed ({error}), so none can be known not to use it"),
+                agent: false,
+            }];
+        }
+    };
     let mine: BTreeSet<u32> = lineage(&all, me).into_iter().collect();
     let mut found = Vec::new();
     for (pid, process) in &all {
@@ -145,33 +159,74 @@ fn within(path: &Path, directory: &Path) -> bool {
     Path::new(text.strip_suffix(" (deleted)").unwrap_or(&text)).starts_with(directory)
 }
 
+/// Where the process's own files are told: its directory under `/proc`, or,
+/// where its first thread ended and others run on, one of theirs.
+fn readable(at: &Path, part: &str) -> io::Result<PathBuf> {
+    let own = at.join(part);
+    match fs::symlink_metadata(&own) {
+        Ok(_) if fs::read_dir(&own).is_ok() || part != "fd" => return Ok(own),
+        _ => {}
+    }
+    for task in fs::read_dir(at.join("task"))?.flatten() {
+        let theirs = task.path().join(part);
+        if (part == "fd" && fs::read_dir(&theirs).is_ok()) || (part != "fd" && fs::metadata(&theirs).is_ok()) {
+            return Ok(theirs);
+        }
+    }
+    Err(io::Error::new(io::ErrorKind::NotFound, format!("{} of no thread can be read", part)))
+}
+
 fn uses(at: &Path, directory: &Path, agent: &str, default: bool, process: &Process) -> Result<Option<String>, String> {
+    // Gone since it was listed: it uses nothing.
+    if !at.exists() {
+        return Ok(None);
+    }
     for link in ["cwd", "root", "exe"] {
         match fs::read_link(at.join(link)) {
             Ok(path) if within(&path, directory) => return Ok(Some(format!("its {link} is {}", path.display()))),
             Ok(_) => {}
-            // Gone, or a kernel thread: nothing of it uses anything.
-            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+            // A kernel thread, or a first thread that ended: what else of it
+            // is told below.
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
             Err(error) => return Err(error.to_string()),
         }
     }
-    let files = fs::read_dir(at.join("fd")).map_err(|error| error.to_string())?;
-    for file in files.flatten() {
-        if let Ok(path) = fs::read_link(file.path())
-            && within(&path, directory)
-        {
-            return Ok(Some(format!("it holds {} open", path.display())));
+    let files = readable(at, "fd").and_then(fs::read_dir);
+    match files {
+        Ok(files) => {
+            for file in files.flatten() {
+                if let Ok(path) = fs::read_link(file.path())
+                    && within(&path, directory)
+                {
+                    return Ok(Some(format!("it holds {} open", path.display())));
+                }
+            }
         }
+        Err(_) if !at.exists() => return Ok(None),
+        Err(error) => return Err(format!("its open files: {error}")),
     }
-    let maps = fs::read_to_string(at.join("maps")).map_err(|error| error.to_string())?;
+    let maps = match readable(at, "maps").and_then(fs::read_to_string) {
+        Ok(maps) => maps,
+        Err(_) if !at.exists() => return Ok(None),
+        Err(error) => return Err(format!("what it maps: {error}")),
+    };
     for line in maps.lines() {
-        if let Some(path) = line.split_whitespace().nth(5).map(PathBuf::from)
-            && within(&path, directory)
-        {
-            return Ok(Some(format!("it maps {}", path.display())));
+        // The address, permissions, offset, device and inode, then the path
+        // to the end of the line, spaces and all.
+        let mut rest = line;
+        for _ in 0..5 {
+            rest = rest.trim_start().split_once(char::is_whitespace).map_or("", |(_, rest)| rest);
+        }
+        let path = rest.trim_start();
+        if path.starts_with('/') && within(Path::new(path), directory) {
+            return Ok(Some(format!("it maps {path}")));
         }
     }
-    let environment = fs::read(at.join("environ")).map_err(|error| error.to_string())?;
+    let environment = match readable(at, "environ").and_then(fs::read) {
+        Ok(environment) => environment,
+        Err(_) if !at.exists() => return Ok(None),
+        Err(error) => return Err(format!("its environment: {error}")),
+    };
     let mut named = false;
     for variable in environment.split(|byte| *byte == 0) {
         let text = String::from_utf8_lossy(variable);
@@ -200,6 +255,9 @@ fn uses(at: &Path, directory: &Path, agent: &str, default: bool, process: &Proce
 /// meanwhile is never signalled. Where the system gives no such handle,
 /// nothing is signalled.
 pub fn stop(occupant: &Occupant) -> io::Result<()> {
+    if occupant.pid == 0 {
+        return Err(io::Error::other("no process to stop"));
+    }
     // SAFETY: pidfd_open takes an id and flags, and returns a descriptor.
     let opened = unsafe { libc::syscall(libc::SYS_pidfd_open, occupant.pid as libc::pid_t, 0) };
     if opened < 0 {

@@ -91,27 +91,30 @@ fn given(world: &Path, agent: &AgentName, dir: &Path, bytes_at_most: usize) -> i
     if let Some(known) = registry.logins.iter().find(|known| known.agent == *agent && known.dir == real) {
         return Ok(known.id.clone());
     }
-    // Moved: a finished move took the directory kept for one id away and
-    // left a link to this one where it was (`super::moves`). A link put
-    // there by other hands is another login. Only where one alone is, and
-    // the record says where it is from here on.
-    let moved_from = super::moves::finished_sources(world);
+    // Moved: finished moves took the directory kept for one id to this one,
+    // the very directory one of them published (`super::moves`). A link put
+    // there by other hands, or one pointed elsewhere since, leads to another
+    // login. Only where one alone is, and the record says where it is from
+    // here on.
+    // Records that cannot be read give no id: that would be a second one if
+    // a move they hold took this directory's login here.
+    let finished = super::moves::finished(world)?;
     let moved: Vec<usize> = registry
         .logins
         .iter()
         .enumerate()
-        .filter(|(_, known)| {
-            known.agent == *agent
-                && moved_from.contains(&known.dir)
-                && fastctx_platform::disk::canonicalize(&known.dir).is_ok_and(|now| now == real)
-        })
+        .filter(|(_, known)| known.agent == *agent && super::moves::led_to(&finished, &known.dir, &real))
         .map(|(index, _)| index)
         .collect();
-    if let [index] = moved[..] {
-        registry.logins[index].dir = real;
-        let id = registry.logins[index].id.clone();
-        keep(world, &registry, bytes_at_most)?;
-        return Ok(id);
+    match moved[..] {
+        [index] => {
+            registry.logins[index].dir = real;
+            let id = registry.logins[index].id.clone();
+            keep(world, &registry, bytes_at_most)?;
+            return Ok(id);
+        }
+        [] => {}
+        _ => return Err(invalid(format!("{} could be the directory of more than one login moved here", real.display()))),
     }
     let id = loop {
         let mut bytes = [0_u8; 8];
@@ -252,6 +255,21 @@ mod tests {
         assert_ne!(given(unproven.path(), &agent("claude"), &home, RECORD_BYTES).expect("an id"), first);
         super::super::moves::finished_for_test(world.path(), &real, &went);
         assert_eq!(given(world.path(), &agent("claude"), &home, RECORD_BYTES).expect("an id"), first);
+        // The link a move left pointed elsewhere afterwards leads to another
+        // login: the id stays with the directory the move put there.
+        let other = tempfile::tempdir().expect("a directory");
+        let home2 = login(other.path(), "claude-home");
+        let second = given(other.path(), &agent("claude"), &home2, RECORD_BYTES).expect("an id");
+        let real2 = fastctx_platform::disk::canonicalize(&home2).expect("resolved");
+        let went2 = login(other.path(), "went");
+        fastctx_platform::disk::rename(&home2, other.path().join("claude-home.moved")).expect("set aside");
+        std::os::unix::fs::symlink(&went2, &home2).expect("a link");
+        super::super::moves::finished_for_test(other.path(), &real2, &went2);
+        let elsewhere = login(other.path(), "elsewhere");
+        fastctx_platform::disk::remove_file(&home2).expect("unlinked");
+        std::os::unix::fs::symlink(&elsewhere, &home2).expect("a link");
+        assert_ne!(given(other.path(), &agent("claude"), &home2, RECORD_BYTES).expect("an id"), second);
+        assert_eq!(given(other.path(), &agent("claude"), &went2, RECORD_BYTES).expect("an id"), second);
         assert_eq!(given(world.path(), &agent("claude"), &went, RECORD_BYTES).expect("an id"), first);
         let record = read(world.path()).expect("the record");
         assert_eq!(record.logins.len(), 1);

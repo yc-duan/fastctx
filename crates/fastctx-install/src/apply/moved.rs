@@ -77,17 +77,16 @@ pub fn unfinished(root: &Path) -> Result<Vec<String>, Error> {
 }
 
 /// The Claude receipts of the home that resolved to `from` follow it to
-/// `to`, where it resolves now: renamed after it, and the value its entry's
-/// state was found by, where that was the home itself, made `to`. Under the
-/// apply lock, held by the caller; done again, it changes nothing more.
+/// `to`, where it resolves now: named after it, the receipts themselves
+/// unchanged — what they record of the home leads where it went through the
+/// link left behind, and an apply brings that up to date by its own rules.
+/// Under the apply lock, held by the caller; done again, it changes nothing
+/// more.
 pub fn moved(root: &Path, from: &Path, to: &Path) -> Result<Vec<String>, Error> {
     let mut done = Vec::new();
     for kind in ["plugin", "entry"] {
-        let old = root.join(format!("applied-claude-{kind}-{:x}.json", Sha256::digest(spelled(from)?.as_bytes())));
-        let new = root.join(format!("applied-claude-{kind}-{:x}.json", Sha256::digest(spelled(to)?.as_bytes())));
-        let there = |path: &Path| {
-            path.try_exists().map_err(|error| Error::Io(format!("checking {}: {error}", path.display())))
-        };
+        let old = receipt(root, kind, from)?;
+        let new = receipt(root, kind, to)?;
         if !there(&old)? {
             continue;
         }
@@ -104,28 +103,32 @@ pub fn moved(root: &Path, from: &Path, to: &Path) -> Result<Vec<String>, Error> 
             .map_err(|error| Error::Io(format!("keeping {}: {error}", new.display())))?;
         done.push(format!("{} -> {}", old.display(), new.display()));
     }
-    let entry = root.join(format!("applied-claude-entry-{:x}.json", Sha256::digest(spelled(to)?.as_bytes())));
-    if super::state::moved(&entry, from, to)? {
-        done.push(format!("{}: found by {}", entry.display(), to.display()));
-    }
     Ok(done)
 }
 
-/// Why the receipts of a home resolving to `from` could not follow it to
-/// `to`: a receipt named after `to` is there already.
-pub fn conflicts(root: &Path, from: &Path, to: &Path) -> Result<(), Error> {
+/// Why the Claude receipts of a home could not follow it to `to`: a receipt
+/// named after `to` is there already, of a home that was there before.
+pub fn conflicts(root: &Path, to: &Path) -> Result<(), Error> {
     for kind in ["plugin", "entry"] {
-        let old = root.join(format!("applied-claude-{kind}-{:x}.json", Sha256::digest(spelled(from)?.as_bytes())));
-        let new = root.join(format!("applied-claude-{kind}-{:x}.json", Sha256::digest(spelled(to)?.as_bytes())));
-        if old.exists() && new.exists() {
+        let new = receipt(root, kind, to)?;
+        if there(&new)? {
             return Err(Error::Io(format!(
-                "{} is there already, for a home at {}; the moved home's receipt could not follow it",
+                "{} is there already, for a Claude Code home at {}; take it away before a login is moved there",
                 new.display(),
                 to.display()
             )));
         }
     }
     Ok(())
+}
+
+/// The receipt of `kind` of the home that resolves to `home`.
+fn receipt(root: &Path, kind: &str, home: &Path) -> Result<std::path::PathBuf, Error> {
+    Ok(root.join(format!("applied-claude-{kind}-{:x}.json", Sha256::digest(spelled(home)?.as_bytes()))))
+}
+
+fn there(path: &Path) -> Result<bool, Error> {
+    path.try_exists().map_err(|error| Error::Io(format!("checking {}: {error}", path.display())))
 }
 
 /// A home's spelling as the receipts are named by it (`homes::identity`),

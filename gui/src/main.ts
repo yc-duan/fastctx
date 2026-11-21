@@ -145,6 +145,8 @@ import { ProjectForm } from "./app/project-form";
 import { fileLink, link, placeOf, talkLink, type Place } from "./app/places";
 import { enMachinePage, zhMachinePage } from "./app/machine-page-words";
 import { enManage, zhManage } from "./app/machine-manage-words";
+import { enLoginMove, zhLoginMove } from "./app/login-move-words";
+import type { MachineName } from "./world/events";
 import { enBatch, zhBatch } from "./app/machine-batch-words";
 import { enTroubles, zhTroubles } from "./app/trouble-words";
 import { enNameSaid, zhNameSaid } from "./app/name-words";
@@ -322,6 +324,7 @@ import {
   remoteLook,
   remoteOpen,
   remoteProbe,
+  remoteMoveLogin,
   remoteWithdraw,
   projectEdit,
   projectNew,
@@ -350,6 +353,7 @@ import {
   machineLog,
   machineStats,
   machineMemoryRoom,
+  machineCopies,
   renameHere,
   agentActivity,
 } from "./world/bridge";
@@ -3082,6 +3086,21 @@ function show(next: Place): void {
           view: english ? enUpdateView : zhUpdateView,
         },
         manage: english ? enManage : zhManage,
+        copies: live ? machineCopies : undefined,
+        moveLogin: live
+          ? {
+              words: english ? enLoginMove : zhLoginMove,
+              section: (english ? enLoginMove : zhLoginMove).section,
+              probe: remoteProbe,
+              move: remoteMoveLogin,
+              dirs: async (machine) => {
+                const heard = await agentLogins(machine as MachineName);
+                return heard.machines.flatMap((one) =>
+                  one.kind === "answered" ? [...one.logins.claude.listed, ...one.logins.codex.listed].map((login) => login.dir) : [],
+                );
+              },
+            }
+          : undefined,
         ...(live ? { allowPrivacy: () => void allowPrivacy().catch((error: unknown) => console.error("opening the Mac's privacy settings", error)) } : {}),
       });
       });

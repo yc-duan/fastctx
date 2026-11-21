@@ -279,6 +279,11 @@ pub enum RemoteCall {
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         cursors: Vec<Option<String>>,
     },
+    /// What the machine's owner asks of the copies held there of
+    /// conversations living elsewhere: only its owner's to ask.
+    Copies {
+        ask: crate::data::CopiesAsk,
+    },
     /// The user's word on Claude Code's bypass-permissions consent there.
     ClaudeConsent {
         accept: bool,
@@ -740,6 +745,7 @@ impl RemoteCall {
             | RemoteCall::Place { .. }
             | RemoteCall::PipeOut { .. }
             | RemoteCall::ClaudeConsent { .. }
+            | RemoteCall::Copies { .. }
             | RemoteCall::Homes { .. }
             | RemoteCall::ScanAgents { .. }
             | RemoteCall::AddAgentLogin { .. }
@@ -845,6 +851,7 @@ pub enum RemoteReply {
         accepted: bool,
         changed: bool,
     },
+    Copies(crate::data::CopiesAnswer),
     AttachmentPlaces(crate::attachments::AttachmentPlaces),
     Uploaded(crate::attachments::Attachment),
     Run(Box<RunReply>),
@@ -969,6 +976,7 @@ impl RemoteCall {
             | Self::ChangeAgentLogin { .. }
             | Self::ChangeAgentModels { .. }
             | Self::ClaudeConsent { .. }
+            | Self::Copies { .. }
             | Self::Collaboration { .. }
             | Self::CommitAttachment { .. }
             | Self::Composer { .. }
@@ -1064,6 +1072,7 @@ impl RemoteReply {
             | Self::Book { .. }
             | Self::Canon { .. }
             | Self::ClaudeConsent { .. }
+            | Self::Copies { .. }
             | Self::Collaboration { .. }
             | Self::Composer { .. }
             | Self::ComposerUploaded { .. }

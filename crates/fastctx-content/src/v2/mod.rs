@@ -64,7 +64,7 @@ mod window;
 pub use checkpoints::HeldItem;
 pub use collect::{Collected, Started};
 pub use commit::{Commit, Committed};
-pub use copies::HeldScope;
+pub use copies::{CopySize, Dropped, HeldScope};
 pub use exchange::{Holder, Imported, RawFrame, Verifier};
 pub use frame::{FORMAT, Header, KindRecord, Signer, open};
 pub use facts::{EpochFact, EpochKind, GapFact};

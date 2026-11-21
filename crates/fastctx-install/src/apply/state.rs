@@ -69,28 +69,6 @@ pub(super) fn receipt(places: &Places) -> Result<(Snapshot, Option<Receipt>), Er
     Ok((file, receipt))
 }
 
-/// The entry receipt kept in `record`, of a home moved from `from` to `to`:
-/// found by `to` where it was found by `from` (`super::moved`). Whether it
-/// changed.
-pub(super) fn moved(record: &std::path::Path, from: &std::path::Path, to: &std::path::Path) -> Result<bool, Error> {
-    let bytes = match fastctx_platform::disk::read(record) {
-        Ok(bytes) => bytes,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
-        Err(error) => return Err(Error::Io(format!("reading {}: {error}", record.display()))),
-    };
-    let mut kept: Kept =
-        serde_json::from_slice(&bytes).map_err(|error| Error::Io(format!("reading {}: {error}", record.display())))?;
-    if kept.version != VERSION {
-        return Err(Error::Io(format!("{}: unsupported entry record version {}", record.display(), kept.version)));
-    }
-    if !kept.entry.moved(from, to) {
-        return Ok(false);
-    }
-    let bytes = serde_json::to_vec_pretty(&kept).map_err(|error| Error::Io(error.to_string()))?;
-    crate::disk::publish_private(record, &bytes).map_err(|error| Error::Io(format!("keeping {}: {error}", record.display())))?;
-    Ok(true)
-}
-
 /// The change that keeps `receipt` in its file, or takes the file away
 /// with none; nothing where there is no file to take away.
 pub(super) fn keep(file: Snapshot, receipt: Option<&Receipt>) -> Result<Option<FileChange>, Error> {
@@ -118,7 +96,7 @@ pub(super) fn plan_put(places: &Places, previous: Option<&Receipt>, take_back: b
     let configured = configured(places)?;
     let wanted = wanted(places, configured.as_deref())?;
     let (path, before) = read(configured.as_deref())?;
-    let previous = previous.filter(|receipt| receipt.configured() == configured.as_deref());
+    let previous = previous.filter(|receipt| same_state(receipt.configured(), configured.as_deref()));
     let (next, _) = entry::place(before.as_deref(), &text(&path), &wanted, configured.as_deref(), previous, take_back)?;
     let after = next.or_else(|| before.clone());
     Ok(Planned { path, before, after })
@@ -148,7 +126,7 @@ pub(super) fn put(places: &Places, previous: Option<&Receipt>, take_back: bool) 
     let configured = configured(places)?;
     // An entry in the state a home's earlier setting named goes first.
     let previous = match previous {
-        Some(receipt) if receipt.configured() != configured.as_deref() => {
+        Some(receipt) if !same_state(receipt.configured(), configured.as_deref()) => {
             take(receipt, false)?;
             None
         }
@@ -242,6 +220,34 @@ fn wanted(places: &Places, configured: Option<&OsStr>) -> Result<serde_json::Val
     let (command, root) =
         fastctx_hosts::claude::world_server(&places.world).map_err(io("finding the World's server"))?;
     Ok(entry::wanted(&command, &root, configured))
+}
+
+/// Whether the state found by `a` is the very file found by `b`: the same
+/// setting, or two that open one file — a home moved to another disk with a
+/// link left where it was (`fastctx move-login`). Files that cannot both be
+/// looked at are told apart by their settings alone.
+fn same_state(a: Option<&OsStr>, b: Option<&OsStr>) -> bool {
+    if a == b {
+        return true;
+    }
+    let (Ok((first, _)), Ok((second, _))) = (read(a), read(b)) else { return false };
+    match (std::fs::metadata(&first), std::fs::metadata(&second)) {
+        (Ok(one), Ok(other)) => same_file(&one, &other),
+        _ => false,
+    }
+}
+
+#[cfg(unix)]
+fn same_file(one: &std::fs::Metadata, other: &std::fs::Metadata) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    (one.dev(), one.ino()) == (other.dev(), other.ino())
+}
+
+/// A home is moved on Linux alone (`fastctx move-login`): elsewhere the
+/// settings are told apart by their words.
+#[cfg(not(unix))]
+fn same_file(_: &std::fs::Metadata, _: &std::fs::Metadata) -> bool {
+    false
 }
 
 fn read(configured: Option<&OsStr>) -> Result<(PathBuf, Option<Vec<u8>>), Error> {

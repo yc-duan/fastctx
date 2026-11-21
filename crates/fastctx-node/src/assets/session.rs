@@ -78,7 +78,16 @@ pub(crate) struct Proposal {
     pub(crate) hub: String,
     pub(crate) readers: Readers,
     pub(crate) classes: Vec<StreamClass>,
+    /// When the account a conversation's scope was begun for was opened, in
+    /// milliseconds: which account of its name it is, the scope described for
+    /// that one alone. Kept here only; none where it was not known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) born: Option<i64>,
 }
+
+/// What describing a scope ends with when its hub will never describe it
+/// (`undescribed`): kept as such, not a failure.
+const GONE: &str = "never to be described: ";
 
 /// Brings the driver of `hub` round, starting it where none runs.
 pub(crate) fn wake(node: &Arc<Node>, hub: &HubId) {
@@ -419,7 +428,7 @@ async fn pass(node: &Arc<Node>, hub: &HubId, link: &Arc<Link>, network: &Network
     };
     let mut failed = {
         let _phase = phase(hub, "describing the scopes made here");
-        describe(assets, hub, link, &key, network).await.err()
+        describe(node, assets, hub, link, &key, network).await.err()
     };
     // What wanted a stream taken over as its descriptors came is made again
     // (MM14).
@@ -435,7 +444,7 @@ async fn pass(node: &Arc<Node>, hub: &HubId, link: &Arc<Link>, network: &Network
     let mut listed = None;
     if isolated.is_none() {
         let _phase = phase(hub, "listing what this machine may hold");
-        match discover(assets, hub, link, &key, network).await {
+        match discover(node, assets, hub, link, &key, network).await {
             Ok(whole) => listed = whole,
             Err(why) => {
                 failed.get_or_insert(format!("listing what this machine may hold: {why}"));
@@ -1338,6 +1347,7 @@ async fn open(assets: &Assets, hub: &HubId, link: &Arc<Link>, session: u64) -> R
 
 /// The scopes this machine began before any hub described them, described.
 async fn describe(
+    node: &Arc<Node>,
     assets: &Assets,
     hub: &HubId,
     link: &Arc<Link>,
@@ -1356,7 +1366,7 @@ async fn describe(
         let scope = wire::records_key(hub.as_str(), &account, opened.as_millisecond());
         let readers = Readers::Account { account };
         let classes = wire::classes_for(&readers, &scope);
-        let proposal = Proposal { hub: hub.to_string(), readers, classes };
+        let proposal = Proposal { hub: hub.to_string(), readers, classes, born: None };
         let (network, proposal) = (network.clone(), serde_json::to_vec(&proposal).map_err(|error| error.to_string())?);
         blocking(library, move |library| {
             if library.holding(&scope)?.is_none() {
@@ -1375,7 +1385,7 @@ async fn describe(
         let readers = Readers::Project { town };
         let scope = format!("{}ledger", readers.key_prefix(hub.as_str()));
         let classes = wire::classes_for(&readers, &scope);
-        let proposal = Proposal { hub: hub.to_string(), readers, classes };
+        let proposal = Proposal { hub: hub.to_string(), readers, classes, born: None };
         let (network, proposal) = (network.clone(), serde_json::to_vec(&proposal).map_err(|error| error.to_string())?);
         blocking(library, move |library| {
             if library.holding(&scope)?.is_none() {
@@ -1385,26 +1395,52 @@ async fn describe(
         })
         .await?;
     }
-    // Each is described apart: one the hub will not describe — a
-    // conversation of an account removed since — holds up none after it.
-    // The pass reports the first that failed.
+    // Each is described apart: one the hub will not describe holds up none
+    // after it, and one it will never describe — begun for an account gone
+    // from it since, or for an earlier account of a name — is kept as such
+    // and asked no more (`undescribed`). The pass reports the first that
+    // failed otherwise.
+    let never = super::undescribed::read(&node.world.assets());
     let mut failed: Option<String> = None;
     for (scope, proposal) in blocking(library, |library| library.provisionals()).await? {
         let Some(proposal) = proposal else { continue };
-        let Proposal { hub: meant, readers, classes } =
-            serde_json::from_slice(&proposal).map_err(|error| error.to_string())?;
-        if meant != hub.as_str() {
-            continue;
-        }
-        let described = link.assets(Request::Describe { scope: scope.clone(), readers, classes }).await;
-        // A scope the hub does not describe for this machine that is no
-        // conversation's — a project's, an account's, a log's: no account
-        // here reads it any more — holds up no conversation's.
-        if described.is_err() && !scope.starts_with("c/") {
+        if never.contains_key(&scope) {
             continue;
         }
         let done: Result<(), String> = async {
-            let Reply::Described { descriptor } = described? else {
+            let Proposal { hub: meant, readers, classes, born } =
+                serde_json::from_slice(&proposal).map_err(|error| format!("reading what was proposed: {error}"))?;
+            if meant != hub.as_str() {
+                return Ok(());
+            }
+            // Begun for an account of its name opened before the one there
+            // now: never described, so never the later one's.
+            if let Readers::Conversation { openers, .. } = &readers {
+                for opener in openers {
+                    let born = born.or_else(|| born_under(node, &scope, hub, opener));
+                    let now = link.view().directory.account(opener).map(|found| found.opened.as_millisecond());
+                    if let (Some(born), Some(now)) = (born, now)
+                        && born != now
+                    {
+                        return Err(format!("{GONE}it was begun for an earlier account named {opener}"));
+                    }
+                }
+            }
+            let conversation = scope.starts_with("c/");
+            let described = match ask(assets, link, Request::Describe { scope: scope.clone(), readers, classes }).await {
+                Ok(described) => described,
+                // Revoked: its holding here ended (`heard`).
+                Err(why) if why.starts_with(REVOKED) => return Ok(()),
+                // The hub has no account it was begun for: no hub will ever
+                // describe it.
+                Err(why) if conversation && why.contains("there is no account") => return Err(format!("{GONE}{why}")),
+                // A scope the hub does not describe for this machine that is
+                // no conversation's — a project's, an account's, a log's: no
+                // account here reads it any more — holds up no conversation's.
+                Err(_) if !conversation => return Ok(()),
+                Err(why) => return Err(why),
+            };
+            let Reply::Described { descriptor } = described else {
                 return Err("the hub did not describe the scope".into());
             };
             if !assets.heard(hub, key, &descriptor.fact.0, &descriptor.word.0) {
@@ -1420,14 +1456,32 @@ async fn describe(
             Ok(())
         }
         .await;
-        if let Err(why) = done {
-            if why.starts_with(REVOKED) {
-                return Err(why);
+        let Err(why) = done else { continue };
+        match why.strip_prefix(GONE) {
+            Some(why) => {
+                let (dir, kept, said) = (node.world.assets(), scope.clone(), why.to_string());
+                match fastctx_platform::task::blocking(move || super::undescribed::keep(&dir, &kept, &said)).await {
+                    Ok(()) => node.log.line(format_args!("{scope} will never be described by {hub}: {why}; it is asked no more")),
+                    Err(error) => {
+                        failed.get_or_insert(format!("keeping that {scope} will never be described: {error}"));
+                    }
+                }
             }
-            failed.get_or_insert(format!("describing {scope}: {why}"));
+            None => {
+                failed.get_or_insert(format!("describing {scope}: {why}"));
+            }
         }
     }
     failed.map_or(Ok(()), Err)
+}
+
+/// When the account `opener` the conversation whose scope is `scope` was
+/// begun for on `hub` was opened, in milliseconds, as the conversation
+/// keeps it; none where it does not.
+fn born_under(node: &Node, scope: &str, hub: &HubId, opener: &fastctx_types::AccountName) -> Option<i64> {
+    let id = fastctx_types::ResidentId::try_from(scope.rsplit('/').next()?).ok()?;
+    let (about, _) = node.residents.about(&id)?;
+    about.born_as?.into_iter().find(|born| born.hub == *hub && born.account == *opener).map(|born| born.generation.as_millisecond())
 }
 
 /// How often the scopes a hub lists for this machine are listed whole: a
@@ -1442,6 +1496,7 @@ const RELIST: Duration = Duration::from_secs(300);
 /// numbers carry it (§28.1). All it listed, when it listed all under one
 /// basis.
 async fn discover(
+    node: &Arc<Node>,
     assets: &Assets,
     hub: &HubId,
     link: &Arc<Link>,
@@ -1501,6 +1556,12 @@ async fn discover(
                 return Err(format!("the hub listed another scope than {}", held.scope));
             }
             listed_all.insert(held.scope.clone());
+            // Let go here at its owner's word: not held anew while every
+            // reader of it here stays paused (`copies::clear`).
+            let (staying, scope, readers, hub_text) = (node.clone(), held.scope.clone(), held.readers.clone(), hub.to_string());
+            if fastctx_platform::task::blocking(move || super::copies::stays_cleared(&staying, &hub_text, &scope, &readers)).await {
+                continue;
+            }
             let (scope, fact) = (held.scope.clone(), held.descriptor.fact.0);
             let here = blocking(library, move |library| library.held_listing(&scope)).await?;
             let described = here.as_ref().map(|listing| listing.description.clone());
@@ -1945,7 +2006,9 @@ async fn renew(
 
 /// Commits what waits of `stream` again, in its current epoch.
 async fn resubmit(assets: &Assets, scope: &str, stream: &str) -> Result<(), String> {
-    loop {
+    // A stream written to as fast as what waits is looked at goes on the
+    // next pass, not this one for good.
+    for _ in 0..RESUBMIT_ROUNDS {
         let (scope_text, stream_text, signer) = (scope.to_string(), stream.to_string(), assets.signer());
         let committed =
             blocking(&assets.library, move |library| library.resubmit(&scope_text, &stream_text, 64, signer)).await?;
@@ -1953,7 +2016,12 @@ async fn resubmit(assets: &Assets, scope: &str, stream: &str) -> Result<(), Stri
             return Ok(());
         }
     }
+    Ok(())
 }
+
+/// The most rounds of committing again one stream's waiting records a pass
+/// makes.
+const RESUBMIT_ROUNDS: usize = 256;
 
 /// The frames of the streams of `scope` this machine holds, past what it
 /// has, under the hub's signed epochs and gap facts.

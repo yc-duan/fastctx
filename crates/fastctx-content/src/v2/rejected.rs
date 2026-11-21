@@ -286,20 +286,26 @@ impl Library {
         let waiting = self.resubmits(scope, stream, take)?;
         let Some(holding) = waiting.first().map(|first| first.holding) else { return Ok(0) };
         let batch: Vec<Resubmit> = waiting.into_iter().take_while(|resubmit| resubmit.holding == holding).collect();
-        // A record whose item was written again after its run was cut is
-        // older than what stands: committed again it would land last and
-        // stand instead. It is let go, its holds with it; what is committed
-        // is checked to land where the stream stood as that was looked at,
-        // nothing written in between (codex-15695bc9 #6).
+        // A record whose item was written again in its period after its run
+        // was cut is older than what stands: committed again it would land
+        // last and stand instead. It is let go, its holds with it; what is
+        // committed is checked to land where the stream stood as that was
+        // looked at, nothing written in between (codex-15695bc9 #6). Only
+        // while the scope is held in the period the records wait in and the
+        // stream is not withheld: what waits from a period that ended is the
+        // purge's, which keeps a user's write refused for the user
+        // (`end_resubmits`).
         let (scope_key, stream_name, looked) = (scope.to_string(), stream.to_string(), batch.clone());
         let (outdated, at) = self.database().write_now_at(Priority::Normal, 1 << 16, move |db| {
-            let found: Option<(i64, i64)> = db
-                .prepare_cached(
-                    "SELECT s.id, s.next FROM streams s JOIN scopes c ON c.id = s.scope WHERE c.key = ?1 AND s.name = ?2",
-                )?
-                .query_row(params![scope_key, stream_name], |row| Ok((row.get(0)?, row.get(1)?)))
+            let Some((scope_id, _, Some(current))) = held(db, &scope_key)? else { return Ok((0, None)) };
+            if current != holding || super::letgo::withheld(db, scope_id, &stream_name, holding)? {
+                return Ok((0, None));
+            }
+            let found: Option<(i64, i64, Option<Vec<u8>>)> = db
+                .prepare_cached("SELECT id, next, head FROM streams WHERE scope = ?1 AND name = ?2")?
+                .query_row(params![scope_id, stream_name], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
                 .optional()?;
-            let Some((stream_id, next)) = found else { return Ok((0, 0)) };
+            let Some((stream_id, next, head)) = found else { return Ok((0, None)) };
             let mut outdated = 0;
             for resubmit in &looked {
                 if written_since(db, stream_id, resubmit)? {
@@ -311,7 +317,7 @@ impl Library {
             if outdated > 0 {
                 release_holds(db, stream_id)?;
             }
-            Ok((outdated, next as u64))
+            Ok((outdated, Some((next as u64, head))))
         })?;
         if outdated > 0 {
             self.wrote();
@@ -337,9 +343,25 @@ impl Library {
             // Judged when first committed; the hub judges each again.
             None,
             move |db, landed| {
-                if landed != at {
-                    racing.store(true, std::sync::atomic::Ordering::Relaxed);
-                    return Err(invalid("the stream was written to as what waited was looked at"));
+                // Where the stream stood as it was looked at, its chain
+                // the same: written to or cut back meanwhile, it is looked at
+                // again.
+                if let Some((at, head)) = &at {
+                    let previous = db
+                        .prepare_cached("SELECT f.header FROM frames f JOIN streams s ON s.id = f.stream JOIN scopes c ON c.id = s.scope WHERE c.key = ?1 AND s.name = ?2 AND f.first = ?3")?
+                        .query_row(params![scope_key, stream_name, landed as i64], |row| row.get::<_, Vec<u8>>(0))
+                        .optional()?
+                        .and_then(|header| Header::decode(&header).ok())
+                        .map(|header| header.previous);
+                    let chained = match (head, previous) {
+                        (Some(head), Some(previous)) => previous[..] == head[..],
+                        (None, _) => true,
+                        (Some(_), None) => false,
+                    };
+                    if landed != *at || !chained {
+                        racing.store(true, std::sync::atomic::Ordering::Relaxed);
+                        return Err(invalid("the stream was written to as what waited was looked at"));
+                    }
                 }
                 let (scope_id, stream_id): (i64, i64) = db
                     .prepare_cached(
@@ -493,8 +515,10 @@ pub(super) fn end_resubmits(db: &Connection, scope: i64, holding: i64) -> fastct
 /// record first written after it committed again before it.
 fn written_since(db: &Connection, stream: i64, resubmit: &Resubmit) -> fastctx_storage::Result<bool> {
     let standing: Option<i64> = db
-        .prepare_cached("SELECT revision FROM items WHERE stream = ?1 AND item = ?2 ORDER BY revision DESC LIMIT 1")?
-        .query_row(params![stream, resubmit.record.record.item], |row| row.get(0))
+        .prepare_cached(
+            "SELECT revision FROM items WHERE stream = ?1 AND item = ?2 AND holding = ?3 ORDER BY revision DESC LIMIT 1",
+        )?
+        .query_row(params![stream, resubmit.record.record.item, resubmit.holding], |row| row.get(0))
         .optional()?;
     let Some(revision) = standing.filter(|revision| *revision >= resubmit.rejected as i64) else { return Ok(false) };
     let order: Option<i64> = db

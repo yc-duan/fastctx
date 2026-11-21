@@ -8,6 +8,8 @@ import { Channel, invoke } from "@tauri-apps/api/core";
 import { closeDelivery, observe, retryDeliveries } from "./delivery";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import type { HomeChange, WorldAgents } from "./agents";
+import type { CopiesAnswer, CopiesAsk } from "./data";
+import type { MoveAsk, Moved } from "./login-move";
 import type { ChangePreview, FolderChange, LoginChange, MachineLogins, ModelChange, WorldLogins } from "./logins";
 import type { Control, Controlled, Offers } from "./control";
 import type { WorldSince } from "./since";
@@ -388,6 +390,12 @@ export function claudeConsent(
   home: string | null = null,
 ): Promise<{ accepted: boolean; changed: boolean }> {
   return invoke("claude_consent", { machineName: machine, accept, home });
+}
+
+/** What the owner of a machine asks of the copies it holds of the
+ *  conversations living on other machines (`Call::MachineCopies`). */
+export function machineCopies(machine: string, ask: CopiesAsk): Promise<CopiesAnswer> {
+  return invoke("machine_copies", { machineName: machine, ask });
 }
 
 /** Adds an agent's home on a machine, or hides one or shows it again. */
@@ -804,6 +812,15 @@ export function retentionWrite(days: number): Promise<void> {
 /** Making a World on a server over SSH (`src-tauri/src/remote_world.rs`). */
 export function remoteProbe(host: string, port: number): Promise<RemoteKey> {
   return invoke("remote_probe", { host, port });
+}
+
+/** Has the Fastctx of a server signed in to over SSH move one of its
+ *  logins' directories to another disk, or finish or look at a move: what
+ *  it writes told as it comes. */
+export function remoteMoveLogin(server: RemoteServer, ask: MoveAsk, told: (piece: string) => void): Promise<Moved> {
+  const channel = new Channel<string>();
+  channel.onmessage = told;
+  return invoke("remote_move_login", { server, ask, told: channel });
 }
 
 /** Signs in to the server whose key was confirmed and looks at it: the

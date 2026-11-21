@@ -62,6 +62,24 @@ impl Owner {
         }
     }
 
+    /// The owner whose library a directory named `name` under `kind`
+    /// (`account` or `body`) is, read back as `directory` names it.
+    fn of_directory(kind: &str, name: &str) -> Option<Self> {
+        let plain = match name.strip_prefix("x-") {
+            Some(hex) => String::from_utf8(unhex(hex)?).ok()?,
+            None => name.to_string(),
+        };
+        let owner = match kind {
+            "account" => {
+                let (account, opened) = plain.rsplit_once('.')?;
+                Self::Account(account.into(), opened.parse().ok()?)
+            }
+            "body" => Self::Body(plain),
+            _ => return None,
+        };
+        (owner.directory() == PathBuf::from(kind).join(name)).then_some(owner)
+    }
+
     fn directory(&self) -> PathBuf {
         match self {
             Self::Account(name, opened) => PathBuf::from("account").join(directory_name(&format!("{name}.{opened}"))),
@@ -69,6 +87,13 @@ impl Owner {
             Self::Hub => PathBuf::from("hub"),
         }
     }
+}
+
+fn unhex(text: &str) -> Option<Vec<u8>> {
+    if !text.len().is_multiple_of(2) {
+        return None;
+    }
+    (0..text.len()).step_by(2).map(|at| u8::from_str_radix(text.get(at..at + 2)?, 16).ok()).collect()
 }
 
 /// One library's place among the open ones.
@@ -93,6 +118,28 @@ const STAMP: &str = "hub";
 impl Owners {
     pub(crate) fn new(root: PathBuf, incarnation: Vec<u8>) -> Self {
         Self { root, incarnation, slots: Mutex::new(HashMap::new()), fenced: Mutex::new(std::collections::HashSet::new()) }
+    }
+
+    /// The accounts and bodies whose libraries are on this hub's disk, not
+    /// one being thrown away.
+    pub(crate) fn on_disk(&self) -> io::Result<Vec<Owner>> {
+        let mut found = Vec::new();
+        for kind in ["account", "body"] {
+            let entries = match fastctx_platform::disk::read_dir(self.root.join(kind)) {
+                Ok(entries) => entries,
+                Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+                Err(error) => return Err(error),
+            };
+            for entry in entries {
+                let entry = entry?;
+                let name = entry.file_name().to_string_lossy().into_owned();
+                if name.starts_with(DISCARDED) || !entry.file_type()?.is_dir() {
+                    continue;
+                }
+                found.extend(Owner::of_directory(kind, &name));
+            }
+        }
+        Ok(found)
     }
 
     /// Whether `owner` has a library on this hub's disk: one asked after by

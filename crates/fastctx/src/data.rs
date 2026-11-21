@@ -58,9 +58,30 @@ enum DataCommand {
         /// Take in nothing more of this account's copies here.
         #[arg(long, value_name = "ACCOUNT")]
         pause: Option<String>,
+        /// Let go the copies held here of this account's conversations that
+        /// live elsewhere, every reader of each here paused: counted, and
+        /// let go with --yes. The room comes back once the library is
+        /// compacted.
+        #[arg(long, value_name = "ACCOUNT", conflicts_with_all = ["on", "pause"])]
+        clear: Option<String>,
+        /// With --clear: let them go.
+        #[arg(long, requires = "clear")]
+        yes: bool,
         /// The hub the account is on, where this machine is on several.
         #[arg(long)]
         hub: Option<String>,
+        /// Print what the node answered, as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Give back to the disk the room the asset library keeps from what was
+    /// deleted, copies let go among it: compacted with this machine's node
+    /// stopped for a few minutes. Linux only.
+    Compact(crate::compact::CompactArgs),
+    /// The conversations begun here that their hub will never take: their
+    /// account was removed from it, or another of that name opened since.
+    /// They are kept here until deleted (`fastctx data delete`).
+    Undescribed {
         /// Print what the node answered, as JSON.
         #[arg(long)]
         json: bool,
@@ -95,7 +116,36 @@ pub fn run(args: DataArgs) -> anyhow::Result<()> {
             Ok(())
         }
         DataCommand::Delete { names, yes } => delete(names, yes),
-        DataCommand::Copies { on, pause, hub, json } => copies(on, pause, hub, json),
+        DataCommand::Copies { on, pause, clear, yes, hub, json } => match clear {
+            Some(account) => clear_copies(account, hub, yes, json),
+            None => copies(on, pause, hub, json),
+        },
+        DataCommand::Compact(args) => crate::compact::run(args),
+        DataCommand::Undescribed { json } => {
+            let Reply::Data(DataReply::Undescribed { scopes }) = call(DataCall::Undescribed)? else {
+                anyhow::bail!("the node answered something other than its undescribed scopes");
+            };
+            if json {
+                println!("{}", serde_json::to_string_pretty(&scopes)?);
+                return Ok(());
+            }
+            if scopes.is_empty() {
+                println!("every conversation begun here is one its hub takes");
+                return Ok(());
+            }
+            for scope in &scopes {
+                println!(
+                    "{}  {}  since {}  {}{}",
+                    scope.conversation,
+                    scope.scope,
+                    scope.at.strftime("%Y-%m-%d %H:%M"),
+                    scope.why,
+                    if scope.kept { "" } else { "  (the conversation is not kept here)" }
+                );
+            }
+            println!("each is kept here until deleted: `fastctx data delete <conversation>`");
+            Ok(())
+        }
         DataCommand::Output { days } => {
             let Reply::Data(DataReply::OutputDays { days, output_retention }) = call(DataCall::OutputDays { days })?
             else {
@@ -129,22 +179,50 @@ fn copied(reply: Reply) -> anyhow::Result<Vec<CopiesOf>> {
     }
 }
 
+/// The one hub `account` is logged in here on, as `hub` narrows it.
+fn hub_of(accounts: &[CopiesOf], account: &str, hub: Option<String>) -> anyhow::Result<String> {
+    let hubs: Vec<String> = accounts
+        .iter()
+        .filter(|one| one.account == account && hub.as_ref().is_none_or(|hub| *hub == one.hub))
+        .map(|one| one.hub.clone())
+        .collect();
+    match hubs.as_slice() {
+        [one] => Ok(one.clone()),
+        [] => anyhow::bail!("{account} is not logged in here{}", hub.map(|hub| format!(" on {hub}")).unwrap_or_default()),
+        _ => anyhow::bail!("{account} is logged in here on several hubs; say which with --hub"),
+    }
+}
+
+fn clear_copies(account: String, hub: Option<String>, apply: bool, json: bool) -> anyhow::Result<()> {
+    let accounts = copied(call(DataCall::Copies)?)?;
+    let hub = hub_of(&accounts, &account, hub)?;
+    let Reply::Data(DataReply::Cleared(cleared)) = call(DataCall::ClearCopies { hub, account: account.clone(), apply })? else {
+        anyhow::bail!("the node answered something other than what it let go");
+    };
+    if json {
+        println!("{}", serde_json::to_string_pretty(&cleared)?);
+        return Ok(());
+    }
+    if cleared.applied {
+        println!("let go {} copies of {account}'s conversations, about {}", cleared.scopes, size(cleared.bytes));
+        println!("their room comes back once this machine's library is compacted: `fastctx data compact --yes`");
+    } else {
+        println!(
+            "{} copies of {account}'s conversations may be let go here, about {}; pass --yes to let them go",
+            cleared.scopes,
+            size(cleared.bytes)
+        );
+    }
+    for (scope, why) in &cleared.kept {
+        println!("  kept {scope}: {why}");
+    }
+    Ok(())
+}
+
 fn copies(on: Option<String>, pause: Option<String>, hub: Option<String>, json: bool) -> anyhow::Result<()> {
     let mut accounts = copied(call(DataCall::Copies)?)?;
     if let Some((account, on)) = on.map(|account| (account, true)).or(pause.map(|account| (account, false))) {
-        let hubs: Vec<String> = accounts
-            .iter()
-            .filter(|one| one.account == account && hub.as_ref().is_none_or(|hub| *hub == one.hub))
-            .map(|one| one.hub.clone())
-            .collect();
-        let hub = match hubs.as_slice() {
-            [one] => one.clone(),
-            [] => anyhow::bail!(
-                "{account} is not logged in here{}",
-                hub.map(|hub| format!(" on {hub}")).unwrap_or_default()
-            ),
-            _ => anyhow::bail!("{account} is logged in here on several hubs; say which with --hub"),
-        };
+        let hub = hub_of(&accounts, &account, hub)?;
         accounts = copied(call(DataCall::SetCopies { hub, account, on })?)?;
     }
     if json {
@@ -157,11 +235,12 @@ fn copies(on: Option<String>, pause: Option<String>, hub: Option<String>, json: 
     for one in &accounts {
         let source = one.source.as_deref().map(|source| format!(" ({source})")).unwrap_or_default();
         println!(
-            "{} on {}: {}{source}; conversations held here and taken in no more: {}",
+            "{} on {}: {}{source}; conversations held here and taken in no more: {} (about {})",
             one.account,
             one.hub,
             if one.on { "taken in" } else { "paused" },
-            one.paused_scopes
+            one.paused_scopes,
+            size(one.paused_bytes)
         );
     }
     Ok(())

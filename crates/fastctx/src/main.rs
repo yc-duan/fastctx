@@ -16,6 +16,7 @@ mod claude_session_directory;
 mod claude_subagents;
 mod command_guard;
 mod copy;
+mod compact;
 mod data;
 mod move_login;
 mod doctor;

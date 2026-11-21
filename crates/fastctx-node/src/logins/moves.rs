@@ -135,6 +135,12 @@ pub fn records(world: &Path) -> io::Result<Vec<(PathBuf, Record)>> {
     Ok(found)
 }
 
+/// Whether `record` leaves something to do: the directory between its two
+/// places, or the service not put back as it was.
+pub fn pending(record: &Record) -> bool {
+    !record.phase.settled() || !record.service_restored
+}
+
 /// The record of a move not settled, if any; a record that cannot be read
 /// counts as one.
 pub fn unsettled(world: &Path) -> Option<String> {
@@ -151,14 +157,50 @@ pub fn unsettled(world: &Path) -> Option<String> {
     }
 }
 
-/// The directories finished moves took away, a link left in each.
-pub fn finished_sources(world: &Path) -> Vec<PathBuf> {
-    records(world)
-        .unwrap_or_default()
+/// A finished move: the directory it took away, a link left there, and
+/// where it put the copy, as that directory was once published.
+pub struct Finished {
+    pub source: PathBuf,
+    pub target: PathBuf,
+    pub target_identity: Option<Identity>,
+}
+
+/// The moves finished on this World; an error where the records cannot be read.
+pub fn finished(world: &Path) -> io::Result<Vec<Finished>> {
+    Ok(records(world)?
         .into_iter()
         .filter(|(_, record)| record.phase == Phase::Done)
-        .map(|(_, record)| record.source)
-        .collect()
+        .map(|(_, record)| Finished { source: record.source, target: record.target, target_identity: record.target_identity })
+        .collect())
+}
+
+/// Whether the directory `from` was moved, by one finished move or one after
+/// another, to `real`, the very directory a move published there.
+pub fn led_to(finished: &[Finished], from: &Path, real: &Path) -> bool {
+    let mut at = from.to_path_buf();
+    for _ in 0..16 {
+        let Some(move_) = finished.iter().find(|move_| move_.source == at) else { return false };
+        if move_.target == real {
+            return move_.target_identity.is_none_or(|identity| identity_of(real).is_ok_and(|now| now == identity));
+        }
+        at = move_.target.clone();
+    }
+    false
+}
+
+/// A directory's identity, not followed through a link.
+pub fn identity_of(path: &Path) -> io::Result<Identity> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let metadata = fastctx_platform::disk::symlink_metadata(path)?;
+        Ok(Identity { device: metadata.dev(), inode: metadata.ino() })
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+        Err(io::Error::new(io::ErrorKind::Unsupported, "a directory's identity is read on Unix"))
+    }
 }
 
 /// Keeps `record` in its file, on disk before it is answered.
@@ -184,8 +226,8 @@ pub(crate) fn finished_for_test(world: &Path, source: &Path, target: &Path) {
         login: source.to_path_buf(),
         source: source.to_path_buf(),
         source_identity: Identity { device: 0, inode: 0 },
-        target: target.to_path_buf(),
-        target_identity: None,
+        target: fastctx_platform::disk::canonicalize(target).expect("a target"),
+        target_identity: Some(identity_of(target).expect("a target")),
         staging: target.with_extension("staging"),
         backup: source.with_extension("moved"),
         service: None,

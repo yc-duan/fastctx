@@ -105,28 +105,38 @@ pub fn walk(root: &Path) -> io::Result<Vec<Entry>> {
 
 /// What a walk found that a copy does not take as it is: entries not
 /// copied, and links leading out of the directory by a relative path, which
-/// are written as the absolute path they led to.
+/// are written as the absolute path they led to; entries of another owner
+/// than a caller who is not the superuser can give a copy, entries on
+/// another filesystem than the directory, and relative links out of it whose
+/// place cannot be told for sure.
 pub struct Findings {
     pub bytes: u64,
     pub others: Vec<PathBuf>,
     pub outward: Vec<(PathBuf, PathBuf)>,
     pub foreign: Vec<PathBuf>,
+    pub mounted: Vec<PathBuf>,
+    pub unsure: Vec<PathBuf>,
 }
 
 /// Looks at `entries` of `root` before anything is copied: what it holds,
 /// and, for a caller who is not the superuser, entries it could not give the
 /// copy as they are owned.
 pub fn findings(root: &Path, entries: &[Entry], superuser: bool, uid: u32) -> Findings {
-    let mut findings = Findings { bytes: 0, others: Vec::new(), outward: Vec::new(), foreign: Vec::new() };
+    let mut findings =
+        Findings { bytes: 0, others: Vec::new(), outward: Vec::new(), foreign: Vec::new(), mounted: Vec::new(), unsure: Vec::new() };
+    let device = entries.first().map(|first| first.device);
     for entry in entries {
+        if Some(entry.device) != device {
+            findings.mounted.push(entry.path.clone());
+        }
         match &entry.kind {
             Kind::File => findings.bytes += entry.size,
             Kind::Other => findings.others.push(entry.path.clone()),
-            Kind::Link(target) => {
-                if let Some(absolute) = outward(root, &entry.path, target) {
-                    findings.outward.push((entry.path.clone(), absolute));
-                }
-            }
+            Kind::Link(target) => match outward(root, &entry.path, target) {
+                Ok(Some(absolute)) => findings.outward.push((entry.path.clone(), absolute)),
+                Ok(None) => {}
+                Err(()) => findings.unsure.push(entry.path.clone()),
+            },
             Kind::Directory => {}
         }
         if !superuser && entry.uid != uid && entry.kind != Kind::Other {
@@ -137,26 +147,38 @@ pub fn findings(root: &Path, entries: &[Entry], superuser: bool, uid: u32) -> Fi
 }
 
 /// The absolute path a relative link at `path` in `root` leads to, where it
-/// leads out of `root`; none for one that stays in it or is absolute.
-fn outward(root: &Path, path: &Path, target: &Path) -> Option<PathBuf> {
+/// leads out of `root`, as the system resolves it; none for one that stays
+/// in it or is absolute. One that leads nowhere is told by its words alone
+/// where they cannot mean another place — only `..` before any name — and
+/// is unsure (`Err`) otherwise.
+fn outward(root: &Path, path: &Path, target: &Path) -> Result<Option<PathBuf>, ()> {
     if target.is_absolute() {
-        return None;
+        return Ok(None);
     }
+    // The link's own directory: a directory of `root`, reached through none.
     let base = root.join(path.parent().unwrap_or(Path::new("")));
+    if let Ok(led) = fs::canonicalize(base.join(target)) {
+        return Ok((!led.starts_with(root)).then_some(led));
+    }
+    let mut named = false;
     let mut at: Vec<Component> = base.components().collect();
     for part in target.components() {
         match part {
+            Component::ParentDir if named => return Err(()),
             Component::ParentDir => {
                 if at.len() > 1 {
                     at.pop();
                 }
             }
             Component::CurDir => {}
-            other => at.push(other),
+            other => {
+                named = true;
+                at.push(other);
+            }
         }
     }
     let led: PathBuf = at.iter().collect();
-    (!led.starts_with(root)).then_some(led)
+    Ok((!led.starts_with(root)).then_some(led))
 }
 
 fn cstring(path: &Path) -> io::Result<CString> {
@@ -318,6 +340,8 @@ pub fn copy(source: &Path, staging: &Path, entries: &[Entry], outward_links: &[(
                 let digest = copy_file(&from, &to, entry)?;
                 set_attributes(&to, &attributes(&from)?).with_context(|| format!("giving {} its attributes", to.display()))?;
                 settle(&to, entry).with_context(|| format!("settling {}", to.display()))?;
+                // What was given it on disk too, as its bytes are.
+                File::open(&to).and_then(|file| file.sync_all()).with_context(|| format!("keeping {}", to.display()))?;
                 if entry.links > 1 {
                     made.insert((entry.device, entry.inode), to.clone());
                 }
@@ -493,9 +517,14 @@ pub fn stage(staging: &Path, op: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Whether the directory at `path` holds the marker of the move `op`.
+pub fn marked_by(path: &Path, op: &str) -> bool {
+    fs::read(path.join(MARKER)).is_ok_and(|bytes| bytes == op.as_bytes())
+}
+
 /// Whether the directory at `path` is the one the move `op` staged: its
 /// marker says so, or it is empty as a staging directory is before its
-/// marker is written.
+/// marker is written (its name is the move's own).
 pub fn staged_by(path: &Path, op: &str) -> bool {
     match fs::read(path.join(MARKER)) {
         Ok(bytes) => bytes == op.as_bytes(),
@@ -506,26 +535,41 @@ pub fn staged_by(path: &Path, op: &str) -> bool {
     }
 }
 
-/// Renames `from` to `to`, which must not be there. An error means it was
-/// not renamed: once it is, the directories that hold both names are put on
-/// disk, and where that fails it is said, the rename standing.
-pub fn rename_new(from: &Path, to: &Path) -> io::Result<()> {
-    let (from_name, to_name) = (cstring(from)?, cstring(to)?);
+/// How a rename failed: not made, or made but not known to be on disk.
+#[derive(Debug)]
+pub enum Renamed {
+    Not(io::Error),
+    Unkept(io::Error),
+}
+
+impl std::fmt::Display for Renamed {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Not(error) => write!(f, "{error}"),
+            Self::Unkept(error) => write!(f, "renamed, but it could not be put on disk: {error}"),
+        }
+    }
+}
+
+impl std::error::Error for Renamed {}
+
+/// Renames `from` to `to`, which must not be there, and puts the directories
+/// that hold both names on disk.
+pub fn rename_new(from: &Path, to: &Path) -> Result<(), Renamed> {
+    let (from_name, to_name) = (cstring(from).map_err(Renamed::Not)?, cstring(to).map_err(Renamed::Not)?);
     // SAFETY: both names are terminated; renameat2 reads them only.
     let result = unsafe {
         libc::syscall(libc::SYS_renameat2, libc::AT_FDCWD, from_name.as_ptr(), libc::AT_FDCWD, to_name.as_ptr(), libc::RENAME_NOREPLACE)
     };
     if result != 0 {
-        return Err(io::Error::last_os_error());
+        return Err(Renamed::Not(io::Error::last_os_error()));
     }
     let mut parents = vec![to.parent().expect("a renamed entry's parent")];
     if from.parent() != to.parent() {
         parents.push(from.parent().expect("a renamed entry's parent"));
     }
     for parent in parents {
-        if let Err(error) = fastctx_platform::durable_file::sync_directory(parent) {
-            eprintln!("fastctx: {} was renamed to {}, but {} could not be put on disk: {error}", from.display(), to.display(), parent.display());
-        }
+        fastctx_platform::durable_file::sync_directory(parent).map_err(Renamed::Unkept)?;
     }
     Ok(())
 }

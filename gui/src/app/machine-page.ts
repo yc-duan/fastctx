@@ -20,6 +20,7 @@ import type { NameProblem, WorldNow } from "../world/bridge";
 import { agentName, osName, titleOf } from "../world/names";
 import type { Card, LimitUse, MachineStats, StatsSeen } from "../world/stats";
 import type { DoctorReadings } from "../world/doctor";
+import type { CopiesAnswer, CopiesAsk } from "../world/data";
 import type { MachineFacts } from "../world/world";
 import type { AccessWords, MachinesWords } from "./account-words";
 import { AssistSheet, assistChange, assistancesIn, endAssist, namesOn, type Assistance } from "./assist-sheet";
@@ -29,9 +30,12 @@ import { redrawKeepingFocus } from "./focus";
 import { diskBar, levelOf, Ring, Spark, Strip, type LineMark, type LineSpan } from "./machine-draw";
 import { daysOf, heldOf, keptOf, LIMITS_MS, seenOf, SPAN_MS, take, tripsHeld, type Sample } from "./machine-history";
 import type { MachinePageWords } from "./machine-page-words";
+import { CopiesBlock } from "./machine-copies";
+import { LoginMoveSheet, type LoginMoveOptions } from "./login-move-sheet";
+import type { LoginMoveSection } from "./login-move-words";
 import { FastctxBlock, type FastctxSubject } from "./machine-fastctx";
 import type { ReadLog } from "./machine-log";
-import { holderLoginOf, removerLoginOf, updaterLoginOf } from "./machine-logins";
+import { holderLoginOf, ownerLoginOf, removerLoginOf, updaterLoginOf } from "./machine-logins";
 import type { ManageWords } from "./machine-manage-words";
 import { RemoveMachineSheet } from "./machine-remove";
 import { removeMachines } from "./machine-removing";
@@ -96,6 +100,13 @@ export interface MachinePageOptions {
       }
     | undefined;
   manage: ManageWords;
+  /** Asks a machine of the user's about the copies it holds of the
+   *  conversations living elsewhere; none where it cannot be asked. */
+  copies?: ((machine: string, ask: CopiesAsk) => Promise<CopiesAnswer>) | undefined;
+  /** Moving one of a Linux machine's login directories to another disk,
+   *  over SSH from here, with the directories it has; none where it cannot
+   *  be done from here. */
+  moveLogin?: (LoginMoveOptions & { section: LoginMoveSection; dirs(machine: string): Promise<string[]> }) | undefined;
   /** On a Mac, where Fastctx is let into what macOS keeps private. */
   allowPrivacy?: () => void;
   /** What the machine (this computer with none) keeps free in memory for
@@ -201,6 +212,10 @@ export class MachinePage implements Page {
   private readonly cardsBox: HTMLElement;
   private readonly directBox: HTMLElement;
   private readonly fastctxBox: HTMLElement;
+  private readonly copiesBox: HTMLElement;
+  private readonly copies: CopiesBlock | null;
+  private readonly movesBox: HTMLElement;
+  private moveSheet: LoginMoveSheet | null = null;
   private readonly namingBox: HTMLElement;
   private readonly roomBox: HTMLElement;
   private roomMenu: ActsMenu | null = null;
@@ -261,6 +276,10 @@ export class MachinePage implements Page {
           changed: () => this.render(),
         })
       : null;
+    const asking = options.copies;
+    this.copies = asking
+      ? new CopiesBlock({ words: options.manage.copies, ask: asking, confirm: options.confirm, changed: () => this.render() })
+      : null;
     this.element = document.createElement("div");
     this.element.className = "machine-page";
     const { words } = options;
@@ -288,6 +307,8 @@ export class MachinePage implements Page {
           </div>
           <div class="mp-pane" id="mp-pane-manage" role="tabpanel" aria-labelledby="mp-tab-manage" data-pane="manage" hidden>
             <section class="mp-sec mp-fastctx" hidden></section>
+            <section class="mp-sec mp-copies" hidden></section>
+            <section class="mp-sec mp-moves" hidden></section>
             <section class="mp-sec mp-naming" hidden></section>
             <section class="mp-sec mp-room" hidden></section>
             <section class="mp-sec mp-sharing" hidden></section>
@@ -323,6 +344,8 @@ export class MachinePage implements Page {
     this.cardsBox = part(".mp-cards");
     this.directBox = part(".mp-direct");
     this.fastctxBox = part(".mp-fastctx");
+    this.copiesBox = part(".mp-copies");
+    this.movesBox = part(".mp-moves");
     this.namingBox = part(".mp-naming");
     this.roomBox = part(".mp-room");
     this.sharingBox = part(".mp-sharing");
@@ -496,6 +519,8 @@ export class MachinePage implements Page {
     this.drawWhere(machine, world);
     this.drawDirect(machine, world);
     this.drawFastctx(machine, stats, world);
+    this.drawCopies(machine, world);
+    this.drawMoves(machine, world);
     this.drawNaming(machine, world);
     this.drawRoom(machine, stats, world);
     this.drawSharing(machine, world);
@@ -1146,6 +1171,43 @@ export class MachinePage implements Page {
     this.put("fastctx", this.fastctxBox, block.html(subject));
   }
 
+  /** The copies it holds of conversations living elsewhere, for its owner. */
+  private drawCopies(machine: Machine, world: WorldNow): void {
+    const block = this.copies;
+    const owner = block ? ownerLoginOf(machine, world) : undefined;
+    this.copiesBox.hidden = !block || !owner;
+    if (!block || !owner) return;
+    block.show(machine, this.tab === "manage" && document.visibilityState === "visible");
+    this.put("copies", this.copiesBox, block.html());
+  }
+
+  /** Moving its login directories to another disk, over SSH: a Linux
+   *  machine of the user's own, not this computer. */
+  private drawMoves(machine: Machine, world: WorldNow): void {
+    const moving = this.options.moveLogin;
+    const shown = !!moving && !machine.here && factsOf(machine)?.os === "linux" && !!ownerLoginOf(machine, world);
+    this.movesBox.hidden = !shown;
+    if (!moving || !shown) return;
+    const { section } = moving;
+    this.put(
+      "moves",
+      this.movesBox,
+      `<h3 class="mp-sec-title">${escape(section.title)}</h3><p class="mp-sec-note">${escape(section.what)}</p><div class="fx-status"><button class="text-button quiet-button" type="button" data-act="move-login">${escape(section.open)}</button></div>`,
+    );
+  }
+
+  /** Opens the sheet that moves a login directory of `machine`. */
+  private openMove(machine: Machine): void {
+    const moving = this.options.moveLogin;
+    if (!moving) return;
+    this.moveSheet ??= new LoginMoveSheet(moving);
+    const sheet = this.moveSheet;
+    void moving.dirs(machine.written).then(
+      (dirs) => sheet.open(machine.written, dirs),
+      () => sheet.open(machine.written, []),
+    );
+  }
+
   /** At the foot of 「管理」: taking it off, for whoever may; on the machine
    *  that runs the network's hub, the way to move the hub or dissolve the
    *  network instead of uninstalling it. */
@@ -1364,6 +1426,7 @@ export class MachinePage implements Page {
       return;
     }
     if (this.fastctx?.click(target)) return;
+    if (this.copies?.click(target)) return;
     if (target.dataset.range) {
       this.range = target.dataset.range as Range;
       keepRange(this.range);
@@ -1376,6 +1439,8 @@ export class MachinePage implements Page {
     const owner = this.holder(machine, world);
     const button = target as HTMLButtonElement;
     switch (target.dataset.act) {
+      case "move-login":
+        return this.openMove(machine);
       case "rename":
         return this.startRename();
       case "room":

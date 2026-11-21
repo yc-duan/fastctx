@@ -30,6 +30,7 @@ impl RemoteCall {
             | Self::Canon { .. }
             | Self::ChangeAgentModels { .. }
             | Self::ClaudeConsent { .. }
+            | Self::Copies { .. }
             | Self::Collaboration { .. }
             | Self::CommitAttachment { .. }
             | Self::ConversationDebt { .. }
@@ -139,6 +140,7 @@ impl Call {
             | Self::BringIn { .. }
             | Self::ChangeAgentModels { .. }
             | Self::ClaudeConsent { .. }
+            | Self::MachineCopies { .. }
             | Self::ClaudeContext { .. }
             | Self::ClaudeSessionDirectory { .. }
             | Self::CollabRead { .. }
@@ -298,8 +300,11 @@ impl Call {
                 match request {
                     DataCall::List { .. } | DataCall::OutputDays { .. } => Response::Answer,
                     // A word kept in one small file, answered as it is kept.
-                    DataCall::Copies | DataCall::SetCopies { .. } | DataCall::AppOpened { .. } => Response::Answer,
-                    DataCall::Delete { .. } | DataCall::ClearCache => Response::Submit,
+                    DataCall::Copies
+                    | DataCall::SetCopies { .. }
+                    | DataCall::AppOpened { .. }
+                    | DataCall::Undescribed => Response::Answer,
+                    DataCall::Delete { .. } | DataCall::ClearCache | DataCall::ClearCopies { .. } => Response::Submit,
                 }
             }
             Self::ProfileSubagents { operation, .. } => {

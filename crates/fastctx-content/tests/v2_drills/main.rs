@@ -8,6 +8,7 @@
 mod aside;
 mod changes;
 mod commit;
+mod copies;
 mod defer;
 mod exchange;
 mod faults;
@@ -27,10 +28,11 @@ mod unaccepted;
 mod window;
 
 fn main() {
-    let drills: [(&str, fn()); 20] = [
+    let drills: [(&str, fn()); 21] = [
         ("aside", aside::run as fn()),
         ("changes", changes::run as fn()),
         ("commit", commit::run as fn()),
+        ("copies", copies::run as fn()),
         ("defer", defer::run as fn()),
         ("exchange", exchange::run as fn()),
         ("faults", faults::run as fn()),

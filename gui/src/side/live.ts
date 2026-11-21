@@ -141,7 +141,8 @@ function worldColleagues(store: Store, address: Address, now: number): CollabNod
     const busy = r.now?.activity === "busy";
     const born = Date.parse(r.about.born_at);
     const since = r.now?.since ? Date.parse(r.now.since) : born;
-    const state: NodeState = r.now?.trouble ? "failed" : !r.now ? "unknown" : busy ? "working" : "done";
+    // As the tree tells it (`branchNode`), so the two order alike.
+    const state: NodeState = r.now?.trouble ? "failed" : !r.now ? "unknown" : r.now.waiting_for_user ? "waiting" : busy ? "working" : "done";
     return [
       {
         id: r.about.id,
@@ -157,7 +158,7 @@ function worldColleagues(store: Store, address: Address, now: number): CollabNod
         // As the tree tells them (`branchNode`): the page orders by them,
         // and the two must order alike as one replaces the other.
         began: Number.isFinite(born) ? born : null,
-        ended: busy || !Number.isFinite(since) ? null : since,
+        ended: busy || state === "waiting" || !Number.isFinite(since) ? null : since,
         steps: null,
         machine: r.about.machine,
       },

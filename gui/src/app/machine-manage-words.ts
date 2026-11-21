@@ -3,6 +3,7 @@
 // three ways.
 
 import type { RenewalPhase } from "../world/renewal";
+import type { CopiesWords } from "./machine-copies";
 import { enProblems, failure, zhProblems } from "./problem";
 
 export interface ManageWords {
@@ -77,6 +78,8 @@ export interface ManageWords {
   /** The machine that runs the network's hub. */
   hubHere: string;
   hubGo: string;
+  /** The copies it holds of conversations living elsewhere (`machine-copies.ts`). */
+  copies: CopiesWords;
 }
 
 export const zhManage: ManageWords = {
@@ -141,6 +144,28 @@ export const zhManage: ManageWords = {
   done: "完成",
   hubHere: "该机器运行着网络的中枢：卸载前请先在机器图上迁移中枢或解散网络",
   hubGo: "前往机器图",
+  copies: {
+    title: "会话副本",
+    what: "这台机器为别的机器上的会话存的副本。服务器一般用不到：停收之后，可以把已经存下的清掉。会话本身留在它所在的机器上。",
+    takenIn: "接收中",
+    paused: "已停收",
+    pausedHeld: (count, size) => `停收的副本 ${count} 段，约 ${size}`,
+    pause: "停收",
+    takeIn: "恢复接收",
+    count: "看能清多少",
+    clearable: (count, size) => `可以清掉 ${count} 段，约 ${size}`,
+    none: "没有可以清的副本",
+    clear: (count) => `清掉 ${count} 段`,
+    confirmTitle: "清掉会话副本",
+    confirm: (account, count, size, machine) =>
+      `清掉 ${machine} 上 ${account} 的 ${count} 段会话副本（约 ${size}）？会话本身留在它们所在的机器上；以后在这台机器恢复接收，会整段重新取回。`,
+    cleared: (count, size) => `已清掉 ${count} 段，约 ${size}。`,
+    kept: (count) => `${count} 段保留（这台机器写过，或正在用）。`,
+    compact: "要在那台机器上压缩之后才还出磁盘：fastctx data compact --yes（会中断那台机器上的会话几分钟）",
+    asking: "正在问…",
+    noAccount: "这台机器上没有登录的账号",
+    unread: (why) => `问不到：${why}`,
+  },
 };
 
 export const enManage: ManageWords = {
@@ -205,4 +230,26 @@ export const enManage: ManageWords = {
   done: "Done",
   hubHere: "It runs the network's hub: to uninstall it, move the hub or dissolve the network on the machines map first",
   hubGo: "To the map",
+  copies: {
+    title: "Conversation copies",
+    what: "Copies this machine keeps of conversations living on other machines. A server seldom reads them: once paused, what it keeps can be let go. The conversations stay where they live.",
+    takenIn: "Taken in",
+    paused: "Paused",
+    pausedHeld: (count, size) => `${count} paused, about ${size}`,
+    pause: "Pause",
+    takeIn: "Take in again",
+    count: "Count what may go",
+    clearable: (count, size) => `${count} may go, about ${size}`,
+    none: "Nothing may go",
+    clear: (count) => `Let ${count} go`,
+    confirmTitle: "Let copies go",
+    confirm: (account, count, size, machine) =>
+      `Let go ${count} copies of ${account}'s conversations on ${machine} (about ${size})? The conversations stay where they live; taken in again here, they come down whole.`,
+    cleared: (count, size) => `${count} let go, about ${size}.`,
+    kept: (count) => `${count} kept (written here, or in use).`,
+    compact: "The disk gets the room back once that machine's library is compacted there: fastctx data compact --yes (stops its conversations for a few minutes)",
+    asking: "Asking…",
+    noAccount: "No account is logged in on this machine",
+    unread: (why) => `Could not ask: ${why}`,
+  },
 };

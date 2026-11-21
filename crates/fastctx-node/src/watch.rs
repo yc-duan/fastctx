@@ -66,6 +66,9 @@ pub struct Watchers {
     pub(crate) produced: Arc<Produced>,
     /// The bytes of the events every conversation keeps.
     kept: Arc<AtomicUsize>,
+    /// The conversations deleted since the node started: a watch of one ends
+    /// at once (`ended`).
+    gone: Arc<Mutex<HashSet<ResidentId>>>,
 }
 
 /// Conversations whose history grew, for their timelines to be brought to it.
@@ -94,6 +97,7 @@ impl Default for Watchers {
             changed: Arc::default(),
             produced: Arc::default(),
             kept: Arc::default(),
+            gone: Arc::default(),
         }
     }
 }
@@ -308,15 +312,19 @@ impl Watchers {
         self.subscribe(id, false)
     }
 
-    /// `id`'s conversation is deleted: every watch of it ends now, so a
-    /// reader waiting for what comes next — a turn's end its deletion cut
-    /// short — looks for it again and is told it is gone.
+    /// `id`'s conversation is deleted: every watch of it ends now, and any
+    /// opened later ends at once, so a reader waiting for what comes next —
+    /// a turn's end its deletion cut short — looks for it again and is told
+    /// it is gone.
     pub(crate) fn ended(&self, id: &ResidentId) {
+        self.gone.lock().expect("never poisoned").insert(id.clone());
         let cell = self.watching[shard(id)].write().expect("never poisoned").remove(id);
         if let Some(cell) = cell {
             let mut session = cell.lock().expect("never poisoned");
-            session.senders.clear();
-            session.quiet.clear();
+            let session = &mut *session;
+            for sender in session.senders.drain(..).chain(session.quiet.drain(..)) {
+                sender.finish();
+            }
         }
     }
     pub fn watch_composer(&self, id: &ResidentId) -> Events {
@@ -343,6 +351,11 @@ impl Watchers {
 
     fn open(&self, id: &ResidentId, composer: bool, since: Option<Mark>, how: Opened) -> Followed {
         let (sender, receiver) = events();
+        // Deleted: nothing is told of it any more.
+        if self.gone.lock().expect("never poisoned").contains(id) {
+            sender.finish();
+            return Followed { replay: None, reset: false, snapshots: Vec::new(), at: Mark { epoch: 0, sequence: 0 }, events: receiver };
+        }
         let cell = self.session(id);
         let mut session = cell.lock().expect("never poisoned");
         let replay = since.and_then(|since| session.told.after(since));

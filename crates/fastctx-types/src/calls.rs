@@ -857,6 +857,12 @@ pub enum Call {
     UpdateMachine {
         machine: crate::access::Written,
     },
+    /// What the owner of `machine`, this one or another of the network's,
+    /// asks of the copies it holds of conversations living elsewhere.
+    MachineCopies {
+        machine: crate::access::Written,
+        ask: crate::data::CopiesAsk,
+    },
     /// New versions of Fastctx on `machine`, this one or another of the
     /// network's (`crate::update::UpdateCall`); answered with how updates
     /// stand there.
@@ -1230,6 +1236,7 @@ pub enum Reply {
     },
     Data(crate::data::DataReply),
     Update(Box<crate::update::State>),
+    MachineCopies(crate::data::CopiesAnswer),
     NetworkUpdates(crate::update::ViewReply),
     ClaudeSessionDirectory {
         path: String,
@@ -1507,6 +1514,7 @@ impl Call {
             | Self::ChangeAgentLogin { .. }
             | Self::ChangeAgentModels { .. }
             | Self::ClaudeConsent { .. }
+            | Self::MachineCopies { .. }
             | Self::ClaudeContext { .. }
             | Self::ClaudeSessionDirectory { .. }
             | Self::ClaudeSubagents { .. }
@@ -1654,6 +1662,7 @@ impl Reply {
             | Self::Book { .. }
             | Self::Changed { .. }
             | Self::ClaudeConsent { .. }
+            | Self::MachineCopies { .. }
             | Self::ClaudeContext { .. }
             | Self::ClaudeSessionDirectory { .. }
             | Self::ClaudeSubagents { .. }

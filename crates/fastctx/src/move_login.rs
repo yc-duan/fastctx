@@ -55,6 +55,9 @@ pub struct MoveLoginArgs {
     /// The moves recorded on this machine.
     #[arg(long, conflicts_with_all = ["login", "target"])]
     status: bool,
+    /// With --status: as JSON.
+    #[arg(long, requires = "status")]
+    json: bool,
 }
 
 pub fn run(args: MoveLoginArgs) -> anyhow::Result<()> {
@@ -68,7 +71,7 @@ pub fn run(args: MoveLoginArgs) -> anyhow::Result<()> {
 }
 
 #[cfg(target_os = "linux")]
-mod linux {
+pub(crate) mod linux {
     use std::fs;
     use std::os::unix::fs::MetadataExt;
     use std::path::{Path, PathBuf};
@@ -83,21 +86,23 @@ mod linux {
     use super::MoveLoginArgs;
     use super::{occupants, tree};
 
-    /// This machine's fastctx: its root and World, the user who owns them,
-    /// and the service that keeps its node, where one does.
-    struct Here {
+    /// This machine's fastctx: its root and World, the user and group that
+    /// own them, and the service that keeps its node, where one does.
+    pub(crate) struct Here {
         root: PathBuf,
-        world: WorldDir,
+        pub(crate) world: WorldDir,
         owner: u32,
+        group: u32,
         home: PathBuf,
-        service: Option<Service>,
+        pub(crate) service: Option<Service>,
     }
 
     impl Here {
-        fn find() -> anyhow::Result<Self> {
+        pub(crate) fn find() -> anyhow::Result<Self> {
             let root = fastctx_platform::fastctx_root()?;
             let world = WorldDir::under(&root);
-            let owner = fs::metadata(&root).with_context(|| format!("reading {}", root.display()))?.uid();
+            let metadata = fs::metadata(&root).with_context(|| format!("reading {}", root.display()))?;
+            let (owner, group) = (metadata.uid(), metadata.gid());
             // SAFETY: geteuid has no preconditions.
             let caller = unsafe { libc::geteuid() };
             if caller != 0 && caller != owner {
@@ -113,11 +118,23 @@ mod linux {
             if service.is_some() && caller != 0 {
                 bail!("this machine's node is kept by a system service, which only root stops: run this as root");
             }
-            Ok(Self { root, world, owner, home, service })
+            Ok(Self { root, world, owner, group, home, service })
         }
 
         fn records(&self) -> PathBuf {
             self.world.path().join(moves::DIRECTORY)
+        }
+
+        /// Gives what this command made in the World to the World's owner:
+        /// run by root for another user's World, its node reads it as that
+        /// user.
+        pub(crate) fn own(&self, path: &Path) -> anyhow::Result<()> {
+            // SAFETY: geteuid has no preconditions.
+            if unsafe { libc::geteuid() } != 0 || self.owner == 0 {
+                return Ok(());
+            }
+            std::os::unix::fs::lchown(path, Some(self.owner), Some(self.group))
+                .with_context(|| format!("giving {} to the World's owner", path.display()))
         }
     }
 
@@ -126,7 +143,7 @@ mod linux {
     /// with it (the user, 2026-11-21: "这里是不是控制端和被控端是一个，被控端
     /// 停止了，控制端是不是也停了"): it is run in a login of this machine's
     /// own, over ssh.
-    fn outside_fastctx() -> anyhow::Result<()> {
+    pub(crate) fn outside_fastctx() -> anyhow::Result<()> {
         let refusal = "this runs inside this machine's fastctx (a conversation, or a command its node started), which stops with the node: log in to this machine directly — over ssh — and run it there";
         if std::env::var_os("FASTCTX_RESIDENT").is_some() {
             bail!(refusal);
@@ -152,31 +169,17 @@ mod linux {
 
     pub fn run(args: MoveLoginArgs) -> anyhow::Result<()> {
         let here = Here::find()?;
-        if !args.status {
-            outside_fastctx()?;
-        }
-        fastctx_platform::ensure_private_dir(&here.records())?;
-        let _alone = FileLock::try_acquire(&here.records().join(".lock"))?
-            .ok_or_else(|| anyhow!("another `fastctx move-login` runs on this World"))?;
         if args.status {
-            for (path, record) in moves::records(here.world.path())? {
-                println!(
-                    "{}  {:?}  {} -> {}{}{}  ({})",
-                    record.op,
-                    record.phase,
-                    record.login.display(),
-                    record.target.display(),
-                    if record.phase == Phase::Done && !record.backup_deleted {
-                        format!("  backup {}", record.backup.display())
-                    } else {
-                        String::new()
-                    },
-                    record.why.as_deref().map(|why| format!("  {why}")).unwrap_or_default(),
-                    path.display()
-                );
-            }
-            return Ok(());
+            return status(&here, args.json);
         }
+        outside_fastctx()?;
+        let records = here.records();
+        fastctx_platform::ensure_private_dir(&records)?;
+        here.own(&records)?;
+        let lock = records.join(".lock");
+        let _alone =
+            FileLock::try_acquire(&lock)?.ok_or_else(|| anyhow!("another `fastctx move-login` runs on this World"))?;
+        here.own(&lock)?;
         if let Some(op) = &args.drop_backup {
             return drop_backup(&here, op, args.anyway);
         }
@@ -189,10 +192,7 @@ mod linux {
         if !args.yes {
             bail!("moving a login stops this machine's node, and every conversation on it, until it is done: pass --yes");
         }
-        let pending = moves::records(here.world.path())?
-            .into_iter()
-            .find(|(_, record)| !record.phase.settled() || (record.phase == Phase::Done && !record.service_restored));
-        if let Some((path, _)) = pending {
+        if let Some((path, _)) = moves::records(here.world.path())?.into_iter().find(|(_, record)| moves::pending(record)) {
             bail!("a move is unfinished ({}); finish it with `fastctx move-login --resume`", path.display());
         }
         let moved = start(&here, &login, &target, args.unmounted_at_boot_ok, args.stop_agents);
@@ -202,11 +202,36 @@ mod linux {
         moved
     }
 
+    /// The moves recorded on this World, read and nothing made.
+    fn status(here: &Here, json: bool) -> anyhow::Result<()> {
+        if json {
+            let records: Vec<Record> = moves::records(here.world.path())?.into_iter().map(|(_, record)| record).collect();
+            println!("{}", serde_json::to_string_pretty(&records)?);
+            return Ok(());
+        }
+        for (path, record) in moves::records(here.world.path())? {
+            println!(
+                "{}  {:?}{}  {} -> {}{}{}  ({})",
+                record.op,
+                record.phase,
+                if record.service_restored { "" } else { " (service not put back)" },
+                record.login.display(),
+                record.target.display(),
+                if record.phase == Phase::Done && !record.backup_deleted {
+                    format!("  backup {}", record.backup.display())
+                } else {
+                    String::new()
+                },
+                record.why.as_deref().map(|why| format!("  {why}")).unwrap_or_default(),
+                path.display()
+            );
+        }
+        Ok(())
+    }
+
     /// Whether a move is left to finish, or its service to put back.
-    fn unfinished(here: &Here) -> bool {
-        moves::records(here.world.path()).map_or(true, |records| {
-            records.iter().any(|(_, record)| !record.phase.settled() || (record.phase == Phase::Done && !record.service_restored))
-        })
+    pub(crate) fn unfinished(here: &Here) -> bool {
+        moves::records(here.world.path()).map_or(true, |records| records.iter().any(|(_, record)| moves::pending(record)))
     }
 
     fn identity(path: &Path) -> std::io::Result<Identity> {
@@ -276,9 +301,15 @@ mod linux {
             .unwrap_or_else(|| PathBuf::from("/")))
     }
 
+    /// The places a filesystem is mounted at `path` or inside it.
+    fn mounted_in(path: &Path) -> anyhow::Result<Vec<PathBuf>> {
+        Ok(fastctx_platform::mountinfo::read()?.into_iter().map(|mount| mount.point).filter(|point| point.starts_with(path)).collect())
+    }
+
     fn keep(here: &Here, record: &Record) -> anyhow::Result<()> {
-        moves::keep(&here.records().join(format!("{}.json", record.op)), record)
-            .with_context(|| format!("keeping the record of the move {}", record.op))?;
+        let path = here.records().join(format!("{}.json", record.op));
+        moves::keep(&path, record).with_context(|| format!("keeping the record of the move {}", record.op))?;
+        here.own(&path)?;
         // Rehearsals cut a move short where they want it cut, as a power
         // failure would, just after a phase is kept.
         if let Some(stop) = std::env::var_os("FASTCTX_LAB_MOVE_LOGIN_STOP")
@@ -296,14 +327,14 @@ mod linux {
 
     /// What the move holds while it runs: the node's lock and the apply
     /// lock. Let go before the service is started again.
-    struct Held {
+    pub(crate) struct Held {
         _node: FileLock,
         _apply: FileLock,
     }
 
     /// Stops the node's service, where one keeps it, and takes the node's
     /// lock and the apply lock, waiting a while for each.
-    fn hold(here: &Here) -> anyhow::Result<Held> {
+    pub(crate) fn hold(here: &Here) -> anyhow::Result<Held> {
         if let Some(service) = &here.service {
             service.hold().context("stopping the node's service")?;
         }
@@ -339,6 +370,19 @@ mod linux {
         keep(here, record)
     }
 
+    /// What an apply left unfinished, or a receipt in the way of the Claude
+    /// receipts following the directory: a reason not to move it now.
+    fn applies_in_the_way(here: &Here, agent: &str, target: &Path) -> anyhow::Result<()> {
+        let left = fastctx_install::apply::moved::unfinished(&here.root)?;
+        if !left.is_empty() {
+            bail!("an apply was left unfinished ({}); run `fastctx apply` to finish it first", left.join(", "));
+        }
+        if agent == "claude" {
+            fastctx_install::apply::moved::conflicts(&here.root, target)?;
+        }
+        Ok(())
+    }
+
     fn start(here: &Here, login: &Path, target: &Path, unmounted_ok: bool, stop_agents: bool) -> anyhow::Result<()> {
         let login = std::path::absolute(login)?;
         let source = fs::canonicalize(&login).with_context(|| format!("resolving {}", login.display()))?;
@@ -367,6 +411,13 @@ mod linux {
                 bail!("{what}, {}, is in {}: it cannot be moved with the node stopped", real.display(), source.display());
             }
         }
+        if let Some(point) = mounted_in(&source)?.first() {
+            bail!(
+                "a filesystem is mounted at {}, {}: what is mounted is not the login's to move, nor to delete with its original",
+                point.display(),
+                if *point == source { "the login's own directory" } else { "inside the login's directory" }
+            );
+        }
         for (other, dir) in registered(here.world.path())? {
             if dir == target {
                 bail!("{} is already the directory of another login", target.display());
@@ -378,11 +429,7 @@ mod linux {
                 bail!("{} is {other}'s login as well as {agent}'s; it is not moved", source.display());
             }
         }
-        let left = fastctx_install::apply::moved::unfinished(&here.root)?;
-        if !left.is_empty() {
-            bail!("an apply was left unfinished ({}); run `fastctx apply` to finish it first", left.join(", "));
-        }
-        fastctx_install::apply::moved::conflicts(&here.root, &source, &target)?;
+        applies_in_the_way(here, agent, &target)?;
         let point = mount_point(&parent)?;
         if !mounted_at_boot(&point) && !unmounted_ok {
             bail!(
@@ -397,6 +444,16 @@ mod linux {
         let findings = tree::findings(&source, &entries, superuser, here.owner);
         if let Some(foreign) = findings.foreign.first() {
             bail!("{} is another user's; only root moves it with its owner kept", source.join(foreign).display());
+        }
+        if let Some(mounted) = findings.mounted.first() {
+            bail!("{} is on another filesystem than the login's directory; it is not moved", source.join(mounted).display());
+        }
+        if !findings.unsure.is_empty() {
+            let unsure: Vec<String> = findings.unsure.iter().map(|path| source.join(path).display().to_string()).collect();
+            bail!(
+                "these links lead out of the directory to nowhere, through names whose place cannot be told: {}; mend or remove them first",
+                unsure.join(", ")
+            );
         }
         let available = fastctx_platform::space::available(&parent)?;
         let needed = findings.bytes + findings.bytes / 10 + (1 << 30);
@@ -452,6 +509,11 @@ mod linux {
             Ok(held) => held,
             Err(error) => return abort(here, &mut record, None, &format!("{error:#}")),
         };
+        // Looked at again under the apply lock: an apply that was under way
+        // as this began may have stopped half done.
+        if let Err(error) = applies_in_the_way(here, agent, &target) {
+            return abort(here, &mut record, Some(held), &format!("{error:#}"));
+        }
         record.phase = Phase::Checking;
         keep(here, &record)?;
         if let Err(error) = check_unused(here, &record, stop_agents) {
@@ -462,7 +524,9 @@ mod linux {
         let copied = (|| -> anyhow::Result<tree::Copy> {
             tree::stage(&staging, &op)?;
             let copied = tree::copy(&source, &staging, &entries, &findings.outward)?;
-            fastctx_platform::publish(&manifest_path(here, &op), copied.manifest.as_bytes(), fastctx_platform::Permissions::Private)?;
+            let manifest = manifest_path(here, &op);
+            fastctx_platform::publish(&manifest, copied.manifest.as_bytes(), fastctx_platform::Permissions::Private)?;
+            here.own(&manifest)?;
             Ok(copied)
         })();
         let copied = match copied {
@@ -496,16 +560,23 @@ mod linux {
         record.phase = Phase::Swapping;
         keep(here, &record)?;
         // The one step after which the move goes forward.
-        if let Err(error) = tree::rename_new(&source, &record.backup) {
-            return abort(here, &mut record, Some(held), &format!("setting {} aside: {error}", source.display()));
+        match tree::rename_new(&source, &record.backup) {
+            Ok(()) => {}
+            Err(tree::Renamed::Not(error)) => {
+                return abort(here, &mut record, Some(held), &format!("setting {} aside: {error}", source.display()));
+            }
+            Err(error) => {
+                drop(held);
+                bail!("setting {} aside: {error}; nothing more is done until `fastctx move-login --resume`", source.display());
+            }
         }
-        link(&record)?;
+        link(here, &record)?;
         forward(here, &mut record, held)
     }
 
     /// Puts the link to the target where the source was: made beside it,
     /// then renamed into its place, which must be empty.
-    fn link(record: &Record) -> anyhow::Result<()> {
+    fn link(here: &Here, record: &Record) -> anyhow::Result<()> {
         let beside = record.source.with_file_name(format!(".fastctx-link-{}", record.op));
         match fs::symlink_metadata(&beside) {
             Ok(metadata) if metadata.file_type().is_symlink() => fs::remove_file(&beside)?,
@@ -514,8 +585,9 @@ mod linux {
             Err(error) => return Err(error.into()),
         }
         std::os::unix::fs::symlink(&record.target, &beside).with_context(|| format!("making the link {}", beside.display()))?;
-        tree::rename_new(&beside, &record.source).with_context(|| format!("putting the link at {}", record.source.display()))?;
-        Ok(())
+        here.own(&beside)?;
+        tree::rename_new(&beside, &record.source)
+            .map_err(|error| anyhow!("putting the link at {}: {error}; `fastctx move-login --resume` goes on", record.source.display()))
     }
 
     /// From the link on: the receipts follow the directory, the marker goes,
@@ -523,8 +595,10 @@ mod linux {
     fn forward(here: &Here, record: &mut Record, held: Held) -> anyhow::Result<()> {
         record.phase = Phase::Linked;
         keep(here, record)?;
-        for done in fastctx_install::apply::moved::moved(&here.root, &record.source, &record.target)? {
-            println!("{done}");
+        if record.agent == "claude" {
+            for done in fastctx_install::apply::moved::moved(&here.root, &record.source, &record.target)? {
+                println!("{done}");
+            }
         }
         record.phase = Phase::Done;
         keep(here, record)?;
@@ -586,6 +660,22 @@ mod linux {
         }
     }
 
+    /// A move given up before its original was touched: taken back, its
+    /// service put back; `clean` where nothing it made is left behind.
+    #[derive(Debug)]
+    struct TakenBack {
+        why: String,
+        clean: bool,
+    }
+
+    impl std::fmt::Display for TakenBack {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(f, "the login was not moved: {}", self.why)
+        }
+    }
+
+    impl std::error::Error for TakenBack {}
+
     /// Gives a move up before its original was touched: what it made goes,
     /// the service is put back.
     fn abort(here: &Here, record: &mut Record, held: Option<Held>, why: &str) -> anyhow::Result<()> {
@@ -597,11 +687,12 @@ mod linux {
         });
         keep(here, record)?;
         restore(here, record, held)?;
-        bail!("the login was not moved: {}", record.why.as_deref().unwrap_or(why))
+        Err(TakenBack { why: record.why.clone().unwrap_or_default(), clean: undone.is_ok() }.into())
     }
 
     /// Takes away the staging directory and the published copy this move
-    /// made, the original untouched.
+    /// made, the original untouched: the copy by what it is or by the move's
+    /// marker in it, never for being empty alone.
     fn undo(record: &Record) -> anyhow::Result<()> {
         if fs::symlink_metadata(&record.staging).is_ok() {
             if !tree::staged_by(&record.staging, &record.op) {
@@ -609,81 +700,116 @@ mod linux {
             }
             fastctx_platform::owned_directory::delete(&record.staging)?;
         }
-        if let Ok(found) = identity(&record.target)
-            && (Some(found) == record.target_identity || tree::staged_by(&record.target, &record.op))
-            && fs::symlink_metadata(&record.target).is_ok_and(|metadata| metadata.is_dir())
+        if let Ok(metadata) = fs::symlink_metadata(&record.target)
+            && metadata.is_dir()
+            && (Some(Identity { device: metadata.dev(), inode: metadata.ino() }) == record.target_identity
+                || tree::marked_by(&record.target, &record.op))
         {
             fastctx_platform::owned_directory::delete(&record.target)?;
         }
         Ok(())
     }
 
+    /// How the three places of a move stand on disk now.
+    struct Standing {
+        source_is_original: bool,
+        source_is_link: bool,
+        source_gone: bool,
+        backup: Option<Identity>,
+        target_is_ours: bool,
+    }
+
+    impl Standing {
+        fn of(record: &Record) -> Self {
+            let source = fs::symlink_metadata(&record.source);
+            let target = identity(&record.target).ok();
+            Self {
+                source_is_original: source.as_ref().is_ok_and(|metadata| {
+                    metadata.is_dir() && Identity { device: metadata.dev(), inode: metadata.ino() } == record.source_identity
+                }),
+                source_is_link: source.as_ref().is_ok_and(|metadata| metadata.file_type().is_symlink())
+                    && fs::read_link(&record.source).is_ok_and(|led| led == record.target),
+                source_gone: matches!(&source, Err(error) if error.kind() == std::io::ErrorKind::NotFound),
+                backup: identity(&record.backup).ok(),
+                target_is_ours: target.is_some() && target == record.target_identity,
+            }
+        }
+
+        fn backup_is_original(&self, record: &Record) -> bool {
+            self.backup == Some(record.source_identity)
+        }
+    }
+
+    fn cannot_tell(record: &Record) -> anyhow::Error {
+        anyhow!(
+            "the move cannot tell how to go on: {} is {}, {} is {}, {} is {}; nothing is changed — look, put things right, and run --resume again",
+            record.source.display(),
+            describe(&record.source),
+            record.backup.display(),
+            describe(&record.backup),
+            record.target.display(),
+            describe(&record.target)
+        )
+    }
+
     /// Finishes the move cut short, from where it stands on disk.
     fn resume(here: &Here) -> anyhow::Result<()> {
-        let found = moves::records(here.world.path())?
-            .into_iter()
-            .find(|(_, record)| !record.phase.settled() || (record.phase == Phase::Done && !record.service_restored));
+        let found = moves::records(here.world.path())?.into_iter().find(|(_, record)| moves::pending(record));
         let Some((_, mut record)) = found else {
             println!("no move is unfinished");
             return Ok(());
         };
         println!("finishing the move {} of {} to {} ({:?})", record.op, record.login.display(), record.target.display(), record.phase);
-        if record.phase == Phase::Done {
-            unmark(&record)?;
-            return restore(here, &mut record, None);
+        // Taken back with nothing of it left: finished as well as it can be.
+        let taken_back = |result: anyhow::Result<()>| -> anyhow::Result<()> {
+            match result {
+                Err(error) => match error.downcast_ref::<TakenBack>() {
+                    Some(taken) if taken.clean => {
+                        println!("{taken}");
+                        Ok(())
+                    }
+                    _ => Err(error),
+                },
+                Ok(()) => Ok(()),
+            }
+        };
+        match record.phase {
+            // Settled: the service is left to put back.
+            Phase::Aborted => return restore(here, &mut record, None),
+            Phase::Done => {
+                if identity(&record.target).ok() == record.target_identity {
+                    unmark(&record)?;
+                }
+                return restore(here, &mut record, None);
+            }
+            _ => {}
         }
         let held = hold(here)?;
-        // Taken back, the move is finished as well as it can be: said, not failed.
-        let taken_back = |result: anyhow::Result<()>| {
-            if let Err(error) = result {
-                println!("{error:#}");
-            }
-            Ok(())
-        };
+        let standing = Standing::of(&record);
         match record.phase {
             Phase::Stopping | Phase::Checking | Phase::Copying | Phase::Verifying | Phase::Published => {
                 taken_back(abort(here, &mut record, Some(held), "it was cut short before the original was set aside"))
             }
             Phase::Swapping => {
-                let source = fs::symlink_metadata(&record.source);
-                let backup = identity(&record.backup).ok();
-                let target = identity(&record.target).ok();
-                let target_is_ours = target.is_some() && target == record.target_identity;
-                let source_is_original = source.as_ref().is_ok_and(|metadata| {
-                    metadata.is_dir() && Identity { device: metadata.dev(), inode: metadata.ino() } == record.source_identity
-                });
-                let source_is_link = source.as_ref().is_ok_and(|metadata| metadata.file_type().is_symlink())
-                    && fs::read_link(&record.source).is_ok_and(|led| led == record.target);
-                let source_gone = matches!(&source, Err(error) if error.kind() == std::io::ErrorKind::NotFound);
-                let backup_is_original = backup == Some(record.source_identity);
-                if source_is_original && backup.is_none() {
+                if standing.source_is_original && standing.backup.is_none() {
                     taken_back(abort(here, &mut record, Some(held), "it was cut short before the original was set aside"))
-                } else if source_gone && backup_is_original && target_is_ours {
-                    link(&record)?;
+                } else if standing.source_gone && standing.backup_is_original(&record) && standing.target_is_ours {
+                    link(here, &record)?;
                     forward(here, &mut record, held)
-                } else if source_is_link && backup_is_original && target_is_ours {
+                } else if standing.source_is_link && standing.backup_is_original(&record) && standing.target_is_ours {
                     forward(here, &mut record, held)
                 } else {
-                    let why = format!(
-                        "the move cannot tell how to go on: {} is {}, {} is {}, {} is {}; nothing is changed — look, put things right, and run --resume again",
-                        record.source.display(),
-                        describe(&record.source),
-                        record.backup.display(),
-                        describe(&record.backup),
-                        record.target.display(),
-                        describe(&record.target)
-                    );
                     drop(held);
-                    bail!(why)
+                    Err(cannot_tell(&record))
                 }
             }
             Phase::Linked => {
-                let target = identity(&record.target).ok();
-                if target.is_none() || target != record.target_identity {
+                if standing.source_is_link && standing.backup_is_original(&record) && standing.target_is_ours {
+                    forward(here, &mut record, held)
+                } else {
                     drop(held);
-                    bail!("{} is not the copy this move made ({}); nothing is changed", record.target.display(), describe(&record.target));
+                    Err(cannot_tell(&record))
                 }
-                forward(here, &mut record, held)
             }
             Phase::Done | Phase::Aborted => unreachable!("settled"),
         }
@@ -702,7 +828,8 @@ mod linux {
     }
 
     /// Deletes the original a finished move set aside: the same directory,
-    /// unused, and, unless `anyway`, as it was when it was copied.
+    /// nothing mounted in it, unused, and, unless `anyway`, as it was when it
+    /// was copied.
     fn drop_backup(here: &Here, op: &str, anyway: bool) -> anyhow::Result<()> {
         let (_, mut record) = moves::records(here.world.path())?
             .into_iter()
@@ -718,6 +845,9 @@ mod linux {
         let metadata = fs::symlink_metadata(&record.backup).with_context(|| format!("looking at {}", record.backup.display()))?;
         if !metadata.is_dir() || (Identity { device: metadata.dev(), inode: metadata.ino() }) != record.source_identity {
             bail!("{} is not the original this move set aside; it is not deleted", record.backup.display());
+        }
+        if let Some(point) = mounted_in(&record.backup)?.first() {
+            bail!("a filesystem is mounted at {}, in the original set aside; it is not deleted", point.display());
         }
         let found = occupants::of(&record.backup, &record.agent, false, here.owner);
         if !found.is_empty() {

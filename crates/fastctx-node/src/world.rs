@@ -1389,6 +1389,14 @@ impl fastctx_net::link::Node for Handler {
                         .map_err(|error| Failure::new(error.to_string()))?
                         .map(|used| RemoteReply::AttachmentReferences { used })
                     }
+                    RemoteCall::Copies { ask } => {
+                        let asking = node.clone();
+                        fastctx_platform::task::spawn_blocking(move || crate::assets::copies::asked(&asking, ask))
+                            .await
+                            .map_err(|error| Failure::new(error.to_string()))?
+                            .map(RemoteReply::Copies)
+                            .map_err(Failure::not_run)
+                    }
                     RemoteCall::UpdateWorld | RemoteCall::Updates { .. } => {
                         let update = match call {
                             RemoteCall::Updates { update } => Some(update),

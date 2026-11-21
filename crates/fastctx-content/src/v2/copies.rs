@@ -3,7 +3,9 @@
 //! the machine it was born on or the body it is in not known to the reader.
 
 use super::Library;
+use super::frame::Header;
 use crate::Result;
+use fastctx_storage::Priority;
 use fastctx_storage::rusqlite::params;
 
 /// A scope held here, as a reader decides whether to read it.
@@ -24,7 +26,99 @@ pub struct HeldScope {
     pub description: Option<Vec<u8>>,
 }
 
+/// What a copy held here takes, as near as is cheaply known: the bytes of
+/// its frames in its present holding, and of the objects here they refer to
+/// — an object two copies refer to counted in each.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct CopySize {
+    pub frames: u64,
+    pub objects: u64,
+}
+
+/// What came of letting a copy go (`Library::drop_copy`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Dropped {
+    /// Its holding ended: its frames, and the objects nothing else holds, go
+    /// with the purge.
+    Gone,
+    /// Kept, and why.
+    Kept(String),
+}
+
 impl Library {
+    /// What the copy of `scope` held here takes; nothing where it is not held.
+    pub fn copy_size(&self, scope: &str) -> Result<CopySize> {
+        let scope = scope.to_string();
+        Ok(self.database().read_now(move |db| {
+            let Some((id, _, Some(holding))) = super::scopes::held(db, &scope)? else { return Ok(CopySize::default()) };
+            let frames: i64 = db
+                .prepare_cached(
+                    "SELECT COALESCE(SUM(length(f.header) + length(f.body)), 0) FROM frames f
+                     JOIN streams s ON s.id = f.stream WHERE s.scope = ?1 AND f.holding = ?2",
+                )?
+                .query_row(params![id, holding], |row| row.get(0))?;
+            let objects: i64 = db
+                .prepare_cached(
+                    "SELECT COALESCE(SUM(o.size), 0) FROM objects o WHERE o.state = 1 AND o.hash IN
+                     (SELECT DISTINCT fo.hash FROM frame_objects fo JOIN streams s ON s.id = fo.stream
+                      WHERE s.scope = ?1 AND fo.holding = ?2)",
+                )?
+                .query_row(params![id, holding], |row| row.get(0))?;
+            Ok(CopySize { frames: frames.max(0) as u64, objects: objects.max(0) as u64 })
+        })?)
+    }
+
+    /// Lets go the copy of `scope` held here in `holding` where nothing of
+    /// it is this device's, `device`: no stream of it ordered here, no frame
+    /// of it signed here, no write of this device's waiting to be sent again
+    /// or kept for its user. Checked and let go in one transaction, its
+    /// holding ended as a revocation ends it; its purge follows (`purge`).
+    pub fn drop_copy(&self, scope: &str, holding: i64, device: &[u8; 32]) -> Result<Dropped> {
+        let (scope, device) = (scope.to_string(), *device);
+        let dropped = self.database().write_now_at(Priority::Normal, 1 << 16, move |db| {
+            let Some((id, _, Some(current))) = super::scopes::held(db, &scope)? else {
+                return Ok(Dropped::Kept("it is not held here".into()));
+            };
+            if current != holding {
+                return Ok(Dropped::Kept("it was held anew since it was looked at".into()));
+            }
+            if !super::device::own(db, id, holding, &device)?.is_empty() {
+                return Ok(Dropped::Kept("this machine orders a stream of it".into()));
+            }
+            let waiting: i64 = db
+                .prepare_cached("SELECT COUNT(*) FROM resubmits r JOIN streams s ON s.id = r.stream WHERE s.scope = ?1")?
+                .query_row([id], |row| row.get(0))?;
+            if waiting > 0 {
+                return Ok(Dropped::Kept("writes of this machine wait in it to be sent again".into()));
+            }
+            let ops: i64 =
+                db.prepare_cached("SELECT COUNT(*) FROM op_records WHERE scope = ?1")?.query_row([id], |row| row.get(0))?;
+            if ops > 0 {
+                return Ok(Dropped::Kept("it holds writes this machine made".into()));
+            }
+            let mut frames = db.prepare_cached(
+                "SELECT f.header FROM frames f JOIN streams s ON s.id = f.stream WHERE s.scope = ?1 AND f.holding = ?2",
+            )?;
+            let mut rows = frames.query(params![id, holding])?;
+            while let Some(row) = rows.next()? {
+                let header: Vec<u8> = row.get(0)?;
+                match Header::decode(&header) {
+                    Ok(header) if header.device != device => {}
+                    Ok(_) => return Ok(Dropped::Kept("this machine wrote to it".into())),
+                    Err(_) => return Ok(Dropped::Kept("a frame of it cannot be read".into())),
+                }
+            }
+            drop(rows);
+            drop(frames);
+            super::scopes::revoke_in(db, &scope)?;
+            Ok(Dropped::Gone)
+        })?;
+        if dropped == Dropped::Gone {
+            self.wrote();
+        }
+        Ok(dropped)
+    }
+
     /// The keys of every scope this library knows, in any state, ending
     /// with `tail`.
     pub fn keys_ending(&self, tail: &str) -> Result<Vec<String>> {

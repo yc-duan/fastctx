@@ -343,6 +343,24 @@ impl Assets {
                 }
             }
         }
+        // A library all of whose scopes went is the owner of none: found on
+        // the disk, it is judged as any other — none reads what it does not
+        // hold — and goes once unread as long.
+        let named: std::collections::HashSet<String> = self
+            .control
+            .read_now(|c| {
+                let mut statement =
+                    c.prepare_cached("SELECT DISTINCT owner FROM asset_scopes UNION SELECT owner FROM asset_deleting")?;
+                let rows = statement.query_map([], |row| row.get(0))?;
+                Ok(rows.collect::<std::result::Result<_, _>>()?)
+            })
+            .map_err(io::Error::other)?;
+        for owner in self.owners.on_disk()? {
+            let key = owner.key();
+            if !named.contains(&key) && self.sweep_owner(directory, &key, now)? {
+                dropped += 1;
+            }
+        }
         self.finish_deleting()?;
         Ok(dropped)
     }
