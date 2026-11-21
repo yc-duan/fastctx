@@ -1385,6 +1385,10 @@ async fn describe(
         })
         .await?;
     }
+    // Each is described apart: one the hub will not describe — a
+    // conversation of an account removed since — holds up none after it.
+    // The pass reports the first that failed.
+    let mut failed: Option<String> = None;
     for (scope, proposal) in blocking(library, |library| library.provisionals()).await? {
         let Some(proposal) = proposal else { continue };
         let Proposal { hub: meant, readers, classes } =
@@ -1399,21 +1403,31 @@ async fn describe(
         if described.is_err() && !scope.starts_with("c/") {
             continue;
         }
-        let Reply::Described { descriptor } = described? else {
-            return Err("the hub did not describe the scope".into());
-        };
-        if !assets.heard(hub, key, &descriptor.fact.0, &descriptor.word.0) {
-            return Err(format!("the descriptor of {scope} is not the hub's"));
+        let done: Result<(), String> = async {
+            let Reply::Described { descriptor } = described? else {
+                return Err("the hub did not describe the scope".into());
+            };
+            if !assets.heard(hub, key, &descriptor.fact.0, &descriptor.word.0) {
+                return Err(format!("the descriptor of {scope} is not the hub's"));
+            }
+            let read: wire::Descriptor = serde_json::from_slice(&descriptor.fact.0).map_err(|error| error.to_string())?;
+            if read.scope != scope || read.hub != hub.as_str() {
+                return Err(format!("the hub described another scope than {scope}"));
+            }
+            let (network, scope) = (network.clone(), scope.clone());
+            blocking(library, move |library| library.install_on(&network, &scope, descriptor.fact.0, read.seq as i64))
+                .await?;
+            Ok(())
         }
-        let read: wire::Descriptor = serde_json::from_slice(&descriptor.fact.0).map_err(|error| error.to_string())?;
-        if read.scope != scope || read.hub != hub.as_str() {
-            return Err(format!("the hub described another scope than {scope}"));
+        .await;
+        if let Err(why) = done {
+            if why.starts_with(REVOKED) {
+                return Err(why);
+            }
+            failed.get_or_insert(format!("describing {scope}: {why}"));
         }
-        let network = network.clone();
-        blocking(library, move |library| library.install_on(&network, &scope, descriptor.fact.0, read.seq as i64))
-            .await?;
     }
-    Ok(())
+    failed.map_or(Ok(()), Err)
 }
 
 /// How often the scopes a hub lists for this machine are listed whole: a
@@ -2247,8 +2261,11 @@ async fn discard_unaccepted(
     let unaccepted = blocking(library, move |library| library.unaccepted(&scope_text, &device)).await?;
     let mut discarded = false;
     for (stream, _) in unaccepted {
-        // The hub has none of it: this machine's to send up.
-        if theirs.get(&stream).copied().unwrap_or(0) == 0 {
+        // The hub knows nothing of it: this machine's to send up. A stream
+        // it lists, though it holds no frame of it — opened by its source,
+        // which keeps its frames (`assets::DIRECT`) — is the device's its
+        // first epoch names, asked below.
+        if !theirs.contains_key(&stream) {
             continue;
         }
         let Reply::Succession { epochs, .. } =

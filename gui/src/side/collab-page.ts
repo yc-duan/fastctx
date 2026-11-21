@@ -28,12 +28,18 @@ function lastAt(node: CollabNode, now: number): number {
 }
 
 /** Those at work first, the longest at it on top; then those that ended,
- *  the latest first. */
+ *  the latest first; any two alike by when they began, the later first, and
+ *  then by who they are — the same rows in the same order however often,
+ *  and from whichever source, they come again. */
 function order(nodes: CollabNode[], now: number): CollabNode[] {
   return [...nodes].sort((a, b) => {
     const working = Number(going(b.state)) - Number(going(a.state));
     if (working) return working;
-    return going(a.state) ? (a.began ?? now) - (b.began ?? now) : lastAt(b, now) - lastAt(a, now);
+    const by = going(a.state) ? (a.began ?? now) - (b.began ?? now) : lastAt(b, now) - lastAt(a, now);
+    if (by) return by;
+    const began = (b.began ?? 0) - (a.began ?? 0);
+    if (began) return began;
+    return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
   });
 }
 

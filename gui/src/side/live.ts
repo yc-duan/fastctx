@@ -154,6 +154,10 @@ function worldColleagues(store: Store, address: Address, now: number): CollabNod
         goal: null,
         branchOf: null,
         took: Number.isFinite(born) ? Math.max(0, (busy ? now : Number.isFinite(since) ? since : now) - born) : 0,
+        // As the tree tells them (`branchNode`): the page orders by them,
+        // and the two must order alike as one replaces the other.
+        began: Number.isFinite(born) ? born : null,
+        ended: busy || !Number.isFinite(since) ? null : since,
         steps: null,
         machine: r.about.machine,
       },
@@ -180,6 +184,8 @@ function sideNodes(store: Store, address: Address, words: SideWords, now: number
         state,
         goal: null,
         took: Number.isFinite(born) ? Math.max(0, (busy ? now : Number.isFinite(since) ? since : now) - born) : 0,
+        began: Number.isFinite(born) ? born : null,
+        ended: busy || !Number.isFinite(since) ? null : since,
         steps: null,
         machine: r.about.machine,
       };

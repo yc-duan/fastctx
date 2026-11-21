@@ -307,6 +307,18 @@ impl Watchers {
     pub fn watch(&self, id: &ResidentId) -> Events {
         self.subscribe(id, false)
     }
+
+    /// `id`'s conversation is deleted: every watch of it ends now, so a
+    /// reader waiting for what comes next — a turn's end its deletion cut
+    /// short — looks for it again and is told it is gone.
+    pub(crate) fn ended(&self, id: &ResidentId) {
+        let cell = self.watching[shard(id)].write().expect("never poisoned").remove(id);
+        if let Some(cell) = cell {
+            let mut session = cell.lock().expect("never poisoned");
+            session.senders.clear();
+            session.quiet.clear();
+        }
+    }
     pub fn watch_composer(&self, id: &ResidentId) -> Events {
         self.subscribe(id, true)
     }

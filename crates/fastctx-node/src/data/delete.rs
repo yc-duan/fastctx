@@ -275,6 +275,9 @@ async fn delete_inner(node: &Arc<Node>, name: &str) -> Result<Gone, Stop> {
     };
     // From here it is deleted: what fails now is finished by the node.
     node.residents.condemn(id);
+    // Whoever waits on it hears that it went, not nothing (a `talk` waiting
+    // for the end of a turn its deletion stopped).
+    node.watchers.ended(id);
     match records(node, id, name, &resident, &measured).await {
         Ok((retained, database_bytes)) => Ok(Gone {
             bytes: bytes.saturating_sub(retained + host_kept).saturating_add(database_bytes),

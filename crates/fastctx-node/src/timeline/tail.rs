@@ -1179,13 +1179,20 @@ async fn produce_with(node: &Arc<Node>, resident: &ResidentId, whole: bool, chec
                 let spill = super::spill::Spill::new(kept.spill_dir(), resident.as_str());
                 let early = assets::Early::new(library.clone(), resident);
                 let (writing, signer, whose, folder, held) = (library.clone(), signer.clone(), resident.clone(), directory.clone(), producing.clone());
+                // A conversation its host has a record of — a login the
+                // workbench is closed in, moved, or not this node's to drive
+                // — is read here from the World's record alone, which lacks
+                // what only the host recorded: what it shows is written and
+                // nothing is taken away. Read whole again once its host is
+                // read (its version then differs, `held_history::version`).
+                let reach = if about.session.is_some() { Reach::Kept } else { Reach::Whole };
                 let wrote = fastctx_platform::task::blocking(move || {
                     let _held = held;
                     let mut world = world;
                     world.view_as_recorded().map_err(Failure::new)?;
                     let mut finals = finals_recorded(&folder, &world, spill, early)?;
                     drop(world);
-                    assets::write_kept(&writing, signer, &whose, &placed, &mut finals.spill, finals.early.as_ref(), Reach::Whole, &mut |_, _, _| Ok(false))
+                    assets::write_kept(&writing, signer, &whose, &placed, &mut finals.spill, finals.early.as_ref(), reach, &mut |_, _, _| Ok(false))
                 })
                 .await?;
                 let floor = wrote.floor;

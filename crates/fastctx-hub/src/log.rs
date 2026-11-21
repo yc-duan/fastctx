@@ -1,5 +1,7 @@
 //! The hub's diagnostics, one timestamped line each, in `hub.log` and on
-//! standard error, where a service manager's journal keeps them. A line is
+//! standard error, where a service manager keeps them — unless standard error
+//! is systemd's journal, which forwards to syslog: there `hub.log` alone keeps
+//! them, not three times over (Hangzhou's disk filled so). A line is
 //! handed to a thread of its own to write, so logging never blocks the
 //! thread that logs (`specs/world-engine.md`); the lines left when the hub
 //! lets its log go still reach the file.
@@ -13,7 +15,7 @@ pub struct Log(LogWriter, PathBuf);
 
 impl Log {
     pub fn open(path: &Path) -> io::Result<Self> {
-        Ok(Self(LogWriter::open(path, true, "hub-log")?, path.to_path_buf()))
+        Ok(Self(LogWriter::open(path, !journal(), "hub-log")?, path.to_path_buf()))
     }
 
     /// Where the log is written.
@@ -35,4 +37,22 @@ impl Log {
     pub fn flush(&self, within: std::time::Duration) {
         self.0.flush(within);
     }
+}
+
+/// Whether standard error is the journal of the systemd unit running the hub:
+/// `JOURNAL_STREAM` names that stream's device and inode (systemd.exec(5)), and
+/// a child of a process run so inherits the variable with another stream.
+fn journal() -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::fd::AsFd;
+        use std::os::unix::fs::MetadataExt;
+        let Some(named) = std::env::var_os("JOURNAL_STREAM") else { return false };
+        let Some((device, inode)) = named.to_str().and_then(|named| named.split_once(':')) else { return false };
+        let (Ok(device), Ok(inode)) = (device.parse::<u64>(), inode.parse::<u64>()) else { return false };
+        let Ok(stream) = std::io::stderr().as_fd().try_clone_to_owned() else { return false };
+        std::fs::File::from(stream).metadata().is_ok_and(|stream| stream.dev() == device && stream.ino() == inode)
+    }
+    #[cfg(not(target_os = "linux"))]
+    false
 }
