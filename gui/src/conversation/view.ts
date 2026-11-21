@@ -212,6 +212,10 @@ const BELOW = 2;
  *  who moves, in screens: going up fast, they come to what was read while
  *  they came, not to a wait at each part. */
 const AHEAD = 4;
+/** How long a part read ahead is not read ahead again: read, it may be let
+ *  go at once where the page holds as much as it keeps, and be asked for
+ *  again at the next layout. */
+const AHEAD_AGAIN = 30_000;
 
 /** How far from what is drawn a block the reader has focus or a selection
  *  in may be and still be kept drawn, in blocks. */
@@ -404,6 +408,8 @@ export class ConversationView {
   /** When the view last scrolled, and what settles it once it rests. */
   private scrolledAt = -Infinity;
   private settling = 0;
+  /** When each part was last read ahead (`AHEAD_AGAIN`). */
+  private readonly aheadAt = new Map<string, number>();
   private readonly sizes: ResizeObserver;
   private laying = 0;
   /** Gaps asked to be read, so a gap near the reader is asked once. */
@@ -734,14 +740,22 @@ export class ConversationView {
       this.context.near?.(block, index <= reader ? "end" : "start");
     }
     // Further off than what is drawn, a part not read yet in a moving
-    // reader's way is read ahead of them, from the end they come to first.
-    if (!following && n) {
+    // reader's way is read ahead of them, from the end they come to first:
+    // only while they move, and each part once in a while — a reader at
+    // rest is read nothing ahead, and a part the page let go as soon as it
+    // was read is not asked for over and over.
+    if (gliding && n) {
+      const now = performance.now();
       const from = this.heights.find(Math.max(0, top - view * AHEAD));
       const to = this.heights.find(top + view * (1 + AHEAD));
       for (let index = from; index <= to; index += 1) {
         if (index >= first && index <= last) continue;
         const block = this.blocks[index]!;
         if (block.kind !== "gap" || block.loading || this.asked.has(block.key)) continue;
+        const before = this.aheadAt.get(block.key);
+        if (before !== undefined && now - before < AHEAD_AGAIN) continue;
+        if (this.aheadAt.size > 256) this.aheadAt.clear();
+        this.aheadAt.set(block.key, now);
         this.asked.add(block.key);
         this.context.near?.(block, index < first ? "end" : "start");
       }
@@ -800,9 +814,13 @@ export class ConversationView {
   private giveBack(): void {
     if (!this.shift) return;
     const by = this.shift;
+    const scroller = this.context.scroller;
+    const from = scroller.scrollTop;
     this.shift = 0;
     this.space();
-    this.keepStill(-by);
+    // The room above made shorter near the page's end, the browser brings
+    // the view up by itself: what it took already is not taken again.
+    this.keepStill(-by - (scroller.scrollTop - from));
   }
 
   /** What is kept in view moved `by` pixels down the screen while the
@@ -1497,6 +1515,9 @@ export class ConversationView {
     if (shown?.signature !== null && shown?.element.isConnected) return true;
     const scroller = this.context.scroller;
     this.context.reading();
+    // What the position is owed is given first: the layout that follows
+    // owes it nothing, and would leave the view off by as much.
+    this.giveBack();
     scroller.scrollTop = this.origin() + this.heights.top(index) - (scroller.clientHeight || innerHeight) / 3;
     this.lay(false, true);
     return this.slots.get(key)?.element.isConnected ?? false;

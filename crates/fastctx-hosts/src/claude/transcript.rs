@@ -2846,8 +2846,10 @@ mod tests {
             std::io::Write::write_all(&mut file, &grown).unwrap();
         }
         assert!(follow::prefix_unchanged(&path, &seam, &|| false).unwrap());
-        // Another file in its place, the same bytes.
-        std::fs::remove_file(&path).unwrap();
+        // Another file in its place, the same bytes. The first is kept
+        // beside it: a file removed may leave its identity to the next one
+        // made, as ext4 gives a freed inode out again at once.
+        std::fs::rename(&path, dir.join("was.jsonl")).unwrap();
         std::fs::write(&path, &grown).unwrap();
         assert!(!follow::prefix_unchanged(&path, &seam, &|| false).unwrap());
         // A seam at the start has nothing before it but the file itself.

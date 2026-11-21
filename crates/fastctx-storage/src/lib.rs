@@ -5,6 +5,7 @@
 pub mod authorization;
 mod blocking;
 mod checkpointer;
+mod compact;
 pub mod documents;
 mod error;
 pub mod format_upgrade;
@@ -21,6 +22,7 @@ mod settled;
 pub mod versions;
 mod writer;
 
+pub use compact::{Compacted, compact};
 pub use error::{Error, ErrorKind};
 pub use guard::Guard;
 pub use metrics::Statistics;

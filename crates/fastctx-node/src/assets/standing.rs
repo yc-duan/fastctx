@@ -18,6 +18,8 @@ use std::time::{Duration, Instant};
 
 /// The least time between two reports that only say more of the same.
 const SPACING: Duration = Duration::from_secs(10);
+/// How soon after a report where this machine stands is worked out again.
+const LOOKED_APART: Duration = Duration::from_secs(3);
 /// The most time between two reports.
 const EVERY: Duration = Duration::from_secs(300);
 /// The span the receiving rate is taken over.
@@ -140,10 +142,11 @@ fn settled(report: &SyncReport) -> bool {
 
 /// Tells `hub` where this machine stands, when that is due.
 pub(super) async fn report(assets: &Assets, hub: &HubId, link: &Arc<Link>) -> Result<(), String> {
-    // Told a moment ago, nothing is told yet whatever it says, so nothing
-    // is worked out either: where it stands is four passes through the
-    // library, and a pass ends each time a timeline is written.
-    if assets.reported.lock().expect("reported").get(hub).is_some_and(|(_, at)| at.elapsed() < SPACING) {
+    // Worked out a moment ago, it is not worked out again: where it stands
+    // is four passes through the library. No longer than a round follows
+    // what was committed (`session::ROUND_AFTER`), so that having caught up,
+    // or fallen behind, is told about as soon as it was (codex-15695bc9).
+    if assets.reported.lock().expect("reported").get(hub).is_some_and(|(_, at)| at.elapsed() < LOOKED_APART) {
         return Ok(());
     }
     let report = facts(assets, hub, link).await?;

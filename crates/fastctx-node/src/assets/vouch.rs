@@ -350,7 +350,13 @@ async fn tell(node: &Arc<crate::Node>, hub: &HubId, link: &Arc<Link>) -> Result<
         for (scope, stream) in gone {
             let epoch = {
                 let (scope, stream) = (scope.clone(), stream.clone());
-                blocking(&assets.library, move |library| library.known_last_epoch(&scope, &stream)).await.ok().flatten()
+                // Not read just now, it is asked of again at a later round:
+                // not taken for a stream with no epoch, whose withdrawal is
+                // forgotten.
+                match blocking(&assets.library, move |library| library.known_last_epoch(&scope, &stream)).await {
+                    Ok(epoch) => epoch,
+                    Err(_) => continue,
+                }
             };
             // Forgotten once the hub took the withdrawal, or where no epoch
             // of it is known here to withdraw it in; told withdrawn again at

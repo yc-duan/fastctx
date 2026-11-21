@@ -8,10 +8,18 @@
 //! made again and written. The items the window holds before that place
 //! stay as the reading from the seam wrote them.
 //!
+//! The World's record grows beside the host's while a turn is at work — the
+//! model asked and answering at every step, what the host says of itself —
+//! and what it tells so stands in the timeline by its time alone: those
+//! events are put among the items past the place as a merge puts them
+//! (`plain`, `derive`). What it tells that places or replaces others — a
+//! turn begun or ended, words heard, a request — is the reading from the
+//! seam's.
+//!
 //! Nothing is settled here. The seam, the floor and the generation the
 //! window's items are held under stay as the reading from the seam left
-//! them; what cannot be shown from the place on alone — the World's record
-//! grown, words heard, a row that refers back before the place, an event
+//! them; what cannot be shown from the place on alone — a turn begun or
+//! ended, words heard, a row that refers back before the place, an event
 //! the World's record tells of too, a record changed before it — is left to
 //! the next reading from the seam, which makes the window again. What a
 //! window stands on is held in memory only (`Window`): a node that stops
@@ -30,14 +38,17 @@ use std::path::PathBuf;
 /// again whatever the record shows: what the two leave is compared then
 /// (`Audit`). One whose reading from the seam reads the record whole — a
 /// compaction lies past the seam — is judged less often.
-const JUDGED_EVERY: Duration = Duration::from_secs(15 * 60);
+pub(super) const JUDGED_EVERY: Duration = Duration::from_secs(15 * 60);
 const JUDGED_EVERY_WHOLE: Duration = Duration::from_secs(2 * 60 * 60);
 /// The most a window holds of what the rows before the place leave, and of
 /// items past it: beyond either it is read from the seam at every look, as
 /// it was before windows were written on. A row leaves two or three, eight
 /// bytes each and as much again to hold them.
-const LEFT_MOST: usize = 1 << 19;
+pub(crate) const LEFT_MOST: usize = 1 << 19;
 const ITEMS_MOST: usize = 4096;
+/// The most events of the World's record a window holds past its place, and
+/// a look takes new: more are the reading from the seam's.
+pub(super) const WORLD_MOST: usize = 2048;
 /// The most windows held at once, and the most all of them hold of what
 /// rows leave: the one judged longest ago goes first.
 const WINDOWS_MOST: usize = 128;
@@ -71,6 +82,9 @@ pub(super) struct Window {
     /// The items written of the rows from the place on, in their order:
     /// identity, time and order key.
     items: Vec<(Vec<u8>, Timestamp, u64)>,
+    /// The events of the World's record later than the latest time before
+    /// the place, as it recorded them: all `plain`, put among those items.
+    world: Vec<SessionEvent>,
     /// When a reading from the seam last judged the window, and whether it
     /// read the record whole.
     judged: Instant,
@@ -105,12 +119,12 @@ pub(super) fn forget_of(resident: &ResidentId) {
     windows().remove(resident);
 }
 
-fn digest(bytes: &[u8]) -> [u8; 32] {
+pub(super) fn digest(bytes: &[u8]) -> [u8; 32] {
     Sha256::digest(bytes).into()
 }
 
 /// Why a look was left to a reading from the seam, counted by its kind.
-fn left_to_the_seam(why: &'static str) {
+pub(super) fn left_to_the_seam(why: &'static str) {
     let kind: String = why.chars().map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_lowercase() } else { '_' }).collect();
     readings::counter_of("timeline.onward.left", &kind).add(1);
 }
@@ -120,8 +134,9 @@ fn left_to_the_seam(why: &'static str) {
 /// facts of runs standing as the look read them, that reading writes
 /// nothing — what it writes is where the two differ.
 pub(super) struct Audit {
-    path: PathBuf,
-    end: u64,
+    /// The record's file, how long it was and when it was last written;
+    /// none of a host whose history is no file here.
+    record: Option<(PathBuf, u64, Option<std::time::SystemTime>)>,
     latest: u64,
     runs: i64,
 }
@@ -131,7 +146,17 @@ impl Audit {
     /// record no longer, the World's record and the runs' facts as they
     /// stood. Call on a thread that may block.
     pub(super) fn stands(&self, latest: u64, runs: i64) -> bool {
-        latest == self.latest && runs == self.runs && fastctx_platform::disk::metadata(&self.path).is_ok_and(|metadata| metadata.len() == self.end)
+        latest == self.latest
+            && runs == self.runs
+            && self.record.as_ref().is_none_or(|(path, end, written)| {
+                fastctx_platform::disk::metadata(path).is_ok_and(|metadata| metadata.len() == *end && metadata.modified().ok() == *written)
+            })
+    }
+
+    /// Of a look that read no record file: the World's record and the runs'
+    /// facts as it read them.
+    pub(super) fn of_world(latest: u64, runs: i64) -> Self {
+        Audit { record: None, latest, runs }
     }
 
     /// The reading from the seam wrote `written` items and took `gone` away
@@ -169,19 +194,40 @@ fn alone(event: &SessionEvent) -> bool {
     }
 }
 
-/// The history the events of the rows past a place make, as a reading from
-/// the seam makes it of them among the window's: each later than `after`,
-/// the latest time before the place; placed in `turn` in the order of their
-/// times (`placement::decide`), shown (`talk::shown`), merged with a World's
-/// record that tells of none of them (`names`) and given the facts of its
-/// runs (where there are the conversation's files to tell them). Why not,
-/// where one of them is not made so alone. Call on a thread that may block.
+/// Whether `event`, of the World's record, is one a window puts among the
+/// items past its place: a merge places it by its time alone (`merging`,
+/// kind `Other`) — a change that tells no other history and asks nothing,
+/// a note, the context given, steps planned, a title, a delivery not known
+/// to have been taken — of the turn under way (`turn`) or of none. One of
+/// a turn that ended stands before that turn's end, wherever that is.
+fn plain(event: &SessionEvent, turn: Option<&str>) -> bool {
+    let placed_by_time = match &event.happened {
+        Happened::Changed { change, .. } => {
+            !matches!(change, SessionChange::HistoryChanged | SessionChange::HistoryCut { .. } | SessionChange::Request { .. } | SessionChange::Resolved { .. })
+        }
+        Happened::Health { .. } | Happened::Context { .. } | Happened::Steps { .. } | Happened::Titled { .. } | Happened::DeliveryUncertain { .. } => true,
+        _ => false,
+    };
+    placed_by_time && event.happened.in_history() && crate::talk::turn_of(&event.happened).is_none_or(|of| Some(of) == turn)
+}
+
+/// The history the events of the rows past a place make with what the
+/// World's record tells later than it (`world`, as recorded), as a reading
+/// from the seam makes it of them among the window's: each later than
+/// `after`, the latest time before the place; the host's placed in `turn`
+/// in the order of their times (`placement::decide`), shown (`talk::shown`)
+/// and merged with a World's record that names none of them (`names`); the
+/// World's, each `plain`, put in turn before the first event later than it
+/// (`merging::decide`); every one given the facts of its runs (where there
+/// are the conversation's files to tell them). Why not, where one of them
+/// is not made so alone. Call on a thread that may block.
 fn derive(
     directory: Option<&fastctx_types::layout::ConversationDir>,
     mut events: Vec<SessionEvent>,
     turn: Option<&str>,
     names: &mut merging::Names,
     after: Option<Timestamp>,
+    world: &[SessionEvent],
 ) -> Result<Result<Vec<SessionEvent>, &'static str>, Failure> {
     use history::placement::{self, Turns};
     // In the order of their times, those alike in time as they came.
@@ -189,6 +235,18 @@ fn derive(
     let turns = Turns::kept(Vec::new(), &|_, _| false);
     let mut made = Vec::with_capacity(events.len());
     for event in events {
+        // The host's copy of what the World told it — all of it the World's
+        // telling, no envelope, no picture — is left out whatever turn
+        // heard it (`placement::finish`): the World's own record tells
+        // those words. Other words are placed by what that record holds.
+        if let Happened::Heard { text, message, .. } = &event.happened
+            && fastctx_hosts::claude::is_framed(text)
+            && fastctx_hosts::claude::beside_framed(text).is_none()
+            && fastctx_types::session::attachments::Envelope::read(text).is_none()
+            && message.as_ref().is_none_or(|message| message.images.is_empty())
+        {
+            continue;
+        }
         if after.is_some_and(|after| event.at <= after) {
             return Ok(Err("an event no later than the place"));
         }
@@ -211,6 +269,20 @@ fn derive(
             made.push(shown);
         }
     }
+    for event in world {
+        if after.is_some_and(|after| event.at <= after) {
+            return Ok(Err("an event of the World's record no later than the place"));
+        }
+        if !plain(event, turn) {
+            return Ok(Err("an event of the World's record that places others"));
+        }
+        let mut event = event.clone();
+        if let Some(directory) = directory {
+            crate::run_facts::attach(directory, &mut event).map_err(crate::record_migration::failure)?;
+        }
+        let at = made.iter().position(|other| other.at > event.at).unwrap_or(made.len());
+        made.insert(at, event);
+    }
     Ok(Ok(made))
 }
 
@@ -226,7 +298,7 @@ type Item = (Vec<u8>, Timestamp, u64);
 /// order — the same identities, order keys rising, the same records — with
 /// the order key of the item before them (naught where none is); none where
 /// they are not. Read from its end a few at a time.
-fn last_items(library: &Library, scope: &str, made: &[SessionEvent]) -> Result<Option<(Vec<Item>, u64)>, Failure> {
+pub(super) fn last_items(library: &Library, scope: &str, made: &[SessionEvent]) -> Result<Option<(Vec<Item>, u64)>, Failure> {
     use fastctx_content::{Anchor, Place};
     let identities = super::super::names::identities(made);
     let key_of = |order: &[u8]| <[u8; 8]>::try_from(order).ok().map(u64::from_be_bytes);
@@ -276,16 +348,22 @@ pub(super) struct Judged {
     pub(super) turn: Option<String>,
     pub(super) names: merging::Names,
     pub(super) whole: bool,
+    /// What the World's record tells later than the latest time before the
+    /// place, as recorded.
+    pub(super) world: Vec<SessionEvent>,
 }
 
 /// What the rows from a place on gave at one look (`history::read_on`):
 /// their events, where the place moved to and what the rows it moved past
-/// leave, and the session's title as the record tells it.
+/// leave, and the session's title as the record tells it; with what the
+/// World's record tells that the window has not yet (none at its seeding,
+/// which is given all in `Judged`).
 pub(super) struct Read {
     pub(super) events: Vec<SessionEvent>,
     pub(super) moved: Option<Seam>,
     pub(super) passed: Vec<u64>,
     pub(super) title: Option<String>,
+    pub(super) world: Vec<SessionEvent>,
 }
 
 /// What a look written on wrote (`Window::write_on`): how many items it
@@ -312,6 +390,7 @@ impl Window {
             self.floor = *key;
         }
         self.items.drain(..before);
+        self.world.retain(|event| after.is_none_or(|after| event.at > after));
         self.left.len() <= LEFT_MOST
     }
 
@@ -334,9 +413,12 @@ impl Window {
         judged: Judged,
         read: Read,
     ) -> Result<Result<Window, &'static str>, Failure> {
-        let Judged { read: place, left, turn, mut names, whole } = judged;
-        let Read { events, moved, passed, title } = read;
-        let made = match derive(directory, events, turn.as_deref(), &mut names, place.latest)? {
+        let Judged { read: place, left, turn, mut names, whole, world } = judged;
+        let Read { events, moved, passed, title, .. } = read;
+        if world.len() > WORLD_MOST {
+            return Ok(Err("a window too long to hold"));
+        }
+        let made = match derive(directory, events, turn.as_deref(), &mut names, place.latest, &world)? {
             Ok(made) => made,
             Err(why) => return Ok(Err(why)),
         };
@@ -348,7 +430,7 @@ impl Window {
         }
         let Some((items, floor)) = last_items(library, scope, &made)? else { return Ok(Err("a timeline's end the rows past the place do not make")) };
         let mut window =
-            Window { stood, session, read: place, left: Arc::new(left.into_iter().collect()), turn, names, title, floor, items, judged: Instant::now(), whole };
+            Window { stood, session, read: place, left: Arc::new(left.into_iter().collect()), turn, names, title, floor, items, world, judged: Instant::now(), whole };
         if let Some(next) = moved
             && !window.moved(next, passed)
         {
@@ -378,11 +460,16 @@ impl Window {
         expected: Option<i64>,
         read: Read,
     ) -> Result<Result<Written, &'static str>, Failure> {
-        let Read { events, moved, passed, title } = read;
+        let Read { events, moved, passed, title, world: fresh } = read;
         if title != self.title {
             return Ok(Err("the session's title"));
         }
-        let made = match derive(directory, events, self.turn.as_deref(), &mut self.names, self.read.latest)? {
+        let mut world = self.world.clone();
+        world.extend(fresh);
+        if world.len() > WORLD_MOST {
+            return Ok(Err("a window too long to hold"));
+        }
+        let made = match derive(directory, events, self.turn.as_deref(), &mut self.names, self.read.latest, &world)? {
             Ok(made) => made,
             Err(why) => return Ok(Err(why)),
         };
@@ -409,6 +496,7 @@ impl Window {
             library.restage_held(name, generation, gone, kept).map_err(failure)?;
         }
         self.items = wrote.items;
+        self.world = world;
         let mut holds = rising;
         if let Some(next) = moved {
             holds &= self.moved(next, passed);
@@ -432,11 +520,12 @@ impl Window {
             .map_err(|error| error.to_string())?
             .map_err(str::to_string)?
             .map_err(|why| why.to_string())?;
-        Ok(Read { events, moved: tail.seam, passed, title: tail.transcript.title })
+        Ok(Read { events, moved: tail.seam, passed, title: tail.transcript.title, world: Vec::new() })
     }
 
     /// One look written on of the record at `path`, as `advance` reads and
-    /// writes it with the World's record and the runs' facts as they stood.
+    /// writes it: with what the World recorded since the look before
+    /// (`world`), the runs' facts as they stood.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn look(
         &mut self,
@@ -449,8 +538,10 @@ impl Window {
         generation: u64,
         expected: Option<i64>,
         seen: Option<&(Library, String, u64)>,
+        world: Vec<SessionEvent>,
     ) -> Result<Written, String> {
-        let read = Self::read_past(path, &self.read, &self.left, seen)?;
+        let mut read = Self::read_past(path, &self.read, &self.left, seen)?;
+        read.world = world;
         self.write_on(library, signer, resident, placed, None, name, generation, expected, read).map_err(|failure| failure.message)?.map_err(str::to_string)
     }
 }
@@ -486,7 +577,7 @@ pub(super) async fn seed(
     let (library, scope, directory, stood) = (library.clone(), scope.to_string(), node.world.conversation(resident), digest(kept));
     let seeded = fastctx_platform::task::blocking(move || {
         let _held = producing;
-        Window::seeded(&library, &scope, Some(&directory), stood, session, judged, Read { events, moved, passed, title })
+        Window::seeded(&library, &scope, Some(&directory), stood, session, judged, Read { events, moved, passed, title, world: Vec::new() })
     })
     .await;
     match seeded {
@@ -497,6 +588,37 @@ pub(super) async fn seed(
         Ok(Err(why)) => left_to_the_seam(why),
         Err(_) => left_to_the_seam("a record not read"),
     }
+}
+
+/// What the World recorded of the conversation in `directory` past the
+/// sequence `heard`, as far as its record goes now, with the sequence it is
+/// read through; none where it is more than a window takes (`WORLD_MOST`).
+pub(super) async fn recorded_since(directory: &fastctx_types::layout::ConversationDir, heard: u64) -> Result<(u64, Option<Vec<SessionEvent>>), Failure> {
+    let directory = directory.clone();
+    fastctx_platform::task::blocking(move || -> std::io::Result<(u64, Option<Vec<SessionEvent>>)> {
+        let mut fresh = Some(Vec::new());
+        let (mut from, mut through) = (heard, None);
+        let latest = loop {
+            let (latest, next, count) = crate::session_record::page_each(&directory, from, through, 512, &mut |_, body| {
+                if let Some(events) = &mut fresh {
+                    if events.len() >= WORLD_MOST {
+                        fresh = None;
+                    } else {
+                        events.push(serde_json::from_slice::<SessionEvent>(body).map_err(|error| error.to_string())?);
+                    }
+                }
+                Ok(())
+            })?;
+            through = Some(latest);
+            if count == 0 || next >= latest {
+                break latest;
+            }
+            from = next;
+        };
+        Ok((latest, fresh))
+    })
+    .await
+    .map_err(failure)
 }
 
 /// Brings `resident`'s timeline on from the place its window was read
@@ -533,15 +655,14 @@ pub(super) async fn advance(
         return leave("a checkpoint kept otherwise");
     };
     let directory = node.world.conversation(resident);
-    // What the World recorded since is placed and merged by a reading from
-    // the seam: a turn begun or ended, words heard.
-    let latest = {
-        let directory = directory.clone();
-        fastctx_platform::task::blocking(move || crate::session_record::latest(&directory)).await.map_err(failure)?
+    // What the World recorded since: read as far as it goes now. What of
+    // it places others — a turn begun or ended, words heard — is found as
+    // the window is written (`derive`), and left to a reading from the seam.
+    let Some(heard) = state.world_latest else { return leave("a checkpoint kept otherwise") };
+    let (latest, fresh) = match recorded_since(&directory, heard).await? {
+        (latest, Some(fresh)) => (latest, fresh),
+        (_, None) => return leave("a window too long to hold"),
     };
-    if state.world_latest != Some(latest) {
-        return leave("the World's record grown");
-    }
     let seen = seen_of(library, resident).await?;
     let onward = match history::onward(node, resident, &window.session, &state.earlier, &window.read, window.left.clone(), seen).await {
         Ok(Ok(onward)) => onward,
@@ -565,7 +686,7 @@ pub(super) async fn advance(
         let mut window = window;
         fastctx_platform::task::blocking(move || -> Result<_, Failure> {
             let _held = held;
-            let read = Read { events, moved, passed, title };
+            let read = Read { events, moved, passed, title, world: fresh };
             let written = window.write_on(&library, signer, &whose, &placed, Some(&directory), &name, generation, expected, read)?;
             Ok((written, window))
         })
@@ -586,6 +707,8 @@ pub(super) async fn advance(
         holding: Some(written.holding),
         kept: if kept_here { kept } else { state.kept.clone() },
         runs_version,
+        // Read through here: what it told is in the window.
+        world_latest: Some(latest),
         ..state.clone()
     };
     let long_changed = next.runs_version.is_none();
@@ -605,7 +728,8 @@ pub(super) async fn advance(
     let due = window.judged.elapsed() >= if window.whole { JUDGED_EVERY_WHOLE } else { JUDGED_EVERY };
     keep(resident, window);
     if due {
-        return Ok(Step::Judge(produced, Audit { path, end, latest, runs: runs_now }));
+        let written = fastctx_platform::disk::metadata(&path).ok().filter(|metadata| metadata.len() == end).and_then(|metadata| metadata.modified().ok());
+        return Ok(Step::Judge(produced, Audit { record: Some((path, end, written)), latest, runs: runs_now }));
     }
     Ok(Step::Done(produced))
 }
@@ -727,7 +851,10 @@ mod tests {
                     })
                     .max_by_key(|(at, _)| *at)
                     .map(|(_, turn)| turn);
-                let judged = tail.read.map(|read| Judged { read, left, turn, names, whole });
+                let judged = tail.read.map(|read| {
+                    let world = recorded.iter().filter(|event| read.latest.is_none_or(|after| event.at > after)).cloned().collect();
+                    Judged { read, left, turn, names, whole, world }
+                });
                 let _ = crate::timeline::spill::clear(spill);
                 return (judged, whole || self.seam.offset != before);
             }
@@ -753,10 +880,28 @@ mod tests {
             at(self.clock).to_string()
         }
 
-        /// The model's next round: rows of one message.
-        fn answers(&mut self, choices: &mut Choices, lines: &mut Vec<String>) {
+        /// What the World records of a step of the model's, as the host's
+        /// mod tells it: the model asked, at `asked`, and its answer done,
+        /// at `done` — each a change of the turn under way, placed by its
+        /// time.
+        fn told(&self, recorded: &mut Vec<SessionEvent>, asked: Timestamp, done: Timestamp) {
+            let turn = format!("t{}", self.turn);
+            let change = |at: Timestamp, change: Value| -> SessionEvent {
+                serde_json::from_value(json!({"at": at.to_string(), "event": "changed", "turn": turn, "change": change})).unwrap()
+            };
+            recorded.push(change(asked, json!({"kind": "model_request", "step": self.round, "model": "x", "effort": "high"})));
+            recorded.push(change(done, json!({"kind": "model_response", "step": self.round, "usage": null})));
+        }
+
+        /// The model's next round: rows of one message, and what the World
+        /// records of the step — the model asked a little before the rows,
+        /// its answer done at the time of the last of them or a little
+        /// after.
+        fn answers(&mut self, choices: &mut Choices, lines: &mut Vec<String>, recorded: &mut Vec<SessionEvent>) {
             self.round += 1;
             let round = self.round;
+            let half = jiff::SignedDuration::from_millis(500);
+            let asked = at(self.clock) + half;
             let message = format!("wm{round}");
             let usage = json!({"input_tokens": round, "output_tokens": 1});
             let mut part = 0;
@@ -780,6 +925,11 @@ mod tests {
             for call in &calls {
                 let at = self.time(choices);
                 row(json!({"type": "tool_use", "id": call, "name": "Bash", "input": {"command": "ls"}}), at, lines, &mut part);
+            }
+            // Its answer done once its rows are written, before the tools run.
+            let done = if choices.pick(2) == 0 { at(self.clock) } else { at(self.clock) + half };
+            if asked < done || part > 0 {
+                self.told(recorded, asked, done.max(asked));
             }
             for (index, call) in calls.iter().enumerate() {
                 // The last call of a round is now and then left waiting.
@@ -876,9 +1026,21 @@ mod tests {
                     lines.push(self.result(&call, at));
                     "a call answered again"
                 }
+                8 => {
+                    // The World tells late of a step long done.
+                    let then = at((self.clock - 6).max(0));
+                    self.told(recorded, then, then);
+                    "the World telling late"
+                }
+                9 => {
+                    // A note of the World's own, of no turn.
+                    self.clock += 1;
+                    recorded.push(serde_json::from_value(json!({"at": at(self.clock).to_string(), "event": "health", "turn": null, "health": {"kind": "warning", "text": format!("note {}", self.clock)}})).unwrap());
+                    "a note of the World's"
+                }
                 _ => {
                     for _ in 0..1 + choices.pick(3) {
-                        self.answers(choices, lines);
+                        self.answers(choices, lines, recorded);
                         if self.waiting.is_some() {
                             break;
                         }
@@ -891,9 +1053,11 @@ mod tests {
 
     /// A timeline written on from inside a turn is the timeline a reading
     /// from the seam makes at every step: over a record at work that grows a
-    /// few rows at a time — rounds of answers, tool calls answered and left
-    /// waiting, words handed into the turn, turns ended and begun, titles,
-    /// answers taken back, compactions, lines not made out — one timeline
+    /// few rows at a time while the World records each step of the model's
+    /// — rounds of answers, tool calls answered and left waiting, words
+    /// handed into the turn, turns ended and begun, titles, answers taken
+    /// back, compactions, lines not made out, the World telling late and
+    /// noting things of its own — one timeline
     /// is brought by a reading from the seam at each step, the other
     /// written on from the place the last such reading read the record
     /// through wherever its window stands; both hold the same items, order
@@ -927,13 +1091,12 @@ mod tests {
                 slow.judge(&dir.join("spill-slow"), &path, &recorded, &resident);
                 // Written on where a window stands and only the record grew.
                 let mut written = false;
-                if let Some(held) = window.as_mut()
-                    && world == recorded.len()
-                {
+                if let Some(held) = window.as_mut() {
                     let seen = seen_in(&fast.library, &resident);
                     match history::read_on(&path, &held.read, &held.left, seen.as_ref(), &[], false, &mut |_| {}).unwrap() {
                         Ok(Ok((tail, events, passed))) => {
-                            let read = Read { events, moved: tail.seam, passed, title: tail.transcript.title };
+                            // With what the World recorded since the look before.
+                            let read = Read { events, moved: tail.seam, passed, title: tail.transcript.title, world: recorded[world..].to_vec() };
                             let wrote = held.write_on(&fast.library, signer.clone(), &resident, &fast.placed, None, &name, fast.held.unwrap(), fast.holding, read).unwrap();
                             written = wrote.is_ok();
                             if let Err(why) = &wrote {
@@ -946,8 +1109,6 @@ mod tests {
                         Ok(Err(why)) => *why_not.entry(format!("read: {why}")).or_default() += 1,
                         Err(why) => *why_not.entry(format!("read: {why}")).or_default() += 1,
                     }
-                } else if window.is_some() {
-                    *why_not.entry("the World's record grown".into()).or_default() += 1;
                 } else {
                     *why_not.entry("no window".into()).or_default() += 1;
                 }
@@ -955,6 +1116,7 @@ mod tests {
                 if written {
                     on += 1;
                     count.0 += 1;
+                    world = recorded.len();
                 } else {
                     seam += 1;
                     count.1 += 1;
@@ -967,7 +1129,7 @@ mod tests {
                             let seen = seen_in(&fast.library, &resident);
                             match history::read_on(&path, &judged.read, &held, seen.as_ref(), &[], false, &mut |_| {}).unwrap() {
                                 Ok(Ok((tail, events, passed))) => {
-                                    let read = Read { events, moved: tail.seam, passed, title: tail.transcript.title };
+                                    let read = Read { events, moved: tail.seam, passed, title: tail.transcript.title, world: Vec::new() };
                                     match Window::seeded(&fast.library, &fast.placed.scope, None, [0; 32], "session".into(), judged, read).unwrap() {
                                         Ok(held) => {
                                             window = Some(held);
@@ -997,5 +1159,9 @@ mod tests {
         let _ = fastctx_platform::disk::remove_dir_all(&base);
         assert!(on >= 400 && seam >= 100 && seeded >= 60, "{on} written on, {seam} left to the seam, {seeded} windows held: {met:?}, {why_not:?}");
         assert!(met.get("answers").is_some_and(|(on, _)| *on >= 300), "{met:?}");
+        assert!(met.get("a note of the World's").is_some_and(|(on, _)| *on >= 5), "{met:?}");
+        // Told later than the place is, it is written on; told of a time
+        // before it, left to the seam.
+        assert!(met.get("the World telling late").is_some_and(|(_, left)| *left >= 5), "{met:?}");
     }
 }

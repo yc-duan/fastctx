@@ -865,7 +865,26 @@ export class ConversationPage {
         if (event.pointerType !== "mouse") return;
         const steering = event.button === 1 && !this.steering;
         this.steering = steering;
+        this.steered?.abort();
+        this.steered = null;
         if (!steering) return;
+        // The browser stops steering at a press or a key anywhere, and when
+        // the window loses the pointer: not only over the view.
+        const steered = new AbortController();
+        this.steered = steered;
+        const over = () => {
+          this.steering = false;
+          steered.abort();
+        };
+        window.addEventListener("keydown", over, { capture: true, signal: steered.signal });
+        window.addEventListener("blur", over, { signal: steered.signal });
+        window.addEventListener(
+          "pointerdown",
+          (pressed) => {
+            if (pressed !== event && !this.scroller.contains(pressed.target as Node)) over();
+          },
+          { capture: true, signal: steered.signal },
+        );
         const from = this.scroller.scrollTop;
         const held = new AbortController();
         const done = (ended: PointerEvent) => {
@@ -1016,6 +1035,8 @@ export class ConversationPage {
   private pointerPaging = false;
   /** The browser's own scroll, begun by the middle button, steers the view. */
   private steering = false;
+  /** What listens for the end of that steering outside the view. */
+  private steered: AbortController | null = null;
   private paging = false;
   private async fillGap(gap: Gap, side: "end" | "start", _explicit = false, into?: import("./conversation").Into): Promise<void> {
     // One part read at a time: what the view is in by then is asked next.

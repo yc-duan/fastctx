@@ -25,7 +25,7 @@ required-features = ["storage-drill"]
 storage-drill = []
 timeline-drill = []
 # The timeline's writing, for fastctx-bench; nothing of the node changes with it.
-bench = ["fastctx-timeline-core/bench"]
+bench = ["fastctx-timeline-core/bench", "fastctx-hosts/drill"]
 # What the timeline's library tests look into (`cargo test -p fastctx-node --lib
 # --features timeline-test-support`). A feature of its own, not a
 # dev-dependency's: one would give the timeline another set of features

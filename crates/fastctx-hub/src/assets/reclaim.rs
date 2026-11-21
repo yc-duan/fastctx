@@ -159,8 +159,18 @@ impl Assets {
         let apply = match first.said.as_str() {
             "count" => false,
             "go" => {
+                // Said once for each asking, and not kept as gone by: a
+                // version that takes `go` goes by this very file.
+                static SAID: std::sync::Mutex<Option<Finished>> = std::sync::Mutex::new(None);
+                let asking = first.finished();
+                let mut said = SAID.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+                if said.as_ref() == Some(&asking) {
+                    return Ok(None);
+                }
+                *said = Some(asking);
                 report.failed.push(GO_WAITS.into());
-                return finish(&mut report);
+                keep(&mut report)?;
+                return Ok(Some(format!("vouched objects (go): {GO_WAITS}")));
             }
             _ => {
                 report.failed.push("the file says neither `count` nor `go`".into());

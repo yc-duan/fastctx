@@ -1,6 +1,7 @@
 //! Which conversation each Claude session's directory names, kept in
-//! memory. A directory's `resident.json` is written once and never changed
-//! (`pairing`), so one read to name a conversation is not read again. The
+//! memory. A directory's `resident.json` is written once (`pairing`), so
+//! one read to name a conversation is read again only where the file was
+//! written since — a directory made again under its name. The
 //! directories are listed again when the directory holding them changed,
 //! and at least every `LISTED_FOR`; those naming none yet are read again
 //! then. Asked without this, every question of one conversation's sessions
@@ -29,8 +30,10 @@ struct Kept {
     /// When the directories were last listed, and when the directory
     /// holding them had last changed then; none where it had just changed.
     listed: Option<(Instant, Option<SystemTime>)>,
-    /// The directories that name a conversation, by name.
-    named: HashMap<String, ResidentId>,
+    /// The directories that name a conversation, by name, each with when
+    /// it was last written as it was read: one made again under its name
+    /// since is read again.
+    named: HashMap<String, (ResidentId, Option<SystemTime>)>,
     /// The directories that could not be read at the last listing.
     problems: Vec<String>,
     /// Why they could not be listed at all, where they could not.
@@ -50,7 +53,7 @@ impl Aliases {
             kept.list(root, changed);
         }
         let mut directories: Vec<PathBuf> =
-            kept.named.iter().filter(|(_, named)| *named == resident).map(|(name, _)| root.join(name)).collect();
+            kept.named.iter().filter(|(_, (named, _))| named == resident).map(|(name, _)| root.join(name)).collect();
         directories.sort();
         let mut problems = kept.problems.clone();
         if let Some(error) = &kept.unlisted {
@@ -61,7 +64,8 @@ impl Aliases {
 
     /// `session`'s directory was just written to name `resident`.
     pub(super) fn named(&self, session: &str, resident: &ResidentId) {
-        self.0.lock().expect("never poisoned").named.insert(session.to_string(), resident.clone());
+        // Read again at the next listing, as written by then.
+        self.0.lock().expect("never poisoned").named.insert(session.to_string(), (resident.clone(), None));
     }
 }
 
@@ -91,15 +95,25 @@ impl Kept {
             };
             let directory = entry.path();
             let Some(name) = entry.file_name().to_str().map(str::to_string) else { continue };
-            if !self.named.contains_key(&name) {
+            // When the file naming it was last written: one read as it
+            // stands is not read again.
+            let written = fastctx_platform::disk::metadata(directory.join("resident.json")).and_then(|metadata| metadata.modified()).ok();
+            if self.named.get(&name).is_none_or(|(_, read)| read.is_none() || *read != written) {
                 match fastctx_platform::disk::read(directory.join("resident.json")) {
                     Ok(bytes) => match serde_json::from_slice::<ResidentId>(&bytes) {
                         Ok(resident) => {
-                            self.named.insert(name.clone(), resident);
+                            self.named.insert(name.clone(), (resident, written));
                         }
                         Err(error) => self.problems.push(format!("reading {}: {error}", directory.display())),
                     },
-                    Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                    // Naming none now, whatever its file named when it
+                    // was read; one told of and not read yet (`named`) is
+                    // written by whoever told of it.
+                    Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                        if self.named.get(&name).is_some_and(|(_, read)| read.is_some()) {
+                            self.named.remove(&name);
+                        }
+                    }
                     Err(error) => self.problems.push(format!("reading {}: {error}", directory.display())),
                 }
             }

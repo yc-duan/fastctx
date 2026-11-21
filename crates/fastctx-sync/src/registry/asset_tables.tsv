@@ -71,4 +71,5 @@ moves	crates/fastctx-content/src/v2/schema.rs
 checkpoint_epochs	crates/fastctx-content/src/v2/schema.rs
 checkpoint_digests	crates/fastctx-content/src/v2/schema.rs
 checkpoint_held	crates/fastctx-content/src/v2/schema.rs
+vouched	crates/fastctx-content/src/v2/schema.rs
 ledger_entries	crates/fastctx-content/src/v2/ledger_entries.rs

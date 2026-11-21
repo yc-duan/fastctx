@@ -405,12 +405,14 @@ pub(crate) fn follow_window(dir: &Path, scale: Scale) -> Result<bool, String> {
 }
 
 /// `claude-follow-on`: the record of `claude-follow-window` followed from
-/// its start, then grown a tool call and its result at a time and its
-/// timeline written on from the place it was read through at each of many
-/// looks (design §10: what did not change is not read again): each look
-/// reads the rows past that place and writes what they show, whatever the
-/// length of the window before it. Each look measured; the slowest is to
-/// take no longer than `target_seconds`.
+/// its start, then grown a tool call and its result at a time — the World
+/// recording, as the host's mod tells it, the model asked and its answer
+/// done at each — and its timeline written on from the place it was read
+/// through at each of many looks (design §10: what did not change is not
+/// read again): each look reads the rows past that place and writes what
+/// they and the World's record show, whatever the length of the window
+/// before it. Each look measured; the slowest is to take no longer than
+/// `target_seconds`.
 pub(crate) fn follow_on(dir: &Path, scale: Scale) -> Result<bool, String> {
     let rows = match scale {
         Scale::Full => 1_000_000,
@@ -427,13 +429,25 @@ pub(crate) fn follow_on(dir: &Path, scale: Scale) -> Result<bool, String> {
     let mut first_seconds = None;
     let (written_first, looks) = follower.claude_follow_on(&path, began, dir.join("window").join("spill"), LOOKS, &mut |look| {
         first_seconds.get_or_insert_with(|| started.elapsed().as_secs_f64());
-        autonomous(&record, 2, rows + look * 2, true).map(|_| ())
+        autonomous(&record, 2, rows + look * 2, true)?;
+        // As `autonomous` times the call's row: asked a little before it,
+        // answered a little after.
+        let row = began + jiff::SignedDuration::from_millis(1_000 + (rows + look * 2) as i64 * 500);
+        let told = |at: jiff::Timestamp, change: serde_json::Value| {
+            serde_json::from_value(json!({"at": at.to_string(), "event": "changed", "turn": null, "change": change})).map_err(error)
+        };
+        let tenth = jiff::SignedDuration::from_millis(100);
+        Ok(vec![
+            told(row - tenth, json!({"kind": "model_request", "step": look, "model": "claude-bench", "effort": "high"}))?,
+            told(row + tenth, json!({"kind": "model_response", "step": look, "usage": null}))?,
+        ])
     })?;
     let mut seconds: Vec<f64> = looks.iter().map(|(seconds, _)| *seconds).collect();
     seconds.sort_by(f64::total_cmp);
     let (median, slowest) = (seconds[seconds.len() / 2], seconds[seconds.len() - 1]);
     let written: usize = looks.iter().map(|(_, written)| *written).sum();
-    let met = slowest <= TARGET_SECONDS && written >= LOOKS;
+    // A call, its result's item and the two the World told, at each look.
+    let met = slowest <= TARGET_SECONDS && written >= LOOKS * 3;
     println!(
         "{}",
         json!({ "row": "claude-follow-on", "measure": "a record whose seam never moves followed from its start, then written on from inside the turn as it grows a call and its result at a time",

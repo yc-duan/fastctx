@@ -1514,7 +1514,6 @@ impl Call {
             | Self::ChangeAgentLogin { .. }
             | Self::ChangeAgentModels { .. }
             | Self::ClaudeConsent { .. }
-            | Self::MachineCopies { .. }
             | Self::ClaudeContext { .. }
             | Self::ClaudeSessionDirectory { .. }
             | Self::ClaudeSubagents { .. }
@@ -1635,6 +1634,8 @@ impl Call {
             }
             // Takes over the streams the lost device ordered (design §28.10).
             Self::AdoptConversation { .. } => Some(Purpose::AssetSync),
+            // What a machine's owner asks of the copies its library holds.
+            Self::MachineCopies { .. } => Some(Purpose::AssetSync),
             // Sets what a login's assistances and its Fable line are held to.
             Self::SetAgentWeek { .. } | Self::ResetAgentUsage { .. } => Some(Purpose::ExecutionControl),
         }
@@ -1662,7 +1663,6 @@ impl Reply {
             | Self::Book { .. }
             | Self::Changed { .. }
             | Self::ClaudeConsent { .. }
-            | Self::MachineCopies { .. }
             | Self::ClaudeContext { .. }
             | Self::ClaudeSessionDirectory { .. }
             | Self::ClaudeSubagents { .. }
@@ -1740,7 +1740,7 @@ impl Reply {
             | Self::Who { .. }
             | Self::WorldNow { .. }
             | Self::Written { .. } => None,
-            Self::Timeline(_) => Some(Purpose::AssetSync),
+            Self::Timeline(_) | Self::MachineCopies { .. } => Some(Purpose::AssetSync),
             Self::Topics(_) | Self::RemoteTopics(_) | Self::SyncStatus { .. } => Some(Purpose::Observation),
         }
     }

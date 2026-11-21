@@ -123,6 +123,19 @@ pub const BYTES_FILE: &str = "asset-bytes.sqlite3";
 /// The objects that are files, each `<hh>/<hex>.<life>`.
 pub const OBJECTS_DIRECTORY: &str = "asset-objects";
 
+/// Compacts the databases of the library in `directory`, none of them open
+/// in any process: each by its file's name with what it came to, up to the
+/// first that failed.
+pub fn compact(directory: &Path) -> fastctx_storage::Result<Vec<(&'static str, fastctx_storage::Compacted)>> {
+    [FILE, BYTES_FILE]
+        .into_iter()
+        .map(|name| match fastctx_storage::compact(&directory.join(name)) {
+            Ok(compacted) => Ok((name, compacted)),
+            Err(error) => Err(fastctx_storage::Error::with_kind(error.kind(), format!("{name}: {error}"))),
+        })
+        .collect()
+}
+
 /// One machine's asset library. Cloning it shares the library.
 #[derive(Clone)]
 pub struct Library(Arc<Inner>);

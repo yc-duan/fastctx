@@ -549,8 +549,8 @@ impl Residents {
         let state = self.state.lock().expect("never poisoned");
         let at = *self.changed.borrow();
         let everyone = seen == 0 || self.everyone.load(std::sync::atomic::Ordering::SeqCst) > seen;
-        let residents = if everyone { Vec::new() } else { state.live.stamped_since(seen) };
-        Changed { at, everyone, residents }
+        let stamped = if everyone { None } else { state.live.stamped_since(seen) };
+        Changed { at, everyone: stamped.is_none(), residents: stamped.unwrap_or_default() }
     }
 
     /// Moves `changes` though no resident changed: what is shown of them

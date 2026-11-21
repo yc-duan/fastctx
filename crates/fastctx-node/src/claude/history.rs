@@ -435,7 +435,13 @@ pub fn stamp(node: &Node, resident: &ResidentId, digest: &mut impl FnMut(&[u8]))
         digest(format!("{cuts:?}").as_bytes());
         let record = exchange::transcript(&directory).map(|path| {
             path.map(|path| {
-                (fastctx_platform::disk::metadata(&path).map(|meta| (meta.len(), meta.modified().ok())), path)
+                // With when the files of the agents it started last came or
+                // went: what they tell is part of what the record shows
+                // (`subagents`).
+                let agents = claude::subagents::directory(&path)
+                    .and_then(|agents| fastctx_platform::disk::metadata(agents).ok())
+                    .and_then(|meta| meta.modified().ok());
+                (fastctx_platform::disk::metadata(&path).map(|meta| (meta.len(), meta.modified().ok())), agents, path)
             })
         });
         digest(format!("{record:?}").as_bytes());

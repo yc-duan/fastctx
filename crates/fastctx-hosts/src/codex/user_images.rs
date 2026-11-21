@@ -4,7 +4,7 @@ use fastctx_types::Address;
 use fastctx_types::session::{UserMessage, images};
 use serde_json::Value;
 
-#[derive(Default, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
 pub(super) struct Submissions {
     turn: String,
     ids: Vec<String>,

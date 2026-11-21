@@ -44,7 +44,7 @@ mod tail;
 pub use tail::bench;
 pub(crate) use assets::Early;
 pub(crate) use tail::told_again;
-pub(crate) use tail::forget_windows;
+pub(crate) use tail::{LEFT_MOST, forget_windows};
 pub(crate) mod timers;
 
 use fastctx_content::StreamKey;

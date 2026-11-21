@@ -471,6 +471,25 @@ impl World {
         self.starts.iter().filter(|start| !ends.contains_key(start.turn.as_str())).max_by_key(|start| start.at).map(|start| start.turn.clone())
     }
 
+    /// What it records later than `after` (all of it for none), in its
+    /// order, held: at most `most` events, none where there are more — what
+    /// a window written on from inside a turn puts among its last items
+    /// (`tail::onward`).
+    pub(crate) fn later_than(&self, after: Option<Timestamp>, most: usize) -> Result<Option<Vec<SessionEvent>>, String> {
+        let db = self.db()?;
+        let (second, nanosecond) = after.map_or((i64::MIN, i32::MIN), parts);
+        let bodies = fastctx_platform::roles::in_place("reading the World's record kept on disk", || -> Result<Vec<Vec<u8>>, fastctx_storage::rusqlite::Error> {
+            let mut query = db.prepare_cached("SELECT body FROM world WHERE cut = 0 AND (second, nanosecond) > (?1, ?2) ORDER BY n LIMIT ?3")?;
+            let rows = query.query_map(params![second, nanosecond, most as i64 + 1], |row| row.get(0))?;
+            rows.collect()
+        })
+        .map_err(failed)?;
+        if bodies.len() > most {
+            return Ok(None);
+        }
+        bodies.iter().map(|body| decoded(body)).collect::<Result<Vec<_>, _>>().map(Some)
+    }
+
     /// Each turn's end: the last told of it.
     fn ends_by_turn(&self) -> HashMap<&str, Timestamp> {
         let mut ends = HashMap::new();

@@ -330,7 +330,11 @@ pub(crate) async fn window(
                         &PrefixIds::digest,
                         &mut |event| crate::user_images::claude(&node, &whose, event),
                         &mut |left| {
-                            passed.push(key(left));
+                            // No more than a window holds, and one more to
+                            // say there were (`onward::LEFT_MOST`).
+                            if passed.len() <= crate::timeline::LEFT_MOST {
+                                passed.push(key(left));
+                            }
                             Ok(())
                         },
                     );

@@ -2,6 +2,7 @@
 //! retained by the World; it is not reconstructed from unrelated items.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use fastctx_types::session::{Happened, SessionEvent, TurnEnd, What};
 use jiff::Timestamp;
@@ -54,7 +55,7 @@ pub(super) async fn read(
                 Err(error) => return Err(error.to_string()),
             };
         // Timeline pages run newest to oldest, with each page ordered forward.
-        timeline.sort_by_key(|entry| entry["position"].as_u64());
+        super::follow::onward::canonical(&mut timeline);
         let mut events: Vec<SessionEvent> =
             active_voice.into_iter().map(|session| voice(seconds(metadata.get("createdAt")), session)).collect();
         events.extend(project_timeline(&timeline, &entries, running, owner, seconds(metadata.get("createdAt"))).events);
@@ -95,6 +96,7 @@ pub(super) fn voice(at: Timestamp, session: String) -> SessionEvent {
 /// One turn of a projected timeline: where it begins in the thread's
 /// timeline (when the timeline says), when it began, the latest time of its
 /// events and of what follows it before the next turn, and whether it ended.
+#[derive(Clone)]
 pub(super) struct TurnSpan {
     pub id: String,
     pub position: Option<u64>,
@@ -107,6 +109,7 @@ pub(super) struct TurnSpan {
 pub(super) struct Projected {
     pub events: Vec<SessionEvent>,
     pub turns: Vec<TurnSpan>,
+    pub running: Option<RunningProjection>,
 }
 
 /// When an item began and was done, as its entry in `thread/items/list`
@@ -142,7 +145,8 @@ pub(super) fn project_timeline(
     for entry in timeline {
         projector.push(entry, &mut |turn, id| Ok(times.get(&(turn, id)).copied()), &mut events).expect("timed from memory");
     }
-    Projected { events, turns: projector.finish() }
+    let running = projector.running_projection();
+    Projected { events, turns: projector.finish(), running }
 }
 
 /// A projection of timeline entries handed to it one at a time, in order
@@ -155,8 +159,16 @@ pub(super) struct Projector<'a> {
     turns: Vec<TurnSpan>,
     /// Each turn's last span in `turns`.
     last: HashMap<String, usize>,
-    messages: HashMap<String, String>,
-    submissions: super::user_images::Submissions,
+    messages: HashMap<String, Arc<str>>,
+    submissions: Arc<super::user_images::Submissions>,
+}
+
+#[derive(Clone)]
+pub(super) struct RunningProjection {
+    pub span: TurnSpan,
+    at: Timestamp,
+    message: Option<Arc<str>>,
+    submissions: Arc<super::user_images::Submissions>,
 }
 
 /// When the item `id` of a turn began and was done (`Timing`), where known.
@@ -165,6 +177,21 @@ pub(super) type Timed<'t> = dyn FnMut(&str, &str) -> Result<Option<Timing>, Stri
 impl<'a> Projector<'a> {
     pub(super) fn new(running: Option<&'a str>, owner: Option<&'a fastctx_types::Address>, at: Timestamp) -> Self {
         Self { running, owner, at, turns: Vec::new(), last: HashMap::new(), messages: HashMap::new(), submissions: Default::default() }
+    }
+
+    pub(super) fn running_projection(&self) -> Option<RunningProjection> {
+        let turn = self.running?;
+        let span = self.turns.last().filter(|span| span.id == turn && !span.ended)?;
+        Some(RunningProjection { span: span.clone(), at: self.at, message: self.messages.get(turn).cloned(), submissions: self.submissions.clone() })
+    }
+
+    pub(super) fn resume(turn: &'a str, owner: Option<&'a fastctx_types::Address>, state: &RunningProjection) -> Self {
+        let mut projector = Self::new(Some(turn), owner, state.at);
+        projector.turns.push(state.span.clone());
+        projector.last.insert(turn.into(), 0);
+        projector.messages.extend(state.message.iter().map(|message| (turn.into(), message.clone())));
+        projector.submissions = state.submissions.clone();
+        projector
     }
 
     /// Projects `entry`, the next of the timeline, onto `events`.
@@ -188,7 +215,7 @@ impl<'a> Projector<'a> {
                 if let Some(completed) = timing.and_then(|timing| timing.completed) {
                     self.at = millis(Some(&Value::from(completed)));
                 }
-                let ordinal = self.submissions.observe(turn, item);
+                let ordinal = if item["type"] == "userMessage" { Arc::make_mut(&mut self.submissions).observe(turn, item) } else { None };
                 let facts = items::agent_facts(item);
                 if let Some(mut happened) = completed(turn, item, &mut self.messages) {
                     if let Happened::Heard { message: Some(message), .. } = &mut happened {
@@ -223,7 +250,7 @@ impl<'a> Projector<'a> {
                             how: turn_how(entry.get("status").and_then(Value::as_str)),
                             reason: entry.pointer("/error/message").and_then(Value::as_str).map(str::to_string),
                             duration_ms: entry.get("durationMs").and_then(Value::as_u64),
-                            last_message: self.messages.remove(turn),
+                            last_message: self.messages.remove(turn).map(|text| text.to_string()),
                         },
                     },
                 });
@@ -331,7 +358,7 @@ pub(super) async fn each_page(
     }
 }
 
-fn completed(turn: &str, raw: &Value, messages: &mut HashMap<String, String>) -> Option<Happened> {
+fn completed(turn: &str, raw: &Value, messages: &mut HashMap<String, Arc<str>>) -> Option<Happened> {
     match items::read(raw, true) {
         items::Read::Words { text, message } => Some(Happened::Heard {
             delivery: None,
@@ -343,7 +370,7 @@ fn completed(turn: &str, raw: &Value, messages: &mut HashMap<String, String>) ->
         }),
         items::Read::Item(item) => {
             if let What::Message { text } = &item.what {
-                messages.insert(turn.into(), text.clone());
+                messages.insert(turn.into(), Arc::from(text.as_str()));
             }
             Some(Happened::Finished { turn: turn.into(), item })
         }

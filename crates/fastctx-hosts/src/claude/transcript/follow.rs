@@ -226,11 +226,9 @@ pub fn tail(
         None => None,
     };
     let told: Vec<(String, String)> = beside.calls().map(|(id, call)| (id.to_string(), call.to_string())).collect();
-    let pairs: Vec<String> = told.iter().map(|(id, call)| format!("{id}@{call}")).collect();
-    if seam.offset > 0
-        && told.iter().zip(&pairs).any(|((id, _), pair)| seam.agents.contains_key(id) && !seam.told.contains(pair))
-    {
-        return Ok(Err(Restart::Unsupported("an agent before the seam told of another call")));
+    let pairs: Vec<String> = told.iter().map(|(_, call)| beside.told_of(call)).collect();
+    if seam.offset > 0 && told.iter().zip(&pairs).any(|((id, call), pair)| seam.agents.contains_key(id) && !told_before(seam, id, call, pair)) {
+        return Ok(Err(Restart::Unsupported("an agent before the seam told of otherwise")));
     }
     let transcript = project(scanned, &[], earlier, beside, seam.agents.clone(), super::Output::Context)?;
     // An agent the files beside tell of that no call started — before the
@@ -326,7 +324,13 @@ impl RowStore for HeldRows {
     }
 
     fn note_block(&self, id: &str, result: bool, row: usize, index: usize) -> io::Result<()> {
-        self.blocks.borrow_mut().entry(id.to_owned()).or_default().push((result, row, index));
+        // No more of a side than `blocks` gives: a tool use named in very
+        // many rows is not gone through for each of them.
+        let mut blocks = self.blocks.borrow_mut();
+        let noted = blocks.entry(id.to_owned()).or_default();
+        if noted.iter().filter(|(of, ..)| *of == result).count() < 2 {
+            noted.push((result, row, index));
+        }
         Ok(())
     }
 
@@ -378,6 +382,11 @@ pub const KEY_CALL: &str = "c:";
 pub const KEY_ANSWER: &str = "a:";
 pub const KEY_TAKEN_BACK: &str = "x:";
 pub const KEY_SOURCE: &str = "s:";
+/// And the record ids it names that no row before the place bears: its
+/// parent, where it is a row a compaction's summary is found through (the
+/// summary, or what Claude Code writes between it and its compaction); and
+/// what a compaction says it kept.
+pub const KEY_PARENT: &str = "n:";
 
 /// The record ids `row` takes back (`project_rows`, `removed`).
 fn taken_back(row: &super::Row) -> impl Iterator<Item = &str> {
@@ -400,10 +409,39 @@ fn calls_of(row: &super::Row) -> impl Iterator<Item = (bool, &str)> {
     })
 }
 
-/// The keys `row` leaves for the rows after it (`KEY_ROW`).
-fn keys_left(row: &super::Row, each: &mut dyn FnMut(&str) -> io::Result<()>) -> io::Result<()> {
+/// The keys `row` leaves for the rows after it (`KEY_ROW`); `before` says
+/// whether a record id is of a row before the place the keys are left for.
+fn keys_left(row: &super::Row, before: &dyn Fn(&str) -> io::Result<bool>, each: &mut dyn FnMut(&str) -> io::Result<()>) -> io::Result<()> {
     if let Some(uuid) = row.value.get("uuid").and_then(Value::as_str) {
         each(&format!("{KEY_ROW}{uuid}"))?;
+    }
+    // A summary is found from its compaction along its parents, through
+    // what is no message (`summarized`): a parent not written yet, once it
+    // comes, joins what stands before the place.
+    let message = matches!(row.kind(), Some("user" | "assistant")) && row.value["isCompactSummary"] != true;
+    if !message
+        && let Some(parent) = row.value.get("parentUuid").and_then(Value::as_str)
+        && !before(parent)?
+    {
+        each(&format!("{KEY_PARENT}{parent}"))?;
+    }
+    // And what a compaction names of what it kept: one of them written
+    // later changes what the compaction is told to hold.
+    if row.compaction() {
+        let metadata = &row.value["compactMetadata"];
+        let named = [
+            &row.value["logicalParentUuid"],
+            &metadata["preservedSegment"]["headUuid"],
+            &metadata["preservedSegment"]["tailUuid"],
+            &metadata["preservedSegment"]["anchorUuid"],
+            &metadata["preservedMessages"]["anchorUuid"],
+        ];
+        let kept = metadata["preservedMessages"]["uuids"].as_array().into_iter().flatten();
+        for uuid in named.into_iter().chain(kept).filter_map(Value::as_str) {
+            if !before(uuid)? {
+                each(&format!("{KEY_PARENT}{uuid}"))?;
+            }
+        }
     }
     for (answer, id) in calls_of(row) {
         each(&format!("{}{id}", if answer { KEY_ANSWER } else { KEY_CALL }))?;
@@ -434,9 +472,12 @@ fn refers_back<L: Rows>(rows: &L, held: Before<'_>) -> io::Result<Option<&'stati
         if let Some(uuid) = row.value.get("uuid").and_then(Value::as_str) {
             asked.push((format!("{KEY_TAKEN_BACK}{uuid}"), "a row taken back before it was written"));
             asked.push((format!("{KEY_SOURCE}{uuid}"), "a row an answer named as its call's before it was written"));
+            asked.push((format!("{KEY_PARENT}{uuid}"), "a row a compaction before where it was read through names"));
         }
         if let Some(source) = row.value.get("sourceToolAssistantUUID").and_then(Value::as_str) {
             asked.push((format!("{KEY_ROW}{source}"), "an answer naming a row before where it was read through as its call's"));
+            // An answer to a call of a row taken back is not shown.
+            asked.push((format!("{KEY_TAKEN_BACK}{source}"), "an answer to a call of a row taken back before it was written"));
         }
         Ok(())
     })?;
@@ -551,7 +592,15 @@ pub fn tail_kept(
             _ => None,
         };
         if let Some((from, to)) = span {
-            scanned.rows.each(&mut |_, row| if row.start >= from && row.start < to { keys_left(row, read_past) } else { Ok(()) })?;
+            // Of a row before the place: among the rows read, starting
+            // before it.
+            let before = |uuid: &str| -> io::Result<bool> {
+                match scanned.rows.index_of(uuid)? {
+                    Some(index) => Ok(scanned.rows.row(index)?.start < to),
+                    None => Ok(false),
+                }
+            };
+            scanned.rows.each(&mut |_, row| if row.start >= from && row.start < to { keys_left(row, &before, read_past) } else { Ok(()) })?;
         }
     }
     let beside = subagents::beside(path);
@@ -606,11 +655,22 @@ pub fn tail_kept(
         None => None,
     };
     let told: Vec<(String, String)> = beside.calls().map(|(id, call)| (id.to_string(), call.to_string())).collect();
-    let pairs: Vec<String> = told.iter().map(|(id, call)| format!("{id}@{call}")).collect();
-    if seam.offset > 0
-        && told.iter().zip(&pairs).any(|((id, _), pair)| seam.agents.contains_key(id) && !seam.told.contains(pair))
-    {
-        return Ok(Err(Restart::Unsupported("an agent before the seam told of another call")));
+    let pairs: Vec<String> = told.iter().map(|(_, call)| beside.told_of(call)).collect();
+    if seam.offset > 0 && told.iter().zip(&pairs).any(|((id, call), pair)| seam.agents.contains_key(id) && !told_before(seam, id, call, pair)) {
+        return Ok(Err(Restart::Unsupported("an agent before the seam told of otherwise")));
+    }
+    // Read on from a place inside a turn, the files beside the record are
+    // to tell just what they told as the place was read through: one come,
+    // gone or changed since may tell otherwise of a row before the place —
+    // an agent's start there, a notice of one not known then — which a
+    // reading from the seam shows.
+    if read_on.is_some() {
+        let (mut now, mut then) = (pairs.clone(), seam.told.clone());
+        now.sort_unstable();
+        then.sort_unstable();
+        if now != then {
+            return Ok(Err(Restart::Unsupported("the agents' files beside the record telling otherwise")));
+        }
     }
     let unlinked: Vec<String> = told
         .into_iter()
@@ -627,6 +687,16 @@ pub fn tail_kept(
     };
     let (next, read) = (next.map(&finish), read.map(&finish));
     Ok(Ok(Tail { transcript, seam: next, end, since, seam_at, prefix_ids: Vec::new(), read }))
+}
+
+/// Whether the file beside the record told of the agent `id`, of the call
+/// `call`, at the reading that placed `seam` as it tells of it now (`told`,
+/// `Beside::told_of`): the same call, and of what the file says of the
+/// agent — its kind, its task, whether it works on in the background — the
+/// same. A seam placed before these were kept tells the call alone, and is
+/// taken at its word until it is placed again.
+fn told_before(seam: &Seam, id: &str, call: &str, told: &str) -> bool {
+    seam.told.iter().any(|before| before == told) || seam.told.iter().any(|before| before.len() == id.len() + 1 + call.len() && before.strip_prefix(id).and_then(|rest| rest.strip_prefix('@')) == Some(call))
 }
 
 /// Whether `[from, to)` of `file` hashes to `expected` read again.
@@ -757,6 +827,14 @@ fn next_seam<L: Rows>(rows: &L, seam: &Seam, accept: &dyn Fn(Timestamp) -> bool)
         if since.is_none() {
             since = time;
         }
+        // A row after a place read through whose time is no later than the
+        // latest before the place would stand, by its time, among what the
+        // place leaves unread: no such place is given.
+        if let (Some((_, _, Some(before), _)), Some(time)) = (&inner, time)
+            && time <= *before
+        {
+            inner = None;
+        }
         if in_order
             && waiting.is_empty()
             && row.start > seam.offset
@@ -776,7 +854,9 @@ fn next_seam<L: Rows>(rows: &L, seam: &Seam, accept: &dyn Fn(Timestamp) -> bool)
         for block in row.blocks().into_iter().flatten() {
             match (row.kind(), block.get("type").and_then(Value::as_str)) {
                 (Some("assistant"), Some("tool_use")) => {
-                    if let Some(id) = block.get("id").and_then(Value::as_str) {
+                    // One with no id is paired with no answer (`Pairs`):
+                    // none is waited for.
+                    if let Some(id) = block.get("id").and_then(Value::as_str).filter(|id| !id.is_empty()) {
                         waiting.insert(id.to_string(), 0);
                     }
                 }
@@ -945,7 +1025,10 @@ fn prefix_holds(file: &mut File, seam: &Seam) -> io::Result<bool> {
     let checked: Vec<usize> = if count < 2 {
         (0..count).collect()
     } else {
-        let turn = (Timestamp::now().as_nanosecond().unsigned_abs() % (count as u128 - 1)) as usize;
+        // In turn over every advance of the process: a clock's last digits
+        // are not spread over the blocks on every system (codex-8d58c146).
+        static TURN: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let turn = TURN.fetch_add(1, std::sync::atomic::Ordering::Relaxed) % (count - 1);
         vec![count - 1, turn]
     };
     let mut bytes = vec![0u8; BLOCK as usize];

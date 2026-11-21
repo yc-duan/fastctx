@@ -958,7 +958,9 @@ impl RemoteCall {
         use crate::sync::transfer::Purpose;
         match self {
             Self::Timeline { .. } | Self::Topics { .. } => Some(Purpose::Observation),
-            Self::Assets => Some(Purpose::AssetSync),
+            // The asset lines, and what a machine's owner asks of the copies its
+            // library holds.
+            Self::Assets | Self::Copies { .. } => Some(Purpose::AssetSync),
             Self::SetAgentWeek { .. } | Self::ResetAgentUsage { .. } => Some(Purpose::ExecutionControl),
             Self::AddAgentLogin { .. }
             | Self::AgentActivity { .. }
@@ -976,7 +978,6 @@ impl RemoteCall {
             | Self::ChangeAgentLogin { .. }
             | Self::ChangeAgentModels { .. }
             | Self::ClaudeConsent { .. }
-            | Self::Copies { .. }
             | Self::Collaboration { .. }
             | Self::CommitAttachment { .. }
             | Self::Composer { .. }
@@ -1059,6 +1060,7 @@ impl RemoteReply {
         use crate::sync::transfer::Purpose;
         match self {
             Self::Timeline { .. } | Self::Topics { .. } => Some(Purpose::Observation),
+            Self::Copies { .. } => Some(Purpose::AssetSync),
             Self::AgentActivity { .. }
             | Self::AgentCalls { .. }
             | Self::AgentChangePreview { .. }
@@ -1072,7 +1074,6 @@ impl RemoteReply {
             | Self::Book { .. }
             | Self::Canon { .. }
             | Self::ClaudeConsent { .. }
-            | Self::Copies { .. }
             | Self::Collaboration { .. }
             | Self::Composer { .. }
             | Self::ComposerUploaded { .. }

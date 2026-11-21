@@ -31,6 +31,11 @@ pub(crate) struct Window {
     pub seam: Seam,
     /// Before when the events are settled from now on.
     pub settled: Timestamp,
+    /// A place inside the turn that runs that the thread is read through
+    /// (`fastctx_hosts::codex::follow::onward`): from there it is read on
+    /// while only that turn grows. None where no turn runs, the thread was
+    /// read whole into a store, or its last entry is not done.
+    pub through: Option<fastctx_hosts::codex::follow::onward::Through>,
 }
 
 /// The window of `resident`'s thread past `from`, placed against the
@@ -61,7 +66,7 @@ pub(crate) async fn window(
     }
     let since = if tail.whole { Timestamp::MIN } else { tail.since.unwrap_or(Timestamp::MAX) };
     let settled = tail.settled.unwrap_or(since);
-    Ok(Some(Window { events: tail.events, kept: tail.kept, whole: tail.whole, since, seam: tail.seam, settled }))
+    Ok(Some(Window { events: tail.events, kept: tail.kept, whole: tail.whole, since, seam: tail.seam, settled, through: tail.through }))
 }
 
 /// A whole reading of a thread kept on disk as it is read (design §28.51),

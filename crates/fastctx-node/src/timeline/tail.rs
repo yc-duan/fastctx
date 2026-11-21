@@ -26,8 +26,16 @@ use std::collections::HashMap;
 use std::sync::{Arc, LazyLock, Mutex};
 use std::time::{Duration, Instant};
 
+mod codex_onward;
 mod onward;
-pub(crate) use onward::forget as forget_windows;
+pub(crate) use onward::LEFT_MOST;
+
+/// Lets go every window a timeline is written on from inside a turn by
+/// (`onward`, `codex_onward`): each is made again by a reading from its seam.
+pub(crate) fn forget_windows() {
+    onward::forget();
+    codex_onward::forget();
+}
 
 /// The kind of job that brings a conversation's timeline in the asset
 /// library to its history.
@@ -413,7 +421,9 @@ enum Next {
         /// the rows before it leave (`claude::history::Window::read`).
         read: Option<Box<(Seam, Vec<u64>)>>,
     },
-    Codex(CodexSeam),
+    /// A Codex thread's seam, and the place inside its running turn it is
+    /// read through (`codex::follow::Window::through`).
+    Codex(CodexSeam, Option<Box<fastctx_hosts::codex::follow::onward::Through>>),
 }
 
 /// Whether `event` is one a Codex reading tells again each time: the
@@ -907,6 +917,20 @@ async fn produce_step(
             step => return Ok(step),
         }
     }
+    // And a Codex thread whose running turn only grew past the place it was
+    // read through there (`codex_onward`).
+    if follows
+        && agent == "codex"
+        && !whole
+        && !checked
+        && audit.is_none()
+        && let Some(stood) = stood
+    {
+        match codex_onward::advance(node, resident, &about, &library, &name, epoch, &state, stood, &version, runs_now, producing.clone()).await? {
+            onward::Step::Seam => {}
+            step => return Ok(step),
+        }
+    }
     fastctx_platform::readings::counter_of("timeline.looks", if !follows { "whole" } else if agent == "claude" { "claude_from_the_seam" } else { "codex" }).add(1);
     let window = if follows {
         // What Codex said so far is in the World's record before it is read.
@@ -1003,7 +1027,8 @@ async fn produce_step(
                     } else {
                         (window.events.iter().filter(|event| told_again(event)).cloned().collect(), None)
                     };
-                    Followed { told, events: window.events, whole: window.whole, since: window.since, settled: window.settled, next: Next::Codex(window.seam), kept }
+                    let next = Next::Codex(window.seam, window.through.map(Box::new));
+                    Followed { told, events: window.events, whole: window.whole, since: window.since, settled: window.settled, next, kept }
                 })
             };
             // The host read whole of its own accord (a seam gone, a settled
@@ -1028,14 +1053,28 @@ async fn produce_step(
     };
     let (signer, hub) = (kept.signer(), placed.hub.clone());
     let written_to = placed.scope.clone();
+    // What a Codex window written on from inside its running turn stands on,
+    // where this reading read the thread through a place there.
+    let mut codex_seeded: Option<(fastctx_hosts::codex::follow::onward::Through, Vec<SessionEvent>, Vec<SessionEvent>)> = None;
     let (wrote, next, unread, judged) = match window {
         Some((window, world, open)) => {
-            let (world_from, world_open, latest, running) = {
+            // The latest time before the place the record was read through,
+            // where it was read through one: what the World tells later than
+            // it is a window's too (`onward`).
+            let read_after = match &window.next {
+                Next::Claude { read: Some(read), .. } => Some(read.0.latest),
+                _ => None,
+            };
+            let (world_from, world_open, latest, running, later) = {
                 let (world, settled, from) = (world.clone(), window.settled, state.world_from);
                 fastctx_platform::task::blocking(move || -> Result<_, String> {
                     let world = world.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
                     let (through, open) = world.world_after(open, settled, from)?;
-                    Ok((through, open, world.latest(), world.running()))
+                    let later = match read_after {
+                        Some(after) => world.later_than(after, onward::WORLD_MOST)?,
+                        None => None,
+                    };
+                    Ok((through, open, world.latest(), world.running(), later))
                 })
                 .await
                 .map_err(Failure::new)?
@@ -1055,6 +1094,7 @@ async fn produce_step(
             let host_told: Vec<serde_json::Value> = window.told.iter().filter_map(|event| serde_json::to_value(event).ok()).collect();
             let (whole, since, settled) = (window.whole, window.since, window.settled);
             let stood = Stood { name: name.clone(), held: state.held, told: state.told.clone(), floor: state.floor, holding: state.holding, generation };
+            let mut codex_judged: Option<(Vec<SessionEvent>, Vec<SessionEvent>)> = None;
             let Placement { wrote, floor: settled_floor, held, told, before_seam } = match window.kept {
                 // Read whole and kept on disk: made into the history there
                 // and written a batch at a time (design §28.51).
@@ -1101,6 +1141,11 @@ async fn produce_step(
                         .map_err(Failure::new)?
                     };
                     let recorded = if agent == "codex" { crate::codex::watch::recorded(recorded, &window.events) } else { recorded };
+                    // What a Codex window written on stands on: the World's
+                    // record as merged, and what the host told again.
+                    if matches!(window.next, Next::Codex(_, Some(_))) {
+                        codex_judged = Some((recorded.clone(), window.told.clone()));
+                    }
                     let history = {
                         let (assembling, whose, folder, events, agent) = (node.clone(), resident.clone(), directory.clone(), window.events, agent.to_string());
                         let held = producing.clone();
@@ -1113,7 +1158,7 @@ async fn produce_step(
                     if whole {
                         reset(&library, &name, epoch, producing.clone()).await?;
                     }
-                    let reading = Reading { history, host_told, whole, since, settled, codex: matches!(window.next, Next::Codex(_)) };
+                    let reading = Reading { history, host_told, whole, since, settled, codex: matches!(window.next, Next::Codex(..)) };
                     let (writing, signer, whose, placed, held) = (library.clone(), signer.clone(), resident.clone(), placed, producing.clone());
                     fastctx_platform::task::blocking(move || {
                         let _held = held;
@@ -1155,8 +1200,8 @@ async fn produce_step(
                     let unread = seen.is_some() && !kept_here && seen != state.kept;
                     // What a window written on from the place this reading
                     // read the record through stands on (`onward::seed`).
-                    let judged = match (read.map(|read| *read), world_names) {
-                        (Some((read, left)), Some(names)) if !unread => Some(onward::Judged { read, left, turn: running, names, whole }),
+                    let judged = match (read.map(|read| *read), world_names, later) {
+                        (Some((read, left)), Some(names), Some(world)) if !unread => Some(onward::Judged { read, left, turn: running, names, whole, world }),
                         _ => None,
                     };
                     let next = Following {
@@ -1181,7 +1226,8 @@ async fn produce_step(
                     };
                     (next, unread, judged)
                 }
-                Next::Codex(seam) => {
+                Next::Codex(seam, through) => {
+                    codex_seeded = through.zip(codex_judged).map(|(through, (recorded, told))| (*through, recorded, told));
                     let next = Following {
                         form: FORM,
                         version,
@@ -1351,6 +1397,10 @@ async fn produce_step(
     match judged {
         Some(judged) => onward::seed(node, resident, &library, &written_to, &next, &state, judged, producing.clone()).await,
         None => onward::forget_of(resident),
+    }
+    match codex_seeded {
+        Some((through, recorded, told)) => codex_onward::seed(node, resident, &library, &written_to, &state, through, recorded, told, producing.clone()).await,
+        None => codex_onward::forget_of(resident),
     }
     Ok(Done(Produced { written: wrote.written, gone: wrote.gone, unread, long_changed, verified, handing: false, read: true }))
 }
@@ -1718,8 +1768,22 @@ async fn run(node: &Arc<Node>, resident: &ResidentId) -> Outcome {
     // over), and every `BESIDE_EVERY` at least.
     let due = BESIDE_MADE.lock().expect("beside timelines made").get(resident).is_none_or(|made| made.elapsed() >= BESIDE_EVERY);
     if !(asked || due || produced.as_ref().map_or(true, |produced| produced.read)) {
+        // Its file changes are made of the timeline itself: made again
+        // whenever the timeline was written.
+        let mut beside_failed = false;
+        if produced.as_ref().is_ok_and(|produced| produced.written + produced.gone > 0) {
+            match super::file_changes::produce(node, resident, &PRODUCING).await {
+                Ok(0) => {}
+                Ok(written) => node.log.line(format_args!("{resident}'s file changes: {written} written")),
+                Err(error) => {
+                    beside_failed = true;
+                    BESIDE.lock().expect("beside timelines").insert(resident.clone());
+                    node.log.line(format_args!("{resident}'s file changes: {error}"));
+                }
+            }
+        }
         BROUGHT.lock().expect("brought timelines").insert(resident.clone(), (Instant::now(), begun.elapsed()));
-        return match brought(node, resident, begun, produced, false) {
+        return match brought(node, resident, begun, produced, beside_failed) {
             Outcome::Again { after } => Outcome::Again { after: resting(node, resident).map_or(after, |rest| rest.max(after)) },
             outcome => outcome,
         };
@@ -1794,7 +1858,14 @@ async fn run(node: &Arc<Node>, resident: &ResidentId) -> Outcome {
     } else {
         BESIDE_MADE.lock().expect("beside timelines made").insert(resident.clone(), Instant::now());
     }
-    BROUGHT.lock().expect("brought timelines").insert(resident.clone(), (Instant::now(), begun.elapsed()));
+    // A look that failed rests no longer than its job's failures say: resting
+    // as one that brought it would put the job back before it counted as
+    // failed, each time (codex-15695bc9).
+    if produced.is_ok() {
+        BROUGHT.lock().expect("brought timelines").insert(resident.clone(), (Instant::now(), begun.elapsed()));
+    } else {
+        BROUGHT.lock().expect("brought timelines").remove(resident);
+    }
     // Looked at again no sooner than it rests.
     match brought(node, resident, begun, produced, beside_failed) {
         Outcome::Again { after } => Outcome::Again { after: resting(node, resident).map_or(after, |rest| rest.max(after)) },
@@ -2289,17 +2360,18 @@ pub mod bench {
         /// `claude_follow_twice` first does; then, at each of `looks` looks,
         /// after `between` grew the record for it, writes the timeline on
         /// from the place the record was read through (`onward`): only the
-        /// rows from there on read, only what they show written. How many
-        /// items the first reading wrote, and of each look how long it took
-        /// and how many it wrote. A look that cannot be written on fails:
-        /// the record the bench grows is one that can.
+        /// rows from there on read, only what they show written, with what
+        /// `between` says the World recorded meanwhile put among them. How
+        /// many items the first reading wrote, and of each look how long it
+        /// took and how many it wrote. A look that cannot be written on
+        /// fails: the record the bench grows is one that can.
         pub fn claude_follow_on(
             &self,
             path: &std::path::Path,
             began: Timestamp,
             root: std::path::PathBuf,
             looks: usize,
-            between: &mut dyn FnMut(usize) -> Result<(), String>,
+            between: &mut dyn FnMut(usize) -> Result<Vec<SessionEvent>, String>,
         ) -> Result<(usize, Vec<(f64, usize)>), String> {
             use fastctx_hosts::claude::transcript::follow;
             let failed = |error: fastctx_content::Error| error.to_string();
@@ -2340,16 +2412,17 @@ pub mod bench {
             let seen = (self.library.clone(), prefix_name(&self.resident), generation);
             self.library.sweep_held(&name, Some(placement.held)).map_err(failed)?;
             let place = tail.read.clone().ok_or("the reading read the record through no place inside the turn")?;
-            let judged = onward::Judged { read: place, left, turn: None, names, whole: true };
+            let judged = onward::Judged { read: place, left, turn: None, names, whole: true, world: Vec::new() };
             let shown = onward::Window::read_from(path, &judged, Some(&seen))?;
             let mut window = onward::Window::seeded(&self.library, &self.placed.scope, None, [0; 32], "bench".into(), judged, shown)
                 .map_err(|failure| failure.message)?
                 .map_err(|why| format!("no window is held: {why}"))?;
             let mut took = Vec::with_capacity(looks);
             for look in 0..looks {
-                between(look)?;
+                let world = between(look)?;
                 let started = std::time::Instant::now();
-                let wrote = window.look(path, &self.library, self.signer.clone(), &self.resident, &self.placed, &name, placement.held, Some(placement.wrote.holding), Some(&seen))?;
+                let wrote =
+                    window.look(path, &self.library, self.signer.clone(), &self.resident, &self.placed, &name, placement.held, Some(placement.wrote.holding), Some(&seen), world)?;
                 if !wrote.holds {
                     return Err("the window is not held on".into());
                 }

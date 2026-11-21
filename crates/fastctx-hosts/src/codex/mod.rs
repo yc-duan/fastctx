@@ -863,12 +863,30 @@ impl CodexHost {
         }
     }
 
+    /// What the thread's running turn shows past a place inside it that a
+    /// reading from its seam read it through (`follow::onward::Through`):
+    /// only the entries listed after that place. Why not, where what lies
+    /// there cannot be shown alone — the turn ended, words steered into it,
+    /// an entry not done, the place gone — or the turn it runs changed as it
+    /// was read.
+    pub async fn read_onward(
+        self: &Arc<Self>,
+        thread: &str,
+        owner: &fastctx_types::Address,
+        through: &follow::onward::Through,
+    ) -> Result<Result<follow::onward::Delta, &'static str>, String> {
+        let server = self.server().await?;
+        let running = self.running_turn(thread);
+        let answer = follow::onward::read(&server, thread, running.as_deref(), Some(owner), through).await?;
+        if self.running_turn(thread) != running {
+            return Ok(Err("the running turn changed during the read"));
+        }
+        Ok(answer)
+    }
+
     /// What the thread is like now, as Codex says without reading its turns:
     /// it changes whenever the thread does, so equal stamps mean its history
-    /// is as it was. A turn this host runs in it is part of it; so is where
-    /// its timeline ends, where Codex lists one: Codex tells when a thread
-    /// last changed to the second, and what is added within the second of
-    /// the reading before would else be read only once something more is.
+    /// is as it was. A turn this host runs in it is part of it.
     pub async fn stamp(self: &Arc<Self>, thread: &str) -> Result<String, String> {
         let server = self.server().await?;
         let asking = json!({"threadId": thread, "includeTurns": false});
@@ -880,12 +898,7 @@ impl CodexHost {
             }
             answer => answer?,
         };
-        let end = match server.ask("thread/timeline/list", json!({"threadId": thread, "limit": 1})).await {
-            Ok(page) => page["data"].as_array().and_then(|data| data.iter().filter_map(|entry| entry["position"].as_u64()).max()),
-            // A Codex without it, or one refusing it for this thread.
-            Err(_) => None,
-        };
-        Ok(format!("{}|{:?}|{end:?}", answer["thread"], self.running_turn(thread)))
+        Ok(format!("{}|{:?}", answer["thread"], self.running_turn(thread)))
     }
 
     /// The rollout belongs to this host's thread. Only this host chooses

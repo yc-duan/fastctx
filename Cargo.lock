@@ -1306,7 +1306,6 @@ dependencies = [
  "fastctx-platform",
  "fastctx-ripgrep",
  "fastctx-serve",
- "fastctx-storage",
  "fastctx-tui",
  "fastctx-types",
  "fastctx-uninstall",

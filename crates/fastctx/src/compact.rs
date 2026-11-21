@@ -32,12 +32,10 @@ pub fn run(args: CompactArgs) -> anyhow::Result<()> {
 #[cfg(target_os = "linux")]
 pub(crate) mod linux {
     use std::fs;
-    use std::path::{Path, PathBuf};
-    use std::time::Duration;
+    use std::path::PathBuf;
 
     use anyhow::{Context, bail};
     use fastctx_node::login_moves::ServiceBefore;
-    use fastctx_storage::rusqlite;
     use serde::{Deserialize, Serialize};
 
     use super::CompactArgs;
@@ -50,9 +48,6 @@ pub(crate) mod linux {
         service: Option<ServiceBefore>,
         at: jiff::Timestamp,
     }
-
-    /// The databases of the asset library.
-    const DATABASES: [&str; 2] = ["assets.sqlite3", "asset-bytes.sqlite3"];
 
     /// Where a compaction keeps what it does while it goes: there, one was
     /// cut short.
@@ -109,7 +104,7 @@ pub(crate) mod linux {
             // library's own disk, not a small /tmp.
             // SAFETY: set before any thread of this command opens a database.
             unsafe { std::env::set_var("SQLITE_TMPDIR", &dir) };
-            DATABASES.iter().map(|name| compact(&dir.join(name))).collect()
+            fastctx_node::compact_library(&dir).context("compacting the library")
         })();
         let put = put_service_back(&here, service.as_ref());
         match &compacted {
@@ -123,43 +118,5 @@ pub(crate) mod linux {
         put?;
         fs::remove_file(&kept).context("forgetting the compaction")?;
         compacted.map(|_| ())
-    }
-
-    fn with_log(path: &Path) -> u64 {
-        let log = PathBuf::from(format!("{}-wal", path.display()));
-        fs::metadata(path).map_or(0, |found| found.len()) + fs::metadata(log).map_or(0, |found| found.len())
-    }
-
-    /// Compacts the database at `path`, where its disk has the room: what it
-    /// came to, said. Another connection still open — a writer of a node
-    /// that let its lock go before it ended — may have it fail as busy, the
-    /// database unharmed: before it is compacted, nothing is done; after,
-    /// the room comes back once its log is folded in, at the next run.
-    fn compact(path: &Path) -> anyhow::Result<String> {
-        let name = path.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default();
-        if !path.exists() {
-            return Ok(format!("{name}: not there"));
-        }
-        let connection = rusqlite::Connection::open(path).with_context(|| format!("opening {name}"))?;
-        connection.busy_timeout(Duration::from_secs(10))?;
-        let fold = |connection: &rusqlite::Connection| -> anyhow::Result<()> {
-            let busy: i64 = connection.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |row| row.get(0))?;
-            if busy != 0 {
-                bail!("{name}'s log could not be folded in: something else has it open");
-            }
-            Ok(())
-        };
-        fold(&connection)?;
-        let before = with_log(path);
-        let free = fastctx_platform::space::available(path)?;
-        let needed = before.saturating_mul(2).saturating_add(1 << 30);
-        if free < needed {
-            return Ok(format!("{name}: left as it is, {} MiB free where {} MiB are needed", free >> 20, needed >> 20));
-        }
-        connection.execute_batch("VACUUM;").with_context(|| format!("compacting {name}"))?;
-        fold(&connection)?;
-        drop(connection);
-        let after = with_log(path);
-        Ok(format!("{name}: {} MiB -> {} MiB", before >> 20, after >> 20))
     }
 }
