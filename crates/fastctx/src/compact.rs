@@ -79,7 +79,7 @@ pub(crate) mod linux {
             let compacting: Compacting = serde_json::from_slice(&bytes).context("reading what the compaction kept")?;
             put_service_back(&here, compacting.service.as_ref())?;
             fs::remove_file(&kept).context("forgetting the compaction")?;
-            println!("the node's service is as it was before the compaction");
+            println!("the compaction cut short is settled: its node's service is put back as said");
             return Ok(());
         }
         if there(&kept)? {
@@ -132,8 +132,9 @@ pub(crate) mod linux {
 
     /// Compacts the database at `path`, where its disk has the room: what it
     /// came to, said. Another connection still open — a writer of a node
-    /// that let its lock go before it ended — leaves it untouched: its log is
-    /// not folded in, or SQLite refuses the compaction as busy.
+    /// that let its lock go before it ended — may have it fail as busy, the
+    /// database unharmed: before it is compacted, nothing is done; after,
+    /// the room comes back once its log is folded in, at the next run.
     fn compact(path: &Path) -> anyhow::Result<String> {
         let name = path.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default();
         if !path.exists() {

@@ -82,16 +82,16 @@ fn asks_behind_the_gate() {
     // A conversation born on m1, opened by root: m1 describes it; m2, bob's, cannot.
     let readers = Readers::Conversation { openers: vec![root.clone()], born_on: Some(m1.clone()) };
     let classes = fastctx_types::assets::conversation_classes();
-    let describe = Request::Describe { scope: conv1.into(), readers: readers.clone(), classes: classes.clone(), born: Default::default() };
+    let describe = Request::Describe { scope: conv1.into(), readers: readers.clone(), classes: classes.clone(), born: Default::default(), begun: None };
     let Reply::Described { descriptor } = ask(&store, &m1, &k1, describe.clone()).unwrap() else { panic!("described") };
     assert!(heard_word(&assets.public(), &descriptor.fact.0, &descriptor.word.0).is_some(), "the hub's word");
     let Reply::Described { descriptor: again } = ask(&store, &m1, &k1, describe).unwrap() else { panic!() };
     assert_eq!(again, descriptor, "the same description again is the same descriptor");
-    let bobs = Request::Describe { scope: conv1.into(), readers: Readers::Conversation { openers: vec![bob.clone()], born_on: None }, classes: classes.clone(), born: Default::default() };
+    let bobs = Request::Describe { scope: conv1.into(), readers: Readers::Conversation { openers: vec![bob.clone()], born_on: None }, classes: classes.clone(), born: Default::default(), begun: None };
     assert!(ask(&store, &m2, &k2, bobs).is_err(), "a key under another's prefix");
-    let theirs = Request::Describe { scope: conv1.into(), readers: readers.clone(), classes: classes.clone(), born: Default::default() };
+    let theirs = Request::Describe { scope: conv1.into(), readers: readers.clone(), classes: classes.clone(), born: Default::default(), begun: None };
     assert!(ask(&store, &m2, &k2, theirs).is_err(), "only the machine it was born on describes it");
-    let unprefixed = Request::Describe { scope: "conv-2".into(), readers: readers.clone(), classes: classes.clone(), born: Default::default() };
+    let unprefixed = Request::Describe { scope: "conv-2".into(), readers: readers.clone(), classes: classes.clone(), born: Default::default(), begun: None };
     assert!(ask(&store, &m1, &k1, unprefixed).is_err(), "a key under its readers' prefix");
     let read: fastctx_types::assets::Descriptor = serde_json::from_slice(&descriptor.fact.0).unwrap();
     assert_eq!(read.hub, store.hub.id.as_str());
@@ -105,12 +105,30 @@ fn asks_behind_the_gate() {
         readers: readers.clone(),
         classes: classes.clone(),
         born: [("account:root".to_string(), opened.to_string())].into_iter().collect(),
+        begun: None,
     };
     let earlier = ask(&store, &m1, &k1, begun("1")).unwrap_err();
     assert!(earlier.contains(fastctx_types::assets::BEGUN_FOR_ANOTHER), "{earlier}");
     assert!(matches!(ask(&store, &m1, &k1, begun(&root_now)).unwrap(), Reply::Described { .. }), "begun for the one there now");
+    // Described already: given again only to one that began it for the same.
+    let again = ask(&store, &m1, &k1, begun("1")).unwrap_err();
+    assert!(again.contains(fastctx_types::assets::BEGUN_FOR_ANOTHER), "{again}");
+    // Who it was begun for not known, when it was begun is: begun long before
+    // root was opened, it was not root's.
+    let conv4 = format!("c/{}/m1/conv-4", assets.id);
+    let at = |begun: i64| Request::Describe {
+        scope: conv4.clone(),
+        readers: readers.clone(),
+        classes: classes.clone(),
+        born: Default::default(),
+        begun: Some(begun),
+    };
+    let long_before = ask(&store, &m1, &k1, at(1)).unwrap_err();
+    assert!(long_before.contains(fastctx_types::assets::BEGUN_FOR_ANOTHER), "{long_before}");
+    let now = jiff::Timestamp::now().as_millisecond();
+    assert!(matches!(ask(&store, &m1, &k1, at(now)).unwrap(), Reply::Described { .. }), "begun since root was opened");
     // An account's own scope: the cached answer passes the read gate too.
-    let roots = Request::Describe { scope: own("root", "settings"), readers: Readers::Account { account: root.clone() }, classes: fastctx_types::assets::records_classes(), born: Default::default() };
+    let roots = Request::Describe { scope: own("root", "settings"), readers: Readers::Account { account: root.clone() }, classes: fastctx_types::assets::records_classes(), born: Default::default(), begun: None };
     assert!(matches!(ask(&store, &m1, &k1, roots.clone()).unwrap(), Reply::Described { .. }));
     assert!(ask(&store, &m2, &k2, roots).is_err(), "bob's machine is not given root's descriptor");
     // A first word bound to the chain's start opens a session; it seals nothing.
@@ -370,7 +388,7 @@ fn asks_behind_the_gate() {
     println!("several frames in one take: ok");
 
     // Bob's account made again under his name reads nothing of what the old one did.
-    let bobs_own = Request::Describe { scope: own("bob", "notes"), readers: Readers::Account { account: bob.clone() }, classes: fastctx_types::assets::records_classes(), born: Default::default() };
+    let bobs_own = Request::Describe { scope: own("bob", "notes"), readers: Readers::Account { account: bob.clone() }, classes: fastctx_types::assets::records_classes(), born: Default::default(), begun: None };
     assert!(matches!(ask(&store, &m2, &k2, bobs_own.clone()).unwrap(), Reply::Described { .. }));
     let streams = Request::Streams { scope: own("bob", "notes") };
     assert!(ask(&store, &m2, &k2, streams.clone()).is_ok());
@@ -503,9 +521,9 @@ fn bodies_outlive_their_machine() {
     store.book_edit = crate::store::BookEdit::Full;
     store.save_book().unwrap();
     let theirs = Readers::Body { body: body.clone(), opener: dave.clone() };
-    assert!(ask(&store, &m1, &k1, Request::Describe { scope: key.clone(), readers: theirs, classes: classes.clone(), born: Default::default() }).is_err(), "an opener the machine does not act for");
-    assert!(ask(&store, &m2, &k2, Request::Describe { scope: key.clone(), readers: readers.clone(), classes: classes.clone(), born: Default::default() }).is_err(), "described by the body's machine alone");
-    let Reply::Described { .. } = ask(&store, &m1, &k1, Request::Describe { scope: key.clone(), readers, classes, born: Default::default() }).unwrap() else { panic!("described") };
+    assert!(ask(&store, &m1, &k1, Request::Describe { scope: key.clone(), readers: theirs, classes: classes.clone(), born: Default::default(), begun: None }).is_err(), "an opener the machine does not act for");
+    assert!(ask(&store, &m2, &k2, Request::Describe { scope: key.clone(), readers: readers.clone(), classes: classes.clone(), born: Default::default(), begun: None }).is_err(), "described by the body's machine alone");
+    let Reply::Described { .. } = ask(&store, &m1, &k1, Request::Describe { scope: key.clone(), readers, classes, born: Default::default(), begun: None }).unwrap() else { panic!("described") };
     let streams = Request::Streams { scope: key.clone() };
     assert!(matches!(ask(&store, &m2, &k2, streams.clone()).unwrap(), Reply::Streams { .. }), "bob, a member, reads it");
     // m1 leaves the directory, then root is deleted: bob, frozen in, reads on.

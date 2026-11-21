@@ -47,10 +47,11 @@ pub(crate) async fn remote_probe(host: String, port: u16) -> Result<Probed, Stri
 pub(crate) async fn remote_move_login(
     server: Server,
     machine: String,
+    hub: String,
     ask: ssh::MoveAsk,
     told: Channel<String>,
 ) -> Result<ssh::Moved, String> {
-    ssh::move_login(&server, &machine, ask, &move |piece| {
+    ssh::move_login(&server, &machine, &hub, ask, &move |piece| {
         let _ = told.send(piece);
     })
     .await

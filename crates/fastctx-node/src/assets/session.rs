@@ -650,6 +650,12 @@ async fn pass(node: &Arc<Node>, hub: &HubId, link: &Arc<Link>, network: &Network
     if let Err(why) = super::standing::report(assets, hub, link).await {
         node.log.line(format_args!("assets with {hub}: telling where this machine stands: {why}"));
     }
+    // What it holds of the conversation streams it orders is vouched for:
+    // the hub may let go of its own copies (`vouch`).
+    let _step = phase(hub, "vouching for what this machine holds");
+    if let Err(why) = super::vouch::tell(assets, hub, link).await {
+        node.log.line(format_args!("assets with {hub}: vouching for what this machine holds: {why}"));
+    }
     failed.map_or(Ok(()), Err)
 }
 
@@ -698,6 +704,9 @@ async fn turn(
     let turning = assets.turn_of(&scope);
     let _turn = turning.lock().await;
     let scope = &scope;
+    // Where it stood in being taken in again as this turn began: taken in
+    // again meanwhile, it is not marked pulled whole by this turn.
+    let released_at = assets.copies.release_mark(scope);
     let _phase = phase(hub, &format!("going through {scope}"));
     // Each step goes on whatever the one before met; a revoked scope goes
     // no further.
@@ -781,12 +790,16 @@ async fn turn(
         && matches!(&pulled, Ok((_, None)))
         && checked.is_ok()
         && !assets.copies.paused_now().contains(scope)
+        && assets.copies.release_mark(scope) == released_at
     {
         let key_text = scope.clone();
         match blocking(library, move |library| library.pulled(&key_text, holding)).await {
             // Pulled whole, its copy is read here from now: what the
             // interface lists of conversations is made again (plan 3-5).
-            Ok(_) => assets.metadata_moved.send_modify(|count| *count = count.wrapping_add(1)),
+            Ok(_) => {
+                assets.copies.pulled_since(scope, released_at);
+                assets.metadata_moved.send_modify(|count| *count = count.wrapping_add(1));
+            }
             Err(why) => {
                 failed.get_or_insert(why);
             }
@@ -1406,17 +1419,30 @@ async fn describe(
     // (`BORN`) is told it, and describes it for that one alone.
     let judged = link.asset_version() >= wire::BORN;
     let mut failed: Option<String> = None;
-    for (scope, proposal) in blocking(library, |library| library.provisionals()).await? {
+    let provisionals = blocking(library, |library| library.provisionals()).await?;
+    // Kept as never to be described, but proposed no more — let go, or
+    // described after all: not kept so any longer.
+    let proposed: std::collections::BTreeSet<&str> = provisionals.iter().map(|(scope, _)| scope.as_str()).collect();
+    let stale: Vec<String> = never.keys().filter(|scope| !proposed.contains(scope.as_str())).cloned().collect();
+    for scope in stale {
+        let dir = dir.clone();
+        if let Err(error) = fastctx_platform::task::blocking(move || super::undescribed::forget(&dir, &scope)).await {
+            node.log.line(format_args!("forgetting a scope no longer proposed: {error}"));
+        }
+    }
+    for (scope, proposal) in provisionals {
         let Some(proposal) = proposal else { continue };
         // A conversation not on record here — deleted, or being — is never
         // described: what of it is here goes with it, not to its hub. One
-        // whose deletion left it is let go now.
+        // deleted, or whose place here is gone, is let go now.
         if wire::of_conversation(&scope)
             && let Some(id) = scope.rsplit('/').next().and_then(|id| fastctx_types::ResidentId::try_from(id).ok())
         {
             let deleting = node.residents.is_deleting(&id);
             if !deleting && node.residents.about(&id).is_none() {
-                if node.residents.deleted(&id).is_some() {
+                let gone = node.residents.deleted(&id).is_some()
+                    || !fastctx_platform::disk::exists(node.world.conversation(&id).path()).unwrap_or(true);
+                if gone {
                     let key = scope.clone();
                     if blocking(library, move |library| library.revoke_proposed(&key)).await? && never.contains_key(&scope) {
                         let (dir, key) = (dir.clone(), scope.clone());
@@ -1448,12 +1474,21 @@ async fn describe(
             };
             let borns: Vec<(fastctx_types::AccountName, Option<i64>)> =
                 openers.into_iter().map(|opener| { let born = born.or_else(|| born_under(node, &scope, hub, &opener)); (opener, born) }).collect();
+            // When it was begun here: an opener who it was begun for is not
+            // known of is judged by it (`BEGUN_CLOCKS`).
+            let begun_of = scope.clone();
+            let begun = if wire::of_conversation(&scope) {
+                blocking(library, move |library| library.first_held(&begun_of)).await?
+            } else {
+                None
+            };
             // Kept as never to be described: asked again once a day only
             // where the hub judges which account it was begun for, each
-            // known — a later account of a name is refused then, never given
-            // it.
+            // known or when it was begun — a later account of a name is
+            // refused then, never given it.
             if let Some(kept) = never.get(&scope) {
-                let judgeable = judged && !borns.is_empty() && borns.iter().all(|(_, born)| born.is_some());
+                let judgeable =
+                    judged && !borns.is_empty() && (begun.is_some() || borns.iter().all(|(_, born)| born.is_some()));
                 if !judgeable || !super::undescribed::due(kept) {
                     return Ok(());
                 }
@@ -1482,7 +1517,8 @@ async fn describe(
             let conversation = scope.starts_with("c/");
             // The hub's own words for an opener it has not, or not as it was.
             let never_to_be = |why: &str| why.contains("there is no account:") || why.contains(wire::BEGUN_FOR_ANOTHER);
-            let asked = Request::Describe { scope: scope.clone(), readers, classes, born: said };
+            let asked =
+                Request::Describe { scope: scope.clone(), readers, classes, born: said, begun: if judged { begun } else { None } };
             let described = match ask(assets, link, asked).await {
                 Ok(described) => described,
                 // Revoked: its holding here ended (`heard`).
@@ -1510,9 +1546,14 @@ async fn describe(
             // it was begun for: not installed, so never that one's.
             for (opener, born) in &borns {
                 let described = read.born.get(&format!("account:{opener}")).and_then(|opened| opened.parse::<i64>().ok());
-                if let (Some(born), Some(described)) = (born, described)
-                    && *born != described
-                {
+                let later = match (born, described) {
+                    (Some(born), Some(described)) => *born != described,
+                    // Who it was begun for not known: an account opened after
+                    // it was begun here did not begin it.
+                    (None, Some(described)) => begun.is_some_and(|begun| described > begun.saturating_add(wire::BEGUN_CLOCKS)),
+                    _ => false,
+                };
+                if later {
                     return Err(format!("{GONE}the hub described it for a later account named {opener}"));
                 }
             }
@@ -1577,7 +1618,6 @@ async fn discover(
     key: &PublicKey,
     network: &Network,
 ) -> Result<Option<std::collections::BTreeSet<String>>, String> {
-    let library = &assets.library;
     let mut listed_all = std::collections::BTreeSet::new();
     let began = assets.forgotten.load(std::sync::atomic::Ordering::SeqCst);
     let known = assets.listed.lock().expect("listed").get(hub).cloned();
@@ -1630,26 +1670,19 @@ async fn discover(
                 return Err(format!("the hub listed another scope than {}", held.scope));
             }
             listed_all.insert(held.scope.clone());
-            // Let go here at its owner's word, it is not held anew while
-            // every reader of it here stays paused (`copies::clear`).
+            // Installed as listed, and what it may hold of it and who logged
+            // in here reads it kept with it (HH04, AV01) — but where its copy
+            // was let go here at its owner's word and every reader of it here
+            // stays paused (`copies::clear`), this machine began it and
+            // describes it itself, or its conversation is deleted here.
+            let holds = held.holds.join("\n");
+            let said = serde_json::json!({ "of": held.readers, "frozen": held.frozen }).to_string();
             let (asker, scope, readers, hub_text) = (node.clone(), held.scope.clone(), held.readers.clone(), hub.to_string());
             let (network, fact, revision) = (network.clone(), held.descriptor.fact.0, read.seq as i64);
-            let held_now = fastctx_platform::task::blocking(move || {
-                super::copies::hold_listed(&asker, &hub_text, &scope, &readers, &network, fact, revision)
+            fastctx_platform::task::blocking(move || {
+                super::copies::hold_listed(&asker, &hub_text, &scope, &readers, (&network, fact, revision), (&holds, &said))
             })
             .await?;
-            let Some(here) = held_now else { continue };
-            // What it may hold of the scope changed with nothing else of it:
-            // pulled whole again, its streams each judged anew (HH04).
-            // Who logged in here reads it rides along: a copy is read here
-            // only for them (AV01).
-            let holds = held.holds.join("\n");
-            let readers = serde_json::json!({ "of": held.readers, "frozen": held.frozen }).to_string();
-            let listed = here.as_ref().map(|listing| (listing.allowed.as_deref(), listing.readers.as_deref()));
-            if listed != Some((Some(holds.as_str()), Some(readers.as_str()))) {
-                let scope = held.scope.clone();
-                blocking(library, move |library| library.allow(&scope, &holds, &readers)).await?;
-            }
         }
         // Where the next listing goes on from: the last scope looked at,
         // given or not (AD10).

@@ -1196,15 +1196,18 @@ export class MachinePage implements Page {
     );
   }
 
-  /** Opens the sheet that moves a login directory of `machine`. */
-  private openMove(machine: Machine): void {
+  /** Opens the sheet that moves a login directory of `machine`, on the
+   *  network its owner's login is of. */
+  private openMove(machine: Machine, world: WorldNow): void {
     const moving = this.options.moveLogin;
-    if (!moving) return;
+    const owner = ownerLoginOf(machine, world);
+    if (!moving || !owner) return;
     this.moveSheet ??= new LoginMoveSheet(moving);
     const sheet = this.moveSheet;
+    const target = { written: machine.written, name: machine.name, hub: owner.hub };
     void moving.dirs(machine.written).then(
-      (dirs) => sheet.open(machine.name, dirs),
-      () => sheet.open(machine.name, []),
+      (dirs) => sheet.open(target, dirs),
+      () => sheet.open(target, []),
     );
   }
 
@@ -1440,7 +1443,7 @@ export class MachinePage implements Page {
     const button = target as HTMLButtonElement;
     switch (target.dataset.act) {
       case "move-login":
-        return this.openMove(machine);
+        return this.openMove(machine, world);
       case "rename":
         return this.startRename();
       case "room":

@@ -193,11 +193,6 @@ async fn delete_inner(node: &Arc<Node>, name: &str) -> Result<Gone, Stop> {
         None
     };
     let Some(resident) = node.residents.on_record(id) else {
-        // What it began that no hub described goes with it, where a deletion
-        // cut short left it.
-        if let Err(error) = crate::assets::undescribed::let_go(node, id.as_str()).await {
-            node.log.line(format_args!("letting go the undescribed scopes of {id}: {error}"));
-        }
         crate::goals::lifecycle::prepare_delete(node, id).await.map_err(|error| Stop::Failed(error.message))?;
         crate::goals::lifecycle::delete(node, id).await.map_err(|error| Stop::Failed(error.message))?;
         let directory = node.world.conversation(id);
@@ -208,6 +203,11 @@ async fn delete_inner(node: &Arc<Node>, name: &str) -> Result<Gone, Stop> {
             return Err(Stop::Refused(
                 "its identity record cannot be read; its host record cannot be identified".into(),
             ));
+        }
+        // What it began that no hub described goes with it, where a deletion
+        // cut short left it: only now that it is known to be going.
+        if let Err(error) = crate::assets::undescribed::let_go(node, id.as_str()).await {
+            node.log.line(format_args!("letting go the undescribed scopes of {id}: {error}"));
         }
         let mut host_kept = 0;
         if let Some(about) = crate::forks::retained(&directory).map_err(|error| Stop::Failed(error.to_string()))? {

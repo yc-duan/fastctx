@@ -78,6 +78,7 @@ fn a_look_that_finds_nothing_to_put_right_writes_nothing() {
         readers: Readers::Account { account: root.clone() },
         classes: fastctx_types::assets::records_classes(),
         born: Default::default(),
+        begun: None,
     };
     let Reply::Described { .. } =
         serve::ask(&assets, &store.indexed(), &String::new, &m1, &key.public(), describe).unwrap()

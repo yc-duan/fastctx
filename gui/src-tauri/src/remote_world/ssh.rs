@@ -564,23 +564,8 @@ pub struct Moved {
     pub op: Option<String>,
 }
 
-/// The moves a listing holds, each by its id and whether it is pending.
-fn moves_of(records: &serde_json::Value) -> Vec<(String, bool)> {
-    records
-        .as_array()
-        .map(|records| {
-            records
-                .iter()
-                .filter_map(|record| {
-                    let op = record.get("op")?.as_str()?.to_string();
-                    let phase = record.get("phase").and_then(|phase| phase.as_str()).unwrap_or_default();
-                    let restored = record.get("service_restored").and_then(|restored| restored.as_bool()).unwrap_or(false);
-                    Some((op, (phase != "done" && phase != "aborted") || !restored))
-                })
-                .collect()
-        })
-        .unwrap_or_default()
-}
+/// What `fastctx move-login` says first of the move a run is.
+const MOVE_SAID: &str = "fastctx-move: ";
 
 /// Signs in to the server whose key was confirmed and has its Fastctx move
 /// one of its logins' directories to another disk, or finish or look at a
@@ -589,7 +574,13 @@ fn moves_of(records: &serde_json::Value) -> Vec<(String, bool)> {
 /// signed-in user's, as a server made from here is (`open`), and root is
 /// had through sudo where that user is not root, with the password given
 /// here when sudo wants one.
-pub async fn move_login(server: &Server, machine: &str, ask: MoveAsk, tell: &(dyn Fn(String) + Sync)) -> Result<Moved, String> {
+pub async fn move_login(
+    server: &Server,
+    machine: &str,
+    hub: &str,
+    ask: MoveAsk,
+    tell: &(dyn Fn(String) + Sync),
+) -> Result<Moved, String> {
     let (_, handle) = sign_in(server).await?;
     let done = async {
         let uid = run(&handle, "id -u", Vec::new()).await?.ok("looking at the server")?;
@@ -600,8 +591,9 @@ pub async fn move_login(server: &Server, machine: &str, ask: MoveAsk, tell: &(dy
         } else {
             Sudo::Password(server.sudo.clone().ok_or_else(|| SUDO_WANTED.to_string())?)
         };
-        // Only the machine meant: the World there says which it is.
-        let program = format!(r#""$HOME/.fastctx/bin/fastctx" move-login --machine {}"#, quote(machine));
+        // Only the machine meant, of the network meant: the World there says
+        // which it is.
+        let program = format!(r#""$HOME/.fastctx/bin/fastctx" move-login --machine {} --hub {}"#, quote(machine), quote(hub));
         let line = |words: &str| match &sudo {
             Sudo::Root => format!("{program} {words}"),
             Sudo::Free => format!(r#"sudo -n env FASTCTX_HOME="$HOME/.fastctx" {program} {words}"#),
@@ -611,7 +603,6 @@ pub async fn move_login(server: &Server, machine: &str, ask: MoveAsk, tell: &(dy
             let listed = run(&handle, &line("--status --json"), sudo.line().into_bytes()).await?.ok("reading the moves recorded there")?;
             serde_json::from_slice::<serde_json::Value>(&listed).map_err(|error| format!("reading the moves recorded there: {error}"))
         };
-        let before = moves_of(&list().await?);
         let words = match &ask {
             MoveAsk::Move { login, target, stop_agents } => {
                 format!("{} {} --yes{}", quote(login), quote(target), if *stop_agents { " --stop-agents" } else { "" })
@@ -620,18 +611,27 @@ pub async fn move_login(server: &Server, machine: &str, ask: MoveAsk, tell: &(dy
             MoveAsk::DropBackup { op, anyway } => format!("--drop-backup {}{}", quote(op), if *anyway { " --anyway" } else { "" }),
             MoveAsk::Status => String::new(),
         };
+        // What the run says of the move it is (`MOVE_SAID`), as it goes: a run
+        // that made none, refused before it began, says none.
+        let said = std::sync::Mutex::new(String::new());
+        let telling = |piece: String| {
+            said.lock().expect("said").push_str(&piece);
+            tell(piece);
+        };
         let status = if matches!(ask, MoveAsk::Status) {
             None
         } else {
-            run_telling(&handle, &format!("{} 2>&1", line(&words)), sudo.line().into_bytes(), tell).await?.status
+            run_telling(&handle, &format!("{} 2>&1", line(&words)), sudo.line().into_bytes(), &telling).await?.status
         };
         let records = list().await?;
-        let after = moves_of(&records);
         let op = match &ask {
-            // The move it began: one not recorded before it.
-            MoveAsk::Move { .. } => after.iter().find(|(op, _)| !before.iter().any(|(was, _)| was == op)).map(|(op, _)| op.clone()),
-            // The move it finished: the one pending before it.
-            MoveAsk::Resume => before.iter().find(|(_, pending)| *pending).map(|(op, _)| op.clone()),
+            MoveAsk::Move { .. } | MoveAsk::Resume => said
+                .lock()
+                .expect("said")
+                .lines()
+                .filter_map(|line| line.trim().strip_prefix(MOVE_SAID))
+                .next_back()
+                .map(|op| op.trim().to_string()),
             MoveAsk::DropBackup { op, .. } => Some(op.clone()),
             MoveAsk::Status => None,
         };

@@ -52,7 +52,7 @@ fn hub_streams_go_on_after_a_key_rotation() {
     store.save_book().unwrap();
     let conv = format!("c/{}/m1/conv-1", assets.id);
     let readers = Readers::Conversation { openers: vec![root.clone()], born_on: Some(fastctx_types::MachineName::try_from("m1".to_string()).unwrap()) };
-    let describe = Request::Describe { scope: conv.clone(), readers, classes: fastctx_types::assets::conversation_classes(), born: Default::default() };
+    let describe = Request::Describe { scope: conv.clone(), readers, classes: fastctx_types::assets::conversation_classes(), born: Default::default(), begun: None };
     let m1 = fastctx_types::MachineName::try_from("m1".to_string()).unwrap();
     let Reply::Described { .. } = serve::ask(&assets, &store.indexed(), &String::new, &m1, &key.public(), describe).unwrap() else { panic!("described") };
     {

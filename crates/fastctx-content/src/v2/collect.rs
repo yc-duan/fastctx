@@ -47,6 +47,9 @@ pub struct Started {
     /// Transfers whose record was cut back to their part file, or forgotten
     /// with it.
     pub transfers: usize,
+    /// Tombstones whose bytes could not be deleted now: they stay
+    /// tombstones, tried again at the next start, and hold nothing up.
+    pub stuck: usize,
 }
 
 impl Library {
@@ -185,7 +188,7 @@ impl Library {
 
     /// Deletes the bytes of a tombstone's life, then its row, and the chunk
     /// manifest once no life of the hash is left.
-    fn delete_life(&self, hash: &[u8; 32], life: i64, size: u64) -> Result<()> {
+    pub(super) fn delete_life(&self, hash: &[u8; 32], life: i64, size: u64) -> Result<()> {
         if size as usize <= super::ROW_BYTES {
             let hash = *hash;
             self.0.bytes.write_relaxed_now_at(Priority::Background, 64, move |db| {
@@ -230,8 +233,13 @@ impl Library {
         })?;
         for (hash, life, size) in tombstones {
             let hash: [u8; 32] = hash.try_into().map_err(|_| crate::Error::Invalid("a malformed object hash".into()))?;
-            self.delete_life(&hash, life, size as u64)?;
-            started.tombstones += 1;
+            // A tombstone is never present again (I5): one whose bytes cannot
+            // go now keeps the library from opening no more than it keeps
+            // anything else from being served.
+            match self.delete_life(&hash, life, size as u64) {
+                Ok(()) => started.tombstones += 1,
+                Err(_) => started.stuck += 1,
+            }
         }
         started.transfers = self.settle_transfers()?;
         started.lost = self.check_published()?;

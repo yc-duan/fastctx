@@ -349,8 +349,10 @@ pub(crate) async fn delete(node: &Arc<Node>, about: &About) -> Result<(), Failur
         .await;
         match deleted {
             Ok(()) => {}
-            // An account the hub has no more keeps nothing there to delete.
-            Err(why) if why.contains("there is no account") => {
+            // An account the hub has no more, or one this machine may not act
+            // for now — another of the name — keeps nothing there of this
+            // machine's to delete.
+            Err(why) if why.contains("there is no account") || why.contains(" may not act for the account ") => {
                 node.log.line(format_args!("the plan of {} at {}: {why}; nothing is left there to delete", about.id, scope.account));
             }
             Err(why) => return Err(Failure::new(why)),

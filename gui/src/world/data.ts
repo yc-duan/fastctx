@@ -46,7 +46,13 @@ export interface CopiesOf {
 export type CopiesAsk =
   | { do: "report" }
   | { do: "set"; hub: string; account: string; on: boolean }
-  | { do: "clear"; hub: string; account: string; apply?: boolean; only?: string[] };
+  | { do: "clear"; hub: string; account: string; apply?: boolean; only?: CopyHeld[] };
+
+/** A copy held on a machine: its scope, in the holding period it is held in. */
+export interface CopyHeld {
+  scope: string;
+  holding: number;
+}
 
 /** What letting go an account's copies came to, or would. */
 export interface Cleared {
@@ -56,7 +62,7 @@ export interface Cleared {
   kept: [string, string][];
   /** The copies let go, or that would be: what letting go after a count is
    *  limited to. */
-  keys?: string[];
+  keys?: CopyHeld[];
   /** Why letting go stopped short after some went. */
   failed?: string | null;
 }

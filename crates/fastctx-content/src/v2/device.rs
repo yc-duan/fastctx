@@ -87,6 +87,28 @@ impl Library {
         })?)
     }
 
+    /// Whether `key` is a scope this device proposed that no hub described
+    /// yet, held so now.
+    pub fn is_proposed(&self, key: &str) -> Result<bool> {
+        let key = key.to_string();
+        Ok(self.database().read_now(move |db| {
+            Ok(db
+                .prepare_cached("SELECT EXISTS (SELECT 1 FROM scopes WHERE key = ?1 AND state = 'provisional' AND holding IS NOT NULL)")?
+                .query_row([&key], |row| row.get::<_, bool>(0))?)
+        })?)
+    }
+
+    /// When `key` was first held here, in milliseconds: for a scope this
+    /// device proposed, when it was begun here.
+    pub fn first_held(&self, key: &str) -> Result<Option<i64>> {
+        let key = key.to_string();
+        Ok(self.database().read_now(move |db| {
+            Ok(db
+                .prepare_cached("SELECT MIN(h.started) FROM holdings h JOIN scopes s ON s.id = h.scope WHERE s.key = ?1")?
+                .query_row([&key], |row| row.get::<_, Option<i64>>(0))?)
+        })?)
+    }
+
     /// Every scope a hub described here, held now or not, with its
     /// descriptor.
     pub fn described_scopes(&self) -> Result<Vec<(String, Vec<u8>)>> {

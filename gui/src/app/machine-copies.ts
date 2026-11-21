@@ -78,8 +78,9 @@ export class CopiesBlock {
     return `${hub}\n${account}`;
   }
 
-  private async run(ask: CopiesAsk): Promise<void> {
-    const machine = this.machine;
+  /** Asks `machine` — the one shown as it was asked, by default — and keeps
+   *  what it answers while that one is shown still. */
+  private async run(ask: CopiesAsk, machine: Machine | null = this.machine): Promise<void> {
     if (!machine || this.busy) return;
     this.busy = true;
     this.options.changed();
@@ -93,12 +94,18 @@ export class CopiesBlock {
         const { copies: _, ...cleared } = answer;
         this.outcome.set(CopiesBlock.key(ask.hub, ask.account), cleared);
         if (cleared.applied) {
-          const report = await this.options.ask(machine.written, { do: "report" });
-          if (report.copies === "report") this.accounts = report.accounts;
+          // What it came to stays said, the counts after it asked again where
+          // they can be: not asked now, they are as the page is shown again.
+          try {
+            const report = await this.options.ask(machine.written, { do: "report" });
+            if (machine.written === this.shown && report.copies === "report") this.accounts = report.accounts;
+          } catch {
+            // Kept as it was.
+          }
         }
       }
     } catch (error) {
-      this.problem = detailOf(error);
+      if (machine.written === this.shown) this.problem = detailOf(error);
     } finally {
       this.busy = false;
       this.options.changed();
@@ -168,9 +175,9 @@ export class CopiesBlock {
           title: words.confirmTitle,
           what: words.confirm(account, counted.scopes, bytesSaid(counted.bytes), machine.name),
           go: words.clear(counted.scopes),
-          // Only what the count said: one made a copy since is not let go
-          // unseen.
-          act: () => this.run({ do: "clear", hub, account, apply: true, ...(counted.keys ? { only: counted.keys } : {}) }),
+          // Only what the count said, on the machine it was said of: a copy
+          // made or held anew since is not let go unseen.
+          act: () => this.run({ do: "clear", hub, account, apply: true, ...(counted.keys ? { only: counted.keys } : {}) }, machine),
           done: () => this.options.changed(),
         });
         return true;

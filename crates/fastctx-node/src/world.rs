@@ -1390,9 +1390,12 @@ impl fastctx_net::link::Node for Handler {
                         .map(|used| RemoteReply::AttachmentReferences { used })
                     }
                     RemoteCall::Copies { ask } => {
-                        // Answered for the network it came over alone.
-                        let (asking, through) = (node.clone(), hub.clone());
-                        fastctx_platform::task::spawn_blocking(move || crate::assets::copies::asked(&asking, ask, Some(&through)))
+                        // Answered for the network it came over alone, its
+                        // owner asking, so still as it is done.
+                        let (asking, through, owner) = (node.clone(), hub.clone(), caller.account.clone());
+                        fastctx_platform::task::spawn_blocking(move || {
+                            crate::assets::copies::asked(&asking, ask, Some((&through, &owner)))
+                        })
                             .await
                             .map_err(|error| Failure::new(error.to_string()))?
                             .map(RemoteReply::Copies)

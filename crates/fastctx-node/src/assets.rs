@@ -26,6 +26,7 @@ pub(crate) mod takeover;
 pub(crate) mod undescribed;
 pub(crate) mod upkeep;
 mod usage_marks;
+mod vouch;
 
 pub(crate) use session::{Proposal, committed, pushed, shared_elsewhere, wake};
 
@@ -181,6 +182,8 @@ pub(crate) struct Assets {
     /// What is kept of taking conversations' streams from the machines that
     /// order them, and of giving this machine's own (`direct`).
     pub(crate) direct: direct::Direct,
+    /// What was vouched for to each hub (`vouch`).
+    pub(crate) vouched: vouch::Vouched,
 }
 
 /// How far a hub's scopes this machine may hold were listed.
@@ -292,6 +295,7 @@ impl Assets {
             quick: Arc::new(tokio::sync::Semaphore::new(2)),
             copies: copies::Copies::open(&dir),
             direct: direct::Direct::default(),
+            vouched: Default::default(),
         })
     }
 

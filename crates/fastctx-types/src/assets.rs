@@ -24,8 +24,9 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error};
 /// lines (`LINES`); the fifth, a conversation's streams kept by the machine
 /// that orders them and taken from it (`DIRECT`); the sixth, a
 /// conversation's scope described for the account of each opener's name it
-/// was begun for alone (`BORN`).
-pub const VERSION: u32 = 6;
+/// was begun for alone (`BORN`); the seventh, the objects a machine holds of
+/// the conversation streams it orders vouched for to the hub (`VOUCH`).
+pub const VERSION: u32 = 7;
 
 /// The oldest version a side still speaks.
 pub const OLDEST: u32 = 1;
@@ -60,6 +61,20 @@ pub const BORN: u32 = 6;
 /// account of an opener's name than the one there now; the opener's key
 /// (`account:NAME`) follows.
 pub const BEGUN_FOR_ANOTHER: &str = "begun for an earlier account of the name of ";
+
+/// How far a machine's clock and its hub's may differ, in milliseconds, as
+/// a scope is judged begun before an account was opened (`Request::Describe`'s
+/// `begun`): an account opened later than that past this did not begin it.
+pub const BEGUN_CLOCKS: i64 = 60 * 60 * 1000;
+
+/// The version from which a device vouches to the hub for the objects it
+/// holds of the conversation streams it orders (`Request::Vouch`): the hub
+/// may let go of its own copy of an object every reference of which is so
+/// vouched for, the machine the conversation lives on keeping it.
+pub const VOUCH: u32 = 7;
+
+/// The most objects one `Vouch` names.
+pub const VOUCHED_A_TIME: usize = 512;
 
 /// The most frames one `TakeMany` carries.
 pub const FRAMES_A_TAKE: usize = 16;
@@ -482,6 +497,11 @@ pub enum Request {
         classes: Vec<StreamClass>,
         #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
         born: std::collections::BTreeMap<String, String>,
+        /// When the device began the scope, in its milliseconds: an opener
+        /// `born` says nothing of is judged by it (`BEGUN_CLOCKS`). From
+        /// version `BORN` on.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        begun: Option<i64>,
     },
     /// The streams of a scope this device holds, each with the sequence the
     /// hub's applied prefix reaches next (§6.6).
@@ -574,6 +594,10 @@ pub enum Request {
     /// machines that keep their streams to give them by. From version
     /// `DIRECT` on.
     Permits { scopes: Vec<String> },
+    /// This device, ordering `stream` of the conversation scope `scope` in
+    /// `epoch`, holds whole each object of `hashes` (at most
+    /// `VOUCHED_A_TIME`) its frames refer to. From version `VOUCH` on.
+    Vouch { scope: String, stream: String, epoch: u64, hashes: Vec<Bytes> },
 }
 
 /// How a proof of holding by challenge stands (design §28.45).
@@ -755,6 +779,7 @@ impl Request {
             Self::Begin { .. } => "begin",
             Self::Stirred { .. } => "stirred",
             Self::Permits { .. } => "permits",
+            Self::Vouch { .. } => "vouch",
         }
     }
 
@@ -788,7 +813,8 @@ impl Request {
             | Self::Proof { .. }
             | Self::Begin { .. }
             | Self::Stirred { .. }
-            | Self::Permits { .. } => Purpose::AssetSync,
+            | Self::Permits { .. }
+            | Self::Vouch { .. } => Purpose::AssetSync,
         }
     }
 }
@@ -1024,6 +1050,9 @@ pub enum Reply {
     /// The scopes, of those asked after, this device holds until `until`, the
     /// hub's milliseconds, and the hub's word on it (`permit_statement`).
     Permits { until: i64, granted: Vec<String>, word: Bytes },
+    /// How many of the objects vouched for the stream's frames here refer
+    /// to, and are kept as vouched for.
+    Vouched { kept: u32 },
 }
 
 /// What the hub tells a device unasked.

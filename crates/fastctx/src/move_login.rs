@@ -63,6 +63,10 @@ pub struct MoveLoginArgs {
     /// over SSH).
     #[arg(long, hide = true)]
     machine: Option<String>,
+    /// With --machine: the network it is meant on, by its hub's id — one of
+    /// another network of the same name is not it.
+    #[arg(long, hide = true, requires = "machine")]
+    hub: Option<String>,
 }
 
 pub fn run(args: MoveLoginArgs) -> anyhow::Result<()> {
@@ -90,6 +94,9 @@ pub(crate) mod linux {
 
     use super::MoveLoginArgs;
     use super::{occupants, tree};
+
+    /// What a run says first of the move it is, for whoever asked over SSH.
+    pub(crate) const MOVE_SAID: &str = "fastctx-move: ";
 
     /// This machine's fastctx: its root and World, the user and group that
     /// own them, and the service that keeps its node, where one does.
@@ -182,6 +189,12 @@ pub(crate) mod linux {
                 .ok_or_else(|| anyhow!("this machine's name in the World cannot be read"))?;
             if name != *meant {
                 bail!("this machine is {name} in the World, not {meant}: nothing is done here");
+            }
+            if let Some(hub) = &args.hub {
+                let plain = !hub.is_empty() && hub.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_'));
+                if !plain || !fs::metadata(here.world.net().join(hub)).is_ok_and(|found| found.is_dir()) {
+                    bail!("this machine is not {meant} of the network meant (hub {hub}): nothing is done here");
+                }
             }
         }
         if args.status {
@@ -550,6 +563,8 @@ pub(crate) mod linux {
             backup_deleted: false,
         };
         keep(here, &record)?;
+        // Read by whoever asked over SSH: the move this run is.
+        println!("{MOVE_SAID}{op}");
         println!("moving {} ({agent}) to {}: the node is stopped until it is done (move {op})", login.display(), target.display());
         let held = match hold(here) {
             Ok(held) => held,
@@ -758,20 +773,26 @@ pub(crate) mod linux {
         Ok(())
     }
 
-    /// How the three places of a move stand on disk now.
+    /// How the three places of a move stand on disk now; `unreadable` where
+    /// any of them could not be looked at, there or not.
     struct Standing {
         source_is_original: bool,
         source_is_link: bool,
         source_gone: bool,
         backup: Option<Identity>,
         target_is_ours: bool,
+        unreadable: bool,
     }
 
     impl Standing {
         fn of(record: &Record) -> Self {
             let source = fs::symlink_metadata(&record.source);
             let target = identity(&record.target).ok();
+            let unknown = |path: &Path| {
+                matches!(fs::symlink_metadata(path), Err(error) if error.kind() != std::io::ErrorKind::NotFound)
+            };
             Self {
+                unreadable: unknown(&record.source) || unknown(&record.backup) || unknown(&record.target),
                 source_is_original: source.as_ref().is_ok_and(|metadata| {
                     metadata.is_dir() && Identity { device: metadata.dev(), inode: metadata.ino() } == record.source_identity
                 }),
@@ -807,6 +828,7 @@ pub(crate) mod linux {
             println!("no move is unfinished");
             return Ok(());
         };
+        println!("{MOVE_SAID}{}", record.op);
         println!("finishing the move {} of {} to {} ({:?})", record.op, record.login.display(), record.target.display(), record.phase);
         // Taken back with nothing of it left: finished as well as it can be.
         let taken_back = |result: anyhow::Result<()>| -> anyhow::Result<()> {
@@ -828,7 +850,8 @@ pub(crate) mod linux {
             // to the copy still, as the move left it.
             Phase::Done => {
                 let standing = Standing::of(&record);
-                if !(standing.source_is_link && standing.target_is_ours) {
+                let led = fs::canonicalize(&record.login).ok().is_some_and(|real| Some(real) == fs::canonicalize(&record.target).ok());
+                if standing.unreadable || !(standing.source_is_link && standing.target_is_ours) || !led {
                     return Err(cannot_tell(&record));
                 }
                 unmark(&record)?;
@@ -842,12 +865,20 @@ pub(crate) mod linux {
             // Before the original was set aside: it stands where it was, or
             // nothing of this move's is taken away.
             Phase::Stopping | Phase::Checking | Phase::Copying | Phase::Verifying | Phase::Published => {
-                if standing.source_is_original && standing.backup.is_none() {
+                if !standing.unreadable && standing.source_is_original && standing.backup.is_none() {
                     taken_back(abort(here, &mut record, Some(held), "it was cut short before the original was set aside"))
                 } else {
                     drop(held);
                     Err(cannot_tell(&record))
                 }
+            }
+            Phase::Swapping if standing.unreadable => {
+                drop(held);
+                Err(cannot_tell(&record))
+            }
+            Phase::Linked if standing.unreadable => {
+                drop(held);
+                Err(cannot_tell(&record))
             }
             Phase::Swapping => {
                 if standing.source_is_original && standing.backup.is_none() {
@@ -972,6 +1003,10 @@ pub(crate) mod linux {
                     changed.join("\n  ")
                 );
             }
+        }
+        // Looked at again just before: nothing changed while it was gone through.
+        if !still_led(here, &record)? {
+            bail!("{} no longer leads to the copy the move made; the original set aside is not deleted", record.login.display());
         }
         fastctx_platform::owned_directory::delete(&record.backup).with_context(|| format!("deleting {}", record.backup.display()))?;
         record.backup_deleted = true;

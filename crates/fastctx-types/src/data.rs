@@ -49,7 +49,7 @@ pub enum DataCall {
         apply: bool,
         /// Only these, where given: those a count said (`Cleared::keys`).
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        only: Option<Vec<String>>,
+        only: Option<Vec<CopyHeld>>,
     },
     /// The application was opened here as `account` of the hub `hub`,
     /// opened at `opened` (milliseconds): it takes in its copies here from
@@ -110,8 +110,16 @@ pub enum CopiesAsk {
         apply: bool,
         /// Only these, where given: those a count said (`Cleared::keys`).
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        only: Option<Vec<String>>,
+        only: Option<Vec<CopyHeld>>,
     },
+}
+
+/// A copy held here: its scope, in the holding period it is held in — one
+/// held anew since is another copy.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CopyHeld {
+    pub scope: String,
+    pub holding: i64,
 }
 
 /// What a machine answers its owner of its copies.
@@ -135,10 +143,10 @@ pub struct Cleared {
     /// Those kept, each with why.
     #[serde(default)]
     pub kept: Vec<(String, String)>,
-    /// The scopes let go, or that would be: what letting go after a count
+    /// The copies let go, or that would be: what letting go after a count
     /// is limited to.
     #[serde(default)]
-    pub keys: Vec<String>,
+    pub keys: Vec<CopyHeld>,
     /// Why letting go stopped short after some were let go: those are
     /// said above, the rest left as they were.
     #[serde(default, skip_serializing_if = "Option::is_none")]

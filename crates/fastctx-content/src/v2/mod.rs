@@ -59,12 +59,14 @@ mod timeline;
 mod transfers;
 mod unaccepted;
 mod view;
+mod vouch;
 mod window;
 
 pub use checkpoints::HeldItem;
 pub use collect::{Collected, Started};
 pub use commit::{Commit, Committed};
 pub use copies::{CopySize, Dropped, HeldScope};
+pub use vouch::{Reclaimed, Vouchable};
 pub use exchange::{Holder, Imported, RawFrame, Verifier};
 pub use frame::{FORMAT, Header, KindRecord, Signer, open};
 pub use facts::{EpochFact, EpochKind, GapFact};

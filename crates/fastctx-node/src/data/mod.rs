@@ -105,9 +105,10 @@ pub(crate) async fn answer(node: &Arc<Node>, call: DataCall) -> Result<DataReply
         }
         DataCall::ClearCopies { hub, account, apply, only } => {
             let clearing = node.clone();
-            let only: Option<std::collections::BTreeSet<String>> = only.map(|keys| keys.into_iter().collect());
+            let only: Option<std::collections::BTreeSet<(String, i64)>> =
+                only.map(|held| held.into_iter().map(|one| (one.scope, one.holding)).collect());
             let cleared = fastctx_platform::task::spawn_blocking(move || {
-                crate::assets::copies::clear(&clearing, &hub, &account, apply, only.as_ref())
+                crate::assets::copies::clear(&clearing, &hub, &account, apply, only.as_ref(), None)
             })
             .await
             .map_err(|error| Failure::new(error.to_string()))?

@@ -57,7 +57,15 @@ export interface LoginMoveWords {
 export interface LoginMoveOptions {
   words: LoginMoveWords;
   probe(host: string, port: number): Promise<RemoteKey>;
-  move(server: RemoteServer, machine: string, ask: MoveAsk, told: (piece: string) => void): Promise<Moved>;
+  move(server: RemoteServer, machine: string, hub: string, ask: MoveAsk, told: (piece: string) => void): Promise<Moved>;
+}
+
+/** The machine a move is for: as the World writes it, by its name, and the
+ *  network it is meant on — one of another network of that name is not it. */
+export interface MoveTarget {
+  written: string;
+  name: string;
+  hub: string;
 }
 
 type Stage = "form" | "key" | "running" | "done";
@@ -74,7 +82,7 @@ export class LoginMoveSheet {
   private moved: Moved | null = null;
   private problem: string | null = null;
   private logins: string[] = [];
-  private machine = "";
+  private target: MoveTarget = { written: "", name: "", hub: "" };
   /** The backup asked to be deleted, waiting for a second press. */
   private dropping: string | null = null;
 
@@ -87,18 +95,18 @@ export class LoginMoveSheet {
     this.sheet.body.addEventListener("change", (event) => this.picked(event));
   }
 
-  /** Opens it for `machine`, by its name in the World, its logins'
-   *  directories offered. Another machine than last time starts from
-   *  nothing typed: no address, way in or key of one is used for another. */
-  open(machine: string, logins: string[]): void {
-    if (machine !== this.machine) {
+  /** Opens it for `target`, its logins' directories offered. Another machine
+   *  than last time — of another network too — starts from nothing typed: no
+   *  address, way in or key of one is used for another. */
+  open(target: MoveTarget, logins: string[]): void {
+    if (target.written !== this.target.written || target.hub !== this.target.hub) {
       this.probed = null;
       this.typed = { host: "", port: "22", user: "root", by: "password", login: "", target: "", stopAgents: false };
       this.secret = { password: "", passphrase: "", sudo: "" };
       this.key = null;
       this.wantsSudo = false;
     }
-    this.machine = machine;
+    this.target = target;
     this.logins = logins;
     this.stage = "form";
     this.output = "";
@@ -194,7 +202,8 @@ export class LoginMoveSheet {
     this.sheet.busy = true;
     this.draw();
     try {
-      this.moved = await this.options.move(this.server(), this.machine, ask, (piece) => {
+      const { name, hub } = this.target;
+      this.moved = await this.options.move(this.server(), name, hub, ask, (piece) => {
         this.output += piece;
         this.tail();
       });
@@ -236,7 +245,7 @@ export class LoginMoveSheet {
     const field = (name: string, label: string, attributes: string, value: string) =>
       `<label class="field"><span class="field-label">${escape(label)}</span><input name="${name}" ${attributes} value="${escape(value)}"></label>`;
     const note = this.problem ? `<p class="sheet-note" role="alert">${escape(this.problem)}</p>` : "";
-    const head = this.sheet.head(`${words.title} · ${this.machine}`, words.close);
+    const head = this.sheet.head(`${words.title} · ${this.target.written}`, words.close);
     let body = "";
     switch (this.stage) {
       case "form": {

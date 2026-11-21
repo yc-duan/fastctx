@@ -35,12 +35,16 @@ pub(crate) fn same_dir_now(a: &Path, b: &Path) -> bool {
     if normal(a) == normal(b) {
         return true;
     }
-    {
-        let mut resolved = RESOLVED.lock().expect("never poisoned");
-        resolved.remove(a);
-        resolved.remove(b);
+    // Resolved here and compared as found, what was found kept for others.
+    let found = |path: &Path| {
+        let found = fastctx_platform::disk::canonicalize(path).ok();
+        RESOLVED.lock().expect("never poisoned").insert(path.to_path_buf(), (found.clone(), std::time::Instant::now()));
+        found
+    };
+    match (found(a), found(b)) {
+        (Some(a), Some(b)) => normal(&a) == normal(&b),
+        _ => false,
     }
-    same_dir(a, b)
 }
 
 /// The directories a home's path was last resolved to on disk. Homes are

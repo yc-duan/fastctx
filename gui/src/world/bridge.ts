@@ -817,10 +817,10 @@ export function remoteProbe(host: string, port: number): Promise<RemoteKey> {
 /** Has the Fastctx of a server signed in to over SSH move one of its
  *  logins' directories to another disk, or finish or look at a move: what
  *  it writes told as it comes. */
-export function remoteMoveLogin(server: RemoteServer, machine: string, ask: MoveAsk, told: (piece: string) => void): Promise<Moved> {
+export function remoteMoveLogin(server: RemoteServer, machine: string, hub: string, ask: MoveAsk, told: (piece: string) => void): Promise<Moved> {
   const channel = new Channel<string>();
   channel.onmessage = told;
-  return invoke("remote_move_login", { server, machine, ask, told: channel });
+  return invoke("remote_move_login", { server, machine, hub, ask, told: channel });
 }
 
 /** Signs in to the server whose key was confirmed and looks at it: the

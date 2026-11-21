@@ -44,9 +44,19 @@ pub(crate) fn read(dir: &Path) -> BTreeMap<String, Undescribed> {
         .unwrap_or_default()
 }
 
+/// Changes what is kept; nothing is written over a file that cannot be read.
 fn change(dir: &Path, change: impl FnOnce(&mut BTreeMap<String, Undescribed>)) -> io::Result<()> {
     let _changing = CHANGING.lock().expect("never poisoned");
-    let mut kept = Kept { scopes: read(dir) };
+    let scopes = match fastctx_platform::durable_file::read_bounded(&path(dir), 4 << 20) {
+        Ok(bytes) => {
+            serde_json::from_slice::<Kept>(&bytes)
+                .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, format!("{} cannot be read: {error}", path(dir).display())))?
+                .scopes
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => BTreeMap::new(),
+        Err(error) => return Err(error),
+    };
+    let mut kept = Kept { scopes };
     change(&mut kept.scopes);
     let mut bytes = serde_json::to_vec_pretty(&kept).map_err(io::Error::other)?;
     bytes.push(b'\n');

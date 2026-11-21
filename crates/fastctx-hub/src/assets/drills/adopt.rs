@@ -69,7 +69,7 @@ fn adopting_a_stream_ordered_nowhere() {
     // Described on m1, where it was born; nothing of it ordered anywhere yet.
     let scope = format!("c/{}/m1/conv-9", assets.id);
     let readers = Readers::Conversation { openers: vec![root.clone()], born_on: Some(m1.clone()) };
-    let describe = Request::Describe { scope: scope.clone(), readers, classes: fastctx_types::assets::conversation_classes(), born: Default::default() };
+    let describe = Request::Describe { scope: scope.clone(), readers, classes: fastctx_types::assets::conversation_classes(), born: Default::default(), begun: None };
     let Reply::Described { descriptor } = ask(&store, &m1, &k1, describe).unwrap() else { panic!("described") };
     // root adopts it on m3: the hub begins the timeline there, its first epoch m3's.
     let adopt = Request::Takeover { scope: scope.clone(), stream: "timeline".into(), release: None, adopt: true };
@@ -115,7 +115,7 @@ fn adopting_a_stream_ordered_nowhere() {
     let body = bodies::body_of(&store.book.directory, &m1).unwrap();
     let bobs = format!("b/{body}/conv-20");
     let readers = Readers::Body { body: body.clone(), opener: bob.clone() };
-    let describe = Request::Describe { scope: bobs.clone(), readers, classes: fastctx_types::assets::conversation_classes(), born: Default::default() };
+    let describe = Request::Describe { scope: bobs.clone(), readers, classes: fastctx_types::assets::conversation_classes(), born: Default::default(), begun: None };
     let Reply::Described { .. } = ask(&store, &m1, &k1, describe).unwrap() else { panic!("bob's, described on m1") };
     store.book.directory.shares.retain(|share| share.account != bob);
     store.book.directory.accounts.retain(|account| account.name != bob);
@@ -135,7 +135,7 @@ fn adopting_a_stream_ordered_nowhere() {
     // begin it; the account that opened it adopts it there, and then it does.
     let gone_scope = format!("c/{}/m1/conv-11", assets.id);
     let readers = Readers::Conversation { openers: vec![root.clone()], born_on: Some(m1.clone()) };
-    let describe = Request::Describe { scope: gone_scope.clone(), readers, classes: fastctx_types::assets::conversation_classes(), born: Default::default() };
+    let describe = Request::Describe { scope: gone_scope.clone(), readers, classes: fastctx_types::assets::conversation_classes(), born: Default::default(), begun: None };
     let Reply::Described { descriptor: gone_descriptor } = ask(&store, &m1, &k1, describe).unwrap() else { panic!("described") };
     store.book.directory.members.retain(|member| member.name != m1);
     store.book_edit = crate::store::BookEdit::Full;

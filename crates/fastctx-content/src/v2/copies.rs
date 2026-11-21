@@ -6,7 +6,7 @@ use super::Library;
 use super::frame::Header;
 use crate::Result;
 use fastctx_storage::Priority;
-use fastctx_storage::rusqlite::{Connection, params};
+use fastctx_storage::rusqlite::{Connection, OptionalExtension, params};
 
 /// A scope held here, as a reader decides whether to read it.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -122,6 +122,66 @@ impl Library {
                     if counted.insert(hash) {
                         objects += size;
                     }
+                }
+            }
+            Ok(CopySize { frames: frames.max(0) as u64, objects: objects.max(0) as u64 })
+        })?)
+    }
+
+    /// The room letting go the copies `scopes` held here would give back:
+    /// their frames in their present holdings, and the objects they refer to
+    /// that nothing else here refers to, holds or leases, each counted once.
+    pub fn copies_freed(&self, scopes: &[String]) -> Result<CopySize> {
+        let scopes = scopes.to_vec();
+        Ok(self.database().read_now(move |db| {
+            let mut frames = 0i64;
+            let mut ids = std::collections::BTreeSet::new();
+            let mut hashes: std::collections::BTreeSet<Vec<u8>> = std::collections::BTreeSet::new();
+            for scope in &scopes {
+                let Some((id, _, Some(holding))) = super::scopes::held(db, scope)? else { continue };
+                ids.insert(id);
+                frames += db
+                    .prepare_cached(
+                        "SELECT COALESCE(SUM(length(f.header) + length(f.body)), 0) FROM frames f
+                         JOIN streams s ON s.id = f.stream WHERE s.scope = ?1 AND f.holding = ?2",
+                    )?
+                    .query_row(params![id, holding], |row| row.get::<_, i64>(0))?;
+                let mut statement = db.prepare_cached(
+                    "SELECT DISTINCT fo.hash FROM frame_objects fo JOIN streams s ON s.id = fo.stream WHERE s.scope = ?1 AND fo.holding = ?2",
+                )?;
+                let rows = statement.query_map(params![id, holding], |row| row.get::<_, Vec<u8>>(0))?;
+                for row in rows {
+                    hashes.insert(row?);
+                }
+            }
+            let mut objects = 0i64;
+            for hash in hashes {
+                let size: Option<i64> = db
+                    .prepare_cached("SELECT size FROM objects WHERE hash = ?1 AND state = 1")?
+                    .query_row([&hash], |row| row.get(0))
+                    .optional()?;
+                let Some(size) = size else { continue };
+                let mut elsewhere = false;
+                for query in [
+                    "SELECT DISTINCT s.scope FROM frame_objects f JOIN streams s ON s.id = f.stream WHERE f.hash = ?1",
+                    "SELECT DISTINCT scope FROM object_refs WHERE hash = ?1 AND count > 0",
+                ] {
+                    let mut statement = db.prepare_cached(query)?;
+                    let rows = statement.query_map([&hash], |row| row.get::<_, i64>(0))?;
+                    for row in rows {
+                        if !ids.contains(&row?) {
+                            elsewhere = true;
+                        }
+                    }
+                }
+                let held: bool = db
+                    .prepare_cached(
+                        "SELECT EXISTS (SELECT 1 FROM object_holds WHERE hash = ?1)
+                             OR EXISTS (SELECT 1 FROM leases WHERE hash = ?1 AND expires >= ?2)",
+                    )?
+                    .query_row(params![&hash, super::objects::now()], |row| row.get(0))?;
+                if !elsewhere && !held {
+                    objects += size;
                 }
             }
             Ok(CopySize { frames: frames.max(0) as u64, objects: objects.max(0) as u64 })

@@ -357,7 +357,8 @@ pub(crate) fn stream_of(request: &Request) -> Option<&str> {
         | Request::Window { stream, .. }
         | Request::Older { stream, .. }
         | Request::Begin { stream, .. }
-        | Request::Stirred { stream, .. } => Some(stream),
+        | Request::Stirred { stream, .. }
+        | Request::Vouch { stream, .. } => Some(stream),
         // Each scope asked after is judged by itself as it is answered.
         Request::Permits { .. }
         | Request::Open { .. }
@@ -514,6 +515,7 @@ pub(crate) fn scope_of(request: &Request) -> Option<&str> {
         | Request::Permits { .. } => None,
         Request::Begin { scope, .. }
         | Request::Stirred { scope, .. }
+        | Request::Vouch { scope, .. }
         | Request::Answer { scope, .. }
         | Request::Take { scope, .. }
         | Request::TakeMany { scope, .. }
@@ -633,9 +635,9 @@ pub(crate) fn ask_in(
     }
     match request {
         Request::Open { version, seen, reported, pinned, lineage } => open(assets, directory, machine, key, version, seen, reported, pinned, lineage),
-        Request::Describe { scope, readers, classes, born } => {
-            Ok(Reply::Described { descriptor: scopes::describe(assets, directory, machine, &scope, readers, classes, &born)? })
-        }
+        Request::Describe { scope, readers, classes, born, begun } => Ok(Reply::Described {
+            descriptor: scopes::describe(assets, directory, machine, &scope, readers, classes, (&born, begun))?,
+        }),
         Request::Answer { scope, header, signature } => {
             let kept = gated(assets, directory, machine, &scope)?;
             let library = scopes::library(assets, &kept)?;
@@ -1132,6 +1134,32 @@ pub(crate) fn ask_in(
                 assets.moved(&kept.owner, &scope, &stream, next, machine);
             }
             Ok(Reply::Noted)
+        }
+        Request::Vouch { scope, stream, epoch, hashes } => {
+            // Through the hub, a conversation's streams are the hub's to keep.
+            if assets.sync_version() < wire::VOUCH {
+                return Err("conversations come through this hub: nothing is vouched for".into());
+            }
+            if !wire::of_conversation(&scope) || fastctx_content::v2::hub_orders(&stream) {
+                return Err("only a conversation's stream a machine orders is vouched for".into());
+            }
+            if hashes.len() > wire::VOUCHED_A_TIME {
+                return Err(format!("at most {} objects are vouched for at a time", wire::VOUCHED_A_TIME));
+            }
+            let hashes: Vec<[u8; 32]> = hashes
+                .iter()
+                .map(|hash| <[u8; 32]>::try_from(hash.0.as_slice()).map_err(|_| "an object's hash is 32 bytes".to_string()))
+                .collect::<Result<_, _>>()?;
+            let kept = held(assets, directory, machine, &scope, &stream)?;
+            let library = scopes::library(assets, &kept)?;
+            // Only the device ordering the stream, in its epoch now, vouches
+            // for what its frames refer to.
+            let last = library.last_epoch(&scope, &stream).map_err(|error| error.to_string())?;
+            if last.is_none_or(|(at, device)| at != epoch || &device != key.as_bytes()) {
+                return Err("only the device ordering the stream, in its epoch now, vouches for its objects".into());
+            }
+            let kept = library.vouch(&scope, &stream, epoch, key.as_bytes(), &hashes).map_err(|error| error.to_string())?;
+            Ok(Reply::Vouched { kept: kept as u32 })
         }
         Request::Permits { scopes } => {
             if scopes.len() > fastctx_types::asset_peers::SCOPES {
