@@ -224,6 +224,11 @@ impl Library {
         self.database().write_now_at(Priority::Normal, 64, |db| {
             db.prepare_cached("INSERT OR IGNORE INTO stamps (name, value) SELECT 'life', COALESCE(MAX(life), 0) FROM objects")?
                 .execute([])?;
+            // A stream a refusal cut back to its start before 1.0.1-beta.23
+            // kept a cursor at no frame with no chain value, which no reader
+            // takes: nothing of it is applied, as a stream begun anew has no
+            // cursor.
+            db.prepare_cached("DELETE FROM cursors WHERE sequence < 0 AND head IS NULL")?.execute([])?;
             Ok(())
         })?;
         let tombstones: Vec<(Vec<u8>, i64, i64)> = self.database().read_now(|db| {

@@ -21,6 +21,10 @@ const MAX_PARTS: u32 = 4096;
 const STALLED_AFTER: std::time::Duration = std::time::Duration::from_secs(180);
 /// How many questions the run must have: one long answer alone is no stall.
 const STALLED_ASKED: u32 = 3;
+/// How long one of the questions still waited for must itself have waited
+/// (half of what a question waits, `within`): one asked just now is not cut
+/// short for those given up on before it.
+const STALLED_WAITING: std::time::Duration = std::time::Duration::from_secs(30);
 
 type Answer = Result<Told, String>;
 
@@ -57,6 +61,8 @@ struct Pending {
     /// preparation, a move of the hub: not counted, and while one waits no
     /// stall of its connection is judged.
     long: bool,
+    /// When it was asked, in time awake.
+    asked: Option<std::time::Duration>,
 }
 
 struct Parts {
@@ -74,7 +80,8 @@ impl Questions {
         progress: Option<tokio::sync::watch::Sender<fastctx_types::update::PackageProgress>>,
         long: bool,
     ) {
-        self.pending.lock().expect("never poisoned").insert(id, Pending { generation, answer, parts: None, progress, long });
+        let asked = awake();
+        self.pending.lock().expect("never poisoned").insert(id, Pending { generation, answer, parts: None, progress, long, asked });
         if long {
             return;
         }
@@ -104,22 +111,26 @@ impl Questions {
 
     /// Whether the session on connection `generation` is stalled: a run of
     /// questions so many and so long with nothing of an answer coming, one
-    /// of them still waited for, and no long one. How many, and how long,
-    /// if so.
+    /// of them still waited for — for a while itself — and no long one. How
+    /// many, and how long, if so.
     pub(super) fn stalled(&self, generation: u64) -> Option<(u32, std::time::Duration)> {
         let (asked, since) = {
             let watch = self.watch.lock().expect("never poisoned");
             (watch.generation == generation && watch.asked >= STALLED_ASKED).then_some((watch.asked, watch.since?))?
         };
-        let quiet = awake()?.checked_sub(since)?;
+        let now = awake()?;
+        let quiet = now.checked_sub(since)?;
         if quiet < STALLED_AFTER {
             return None;
         }
         let pending = self.pending.lock().expect("never poisoned");
-        let (waiting, long) = pending
-            .values()
-            .filter(|question| question.generation == generation)
-            .fold((false, false), |(waiting, long), question| (waiting || !question.long, long || question.long));
+        let (waiting, long) = pending.values().filter(|question| question.generation == generation).fold(
+            (false, false),
+            |(waiting, long), question| {
+                let waited = question.asked.and_then(|asked| now.checked_sub(asked)).is_some_and(|waited| waited >= STALLED_WAITING);
+                (waiting || (!question.long && waited), long || question.long)
+            },
+        );
         (waiting && !long).then_some((asked, quiet))
     }
 

@@ -47,6 +47,16 @@ pub struct Reclaimed {
     pub stuck: u64,
 }
 
+/// What a pass over the large objects marked to go (`Library::mark_vouched`):
+/// where the next pass goes on from, what it found, and the tombstones whose
+/// bytes are yet to be deleted (`Library::let_go_marked`).
+#[derive(Debug)]
+pub struct Marked {
+    pub next: Option<[u8; 32]>,
+    pub found: Reclaimed,
+    doomed: Vec<(Vec<u8>, i64, u64)>,
+}
+
 /// What settling tombstones came to (`Library::settle_tombstones`): how many
 /// went and their bytes, how many could not, and where the next call goes on
 /// from, none once all were gone through.
@@ -183,7 +193,8 @@ impl Library {
     /// of the hub `hub` that `device` orders, a machine's to order, after
     /// `after` (scope and stream, in order), each with its epoch now and the
     /// large objects present here, no longer than `longest`, its frames in
-    /// the holding period now refer to — none where there are none.
+    /// the holding period now refer to — those with none among them, whose
+    /// vouching may be told withdrawn.
     pub fn vouchable(
         &self,
         hub: &str,
@@ -235,11 +246,9 @@ impl Library {
                         }
                         objects
                     };
-                    if !objects.is_empty() {
-                        found.push(Vouchable { scope: key.clone(), stream: name, epoch: epoch.max(0) as u64, holding, objects });
-                        if found.len() >= limit {
-                            return Ok(found);
-                        }
+                    found.push(Vouchable { scope: key.clone(), stream: name, epoch: epoch.max(0) as u64, holding, objects });
+                    if found.len() >= limit {
+                        return Ok(found);
                     }
                 }
             }
@@ -330,14 +339,8 @@ impl Library {
         })?)
     }
 
-    /// Goes through up to `limit` large objects here after `after`, by hash:
-    /// counts those that may go and those kept, by why, or, `apply`, lets go
-    /// those that may — judged again in the transaction that makes each a
-    /// tombstone, the devices that vouched for them among `able`, their files
-    /// and rows deleted after, one that cannot be deleted left a tombstone
-    /// and said (`stuck`). One longer than `longest` is kept: the machines
-    /// take none so long from one another. Where the next pass goes on from,
-    /// none when all were gone through, and what was found.
+    /// `mark_vouched`, and the bytes of what it marked deleted at once
+    /// (`let_go_marked`): where the next pass goes on from and what was found.
     pub fn reclaim_vouched(
         &self,
         after: Option<[u8; 32]>,
@@ -346,9 +349,22 @@ impl Library {
         apply: bool,
         able: Able,
     ) -> Result<(Option<[u8; 32]>, Reclaimed)> {
+        let marked = self.mark_vouched(after, limit, longest, apply, able)?;
+        let next = marked.next;
+        Ok((next, self.let_go_marked(marked)))
+    }
+
+    /// Goes through up to `limit` large objects here after `after`, by hash:
+    /// counts those that may go and those kept, by why, or, `apply`, makes a
+    /// tombstone of each that may — judged again in the transaction that
+    /// makes it one, the devices that vouched for them among `able`. One
+    /// longer than `longest` is kept: the machines take none so long from one
+    /// another. Their bytes are deleted apart (`let_go_marked`), outside
+    /// whatever the caller judged `able` under.
+    pub fn mark_vouched(&self, after: Option<[u8; 32]>, limit: usize, longest: u64, apply: bool, able: Able) -> Result<Marked> {
         let row_bytes = super::ROW_BYTES as i64;
         let longest = i64::try_from(longest).unwrap_or(i64::MAX);
-        let (next, mut found, doomed) = self.database().write_now_at(Priority::Background, 1024, move |db| {
+        let (next, found, doomed) = self.database().write_now_at(Priority::Normal, 1024, move |db| {
             let start = after.map(|hash| hash.to_vec()).unwrap_or_default();
             let large: Vec<(Vec<u8>, i64, i64)> = {
                 let mut statement = db.prepare_cached(
@@ -383,15 +399,26 @@ impl Library {
             }
             Ok((next, found, doomed))
         })?;
+        let next = next.map(|hash| hash.try_into().map_err(|_| crate::Error::Invalid("a malformed object hash".into()))).transpose()?;
+        Ok(Marked { next, found, doomed })
+    }
+
+    /// Deletes the bytes and rows of what `marked` made tombstones; one that
+    /// cannot be deleted stays a tombstone (`stuck`), settled later. What
+    /// was found, with the bytes given back.
+    pub fn let_go_marked(&self, marked: Marked) -> Reclaimed {
+        let Marked { mut found, doomed, .. } = marked;
         for (hash, life, size) in doomed {
-            let hash: [u8; 32] = hash.try_into().map_err(|_| crate::Error::Invalid("a malformed object hash".into()))?;
+            let Ok(hash) = <[u8; 32]>::try_from(hash.as_slice()) else {
+                found.stuck += 1;
+                continue;
+            };
             match self.delete_life(&hash, life, size) {
                 Ok(()) => found.freed += size,
                 Err(_) => found.stuck += 1,
             }
         }
-        let next = next.map(|hash| hash.try_into().map_err(|_| crate::Error::Invalid("a malformed object hash".into()))).transpose()?;
-        Ok((next, found))
+        found
     }
 
     /// Deletes the bytes and rows of up to `limit` tombstones here after

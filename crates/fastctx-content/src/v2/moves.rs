@@ -347,9 +347,6 @@ impl Library {
         Ok(self.database().write_now_at(Priority::Normal, 512 + signed.fact.len(), move |db| {
             let Some((scope_id, _, Some(_))) = held(db, &scope)? else { return Err(invalid("the scope is not held here")) };
             let stream = stream_of(db, scope_id, &fact.stream)?;
-            let later: bool = db
-                .prepare_cached("SELECT EXISTS (SELECT 1 FROM known_epochs WHERE stream = ?1 AND epoch > ?2)")?
-                .query_row(params![stream, fact.epoch as i64], |row| row.get(0))?;
             // Opened, the epoch is written in from where this stream ends
             // here: one that begins further on waits until what comes before
             // it is here, and is not known here before, lest this device
@@ -357,6 +354,12 @@ impl Library {
             let (next, head, current): (i64, Option<Vec<u8>>, i64) = db
                 .prepare_cached("SELECT next, head, epoch FROM streams WHERE id = ?1")?
                 .query_row([stream], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
+            // Handed on since, as the hub's word kept here says, or written in
+            // here in a later epoch already: history.
+            let later: bool = db
+                .prepare_cached("SELECT EXISTS (SELECT 1 FROM known_epochs WHERE stream = ?1 AND epoch > ?2)")?
+                .query_row(params![stream, fact.epoch as i64], |row| row.get::<_, bool>(0))?
+                || (current.max(0) as u64) > fact.epoch;
             if !later && (next as u64) < fact.start {
                 return Ok(Taken::Behind);
             }

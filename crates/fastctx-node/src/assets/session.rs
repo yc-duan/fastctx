@@ -2387,8 +2387,12 @@ async fn pull_kept(
             );
         }
         // Not heard, or heard without a word of this stream: where it stands
-        // there is not known.
-        if !matches!(kept.get(&machine), Some(Some(theirs)) if theirs.contains_key(stream)) {
+        // there is not known — but for one the hub holds nothing of either,
+        // which a machine says nothing of.
+        let heard = matches!(kept.get(&machine), Some(Some(_)));
+        let said = matches!(kept.get(&machine), Some(Some(theirs)) if theirs.contains_key(stream));
+        let nothing_of_it = heard && hub_next == 0;
+        if !said && !nothing_of_it {
             reached = false;
         }
         // Standing no further there than here, what the hub still holds

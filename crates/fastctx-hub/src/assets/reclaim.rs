@@ -182,22 +182,29 @@ impl Assets {
             Ok(enter().ok_or_else(|| "the hub takes nothing now".to_string()))
         };
         for owner in self.owners.on_disk()? {
-            // Opened, and what earlier rounds could not finish deleting
-            // deleted, as work the hub counts.
-            let active = match go_on()? {
-                Ok(active) => active,
-                Err(why) => return stopped(&mut report, why),
-            };
-            let library = match self.library(&owner) {
-                Ok(library) => library,
-                Err(error) => {
-                    report.failed.push(format!("{}: {error}", owner.key()));
-                    continue;
+            // Opened as work the hub counts.
+            let library = {
+                let _active = match go_on()? {
+                    Ok(active) => active,
+                    Err(why) => return stopped(&mut report, why),
+                };
+                match self.library(&owner) {
+                    Ok(library) => library,
+                    Err(error) => {
+                        report.failed.push(format!("{}: {error}", owner.key()));
+                        continue;
+                    }
                 }
             };
+            // What earlier rounds could not finish deleting goes first, a page
+            // at a time, each as work the hub counts while the file asks it.
             if apply {
                 let mut after = None;
                 loop {
+                    let _active = match go_on()? {
+                        Ok(active) => active,
+                        Err(why) => return stopped(&mut report, why),
+                    };
                     let seal = self.seal_held();
                     if let Some(why) = seal.as_ref() {
                         let why = format!("the hub is sealed for a recovery: {why}");
@@ -221,21 +228,31 @@ impl Assets {
                     }
                 }
             }
-            drop(active);
             let mut after = None;
             loop {
                 let active = match go_on()? {
                     Ok(active) => active,
                     Err(why) => return stopped(&mut report, why),
                 };
-                // Who may hold each scope, as the directory stands as this
-                // batch is judged, and since when each device is on the
-                // network as it is now.
                 let Some(now) = directory() else { return stopped(&mut report, "the hub is gone".into()) };
-                let able: fastctx_content::v2::Able = match library.vouchers(after, BATCH) {
-                    Ok(vouchers) => {
-                        let indexed = now.indexed();
-                        vouchers
+                // Under the seal, then the directory's writer, as a grant
+                // takes them: who may hold each scope, and since when each
+                // device is on the network as it is now, is judged as the
+                // directory stands while the batch is marked, no change of it
+                // coming between; the bytes go after, outside both.
+                let marked = {
+                    let seal = self.seal_held();
+                    if let Some(why) = seal.as_ref() {
+                        let why = format!("the hub is sealed for a recovery: {why}");
+                        drop(seal);
+                        return stopped(&mut report, why);
+                    }
+                    let marked = self.bodies.under_directory(&now.book.directory, |current| -> Result<fastctx_content::v2::Marked, String> {
+                        let index = fastctx_net::directory_index::Index::new(current);
+                        let indexed = fastctx_net::directory_index::Indexed::new(current, &index);
+                        let able: fastctx_content::v2::Able = library
+                            .vouchers(after, BATCH)
+                            .map_err(|error| error.to_string())?
                             .into_iter()
                             .filter_map(|voucher| {
                                 let (scope, key) = &voucher;
@@ -244,25 +261,19 @@ impl Assets {
                                 super::scopes::readable(&indexed, &member.name, &kept)
                                     .then(|| (voucher.clone(), member.added.as_millisecond()))
                             })
-                            .collect()
-                    }
-                    Err(error) => {
-                        report.failed.push(format!("{}: {error}", owner.key()));
-                        break;
-                    }
+                            .collect();
+                        library
+                            .mark_vouched(after, BATCH, fastctx_types::asset_peers::OBJECT_BYTES, apply, able)
+                            .map_err(|error| error.to_string())
+                    });
+                    drop(seal);
+                    marked
                 };
                 drop(now);
-                // Under the seal, as a grant commits: the hub seals for a
-                // recovery only once nothing of this batch is let go.
-                let batch = {
-                    let seal = self.seal_held();
-                    if let Some(why) = seal.as_ref() {
-                        let why = format!("the hub is sealed for a recovery: {why}");
-                        drop(seal);
-                        return stopped(&mut report, why);
-                    }
-                    library.reclaim_vouched(after, BATCH, fastctx_types::asset_peers::OBJECT_BYTES, apply, able)
-                };
+                let batch = marked.map(|marked| {
+                    let next = marked.next;
+                    (next, library.let_go_marked(marked))
+                });
                 drop(active);
                 match batch {
                     Ok((next, found)) => {

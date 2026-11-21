@@ -66,7 +66,7 @@ pub use checkpoints::HeldItem;
 pub use collect::{Collected, Started};
 pub use commit::{Commit, Committed};
 pub use copies::{CopySize, Dropped, HeldScope};
-pub use vouch::{Able, Reclaimed, Settled, VOUCHED_FOR, Voucher, Vouchable, VouchableObject};
+pub use vouch::{Able, Marked, Reclaimed, Settled, VOUCHED_FOR, Voucher, Vouchable, VouchableObject};
 pub use exchange::{Holder, Imported, RawFrame, Verifier};
 pub use frame::{FORMAT, Header, KindRecord, Signer, open};
 pub use facts::{EpochFact, EpochKind, GapFact};

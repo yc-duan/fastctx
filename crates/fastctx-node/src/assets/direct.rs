@@ -84,6 +84,9 @@ struct Stall {
     times: u32,
 }
 
+/// Where a stream stood as the hub was told, and in which epoch.
+type Stood = (u64, u64);
+
 /// What this machine keeps of taking from, and giving to, other machines.
 pub(crate) struct Direct {
     /// The hub's word that this machine holds a scope, by hub and scope.
@@ -94,8 +97,9 @@ pub(crate) struct Direct {
     lines: Mutex<HashMap<(HubId, MachineName), Vec<Line>>>,
     /// How far each hub's clock is ahead of this machine's, in milliseconds.
     clocks: Mutex<HashMap<HubId, i64>>,
-    /// Where each stream kept here stood as the hub was last told.
-    told: Mutex<HashMap<(HubId, String, String), u64>>,
+    /// Where each stream kept here stood as the hub was last told, and in
+    /// which epoch.
+    told: Mutex<HashMap<(HubId, String, String), Stood>>,
     /// Where streams held here were said to stand on the machines that keep
     /// them, each with when it was last said to stand further: what a scope
     /// is gone through again for until its streams are there.
@@ -299,11 +303,22 @@ pub(super) async fn source_now(assets: &Assets, hub: &HubId, link: &Link, scope:
     if !stays(link, scope, stream) {
         return Source::Hub;
     }
-    match orderer(assets, link, scope, stream).await {
-        Ok(None) => Source::Hub,
-        Ok(Some(machine)) if assets.direct.is_left_alone(hub, &machine) => Source::Away,
-        Ok(Some(machine)) => Source::From(machine),
-        Err(_) => Source::Away,
+    let (scope_text, stream_text) = (scope.to_string(), stream.to_string());
+    let device = match blocking(&assets.library, move |library| library.orderer(&scope_text, &stream_text)).await {
+        Ok(Some(device)) => device,
+        Ok(None) => return Source::Hub,
+        Err(_) => return Source::Away,
+    };
+    if device == assets.device() {
+        return Source::Hub;
+    }
+    match link.view().by_key(&PublicKey::from_bytes(device)).map(|member| member.name.clone()) {
+        Some(machine) if assets.direct.is_left_alone(hub, &machine) => Source::Away,
+        Some(machine) => Source::From(machine),
+        // Not of the roster as last given: gone from the network where that
+        // roster is current, not known yet where it is not.
+        None if link.view_current() => Source::Hub,
+        None => Source::Away,
     }
 }
 
@@ -772,17 +787,21 @@ pub(super) async fn announce(assets: &Assets, hub: &HubId, link: &Arc<Link>, key
             continue;
         }
         let place = (hub.clone(), scope.to_string(), stream.clone());
-        if assets.direct.told.lock().expect("told").get(&place).is_some_and(|said| *said >= next) {
-            continue;
-        }
         // Said with the epoch it is written in here, not merely some epoch of
         // it, as the hub's word on it kept here says it: the hub takes it
         // only where that is its own last. Where it is not known here, or the
-        // hub takes it not, it is begun there first.
+        // hub takes it not, it is begun there first. Told already as far in
+        // that very epoch, it is not told again.
         let in_force = || {
             let (scope_text, stream_text) = (scope.to_string(), stream.clone());
             blocking(&assets.library, move |library| library.epoch_in_force(&scope_text, &stream_text))
         };
+        let epoch_now = in_force().await?.map(|fact| fact.epoch);
+        if let Some(epoch) = epoch_now
+            && assets.direct.told.lock().expect("told").get(&place).is_some_and(|(said, in_epoch)| *said >= next && *in_epoch == epoch)
+        {
+            continue;
+        }
         let stirred = |fact: EpochFact| Request::Stirred {
             scope: scope.to_string(),
             stream: stream.clone(),
@@ -804,7 +823,9 @@ pub(super) async fn announce(assets: &Assets, hub: &HubId, link: &Arc<Link>, key
         }
         match said {
             Ok(Reply::Noted) => {
-                assets.direct.told.lock().expect("told").insert(place, next);
+                if let Some(epoch) = in_force().await?.map(|fact| fact.epoch) {
+                    assets.direct.told.lock().expect("told").insert(place, (next, epoch));
+                }
             }
             Ok(_) => {
                 failed.get_or_insert(format!("{stream}: the hub did not note where it stands"));
