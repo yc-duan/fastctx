@@ -1,4 +1,4 @@
-use super::{LAST_ACTION, LAST_ACTION_WITHIN};
+use super::{LAST_ACTION, LAST_ACTIONS, LAST_ARRIVED_WITHIN, last_within};
 use fastctx_storage::rusqlite::{Connection, OptionalExtension, StatementStatus, params};
 
 fn arrival(at: i128) -> [u8; 16] {
@@ -19,9 +19,7 @@ fn the_last_action_is_one_row_read_without_sorting() {
     let last: Option<Vec<u8>> = db.query_row(LAST_ACTION, ["c"], |row| row.get(0)).optional().expect("last");
     assert_eq!(last.as_deref(), Some(br#"{"n":4}"#.as_slice()));
     let within = |from: i128, until: i128| -> Option<Vec<u8>> {
-        db.query_row(LAST_ACTION_WITHIN, params!["c", arrival(from).as_slice(), arrival(until).as_slice()], |row| row.get(0))
-            .optional()
-            .expect("within")
+        last_within(&db, &"c", arrival(from).as_slice(), arrival(until).as_slice()).expect("within")
     };
     assert_eq!(within(0, 40).as_deref(), Some(br#"{"n":3}"#.as_slice()));
     assert_eq!(within(0, 10), None);
@@ -40,26 +38,43 @@ fn the_last_action_is_one_row_read_without_sorting() {
     }
     assert_eq!(within(0, 40).as_deref(), Some(br#"{"n":8}"#.as_slice()));
     assert_eq!(within(31, 40).as_deref(), Some(br#"{"n":7}"#.as_slice()));
-    // What a conversation wrote after a span costs the asking nothing: five
-    // thousand actions later, the span's last is found in a few steps.
+    // What a conversation wrote after a span costs the asking of it by the
+    // arrivals nothing: five thousand actions later, the span's last is
+    // found in a few steps.
     for position in 100..5100_i64 {
         db.execute(
-            "INSERT INTO conversation_records(position,conversation,family,identity,body,modified,arrival) VALUES(?1,'c','actions',?2,'{}','',?3)",
+            "INSERT INTO conversation_records(position,conversation,family,identity,body,modified,arrival) VALUES(?1,'c','actions',?2,x'7b7d','',?3)",
             params![position, format!("later-{position}"), arrival(1000 + i128::from(position)).as_slice()],
         )
         .expect("insert");
     }
-    for (from, until, found) in [(0, 40, Some(br#"{"n":8}"#.as_slice())), (41, 900, None)] {
-        let mut asked = db.prepare(LAST_ACTION_WITHIN).expect("prepare");
-        let told: Option<Vec<u8>> = asked
-            .query_row(params!["c", arrival(from).as_slice(), arrival(until).as_slice()], |row| row.get(0))
-            .optional()
-            .expect("within");
-        assert_eq!(told.as_deref(), found);
+    assert_eq!(within(0, 40).as_deref(), Some(br#"{"n":8}"#.as_slice()));
+    assert_eq!(within(41, 900), None);
+    for (from, until, found) in [(0, 40, Some(8_i64)), (41, 900, None)] {
+        let mut asked = db.prepare(LAST_ARRIVED_WITHIN).expect("prepare");
+        let told: Option<i64> =
+            asked.query_row(params!["c", arrival(from).as_slice(), arrival(until).as_slice()], |row| row.get(0)).expect("within");
+        assert_eq!(told, found);
         let steps = asked.get_status(StatementStatus::VmStep);
         assert!(steps < 200, "{steps} steps for the span {from}..{until}");
     }
-    for (sql, index) in [(LAST_ACTION, "conversation_records_order"), (LAST_ACTION_WITHIN, "COVERING INDEX conversation_records_arrival")] {
+    // And what arrived in a long stay costs the asking nothing where its
+    // last is at the end of the order: the first row gone back to is it.
+    assert_eq!(within(1100, i128::MAX).as_deref(), Some(b"{}".as_slice()));
+    {
+        let mut near = db.prepare(LAST_ACTIONS).expect("prepare");
+        let mut rows = near.query(params!["c", 256]).expect("near");
+        let first = rows.next().expect("step").expect("a row");
+        assert_eq!(first.get::<_, i64>(0).expect("place"), 5099);
+        drop(rows);
+        let steps = near.get_status(StatementStatus::VmStep);
+        assert!(steps < 50, "{steps} steps to the last action written");
+    }
+    for (sql, index) in [
+        (LAST_ACTION, "conversation_records_order"),
+        (LAST_ACTIONS, "conversation_records_order"),
+        (LAST_ARRIVED_WITHIN, "COVERING INDEX conversation_records_arrival"),
+    ] {
         let mut explained = db.prepare(&format!("EXPLAIN QUERY PLAN {sql}")).expect("explain");
         let bound = vec!["c"; explained.parameter_count()];
         let plan: Vec<String> = explained

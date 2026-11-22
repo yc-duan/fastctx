@@ -84,20 +84,20 @@ html.framed .sp-host {
 /* It slides whole, never thinned: where the conversations are a frame
    late in giving way, it stands over what of them it has reached. */
 .sp-split > .sp-panel:not(.sp-over) > .sp-sheet {
-  translate: 100% 0;
+  transform: translate(100%, 0);
   opacity: 1;
 }
 
 .sp-split[data-dock="left"] > .sp-panel:not(.sp-over) > .sp-sheet {
-  translate: -100% 0;
+  transform: translate(-100%, 0);
 }
 
 .sp-split[data-dock="bottom"] > .sp-panel:not(.sp-over) > .sp-sheet {
-  translate: 0 100%;
+  transform: translate(0, 100%);
 }
 
 .sp-host.sp-shown > .sp-split > .sp-panel:not(.sp-over) > .sp-sheet {
-  translate: none;
+  transform: none;
 }
 
 .sp-host.sp-shown > .sp-split > .sp-panel:not(.sp-over) {

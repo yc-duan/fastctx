@@ -104,8 +104,18 @@ pub(crate) async fn all(node: &Arc<Node>, link: &Arc<Link>) -> Result<(), String
     else {
         return super::publication::prune(node).await;
     };
+    // A registration not asked again at this pass is not known refused now.
+    // A hub put back from before the conversation was registered holds none
+    // of it and names none of it in its catalog, and what the catalog lacks
+    // is withdrawn here, with the edits made to it offline: asked, the hub
+    // would have taken the registration. What is of those conversations is
+    // left as it is until they are asked again.
+    let mut unasked = std::collections::HashSet::new();
+    let mut here = std::collections::HashSet::new();
     for resident in node.residents.everyone().filter(|resident| resident.removed.is_none()) {
+        here.insert(resident.id.clone());
         if refused_lately(&resident.id) {
+            unasked.insert(resident.id.clone());
             continue;
         }
         match crate::record_ownership::register(node, &resident.id, &resident.about.acting).await {
@@ -119,6 +129,9 @@ pub(crate) async fn all(node: &Arc<Node>, link: &Arc<Link>) -> Result<(), String
             }
         }
     }
+    // What was refused to a conversation no longer here is kept no longer.
+    REFUSED.lock().expect("refused registrations").retain(|resident, _| here.contains(resident));
+    let asked = |scope: &Scope| !matches!(scope, Scope::Conversation { conversation } if unasked.contains(&conversation.address.resident));
     let known: Vec<_> = node
         .replicas
         .state
@@ -126,9 +139,22 @@ pub(crate) async fn all(node: &Arc<Node>, link: &Arc<Link>) -> Result<(), String
         .lock()
         .expect("never poisoned")
         .iter()
+        .filter(|(_, route)| match &route.head.document {
+            Document::Plan { owner } => !unasked.contains(&owner.resident),
+            Document::History { scope, .. } => asked(scope),
+        })
         .map(|(id, route)| (id.clone(), route.clone()))
         .collect();
-    let known_folders: Vec<_> = node.replicas.state.folders.lock().expect("never poisoned").values().cloned().collect();
+    let known_folders: Vec<_> = node
+        .replicas
+        .state
+        .folders
+        .lock()
+        .expect("never poisoned")
+        .values()
+        .filter(|folder| asked(&folder.scope))
+        .cloned()
+        .collect();
     let catalog_view = crate::authorization::current_view(link).map_err(failure)?;
     let Response::Replicas { catalog } = link.owned_records(&account, Request::Replicas).await? else {
         return Err("the hub did not return the replica catalog".into());

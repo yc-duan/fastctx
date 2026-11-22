@@ -44,8 +44,11 @@ export function give(sheet: HTMLElement, { away, size, open, room }: Giving): vo
     room(null, to);
     return;
   }
-  const at = (share: number) => `${away[0] * (1 - share)}px ${away[1] * (1 - share)}px`;
-  const animation = sheet.animate([{ translate: at(from) }, { translate: at(to) }], {
+  // As a transform, and its end heard as an event: a system browser years
+  // old knows neither the property `translate` nor an animation's promise,
+  // and a sheet it could not move would stand over the page, shut.
+  const at = (share: number) => `translate(${away[0] * (1 - share)}px, ${away[1] * (1 - share)}px)`;
+  const animation = sheet.animate([{ transform: at(from) }, { transform: at(to) }], {
     duration: whole * Math.abs(to - from),
     easing: style.getPropertyValue("--glide-easing").trim() || "ease",
   });
@@ -80,15 +83,12 @@ export function give(sheet: HTMLElement, { away, size, open, room }: Giving): vo
   given = Math.round(size * from);
   room(given, from);
   frame = requestAnimationFrame(step);
-  animation.finished.then(
-    () => {
-      if (gliding.get(sheet) !== state) return;
-      cancelAnimationFrame(frame);
-      gliding.delete(sheet);
-      room(null, to);
-    },
-    () => {},
-  );
+  animation.onfinish = () => {
+    if (gliding.get(sheet) !== state) return;
+    cancelAnimationFrame(frame);
+    gliding.delete(sheet);
+    room(null, to);
+  };
 }
 
 /** Ends the glide of `sheet` where the style sheet has it, as the desk is

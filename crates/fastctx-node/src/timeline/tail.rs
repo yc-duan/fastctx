@@ -57,12 +57,13 @@ const GREW_LOOKS: [Duration; 4] =
 static GREW: LazyLock<Mutex<HashMap<ResidentId, Instant>>> = LazyLock::new(Mutex::default);
 /// A reading that came out short of a source — the last record kept not in
 /// its file yet, a login's directory not to be read — is made again after
-/// this long, then twice as long each time it comes out short again, an hour
-/// at most. Each is a reading of the whole history: made every few seconds
-/// for as long as the source stayed away, a conversation whose login was
-/// gone for good took a core of its machine from then on.
+/// this long, then twice as long each time it comes out short again, ten
+/// minutes at most. Each is a reading of the whole history: made every few
+/// seconds for as long as the source stayed away, a conversation whose login
+/// was gone for good took a core of its machine from then on. A source that
+/// comes back and says nothing of it is read within those ten minutes.
 const UNREAD_AGAIN: Duration = Duration::from_secs(5);
-const UNREAD_AGAIN_MOST: Duration = Duration::from_secs(60 * 60);
+const UNREAD_AGAIN_MOST: Duration = Duration::from_secs(10 * 60);
 /// The form of what is kept beside the timeline: one of an earlier form is
 /// read whole again — of form 2, a seam might be kept with no record ids
 /// before it (EE06).
