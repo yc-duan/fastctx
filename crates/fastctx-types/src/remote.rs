@@ -969,7 +969,9 @@ impl RemoteCall {
             // The asset lines, and what a machine's owner asks of the copies its
             // library holds.
             Self::Assets | Self::Copies { .. } => Some(Purpose::AssetSync),
-            Self::SetAgentWeek { .. } | Self::ResetAgentUsage { .. } => Some(Purpose::ExecutionControl),
+            Self::SetAgentWeek { .. } | Self::ResetAgentUsage { .. } | Self::SetIdleCompaction { .. } => {
+                Some(Purpose::ExecutionControl)
+            }
             Self::AddAgentLogin { .. }
             | Self::AgentActivity { .. }
             | Self::AgentCalls { .. }
@@ -985,7 +987,6 @@ impl RemoteCall {
             | Self::Canon { .. }
             | Self::ChangeAgentLogin { .. }
             | Self::ChangeAgentModels { .. }
-            | Self::SetIdleCompaction { .. }
             | Self::ClaudeConsent { .. }
             | Self::Collaboration { .. }
             | Self::CommitAttachment { .. }

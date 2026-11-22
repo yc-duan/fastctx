@@ -30,9 +30,12 @@ pub(crate) async fn query(node: &Arc<Node>, acting: &Acting, machine: Option<Wri
         // from another machine (`admission::local::logins`).
         let works_here = node.works_here(acting).is_ok();
         machines.push(match super::here(node).await {
-            Ok(logins) if works_here => MachineLoginsHeard::Answered { observation: None, logins: Box::new(logins) },
-            // What it sees of compacting idle conversations is what the
+            // What each sees of compacting idle conversations is what the
             // accounts it works for set, not this computer's own.
+            Ok(mut logins) if works_here => {
+                super::idle::fill(node, &super::idle::accounts_of(node, acting), &mut logins);
+                MachineLoginsHeard::Answered { observation: None, logins: Box::new(logins) }
+            }
             Ok(mut logins) => MachineLoginsHeard::Answered {
                 observation: None,
                 logins: Box::new({

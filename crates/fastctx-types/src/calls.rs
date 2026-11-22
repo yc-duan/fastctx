@@ -1522,7 +1522,6 @@ impl Call {
             | Self::BringIn { .. }
             | Self::ChangeAgentLogin { .. }
             | Self::ChangeAgentModels { .. }
-            | Self::SetIdleCompaction { .. }
             | Self::ClaudeConsent { .. }
             | Self::ClaudeContext { .. }
             | Self::ClaudeSessionDirectory { .. }
@@ -1647,7 +1646,9 @@ impl Call {
             // What a machine's owner asks of the copies its library holds.
             Self::MachineCopies { .. } => Some(Purpose::AssetSync),
             // Sets what a login's assistances and its Fable line are held to.
-            Self::SetAgentWeek { .. } | Self::ResetAgentUsage { .. } => Some(Purpose::ExecutionControl),
+            Self::SetAgentWeek { .. } | Self::ResetAgentUsage { .. } | Self::SetIdleCompaction { .. } => {
+                Some(Purpose::ExecutionControl)
+            }
         }
     }
 }

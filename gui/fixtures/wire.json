@@ -21666,7 +21666,8 @@
               "do": "compact"
             },
             "at": "2026-10-21T00:00:00Z",
-            "state": "waiting"
+            "state": "waiting",
+            "automatic": true
           }
         ],
         "pending_newer": [

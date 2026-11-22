@@ -530,8 +530,10 @@ export class AgentsPage implements Page {
         const record = await options.read(machine);
         const heard = record.machines.find((one) => one.kind === "answered" && one.logins.machine === machine);
         const side = heard?.kind !== "answered" ? null : agent === "claude" ? heard.logins.claude : agent === "codex" ? heard.logins.codex : null;
-        const now = side?.listed.find((one) => one.dir === dir)?.idle_compaction;
-        return refreshed(options.setIdleCompaction(machine, agent, dir, { ...(now ?? IDLE_DEFAULT), on }));
+        const listed = side?.listed.find((one) => one.dir === dir);
+        // Not read, its conditions are not known: none are written over.
+        if (!listed) throw new Error("该登录现在读不到，稍后再试");
+        return refreshed(options.setIdleCompaction(machine, agent, dir, { ...(listed.idle_compaction ?? IDLE_DEFAULT), on }));
       },
       idle: (login) => {
         const { machine, agent, dir, one } = this.recordOf(login);

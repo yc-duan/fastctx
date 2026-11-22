@@ -847,5 +847,19 @@
     "purpose": "AssetSync",
     "capability": "timeline_reads",
     "mapping": "crates/fastctx-types/src/remote.rs"
+  },
+  {
+    "type": "crates/fastctx-types/src/calls.rs::Call",
+    "variant": "SetIdleCompaction",
+    "purpose": "ExecutionControl",
+    "capability": "node_ipc",
+    "mapping": "crates/fastctx-types/src/calls.rs"
+  },
+  {
+    "type": "crates/fastctx-types/src/remote.rs::RemoteCall",
+    "variant": "SetIdleCompaction",
+    "purpose": "ExecutionControl",
+    "capability": "timeline_reads",
+    "mapping": "crates/fastctx-types/src/remote.rs"
   }
 ]
