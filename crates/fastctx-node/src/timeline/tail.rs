@@ -55,10 +55,15 @@ const GREW_LOOKS: [Duration; 4] =
     [Duration::from_millis(400), Duration::from_millis(1000), Duration::from_millis(2000), Duration::from_millis(3500)];
 /// When each history was last said to have grown, nothing read of it since.
 static GREW: LazyLock<Mutex<HashMap<ResidentId, Instant>>> = LazyLock::new(Mutex::default);
-/// A reading the last record kept is not in yet is tried again this often,
-/// at most this many times in a row.
+/// A reading that came out short of a source — the last record kept not in
+/// its file yet, a login's directory not to be read — is made again after
+/// this long, then twice as long each time it comes out short again, ten
+/// minutes at most. Each is a reading of the whole history: made every few
+/// seconds for as long as the source stayed away, a conversation whose login
+/// was gone for good took a core of its machine from then on. A source that
+/// comes back and says nothing of it is read within those ten minutes.
 const UNREAD_AGAIN: Duration = Duration::from_secs(5);
-const UNREAD_TRIES: u32 = 20;
+const UNREAD_AGAIN_MOST: Duration = Duration::from_secs(10 * 60);
 /// The form of what is kept beside the timeline: one of an earlier form is
 /// read whole again — of form 2, a seam might be kept with no record ids
 /// before it (EE06).
@@ -149,7 +154,27 @@ const HANDING_AGAIN: Duration = Duration::from_secs(3);
 /// for the first part (CC03).
 const QUIET_SOON: Duration = Duration::from_secs(10 * 60);
 const QUIET_FOR: Duration = Duration::from_secs(60 * 60);
-static UNREAD: LazyLock<Mutex<HashMap<ResidentId, u32>>> = LazyLock::new(Mutex::default);
+/// The histories last read short of a source: how many times in a row, and
+/// when each is read again where nothing of it changes before.
+static UNREAD: LazyLock<Mutex<HashMap<ResidentId, (u32, Instant)>>> = LazyLock::new(Mutex::default);
+
+/// `resident`'s history was read and came out short of a source: how long
+/// until it is read again.
+fn unread_again(resident: &ResidentId) -> Duration {
+    let mut unread = UNREAD.lock().expect("unread timelines");
+    let (tries, again) = unread.entry(resident.clone()).or_insert((0, Instant::now()));
+    let after = UNREAD_AGAIN.saturating_mul(1 << (*tries).min(16)).min(UNREAD_AGAIN_MOST);
+    *tries = tries.saturating_add(1);
+    *again = Instant::now() + after;
+    after
+}
+
+/// How long `resident`'s history, read short of a source, still waits to be
+/// read again; none where it was not, or it is time.
+fn unread_waits(resident: &ResidentId) -> Option<Duration> {
+    let again = UNREAD.lock().expect("unread timelines").get(resident)?.1;
+    again.checked_duration_since(Instant::now()).filter(|left| !left.is_zero())
+}
 
 /// Where a conversation's timeline in the asset library stands.
 #[derive(Clone, Default, Serialize, Deserialize)]
@@ -157,6 +182,10 @@ struct Following {
     form: u32,
     /// The version of the history it was brought to (`held_history::version`).
     version: String,
+    /// That reading came out short of a source: the history is read again
+    /// though its version is the same, once it has waited (`unread_waits`).
+    #[serde(default)]
+    unread: bool,
     /// The holding period of the conversation's scope it was brought to in:
     /// held anew since, it is brought again whole (GG02).
     #[serde(default)]
@@ -855,9 +884,10 @@ async fn produce_step(
             && state.seam.blocks == checked.seam.blocks
     });
     let version = crate::held_history::version(node, resident).await?;
-    if state.version == version && !whole && !checked && audit.is_none() {
-        // Unchanged: when it was last checked still stands (DD10).
-        return Ok(Done(Produced { verified: state.verified, ..Produced::default() }));
+    if state.version == version && !whole && !checked && audit.is_none() && (!state.unread || unread_waits(resident).is_some()) {
+        // Unchanged: when it was last checked still stands (DD10). One read
+        // short of a source waits its time before it is read again.
+        return Ok(Done(Produced { verified: state.verified, unread: state.unread, ..Produced::default() }));
     }
     // Come from another machine, the timeline is not begun here before the
     // hub's description of it is: the hub may have it already, ordered
@@ -1206,8 +1236,10 @@ async fn produce_step(
                     };
                     let next = Following {
                         form: FORM,
-                        // Brought again until the record holds what was kept.
-                        version: if unread { String::new() } else { version },
+                        // Brought again until the record holds what was kept,
+                        // each time after a wait (`unread`).
+                        version,
+                        unread,
                         holding: Some(wrote.holding),
                         session: Some(session),
                         seam: *seam,
@@ -1353,7 +1385,8 @@ async fn produce_step(
             };
             let following = Following {
                 form: FORM,
-                version: if unread { String::new() } else { version },
+                version,
+                unread,
                 holding: Some(wrote.holding),
                 floor,
                 verified: if unread { state.verified } else { Some(Timestamp::now()) },
@@ -1593,8 +1626,9 @@ pub(super) fn register_check(node: &Arc<Node>) {
                 }
             }
             match checked {
-                // Not all could be read: not checked, tried again (DD08).
-                Ok(checked) if checked.unread => Outcome::Again { after: UNREAD_AGAIN * 12 },
+                // Not all could be read: not checked, tried again (DD08), no
+                // sooner than a minute on and as its readings wait.
+                Ok(checked) if checked.unread => Outcome::Again { after: unread_again(&resident).max(UNREAD_AGAIN * 12) },
                 Ok(checked) => {
                     if checked.written + checked.gone > 0 {
                         node.log.line(format_args!(
@@ -1883,16 +1917,12 @@ fn brought(node: &Arc<Node>, resident: &ResidentId, begun: Instant, produced: Re
                 node.log.line(format_args!("{resident}'s asset timeline: {} written, {} gone", produced.written, produced.gone));
             }
             if produced.unread {
-                let mut unread = UNREAD.lock().expect("unread timelines");
-                let tries = unread.entry(resident.clone()).or_default();
-                *tries += 1;
-                if *tries < UNREAD_TRIES {
-                    return Outcome::Again { after: UNREAD_AGAIN };
-                }
-                unread.remove(resident);
-            } else {
-                UNREAD.lock().expect("unread timelines").remove(resident);
+                // Read just now, it waits longer than it did; found
+                // unchanged meanwhile, it waits what is left.
+                let after = if produced.read { unread_again(resident) } else { unread_waits(resident).unwrap_or(UNREAD_AGAIN) };
+                return Outcome::Again { after };
             }
+            UNREAD.lock().expect("unread timelines").remove(resident);
             // A long prefix changed: checked whole within the hour. Any
             // history not checked for a week, or not since this node began
             // keeping it: checked, at some moment of the next hour.

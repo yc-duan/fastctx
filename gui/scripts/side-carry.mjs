@@ -1,7 +1,8 @@
-// Measures what the page shows as the side opens and shuts beside a
-// conversation (`carry.ts`): where the column, a block of it in view, the
-// composer and the side's sheet stand at every frame, as painted, in a
-// headless Chromium. A part that is not where the frame before left it by
+// Measures what the page shows as the sidebar across the desk folds and
+// comes back (`carry.ts`, `--part sidebar`): where the column, a block of
+// it in view, the composer and the side's sheet stand at every frame, as
+// painted, in a headless Chromium. A conversation's side is measured by
+// `side-room.mjs`. A part that is not where the frame before left it by
 // more than a glide moves it in a frame has leapt. The dev server must be
 // running (`npm run dev`).
 //

@@ -139,7 +139,11 @@
 /* The top row's last keeps clear of the corner, where the window's own
    buttons and the side's switch stand, until the side takes it over; the
    others' heads end at their own edge. */
+/* Reckoned here again, as on the desk (`side.css`), from how wide the line
+   is: as the side glides only what keeps clear of the corner is told that
+   (`frame.ts`). */
 .desk-pane > :is(.conversation-page, .dk-fork-page) > .page-head {
+  --sp-corner: calc(var(--sp-switch-right) + var(--sp-corner-width, 32px) + var(--space-2));
   --dk-room: var(--sp-corner);
   padding-right: calc(var(--space-4) + (var(--dk-room) - var(--space-4)) * var(--dk-corner));
 }

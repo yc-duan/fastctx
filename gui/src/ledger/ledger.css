@@ -141,14 +141,19 @@
   gap: var(--space-3);
 }
 /* That head reaches the room's edges as on every page; what is under it
-   keeps the page's measure. */
-.lg-main:has(> .lg-page > .page-head) {
+   keeps the page's measure. A page with such a head says so itself
+   (`lg-headed`): asked of whatever stands under a page that has a head
+   among its own, every element of every page was one that might, and
+   whenever anything was put on a page or taken off one — a block of a
+   conversation, a second on a clock — the style of the whole window was
+   set again. */
+.lg-main:has(> .lg-page.lg-headed) {
   padding-inline: 0;
 }
-.lg-page:has(> .page-head) {
+.lg-page.lg-headed {
   max-width: none;
 }
-.lg-page:has(> .page-head) > :not(.page-head) {
+.lg-page.lg-headed > :not(.page-head) {
   margin-inline: max(var(--gutter-wide), (100% - var(--lg-measure)) / 2);
 }
 .lg-title {

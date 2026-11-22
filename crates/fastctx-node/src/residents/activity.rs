@@ -191,9 +191,7 @@ pub(crate) fn last_action(
         } else {
             let from = from.map_or([0; 16], |at| (at.as_nanosecond() ^ i128::MIN).to_be_bytes());
             let until = until.map_or([255; 16], |at| (at.as_nanosecond() ^ i128::MIN).to_be_bytes());
-            rows.connection()
-                .query_row(LAST_ACTION_WITHIN, params![rows.conversation(), from.as_slice(), until.as_slice()], |row| row.get(0))
-                .optional()?
+            last_within(rows.connection(), &rows.conversation(), &from, &until)?
         };
         body.as_deref().map(records::decode).transpose()
     })
@@ -204,14 +202,53 @@ pub(crate) fn last_action(
 /// conversation by arrival and sorted them with their bodies to find it.
 const LAST_ACTION: &str = "SELECT body FROM conversation_records INDEXED BY conversation_records_order \
     WHERE conversation=?1 AND family='actions' ORDER BY position DESC LIMIT 1";
-/// The last action written of those that arrived in a span of time: the
-/// family's order gone back from its end to the first that arrived in the
-/// span — an action that happened earlier may be written later, and two
-/// may arrive at one moment, so the span's end by arrival is not it
-/// (codex-15695bc9). No row is sorted; those written after the span are
-/// passed one at a time.
-const LAST_ACTION_WITHIN: &str = "SELECT body FROM conversation_records INDEXED BY conversation_records_order \
-    WHERE conversation=?1 AND family='actions' AND arrival>=?2 AND arrival<?3 ORDER BY position DESC LIMIT 1";
+/// The last action written of those that arrived in a span of time. An
+/// action that happened earlier may be written later, and two may arrive at
+/// one moment, so the span's end by arrival is not it: it is the greatest
+/// place among those of the span. The end of the order is looked at first,
+/// `NEAR` actions of it: a conversation still in the town it is asked of, or
+/// one that left it lately, has it there, however much arrived in the span.
+/// Not there, it is told by the index of arrivals, an entry for each that
+/// arrived in the span and no row: a conversation that did nothing in the
+/// span costs a seek, however much it wrote after. Either way alone cost a
+/// machine dearly: gone back along the order to its start, every action
+/// written since the span, at each asking of who had been in a town; by the
+/// arrivals alone, every action of a long stay.
+fn last_within<C: fastctx_storage::rusqlite::ToSql>(
+    db: &fastctx_storage::rusqlite::Connection,
+    conversation: &C,
+    from: &[u8],
+    until: &[u8],
+) -> fastctx_storage::rusqlite::Result<Option<Vec<u8>>> {
+    let mut near = db.prepare_cached(LAST_ACTIONS)?;
+    let mut rows = near.query(params![conversation, NEAR])?;
+    let mut place: Option<i64> = None;
+    while let Some(row) = rows.next()? {
+        let arrived: Option<Vec<u8>> = row.get(1)?;
+        if arrived.as_deref().is_some_and(|at| at >= from && at < until) {
+            place = Some(row.get(0)?);
+            break;
+        }
+    }
+    drop(rows);
+    let place = match place {
+        Some(place) => Some(place),
+        None => db.prepare_cached(LAST_ARRIVED_WITHIN)?.query_row(params![conversation, from, until], |row| row.get(0))?,
+    };
+    match place {
+        Some(place) => db.prepare_cached(ACTION_AT)?.query_row(params![conversation, place], |row| row.get(0)).optional(),
+        None => Ok(None),
+    }
+}
+
+/// How many actions at the end of the order are looked at for the last of
+/// a span before the span's arrivals are gone through.
+const NEAR: i64 = 256;
+const LAST_ACTIONS: &str = "SELECT position, arrival FROM conversation_records INDEXED BY conversation_records_order \
+    WHERE conversation=?1 AND family='actions' ORDER BY position DESC LIMIT ?2";
+const LAST_ARRIVED_WITHIN: &str = "SELECT max(position) FROM conversation_records INDEXED BY conversation_records_arrival \
+    WHERE conversation=?1 AND family='actions' AND arrival>=?2 AND arrival<?3";
+const ACTION_AT: &str = "SELECT body FROM conversation_records WHERE conversation=?1 AND position=?2";
 pub(crate) fn recent_actions(directory: &ConversationDir, limit: usize) -> io::Result<(Vec<Action>, usize)> {
     prepare(directory, "actions")?;
     records::read(directory, |rows| {
@@ -220,7 +257,7 @@ pub(crate) fn recent_actions(directory: &ConversationDir, limit: usize) -> io::R
             [rows.conversation()],
             |row| row.get(0),
         )?;
-        let mut query=rows.connection().prepare_cached("SELECT body FROM conversation_records WHERE conversation=?1 AND family='actions' ORDER BY position DESC LIMIT ?2")?;
+        let mut query=rows.connection().prepare_cached("SELECT body FROM conversation_records INDEXED BY conversation_records_order WHERE conversation=?1 AND family='actions' ORDER BY position DESC LIMIT ?2")?;
         let mut actions = query
             .query_map((rows.conversation(), limit.min(512) as i64), |row| row.get::<_, Vec<u8>>(0))?
             .map(|row| records::decode(&row?))
@@ -250,7 +287,7 @@ pub(crate) fn asked(path: &Path, target: Option<&str>) -> io::Result<Vec<Action>
     let directory = directory(path)?;
     prepare(&directory, "actions")?;
     records::read(&directory, |rows| {
-        let mut query=rows.connection().prepare_cached("SELECT body FROM conversation_records WHERE conversation=?1 AND family='actions' AND json_extract(body,'$.hand')='ask_colleague' AND (?2 IS NULL OR json_extract(body,'$.result')=?2) ORDER BY position DESC")?;
+        let mut query=rows.connection().prepare_cached("SELECT body FROM conversation_records INDEXED BY conversation_records_action WHERE conversation=?1 AND family='actions' AND json_extract(body,'$.hand')='ask_colleague' AND (?2 IS NULL OR json_extract(body,'$.result')=?2) ORDER BY position DESC")?;
         query
             .query_map((rows.conversation(), target), |row| row.get::<_, Vec<u8>>(0))?
             .map(|row| records::decode(&row?))

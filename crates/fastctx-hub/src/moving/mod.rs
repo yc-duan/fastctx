@@ -38,6 +38,7 @@
 pub(crate) mod files;
 pub(crate) mod follow;
 pub(crate) mod frames;
+pub(crate) mod libraries;
 pub(crate) mod old;
 pub(crate) mod out;
 pub(crate) mod requests;
@@ -71,6 +72,56 @@ pub(crate) const NOT_ARRIVING: &str = "this move does not arrive here";
 /// Left where a hub's data was deleted: a hub that moved away, or a move
 /// that was to bring it here and was called off.
 pub(crate) const RETIRED: &str = "retired.json";
+/// At the new hub, the owner libraries still to come from where the hub
+/// was (`Coming`): none of them is opened before its databases came.
+pub(crate) const COMING: &str = "libraries-coming.json";
+
+/// The owner libraries a move left where the hub was, sent once the old hub
+/// serves no more, as the new hub keeps them until each came.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub(crate) struct Coming {
+    /// The move that brings them.
+    pub id: String,
+    /// Those whose databases are still to come, by their paths under the
+    /// hub's directory (`files::LIBRARIES`).
+    pub libraries: BTreeSet<String>,
+    /// Those whose large objects are still to follow: the old place holds
+    /// the only copy of them until then.
+    #[serde(default)]
+    pub objects: BTreeSet<String>,
+}
+
+impl Coming {
+    /// Whether nothing is still to come.
+    pub(crate) fn none(&self) -> bool {
+        self.libraries.is_empty() && self.objects.is_empty()
+    }
+}
+
+/// The owner libraries still to come to the hub in `dir`.
+pub(crate) fn coming(dir: &Path) -> io::Result<Coming> {
+    match read::<Coming>(&dir.join(COMING)) {
+        Ok(coming) => Ok(coming),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(Coming::default()),
+        Err(error) => Err(error),
+    }
+}
+
+/// Keeps which owner libraries are still to come to the hub in `dir`; none
+/// left, nothing is kept. The record that none is left is published before
+/// it is removed: a removal the power took leaves that record, not one of
+/// libraries that came since.
+pub(crate) fn keep_coming(dir: &Path, coming: &Coming) -> io::Result<()> {
+    let place = dir.join(COMING);
+    fastctx_platform::publish(&place, &crate::store::json(coming)?, fastctx_platform::Permissions::Private)?;
+    if coming.none() {
+        return match fastctx_platform::disk::remove_file(&place) {
+            Err(error) if error.kind() != io::ErrorKind::NotFound => Err(error),
+            _ => Ok(()),
+        };
+    }
+    Ok(())
+}
 
 /// A move of the hub away from here, as the old hub keeps it. Its key stays
 /// here: the new place holds only its public half.
@@ -94,6 +145,11 @@ pub(crate) struct Outgoing {
     /// The new place said the hub's service is installed there.
     #[serde(default)]
     pub installed: bool,
+    /// The last try failed after the hub had stopped taking anything: it is
+    /// tried again when the super administrator says so, not by itself
+    /// (`out`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub stopped_short: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub switched: Option<Timestamp>,
     /// After the switch: how this place stands.
@@ -347,6 +403,19 @@ pub(crate) struct Moving {
     pub switched: Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
     /// The old places connected now, by the id of the move that left them.
     pub olds: Mutex<std::collections::HashMap<String, mpsc::UnboundedSender<frames::ToOld>>>,
+    /// Held while an old place sends the owner libraries: by one connection
+    /// at a time (`libraries`).
+    pub receiving: tokio::sync::Mutex<()>,
+    /// Held shared by what the hub writes of its own accord for as long as
+    /// one round of it lasts — a checkpoint, its log's way into its library,
+    /// a sweep of libraries no one reads (`quiet`) — and
+    /// whole by a move from before the hub stops until it serves on or has
+    /// switched (`quieten`, `thaw`). The copies a move takes of the hub's
+    /// record and of its libraries are taken one after another: written
+    /// between two of them, a record would be ahead of a library it speaks
+    /// of where the hub is taken over, which seals every asset there.
+    quiet: std::sync::Arc<tokio::sync::RwLock<()>>,
+    quieted: Mutex<Option<tokio::sync::OwnedRwLockWriteGuard<()>>>,
 }
 
 /// How long a hub that stops taking anything waits for what it took to be
@@ -377,7 +446,18 @@ impl Moving {
             driving: AtomicBool::new(false),
             switched: Mutex::new(Some(switched)),
             olds: Mutex::new(std::collections::HashMap::new()),
+            receiving: tokio::sync::Mutex::new(()),
+            quiet: std::sync::Arc::new(tokio::sync::RwLock::new(())),
+            quieted: Mutex::new(None),
         }
+    }
+
+    /// Lets a round of what the hub writes of its own accord begin, held
+    /// until the round is done; none while a move waits for such rounds to
+    /// end or has the hub stopped: the round is passed by, and made again
+    /// when its time next comes.
+    pub fn quiet(&self) -> Option<tokio::sync::OwnedRwLockReadGuard<()>> {
+        self.quiet.clone().try_read_owned().ok()
     }
 
     pub fn frozen(&self) -> bool {
@@ -420,6 +500,21 @@ impl Moving {
         }
     }
 
+    /// Has what the hub writes of its own accord end, and none of it begin
+    /// until `thaw`: asked while the hub still serves, before it stops
+    /// taking anything, so no member waits for a round under way. One that
+    /// takes longer than `SETTLING` holds the move back: it is tried again.
+    pub async fn quieten(hub: &crate::Hub) -> Result<(), String> {
+        let Ok(quieted) = tokio::time::timeout(SETTLING, hub.moving.quiet.clone().write_owned()).await else {
+            return Err(format!(
+                "what the hub does of its own accord was not done within {} s; the hub serves on",
+                SETTLING.as_secs()
+            ));
+        };
+        *hub.moving.quieted.lock().expect("never poisoned") = Some(quieted);
+        Ok(())
+    }
+
     /// Stops taking anything, ends every member's session and the
     /// connections of old places of earlier moves, waits until no
     /// connection that may change the records is left, nor anything they
@@ -441,8 +536,10 @@ impl Moving {
         crate::updates::flush(hub).await
     }
 
+    /// The hub takes changes again, and writes of its own accord again.
     pub fn thaw(&self) {
         self.frozen.store(false, Ordering::SeqCst);
+        self.quieted.lock().expect("never poisoned").take();
         self.thawed.notify_waiters();
     }
 

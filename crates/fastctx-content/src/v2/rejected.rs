@@ -576,7 +576,7 @@ fn release_holds(db: &Connection, stream: i64) -> fastctx_storage::Result<()> {
             .query_row(params![stream, rejected], |row| row.get(0))?;
         if waiting == 0 {
             db.prepare_cached(
-                "UPDATE objects SET unreferenced = ?2 WHERE state = 1 AND hash IN
+                "UPDATE objects SET unreferenced = ?2 WHERE +state = 1 AND hash IN
                  (SELECT hash FROM object_holds WHERE kind = 'resubmit' AND holder = ?1)",
             )?
             .execute(params![run, super::objects::now()])?;

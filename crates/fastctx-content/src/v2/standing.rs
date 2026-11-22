@@ -191,9 +191,12 @@ impl Library {
         Ok(self.database().read_now(move |db| {
             let (count, bytes): (i64, i64) = db
                 .prepare_cached(
+                    // Each one wanted is looked for among the objects by its
+                    // hash (`+state`): asked which were not among those
+                    // present, every object present was listed at each asking.
                     "SELECT COUNT(*), COALESCE(SUM(size), 0) FROM wanted WHERE hash IN
                      (SELECT i.hash FROM scopes s JOIN wanted_in i ON i.scope = s.id WHERE s.hub = ?1)
-                     AND hash NOT IN (SELECT hash FROM objects WHERE state = 1)",
+                     AND NOT EXISTS (SELECT 1 FROM objects o WHERE o.hash = wanted.hash AND +o.state = 1)",
                 )?
                 .query_row([&hub], |row| Ok((row.get(0)?, row.get(1)?)))?;
             Ok((count.max(0) as u64, bytes.max(0) as u64))

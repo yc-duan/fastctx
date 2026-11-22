@@ -307,11 +307,17 @@ impl Library {
                     let epoch: i64 =
                         db.prepare_cached("SELECT epoch FROM streams WHERE id = ?1")?.query_row([stream_id], |row| row.get(0))?;
                     let objects: Vec<VouchableObject> = {
+                        // From the stream's own frames to their objects, in
+                        // that order whatever the planner would choose: asked
+                        // of the objects first, every object present here was
+                        // gone through for each stream, most of which refer
+                        // to none.
                         let mut statement = db.prepare_cached(
-                            "SELECT o.hash, o.life, o.size FROM objects o
+                            "SELECT o.hash, o.life, o.size
+                             FROM (SELECT DISTINCT hash FROM frame_objects WHERE stream = ?1 AND holding = ?2) f
+                             CROSS JOIN objects o ON o.hash = f.hash
                              WHERE o.state = 1 AND o.size > ?3 AND o.size <= ?4
-                               AND o.hash IN (SELECT f.hash FROM frame_objects f WHERE f.stream = ?1 AND f.holding = ?2)
-                             ORDER BY o.hash",
+                             ORDER BY o.hash, o.life",
                         )?;
                         let rows = statement.query_map(params![stream_id, holding, row_bytes, longest], |row| {
                             Ok((row.get::<_, Vec<u8>>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?))
@@ -402,7 +408,7 @@ impl Library {
             let start = after.map(|hash| hash.to_vec()).unwrap_or_default();
             let large: Vec<Vec<u8>> = {
                 let mut statement =
-                    db.prepare_cached("SELECT hash FROM objects WHERE state = 1 AND size > ?1 AND hash > ?2 ORDER BY hash LIMIT ?3")?;
+                    db.prepare_cached("SELECT hash FROM objects WHERE +state = 1 AND size > ?1 AND hash > ?2 ORDER BY hash LIMIT ?3")?;
                 let rows = statement.query_map(params![row_bytes, start, limit as i64], |row| row.get(0))?;
                 rows.collect::<std::result::Result<_, _>>()?
             };
@@ -447,7 +453,7 @@ impl Library {
             let start = after.map(|hash| hash.to_vec()).unwrap_or_default();
             let large: Vec<(Vec<u8>, i64, i64)> = {
                 let mut statement = db.prepare_cached(
-                    "SELECT hash, life, size FROM objects WHERE state = 1 AND size > ?1 AND hash > ?2 ORDER BY hash LIMIT ?3",
+                    "SELECT hash, life, size FROM objects WHERE +state = 1 AND size > ?1 AND hash > ?2 ORDER BY hash LIMIT ?3",
                 )?;
                 let rows = statement.query_map(params![row_bytes, start, limit as i64], |row| {
                     Ok((row.get(0)?, row.get(1)?, row.get(2)?))

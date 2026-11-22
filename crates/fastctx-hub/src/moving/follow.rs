@@ -125,6 +125,16 @@ pub(crate) fn delete_old(hub: &Hub, id: &str) -> Result<(), String> {
     {
         let mut store = hub.edit_store();
         let incoming = store.moves.iter_mut().find(|incoming| incoming.id == id).ok_or_else(|| unknown(id))?;
+        // Its data is the only whole copy of the owner libraries that have
+        // not come yet, and of the large objects that are to follow them.
+        let coming = hub.assets.awaited().map_err(|error| format!("reading which libraries are to come: {error}"))?;
+        if !coming.none() {
+            return Err(format!(
+                "{} owner libraries and the large objects of {} are still to come from the old place: its data is deleted once they came",
+                coming.libraries.len(),
+                coming.objects.len()
+            ));
+        }
         match incoming.old {
             OldPlace::Forwarding => return Err("the old place still forwards; stop it first".to_string()),
             OldPlace::Deleted { .. } => return Err("the old place's data is deleted already".to_string()),

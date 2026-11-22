@@ -36,6 +36,9 @@ pub(crate) async fn follow(hub: Weak<crate::Hub>) {
     loop {
         tokio::time::sleep(EVERY).await;
         let Some(running) = hub.upgrade() else { return };
+        // The hub's own library is not written while the hub hands itself
+        // over; a move waits for a look under way (`Moving::quiet`).
+        let Some(_quiet) = running.moving.quiet() else { continue };
         let (assets, path) = (running.assets.clone(), running.log.path().to_path_buf());
         let looked = fastctx_platform::task::spawn_blocking(move || look(&assets, &path)).await;
         if let Ok(Err(error)) = looked {

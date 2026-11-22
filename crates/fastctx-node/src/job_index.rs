@@ -16,12 +16,28 @@ use fastctx_types::run::JobRecord;
 /// How long a job that ended stays in the index.
 const KEPT: jiff::SignedDuration = jiff::SignedDuration::from_hours(24);
 
+/// How long after a job ended when it ended is kept beside its path: by
+/// then its supervisor has said how its output drained, and its record is
+/// written no more but as its files go.
+const SETTLED: jiff::SignedDuration = jiff::SignedDuration::from_mins(10);
+
+/// What a record's file is told from another writing of it by: how long it
+/// is, and when it was written.
+type Written = (u64, Option<std::time::SystemTime>);
+
 #[derive(Default)]
 struct Index {
     /// None until made.
     paths: Option<BTreeSet<PathBuf>>,
     /// Jobs that started while it was being made.
     started: BTreeSet<PathBuf>,
+    /// When the jobs that ended a while ago ended, each with what its
+    /// record's file was as that was read. A reader that asks for the jobs
+    /// running, or ended since a time after it, passes such a record by
+    /// while its file is the same: every record of the day was read and
+    /// parsed at each asking who is at work here, some thousands on a
+    /// machine that runs many jobs.
+    ended: HashMap<PathBuf, (Written, jiff::Timestamp)>,
 }
 
 static INDEXES: LazyLock<Mutex<HashMap<PathBuf, Arc<Mutex<Index>>>>> = LazyLock::new(Default::default);
@@ -55,10 +71,29 @@ pub(crate) fn recent(world: &WorldDir, since: jiff::Timestamp) -> io::Result<Vec
     }
     let paths: Vec<PathBuf> =
         index.lock().expect("never poisoned").paths.iter().flatten().cloned().collect();
-    let kept_since = jiff::Timestamp::now() - KEPT;
+    let now = jiff::Timestamp::now();
+    let kept_since = now - KEPT;
     let mut records = Vec::new();
     let mut gone = Vec::new();
+    let mut settled = Vec::new();
     for path in paths {
+        let written: Written = match fastctx_platform::disk::metadata(&path) {
+            Ok(metadata) => (metadata.len(), metadata.modified().ok()),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                gone.push(path);
+                continue;
+            }
+            Err(error) => return Err(error),
+        };
+        let ended = index.lock().expect("never poisoned").ended.get(&path).filter(|(was, _)| *was == written).map(|(_, at)| *at);
+        match ended {
+            Some(at) if at < kept_since => {
+                gone.push(path);
+                continue;
+            }
+            Some(at) if at < since => continue,
+            _ => {}
+        }
         let record = match fastctx_hands::run::record::read(&path) {
             Ok(record) => record,
             Err(error) if error.kind() == io::ErrorKind::NotFound => {
@@ -69,12 +104,23 @@ pub(crate) fn recent(world: &WorldDir, since: jiff::Timestamp) -> io::Result<Vec
         };
         match record.end.as_ref().map(|end| end.at) {
             Some(at) if at < kept_since => gone.push(path),
-            Some(at) if at < since => {}
-            _ => records.push((record, path)),
+            Some(at) => {
+                if ended.is_none() && at < now - SETTLED {
+                    settled.push((path.clone(), (written, at)));
+                }
+                if at >= since {
+                    records.push((record, path));
+                }
+            }
+            None => records.push((record, path)),
         }
     }
-    if !gone.is_empty() {
+    if !gone.is_empty() || !settled.is_empty() {
         let mut index = index.lock().expect("never poisoned");
+        index.ended.extend(settled);
+        for path in &gone {
+            index.ended.remove(path);
+        }
         if let Some(paths) = &mut index.paths {
             for path in &gone {
                 paths.remove(path);

@@ -6,6 +6,7 @@
 //! It stands beside the first version's content database until each kind of
 //! asset moves over (§15), in files of its own.
 
+mod apart;
 mod changes;
 mod checkpoints;
 mod collect;
@@ -62,6 +63,7 @@ mod view;
 mod vouch;
 mod window;
 
+pub use apart::{database_in, forgo_large, large_held, names_database, whole};
 pub use checkpoints::HeldItem;
 pub use collect::{Collected, Started};
 pub use commit::{Commit, Committed};

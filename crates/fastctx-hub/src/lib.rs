@@ -1386,6 +1386,9 @@ async fn intended(
         (wire::DATA_PATH, Intent::AssetLine { key, proof }) => {
             assets::line::serve(hub, socket, binding, key, proof).await;
         }
+        (wire::CONTROL_PATH, Intent::Handover { id, role: fastctx_net::moving::HandoverRole::Libraries, proof }) => {
+            moving::libraries::connected(hub, socket, binding, id, proof).await;
+        }
         (wire::CONTROL_PATH, Intent::Handover { id, role, proof }) => {
             moving::follow::old_connected(hub, socket, binding, id, role, proof).await;
         }

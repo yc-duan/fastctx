@@ -149,10 +149,13 @@ impl Library {
                 purged.rows += super::rejected::end_resubmits(db, scope, holding)?;
                 let mut done = 0usize;
                 // What only a hub's parked or refused frames held waits a
-                // grace from here (I2).
+                // grace from here (I2). The objects are found by their
+                // hashes (`+state`: not by their state, which every object
+                // present has — each pass went through them all, three
+                // times, with the writer held).
                 for table in ["parked_objects", "refused_objects"] {
                     db.prepare_cached(&format!(
-                        "UPDATE objects SET unreferenced = ?4 WHERE state = 1 AND hash IN (SELECT hash FROM {table}
+                        "UPDATE objects SET unreferenced = ?4 WHERE +state = 1 AND hash IN (SELECT hash FROM {table}
                          WHERE stream IN (SELECT id FROM streams WHERE scope = ?1) AND holding = ?2
                          ORDER BY stream, epoch, first, holding, hash LIMIT ?3)"
                     ))?
@@ -165,7 +168,7 @@ impl Library {
                 let evidence = "SELECT holder FROM evidence WHERE stream IN (SELECT id FROM streams WHERE scope = ?1) AND holding = ?2
                                 ORDER BY stream, epoch, first, digest, chain, holding LIMIT ?3";
                 db.prepare_cached(&format!(
-                    "UPDATE objects SET unreferenced = ?4 WHERE state = 1 AND hash IN
+                    "UPDATE objects SET unreferenced = ?4 WHERE +state = 1 AND hash IN
                      (SELECT hash FROM object_holds WHERE kind = 'evidence' AND holder IN ({evidence}))"
                 ))?
                 .execute(params![scope, holding, pass, now()])?;
@@ -221,7 +224,7 @@ impl Library {
                 done += floors;
                 // Collection waits a grace after the last reference went (I2).
                 db.prepare_cached(
-                    "UPDATE objects SET unreferenced = ?3 WHERE state = 1 AND hash IN
+                    "UPDATE objects SET unreferenced = ?3 WHERE +state = 1 AND hash IN
                      (SELECT hash FROM object_refs WHERE scope = ?1 AND holding = ?2)",
                 )?
                 .execute(params![scope, holding, now()])?;

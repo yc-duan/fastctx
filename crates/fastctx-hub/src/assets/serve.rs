@@ -1262,6 +1262,12 @@ fn open(
         if assets.keys().heard(&statement, &word).is_none() {
             continue;
         }
+        // A receipt of a library still coming from where the hub was is
+        // looked at when the machine opens again after it came: it does not
+        // keep the machine's other scopes waiting.
+        if assets.owners.is_coming(&scope.owner) {
+            continue;
+        }
         let library = scopes::library(assets, &scope)?;
         if !library.holds(&wanted).map_err(|error| error.to_string())? {
             if assets.closed_receipt(&wanted).map_err(|error| error.to_string())? {
