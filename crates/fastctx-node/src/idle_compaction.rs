@@ -10,8 +10,11 @@
 //! the setting says, holds at least the context it says, has nothing waiting
 //! to go in and no goal under way, and its last turn was not a compaction.
 //! Each idle stretch is compacted at most once: it is marked before the
-//! compaction is asked for, so one that fails is not tried again until the
-//! conversation speaks again. Where Claude Code said how long its cache
+//! compaction is asked for, and a turn that says nothing, as a compaction's
+//! own does whether it worked or not, begins none, so one that fails is not
+//! tried again until the conversation speaks again. What the hosts said of
+//! context and cache is kept in memory: after the node starts, a
+//! conversation is looked at once it has taken a turn again. Where Claude Code said how long its cache
 //! lasts, a stretch past that, or too near it, is let be: compacting reads
 //! the whole conversation again, and would cost more than it saves.
 
@@ -174,7 +177,14 @@ fn candidate(node: &Node, record: crate::residents::OnRecord, now: Timestamp, an
         return None;
     }
     let live = live?;
-    if live.activity == Activity::Busy || live.turn.is_some() || live.last_compacted || node.residents.is_deleting(&id) {
+    // Its last turn compacted it, or said nothing, as one that compacted
+    // and failed does: no idle stretch of its own follows.
+    if live.activity == Activity::Busy
+        || live.turn.is_some()
+        || live.last_compacted
+        || live.last_said.is_none()
+        || node.residents.is_deleting(&id)
+    {
         return None;
     }
     let after = live.last_turn.clone()?;
