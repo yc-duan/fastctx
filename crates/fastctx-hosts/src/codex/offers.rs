@@ -381,7 +381,9 @@ fn limits_of(answer: &Value) -> Result<Vec<Limit>, String> {
     for (bucket, snapshot) in snapshots {
         for kind in ["primary", "secondary"] {
             let window = &snapshot[kind];
-            if window.is_null() {
+            // A plan without that window reports one zero minutes long: no
+            // window at all, though its reset lies in the past.
+            if window.is_null() || window["windowDurationMins"].as_u64() == Some(0) {
                 continue;
             }
             let duration = window["windowDurationMins"].as_u64().map(|mins| format!(" {mins}m")).unwrap_or_default();

@@ -173,6 +173,11 @@ pub fn limits_of(buckets: &BTreeMap<String, Value>, observed_at: Timestamp) -> F
             snapshot["limitName"].as_str().or_else(|| snapshot["limitId"].as_str()).unwrap_or("codex").to_string();
         for slot in ["primary", "secondary"] {
             let window = &snapshot[slot];
+            // A plan without that window reports one zero minutes long: no
+            // window at all, though its reset lies in the past.
+            if window["windowDurationMins"].as_u64() == Some(0) {
+                continue;
+            }
             let Some(used) = window["usedPercent"].as_i64() else { continue };
             let Ok(used) = u32::try_from(used) else {
                 return Fact::failed(format!("Codex reported {used}% used of {name}"));

@@ -1325,10 +1325,8 @@ export const zhComposer: ComposerWords = {
       minutes < 1 ? "截至刚刚" : minutes < 60 ? `截至 ${minutes} 分钟前` : minutes < 1440 ? `截至 ${Math.round(minutes / 60)} 小时前` : `截至 ${Math.round(minutes / 1440)} 天前`,
     window: (name) => {
       const minutes = /(\d+)m$/.exec(name);
-      if (minutes) {
-        const m = Number(minutes[1]);
-        return m % 1440 === 0 ? `${m / 1440} 天` : m % 60 === 0 ? `${m / 60} 小时` : `${m} 分钟`;
-      }
+      const m = minutes ? Number(minutes[1]) : 0;
+      if (m > 0) return m % 1440 === 0 ? `${m / 1440} 天` : m % 60 === 0 ? `${m / 60} 小时` : `${m} 分钟`;
       return ({ five_hour: "5 小时", seven_day: "7 天" } as Record<string, string>)[name] ?? name;
     },
     used: (percent) => `已用 ${percent}%`,
@@ -1542,10 +1540,8 @@ export const enComposer: ComposerWords = {
       minutes < 1 ? "as of just now" : minutes < 60 ? `as of ${minutes} min ago` : minutes < 1440 ? `as of ${Math.round(minutes / 60)} h ago` : `as of ${Math.round(minutes / 1440)} d ago`,
     window: (name) => {
       const minutes = /(\d+)m$/.exec(name);
-      if (minutes) {
-        const m = Number(minutes[1]);
-        return m % 1440 === 0 ? `${m / 1440} d` : m % 60 === 0 ? `${m / 60} h` : `${m} min`;
-      }
+      const m = minutes ? Number(minutes[1]) : 0;
+      if (m > 0) return m % 1440 === 0 ? `${m / 1440} d` : m % 60 === 0 ? `${m / 60} h` : `${m} min`;
       return ({ five_hour: "5 h", seven_day: "7 d" } as Record<string, string>)[name] ?? name;
     },
     used: (percent) => `${percent}% used`,
