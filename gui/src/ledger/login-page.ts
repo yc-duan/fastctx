@@ -825,8 +825,9 @@ function settings(login: Login): string {
     : login.plan
       ? set("套餐", `${escape(login.plan)}　由 ${escape(familyName(login.family))} 报告`, "")
       : "";
-  const idle = `${login.standing === "in" ? set("闲置自动压缩", "对话闲置够久后自动执行一次 /compact，只对你自己的对话生效", toggle("idle-on", !!login.idle?.on, "", `data-id="${id}"`)) : ""}
-    ${login.standing === "in" && login.idle?.on ? set("压缩条件", `闲置 ${login.idle.after_minutes} 分钟后，上下文至少 ${tenThousands(login.idle.min_tokens)}`, word("idle-edit", "编辑")) : ""}`;
+  const compacts = login.standing === "in" && (login.family === "claude" || login.family === "codex");
+  const idle = `${compacts ? set("闲置自动压缩", "对话闲置够久后自动执行一次 /compact，只对你自己的对话生效", toggle("idle-on", !!login.idle?.on, "", `data-id="${id}"`)) : ""}
+    ${compacts && login.idle?.on ? set("压缩条件", `闲置 ${login.idle.after_minutes} 分钟后，上下文至少 ${tenThousands(login.idle.min_tokens)}`, word("idle-edit", "编辑")) : ""}`;
   if (login.lent) return `<div class="lg-body lg-sheet"><div class="lg-sets">${idle}</div></div>`;
   return `<div class="lg-body lg-sheet"><div class="lg-sets">
     ${set("工作台", "在 Fastctx 中对话，记录用量与额度", toggle("bench", login.workbench, "", `data-id="${id}"`))}

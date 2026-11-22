@@ -522,9 +522,16 @@ export class AgentsPage implements Page {
           },
         });
       },
-      idleOn: (login, on) => {
-        const { machine, agent, dir, one } = this.recordOf(login);
-        return refreshed(options.setIdleCompaction(machine, agent, dir, { ...(one?.idle_compaction ?? IDLE_DEFAULT), on }));
+      idleOn: async (login, on) => {
+        const { machine, agent, dir } = this.recordOf(login);
+        // Its conditions as its machine holds them now, not as last read:
+        // another device, or another account signed in here before, may
+        // have changed them since.
+        const record = await options.read(machine);
+        const heard = record.machines.find((one) => one.kind === "answered" && one.logins.machine === machine);
+        const side = heard?.kind !== "answered" ? null : agent === "claude" ? heard.logins.claude : agent === "codex" ? heard.logins.codex : null;
+        const now = side?.listed.find((one) => one.dir === dir)?.idle_compaction;
+        return refreshed(options.setIdleCompaction(machine, agent, dir, { ...(now ?? IDLE_DEFAULT), on }));
       },
       idle: (login) => {
         const { machine, agent, dir, one } = this.recordOf(login);

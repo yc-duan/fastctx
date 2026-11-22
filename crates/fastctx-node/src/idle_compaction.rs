@@ -1,24 +1,30 @@
-//! Compacting a conversation idle a while (Issue #57): the user's `/compact`
-//! pressed for them once a conversation the World runs has been idle as long
-//! as the setting of its login says for the account it works for, or as the
-//! user said of it alone (`About::idle_compaction`); off unless turned on.
-//! Claude Code and Codex alike, colleagues too; the agents a host runs inside
-//! a turn are not conversations of their own.
+//! Compacting a conversation idle a while (Issue #57): once a conversation
+//! the World runs has been idle as long as the setting of its login says for
+//! the account it works for, or as the user said of it alone
+//! (`About::idle_compaction`), the World compacts it between turns as a goal
+//! does (`turn_evidence::compact`); off unless turned on. Claude Code and
+//! Codex alike, colleagues too; the agents a host runs inside a turn are not
+//! conversations of their own.
 //!
-//! A sweep looks at the conversations here every half minute. One is
-//! compacted when it has been idle since its last turn ended for as long as
-//! the setting says, holds at least the context it says, has nothing waiting
-//! to go in and no goal under way, and its last turn was not a compaction.
-//! Each idle stretch is compacted at most once: it is marked before the
-//! compaction is asked for, and a turn that says nothing, as a compaction's
-//! own does whether it worked or not, begins none, so one that fails is not
-//! tried again until the conversation speaks again. What the hosts said of
-//! context and cache is kept in memory: after the node starts, a
-//! conversation is looked at once it has taken a turn again. Where Claude Code said how long its cache
-//! lasts, a stretch past that, or too near it, is let be: compacting reads
-//! the whole conversation again, and would cost more than it saves.
+//! A sweep looks at the conversations here every half minute, and only at
+//! those told to on their own while no account turned it on for a login
+//! here. One is compacted when it has been idle since its last turn ended for
+//! as long as the setting says, holds at least the context it says, has
+//! nothing waiting to go in and no goal under way, its last turn said
+//! something, and a Claude Code one still has its host. The compaction never
+//! waits in the conversation's line of controls: one that finds a turn under
+//! way is not made, and one that fails is not tried again, nor holds up the
+//! user's words after it. Each idle stretch is compacted at most once: it is
+//! marked before the compaction begins, and a turn that says nothing, as a
+//! compaction's own does, begins none.
+//!
+//! What the hosts said of context and cache is kept in memory: after the
+//! node starts, a conversation is looked at once it has taken a turn again.
+//! Where Claude Code said how long its cache lasts, a stretch past that, or
+//! too near it, is let be: compacting reads the whole conversation again,
+//! and would cost more than it saves.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{Arc, LazyLock, Mutex};
 use std::time::{Duration, Instant};
@@ -26,7 +32,7 @@ use std::time::{Duration, Instant};
 use fastctx_types::ResidentId;
 use fastctx_types::residents::Activity;
 use fastctx_types::session::{Happened, SessionChange};
-use fastctx_types::session::control::Control;
+use fastctx_types::turn_evidence::Compacted;
 use jiff::Timestamp;
 
 use crate::Node;
@@ -36,8 +42,9 @@ const SWEEP: Duration = Duration::from_secs(30);
 /// The most compacting at once on this machine, and in one login.
 const AT_ONCE: usize = 2;
 const OF_ONE_LOGIN: usize = 1;
-/// How long one asked for is counted as under way at most, its end unseen.
-const UNDER_WAY: Duration = Duration::from_secs(15 * 60);
+/// How long a compaction holds its place at most, should its end never be
+/// heard: longer than a compaction is waited for (`control_queue::COMPACTING`).
+const UNDER_WAY: Duration = Duration::from_secs(45 * 60);
 /// How long before its cache lapses a compaction must begin at the latest.
 const BEFORE_LAPSE: Duration = Duration::from_secs(5 * 60);
 
@@ -51,9 +58,13 @@ struct Heard {
 
 static HEARD: LazyLock<Mutex<HashMap<ResidentId, Heard>>> = LazyLock::new(Default::default);
 
-/// The compactions asked for and not yet seen through: each conversation's
-/// login, and when it was asked.
+/// The compactions under way: each conversation's login, and when it began.
 static UNDER_WAY_NOW: LazyLock<Mutex<HashMap<ResidentId, (PathBuf, Instant)>>> = LazyLock::new(Default::default);
+
+/// The conversations told to be compacted on their own, whatever their
+/// login says: found by looking through them all once, then kept as the
+/// user changes them (`told`).
+static TOLD_ON: LazyLock<Mutex<Option<HashSet<ResidentId>>>> = LazyLock::new(Default::default);
 
 /// Takes in what a host reported of `id`'s session.
 pub(crate) fn heard(id: &ResidentId, happened: &Happened, at: Timestamp) {
@@ -86,6 +97,17 @@ pub(crate) fn heard(id: &ResidentId, happened: &Happened, at: Timestamp) {
     }
 }
 
+/// The user said of `id` alone whether it is compacted.
+pub(crate) fn told(id: &ResidentId, on: Option<bool>) {
+    if let Some(told) = TOLD_ON.lock().expect("never poisoned").as_mut() {
+        if on == Some(true) {
+            told.insert(id.clone());
+        } else {
+            told.remove(id);
+        }
+    }
+}
+
 pub(crate) fn start(node: &Arc<Node>) {
     let node = node.clone();
     fastctx_platform::task::spawn(async move {
@@ -108,62 +130,72 @@ struct Candidate {
 
 async fn sweep(node: &Arc<Node>) {
     let now = Timestamp::now();
-    // While no account turned it on for any login here, only a conversation
-    // told to on its own is compacted.
     let any = crate::logins::idle::any_on(node);
-    let candidates: Vec<Candidate> =
-        node.residents.everyone().filter_map(|record| candidate(node, record, now, any)).collect();
-    if candidates.is_empty() {
-        return;
-    }
-    // Those asked for before and seen through, or long enough ago that they
-    // are not waited for, make room again.
-    let asked: Vec<ResidentId> = UNDER_WAY_NOW.lock().expect("never poisoned").keys().cloned().collect();
-    for id in asked {
-        let through = match crate::lifecycle::held(node, &id).await {
-            Ok(held) => !held,
-            Err(_) => true,
-        };
-        let mut under_way = UNDER_WAY_NOW.lock().expect("never poisoned");
-        if through || under_way.get(&id).is_some_and(|(_, at)| at.elapsed() >= UNDER_WAY) {
-            under_way.remove(&id);
-        }
-    }
-    for candidate in candidates {
+    let looked_through = TOLD_ON.lock().expect("never poisoned").is_some();
+    let candidates: Vec<Candidate> = if any || !looked_through {
+        let mut told = HashSet::new();
+        let candidates = node
+            .residents
+            .everyone()
+            .filter_map(|record| {
+                if record.about.idle_compaction == Some(true) {
+                    told.insert(record.id.clone());
+                }
+                candidate(node, record, now, any)
+            })
+            .collect();
+        *TOLD_ON.lock().expect("never poisoned") = Some(told);
+        candidates
+    } else {
+        let told: Vec<ResidentId> = TOLD_ON.lock().expect("never poisoned").iter().flatten().cloned().collect();
+        told.iter().filter_map(|id| node.residents.on_record(id)).filter_map(|record| candidate(node, record, now, any)).collect()
+    };
+    UNDER_WAY_NOW.lock().expect("never poisoned").retain(|_, (_, began)| began.elapsed() < UNDER_WAY);
+    for found in candidates {
         {
             let under_way = UNDER_WAY_NOW.lock().expect("never poisoned");
             if under_way.len() >= AT_ONCE {
                 return;
             }
             let of_login =
-                under_way.values().filter(|(login, _)| crate::homes::same_dir(login, &candidate.login)).count();
-            if under_way.contains_key(&candidate.id) || of_login >= OF_ONE_LOGIN {
+                under_way.values().filter(|(login, _)| crate::homes::same_dir(login, &found.login)).count();
+            if under_way.contains_key(&found.id) || of_login >= OF_ONE_LOGIN {
                 continue;
             }
         }
-        // Nothing waits to go in: no control, no words handed over.
-        match crate::lifecycle::held(node, &candidate.id).await {
+        // Looked at again as it begins: what was true a moment ago in the
+        // sweep may not be now.
+        let Some(record) = node.residents.on_record(&found.id) else { continue };
+        if candidate(node, record, Timestamp::now(), any).is_none_or(|again| again.after != found.after) {
+            continue;
+        }
+        match waiting(node, &found.id).await {
             Ok(false) => {}
             Ok(true) => continue,
             Err(error) => {
-                node.log.line(format_args!("idle compaction of {}: {}", candidate.id, error.message));
+                node.log.line(format_args!("idle compaction of {}: {}", found.id, error.message));
                 continue;
             }
         }
-        // Marked before it is asked for: a stretch is compacted at most once.
-        if let Err(error) = mark(node, &candidate.id, &candidate.after).await {
-            node.log.line(format_args!("idle compaction of {}: marking it: {error}", candidate.id));
+        // Marked before it begins: a stretch is compacted at most once.
+        if let Err(error) = mark(node, &found.id, &found.after).await {
+            node.log.line(format_args!("idle compaction of {}: marking it: {error}", found.id));
             continue;
         }
         UNDER_WAY_NOW
             .lock()
             .expect("never poisoned")
-            .insert(candidate.id.clone(), (candidate.login.clone(), Instant::now()));
-        node.log.line(format_args!("compacting {}, idle since its turn {}", candidate.id, candidate.after));
-        if let Err(error) = crate::control::control_here(node, &candidate.id, Control::Compact).await {
-            node.log.line(format_args!("idle compaction of {}: {}", candidate.id, error.message));
-            UNDER_WAY_NOW.lock().expect("never poisoned").remove(&candidate.id);
-        }
+            .insert(found.id.clone(), (found.login.clone(), Instant::now()));
+        let (node, id, after) = (node.clone(), found.id, found.after);
+        fastctx_platform::task::spawn(async move {
+            node.log.line(format_args!("compacting {id}, idle since its turn {after}"));
+            match crate::turn_evidence::compact::between_turns(&node, &id).await {
+                Compacted::Done => node.log.line(format_args!("compacted {id}, idle")),
+                Compacted::Refused { reason } => node.log.line(format_args!("idle compaction of {id} not made: {reason}")),
+                Compacted::Failed { reason } => node.log.line(format_args!("idle compaction of {id} failed: {reason}")),
+            }
+            UNDER_WAY_NOW.lock().expect("never poisoned").remove(&id);
+        });
     }
 }
 
@@ -177,14 +209,19 @@ fn candidate(node: &Node, record: crate::residents::OnRecord, now: Timestamp, an
         return None;
     }
     let live = live?;
-    // Its last turn compacted it, or said nothing, as one that compacted
-    // and failed does: no idle stretch of its own follows.
+    // Its last turn compacted it, or said nothing, as a compaction's own
+    // does: no idle stretch of its own follows.
     if live.activity == Activity::Busy
         || live.turn.is_some()
         || live.last_compacted
         || live.last_said.is_none()
         || node.residents.is_deleting(&id)
     {
+        return None;
+    }
+    // A Claude Code conversation put to sleep, or let go of as it idled,
+    // has no host to compact in, nor any cache left worth keeping.
+    if agent == "claude" && !node.residents.host_present(&id) {
         return None;
     }
     let after = live.last_turn.clone()?;
@@ -218,6 +255,19 @@ fn candidate(node: &Node, record: crate::residents::OnRecord, now: Timestamp, an
         return None;
     }
     Some(Candidate { id, login, after })
+}
+
+/// Whether anything waits to go into `id`: a control, or words, handed over
+/// or waiting their way in.
+async fn waiting(node: &Arc<Node>, id: &ResidentId) -> Result<bool, fastctx_types::ipc::Failure> {
+    if crate::lifecycle::held(node, id).await? {
+        return Ok(true);
+    }
+    let directory = node.world.conversation(id);
+    fastctx_platform::task::spawn_blocking(move || crate::inbox::any(&directory, |_| true))
+        .await
+        .map_err(|error| fastctx_types::ipc::Failure::new(error.to_string()))?
+        .map_err(|error| fastctx_types::ipc::Failure::new(error.to_string()))
 }
 
 /// The turn the last idle stretch compacted followed, as kept in the

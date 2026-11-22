@@ -54,6 +54,7 @@ pub async fn manage(
 fn idle_compaction(node: &Node, id: &ResidentId, on: Option<bool>) -> Result<Managed, Failure> {
     node.residents.active(id)?;
     node.residents.set_idle_compaction(&node.world, id, on).map_err(|error| Failure::new(error.to_string()))?;
+    crate::idle_compaction::told(id, on);
     let (_, town) = node.residents.about(id).ok_or_else(|| Failure::new("unknown resident"))?;
     let mut result = Managed {
         removed: node.residents.removed(id),
@@ -465,6 +466,7 @@ async fn manage_here(node: &Arc<Node>, id: &ResidentId, action: Management) -> R
         }
         Management::IdleCompaction { on } => {
             node.residents.set_idle_compaction(&node.world, id, on).map_err(|error| Failure::new(error.to_string()))?;
+            crate::idle_compaction::told(id, on);
             step(&mut result, "records", Outcome::Done, "Idle compaction choice saved.".into());
         }
         Management::Mcp { off } => {

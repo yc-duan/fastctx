@@ -98,6 +98,7 @@ pub(super) async fn show(node: &Arc<Node>, ready: Ready) -> std::io::Result<()> 
         crate::turns::apply(node, &claim.resident, finished).await?;
     }
     for usage in events {
+        crate::idle_compaction::heard(&claim.resident, &usage.happened, usage.at);
         node.watchers.publish(&claim.resident, &usage);
     }
     Ok(())
