@@ -55,6 +55,16 @@ pub struct Changes {
     pub more: bool,
 }
 
+/// Where a hub's library stands: its generation and its latest change, as
+/// a page of what changed says them (`Changes::generation`, `top`,
+/// `top_at`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Latest {
+    pub generation: String,
+    pub change: u64,
+    pub at: i64,
+}
+
 /// The class of a stream, by its name: the order streams are caught up in
 /// after being away, small state first (§28.1).
 pub(super) fn class_of(stream: &str) -> u8 {
@@ -144,6 +154,21 @@ impl Library {
             None => self.stamp(GENERATION, fresh_generation().into_bytes())?,
         };
         String::from_utf8(value).map_err(|_| crate::Error::Invalid("a malformed library generation".into()))
+    }
+
+    /// Where the library stands, as `changes` would say it; none while it
+    /// has no generation yet, which only asking for one makes.
+    pub fn latest(&self) -> Result<Option<Latest>> {
+        let Some(generation) = self.stamped(GENERATION)? else { return Ok(None) };
+        let generation = String::from_utf8(generation).map_err(|_| crate::Error::Invalid("a malformed library generation".into()))?;
+        let (change, at): (i64, i64) = self.database().read_now(|db| {
+            Ok(db
+                .prepare_cached("SELECT change, at FROM stream_changes ORDER BY change DESC LIMIT 1")?
+                .query_row([], |row| Ok((row.get(0)?, row.get(1)?)))
+                .optional()?
+                .unwrap_or((0, 0)))
+        })?;
+        Ok(Some(Latest { generation, change: change as u64, at }))
     }
 
     /// A new generation for the library, as the hub reopens it after being

@@ -736,6 +736,18 @@ impl Assets {
         }
     }
 
+    /// Where `owner`'s library stood as it was closed, while it stays shut
+    /// and is not being deleted: nothing has changed in it since, as every
+    /// write goes through an open library.
+    pub(crate) fn shut_at(&self, owner: &Owner) -> io::Result<Option<fastctx_content::v2::Latest>> {
+        let Some(latest) = self.owners.latest(owner) else { return Ok(None) };
+        // One being deleted is refused as an opening would refuse it.
+        if self.deleting(owner)? {
+            return Ok(None);
+        }
+        Ok(Some(latest))
+    }
+
     /// The latest head each of `scopes` of `owner` was checkpointed at.
     fn checkpointed_of(&self, owner: &Owner, scopes: &[String]) -> io::Result<BTreeMap<String, Head>> {
         let (key, scopes) = (owner.key(), scopes.to_vec());
