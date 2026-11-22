@@ -22,6 +22,14 @@ pub(crate) const CHUNK: usize = fastctx_net::wire::MAX_DATA_MESSAGE;
 /// The largest listing in one `Files` message, well within a message.
 const LISTING: usize = fastctx_net::wire::MAX_DATA_MESSAGE / 2;
 
+/// How long a piece of a file is where one is sent as what changed of the
+/// one the other end holds (`ToNew::Patch`): a database's page is no longer
+/// than this, and one page changed sends one piece.
+pub(crate) const PIECE: u32 = 64 << 10;
+
+/// How many pieces' digests one message carries.
+pub(crate) const DIGESTS: usize = 8192;
+
 /// From the old hub to the new place.
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "f")]
@@ -52,6 +60,21 @@ pub(crate) enum ToNew {
     Sum {
         sha256: Digest,
     },
+    /// Say what the file you hold at `path` is, `piece` bytes at a time.
+    Pieces {
+        path: String,
+        piece: u32,
+    },
+    /// The file at `path`, `bytes` long, made of the one you hold there: the
+    /// pieces of `changed` — runs of them, each by its first and how many —
+    /// are the bytes that follow, in order; the others are as yours are.
+    /// Then its `Sum`, of the whole: kept only when what was made has it.
+    Patch {
+        path: String,
+        bytes: u64,
+        piece: u32,
+        changed: Vec<(u64, u64)>,
+    },
     /// A directory, made where it is missing.
     Dir {
         path: String,
@@ -67,7 +90,8 @@ pub(crate) enum ToNew {
     },
     /// The old hub stopped and sent its core: take over, when the core you
     /// hold has this digest. `libraries` are the owner libraries it keeps
-    /// and sends once it serves no more: each is opened when it came.
+    /// and sends once it serves no more: each is opened when its databases
+    /// came, and its large objects follow.
     Commit {
         digest: Digest,
         self_registration: bool,
@@ -81,8 +105,25 @@ pub(crate) enum ToNew {
         library: String,
         digest: Digest,
     },
-    /// Say which owner libraries are still to come.
+    /// Say which owner libraries are still to come, and which have large
+    /// objects still to follow them.
     Coming,
+    /// Say which of these large objects of the owner library `library`,
+    /// open with you, you do not hold.
+    Follow {
+        library: String,
+        objects: Vec<Object>,
+    },
+    /// A large object of the library last asked after, whose `bytes` follow
+    /// as a `Put`'s do: kept when what came is the object `sha256` names.
+    Object {
+        sha256: Digest,
+        bytes: u64,
+    },
+    /// Every large object of `library` something refers to is with you.
+    Followed {
+        library: String,
+    },
     /// The old hub recorded the switch: serve from now on.
     Confirm,
     /// The move is called off: give it up.
@@ -122,15 +163,31 @@ pub(crate) enum ToOld {
     Checked {
         digest: Digest,
     },
+    /// How long the file asked after is, none when no file is there; the
+    /// SHA-256 of each of its pieces follows, one after another, in messages
+    /// of `DIGESTS` of them.
+    Pieces {
+        bytes: Option<u64>,
+    },
     Committed,
     Confirmed,
     Cancelled,
     /// The owner library came whole and is open.
     Opened,
-    /// The owner libraries still to come.
+    /// The owner libraries still to come, and those that came, or are to,
+    /// whose large objects are still to follow.
     Awaited {
         libraries: Vec<String>,
+        #[serde(default)]
+        objects: Vec<String>,
     },
+    /// Of the objects asked after, those not held, by where each was in the
+    /// asking.
+    Lacking {
+        objects: Vec<u32>,
+    },
+    /// The library's large objects are noted as come.
+    Kept,
     /// How many machines and devices still come through the old place.
     Following {
         machines: usize,
@@ -147,6 +204,13 @@ pub(crate) enum ToOld {
         reason: String,
     },
     Working,
+}
+
+/// A large object, by its hash and its length.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub(crate) struct Object {
+    pub sha256: Digest,
+    pub bytes: u64,
 }
 
 /// What the old hub tells the new place of the move when it hands over.

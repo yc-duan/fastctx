@@ -5,7 +5,8 @@
 //! reaching the new hub through the old one's forwarding and following, and
 //! the network going on once the old hub is gone; the owner libraries, which
 //! the hub is not stopped for, coming to the new hub once the old one serves
-//! no more. Run alone (`--hub-move`);
+//! no more, and after them the large objects they hold. Run alone
+//! (`--hub-move`);
 //! the launcher may hold every connection to a rate (`--hub-move-rate`), and
 //! `FASTCTX_DRILL_HUB_MOVE_MB` is how many MiB of records beyond the hub's
 //! own go along.
@@ -16,6 +17,7 @@ use fastctx_client::World;
 use fastctx_types::accounts::AccountChange;
 use fastctx_types::hub_move::{HubMove, HubMoveReply, HubMoveRequest, MoveStage, OldPlace, Waiting};
 use fastctx_types::layout::WorldDir;
+use fastctx_types::skill_files::{File, Reply, Request};
 use serde_json::json;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
@@ -49,6 +51,24 @@ fn serve_at(base: &Path, dir: &Path, log: &str) -> Result<Child> {
 
 /// The moves of the hub as its super administrator is told, newest first;
 /// none while the hub cannot be asked (it hands over, say).
+/// How long each file of some size under `at` is that is no database's: the
+/// large objects a library holds.
+fn large(at: &Path) -> Vec<u64> {
+    let mut sizes = Vec::new();
+    for entry in std::fs::read_dir(at).into_iter().flatten().flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            sizes.extend(large(&path));
+        } else if !entry.file_name().to_string_lossy().contains(".sqlite3")
+            && let Ok(found) = entry.metadata()
+            && found.len() > 64 << 10
+        {
+            sizes.push(found.len());
+        }
+    }
+    sizes
+}
+
 async fn moves(world: &World) -> Option<Vec<HubMove>> {
     match tokio::time::timeout(Duration::from_secs(10), world.hub_move(None, name("owner"), HubMoveRequest::Status)).await {
         Ok(Ok(HubMoveReply::Moves { moves })) => Some(moves),
@@ -140,13 +160,51 @@ pub(crate) async fn run(base: &Path) -> Result<()> {
     }
     libraries.sort();
     record("the machines' records made owner libraries on the hub", !libraries.is_empty(), json!(libraries));
-    let ballast: Vec<u8> = (0..8usize << 20).map(|at| ((at % 241) ^ (at >> 12)) as u8).collect();
-    let ballast_at = libraries.first().map(|library| format!("{library}/asset-objects/ballast/object"));
-    if let Some(at) = &ballast_at {
-        let place = base.join("hub").join(at);
-        std::fs::create_dir_all(place.parent().expect("a parent"))?;
-        std::fs::write(&place, &ballast)?;
+    // A record of the owner's too large to be kept in its item: the hub
+    // keeps it as a large object of the owner's library, which follows the
+    // library once the hub has moved.
+    let much: String = (0..400_000usize).map(|at| char::from(b'a' + ((at * 7 + at / 97) % 26) as u8)).collect();
+    let written = wo
+        .skill_files(
+            None,
+            None,
+            Request::Write {
+                name: "ballast".into(),
+                expected: None,
+                files: vec![
+                    File::text("SKILL.md", "---\nname: ballast\ndescription: A skill of some size.\n---\nBallast.\n"),
+                    File::text("references/much.txt", &much),
+                ],
+            },
+        )
+        .await;
+    record("the owner wrote a record of some size", matches!(written, Ok(Reply::Written { .. })), json!(written.err().map(|error| error.to_string())));
+    // The owner's libraries under a hub's directory, by their paths there.
+    let owners = |under: &Path| -> Vec<String> {
+        std::fs::read_dir(under.join("assets/account"))
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .filter(|name| name.starts_with("owner."))
+            .map(|name| format!("assets/account/{name}"))
+            .collect()
+    };
+    let held = |under: &Path| -> Vec<u64> {
+        let mut sizes: Vec<u64> = owners(under).iter().flat_map(|library| large(&under.join(library))).collect();
+        sizes.sort_unstable();
+        sizes
+    };
+    let mut before = Vec::new();
+    for _ in 0..180 {
+        before = held(&base.join("hub"));
+        if !before.is_empty() {
+            break;
+        }
+        pause().await;
     }
+    let owners = owners(&base.join("hub"));
+    record("the hub keeps it as a large object of the owner's library", !before.is_empty(), json!({"owners": owners, "bytes": before}));
     // The new place's directory on a disk of its own, as a server's data
     // disk is put there before a move (`FASTCTX_DRILL_HUB_MOVE_BIND`): an
     // empty directory of it bound where the hub's directory goes.
@@ -316,14 +374,45 @@ pub(crate) async fn run(base: &Path) -> Result<()> {
         libraries.iter().all(|library| databases(library) > 0),
         json!(libraries.iter().map(|library| (library, databases(library))).collect::<Vec<_>>()),
     );
-    // Each was checked against what the old place sent, its objects with it,
-    // before it was opened: so the old place's log says.
+    // Each was checked against what the old place sent before it was opened:
+    // so the old place's log says.
     let sent = std::fs::read_to_string(base.join("hub.log")).unwrap_or_default();
     record(
         "the old place sent every owner library and the new hub took each",
         sent.contains("every owner library is with the new hub")
             && libraries.iter().all(|library| sent.contains(&format!("the owner library {library} is with the new hub"))),
         json!(sent.lines().filter(|line| line.contains("owner librar")).map(|line| line.chars().take(160).collect::<String>()).collect::<Vec<_>>()),
+    );
+    // Nothing of them went before the switch; each that something refers to
+    // is put into its library once that is open at the new place.
+    let after = held(&dir);
+    record(
+        "the large objects followed their libraries",
+        !before.is_empty()
+            && after == before
+            && owners.iter().all(|library| {
+                sent.lines().any(|line| {
+                    line.contains(&format!("large objects of {library} are with the new hub")) && !line.contains(": 0 sent now")
+                })
+            }),
+        json!({
+            "before": before,
+            "after": after,
+            "said": sent.lines().filter(|line| line.contains("large objects")).map(|line| line.chars().take(200).collect::<String>()).collect::<Vec<_>>(),
+        }),
+    );
+    // With the hub stopped, the databases go as what of them changed since
+    // the copy sent while it served.
+    let stopped: Option<(u64, u64)> = sent.lines().find_map(|line| {
+        let said = line.split("with the hub stopped, ").nth(1)?;
+        let mut numbers = said.split(' ').filter_map(|word| word.parse::<u64>().ok());
+        let (bytes, _files, whole) = (numbers.next()?, numbers.next()?, numbers.next()?);
+        Some((bytes, whole))
+    });
+    record(
+        "with the hub stopped, less went than the changed files are long",
+        stopped.is_some_and(|(bytes, whole)| bytes < whole),
+        json!({"sent": stopped.map(|(bytes, _)| bytes), "of": stopped.map(|(_, whole)| whole)}),
     );
     let said = std::fs::read_to_string(base.join("new-hub.log")).unwrap_or_default();
     record(

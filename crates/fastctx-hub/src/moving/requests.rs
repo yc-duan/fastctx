@@ -128,6 +128,16 @@ fn start(
         if let Some(outgoing) = store.outgoing.as_ref().filter(|outgoing| outgoing.pending()) {
             return Err(format!("the hub is moving to {} already", outgoing.to));
         }
+        // What has not come is not here to be moved on: a hub moved again
+        // now would leave it behind, or hand on a library half come.
+        let coming = hub.assets.awaited().map_err(|error| format!("reading which libraries are to come: {error}"))?;
+        if !coming.none() {
+            return Err(format!(
+                "{} owner libraries and the large objects of {} are still to come from where the hub was: it moves again once they came",
+                coming.libraries.len(),
+                coming.objects.len()
+            ));
+        }
         let member = store.book.directory.member(&to).ok_or_else(|| format!("there is no machine named {to}"))?;
         if member.home.as_ref() != Some(account) {
             return Err(format!(

@@ -162,7 +162,20 @@ impl Library {
         let mut spilled: Option<(std::fs::File, PathBuf)> = None;
         let mut size = 0u64;
         loop {
-            let read = source.read(&mut window).map_err(io)?;
+            let read = match source.read(&mut window) {
+                Ok(read) => read,
+                Err(error) => {
+                    // A source that fails — one read off a connection that
+                    // was cut — gave no object: the file begun for it goes
+                    // now, where a library long open would keep each such
+                    // until it opened again.
+                    if let Some((file, incoming)) = spilled.take() {
+                        drop(file);
+                        let _ = std::fs::remove_file(incoming);
+                    }
+                    return Err(io(error));
+                }
+            };
             if read == 0 {
                 break;
             }

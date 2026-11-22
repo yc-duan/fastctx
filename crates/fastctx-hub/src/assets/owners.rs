@@ -120,6 +120,9 @@ pub(crate) struct Owners {
 /// What a library keeps its hub's incarnation under.
 const STAMP: &str = "hub";
 
+/// How a library that has not come yet is refused.
+pub(crate) const COMING: &str = "is still coming from where the hub was before it moved";
+
 impl Owners {
     pub(crate) fn new(root: PathBuf, incarnation: Vec<u8>) -> Self {
         Self {
@@ -213,10 +216,7 @@ impl Owners {
                 return Err(io::Error::other(format!("the library of {} is being deleted", owner.key())));
             }
             if self.is_coming(owner) {
-                return Err(io::Error::other(format!(
-                    "the library of {} is still coming from where the hub was before it moved",
-                    owner.key()
-                )));
+                return Err(io::Error::other(format!("the library of {} {COMING}", owner.key())));
             }
             if !slots.contains_key(owner) && slots.len() >= OPEN_AT_ONCE {
                 // The least recently used that nobody holds goes: one still

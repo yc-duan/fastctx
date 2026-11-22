@@ -51,6 +51,11 @@ pub(super) fn put_back(assets: &Assets) -> io::Result<Option<String>> {
         if assets.deleting(&scope.owner)? {
             continue;
         }
+        // A library still coming from where the hub was cannot be asked
+        // yet: its receipts are kept, and judged at a start after it came.
+        if assets.owners.is_coming(&scope.owner) {
+            continue;
+        }
         let library = scopes::library(assets, &scope).map_err(io::Error::other)?;
         if !library.holds(&head).map_err(io::Error::other)? && !assets.closed_receipt(&head)? {
             return Ok(Some(format!("{machine} holds the hub's receipt of {key} that the hub's history no longer holds")));

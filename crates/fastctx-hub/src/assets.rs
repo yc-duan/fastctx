@@ -614,16 +614,70 @@ impl Assets {
         owners::Owners::of_path(path)
     }
 
-    /// The owner libraries still coming from where the hub was, by their
-    /// paths under its directory.
-    pub(crate) fn coming(&self) -> io::Result<Vec<String>> {
-        Ok(crate::moving::coming(&self.root)?.libraries.into_iter().collect())
+    /// What is still to come from where the hub was: the owner libraries,
+    /// and those whose large objects are to follow.
+    pub(crate) fn awaited(&self) -> io::Result<crate::moving::Coming> {
+        crate::moving::coming(&self.root)
     }
 
-    /// The owner library at `path` came whole from where the hub was: kept
-    /// so, it is opened from now on, and every scope of it is looked at by
-    /// the checkpoints as on opening. How many are still to come. Call on a
-    /// thread that may block.
+    /// The library at `path`, when it came and its large objects are still
+    /// to follow.
+    fn followed_library(&self, path: &str) -> io::Result<fastctx_content::v2::Library> {
+        let coming = crate::moving::coming(&self.root)?;
+        if coming.libraries.contains(path) || !coming.objects.contains(path) {
+            return Err(io::Error::other(format!("no large object is to follow {path:?} now")));
+        }
+        let owner = Self::owner_at(path).ok_or_else(|| io::Error::other(format!("{path:?} is no owner library's path")))?;
+        self.library(&owner)
+    }
+
+    /// Of `objects`, each a hash and a length, those the owner library at
+    /// `path` does not hold, by where each is among them. Call on a thread
+    /// that may block.
+    pub(crate) fn lacking(&self, path: &str, objects: &[([u8; 32], u64)]) -> io::Result<Vec<u32>> {
+        let library = self.followed_library(path)?;
+        let mut lacking = Vec::new();
+        for (at, (hash, bytes)) in objects.iter().enumerate() {
+            if library.size(hash).map_err(|error| io::Error::other(error.to_string()))? != Some(*bytes) {
+                lacking.push(at as u32);
+            }
+        }
+        Ok(lacking)
+    }
+
+    /// Keeps what `source` gives as an object of the owner library at
+    /// `path`, as one a device sends is kept: what frames and records of the
+    /// library refer to it hold it from then. It is the object `hash` of
+    /// `bytes`, or an error. Call on a thread that may block.
+    pub(crate) fn keep_object(&self, path: &str, source: &mut dyn io::Read, hash: &[u8; 32], bytes: u64) -> io::Result<()> {
+        let library = self.followed_library(path)?;
+        let other = |error: fastctx_content::Error| io::Error::other(error.to_string());
+        let lease = library.put(source, "the hub's move", std::time::Duration::from_secs(60)).map_err(other)?;
+        let kept = lease.object;
+        library.release(lease).map_err(other)?;
+        if kept.hash != *hash || kept.size != bytes {
+            return Err(io::Error::other("what came is not the object it was said to be"));
+        }
+        Ok(())
+    }
+
+    /// The large objects of the owner library at `path` came: its old place
+    /// holds nothing of it the hub lacks. How many libraries still have
+    /// something to come.
+    pub(crate) fn followed(&self, path: &str) -> io::Result<usize> {
+        let mut coming = crate::moving::coming(&self.root)?;
+        if coming.libraries.contains(path) {
+            return Err(io::Error::other(format!("{path:?} itself is still to come")));
+        }
+        coming.objects.remove(path);
+        crate::moving::keep_coming(&self.root, &coming)?;
+        Ok(coming.libraries.union(&coming.objects).count())
+    }
+
+    /// The owner library at `path` came from where the hub was, its
+    /// databases whole: kept so, it is opened from now on, and every scope
+    /// of it is looked at by the checkpoints as on opening. How many are
+    /// still to come. Call on a thread that may block.
     pub(crate) fn arrived(&self, path: &str) -> io::Result<usize> {
         let mut coming = crate::moving::coming(&self.root)?;
         coming.libraries.remove(path);
@@ -1509,11 +1563,20 @@ pub(crate) async fn checkpoints(hub: Weak<crate::Hub>) {
             && !sweeping.swap(true, std::sync::atomic::Ordering::AcqRel)
             && let Some(running) = hub.upgrade()
         {
+            // No library is deleted while the hub hands itself over: one
+            // gone after the hub's record of it was copied would be missing
+            // where the hub moves, and found older than that record there. A
+            // move waits for a sweep under way (`Moving::quiet`).
+            let Some(quiet) = running.moving.quiet() else {
+                sweeping.store(false, std::sync::atomic::Ordering::Release);
+                continue;
+            };
             let (assets, store, log) = (running.assets.clone(), running.store(), running.log.clone());
             drop(running);
             let sweeping = sweeping.clone();
             fastctx_platform::task::spawn(async move {
                 let swept = fastctx_platform::task::spawn_blocking(move || assets.sweep_owners(&store.indexed())).await;
+                drop(quiet);
                 sweeping.store(false, std::sync::atomic::Ordering::Release);
                 match swept {
                     Ok(Ok(0)) => {}
@@ -1525,6 +1588,12 @@ pub(crate) async fn checkpoints(hub: Weak<crate::Hub>) {
         }
         let assets_hub = hub.clone();
         let Some(hub) = hub.upgrade() else { return };
+        // Nothing of the hub's own is written while it hands itself over:
+        // a checkpoint recorded between the copy of a library and the copy
+        // of the hub's record of it would have the new place hold a library
+        // older than that record (`behind`). A move waits for the one under
+        // way (`Moving::quiet`).
+        let Some(quiet) = hub.moving.quiet() else { continue };
         let assets = hub.assets.clone();
         let log = hub.log.clone();
         drop(hub);
@@ -1535,6 +1604,7 @@ pub(crate) async fn checkpoints(hub: Weak<crate::Hub>) {
             checkpointed
         })
         .await;
+        drop(quiet);
         if let Some(hub) = assets_hub.upgrade() {
             let drained = hub.assets.drain_pushes();
             let store = hub.store();

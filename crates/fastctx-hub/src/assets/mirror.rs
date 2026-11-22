@@ -550,7 +550,11 @@ async fn write_all(
             let written = crate::account_records::storage::read(&path)
                 .and_then(|record| document(&assets, &account, opened, &record));
             if let Err(error) = written {
-                log.line(format_args!("writing an account record of {account} into the asset library: {error}"));
+                // One whose library is still coming from where the hub was
+                // is written once it came, and said nothing of till then.
+                if !error.contains(super::owners::COMING) {
+                    log.line(format_args!("writing an account record of {account} into the asset library: {error}"));
+                }
                 failed(&account, opened, path);
             }
         }
@@ -595,7 +599,7 @@ pub(crate) async fn described(hub: std::sync::Arc<crate::Hub>, keys: Vec<String>
 
 /// The account `account` as opened at the millisecond `at`: the one in the
 /// directory, or a removed one a body's conversation keeps its records in.
-fn incarnation(hub: &crate::Hub, account: &AccountName, at: i64) -> Option<jiff::Timestamp> {
+pub(crate) fn incarnation(hub: &crate::Hub, account: &AccountName, at: i64) -> Option<jiff::Timestamp> {
     let store = hub.store();
     match store.book.directory.account(account).filter(|found| found.opened.as_millisecond() == at) {
         Some(found) => Some(found.opened),

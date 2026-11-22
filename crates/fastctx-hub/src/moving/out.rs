@@ -4,14 +4,15 @@
 //! address, until it reaches it: before the hub's service runs there,
 //! failing is what is expected, and the move says it waits; after, the
 //! failure is said. Reached, it copies its core across while it still
-//! serves, with the objects of the owner libraries, which never change once
-//! written; then stops taking anything (`Moving::freeze`), copies what of
+//! serves; then stops taking anything (`Moving::freeze`), copies what of
 //! the core changed meanwhile, and has the new place take over when it
-//! holds exactly the core that is here. The owner libraries follow once
-//! this place serves no more (`super::libraries`). Recording the switch is the last step: before it, any
-//! failure thaws the hub, which serves on; after it, the hub only forwards
-//! (`super::old`). A try that failed before the hub stopped is made again
-//! by itself; one that failed after it had stopped is made again only when
+//! holds exactly the core that is here. Nothing of the owner libraries goes
+//! before that: they follow once this place serves no more
+//! (`super::libraries`). Recording the switch is the last step: before it,
+//! any failure thaws the hub, which serves on; after it, the hub only
+//! forwards (`super::old`). A try that failed before the hub stopped is
+//! made again by itself; one that failed after it had stopped — or that the
+//! hub's own stop cut short while it was stopped — is made again only when
 //! the super administrator says so (`requests::retry`): each such try
 //! takes the hub from every member for as long as it lasts, and tried
 //! again by itself a switch that could not finish took it from them over
@@ -117,6 +118,21 @@ async fn run(hub: &Arc<Hub>) {
                     poked.await;
                     continue;
                 }
+                None
+            }
+            // Recorded as switching with no try under way: the hub was
+            // stopped, or its machine was, while it had stopped taking
+            // anything. That try failed as one that could not finish did.
+            Some(record) if record.stage == MoveStage::Switching => {
+                hub.log.line(format_args!(
+                    "the move {} to {} was cut short while the hub handed over: it waits to be tried again or called off",
+                    record.id, record.to
+                ));
+                reached(hub, &record.id, MoveStage::Copying).await;
+                stopped_short(hub, &record.id).await;
+                noted(hub, &record.id, Some("the hub was stopped while it handed over".to_string())).await;
+                // Where that could not be kept — a disk full — it is found
+                // so again: after a while, as anything that failed is.
                 None
             }
             Some(record) => Some((handover(hub, &record).await, record)),
@@ -263,8 +279,9 @@ async fn handover(hub: &Arc<Hub>, record: &Outgoing) -> Tried {
         Ok(tried) => tried,
         Err(reason) => {
             let stopped = hub.moving.frozen();
+            // It serves on, and writes of its own accord again.
+            hub.moving.thaw();
             if stopped {
-                hub.moving.thaw();
                 hub.log.line(format_args!("the hub serves on: the switch did not finish"));
                 reached(hub, &record.id, MoveStage::Copying).await;
                 stopped_short(hub, &record.id).await;
@@ -276,22 +293,28 @@ async fn handover(hub: &Arc<Hub>, record: &Outgoing) -> Tried {
 
 async fn copy(hub: &Arc<Hub>, record: &Outgoing, socket: &mut HubSocket) -> Result<Tried, String> {
     let dir = hub.store().dir().to_path_buf();
-    // While it serves: its core as it is now, and the objects of the owner
-    // libraries, which are never other than they were sent.
+    // While it serves: its core as it is now. What the new place holds
+    // beyond it, of an earlier try, goes.
     let theirs = holds(socket, None).await?;
     reached(hub, &record.id, MoveStage::Copying).await;
     hub.log.line(format_args!("the move {}: copying the records to {}", record.id, record.to));
-    let mut mine = listing(socket, &dir, Part::Core).await?;
-    mine.extend(listing(socket, &dir, Part::Objects).await?);
-    mine.sort();
-    mine.dedup();
-    send_difference(socket, &dir, &mine, &theirs).await?;
+    let mine = listing(socket, &dir, Part::Core).await?;
+    let sent = send_difference(socket, &dir, &mine, &theirs, true).await?;
+    hub.log.line(format_args!(
+        "the move {}: {} bytes went of the {} files the new place lacked, {} bytes long",
+        record.id, sent.bytes, sent.files, sent.whole
+    ));
     frames::send(socket, &ToNew::Check { part: None }).await?;
     match frames::frame::<_, ToOld>(socket).await? {
         ToOld::Checked { .. } => {}
         other => return Err(format!("the new place answered {other:?}")),
     }
+    // What the hub writes of its own accord ends first, while it serves:
+    // between the copies taken of its record and of its libraries nothing
+    // of its own may be written (`Moving::quieten`).
+    frames::working::<_, ToNew, _>(socket, Moving::quieten(hub)).await??;
     if called_off(hub, &record.id) {
+        hub.moving.thaw();
         frames::send(socket, &ToNew::Cancel).await?;
         match frames::frame::<_, ToOld>(socket).await? {
             ToOld::Cancelled => given_up(hub, &record.id).await,
@@ -306,10 +329,15 @@ async fn copy(hub: &Arc<Hub>, record: &Outgoing, socket: &mut HubSocket) -> Resu
     // Asked again with the hub frozen: an assistance ended for good while
     // the records were copied is handed over with them.
     crate::purges::takes_over(hub, &record.to)?;
-    // The hub stopped: its core alone, each database a closed copy made now.
+    // The hub stopped: its core alone, each database a closed copy made now,
+    // of which what changed since the copy sent while it served is sent.
     let theirs = holds(socket, Some(Part::Core)).await?;
     let mine = listing(socket, &dir, Part::Core).await?;
-    send_difference(socket, &dir, &mine, &theirs).await?;
+    let sent = send_difference(socket, &dir, &mine, &theirs, true).await?;
+    hub.log.line(format_args!(
+        "the move {}: with the hub stopped, {} bytes went of the {} files that had changed, {} bytes long",
+        record.id, sent.bytes, sent.files, sent.whole
+    ));
     let digest = files::digest(&mine);
     frames::send(socket, &ToNew::Check { part: Some(Part::Core) }).await?;
     match frames::frame::<_, ToOld>(socket).await? {
@@ -406,13 +434,18 @@ pub(super) async fn listing(socket: &mut HubSocket, dir: &std::path::Path, part:
 /// Sends what makes `theirs` into `mine`: first the removals of what is
 /// not here, or is here as a directory where it is a file there or the
 /// other way round, deepest first; then the directories and files that
-/// differ.
+/// differ. `patch`, a database the other end holds another copy of goes as
+/// what of it changed (`patch_file`): the hub's own, copied page for page,
+/// differ between two copies by the pages written meanwhile, and the hub is
+/// stopped for as long as the second takes to go.
 pub(super) async fn send_difference(
     socket: &mut HubSocket,
     dir: &std::path::Path,
     mine: &[Entry],
     theirs: &[Entry],
-) -> Result<(), String> {
+    patch: bool,
+) -> Result<Sent, String> {
+    let mut sent = Sent::default();
     let kept: BTreeMap<&str, bool> = mine.iter().map(|entry| (entry.path.as_str(), entry.file.is_some())).collect();
     for entry in theirs.iter().rev() {
         if kept.get(entry.path.as_str()) != Some(&entry.file.is_some()) {
@@ -424,26 +457,152 @@ pub(super) async fn send_difference(
         if held.get(entry.path.as_str()) == Some(&&entry.file) {
             continue;
         }
-        match &entry.file {
-            None => frames::send(socket, &ToNew::Dir { path: entry.path.clone() }).await?,
-            Some(_) => send_file(socket, dir, &entry.path).await?,
+        let (bytes, whole) = match &entry.file {
+            None => {
+                frames::send(socket, &ToNew::Dir { path: entry.path.clone() }).await?;
+                continue;
+            }
+            Some(_) if patch && files::database(&entry.path) && matches!(held.get(entry.path.as_str()), Some(Some(_))) => {
+                patch_file(socket, dir, &entry.path).await?
+            }
+            Some(_) => {
+                let bytes = send_file(socket, dir, &entry.path).await?;
+                (bytes, bytes)
+            }
+        };
+        sent.files += 1;
+        sent.bytes += bytes;
+        sent.whole += whole;
+    }
+    Ok(sent)
+}
+
+/// What sending a difference came to: how many files went, how many bytes
+/// of them were sent, and how long those files are.
+#[derive(Default)]
+pub(super) struct Sent {
+    pub files: usize,
+    pub bytes: u64,
+    pub whole: u64,
+}
+
+/// Where the bytes of the record at `path` are read from: a database's from
+/// the closed copy made of it as it was listed.
+fn source(dir: &std::path::Path, path: &str) -> Result<std::path::PathBuf, String> {
+    let copy = super::snapshot::path(dir, path);
+    if files::database(path) && fastctx_platform::disk::is_there(&copy) { Ok(copy) } else { files::place(dir, path) }
+}
+
+/// What a file is against the one the other end holds: how long, its
+/// SHA-256, and the runs of its pieces that are not as the other's are.
+type Compared = (u64, [u8; 32], Vec<(u64, u64)>);
+
+/// Reads the file at `place` a piece at a time against `theirs`, the
+/// digests of the pieces of the other end's.
+fn compare(place: &std::path::Path, theirs: &[u8]) -> std::io::Result<Compared> {
+    use sha2::Digest as _;
+    use std::io::Read as _;
+    let mut file = fastctx_platform::disk::open(place)?;
+    let mut whole = sha2::Sha256::new();
+    let mut buffer = vec![0; frames::PIECE as usize];
+    let (mut bytes, mut at, mut runs) = (0u64, 0u64, Vec::<(u64, u64)>::new());
+    loop {
+        let mut filled = 0;
+        while filled < buffer.len() {
+            match file.read(&mut buffer[filled..])? {
+                0 => break,
+                read => filled += read,
+            }
+        }
+        if filled == 0 {
+            break;
+        }
+        whole.update(&buffer[..filled]);
+        bytes += filled as u64;
+        let held = usize::try_from(at).ok().and_then(|at| theirs.get(at * 32..at * 32 + 32));
+        if held != Some(sha2::Sha256::digest(&buffer[..filled]).as_slice()) {
+            match runs.last_mut() {
+                Some((first, many)) if *first + *many == at => *many += 1,
+                _ => runs.push((at, 1)),
+            }
+        }
+        at += 1;
+        if filled < buffer.len() {
+            break;
         }
     }
-    Ok(())
+    Ok((bytes, whole.finalize().into(), runs))
+}
+
+/// Sends the database at `path` as what of it is not in the copy the other
+/// end holds: the pieces that differ, the rest taken there from that copy,
+/// the whole kept there only when it has this one's digest.
+///
+/// How many bytes of it were sent, and how long it is.
+async fn patch_file(socket: &mut HubSocket, dir: &std::path::Path, path: &str) -> Result<(u64, u64), String> {
+    use tokio::io::{AsyncReadExt as _, AsyncSeekExt as _};
+    let place = source(dir, path)?;
+    frames::send(socket, &ToNew::Pieces { path: path.to_string(), piece: frames::PIECE }).await?;
+    let theirs = match frames::frame::<_, ToOld>(socket).await? {
+        ToOld::Pieces { bytes: Some(bytes) } => bytes,
+        // No file there after all: whole.
+        ToOld::Pieces { bytes: None } => return send_file(socket, dir, path).await.map(|bytes| (bytes, bytes)),
+        ToOld::Refused { reason } => return Err(reason),
+        other => return Err(format!("the new place answered {other:?}")),
+    };
+    let wanted = usize::try_from(theirs.div_ceil(u64::from(frames::PIECE)))
+        .ok()
+        .and_then(|pieces| pieces.checked_mul(32))
+        .ok_or_else(|| format!("{path} is too long there to be told in pieces"))?;
+    let mut digests = Vec::with_capacity(wanted);
+    while digests.len() < wanted {
+        match frames::recv::<_, ToOld>(socket, true).await? {
+            frames::Got::Bytes(part) => digests.extend_from_slice(&part),
+            frames::Got::Frame(_) => return Err(format!("the new place said other than the pieces of {path}")),
+        }
+    }
+    if digests.len() != wanted {
+        return Err(format!("the new place told the pieces of {path} amiss"));
+    }
+    let compared = {
+        let place = place.clone();
+        fastctx_platform::task::spawn_blocking(move || compare(&place, &digests))
+    };
+    let (bytes, sha256, changed) = frames::working::<_, ToNew, _>(socket, compared)
+        .await?
+        .map_err(|error| error.to_string())?
+        .map_err(|error| format!("reading {path}: {error}"))?;
+    frames::send(socket, &ToNew::Patch { path: path.to_string(), bytes, piece: frames::PIECE, changed: changed.clone() })
+        .await?;
+    let mut file = tokio::fs::File::open(&place).await.map_err(|error| format!("reading {path}: {error}"))?;
+    let piece = u64::from(frames::PIECE);
+    let mut went = 0;
+    for (first, many) in changed {
+        file.seek(std::io::SeekFrom::Start(first * piece)).await.map_err(|error| format!("reading {path}: {error}"))?;
+        let mut left = ((first + many) * piece).min(bytes) - first * piece;
+        while left > 0 {
+            let mut part = vec![0; usize::try_from(left).unwrap_or(usize::MAX).min(frames::CHUNK)];
+            file.read_exact(&mut part).await.map_err(|error| format!("reading {path}: {error}"))?;
+            left -= part.len() as u64;
+            went += part.len() as u64;
+            frames::send_bytes(socket, frames::pack(part)).await?;
+        }
+    }
+    frames::send(socket, &ToNew::Sum { sha256: Digest(sha256) }).await?;
+    Ok((went, bytes))
 }
 
 /// Sends the file at `path` as it is now, a piece at a time: what was
-/// listed may have been replaced since, while the hub still serves.
-async fn send_file(socket: &mut HubSocket, dir: &std::path::Path, path: &str) -> Result<(), String> {
+/// listed may have been replaced since, while the hub still serves. How
+/// many bytes it is.
+async fn send_file(socket: &mut HubSocket, dir: &std::path::Path, path: &str) -> Result<u64, String> {
     use sha2::Digest as _;
     use tokio::io::AsyncReadExt as _;
-    // A database goes as the closed copy made of it as it was listed.
-    let copy = super::snapshot::path(dir, path);
-    let place = if files::database(path) && fastctx_platform::disk::is_there(&copy) { copy } else { files::place(dir, path)? };
+    let place = source(dir, path)?;
     let mut file = match tokio::fs::File::open(&place).await {
         Ok(file) => file,
         // Gone since it was listed; the next listing says so.
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(0),
         Err(error) => return Err(format!("reading {path}: {error}")),
     };
     let bytes = file.metadata().await.map_err(|error| format!("reading {path}: {error}"))?.len();
@@ -457,7 +616,8 @@ async fn send_file(socket: &mut HubSocket, dir: &std::path::Path, path: &str) ->
         left -= piece.len() as u64;
         frames::send_bytes(socket, frames::pack(piece)).await?;
     }
-    frames::send(socket, &ToNew::Sum { sha256: Digest(hasher.finalize().into()) }).await
+    frames::send(socket, &ToNew::Sum { sha256: Digest(hasher.finalize().into()) }).await?;
+    Ok(bytes)
 }
 
 /// Tells the new place of a move called off to give the hub up. It did

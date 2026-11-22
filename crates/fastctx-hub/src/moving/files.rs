@@ -7,16 +7,18 @@
 //! it holds is the digest of what the old hub held when it stopped.
 //!
 //! They are listed and sent in parts (`Part`; the user, 2026-11-22:
-//! "只传核心", "停写期间只传核心那部分"). The hub stops only for its core:
-//! its own records and its own library, a few hundred megabytes of a hub of
-//! twenty gigabytes. The owner libraries are the hub's copies of what the
-//! machines made, written all the while: a copy of one taken file by file is
-//! never the one held a moment later, so with them among what the hub
-//! stopped for it stopped for half an hour to send them again whole, and the
-//! new place still did not hold what was sent. Their objects, which never
-//! change once written, go before the hub stops; each library's databases go
-//! once the old hub serves no more and nothing writes them (`super::old`),
-//! and the new hub opens a library when it came whole.
+//! "只传核心", "停写期间只传核心那部分", "我要求，不传这10G"). The hub stops
+//! only for its core: its own records and its own library, a few hundred
+//! megabytes of a hub of twenty gigabytes. The owner libraries are the hub's
+//! copies of what the machines made, written all the while: a copy of one
+//! taken file by file is never the one held a moment later, so with them
+//! among what the hub stopped for it stopped for half an hour to send them
+//! again whole, and the new place still did not hold what was sent. Nothing
+//! of them goes before the switch. Each library's databases go once the old
+//! hub serves no more and nothing writes them (`super::old`), and the new
+//! hub opens a library when they came; the files of its large objects are
+//! of no listing, and follow the databases, those something still refers to
+//! (`super::libraries`).
 //!
 //! A database goes as a closed copy made of it (`super::snapshot`), never
 //! as the file a connection is writing, and its log and shared memory beside
@@ -40,10 +42,8 @@ pub(crate) enum Part {
     /// What the hub cannot serve without: its own records and its own
     /// library.
     Core,
-    /// The objects of every owner library: each of its files that is no
-    /// database's, never changed once written.
-    Objects,
-    /// One owner library whole, by its path under the hub's directory.
+    /// One owner library, by its path under the hub's directory: its
+    /// databases.
     Library(String),
 }
 
@@ -174,17 +174,6 @@ fn list(dir: &Path, part: &Part, copies: bool) -> io::Result<Vec<Entry>> {
     let walking = Walking { dir, part, copies };
     match part {
         Part::Core => walking.walk(dir, "", &mut entries)?,
-        Part::Objects => {
-            for library in libraries(dir)? {
-                // The directories above them come with them.
-                let mut above = String::new();
-                for name in library.split('/') {
-                    above = if above.is_empty() { name.to_string() } else { format!("{above}/{name}") };
-                    entries.push(Entry { path: above.clone(), file: None });
-                }
-                walking.walk(&dir.join(&library), &library, &mut entries)?;
-            }
-        }
         Part::Library(library) => {
             if !self::library(library) {
                 return Err(io::Error::new(
@@ -225,21 +214,21 @@ impl Walking<'_> {
             }
             let path = if prefix.is_empty() { name.to_string() } else { format!("{prefix}/{name}") };
             let kind = found.file_type()?;
+            let of_library = matches!(self.part, Part::Library(_));
             if kind.is_dir() {
-                // The owner libraries are no part of the core.
-                if *self.part == Part::Core && LIBRARIES.contains(&path.as_str()) {
+                // The owner libraries are no part of the core; of a library,
+                // what is below its directory is its objects' files.
+                if of_library || LIBRARIES.contains(&path.as_str()) {
                     continue;
                 }
                 entries.push(Entry { path: path.clone(), file: None });
                 self.walk(&found.path(), &path, entries)?;
             } else if kind.is_file() {
-                // A database's own files are no objects: they go with the
-                // library, once nothing writes it.
-                if beside_a_database(name) || (*self.part == Part::Objects && name.contains(".sqlite3")) {
+                if beside_a_database(name) || (of_library && !database(&path)) {
                     continue;
                 }
                 let file = if self.copies && database(&path) {
-                    super::snapshot::capture(self.dir, &path, matches!(self.part, Part::Library(_)))?;
+                    super::snapshot::capture(self.dir, &path, of_library)?;
                     sum(&super::snapshot::path(self.dir, &path))?
                 } else {
                     sum(&found.path())?
@@ -256,8 +245,52 @@ impl Walking<'_> {
     }
 }
 
+/// A file of this length or longer is summed once for as long as it stays
+/// the file it was (`SUMS`).
+const REMEMBERED: u64 = 1 << 20;
+
+/// How long a file must have been left alone before its sum is remembered:
+/// one written again within what its disk tells times apart by would look
+/// the same file.
+const SETTLED: std::time::Duration = std::time::Duration::from_secs(3);
+
+/// What tells a file from another written in its place: how long it is,
+/// when it was last written, and which file of its disk it is.
+#[derive(Clone, PartialEq, Eq)]
+struct Stamp {
+    bytes: u64,
+    modified: std::time::SystemTime,
+    file: u64,
+}
+
+impl Stamp {
+    fn of(found: &std::fs::Metadata) -> io::Result<Self> {
+        #[cfg(unix)]
+        let file = std::os::unix::fs::MetadataExt::ino(found);
+        #[cfg(not(unix))]
+        let file = 0;
+        Ok(Self { bytes: found.len(), modified: found.modified()?, file })
+    }
+}
+
+/// The sums of the long files read whole, each for the file it was then. A
+/// move lists what both ends hold several times over, the last of them with
+/// the hub stopped; the releases a hub keeps for its machines are most of
+/// its core and never change, and read again at each listing they were read
+/// four times while every member waited.
+static SUMS: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<PathBuf, (Stamp, Sum)>>> =
+    std::sync::LazyLock::new(Default::default);
+
 fn sum(path: &Path) -> io::Result<Sum> {
+    let began = std::time::SystemTime::now();
     let mut file = fastctx_platform::disk::open(path)?;
+    let stamp = Stamp::of(&file.metadata()?)?;
+    if stamp.bytes >= REMEMBERED
+        && let Some((kept, sum)) = SUMS.lock().expect("sums").get(path)
+        && *kept == stamp
+    {
+        return Ok(*sum);
+    }
     let mut hasher = sha2::Sha256::new();
     let mut buffer = vec![0; 1 << 16];
     let mut bytes = 0;
@@ -269,7 +302,17 @@ fn sum(path: &Path) -> io::Result<Sum> {
         hasher.update(&buffer[..read]);
         bytes += read as u64;
     }
-    Ok(Sum { bytes, sha256: Digest(hasher.finalize().into()) })
+    let sum = Sum { bytes, sha256: Digest(hasher.finalize().into()) };
+    // Remembered when it was not written while it was read, nor so lately
+    // that a later writing might bear the same time.
+    if stamp.bytes >= REMEMBERED
+        && bytes == stamp.bytes
+        && Stamp::of(&file.metadata()?)? == stamp
+        && began.duration_since(stamp.modified).is_ok_and(|since| since >= SETTLED)
+    {
+        SUMS.lock().expect("sums").insert(path.to_path_buf(), (stamp, sum));
+    }
+    Ok(sum)
 }
 
 /// The digest of a whole listing, as both ends compute it.
