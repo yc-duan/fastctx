@@ -24,6 +24,16 @@
   min-height: 52px;
 }
 
+/* A way to a page of its own is named by a file at times, 「全局 CLAUDE.md」,
+   kept on one line though a little wider than the other names. */
+.host-prefs .hp-link-row {
+  grid-template-columns: minmax(8em, max-content) minmax(0, 1fr);
+}
+
+.host-prefs .hp-link-row .choice-label {
+  white-space: nowrap;
+}
+
 /* A row of steps: 「默认」, then the slider, its line level with the
    pill's middle. */
 .hp-slid-options {
