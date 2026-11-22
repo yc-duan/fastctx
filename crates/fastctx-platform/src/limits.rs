@@ -39,7 +39,7 @@ pub fn open_files_allowed() -> Option<u64> {
         if unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut limit) } != 0 || limit.rlim_cur == libc::RLIM_INFINITY {
             return None;
         }
-        Some(limit.rlim_cur as u64)
+        Some(limit.rlim_cur)
     }
     #[cfg(not(unix))]
     None
