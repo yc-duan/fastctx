@@ -125,6 +125,14 @@ export interface IdleCompaction {
   min_tokens: number;
 }
 
+/** What the user set for one conversation alone: each part absent follows
+ *  its agent's setting for the account it works for. */
+export interface IdleChoice {
+  on?: boolean;
+  after_minutes?: number;
+  min_tokens?: number;
+}
+
 /** What a setting never changed holds, once turned on, and its bounds. */
 export const IDLE_DEFAULT: IdleCompaction = { on: false, after_minutes: 50, min_tokens: 100_000 };
 export const IDLE_MINUTES = { least: 5, most: 240 };

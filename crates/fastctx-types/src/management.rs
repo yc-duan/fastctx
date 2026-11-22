@@ -35,10 +35,11 @@ pub enum Management {
     Mcp {
         off: std::collections::BTreeSet<String>,
     },
-    /// Whether it is compacted once idle a while (Issue #57): none follows
-    /// its login's setting for the account it works for.
+    /// How it is compacted once idle a while (Issue #57), replacing what was
+    /// set before: each part not set follows its login's setting for the
+    /// account it works for.
     IdleCompaction {
-        on: Option<bool>,
+        choice: crate::logins::idle::IdleChoice,
     },
 }
 

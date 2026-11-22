@@ -29,7 +29,7 @@ pub(super) struct Stored {
     #[serde(default)]
     mcp_off: std::collections::BTreeSet<String>,
     #[serde(default)]
-    idle_compaction: Option<bool>,
+    idle_compaction: crate::logins::idle::IdleChoice,
     #[serde(default)]
     home: Option<std::path::PathBuf>,
     #[serde(default)]

@@ -12241,7 +12241,10 @@
                     "acting": {
                       "kind": "here"
                     },
-                    "idle_compaction": true
+                    "idle_compaction": {
+                      "on": true,
+                      "after_minutes": 30
+                    }
                   },
                   "town": null,
                   "here": true,
@@ -12338,7 +12341,10 @@
                         }
                       ]
                     },
-                    "idle_compaction": true,
+                    "idle_compaction": {
+                      "on": true,
+                      "after_minutes": 30
+                    },
                     "home": "C:/Users/ada/.codex-work"
                   },
                   "town": "project-0",
@@ -12425,7 +12431,10 @@
                         }
                       ]
                     },
-                    "idle_compaction": true
+                    "idle_compaction": {
+                      "on": true,
+                      "after_minutes": 30
+                    }
                   },
                   "town": "project-0",
                   "here": false,
@@ -12550,7 +12559,10 @@
                     "acting": {
                       "kind": "here"
                     },
-                    "idle_compaction": true
+                    "idle_compaction": {
+                      "on": true,
+                      "after_minutes": 30
+                    }
                   },
                   "town": null,
                   "here": false,
@@ -12669,7 +12681,10 @@
                     "acting": {
                       "kind": "here"
                     },
-                    "idle_compaction": true
+                    "idle_compaction": {
+                      "on": true,
+                      "after_minutes": 30
+                    }
                   },
                   "town": null,
                   "here": true,
@@ -13788,7 +13803,10 @@
                     "acting": {
                       "kind": "here"
                     },
-                    "idle_compaction": true
+                    "idle_compaction": {
+                      "on": true,
+                      "after_minutes": 30
+                    }
                   },
                   "town": null,
                   "here": true,
@@ -13885,7 +13903,10 @@
                         }
                       ]
                     },
-                    "idle_compaction": true,
+                    "idle_compaction": {
+                      "on": true,
+                      "after_minutes": 30
+                    },
                     "home": "C:/Users/ada/.codex-work"
                   },
                   "town": "project-0",
@@ -13972,7 +13993,10 @@
                         }
                       ]
                     },
-                    "idle_compaction": true
+                    "idle_compaction": {
+                      "on": true,
+                      "after_minutes": 30
+                    }
                   },
                   "town": "project-0",
                   "here": false,
@@ -14097,7 +14121,10 @@
                     "acting": {
                       "kind": "here"
                     },
-                    "idle_compaction": true
+                    "idle_compaction": {
+                      "on": true,
+                      "after_minutes": 30
+                    }
                   },
                   "town": null,
                   "here": false,
@@ -14216,7 +14243,10 @@
                     "acting": {
                       "kind": "here"
                     },
-                    "idle_compaction": true
+                    "idle_compaction": {
+                      "on": true,
+                      "after_minutes": 30
+                    }
                   },
                   "town": null,
                   "here": true,
@@ -14334,7 +14364,10 @@
                     "acting": {
                       "kind": "here"
                     },
-                    "idle_compaction": true
+                    "idle_compaction": {
+                      "on": true,
+                      "after_minutes": 30
+                    }
                   },
                   "town": null,
                   "here": true,
@@ -14431,7 +14464,10 @@
                         }
                       ]
                     },
-                    "idle_compaction": true,
+                    "idle_compaction": {
+                      "on": true,
+                      "after_minutes": 30
+                    },
                     "home": "C:/Users/ada/.codex-work"
                   },
                   "town": "project-0",
@@ -14518,7 +14554,10 @@
                         }
                       ]
                     },
-                    "idle_compaction": true
+                    "idle_compaction": {
+                      "on": true,
+                      "after_minutes": 30
+                    }
                   },
                   "town": "project-0",
                   "here": false,
@@ -14643,7 +14682,10 @@
                     "acting": {
                       "kind": "here"
                     },
-                    "idle_compaction": true
+                    "idle_compaction": {
+                      "on": true,
+                      "after_minutes": 30
+                    }
                   },
                   "town": null,
                   "here": false,
@@ -14762,7 +14804,10 @@
                     "acting": {
                       "kind": "here"
                     },
-                    "idle_compaction": true
+                    "idle_compaction": {
+                      "on": true,
+                      "after_minutes": 30
+                    }
                   },
                   "town": null,
                   "here": true,
@@ -23838,7 +23883,10 @@
         "machine": "desktop",
         "action": {
           "do": "idle_compaction",
-          "on": false
+          "choice": {
+            "on": false,
+            "min_tokens": 200000
+          }
         }
       },
       {
@@ -23847,7 +23895,7 @@
         "machine": "desktop",
         "action": {
           "do": "idle_compaction",
-          "on": null
+          "choice": {}
         }
       },
       {
@@ -23933,7 +23981,10 @@
         "resident": "codex-ab12",
         "action": {
           "do": "idle_compaction",
-          "on": false
+          "choice": {
+            "on": false,
+            "min_tokens": 200000
+          }
         }
       },
       {
@@ -23941,7 +23992,7 @@
         "resident": "codex-ab12",
         "action": {
           "do": "idle_compaction",
-          "on": null
+          "choice": {}
         }
       }
     ],

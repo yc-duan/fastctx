@@ -57,6 +57,21 @@ export interface TalkMenuWords {
   idleFollowShort: string;
   idleOn: string;
   idleOff: string;
+  idleCustom: string;
+  idleWhat: string;
+  idleAfter: string;
+  idleMin: string;
+  idleMinutes: string;
+  /** The unit context is written in, and how many tokens it is. */
+  idleTokens: string;
+  idleTokensEach: number;
+  /** What its agent's setting holds, beside a part that follows it. */
+  idleFollows(value: string): string;
+  idleFollowUnknown: string;
+  idleReset: string;
+  idleDone: string;
+  idleClose: string;
+  idleRange(least: number, most: number): string;
   notIdle: string;
   notRenamed: string;
   notDeleted: string;
@@ -116,6 +131,19 @@ export const zhTalkMenu: TalkMenuWords = {
   idleFollowShort: "跟随",
   idleOn: "开",
   idleOff: "关",
+  idleCustom: "自定义",
+  idleWhat: "只对这段对话生效；没单独设的项跟随智能体设置。",
+  idleAfter: "闲置多久后",
+  idleMin: "上下文至少",
+  idleMinutes: "分钟",
+  idleTokens: "万 token",
+  idleTokensEach: 10_000,
+  idleFollows: (value) => `智能体设置：${value}`,
+  idleFollowUnknown: "智能体设置未读到",
+  idleReset: "全部恢复跟随",
+  idleDone: "完成",
+  idleClose: "关闭",
+  idleRange: (least, most) => `填 ${least} 到 ${most} 之间的数，留空则跟随`,
   notIdle: "设置失败",
   notRenamed: "改名失败",
   notDeleted: "删除失败",
@@ -169,6 +197,19 @@ export const enTalkMenu: TalkMenuWords = {
   idleFollowShort: "Follow",
   idleOn: "On",
   idleOff: "Off",
+  idleCustom: "Custom",
+  idleWhat: "For this conversation alone; what is not set here follows the agent's setting.",
+  idleAfter: "Idle for",
+  idleMin: "At least",
+  idleMinutes: "minutes",
+  idleTokens: "K tokens",
+  idleTokensEach: 1_000,
+  idleFollows: (value) => `Agent's setting: ${value}`,
+  idleFollowUnknown: "The agent's setting could not be read",
+  idleReset: "Follow the agent in all",
+  idleDone: "Done",
+  idleClose: "Close",
+  idleRange: (least, most) => `A number from ${least} to ${most}, or empty to follow`,
   notIdle: "Could not set it",
   notRenamed: "Could not rename",
   notDeleted: "Could not delete",

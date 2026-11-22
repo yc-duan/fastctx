@@ -30,20 +30,12 @@ pub(crate) const IDLE: Duration = Duration::from_secs(600);
 /// 256 to 1024. Each machine shared whole has a library of its own, and the
 /// passes of devices touch every library they follow: kept too few, every
 /// pass opened one again (64 on a hub of 128 opened six to twelve a second).
-/// Never more than half the files the hub may hold open allow, an open
-/// library commonly holding some twelve: the rest are for its connections,
-/// its control database and the readers a busy library opens.
+/// The files they hold are well within what the hub raises its own limit to
+/// as it starts (`fastctx_platform::limits::raise_open_files`).
 pub(crate) fn open_at_once() -> usize {
     let physical = fastctx_platform::memory::physical().unwrap_or(2 << 30);
-    let by_memory = usize::try_from(physical / (8 << 20)).unwrap_or(usize::MAX).clamp(256, 1024);
-    let by_files = fastctx_platform::limits::open_files_allowed()
-        .map_or(usize::MAX, |allowed| usize::try_from(allowed / 2 / FILES_EACH).unwrap_or(usize::MAX));
-    by_memory.min(by_files).max(16)
+    usize::try_from(physical / (8 << 20)).unwrap_or(usize::MAX).clamp(256, 1024)
 }
-
-/// The files an open library commonly holds: its two databases' writer and
-/// a reader each, every connection with its WAL and shared memory.
-const FILES_EACH: u64 = 12;
 
 /// Whose library.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]

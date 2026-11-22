@@ -2,6 +2,7 @@
 // and `nodes` answer (`fastctx_types::town`, `::residents`, `::project`,
 // `::world`). These are serialized replies, before any presentation model.
 
+import type { IdleChoice } from "./logins";
 import type { AccountName, Acting, HubId, HubName, Rights } from "./accounts";
 import type { Speaker, TurnEnd } from "./events";
 import type { Focus } from "./focus";
@@ -34,9 +35,9 @@ export interface About {
   /** The MCP servers of the account it works for that it starts without
    *  (`world-user-config.md`). */
   mcp_off?: string[];
-  /** Whether it is compacted once idle a while, as the user said of it
-   *  alone; absent follows its login's setting (Issue #57). */
-  idle_compaction?: boolean;
+  /** How it is compacted once idle a while, as the user set it for it
+   *  alone; each part absent follows its login's setting (Issue #57). */
+  idle_compaction?: IdleChoice;
   /** The agent's home it works in, as its machine writes it, when not the
    *  default one there: which of that machine's logins it uses. */
   home?: string;

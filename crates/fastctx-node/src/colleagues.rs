@@ -334,7 +334,7 @@ pub async fn ask_here(
         side: false,
         forked_from: None,
         mcp_off: Default::default(),
-        idle_compaction: None,
+        idle_compaction: Default::default(),
         id: id.clone(),
         host: Host { agent, client: "codex app-server".to_string(), version: String::new() },
         machine: node.machine(),

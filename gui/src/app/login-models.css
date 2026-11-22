@@ -236,3 +236,37 @@
   background: none;
   cursor: pointer;
 }
+
+/* One conversation's idle compaction (`talk-idle-sheet.ts`): the same list,
+   a quiet line of what it is for over it, and following, on or off as
+   three words side by side; a number left empty follows the agent. */
+@media (min-width: 761px) {
+  .talk-idle-sheet {
+    margin: auto;
+  }
+}
+
+.talk-idle-sheet .sheet-body {
+  width: min(520px, 100vw - 32px);
+}
+
+.li-intro {
+  margin: 0;
+  font-size: var(--size-text);
+  line-height: var(--leading-ui);
+  color: var(--text-3);
+}
+
+.ti-choices {
+  display: inline-flex;
+  flex: none;
+  gap: var(--space-1);
+}
+
+.ti-choices .choice {
+  margin-inline: 0;
+}
+
+.li-number::placeholder {
+  color: var(--text-3);
+}

@@ -15,6 +15,8 @@ import { layerOpened, type Layer } from "./back";
 import type { TalkActs } from "./talk-acts";
 import type { TalkMenuWords } from "./talk-menu-words";
 import { stepped } from "./menu-keys";
+import type { IdleCompaction } from "../world/logins";
+import { TalkIdleSheet } from "./talk-idle-sheet";
 
 export interface TalkMenuOptions {
   words: TalkMenuWords;
@@ -34,6 +36,9 @@ export interface TalkMenuOptions {
   askDelete(r: ResidentNow, then?: () => void): void;
   /** Opens it side by side with the conversations shown. */
   beside?(r: ResidentNow): void;
+  /** Its agent's setting of idle compaction for the account it works for;
+   *  none where it cannot be read. */
+  idleOf?(r: ResidentNow): Promise<IdleCompaction | null>;
 }
 
 export interface MenuOpening {
@@ -65,6 +70,14 @@ export interface MenuOpening {
 
 const narrow = matchMedia("(max-width: 760px)");
 
+/** What its idle compaction stands at, in the menu's row: following its
+ *  agent, on or off for it alone, or its conditions changed. */
+function idleSaid(r: ResidentNow, words: TalkMenuWords): string {
+  const choice = r.about.idle_compaction ?? {};
+  if (choice.on !== undefined) return choice.on ? words.idleOn : words.idleOff;
+  return choice.after_minutes !== undefined || choice.min_tokens !== undefined ? words.idleCustom : words.idleFollowShort;
+}
+
 /** Whether the World compacts it once idle: a Claude Code or Codex session
  *  it runs (`About::world_managed`). */
 function compacts(r: ResidentNow): boolean {
@@ -76,8 +89,7 @@ export class TalkMenu {
   private readonly shade: HTMLElement;
   private opened: { r: ResidentNow; how: MenuOpening } | null = null;
   private towns = false;
-  /** Its other face: whether it is compacted once idle a while. */
-  private idle = false;
+  private idleSheet: TalkIdleSheet | null = null;
   private readonly layer: Layer = {
     isOpen: () => !this.element.hidden,
     close: () => this.close(),
@@ -130,7 +142,6 @@ export class TalkMenu {
     stay(this.shade);
     this.opened = { r, how };
     this.towns = false;
-    this.idle = false;
     this.draw();
     const sheet = narrow.matches;
     this.element.classList.toggle("as-sheet", sheet);
@@ -203,14 +214,6 @@ export class TalkMenu {
     const item = (act: string, icon: Parameters<typeof glyph>[0], label: string, disabled: boolean, end = "") =>
       `<button class="talk-menu-item${act === "delete" ? " danger" : ""}" type="button" role="menuitem" data-act="${act}"${disabled ? " disabled" : ""}>${glyph(icon, 16)}<span class="talk-menu-label">${escape(label)}</span>${end}</button>`;
     const rule = `<hr class="talk-menu-rule">`;
-    if (this.idle) {
-      const now = r.about.idle_compaction ?? null;
-      const pick = (value: boolean | null, label: string) =>
-        `<button class="talk-menu-item talk-menu-town" type="button" role="menuitemradio" aria-checked="${now === value}" data-idle="${value === null ? "follow" : value ? "on" : "off"}"><span class="talk-menu-check">${now === value ? glyph("check", 16) : ""}</span><span class="talk-menu-label">${escape(label)}</span></button>`;
-      this.element.innerHTML = `${head}<button class="talk-menu-back" type="button" data-act="back">${glyph("back", 16)}<span>${escape(words.idle)}</span></button>
-        ${pick(null, words.idleFollow)}${pick(true, words.idleOn)}${pick(false, words.idleOff)}`;
-      return;
-    }
     if (this.towns) {
       const towns = this.options.towns(r);
       const pick = (town: string | null, name: string) =>
@@ -238,7 +241,7 @@ export class TalkMenu {
           item("move", "move", words.move, away, `<span class="talk-menu-more">${glyph("chevron", 14)}</span>`),
           item("rename", "edit", words.rename, away),
           ...(compacts(r)
-            ? [item("idle", "clock", words.idle, away, `<span class="talk-menu-value">${escape(r.about.idle_compaction === undefined ? words.idleFollowShort : r.about.idle_compaction ? words.idleOn : words.idleOff)}</span><span class="talk-menu-more">${glyph("chevron", 14)}</span>`)]
+            ? [item("idle", "clock", words.idle, away, `<span class="talk-menu-value">${escape(idleSaid(r, words))}</span>`)]
             : []),
           item("archive", "archive", words.archive, away),
           ...(this.opened.how.copy || this.opened.how.attach
@@ -274,14 +277,6 @@ export class TalkMenu {
     const target = event.target as HTMLElement;
     const opened = this.opened;
     if (!opened) return;
-    const idle = target.closest<HTMLElement>("[data-idle]");
-    if (idle) {
-      const chosen = idle.dataset.idle === "follow" ? null : idle.dataset.idle === "on";
-      const r = opened.r;
-      this.close();
-      if ((this.options.acts.view(r).about.idle_compaction ?? null) !== chosen) this.options.acts.idle(r, chosen);
-      return;
-    }
     const town = target.closest<HTMLElement>("[data-town]");
     if (town) {
       const chosen = town.dataset.town || null;
@@ -300,15 +295,19 @@ export class TalkMenu {
         if (!narrow.matches) this.place();
         this.items()[1]?.focus({ preventScroll: true });
         return;
-      case "idle":
-        this.idle = true;
-        this.draw();
-        if (!narrow.matches) this.place();
-        this.items()[1]?.focus({ preventScroll: true });
+      case "idle": {
+        this.close();
+        const shown = this.options.acts.view(r);
+        this.idleSheet ??= new TalkIdleSheet(this.options.words);
+        this.idleSheet.open({
+          r: shown,
+          login: this.options.idleOf?.(shown) ?? Promise.resolve(null),
+          keep: (choice) => this.options.acts.idle(r, choice),
+        });
         return;
+      }
       case "back":
         this.towns = false;
-        this.idle = false;
         this.draw();
         if (!narrow.matches) this.place();
         this.items()[0]?.focus({ preventScroll: true });

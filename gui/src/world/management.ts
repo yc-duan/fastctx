@@ -4,6 +4,7 @@
 // World answers with each stage as it went, so what was done and what was
 // not stays in view when only part of it could be.
 
+import type { IdleChoice } from "./logins";
 import { invoke } from "@tauri-apps/api/core";
 import type { Landed } from "./bridge";
 import type { Address, Timestamp, TownName } from "./wire";
@@ -20,9 +21,9 @@ export type Management =
   | { do: "focus"; focus: Focus }
   /** The account's MCP servers it goes without (`world-user-config.md`). */
   | { do: "mcp"; off: string[] }
-  /** Whether it is compacted once idle a while; null follows its login's
-   *  setting (Issue #57). */
-  | { do: "idle_compaction"; on: boolean | null };
+  /** How it is compacted once idle a while, replacing what was set: each
+   *  part absent follows its login's setting (Issue #57). */
+  | { do: "idle_compaction"; choice: IdleChoice };
 
 export type ManagementOutcome = "done" | "pending" | "unsupported" | "failed";
 

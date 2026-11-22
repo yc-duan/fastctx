@@ -489,6 +489,17 @@ fn drain_now<'a>(
             if rows.iter().any(|row| row.state == ControlState::Running) {
                 return Ok(());
             }
+            // One the World began of itself that still waits was left by
+            // its own beginning, which held this gate while it waited: it is
+            // withdrawn, never done late (`control::compact_idle`).
+            if let Some(row) = rows.iter().find(|row| row.automatic && row.state == ControlState::Waiting) {
+                let mut row = row.clone();
+                row.state = ControlState::Cancelled;
+                row.error = Some("an idle compaction not begun is not begun later".into());
+                finish(node, id, &row).await?;
+                crate::composer::forget_command(node, id, &row.id, None).await?;
+                continue;
+            }
             if let Some(row) = rows.iter().find(|row| row.state != ControlState::Waiting) {
                 finish(node, id, row).await?;
                 let failed = (matches!(row.state, ControlState::Failed | ControlState::Uncertain) && !row.automatic)
@@ -710,6 +721,13 @@ async fn recovered(node: &Arc<Node>, id: &ResidentId) -> Result<(), Failure> {
             // the control is let go, so stopping between the two leaves
             // the control to recover again, never words let through.
             crate::composer::forget_command(node, id, &row.id, (!row.automatic).then_some(why)).await?;
+            finish(node, id, &row).await?;
+        } else if row.state == ControlState::Waiting && row.automatic {
+            // One the World began of itself and a stop left waiting is
+            // withdrawn: begun again later it would be done out of its time.
+            row.state = ControlState::Cancelled;
+            row.error = Some("the node stopped before this idle compaction began; it was not begun later".into());
+            crate::composer::forget_command(node, id, &row.id, None).await?;
             finish(node, id, &row).await?;
         } else if row.state != ControlState::Waiting {
             finish(node, id, &row).await?;

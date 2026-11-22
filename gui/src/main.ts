@@ -273,7 +273,7 @@ import { configurePhone, onPhone, phoneSeam, routeActivations, tellPhoneViewing 
 import { copySeam } from "./app/phone-copy";
 import { renewalState, renewHere, type VersionMismatch } from "./world/renewal";
 import type { Address, SessionEvent } from "./world/events";
-import type { MachineLogins, WorldLogins } from "./world/logins";
+import { IDLE_DEFAULT, type IdleCompaction, type MachineLogins, type WorldLogins } from "./world/logins";
 import { ownerResident, type ResidentNow, type WorldWho } from "./world/world";
 import { agentName, titleOf } from "./world/names";
 import { liveSide, specimenSide } from "./side/live";
@@ -1128,11 +1128,28 @@ const talkMenu = new TalkMenu({
   place: (r) => placeSaid(r),
   askDelete: (r, then) => askForget(r, then),
   beside: (r) => openBeside(addressOf(r)),
+  idleOf: (r) => idleOfLogin(r),
 });
 effect(() => {
   const now = store.world.get();
   talkActs.settle((address) => listedAt(now, address), (address) => residentAt(now, address));
 });
+
+/** The idle compaction setting of the login a conversation works in, for
+ *  the account asking: its machine's record of its logins read now. */
+async function idleOfLogin(r: ResidentNow): Promise<IdleCompaction | null> {
+  const machine = r.about.machine;
+  const agent = r.about.host.agent;
+  if (agent !== "claude" && agent !== "codex") return null;
+  const world = await (live ? agentLogins(machine) : specimenLogins(machine, specimen!.now));
+  const heard = world.machines.find((one) => one.kind === "answered" && one.logins.machine === machine);
+  if (heard?.kind !== "answered") return null;
+  const listed = heard.logins[agent].listed;
+  const plain = (dir: string) => dir.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
+  const home = r.about.home;
+  const login = home ? listed.find((one) => plain(one.dir) === plain(home)) : listed.find((one) => one.default);
+  return login ? (login.idle_compaction ?? IDLE_DEFAULT) : null;
+}
 
 /** A conversation as the World lists it, archived or not, as its machine
  *  last answered when it is away. */
@@ -1285,7 +1302,7 @@ async function specimenManaged(address: Address, action: Management): Promise<Ma
     if (action.do === "move") return { ...r, town: action.town };
     if (action.do === "idle_compaction") {
       const { idle_compaction: _, ...about } = r.about;
-      return { ...r, about: action.on === null ? about : { ...about, idle_compaction: action.on } };
+      return { ...r, about: Object.keys(action.choice).length ? { ...about, idle_compaction: action.choice } : about };
     }
     return r;
   });

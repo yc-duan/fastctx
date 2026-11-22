@@ -90,7 +90,11 @@ fn residents() -> Vec<ResidentNow> {
                 side: false,
                 forked_from: None,
                 mcp_off: Default::default(),
-                idle_compaction: Some(true),
+                idle_compaction: fastctx_types::logins::idle::IdleChoice {
+                    on: Some(true),
+                    after_minutes: Some(30),
+                    min_tokens: None,
+                },
                 id: format!("codex-ab1{i}").parse().unwrap(),
                 host: host(),
                 machine: machine(),

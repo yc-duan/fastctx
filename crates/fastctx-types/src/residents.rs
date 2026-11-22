@@ -90,10 +90,10 @@ pub struct About {
     /// (`world-user-config.md`).
     #[serde(default, skip_serializing_if = "std::collections::BTreeSet::is_empty")]
     pub mcp_off: std::collections::BTreeSet<String>,
-    /// Whether it is compacted once idle a while, as the user said of it
-    /// alone; none follows its login's setting (Issue #57).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub idle_compaction: Option<bool>,
+    /// How it is compacted once idle a while, as the user set it for it
+    /// alone; each part not set follows its login's setting (Issue #57).
+    #[serde(default, skip_serializing_if = "crate::logins::idle::IdleChoice::is_empty")]
+    pub idle_compaction: crate::logins::idle::IdleChoice,
     /// The agent's home it was born in, its account on this machine
     /// (`agents::AgentHome`), when not the default one.
     #[serde(default, skip_serializing_if = "Option::is_none")]

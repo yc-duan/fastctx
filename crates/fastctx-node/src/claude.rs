@@ -2228,7 +2228,7 @@ pub async fn open_here(
         side: false,
         forked_from: None,
         mcp_off: options.mcp_off.clone(),
-        idle_compaction: None,
+        idle_compaction: Default::default(),
         id: id.clone(),
         host: Host { agent, client: "claude-code".to_string(), version: String::new() },
         machine: node.machine(),
