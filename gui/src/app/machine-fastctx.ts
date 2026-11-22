@@ -15,6 +15,7 @@ import { detailOf } from "./problem";
 import { lineOf, stageMark } from "./update-marks";
 import type { UpdateViewWords } from "./update-view-words";
 import type { ManageWords } from "./machine-manage-words";
+import { setRow } from "./machine-set";
 import type { Machine } from "./reach";
 import type { Signal } from "./signals";
 
@@ -144,10 +145,8 @@ export class FastctxBlock {
       app ? escape(app === running ? words.withApp : words.app(app)) : "",
       subject.service === null ? "" : escape(this.options.kept(subject.service)),
     ].filter(Boolean);
-    const rows = [`<dt>${escape(words.fastctx)}</dt><dd class="fx-facts"><span>${facts.join(`<span class="sep"></span>`)}</span></dd>`];
     const status = this.status(subject, state, running);
-    if (status) rows.push(`<dt></dt><dd class="fx-status">${status}</dd>`);
-    return `<dl class="mp-rows">${rows.join("")}</dl>`;
+    return `<h2 class="mp-sec-title">${escape(words.fastctx)}</h2>${setRow(escape(words.version), facts.join(`<span class="sep"></span>`), status ? `<span class="fx-status">${status}</span>` : "")}`;
   }
 
   /** What it can take now and how an update of it goes, then the way to

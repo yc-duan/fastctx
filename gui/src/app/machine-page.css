@@ -541,6 +541,15 @@
   mask: var(--pen-rule-2) 0 50% / 100% 100% no-repeat;
 }
 
+/* Its name and what it keeps free in memory are one group of settings. */
+.mp-naming:not([hidden]) + .mp-room:not([hidden])::before {
+  display: none;
+}
+
+.mp-naming:not([hidden]) + .mp-room:not([hidden]) .mp-set {
+  border-top: 1px solid var(--hairline);
+}
+
 .mp-sec-title {
   margin: 0 0 var(--space-3);
   font-size: var(--size-text);
@@ -611,6 +620,92 @@
 }
 
 .mp-rows .sep {
+  margin: 0 6px;
+  color: var(--text-3);
+}
+
+/* A setting in 「管理」: what it is with a line of why under it, quieter, and
+   its value and buttons at the end, the two kept apart however long the
+   line of why; on a narrow sheet the end goes under them, still at the end. */
+.mp-set {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px var(--space-4);
+  padding: 8px 0;
+}
+
+.mp-set + .mp-set {
+  border-top: 1px solid var(--hairline);
+}
+
+.mp-sec-title + .mp-set {
+  padding-top: 0;
+}
+
+.mp-set:last-child {
+  padding-bottom: 0;
+}
+
+/* A button that ends a setting: its words, not its padding, at the end,
+   where a value's would be. */
+.mp-set-end > .text-button:last-child {
+  margin-right: calc(-1 * var(--space-3));
+}
+
+/* It takes the room the end leaves; the end goes under only when its name
+   and the end do not fit on one line. */
+.mp-set-what {
+  display: flex;
+  flex: 1 1 0;
+  flex-direction: column;
+  gap: 2px;
+  max-width: 100%;
+}
+
+/* With a line of why it keeps room enough for the line to read, and the end
+   goes under sooner. */
+.mp-set-what:has(.mp-set-said) {
+  min-width: min(100%, 12em);
+}
+
+.mp-set-name {
+  overflow: hidden;
+  font-size: var(--size-text);
+  color: var(--text);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.mp-set-said {
+  overflow-wrap: anywhere;
+  font-size: var(--size-text);
+  line-height: var(--leading-ui);
+  color: var(--text-3);
+}
+
+.mp-set-end {
+  display: flex;
+  flex: 0 1 auto;
+  margin-left: auto;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px var(--space-3);
+  min-width: 0;
+  font-size: var(--size-text);
+  color: var(--text-2);
+}
+
+.mp-set-end .code {
+  font-family: var(--font-code);
+  font-variation-settings: var(--code-axes);
+  font-size: var(--size-code);
+}
+
+.mp-set-end .sep,
+.mp-set-said .sep {
   margin: 0 6px;
   color: var(--text-3);
 }
@@ -1094,27 +1189,67 @@
   color: var(--text-3);
 }
 
-.mp-sharing .given-row:first-of-type {
+/* Whom it is shared with and whom its logins assist, at a setting's end. */
+.mp-sharing .mp-set-end.given-row {
   margin-top: 0;
 }
 
-.mp-sharing .given-label {
-  flex: none;
-  min-width: calc(var(--mp-label) + var(--mp-gap) - 6px);
-  margin-right: 0;
+.mp-sharing .mp-set-end .quiet-button:last-child {
+  margin-right: calc(-1 * var(--space-2));
 }
 
-.mp-sharing .given-label + .text-button {
-  margin-left: calc(-1 * var(--space-2));
+/* Direct links, a row each: the peer, why one is down in a few words, and
+   how fast or that it is not connected, lined up at the end. */
+.mp-links {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
 }
 
-.mp-direct .panel-direct {
-  display: block;
-  margin-top: 0;
+.mp-link {
+  display: grid;
+  grid-template-columns: minmax(0, 14em) minmax(0, 1fr) auto;
+  column-gap: var(--space-4);
+  align-items: baseline;
+  font-size: var(--size-text);
 }
 
-.mp-direct .panel-direct-at {
-  margin-top: 4px;
+.mp-link-name,
+.mp-link-why {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mp-link-name {
+  color: var(--text);
+}
+
+.mp-link-why {
+  color: var(--text-3);
+}
+
+.mp-link-state {
+  grid-column: 3;
+  min-width: 5em;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-2);
+}
+
+.mp-link.off .mp-link-name,
+.mp-link.off .mp-link-state {
+  color: var(--text-3);
+}
+
+.mp-links-at {
+  margin: var(--space-2) 0 0;
+  font-size: var(--size-text);
+  color: var(--text-3);
 }
 
 /* For a moment after something is taken back: what, and undoing it. */
@@ -1271,15 +1406,6 @@
 
   .mp-rows dd + dt {
     margin-top: var(--space-3);
-  }
-
-  .mp-sharing .given-label {
-    flex-basis: 100%;
-    min-width: 0;
-  }
-
-  .mp-sharing .given-label + .text-button {
-    margin-left: calc(-1 * var(--space-2));
   }
 }
 

@@ -8,6 +8,7 @@
 
 import { wholeDollars } from "../world/money";
 import type { Strain } from "../world/world";
+import type { DirectWords } from "./direct-why";
 import type { MachineFindWords } from "./machine-find";
 import type { GroupWords } from "./machine-groups";
 import type { PasswordProblem } from "./password";
@@ -702,11 +703,13 @@ export interface MachinesWords extends EndAssistWords {
   visitorWhat: string;
   /** After the name of a visitor's group of machines. */
   visitor: string;
-  /** A machine's direct links, in its details. */
-  directRow: string;
-  directUp(peer: string, ms: number | undefined): string;
-  directDown(peer: string, why: string | undefined): string;
-  takesDirectAt(addresses: string): string;
+  /** A machine's direct links, in its details: one up, how fast or that
+   *  it is; one down, that it is and why; where others reach it. */
+  directMs(ms: number): string;
+  directUp: string;
+  directDown: string;
+  directAt(addresses: string): string;
+  directWhy: DirectWords;
   /** Under the drawing, for a mouse: how to zoom and how to move it. */
   hintZoom: string;
   hintPan: string;
@@ -995,10 +998,28 @@ export const zhMachines: MachinesWords = {
   visitorMachine: "访客的机器",
   visitorWhat: "访客的机器仅归访客本人：可查看是否在线，但无法使用",
   visitor: "访客",
-  directRow: "直连",
-  directUp: (peer, ms) => `${peer}${ms !== undefined ? ` ${ms} ms` : ""}`,
-  directDown: (peer, why) => `${peer} 已断开${why ? `：${why}` : ""}`,
-  takesDirectAt: (addresses) => `其他机器经 ${addresses} 直连`,
+  directMs: (ms) => `${ms} ms`,
+  directUp: "已连上",
+  directDown: "未连上",
+  directAt: (addresses) => `本机直连地址 ${addresses}`,
+  directWhy: {
+    silent: (seconds) => `连上后 ${seconds} 秒没有回应`,
+    silentShort: "连上后没有回应",
+    unreachable: (seconds) => `${seconds} 秒内连不上`,
+    unreachableShort: "连不上",
+    refused: "对方拒绝连接",
+    failed: "连接失败",
+    noAddress: "不知道它的地址",
+    cut: "连接被切断",
+    quiet: (seconds) => `${seconds} 秒没有收到消息`,
+    quietShort: "没有消息",
+    closed: "对方关闭了连接",
+    card: (name) => `经网卡「${name}」`,
+    system: "经系统路由",
+    proxy: (at) => `经代理 ${at}`,
+    here: "在本机",
+    attempt: (address, route, outcome) => `${address}（${route}）：${outcome}`,
+  },
   hintZoom: "缩放",
   hintPan: "按住拖动",
   framedTitle: (n) => `已选 ${n} 台`,
@@ -1358,10 +1379,28 @@ export const enMachines: MachinesWords = {
   visitorMachine: "a visitor's",
   visitorWhat: "A visitor's machine is the visitor's alone: you see whether it is there, and cannot use it",
   visitor: "visitor",
-  directRow: "Direct",
-  directUp: (peer, ms) => `${peer}${ms !== undefined ? ` ${ms} ms` : ""}`,
-  directDown: (peer, why) => `${peer} down${why ? `: ${why}` : ""}`,
-  takesDirectAt: (addresses) => `Others connect to it directly at ${addresses}`,
+  directMs: (ms) => `${ms} ms`,
+  directUp: "Connected",
+  directDown: "Not connected",
+  directAt: (addresses) => `Direct address here: ${addresses}`,
+  directWhy: {
+    silent: (seconds) => `connected, then no answer within ${seconds} s`,
+    silentShort: "No answer after connecting",
+    unreachable: (seconds) => `no connection within ${seconds} s`,
+    unreachableShort: "Unreachable",
+    refused: "Refused",
+    failed: "Could not connect",
+    noAddress: "Its address is not known",
+    cut: "The connection was cut",
+    quiet: (seconds) => `nothing came from it for ${seconds} s`,
+    quietShort: "Silent",
+    closed: "It closed the connection",
+    card: (name) => `through “${name}”`,
+    system: "along the system's routes",
+    proxy: (at) => `through ${at}`,
+    here: "on this machine",
+    attempt: (address, route, outcome) => `${address} (${route}): ${outcome}`,
+  },
   hintZoom: "Zoom",
   hintPan: "Hold to move",
   framedTitle: (n) => `${n} chosen`,
