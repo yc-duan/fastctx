@@ -29,6 +29,22 @@ pub fn read() -> Vec<Use> {
     imp::read()
 }
 
+/// How many files this process may hold open now, its soft limit; none
+/// where the system sets none, or does not say.
+pub fn open_files_allowed() -> Option<u64> {
+    #[cfg(unix)]
+    {
+        // SAFETY: getrlimit writes one initialized structure.
+        let mut limit: libc::rlimit = unsafe { std::mem::zeroed() };
+        if unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut limit) } != 0 || limit.rlim_cur == libc::RLIM_INFINITY {
+            return None;
+        }
+        Some(limit.rlim_cur as u64)
+    }
+    #[cfg(not(unix))]
+    None
+}
+
 /// The open files a node or a hub raises its own limit to, at most.
 #[cfg(unix)]
 const OPEN_FILES: u64 = 65_536;

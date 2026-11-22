@@ -156,9 +156,14 @@ impl Library {
         String::from_utf8(value).map_err(|_| crate::Error::Invalid("a malformed library generation".into()))
     }
 
-    /// Where the library stands, as `changes` would say it; none while it
-    /// has no generation yet, which only asking for one makes.
+    /// Where the library stands for good, as `changes` would say it: none
+    /// while it has no generation yet, which only asking for one makes, and
+    /// none while a write let in has not finished, which may yet change it
+    /// after the library is closed.
     pub fn latest(&self) -> Result<Option<Latest>> {
+        if self.0.database.writing() || self.0.bytes.writing() {
+            return Ok(None);
+        }
         let Some(generation) = self.stamped(GENERATION)? else { return Ok(None) };
         let generation = String::from_utf8(generation).map_err(|_| crate::Error::Invalid("a malformed library generation".into()))?;
         let (change, at): (i64, i64) = self.database().read_now(|db| {

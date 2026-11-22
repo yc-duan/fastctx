@@ -437,6 +437,15 @@ impl Database {
         }
     }
 
+    /// Whether a write was let in that has not finished: one whose caller
+    /// stopped waiting for it is written all the same, after every handle
+    /// to the database is gone.
+    pub fn writing(&self) -> bool {
+        [Priority::Control, Priority::Interactive, Priority::Normal, Priority::Background]
+            .into_iter()
+            .any(|priority| self.0.writes.used(priority) > 0)
+    }
+
     /// What was salvaged when this open found the database damaged and set it
     /// aside: each table's rows that came over and why the rest did not.
     pub fn salvaged(&self) -> Option<&str> {
