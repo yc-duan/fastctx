@@ -71,4 +71,7 @@ pub enum HandoverRole {
     /// As the old place after the switch: to hear how many machines still
     /// come through it, and to be told to stop and to delete its data.
     Old,
+    /// As the old place after the switch: to send the owner libraries it
+    /// kept, one at a time, now that nothing writes them.
+    Libraries,
 }

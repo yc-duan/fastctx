@@ -14,7 +14,7 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use tokio_tungstenite::tungstenite::{Error as WsError, Message as WsMessage};
 
-use super::files::Entry;
+use super::files::{Entry, Part};
 
 /// The most bytes of a file in one message.
 pub(crate) const CHUNK: usize = fastctx_net::wire::MAX_DATA_MESSAGE;
@@ -30,11 +30,22 @@ pub(crate) enum ToNew {
     Holds {
         #[serde(default)]
         sqlite: bool,
+        /// This sender hands over the hub's core alone and sends the owner
+        /// libraries once it serves no more (`files::Part`). An older sender
+        /// omits it and would stop the hub for all of them: it is refused.
+        #[serde(default)]
+        apart: bool,
+        /// Of which part; none, of everything.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        part: Option<Part>,
     },
-    /// A file, whose `bytes` follow, then its `Sum`.
+    /// A file, whose `bytes` follow, then its `Sum`. `packed`, each message
+    /// of them begins with how it is carried (`pack`).
     Put {
         path: String,
         bytes: u64,
+        #[serde(default)]
+        packed: bool,
     },
     /// The SHA-256 of the file just sent: the new place keeps it only when
     /// what came has this digest.
@@ -49,15 +60,29 @@ pub(crate) enum ToNew {
     Remove {
         path: String,
     },
-    /// Say the digest of what you hold.
-    Check,
-    /// The old hub stopped and sent everything: take over, when what you
-    /// hold has this digest.
+    /// Say the digest of what you hold: of `part`, or of everything.
+    Check {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        part: Option<Part>,
+    },
+    /// The old hub stopped and sent its core: take over, when the core you
+    /// hold has this digest. `libraries` are the owner libraries it keeps
+    /// and sends once it serves no more: each is opened when it came.
     Commit {
         digest: Digest,
         self_registration: bool,
         record: Box<Record>,
+        #[serde(default)]
+        libraries: Vec<String>,
     },
+    /// The owner library `library` was sent whole: open it, when what you
+    /// hold of it has this digest.
+    Arrived {
+        library: String,
+        digest: Digest,
+    },
+    /// Say which owner libraries are still to come.
+    Coming,
     /// The old hub recorded the switch: serve from now on.
     Confirm,
     /// The move is called off: give it up.
@@ -84,6 +109,11 @@ pub(crate) enum ToOld {
         /// senders ignore it; older receivers omit it and cannot take them.
         #[serde(default)]
         sqlite: bool,
+        /// This receiving process takes the hub's core over and opens each
+        /// owner library when it came. An older receiver omits it and would
+        /// take a hub without them for one put back from an older copy.
+        #[serde(default)]
+        apart: bool,
     },
     Files {
         entries: Vec<Entry>,
@@ -95,6 +125,12 @@ pub(crate) enum ToOld {
     Committed,
     Confirmed,
     Cancelled,
+    /// The owner library came whole and is open.
+    Opened,
+    /// The owner libraries still to come.
+    Awaited {
+        libraries: Vec<String>,
+    },
     /// How many machines and devices still come through the old place.
     Following {
         machines: usize,
@@ -265,4 +301,40 @@ where
         send(socket, &ToOld::Files { entries: part }).await?;
     }
     send(socket, &ToOld::End).await
+}
+
+/// One message of a file's bytes as it is carried where its `Put` says
+/// `packed`: a byte that says how, then the bytes as they are, or how many
+/// they are and the bytes compressed.
+pub(crate) fn pack(piece: Vec<u8>) -> Vec<u8> {
+    match fastctx_net::data::runs::pack(&piece) {
+        Some(packed) => {
+            let mut message = Vec::with_capacity(packed.len() + 5);
+            message.push(1);
+            message.extend_from_slice(&(piece.len() as u32).to_le_bytes());
+            message.extend_from_slice(&packed);
+            message
+        }
+        None => {
+            let mut message = Vec::with_capacity(piece.len() + 1);
+            message.push(0);
+            message.extend_from_slice(&piece);
+            message
+        }
+    }
+}
+
+/// The bytes a message made by `pack` carries.
+pub(crate) fn unpack(message: &[u8]) -> Result<Vec<u8>, String> {
+    match message.split_first() {
+        Some((0, bytes)) => Ok(bytes.to_vec()),
+        Some((1, rest)) if rest.len() >= 4 => {
+            let size = u32::from_le_bytes([rest[0], rest[1], rest[2], rest[3]]);
+            if size as usize > CHUNK {
+                return Err("a piece of a file says it is longer than a piece may be".to_string());
+            }
+            fastctx_net::data::runs::unpack(&rest[4..], u64::from(size))
+        }
+        _ => Err("a piece of a file came in no form this hub reads".to_string()),
+    }
 }

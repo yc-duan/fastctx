@@ -408,6 +408,11 @@ async fn pass(
     let (assets, log, hub) = (hub.assets.clone(), hub.log.clone(), hub.clone());
     let _ = fastctx_platform::task::spawn_blocking(move || {
         for (at, (account, opened, kept)) in accounts.iter().enumerate() {
+            // One whose library is still coming from where the hub was is
+            // told once it came (`moving::libraries`).
+            if assets.owners.is_coming(&super::Owner::Account(account.to_string(), opened.as_millisecond())) {
+                continue;
+            }
             let mut failed = Vec::new();
             if let Err(error) = settings(&assets, account, *opened, kept) {
                 failed.push(format!("settings: {error}"));

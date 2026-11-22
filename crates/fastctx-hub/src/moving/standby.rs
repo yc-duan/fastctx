@@ -277,7 +277,8 @@ pub(crate) async fn connected(
                 }
             }
         }
-        HandoverRole::Old => {
+        // The owner libraries come once this place serves: asked again then.
+        HandoverRole::Old | HandoverRole::Libraries => {
             refuse(&mut socket, Refusal::Broken { reason: "this place has not taken the hub's records over".into() })
                 .await;
         }
@@ -289,19 +290,23 @@ async fn sync(standby: &Arc<Standby>, socket: &mut Socket) -> Result<(), String>
     let dir = standby.dir.clone();
     loop {
         match frames::frame::<_, ToNew>(socket).await? {
-            ToNew::Holds { sqlite } => {
-                if !sqlite {
-                    let reason =
+            ToNew::Holds { sqlite, apart, part } => {
+                if !sqlite || !apart {
+                    let reason = if sqlite {
+                        "update the sending hub before moving: this version would send its copies of the assets, which stay where the hub was"
+                    } else {
                         "update the sending hub before moving: this version does not transfer all hub settings"
-                            .to_string();
+                    }
+                    .to_string();
                     frames::send(socket, &ToOld::Refused { reason: reason.clone() }).await?;
                     return Err(reason);
                 }
-                let entries = listing(socket, &dir).await?;
-                frames::send(socket, &ToOld::Holds { committed: standby.arriving().committed, sqlite: true }).await?;
+                let entries = listing(socket, &dir, part).await?;
+                frames::send(socket, &ToOld::Holds { committed: standby.arriving().committed, sqlite: true, apart: true })
+                    .await?;
                 frames::send_listing(socket, entries).await?;
             }
-            ToNew::Put { path, bytes } => receive(socket, &dir, &path, bytes).await?,
+            ToNew::Put { path, bytes, packed } => receive(socket, &dir, &path, bytes, packed).await?,
             ToNew::Dir { path } => {
                 let place = files::place(&dir, &path)?;
                 let base = dir.clone();
@@ -318,22 +323,30 @@ async fn sync(standby: &Arc<Standby>, socket: &mut Socket) -> Result<(), String>
                 .await
                 .map_err(|error| format!("removing {path}: {error}"))?;
             }
-            ToNew::Check => {
-                let entries = listing(socket, &dir).await?;
+            ToNew::Check { part } => {
+                let entries = listing(socket, &dir, part).await?;
                 frames::send(socket, &ToOld::Checked { digest: files::digest(&entries) }).await?;
             }
-            ToNew::Commit { digest, self_registration, record } => {
-                let entries = listing(socket, &dir).await?;
+            ToNew::Commit { digest, self_registration, record, libraries } => {
+                // The core alone is what the hub stopped for: the owner
+                // libraries come once the old hub serves no more.
+                let entries = listing(socket, &dir, Some(files::Part::Core)).await?;
                 if files::digest(&entries) != digest {
                     let reason = "what this place holds is not what the old hub sent".to_string();
                     frames::send(socket, &ToOld::Refused { reason: reason.clone() }).await?;
                     return Err(reason);
                 }
+                if let Some(odd) = libraries.iter().find(|library| !files::library(library)) {
+                    let reason = format!("{odd:?} is no owner library's path");
+                    frames::send(socket, &ToOld::Refused { reason: reason.clone() }).await?;
+                    return Err(reason);
+                }
                 let (holder, taken) = (standby.clone(), record.clone());
-                let committed =
-                    fastctx_platform::task::spawn_blocking(move || commit(&holder, self_registration, &taken))
-                        .await
-                        .unwrap_or_else(|error| Err(error.to_string()));
+                let committed = fastctx_platform::task::spawn_blocking(move || {
+                    commit(&holder, self_registration, &taken, libraries)
+                })
+                .await
+                .unwrap_or_else(|error| Err(error.to_string()));
                 if let Err(error) = committed {
                     frames::send(socket, &ToOld::Refused { reason: error.clone() }).await?;
                     return Err(error);
@@ -363,8 +376,9 @@ async fn sync(standby: &Arc<Standby>, socket: &mut Socket) -> Result<(), String>
 
 /// Takes the file `path` of `bytes`, a piece at a time, beside where it
 /// goes; it replaces what is there only when its digest is the one the old
-/// hub says.
-async fn receive(socket: &mut Socket, dir: &Path, path: &str, bytes: u64) -> Result<(), String> {
+/// hub says. A database takes its place with no log nor shared memory of an
+/// earlier one beside it: read with those, it would be another database.
+pub(super) async fn receive(socket: &mut Socket, dir: &Path, path: &str, bytes: u64, packed: bool) -> Result<(), String> {
     use sha2::Digest as _;
     let place = files::place(dir, path)?;
     let (base, target) = (dir.to_path_buf(), place.clone());
@@ -378,9 +392,13 @@ async fn receive(socket: &mut Socket, dir: &Path, path: &str, bytes: u64) -> Res
     let mut got = 0;
     while got < bytes {
         let piece = match frames::recv::<_, ToNew>(socket, true).await? {
-            Got::Bytes(piece) if got + piece.len() as u64 <= bytes => piece,
-            _ => return Err(format!("{path} came with more or other than its {bytes} bytes")),
+            Got::Bytes(piece) if packed => frames::unpack(&piece)?,
+            Got::Bytes(piece) => piece,
+            Got::Frame(_) => return Err(format!("{path} came with other than its {bytes} bytes")),
         };
+        if got + piece.len() as u64 > bytes {
+            return Err(format!("{path} came with more than its {bytes} bytes"));
+        }
         got += piece.len() as u64;
         hasher.update(&piece);
         staged = blocking(move || staged.write_all(&piece).map(|()| staged))
@@ -392,23 +410,50 @@ async fn receive(socket: &mut Socket, dir: &Path, path: &str, bytes: u64) -> Res
         ToNew::Sum { .. } => return Err(format!("{path} came with other bytes than its digest says")),
         other => return Err(format!("the old hub said {other:?} after the bytes of {path}")),
     }
-    blocking(move || staged.commit()).await.map_err(|error| format!("writing {path}: {error}"))
+    let database = files::database(path);
+    blocking(move || {
+        if database {
+            for beside in ["-wal", "-shm"] {
+                let mut name = place.clone().into_os_string();
+                name.push(beside);
+                match fastctx_platform::disk::remove_file(std::path::PathBuf::from(name)) {
+                    Err(error) if error.kind() != std::io::ErrorKind::NotFound => return Err(error),
+                    _ => {}
+                }
+            }
+        }
+        staged.commit()
+    })
+    .await
+    .map_err(|error| format!("writing {path}: {error}"))
 }
 
-/// What is here, listed while the old hub is told this end is working.
-async fn listing(socket: &mut Socket, dir: &Path) -> Result<Vec<Entry>, String> {
+/// What is here of `part`, or of everything, listed while the old hub is
+/// told this end is working.
+pub(super) async fn listing(socket: &mut Socket, dir: &Path, part: Option<files::Part>) -> Result<Vec<Entry>, String> {
     let dir = dir.to_path_buf();
-    frames::working::<_, ToOld, _>(socket, blocking(move || files::manifest(&dir)))
-        .await?
-        .map_err(|error| format!("listing the records: {error}"))
+    let listed = blocking(move || match part {
+        Some(part) => files::manifest(&dir, &part),
+        None => files::everything(&dir),
+    });
+    frames::working::<_, ToOld, _>(socket, listed).await?.map_err(|error| format!("listing the records: {error}"))
 }
 
 /// Takes the records over: the move joins the moves that brought the hub
 /// here, with every member there is now, and the hub's settings take the
 /// old hub's last.
-fn commit(standby: &Standby, self_registration: bool, record: &frames::Record) -> Result<(), String> {
+fn commit(
+    standby: &Standby,
+    self_registration: bool,
+    record: &frames::Record,
+    libraries: Vec<String>,
+) -> Result<(), String> {
     let dir = &standby.dir;
     let mut arriving = standby.arriving();
+    // Which owner libraries are still to come, kept before the records are
+    // taken over: the hub that serves from them opens none of those.
+    let coming = super::Coming { id: arriving.id.clone(), libraries: libraries.into_iter().collect() };
+    super::keep_coming(dir, &coming).map_err(|error| format!("keeping which libraries are to come: {error}"))?;
     let directory = Store::read_directory(dir).map_err(|error| format!("reading the directory: {error}"))?;
     let members = directory.members.iter().map(|member| (member.name.clone(), member.is_machine())).collect();
     let mut moves: Vec<Incoming> =
@@ -468,7 +513,7 @@ fn make_parents(base: &Path, place: &Path) -> std::io::Result<()> {
 }
 
 /// Makes the directory `place` under `base` and those between, private.
-fn make_dirs(base: &Path, place: &Path) -> std::io::Result<()> {
+pub(super) fn make_dirs(base: &Path, place: &Path) -> std::io::Result<()> {
     let relative = place.strip_prefix(base).map_err(std::io::Error::other)?;
     let mut at = base.to_path_buf();
     for name in relative.components() {
@@ -478,7 +523,9 @@ fn make_dirs(base: &Path, place: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
-async fn blocking<T: Send + 'static>(work: impl FnOnce() -> std::io::Result<T> + Send + 'static) -> std::io::Result<T> {
+pub(super) async fn blocking<T: Send + 'static>(
+    work: impl FnOnce() -> std::io::Result<T> + Send + 'static,
+) -> std::io::Result<T> {
     fastctx_platform::task::spawn_blocking(work).await.map_err(std::io::Error::other)?
 }
 

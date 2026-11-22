@@ -38,6 +38,7 @@
 pub(crate) mod files;
 pub(crate) mod follow;
 pub(crate) mod frames;
+pub(crate) mod libraries;
 pub(crate) mod old;
 pub(crate) mod out;
 pub(crate) mod requests;
@@ -71,6 +72,41 @@ pub(crate) const NOT_ARRIVING: &str = "this move does not arrive here";
 /// Left where a hub's data was deleted: a hub that moved away, or a move
 /// that was to bring it here and was called off.
 pub(crate) const RETIRED: &str = "retired.json";
+/// At the new hub, the owner libraries still to come from where the hub
+/// was (`Coming`): none of them is opened before it came whole.
+pub(crate) const COMING: &str = "libraries-coming.json";
+
+/// The owner libraries a move left where the hub was, sent once the old hub
+/// serves no more, as the new hub keeps them until each came.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub(crate) struct Coming {
+    /// The move that brings them.
+    pub id: String,
+    /// Their paths under the hub's directory (`files::LIBRARIES`).
+    pub libraries: BTreeSet<String>,
+}
+
+/// The owner libraries still to come to the hub in `dir`.
+pub(crate) fn coming(dir: &Path) -> io::Result<Coming> {
+    match read::<Coming>(&dir.join(COMING)) {
+        Ok(coming) => Ok(coming),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(Coming::default()),
+        Err(error) => Err(error),
+    }
+}
+
+/// Keeps which owner libraries are still to come to the hub in `dir`; none
+/// left, nothing is kept.
+pub(crate) fn keep_coming(dir: &Path, coming: &Coming) -> io::Result<()> {
+    let place = dir.join(COMING);
+    if coming.libraries.is_empty() {
+        return match fastctx_platform::disk::remove_file(&place) {
+            Err(error) if error.kind() != io::ErrorKind::NotFound => Err(error),
+            _ => Ok(()),
+        };
+    }
+    fastctx_platform::publish(&place, &crate::store::json(coming)?, fastctx_platform::Permissions::Private)
+}
 
 /// A move of the hub away from here, as the old hub keeps it. Its key stays
 /// here: the new place holds only its public half.
@@ -94,6 +130,11 @@ pub(crate) struct Outgoing {
     /// The new place said the hub's service is installed there.
     #[serde(default)]
     pub installed: bool,
+    /// The last try failed after the hub had stopped taking anything: it is
+    /// tried again when the super administrator says so, not by itself
+    /// (`out`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub stopped_short: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub switched: Option<Timestamp>,
     /// After the switch: how this place stands.
@@ -347,6 +388,9 @@ pub(crate) struct Moving {
     pub switched: Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
     /// The old places connected now, by the id of the move that left them.
     pub olds: Mutex<std::collections::HashMap<String, mpsc::UnboundedSender<frames::ToOld>>>,
+    /// Held while an old place sends the owner libraries: by one connection
+    /// at a time (`libraries`).
+    pub receiving: tokio::sync::Mutex<()>,
 }
 
 /// How long a hub that stops taking anything waits for what it took to be
@@ -377,6 +421,7 @@ impl Moving {
             driving: AtomicBool::new(false),
             switched: Mutex::new(Some(switched)),
             olds: Mutex::new(std::collections::HashMap::new()),
+            receiving: tokio::sync::Mutex::new(()),
         }
     }
 

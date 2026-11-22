@@ -110,6 +110,11 @@ pub(crate) struct Owners {
     /// Owners whose library is being deleted: none is opened, under the same
     /// lock a deletion checks it is held by no one.
     fenced: Mutex<std::collections::HashSet<Owner>>,
+    /// Owners whose library is still coming from where the hub was before
+    /// it moved (`moving::libraries`): none is opened, nor made, before it
+    /// came whole — one made meanwhile would be older than the hub's record
+    /// of it, and what came after it would have no place to go.
+    coming: Mutex<std::collections::HashSet<Owner>>,
 }
 
 /// What a library keeps its hub's incarnation under.
@@ -117,7 +122,48 @@ const STAMP: &str = "hub";
 
 impl Owners {
     pub(crate) fn new(root: PathBuf, incarnation: Vec<u8>) -> Self {
-        Self { root, incarnation, slots: Mutex::new(HashMap::new()), fenced: Mutex::new(std::collections::HashSet::new()) }
+        Self {
+            root,
+            incarnation,
+            slots: Mutex::new(HashMap::new()),
+            fenced: Mutex::new(std::collections::HashSet::new()),
+            coming: Mutex::new(std::collections::HashSet::new()),
+        }
+    }
+
+    /// The owner whose library is at `path` under the hub's directory
+    /// (`assets/account/<name>`, `assets/body/<id>`).
+    pub(crate) fn of_path(path: &str) -> Option<Owner> {
+        let mut names = path.strip_prefix("assets/")?.split('/');
+        let (kind, name) = (names.next()?, names.next()?);
+        if names.next().is_some() {
+            return None;
+        }
+        Owner::of_directory(kind, name)
+    }
+
+    /// The libraries at `paths` are still coming: none is opened until
+    /// `came` says it came.
+    pub(crate) fn hold_back<'a>(&self, paths: impl IntoIterator<Item = &'a String>) {
+        let mut coming = self.coming.lock().expect("coming owners");
+        coming.extend(paths.into_iter().filter_map(|path| Self::of_path(path)));
+    }
+
+    /// The library at `path` came whole: it is opened from now on.
+    pub(crate) fn came(&self, path: &str) -> Option<Owner> {
+        let owner = Self::of_path(path)?;
+        self.coming.lock().expect("coming owners").remove(&owner);
+        Some(owner)
+    }
+
+    /// Whether `owner`'s library is still coming.
+    pub(crate) fn is_coming(&self, owner: &Owner) -> bool {
+        self.coming.lock().expect("coming owners").contains(owner)
+    }
+
+    /// Whether any library is still coming.
+    pub(crate) fn any_coming(&self) -> bool {
+        !self.coming.lock().expect("coming owners").is_empty()
     }
 
     /// The accounts and bodies whose libraries are on this hub's disk, not
@@ -147,7 +193,9 @@ impl Owners {
     /// Whether `owner` has a library on this hub's disk: one asked after by
     /// a device is opened only then, never made.
     pub(crate) fn exists(&self, owner: &Owner) -> bool {
-        fastctx_platform::disk::is_dir(self.root.join(owner.directory()))
+        // One still coming has a library: a device is not told there is
+        // none before its directory came.
+        self.is_coming(owner) || fastctx_platform::disk::is_dir(self.root.join(owner.directory()))
     }
 
     /// The library of `owner`, opened or made at need, or why it may not be
@@ -163,6 +211,12 @@ impl Owners {
             let mut slots = self.slots.lock().expect("owner libraries");
             if self.fenced.lock().expect("fenced owners").contains(owner) {
                 return Err(io::Error::other(format!("the library of {} is being deleted", owner.key())));
+            }
+            if self.is_coming(owner) {
+                return Err(io::Error::other(format!(
+                    "the library of {} is still coming from where the hub was before it moved",
+                    owner.key()
+                )));
             }
             if !slots.contains_key(owner) && slots.len() >= OPEN_AT_ONCE {
                 // The least recently used that nobody holds goes: one still

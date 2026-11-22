@@ -176,6 +176,7 @@ fn start(
             waiting: None,
             prepared: false,
             installed: false,
+            stopped_short: false,
             switched: None,
             old: None,
             remaining: None,
@@ -199,6 +200,7 @@ fn retry(hub: &Arc<Hub>) -> Result<HubMoveReply, String> {
         let mut store = hub.edit_store();
         let outgoing = store.outgoing.as_mut().filter(|outgoing| outgoing.pending()).ok_or("no move is under way")?;
         outgoing.error = None;
+        outgoing.stopped_short = false;
         store.save_outgoing().map_err(|error| format!("recording the move: {error}"))?;
     }
     hub.changed();

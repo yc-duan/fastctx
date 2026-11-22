@@ -236,6 +236,9 @@ impl Assets {
         let restored = restores::count(&control)?.max(witness.recoveries());
         witness.recovered(restored)?;
         let owners = owners::Owners::new(dir.join("assets"), incarnation);
+        // The owner libraries a move left where the hub was are opened as
+        // each comes (`moving::libraries`).
+        owners.hold_back(&crate::moving::coming(dir)?.libraries);
         let assets = Self {
             id: id.to_string(),
             root: dir.to_path_buf(),
@@ -320,7 +323,9 @@ impl Assets {
     /// then its files go a batch at a time (`finish_deleting`). How many
     /// began. Call on a thread that may block.
     pub(crate) fn sweep_owners(&self, directory: &fastctx_net::directory_index::Indexed<'_>) -> io::Result<usize> {
-        if self.sealed().is_some() || directory.all.accounts.is_empty() {
+        // No library goes while any is still coming from where the hub was:
+        // who read which of them is told again once they are open.
+        if self.sealed().is_some() || directory.all.accounts.is_empty() || self.owners.any_coming() {
             return Ok(0);
         }
         self.finish_deleting()?;
@@ -602,6 +607,39 @@ impl Assets {
             self.witness.advanced(seq, &head)?;
         }
         Ok(())
+    }
+
+    /// The owner whose library is at `path` under the hub's directory.
+    pub(crate) fn owner_at(path: &str) -> Option<Owner> {
+        owners::Owners::of_path(path)
+    }
+
+    /// The owner libraries still coming from where the hub was, by their
+    /// paths under its directory.
+    pub(crate) fn coming(&self) -> io::Result<Vec<String>> {
+        Ok(crate::moving::coming(&self.root)?.libraries.into_iter().collect())
+    }
+
+    /// The owner library at `path` came whole from where the hub was: kept
+    /// so, it is opened from now on, and every scope of it is looked at by
+    /// the checkpoints as on opening. How many are still to come. Call on a
+    /// thread that may block.
+    pub(crate) fn arrived(&self, path: &str) -> io::Result<usize> {
+        let mut coming = crate::moving::coming(&self.root)?;
+        coming.libraries.remove(path);
+        crate::moving::keep_coming(&self.root, &coming)?;
+        let Some(owner) = self.owners.came(path) else { return Ok(coming.libraries.len()) };
+        let key = owner.key();
+        let scopes: Vec<String> = self
+            .control
+            .read_now(move |c| {
+                let mut statement = c.prepare_cached("SELECT key FROM asset_scopes WHERE owner = ?1")?;
+                let rows = statement.query_map([&key], |row| row.get(0))?;
+                Ok(rows.collect::<std::result::Result<_, _>>()?)
+            })
+            .map_err(io::Error::other)?;
+        self.changed.lock().expect("changed scopes").entry(owner).or_default().extend(scopes);
+        Ok(coming.libraries.len())
     }
 
     /// Why the hub was put back, if it was: its backup's mark is here, or
@@ -1307,6 +1345,12 @@ impl Assets {
         let mut owners: Vec<(String, Vec<Head>)> = Vec::new();
         let mut failed: Option<io::Error> = None;
         for (owner, scopes) in batch {
+            // One whose library is still coming from where the hub was is
+            // looked at once it came, and failed no round meanwhile.
+            if self.owners.is_coming(owner) {
+                self.changed.lock().expect("changed scopes").entry(owner.clone()).or_default().extend(scopes.iter().cloned());
+                continue;
+            }
             let heads = (|| {
                 let library = self.library(owner)?;
                 // One deleted since it changed has no head to keep.

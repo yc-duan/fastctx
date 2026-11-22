@@ -3,7 +3,9 @@
 //! while it serves, the copy cut once and taken up again, the switch, the
 //! machines online following the new address, one away all the while
 //! reaching the new hub through the old one's forwarding and following, and
-//! the network going on once the old hub is gone. Run alone (`--hub-move`);
+//! the network going on once the old hub is gone; the owner libraries, which
+//! the hub is not stopped for, coming to the new hub once the old one serves
+//! no more. Run alone (`--hub-move`);
 //! the launcher may hold every connection to a rate (`--hub-move-rate`), and
 //! `FASTCTX_DRILL_HUB_MOVE_MB` is how many MiB of records beyond the hub's
 //! own go along.
@@ -116,6 +118,35 @@ pub(crate) async fn run(base: &Path) -> Result<()> {
     let (owner_pc, mut owner_pc_node) = node(base, "owner-pc", "owner", listen).await?;
     let (target, mut target_node) = node(base, "target", "owner", listen).await?;
     let (alice_pc, mut alice_node) = node(base, "alice-pc", "alice", listen).await?;
+    // The owner libraries the machines' records made, one with an object of
+    // some size: they stay where the hub was until it serves no more.
+    let mut libraries: Vec<String> = Vec::new();
+    for _ in 0..120 {
+        libraries = ["account", "body"]
+            .iter()
+            .flat_map(|kind| {
+                std::fs::read_dir(base.join("hub/assets").join(kind))
+                    .into_iter()
+                    .flatten()
+                    .flatten()
+                    .filter(|entry| entry.path().is_dir())
+                    .map(move |entry| format!("assets/{kind}/{}", entry.file_name().to_string_lossy()))
+            })
+            .collect();
+        if !libraries.is_empty() {
+            break;
+        }
+        pause().await;
+    }
+    libraries.sort();
+    record("the machines' records made owner libraries on the hub", !libraries.is_empty(), json!(libraries));
+    let ballast: Vec<u8> = (0..8usize << 20).map(|at| ((at % 241) ^ (at >> 12)) as u8).collect();
+    let ballast_at = libraries.first().map(|library| format!("{library}/asset-objects/ballast/object"));
+    if let Some(at) = &ballast_at {
+        let place = base.join("hub").join(at);
+        std::fs::create_dir_all(place.parent().expect("a parent"))?;
+        std::fs::write(&place, &ballast)?;
+    }
     // The new place's directory on a disk of its own, as a server's data
     // disk is put there before a move (`FASTCTX_DRILL_HUB_MOVE_BIND`): an
     // empty directory of it bound where the hub's directory goes.
@@ -260,6 +291,46 @@ pub(crate) async fn run(base: &Path) -> Result<()> {
         tokio::time::sleep(Duration::from_secs(2)).await;
     }
     record("the new hub takes an account's change from a phone", changed.is_ok(), json!({"error": changed.err()}));
+    // The owner libraries follow, the old hub serving no more: each opened
+    // as it came, none taken for one put back.
+    let coming = dir.join("libraries-coming.json");
+    let waited = Instant::now();
+    while coming.exists() && waited.elapsed() < Duration::from_secs(600) {
+        pause().await;
+    }
+    record(
+        "the owner libraries came once the hub had switched",
+        !coming.exists(),
+        json!({"libraries": libraries, "after_s": waited.elapsed().as_secs_f32(), "left": std::fs::read_to_string(&coming).ok()}),
+    );
+    let databases = |library: &String| {
+        std::fs::read_dir(dir.join(library))
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter(|entry| entry.file_name().to_string_lossy().ends_with(".sqlite3"))
+            .count()
+    };
+    record(
+        "each owner library's databases are at the new place",
+        libraries.iter().all(|library| databases(library) > 0),
+        json!(libraries.iter().map(|library| (library, databases(library))).collect::<Vec<_>>()),
+    );
+    // Each was checked against what the old place sent, its objects with it,
+    // before it was opened: so the old place's log says.
+    let sent = std::fs::read_to_string(base.join("hub.log")).unwrap_or_default();
+    record(
+        "the old place sent every owner library and the new hub took each",
+        sent.contains("every owner library is with the new hub")
+            && libraries.iter().all(|library| sent.contains(&format!("the owner library {library} is with the new hub"))),
+        json!(sent.lines().filter(|line| line.contains("owner librar")).map(|line| line.chars().take(160).collect::<String>()).collect::<Vec<_>>()),
+    );
+    let said = std::fs::read_to_string(base.join("new-hub.log")).unwrap_or_default();
+    record(
+        "the new hub sealed no asset",
+        !said.contains("sealed") && !said.contains("older than the hub's own record"),
+        json!(said.lines().filter(|line| line.contains("sealed") || line.contains("older than")).take(3).collect::<Vec<_>>()),
+    );
     // How long the old hub took nothing, as its log says: from stopping to
     // forwarding.
     let log = std::fs::read_to_string(base.join("hub.log")).unwrap_or_default();
