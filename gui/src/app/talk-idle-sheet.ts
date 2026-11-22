@@ -87,6 +87,10 @@ export class TalkIdleSheet {
     const loginAfter = login ? `${login.after_minutes} ${words.idleMinutes}` : null;
     const loginMin = login ? `${tokensIn(login.min_tokens, each)} ${words.idleTokens}` : null;
     const set = choice.on !== undefined || choice.after_minutes !== undefined || choice.min_tokens !== undefined;
+    // A number being typed, not kept yet, stays as typed when the sheet is
+    // drawn again, as when its agent's setting comes.
+    const typing = document.activeElement instanceof HTMLInputElement && sheet.body.contains(document.activeElement) ? document.activeElement : null;
+    const typed = typing ? { name: typing.name, value: typing.value } : null;
     sheet.body.innerHTML = `
       ${sheet.head(words.idle, words.idleClose)}
       <p class="li-intro">${escape(words.idleWhat)}</p>
@@ -100,6 +104,10 @@ export class TalkIdleSheet {
         ${set ? `<button class="text-button quiet-button" type="button" data-idle-reset>${escape(words.idleReset)}</button>` : "<span></span>"}
         <button class="sheet-go" type="button" data-done>${escape(words.idleDone)}</button>
       </footer>`;
+    if (typed) {
+      const field = sheet.body.querySelector<HTMLInputElement>(`[name="${typed.name}"]`);
+      if (field) field.value = typed.value;
+    }
   }
 
   /** A number typed: none follows its agent; one within its bounds is kept,
