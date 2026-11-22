@@ -23,6 +23,10 @@ const PASS: i64 = 512;
 /// How long a published file is checked for at start: a rename the power
 /// took is lost within moments of it.
 const PUBLISHED_KEPT: Duration = Duration::from_secs(60 * 60);
+/// How many objects one read looks up as start settles which bytes and
+/// files are owned: one read each made a library of tens of thousands of
+/// objects take as many trips through the reader pool to open.
+const LOOKED_AT_ONCE: usize = 512;
 
 /// What one collection pass did.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -236,8 +240,38 @@ impl Library {
             let rows = statement.query_map([TOMBSTONE], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
             Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
         })?;
+        self.clear_tombstones(&mut started, tombstones);
+        started.transfers = self.settle_transfers()?;
+        started.lost = self.check_published()?;
+        started.orphans = self.remove_orphans()?;
+        started.incoming = self.remove_incoming()?;
+        self.remove_orphan_bytes()?;
+        Ok(started)
+    }
+
+    /// Settles, as a library this process settled whole opens again, what a
+    /// write that failed while it was open may have left: the bytes of a
+    /// tombstone whose deletion failed, a transfer whose part was not made
+    /// or was moved on without its row, and half-written incoming files.
+    pub(super) fn resettle(&self) -> Result<Started> {
+        let mut started = Started::default();
+        let tombstones: Vec<(Vec<u8>, i64, i64)> = self.database().read_now(|db| {
+            let mut statement = db.prepare_cached("SELECT hash, life, size FROM objects WHERE state = ?1")?;
+            let rows = statement.query_map([TOMBSTONE], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
+            Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
+        })?;
+        self.clear_tombstones(&mut started, tombstones);
+        started.transfers = self.settle_transfers()?;
+        started.incoming = self.remove_incoming()?;
+        Ok(started)
+    }
+
+    fn clear_tombstones(&self, started: &mut Started, tombstones: Vec<(Vec<u8>, i64, i64)>) {
         for (hash, life, size) in tombstones {
-            let hash: [u8; 32] = hash.try_into().map_err(|_| crate::Error::Invalid("a malformed object hash".into()))?;
+            let Ok(hash) = <[u8; 32]>::try_from(hash) else {
+                started.stuck += 1;
+                continue;
+            };
             // A tombstone is never present again (I5): one whose bytes cannot
             // go now keeps the library from opening no more than it keeps
             // anything else from being served.
@@ -246,12 +280,6 @@ impl Library {
                 Err(_) => started.stuck += 1,
             }
         }
-        started.transfers = self.settle_transfers()?;
-        started.lost = self.check_published()?;
-        started.orphans = self.remove_orphans()?;
-        started.incoming = self.remove_incoming()?;
-        self.remove_orphan_bytes()?;
-        Ok(started)
     }
 
     /// Published files that are not there go back to preparing and are
@@ -342,32 +370,41 @@ impl Library {
             if bucket.file_name() == INCOMING || !bucket.file_type().map_err(io)?.is_dir() {
                 continue;
             }
+            let mut named = Vec::new();
             for entry in std::fs::read_dir(bucket.path()).map_err(io)? {
                 let path = entry.map_err(io)?.path();
-                if !self.owned(&path)? {
-                    fastctx_platform::durable_file::delete_unreferenced(&path).map_err(io)?;
-                    removed += 1;
+                match life_of(&path) {
+                    Some((hash, life)) => named.push((path, hash, life)),
+                    None => {
+                        fastctx_platform::durable_file::delete_unreferenced(&path).map_err(io)?;
+                        removed += 1;
+                    }
+                }
+            }
+            for batch in named.chunks(LOOKED_AT_ONCE) {
+                let lives: Vec<([u8; 32], i64)> = batch.iter().map(|(_, hash, life)| (*hash, *life)).collect();
+                let owned = self.owned(lives)?;
+                for ((path, _, _), owned) in batch.iter().zip(owned) {
+                    if !owned {
+                        fastctx_platform::durable_file::delete_unreferenced(path).map_err(io)?;
+                        removed += 1;
+                    }
                 }
             }
         }
         Ok(removed)
     }
 
-    /// Whether `path` is the file of a present or preparing life, or of a
+    /// Whether each of `lives` is a present or preparing life, or a
     /// tombstone, whose bytes its own path deletes (`startup`).
-    fn owned(&self, path: &Path) -> Result<bool> {
-        let Some(name) = path.file_name().and_then(|name| name.to_str()) else { return Ok(false) };
-        let Some((name, life)) = name.split_once('.') else { return Ok(false) };
-        let (Ok(life), Some(hash)) = (life.parse::<i64>(), parse_hex(name)) else { return Ok(false) };
-        if hex(&hash) != name {
-            return Ok(false);
-        }
+    fn owned(&self, lives: Vec<([u8; 32], i64)>) -> Result<Vec<bool>> {
         Ok(self.database().read_now(move |db| {
-            Ok(db
-                .prepare_cached("SELECT 1 FROM objects WHERE hash = ?1 AND life = ?2 AND state IN (0, 1, 2)")?
-                .query_row(params![&hash[..], life], |_| Ok(()))
-                .optional()?
-                .is_some())
+            let mut statement = db.prepare_cached("SELECT 1 FROM objects WHERE hash = ?1 AND life = ?2 AND state IN (0, 1, 2)")?;
+            let mut owned = Vec::with_capacity(lives.len());
+            for (hash, life) in &lives {
+                owned.push(statement.query_row(params![&hash[..], life], |_| Ok(())).optional()?.is_some());
+            }
+            Ok(owned)
         })?)
     }
 
@@ -404,20 +441,19 @@ impl Library {
             Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
         })?;
         let mut orphans = Vec::new();
-        for (hash, life) in rows {
-            let known = {
-                let hash = hash.clone();
-                self.database().read_now(move |db| {
-                    Ok(db
-                        .prepare_cached("SELECT 1 FROM objects WHERE hash = ?1 AND life = ?2 AND state IN (0, 1)")?
-                        .query_row(params![hash, life], |_| Ok(()))
-                        .optional()?
-                        .is_some())
-                })?
-            };
-            if !known {
-                orphans.push((hash, life));
-            }
+        for batch in rows.chunks(LOOKED_AT_ONCE) {
+            let batch = batch.to_vec();
+            let found: Vec<(Vec<u8>, i64)> = self.database().read_now(move |db| {
+                let mut statement = db.prepare_cached("SELECT 1 FROM objects WHERE hash = ?1 AND life = ?2 AND state IN (0, 1)")?;
+                let mut found = Vec::new();
+                for (hash, life) in batch {
+                    if statement.query_row(params![hash, life], |_| Ok(())).optional()?.is_none() {
+                        found.push((hash, life));
+                    }
+                }
+                Ok(found)
+            })?;
+            orphans.extend(found);
         }
         if orphans.is_empty() {
             return Ok(());
@@ -430,6 +466,15 @@ impl Library {
         })?;
         Ok(())
     }
+}
+
+/// The object hash and life a file in the objects' buckets is named by,
+/// when its name is the one such a file is made with.
+fn life_of(path: &Path) -> Option<([u8; 32], i64)> {
+    let name = path.file_name()?.to_str()?;
+    let (name, life) = name.split_once('.')?;
+    let (life, hash) = (life.parse::<i64>().ok()?, parse_hex(name)?);
+    (hex(&hash) == name).then_some((hash, life))
 }
 
 fn parse_hex(text: &str) -> Option<[u8; 32]> {

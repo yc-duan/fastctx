@@ -45,8 +45,10 @@ pub(crate) struct Deleted {
     /// The owner libraries that could not be looked through as they opened
     /// for scopes deleted and still in them: looked through at a turn.
     unlooked: Mutex<BTreeSet<Owner>>,
-    /// Held by the one turn under way.
-    turn: Mutex<()>,
+    /// Held by the one turn under way, with the library the last turn
+    /// served last: the next begins with the one after it, so one with
+    /// much to let go of does not keep the others waiting turn after turn.
+    turn: Mutex<Option<Owner>>,
     /// The conversations whose scopes are being deleted now (none), and when
     /// the last try of each that failed ended: tried again no sooner than
     /// `AGAIN` after (`conversation_gone`).
@@ -315,7 +317,7 @@ impl Assets {
     /// a time, so many conversations deleted together make one line of
     /// passes, not one each. Call on a thread that may block.
     pub(crate) fn let_go(&self) {
-        let Ok(_turn) = self.deleted.turn.try_lock() else { return };
+        let Ok(mut served) = self.deleted.turn.try_lock() else { return };
         let begun = std::time::Instant::now();
         let unlooked = std::mem::take(&mut *self.deleted.unlooked.lock().expect("libraries to look through"));
         for owner in unlooked {
@@ -333,11 +335,16 @@ impl Assets {
                 Err(_) => self.deleted.unreached.lock().expect("scopes unreached").push((owner, key)),
             }
         }
-        let owners: Vec<Owner> = self.deleted.purging.lock().expect("libraries letting go").iter().cloned().collect();
+        let mut owners: Vec<Owner> = self.deleted.purging.lock().expect("libraries letting go").iter().cloned().collect();
+        if let Some(last) = served.as_ref() {
+            let after = owners.partition_point(|owner| owner <= last);
+            owners.rotate_left(after);
+        }
         for owner in owners {
             if begun.elapsed() >= TURN {
                 break;
             }
+            *served = Some(owner.clone());
             let done = (|| -> io::Result<bool> {
                 let library = self.library(&owner)?;
                 for _ in 0..PASSES_AT_ONCE {

@@ -125,6 +125,7 @@ pub async fn fork(
         forked_from: Some(Address { machine: node.machine(), resident: resident.clone() }),
         side,
         mcp_off: source.mcp_off.clone(),
+        idle_compaction: Default::default(),
         id: id.clone(),
         host: Host { agent: source.host.agent, client: "claude-code".into(), version: source.host.version },
         machine: node.machine(),

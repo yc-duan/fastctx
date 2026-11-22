@@ -380,11 +380,12 @@ function hubs(two: boolean): { nodes: HubNodes[]; accounts: HubAccounts[] } {
   ];
   // How the lines go: desktop and server take direct connections; laptop
   // and lab hold links with server, laptop one with desktop on the same
-  // network, and lab's with desktop is refused by desktop's firewall.
+  // network, and lab's with desktop gets no answer through desktop's
+  // firewall, said as a node says its tries.
   const paths: Record<string, Paths> = {
     desktop: { hub_ms: 41 },
     laptop: { hub_ms: 46, links: [{ peer: "server", up: true, ms: 9, since: at("02:05:00") }, { peer: "desktop", up: true, ms: 2, since: at("02:05:00") }] },
-    lab: { hub_ms: 12, links: [{ peer: "server", up: true, ms: 4, since: at("00:31:00") }, { peer: "desktop", up: false, since: at("00:31:00"), why: "desktop 的防火墙没放行 7444" }] },
+    lab: { hub_ms: 12, links: [{ peer: "server", up: true, ms: 4, since: at("00:31:00") }, { peer: "desktop", up: false, since: at("00:31:00"), why: '192.168.1.20:7444 directly through "以太网": connected, then no answer within 30 s; 192.168.1.20:7444 along the system\'s routes: no connection within 30 s' }] },
     server: { hub_ms: 3 },
   };
   const reach: Record<string, Reach> = {

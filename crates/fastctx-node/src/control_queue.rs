@@ -39,6 +39,16 @@ pub(crate) fn told(control: &Control) -> bool {
 
 /// A control done now, told in its conversation as begun.
 pub(crate) async fn begin(node: &Arc<Node>, id: &ResidentId, control: &Control) -> Result<PendingControl, Failure> {
+    begin_as(node, id, control, false).await
+}
+
+/// `begin`, `automatic` where the World begins it of itself.
+pub(crate) async fn begin_as(
+    node: &Arc<Node>,
+    id: &ResidentId,
+    control: &Control,
+    automatic: bool,
+) -> Result<PendingControl, Failure> {
     // While what a stop left of its controls is recovered, none starts: a
     // control started now could not be told apart from one left running.
     if RECOVERING.lock().expect("never poisoned").contains(id) {
@@ -53,6 +63,7 @@ pub(crate) async fn begin(node: &Arc<Node>, id: &ResidentId, control: &Control) 
         state: ControlState::Running,
         result: None,
         error: None,
+        automatic,
     };
     storage::tell(node, id, &row, false, true).await?;
     Ok(row)
@@ -77,8 +88,10 @@ async fn end_now(
     row: PendingControl,
     result: Result<Controlled, Failure>,
 ) -> Result<Controlled, Failure> {
+    // One the World began of itself is not tried again: it ends here.
     if let Err(error) = &result
         && error.code == Some(FailureCode::HostUnavailable)
+        && !row.automatic
     {
         defer_host(node, id, &row, &error.message).await?;
         return Ok(Controlled::Reported { said: None, queued: Some(row.id) });
@@ -108,7 +121,7 @@ async fn settled(
     // The words after a failed command are held before its row is settled:
     // a node stopped between the two finds the row still running, and holds
     // them as it holds the words after a command whose outcome is unknown.
-    let failed = result.as_ref().err().filter(|_| ran).map(|error| error.message.as_str());
+    let failed = result.as_ref().err().filter(|_| ran && !row.automatic).map(|error| error.message.as_str());
     // A Codex compaction only started: its place stays among the words, and
     // the words after it wait, until its turn tells how it ended
     // (`after_compaction`).
@@ -309,7 +322,8 @@ fn after_compaction(node: Arc<Node>, id: ResidentId, mut row: PendingControl) {
         // Its place goes now: compacted, the words after it go on; not
         // compacted, or not known to be, they wait for the user, as after a
         // failed turn. They are held before the control is let go.
-        let why = (row.state != ControlState::Completed)
+        // One the World began of itself holds no words, whatever came of it.
+        let why = (row.state != ControlState::Completed && !row.automatic)
             .then(|| row.error.clone().unwrap_or_else(|| "the compaction did not finish".into()));
         // The control is let go only once its words are held or released:
         // were it let go first, a restart would find nothing to hold them by.
@@ -424,6 +438,7 @@ pub(crate) async fn enqueue_if_busy(
         state: ControlState::Waiting,
         result: None,
         error: None,
+        automatic: false,
     };
     storage::put(node, id, row.clone()).await?;
     // Its place among the words that wait: after them, until moved.
@@ -474,9 +489,20 @@ fn drain_now<'a>(
             if rows.iter().any(|row| row.state == ControlState::Running) {
                 return Ok(());
             }
+            // One the World began of itself that still waits was left by
+            // its own beginning, which held this gate while it waited: it is
+            // withdrawn, never done late (`control::compact_idle`).
+            if let Some(row) = rows.iter().find(|row| row.automatic && row.state == ControlState::Waiting) {
+                let mut row = row.clone();
+                row.state = ControlState::Cancelled;
+                row.error = Some("an idle compaction not begun is not begun later".into());
+                finish(node, id, &row).await?;
+                crate::composer::forget_command(node, id, &row.id, None).await?;
+                continue;
+            }
             if let Some(row) = rows.iter().find(|row| row.state != ControlState::Waiting) {
                 finish(node, id, row).await?;
-                let failed = matches!(row.state, ControlState::Failed | ControlState::Uncertain)
+                let failed = (matches!(row.state, ControlState::Failed | ControlState::Uncertain) && !row.automatic)
                     .then(|| row.error.as_deref().unwrap_or("how it ended is not known"));
                 crate::composer::forget_command(node, id, &row.id, failed).await?;
                 continue;
@@ -625,7 +651,7 @@ pub(crate) fn register(node: &Arc<Node>) {
 
 /// Whether words handed to the host (before `before`, where given) have not
 /// been taken into a turn yet: a control waits for that turn.
-async fn words_ahead(node: &Node, id: &ResidentId, before: Option<jiff::Timestamp>) -> Result<bool, Failure> {
+pub(crate) async fn words_ahead(node: &Node, id: &ResidentId, before: Option<jiff::Timestamp>) -> Result<bool, Failure> {
     let directory = node.world.conversation(id);
     fastctx_platform::task::spawn_blocking(move || {
         let mut ahead = false;
@@ -694,7 +720,14 @@ async fn recovered(node: &Arc<Node>, id: &ResidentId) -> Result<(), Failure> {
             // the user, as after one that failed. They are held before
             // the control is let go, so stopping between the two leaves
             // the control to recover again, never words let through.
-            crate::composer::forget_command(node, id, &row.id, Some(why)).await?;
+            crate::composer::forget_command(node, id, &row.id, (!row.automatic).then_some(why)).await?;
+            finish(node, id, &row).await?;
+        } else if row.state == ControlState::Waiting && row.automatic {
+            // One the World began of itself and a stop left waiting is
+            // withdrawn: begun again later it would be done out of its time.
+            row.state = ControlState::Cancelled;
+            row.error = Some("the node stopped before this idle compaction began; it was not begun later".into());
+            crate::composer::forget_command(node, id, &row.id, None).await?;
             finish(node, id, &row).await?;
         } else if row.state != ControlState::Waiting {
             finish(node, id, &row).await?;

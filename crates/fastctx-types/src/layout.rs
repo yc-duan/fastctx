@@ -606,6 +606,11 @@ impl ConversationDir {
 
     /// The settings a Claude Code session the World started was started
     /// with; Claude Code reads it again whenever it starts it again.
+    /// The turn the last idle stretch compacted followed (Issue #57).
+    pub fn idle_compacted(&self) -> PathBuf {
+        self.path.join("idle-compacted")
+    }
+
     pub fn claude_settings(&self) -> PathBuf {
         self.path.join("claude-settings.json")
     }

@@ -125,7 +125,7 @@ export class HostPrefs {
       {
         title: p.otherSection,
         rows: [
-          { kind: "link" as const, id: "prompt", label: words.sections.prompt },
+          { kind: "link" as const, id: "prompt", label: words.prompt.named[agent] },
           ...(options.subagents ? [{ kind: "link" as const, id: "subagents", label: words.subagents.agents }] : []),
           ...otherRows(agent, p),
         ],
@@ -321,7 +321,7 @@ export class HostPrefs {
       case "word":
         return `<label class="choice-row hp-row">${label}<span class="choice-options"><input class="prefs-word" type="text" data-hp-word="${row.id}" placeholder="${escape(row.placeholder)}" spellcheck="false" autocomplete="off"></span></label>`;
       case "link":
-        return `<div class="choice-row hp-row">${label}<div class="choice-options"><button class="choice hp-link" type="button" data-hp-link="${row.id}"><span class="hp-link-what" data-hp-what="${row.id}"></span>${glyph("chevron", 14)}</button></div></div>`;
+        return `<div class="choice-row hp-row hp-link-row">${label}<div class="choice-options"><button class="choice hp-link" type="button" data-hp-link="${row.id}"><span class="hp-link-what" data-hp-what="${row.id}"></span>${glyph("chevron", 14)}</button></div></div>`;
     }
   }
 

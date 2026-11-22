@@ -106,7 +106,7 @@ import { ServerLists } from "./app/mcp-switches";
 import { enAgentChange, zhAgentChange } from "./app/agent-change";
 import "./app/agent-logins.css";
 import "./app/disclose.css";
-import { specimenChange as specimenLoginChange, specimenChangeModels, specimenFolder, specimenLogins, specimenPreview, specimenScan, specimenSetResetInPlace, specimenSetTitle, specimenTakeUp } from "./specimen/logins";
+import { specimenChange as specimenLoginChange, specimenChangeModels, specimenFolder, specimenLogins, specimenPreview, specimenScan, specimenSetIdleCompaction, specimenSetResetInPlace, specimenSetTitle, specimenTakeUp } from "./specimen/logins";
 import { TalksPage, enTalks, zhTalks } from "./app/talks";
 import { FeaturesPage } from "./app/features";
 import { workbenchShown } from "./app/workbench-shown";
@@ -273,7 +273,7 @@ import { configurePhone, onPhone, phoneSeam, routeActivations, tellPhoneViewing 
 import { copySeam } from "./app/phone-copy";
 import { renewalState, renewHere, type VersionMismatch } from "./world/renewal";
 import type { Address, SessionEvent } from "./world/events";
-import type { MachineLogins, WorldLogins } from "./world/logins";
+import { IDLE_DEFAULT, type IdleCompaction, type MachineLogins, type WorldLogins } from "./world/logins";
 import { ownerResident, type ResidentNow, type WorldWho } from "./world/world";
 import { agentName, titleOf } from "./world/names";
 import { liveSide, specimenSide } from "./side/live";
@@ -299,6 +299,7 @@ import {
   setAgentWeek,
   resetAgentUsage,
   changeAgentModels,
+  setIdleCompaction,
   scanAgents,
   control,
   offers,
@@ -685,6 +686,7 @@ function agentsPage(next: Place): Page {
       setWeek: (machine, agent, dir, week, swing) => (live ? setAgentWeek(machine, agent, dir, week, swing) : notLive()),
       resetUsage: (machine, agent, dir, id, toTenths, weekEnd, holder) => (live ? resetAgentUsage(machine, agent, dir, id, toTenths, weekEnd, holder) : notLive()),
       changeModels: (machine, agent, dir, change) => (live ? changeAgentModels(machine, agent, dir, change) : specimenChangeModels(machine, agent, dir, change, specimen!.now)),
+      setIdleCompaction: (machine, agent, dir, setting) => (live ? setIdleCompaction(machine, agent, dir, setting) : specimenSetIdleCompaction(machine, agent, dir, setting, specimen!.now)),
       usage: (machine, agent, dir) => (live ? agentUsage(machine, agent, dir) : specimenUsage(machine, agent, dir, specimen!.now)),
       calls: (machine, agent, dir, query) => (live ? agentCalls(machine, agent, dir, query) : specimenCalls(machine, agent, dir, query, specimen!.now)),
       change_: change,
@@ -1126,11 +1128,28 @@ const talkMenu = new TalkMenu({
   place: (r) => placeSaid(r),
   askDelete: (r, then) => askForget(r, then),
   beside: (r) => openBeside(addressOf(r)),
+  idleOf: (r) => idleOfLogin(r),
 });
 effect(() => {
   const now = store.world.get();
   talkActs.settle((address) => listedAt(now, address), (address) => residentAt(now, address));
 });
+
+/** The idle compaction setting of the login a conversation works in, for
+ *  the account asking: its machine's record of its logins read now. */
+async function idleOfLogin(r: ResidentNow): Promise<IdleCompaction | null> {
+  const machine = r.about.machine;
+  const agent = r.about.host.agent;
+  if (agent !== "claude" && agent !== "codex") return null;
+  const world = await (live ? agentLogins(machine) : specimenLogins(machine, specimen!.now));
+  const heard = world.machines.find((one) => one.kind === "answered" && one.logins.machine === machine);
+  if (heard?.kind !== "answered") return null;
+  const listed = heard.logins[agent].listed;
+  const plain = (dir: string) => dir.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
+  const home = r.about.home;
+  const login = home ? listed.find((one) => plain(one.dir) === plain(home)) : listed.find((one) => one.default);
+  return login ? (login.idle_compaction ?? IDLE_DEFAULT) : null;
+}
 
 /** A conversation as the World lists it, archived or not, as its machine
  *  last answered when it is away. */
@@ -1281,6 +1300,10 @@ async function specimenManaged(address: Address, action: Management): Promise<Ma
     if (action.do === "remove") return { ...r, removed: new Date().toISOString() };
     if (action.do === "restore") return { ...r, removed: null };
     if (action.do === "move") return { ...r, town: action.town };
+    if (action.do === "idle_compaction") {
+      const { idle_compaction: _, ...about } = r.about;
+      return { ...r, about: Object.keys(action.choice).length ? { ...about, idle_compaction: action.choice } : about };
+    }
     return r;
   });
   const now = residentAt(specimen!.world, address);
@@ -3306,6 +3329,7 @@ function show(next: Place): void {
         setTitle: (machine, agent, dir, on) => (live ? setAgentTitle(machine, agent, dir, on) : specimenSetTitle(machine, agent, dir, on, specimen!.now)),
         setResetInPlace: (machine, agent, dir, on) => (live ? setAgentResetInPlace(machine, agent, dir, on) : specimenSetResetInPlace(machine, agent, dir, on, specimen!.now)),
         changeModels: (machine, agent, dir, change) => (live ? changeAgentModels(machine, agent, dir, change) : specimenChangeModels(machine, agent, dir, change, specimen!.now)),
+        setIdleCompaction: (machine, agent, dir, setting) => (live ? setIdleCompaction(machine, agent, dir, setting) : specimenSetIdleCompaction(machine, agent, dir, setting, specimen!.now)),
         usageOf: (machine, agent, dir) => (live ? agentUsage(machine, agent, dir) : specimenUsage(machine, agent, dir, specimen!.now)),
         change_: change,
         confirm: accountConfirm,

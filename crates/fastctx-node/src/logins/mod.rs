@@ -10,6 +10,7 @@ pub(crate) mod change;
 pub(crate) mod folders;
 pub(crate) mod heard;
 pub(crate) mod identify;
+pub(crate) mod idle;
 pub(crate) mod ids;
 pub(crate) mod kept;
 pub(crate) mod limits;
@@ -142,14 +143,20 @@ pub(crate) fn identities(node: &Node, agent: &AgentName) -> Result<Vec<(PathBuf,
 /// (`snapshot::before_reading`).
 pub(crate) async fn here(node: &Arc<Node>) -> Result<MachineLogins, Failure> {
     snapshot::before_reading(node).await;
-    snapshot::read(node)
+    own(node, snapshot::read(node)?)
+}
+
+/// The record as this computer's own accounts see it: with what they set.
+fn own(node: &Node, mut logins: MachineLogins) -> Result<MachineLogins, Failure> {
+    idle::fill(node, &idle::own(node), &mut logins);
+    Ok(logins)
 }
 
 /// The record once what the call just changed is in it: the answer to a
 /// call that changes a login shows the change.
 pub(crate) async fn changed_here(node: &Arc<Node>) -> Result<MachineLogins, Failure> {
     snapshot::renew(node).await;
-    snapshot::read(node)
+    own(node, snapshot::read(node)?)
 }
 
 /// The same projection in the shape older clients read.

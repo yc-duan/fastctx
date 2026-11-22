@@ -30,6 +30,10 @@ pub fn fixtures() -> Fixtures {
                 }],
             },
         },
+        Management::IdleCompaction {
+            choice: fastctx_types::logins::idle::IdleChoice { on: Some(false), after_minutes: None, min_tokens: Some(200_000) },
+        },
+        Management::IdleCompaction { choice: Default::default() },
     ];
     let mut calls: Vec<Call> = actions
         .iter()

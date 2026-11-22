@@ -360,6 +360,13 @@ pub enum RemoteCall {
         dir: std::path::PathBuf,
         change: crate::logins::models::ModelChange,
     },
+    /// Set compacting a conversation idle a while for a login there, for
+    /// the account asking alone; for anyone who may use the login.
+    SetIdleCompaction {
+        agent: AgentName,
+        dir: std::path::PathBuf,
+        setting: crate::logins::idle::IdleCompaction,
+    },
     /// What a change of a login there would do; only for the machine's
     /// owner.
     PreviewAgentChange {
@@ -782,6 +789,7 @@ impl RemoteCall {
             | RemoteCall::Offers { .. }
             | RemoteCall::ItemDetail { .. }
             | RemoteCall::AgentActivity { .. }
+            | RemoteCall::SetIdleCompaction { .. }
             | RemoteCall::Upload { .. } => Purpose::Agents,
             RemoteCall::Agents
             | RemoteCall::AgentLogins
@@ -961,7 +969,9 @@ impl RemoteCall {
             // The asset lines, and what a machine's owner asks of the copies its
             // library holds.
             Self::Assets | Self::Copies { .. } => Some(Purpose::AssetSync),
-            Self::SetAgentWeek { .. } | Self::ResetAgentUsage { .. } => Some(Purpose::ExecutionControl),
+            Self::SetAgentWeek { .. } | Self::ResetAgentUsage { .. } | Self::SetIdleCompaction { .. } => {
+                Some(Purpose::ExecutionControl)
+            }
             Self::AddAgentLogin { .. }
             | Self::AgentActivity { .. }
             | Self::AgentCalls { .. }

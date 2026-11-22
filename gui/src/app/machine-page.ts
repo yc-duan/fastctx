@@ -54,6 +54,8 @@ import { effect, type Signal } from "./signals";
 import { newestKnown, type UpdateCall, type UpdateState } from "../world/updates";
 import type { UpdateViewWords } from "./update-view-words";
 import type { UpdateWords } from "./update-words";
+import { directWhy } from "./direct-why";
+import { setRow } from "./machine-set";
 import { jobsOf, residentsOf, type Store } from "./store";
 import { sayWaiting } from "./waiting";
 
@@ -1002,7 +1004,8 @@ export class MachinePage implements Page {
     if (stats?.boot) rows.push({ label: words.booted, value: words.stamp(new Date(stats.boot), new Date(stats.at)) });
     if (stats) rows.push({ label: words.node, value: words.nodeFor(words.span(Date.parse(stats.at) - Date.parse(stats.node.started))) });
     this.factsBox.hidden = !rows.length;
-    this.put("facts", this.factsBox, `<h2 class="mp-sec-title">${escape(words.about)}</h2>${factRows(rows)}`);
+    const said = rows.map((row) => setRow(escape(row.label), "", `<span${row.code ? ` class="code"` : ""}>${escape(row.value)}</span>`)).join("");
+    this.put("facts", this.factsBox, `<h2 class="mp-sec-title">${escape(words.about)}</h2>${said}`);
   }
 
   /** Where it stands in each network: how this computer reaches each hub
@@ -1110,11 +1113,11 @@ export class MachinePage implements Page {
       ? `<button class="text-button quiet-button" type="button" data-act="rename">${glyph("edit", 14)}<span>${escape(words.rename)}</span></button>`
       : "";
     const rows = [
-      `<dt>${escape(words.name)}</dt><dd><span>${escape(machine.written)}</span>${rename}</dd>`,
-      grouped.length ? `<dt>${escape(words.group)}</dt><dd><span>${escape(grouped.join(" "))}</span></dd>` : "",
+      setRow(escape(words.name), "", `<span>${escape(machine.written)}</span>${rename}`),
+      grouped.length ? setRow(escape(words.group), "", `<span>${escape(grouped.join(" "))}</span>`) : "",
     ].join("");
     this.namingBox.hidden = false;
-    this.put("naming", this.namingBox, `<dl class="mp-rows">${rows}</dl>`);
+    this.put("naming", this.namingBox, rows);
   }
 
   /** What it keeps free in memory for its agents, for whoever holds it,
@@ -1129,7 +1132,11 @@ export class MachinePage implements Page {
     this.put(
       "room",
       this.roomBox,
-      `<dl class="mp-rows"><dt>${escape(words.room)}</dt><dd><button class="text-button quiet-button mp-room-pick" type="button" data-act="room" data-menu-key="room" aria-haspopup="menu" aria-expanded="false"><span>${escape(said)}</span>${glyph("chevron", 13)}</button></dd></dl>`,
+      setRow(
+        escape(words.room),
+        "",
+        `<button class="text-button quiet-button mp-room-pick" type="button" data-act="room" data-menu-key="room" aria-haspopup="menu" aria-expanded="false"><span>${escape(said)}</span>${glyph("chevron", 13)}</button>`,
+      ),
     );
   }
 
@@ -1192,7 +1199,11 @@ export class MachinePage implements Page {
     this.put(
       "moves",
       this.movesBox,
-      `<h3 class="mp-sec-title">${escape(section.title)}</h3><p class="mp-sec-note">${escape(section.what)}</p><div class="fx-status"><button class="text-button quiet-button" type="button" data-act="move-login">${escape(section.open)}</button></div>`,
+      `<h2 class="mp-sec-title">${escape(section.title)}</h2>${setRow(
+        escape(section.name),
+        escape(section.what),
+        `<button class="text-button quiet-button" type="button" data-act="move-login">${escape(section.open)}</button>`,
+      )}`,
     );
   }
 
@@ -1336,7 +1347,7 @@ export class MachinePage implements Page {
     const to = sharedWith(world, owner, machine.name);
     const shared =
       giver || to.includes(owner.account)
-        ? `<div class="given-row"><span class="given-label">${escape(machines.sharedTo)}</span>${to
+        ? `<div class="mp-set"><div class="mp-set-what"><span class="mp-set-name">${escape(machines.sharedTo)}</span></div><div class="mp-set-end given-row">${to
             .filter((one) => giver || one === owner.account)
             .map((one) => {
               if (one === owner.account) return chip(one, `data-act="leave"`, machines.leave);
@@ -1349,7 +1360,7 @@ export class MachinePage implements Page {
         : "";
     const assists = owner ? (hubOf(world, owner)?.assists ?? []).filter((assist) => assist.machine === machine.name) : [];
     const assisting = assists.length
-      ? `<div class="given-row"><span class="given-label">${escape(machines.assisting)}</span>${assists
+      ? `<div class="mp-set"><div class="mp-set-what"><span class="mp-set-name">${escape(machines.assisting)}</span></div><div class="mp-set-end given-row">${assists
           .map((assist) => {
             const label = `${agentName(assist.agent)} ${assist.account}`;
             const at = `data-to="${escape(assist.account)}" data-agent="${escape(assist.agent)}"${assist.home ? ` data-home="${escape(assist.home)}"` : ""}${assist.until ? ` data-until="${escape(assist.until)}"` : ""}${assist.daily ? ` data-daily="${assist.daily}"` : ""}${assist.weekly ? ` data-weekly="${assist.weekly}"` : ""}${assist.five_hour ? ` data-five-hour="${assist.five_hour}"` : ""}${assist.turns ? ` data-turns="${assist.turns}"` : ""}`;
@@ -1358,8 +1369,12 @@ export class MachinePage implements Page {
             const day = until ? `<span class="assist-tag-until">${glyph("history", 12)}${escape(access.moment.short(until, now))}</span>` : "";
             return `<span class="chip assist-chip"><button class="assist-tag-open" type="button" data-act="assist-edit" ${at} title="${escape(`${access.changeUntil}\n${said}`)}">${escape(label)}${day}</button><button class="chip-x" type="button" data-act="assist-end" ${at} aria-label="${escape(machines.endAssist(assist.account))}" title="${escape(machines.endAssist(assist.account))}">${glyph("close", 12)}</button></span>`;
           })
-          .join("")}</div>`
+          .join("")}</div></div>`
       : "";
+    // Shared with no one and assisting no one, for one who may not share it:
+    // nothing to say.
+    this.sharingBox.hidden = !shared && !assisting;
+    if (!shared && !assisting) return;
     this.put("sharing", this.sharingBox, `<h2 class="mp-sec-title">${escape(words.sharing)}</h2>${shared}${assisting}`);
   }
 
@@ -1658,22 +1673,32 @@ function sharedWith(world: WorldNow | null, login: Login, machine: string): stri
   return (hubOf(world, login)?.shares ?? []).filter((share) => share.machine === machine).map((share) => share.account);
 }
 
-/** A machine's direct links: with whom they are up and how fast, which are
- *  down and why, and where others connect to it when it takes them. */
+/** A machine's direct links, a row each: those up first, the quickest
+ *  first, with how fast; those down after, with why in a few words and
+ *  every try where the pointer rests; and where others reach it. */
 function directSaid(machine: Machine, world: WorldNow, words: MachinesWords): string {
   const { nodes, links } = mapOf(world, words);
   const key = `m:${machine.written}`;
   const name = (other: string) => nodes.find((node) => node.key === other)?.name ?? other.replace(/^m:/, "");
-  const mine = links.filter((one) => one.a === key || one.b === key).sort((a, b) => Number(b.up) - Number(a.up));
   const at = nodes.find((node) => node.key === key)?.directAt ?? [];
+  const mine = links
+    .filter((one) => one.a === key || one.b === key)
+    .map((one) => ({ ...one, peer: name(one.a === key ? one.b : one.a) }))
+    .sort((a, b) => Number(b.up) - Number(a.up) || (a.ms ?? Infinity) - (b.ms ?? Infinity) || a.peer.localeCompare(b.peer));
   if (!mine.length && !at.length) return "";
-  const said = mine.map((one) => {
-    const peer = name(one.a === key ? one.b : one.a);
-    return one.up ? `<span class="direct-up">${escape(words.directUp(peer, one.ms))}</span>` : `<span class="direct-down">${escape(words.directDown(peer, one.why))}</span>`;
+  const rows = mine.map((one) => {
+    const peer = `<span class="mp-link-name" title="${escape(one.peer)}">${escape(one.peer)}</span>`;
+    if (one.up) {
+      const state = one.ms === undefined ? words.directUp : words.directMs(one.ms);
+      return `<li class="mp-link">${peer}<span class="mp-link-state">${escape(state)}</span></li>`;
+    }
+    const why = directWhy(one.why, words.directWhy);
+    const detail = why?.detail ? ` title="${escape(why.detail)}"` : "";
+    return `<li class="mp-link off"${detail}>${peer}<span class="mp-link-why">${escape(why?.short ?? "")}</span><span class="mp-link-state">${escape(words.directDown)}</span></li>`;
   });
-  return `<div class="panel-direct"><span class="panel-direct-list">${said.join(`<span class="sep"></span>`)}</span>${
-    at.length ? `<p class="panel-direct-at">${escape(words.takesDirectAt(at.join("、")))}</p>` : ""
-  }</div>`;
+  return `${rows.length ? `<ul class="mp-links">${rows.join("")}</ul>` : ""}${
+    at.length ? `<p class="mp-links-at">${escape(words.directAt(at.join("、")))}</p>` : ""
+  }`;
 }
 
 /** The card the page follows: of those up, the machine's own before one a

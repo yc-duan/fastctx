@@ -10,7 +10,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import type { HomeChange, WorldAgents } from "./agents";
 import type { CopiesAnswer, CopiesAsk } from "./data";
 import type { MoveAsk, Moved } from "./login-move";
-import type { ChangePreview, FolderChange, LoginChange, MachineLogins, ModelChange, WorldLogins } from "./logins";
+import type { ChangePreview, FolderChange, IdleCompaction, LoginChange, MachineLogins, ModelChange, WorldLogins } from "./logins";
 import type { Control, Controlled, Offers } from "./control";
 import type { WorldSince } from "./since";
 import type { FileRange } from "./file-read";
@@ -489,6 +489,12 @@ export function resetAgentUsage(machine: MachineName, agent: string, dir: string
 /** Changes the models a Claude Code login offers, for everyone who uses it. */
 export function changeAgentModels(machine: MachineName, agent: string, dir: string, change: ModelChange): Promise<MachineLogins> {
   return invoke("change_agent_models", { machineName: machine, agentName: agent, dir, change });
+}
+
+/** Sets compacting conversations idle a while in a login, for the account
+ *  asking alone. */
+export function setIdleCompaction(machine: MachineName, agent: string, dir: string, setting: IdleCompaction): Promise<MachineLogins> {
+  return invoke("set_idle_compaction", { machineName: machine, agentName: agent, dir, setting });
 }
 
 /** What a login on a machine was used for, as this device's accounts may

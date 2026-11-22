@@ -10,6 +10,7 @@
 //! into (`fastctx apply`); putting them in lists a candidate, taking them
 //! out (removing it) returns it to the candidates.
 
+pub mod idle;
 pub mod models;
 
 use std::collections::BTreeMap;
@@ -220,6 +221,11 @@ pub struct Login {
     /// them, and for other agents, whose models are their own to list.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_edits: Option<models::ModelEdits>,
+    /// For Codex and Claude Code: compacting a conversation idle a while,
+    /// as the account asking set it for this login; none where it never set
+    /// it, and from a node that cannot.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub idle_compaction: Option<idle::IdleCompaction>,
     /// The change running in it now, or the last one since the node
     /// started, step by step.
     #[serde(default, skip_serializing_if = "Option::is_none")]

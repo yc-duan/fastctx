@@ -154,13 +154,13 @@ for (const session of sessions) {
       const loaded = once("Page.loadEventFired");
       const two = session.endsWith("-2");
       const named = two ? session.slice(0, -2) : session;
-      const shown = named === "machine-manage" || named.startsWith("copies-") || named.startsWith("move-login") ? "machine" : named.startsWith("start-") ? "codex" : named.startsWith("history-side") ? (named.startsWith("history-side-project") ? "claude" : "solo") : named === "strain" || named === "strain-list" || named.startsWith("alerts") || named.startsWith("rollout") ? "machines" : named === "strain-machine" || named === "health" ? "machine" : named.startsWith("patrol") ? "trips" : named.startsWith("invite-") ? "invite" : named === "stop" || named === "stop-overdue" || named === "program" || named === "read-card" || named === "late" ? "claude" : named === "late-straight" ? "voice" : named === "drawer" || named === "palette" ? "home" : named === "service" || named.startsWith("remove-") ? "settings" : named === "slash" || named === "mention" || named === "find" || named === "attach" || named === "rewind" || named === "usage" ? "codex" : named.startsWith("asks") ? "asks" : named === "new-codex" || named === "new-attach" || named === "new-lent" || named === "new-pick" ? "new" : named === "manage" ? "about" : named === "welcome" || named === "create" || named === "created" ? "login" : named === "share" || named === "relays" ? "machines" : named === "lend" || named.startsWith("ledger") ? "home" : named === "queue" ? "codex" : named.startsWith("panel") && named !== "panel-agent" ? "claude" : named.startsWith("team") || named === "panel-agent" ? "stream" : named.startsWith("repair-") ? "home" : named === "updates-repair" ? "machines" : named === "journal-edit" || named === "journal-versions" ? "journal" : named === "project-write" || named === "project-history" ? "project" : named.startsWith("feature-") || named.startsWith("prefs-") || named.startsWith("activity") || named === "sidebar-drag" ? "home" : named;
+      const shown = named.startsWith("machine-manage") || named === "machine-net" || named.startsWith("copies-") || named.startsWith("move-login") ? "machine" : named.startsWith("start-") ? "codex" : named.startsWith("history-side") ? (named.startsWith("history-side-project") ? "claude" : "solo") : named === "strain" || named === "strain-list" || named.startsWith("alerts") || named.startsWith("rollout") ? "machines" : named === "strain-machine" || named === "health" ? "machine" : named.startsWith("patrol") ? "trips" : named.startsWith("invite-") ? "invite" : named === "stop" || named === "stop-overdue" || named === "program" || named === "read-card" || named === "late" ? "claude" : named === "late-straight" ? "voice" : named === "drawer" || named === "palette" ? "home" : named === "service" || named.startsWith("remove-") ? "settings" : named === "slash" || named === "mention" || named === "find" || named === "attach" || named === "rewind" || named === "usage" ? "codex" : named.startsWith("asks") ? "asks" : named === "new-codex" || named === "new-attach" || named === "new-lent" || named === "new-pick" ? "new" : named === "manage" ? "about" : named === "welcome" || named === "create" || named === "created" ? "login" : named === "share" || named === "relays" ? "machines" : named === "lend" || named.startsWith("ledger") ? "home" : named === "queue" ? "codex" : named.startsWith("panel") && named !== "panel-agent" ? "claude" : named.startsWith("team") || named === "panel-agent" ? "stream" : named.startsWith("repair-") ? "home" : named === "updates-repair" ? "machines" : named === "journal-edit" || named === "journal-versions" ? "journal" : named === "project-write" || named === "project-history" ? "project" : named.startsWith("feature-") || named.startsWith("prefs-") || named.startsWith("activity") || named === "sidebar-drag" ? "home" : named;
       // `welcome` and `create` are a computer's first open, in no World yet.
       const alone = named === "welcome" || named === "create" || named === "created";
       // A conversation at rest woken by words: its host starting, in line,
       // or tried again after failed starts.
       const starts = { "start-launching": "&starting=launching", "start-connecting": "&starting=connecting", "start-queued": "&turnline=2", "start-retry": "&starting=retrying,2" };
-      const ask = (starts[named] ?? "") + (named === "machine-manage" || named.startsWith("copies-") || named.startsWith("move-login") ? "&m=server" : "") + (named.startsWith("strain") ? `&strain${named === "strain-machine" ? "&m=server" : ""}` : "") + (named === "alerts-none" ? "&troubles=0" : "") + (named === "health" ? "&health=strained" : "") + (named === "rollout" || named === "rollout-page" ? "&rollout=stopped" : "") + (session.startsWith("asks-") ? `&ask=${session.slice(5)}` : "") + (named === "late" || named === "late-straight" ? "&slow=200,6000,999999&late=1500" : "") + (two ? "&accounts=2" : "") + (alone ? "&accounts=0" : "") + (named.startsWith("team") || named === "panel-agent" ? "&start=agents" : "") + (named.startsWith("repair-") ? `&repair=${named === "repair-broken" ? "broken" : "failed"}` : "") + (named.startsWith("panel-goal-") ? `&goal=${named.slice("panel-goal-".length)}` : "") + (named.startsWith("panel-goalpage-") ? `&goal=${named.slice("panel-goalpage-".length).replace(/-typed$/, "")}` : "") + (named.startsWith("panel-plan-") ? `&plan=${named.slice("panel-plan-".length)}` : "") + (named === "feature-history" ? "&history=off" : "");
+      const ask = (starts[named] ?? "") + (named.startsWith("machine-manage") || named.startsWith("copies-") || named.startsWith("move-login") ? "&m=server" : "") + (named === "machine-net" ? "&m=desktop" : "") + (named.startsWith("strain") ? `&strain${named === "strain-machine" ? "&m=server" : ""}` : "") + (named === "alerts-none" ? "&troubles=0" : "") + (named === "health" ? "&health=strained" : "") + (named === "rollout" || named === "rollout-page" ? "&rollout=stopped" : "") + (session.startsWith("asks-") ? `&ask=${session.slice(5)}` : "") + (named === "late" || named === "late-straight" ? "&slow=200,6000,999999&late=1500" : "") + (two ? "&accounts=2" : "") + (alone ? "&accounts=0" : "") + (named.startsWith("team") || named === "panel-agent" ? "&start=agents" : "") + (named.startsWith("repair-") ? `&repair=${named === "repair-broken" ? "broken" : "failed"}` : "") + (named.startsWith("panel-goal-") ? `&goal=${named.slice("panel-goal-".length)}` : "") + (named.startsWith("panel-goalpage-") ? `&goal=${named.slice("panel-goalpage-".length).replace(/-typed$/, "")}` : "") + (named.startsWith("panel-plan-") ? `&plan=${named.slice("panel-plan-".length)}` : "") + (named === "feature-history" ? "&history=off" : "");
       const specimen = named === "mapcanvas" ? "mapcanvas-specimen.html" : named === "longview" ? "longview-specimen.html" : null;
       // `startup-failed` and the like are the page shown until Fastctx opens.
       const startup = named.startsWith("startup-") ? named.slice("startup-".length) : null;
@@ -664,12 +664,25 @@ for (const session of sessions) {
         // The way into a World with a code, pasted or (on a phone) scanned.
         await send("Runtime.evaluate", { awaitPromise: true, expression: "new Promise(r => setTimeout(r, 300)).then(() => document.querySelector('[data-path=join]')?.click())" });
       }
-      if (named === "machine-manage" || named.startsWith("copies-") || named.startsWith("move-login")) {
+      if (named === "machine-net") {
+        // A machine's network: its cards and its direct links, one down.
+        await send("Runtime.evaluate", {
+          awaitPromise: true,
+          expression: `(async () => {
+            const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+            await wait(400);
+            document.querySelector("[data-tab=net]")?.click();
+            await wait(1200);
+            document.querySelector(".mp-direct")?.scrollIntoView({ block: "start" });
+          })()`,
+        });
+      }
+      if (named.startsWith("machine-manage") || named.startsWith("copies-") || named.startsWith("move-login")) {
         // A server's management: the copies it holds of conversations living
         // elsewhere (counted, then let go after a confirmation), and moving a
         // login directory over SSH — the form, the key seen the first time,
         // and what came of it.
-        const counting = named === "copies-count" || named === "copies-confirm" || named === "copies-cleared";
+        const counting = named === "copies-confirm" || named === "copies-cleared";
         const typing = named === "move-login-key" || named === "move-login-done";
         await send("Runtime.evaluate", {
           awaitPromise: true,
@@ -678,10 +691,9 @@ for (const session of sessions) {
             await wait(400);
             document.querySelector("[data-tab=manage]")?.click();
             await wait(1200);
-            ${counting ? 'document.querySelector("[data-act=cp-count]")?.click(); await wait(1200);' : ""}
-            ${named === "copies-confirm" || named === "copies-cleared" ? 'document.querySelector("[data-act=cp-clear]")?.click(); await wait(600);' : ""}
+            ${counting ? 'document.querySelector("[data-act=cp-clear]")?.click(); await wait(1800);' : ""}
             ${named === "copies-cleared" ? '[...document.querySelectorAll(".sheet-go.danger")].pop()?.click(); await wait(2000);' : ""}
-            document.querySelector(".mp-copies")?.scrollIntoView({ block: "start" });
+            document.querySelector("${named === "machine-manage-top" ? ".mp-fastctx" : named === "machine-manage-end" ? ".mp-danger" : ".mp-copies"}")?.scrollIntoView({ block: "${named === "machine-manage-end" ? "end" : "start"}" });
             ${named.startsWith("move-login") ? 'document.querySelector("[data-act=move-login]")?.click(); await wait(900);' : ""}
             ${typing ? `const set = (name, value) => { const input = document.querySelector(".login-move-sheet [name=" + name + "]"); if (input) input.value = value; };
               set("host", "203.0.113.30"); set("password", "secret"); set("target", "/data/claude");

@@ -103,6 +103,9 @@ export interface PendingControl {
   state: ControlState;
   result?: Controlled | null;
   error?: string | null;
+  /** Begun by the World of itself, as a conversation idle a while is
+   *  compacted: it holds no words after it, whatever came of it. */
+  automatic?: boolean;
 }
 
 /** One of the account's own skills, as a conversation offers it. */

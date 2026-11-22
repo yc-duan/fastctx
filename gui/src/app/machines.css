@@ -1010,39 +1010,6 @@
   margin-top: var(--space-1);
 }
 
-/* A machine's direct links in its details: the ones up, then those down
-   with why, quieter; where others connect to it, under them. Its label
-   keeps its own column, the list wraps in the next. */
-.panel-direct {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  align-items: baseline;
-  gap: 4px var(--space-2);
-  margin: var(--space-3) 0 0;
-  font-size: var(--size-text);
-}
-
-.panel-direct-list {
-  min-width: 0;
-  color: var(--text-2);
-}
-
-.panel-direct .direct-down {
-  color: var(--text-3);
-}
-
-.panel-direct .sep {
-  margin: 0 6px;
-  color: var(--text-3);
-}
-
-.panel-direct-at {
-  grid-column: 2;
-  margin: 0;
-  font-size: var(--size-text);
-  color: var(--text-3);
-}
-
 /* The machines drawing writes its names on the paper, where they zoom with
    it; the canvas keeps its own only for those who hear the drawing. */
 .machine-map .canvas-name {

@@ -59,6 +59,7 @@ pub fn fixtures() -> Fixtures {
                     state: ControlState::Waiting,
                     result: None,
                     error: None,
+                    automatic: true,
                 }],
                 pending_newer: vec![PendingControl {
                     id: "control-2".into(),
@@ -67,6 +68,7 @@ pub fn fixtures() -> Fixtures {
                     state: ControlState::Waiting,
                     result: None,
                     error: None,
+                    automatic: false,
                 }],
                 control_queue: true,
                 controls_told: true,

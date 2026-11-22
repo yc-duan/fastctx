@@ -1120,6 +1120,7 @@ impl fastctx_net::link::Node for Handler {
                     | RemoteCall::SetAgentWeek { .. }
                     | RemoteCall::ResetAgentUsage { .. }
                     | RemoteCall::ChangeAgentModels { .. }
+                    | RemoteCall::SetIdleCompaction { .. }
                     | RemoteCall::PreviewAgentChange { .. }
                     | RemoteCall::ChangeAgentLogin { .. }
                     | RemoteCall::ReadAgentLimits { .. }

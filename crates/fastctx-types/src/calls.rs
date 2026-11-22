@@ -676,6 +676,15 @@ pub enum Call {
         dir: std::path::PathBuf,
         change: crate::logins::models::ModelChange,
     },
+    /// Sets compacting a conversation idle a while for the login `dir` on
+    /// `machine`, for the account asking alone: everyone who may use the
+    /// login sets their own (Issue #57).
+    SetIdleCompaction {
+        machine: Written,
+        agent: AgentName,
+        dir: std::path::PathBuf,
+        setting: crate::logins::idle::IdleCompaction,
+    },
     /// What putting the World's tools into a login on `machine` (`into`),
     /// or taking them out, would change, with nothing written; with
     /// `take_back`, what the user changed of them is rewritten too.
@@ -1637,7 +1646,9 @@ impl Call {
             // What a machine's owner asks of the copies its library holds.
             Self::MachineCopies { .. } => Some(Purpose::AssetSync),
             // Sets what a login's assistances and its Fable line are held to.
-            Self::SetAgentWeek { .. } | Self::ResetAgentUsage { .. } => Some(Purpose::ExecutionControl),
+            Self::SetAgentWeek { .. } | Self::ResetAgentUsage { .. } | Self::SetIdleCompaction { .. } => {
+                Some(Purpose::ExecutionControl)
+            }
         }
     }
 }

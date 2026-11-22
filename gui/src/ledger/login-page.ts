@@ -58,11 +58,13 @@ const waiting = (what: string | Error) =>
 export function loginPage(): string {
   const login = current();
   if (!login) return `<div class="lg-page"><header class="lg-head lg-head-login"><a class="lg-back" href="${linkOf({ kind: "quota" })}" aria-label="返回" title="返回智能体">${glyph("back", 18)}</a></header>${waiting("该登录不在列表中")}</div>`;
-  // One who manages it with its owner sets the shares, and nothing else.
+  // One who manages it with its owner sets the shares; one it assists, as
+  // anyone who uses it, sets compacting their own idle conversations, and
+  // nothing else of it.
   const tabs: [Tab, string][] = login.lent
     ? login.lent.manages
-      ? [["usage", "用量"], ["calls", "调用"], ["assist", "协助"]]
-      : [["usage", "用量"], ["calls", "调用"]]
+      ? [["usage", "用量"], ["calls", "调用"], ["assist", "协助"], ["settings", "设置"]]
+      : [["usage", "用量"], ["calls", "调用"], ["settings", "设置"]]
     : [["usage", "用量"], ["calls", "调用"], ["assist", "协助"], ["settings", "设置"]];
   const wanted = (state.place as { tab: Tab }).tab;
   const tab = tabs.some(([id]) => id === wanted) ? wanted : "usage";
@@ -823,11 +825,16 @@ function settings(login: Login): string {
     : login.plan
       ? set("套餐", `${escape(login.plan)}　由 ${escape(familyName(login.family))} 报告`, "")
       : "";
+  const compacts = login.standing === "in" && (login.family === "claude" || login.family === "codex");
+  const idle = `${compacts ? set("闲置自动压缩", "对话闲置够久后自动执行一次 /compact，只对你自己的对话生效", toggle("idle-on", !!login.idle?.on, "", `data-id="${id}"`)) : ""}
+    ${compacts && login.idle?.on ? set("压缩条件", `闲置 ${login.idle.after_minutes} 分钟后，上下文至少 ${tenThousands(login.idle.min_tokens)}`, word("idle-edit", "编辑")) : ""}`;
+  if (login.lent) return `<div class="lg-body lg-sheet"><div class="lg-sets">${idle}</div></div>`;
   return `<div class="lg-body lg-sheet"><div class="lg-sets">
     ${set("工作台", "在 Fastctx 中对话，记录用量与额度", toggle("bench", login.workbench, "", `data-id="${id}"`))}
     ${set("接入", login.drift ? `已接入　<span class="lg-caution">${escape(login.drift)}</span>` : "已接入 Fastctx", `${login.drift ? word("attach", "更新接入") : ""}${word("detach", "移除", true)}`)}
     ${plan}
     ${claude ? set("模型", `${escape(models)}${login.modelsChanged ? "　已修改" : ""}`, word("models", "编辑")) : set("自动命名对话", "为新对话生成标题，计一次请求", toggle("auto-title", login.autoTitle ?? true, "", `data-id="${id}"`))}
+    ${idle}
     ${claude ? set("周额度", expectLine(login, (days?.weeks ?? []).map((week) => week.value)), word("expect", "编辑")) : ""}
     ${claude ? set("Fable 倍率", `× ${FABLE_TIMES}　其他型号按 API 价计`, "") : set("计量", "按 API 价计", "")}
     ${claude ? set("重置用量", "厂商重置或部分重置额度后，将本周用量调至相应比例", word("reset-usage", "重置")) : ""}
@@ -870,6 +877,17 @@ function flip(button: HTMLElement, keep: (login: Login, on: boolean) => Promise<
   });
 }
 on("auto-title", (button) => flip(button, (login, on) => deeds!.autoTitle(login, on)));
+on("idle-on", (button) => flip(button, (login, on) => deeds!.idleOn(login, on)));
+on("idle-edit", () => {
+  const login = current();
+  if (login && deeds) deeds.idle(login);
+  else say("压缩条件（样品未实现）");
+});
+
+/** Tokens in tens of thousands, as the page writes context. */
+function tenThousands(tokens: number): string {
+  return `${Number((tokens / 10_000).toFixed(1))} 万`;
+}
 on("plan", (button) => {
   const login = current();
   if (!login) return;

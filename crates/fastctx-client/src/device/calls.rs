@@ -458,6 +458,9 @@ impl Device {
             Call::ChangeAgentModels { machine, agent, dir, change } => {
                 (machine, RemoteCall::ChangeAgentModels { agent, dir, change }, None)
             }
+            Call::SetIdleCompaction { machine, agent, dir, setting } => {
+                (machine, RemoteCall::SetIdleCompaction { agent, dir, setting }, None)
+            }
             Call::PreviewAgentChange { machine, agent, dir, into, take_back, workbench } => {
                 (machine, RemoteCall::PreviewAgentChange { agent, dir, into, take_back, workbench }, None)
             }
@@ -808,6 +811,7 @@ impl Device {
                 | RemoteCall::SetAgentWeek { .. }
                 | RemoteCall::ResetAgentUsage { .. }
                 | RemoteCall::ChangeAgentModels { .. }
+                | RemoteCall::SetIdleCompaction { .. }
                 | RemoteCall::ReadAgentLimits { .. },
                 RemoteReply::AgentLogins(logins),
             ) => Reply::MachineAgentLogins(logins),

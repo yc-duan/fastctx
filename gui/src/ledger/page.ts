@@ -11,6 +11,7 @@ import { FolderPicker } from "../app/folder-picker";
 import type { AgentChangeWords } from "../app/agent-change";
 import type { AgentLoginsWords } from "../app/agent-logins-words";
 import { dirName, programLine } from "../app/agent-login-row";
+import { LoginIdleSheet } from "../app/login-idle-sheet";
 import { LoginModelsSheet } from "../app/login-models-sheet";
 import { link, type LoginTab, type Place as AppPlace } from "../app/places";
 import type { Page } from "../app/shell";
@@ -19,7 +20,7 @@ import type { Store } from "../app/store";
 import { glyph } from "../conversation/glyphs";
 import { sameHome } from "../app/reach";
 import { loginsOf, type AccountChange, type Login as AccountLogin } from "../world/accounts";
-import type { ChangePreview, FolderChange, LoginChange, MachineLogins, ModelChange, WorldLogins } from "../world/logins";
+import { IDLE_DEFAULT, type ChangePreview, type FolderChange, type IdleCompaction, type LoginChange, type MachineLogins, type ModelChange, type WorldLogins } from "../world/logins";
 import { followState, LOGINS, type Following } from "../world/topics";
 import type { Folders } from "../world/focus";
 import type { UsageReport } from "../world/usage";
@@ -54,6 +55,8 @@ export interface AgentsPageOptions {
    *  or with none takes the reset `id` back. */
   resetUsage(machine: string, agent: string, dir: string, id: string, toTenths: number | null, weekEnd: string | null, holder: string | null): Promise<MachineLogins>;
   changeModels(machine: string, agent: string, dir: string, change: ModelChange): Promise<MachineLogins>;
+  /** Compacting the reader's idle conversations in a login, for them alone. */
+  setIdleCompaction(machine: string, agent: string, dir: string, setting: IdleCompaction): Promise<MachineLogins>;
   usage(machine: string, agent: string, dir: string): Promise<UsageReport>;
   calls(machine: string, agent: string, dir: string, query: UsageCallsQuery): Promise<UsageCallsPage>;
   change_(login: AccountLogin, change: AccountChange): Promise<void>;
@@ -109,6 +112,7 @@ export class AgentsPage implements Page {
   private readonly seen: Seen = kept;
   private readonly sheet: AgentChangeSheet;
   private readonly models: LoginModelsSheet;
+  private readonly idleSheet: LoginIdleSheet;
   private readonly choosing: FolderPicker;
   private readonly people = { models: new Map<string, Set<string>>(), people: new Map<string, Set<string>>() };
   private following: Following | null = null;
@@ -149,6 +153,7 @@ export class AgentsPage implements Page {
       benched: (open) => options.benched(open),
     });
     this.models = new LoginModelsSheet(options.words);
+    this.idleSheet = new LoginIdleSheet(options.words);
     this.choosing = new FolderPicker(options.words.picker);
     setLinker((to) => link(appPlaceOf(to)));
     setHost({ feed: this.feed(), deeds: this.deeds() });
@@ -512,6 +517,33 @@ export class AgentsPage implements Page {
           login: one,
           change: async (change) => {
             const record = await options.changeModels(machine, "claude", dir, change);
+            this.took(record);
+            return record;
+          },
+        });
+      },
+      idleOn: async (login, on) => {
+        const { machine, agent, dir } = this.recordOf(login);
+        // Its conditions as its machine holds them now, not as last read:
+        // another device, or another account signed in here before, may
+        // have changed them since.
+        const record = await options.read(machine);
+        const heard = record.machines.find((one) => one.kind === "answered" && one.logins.machine === machine);
+        const side = heard?.kind !== "answered" ? null : agent === "claude" ? heard.logins.claude : agent === "codex" ? heard.logins.codex : null;
+        const listed = side?.listed.find((one) => one.dir === dir);
+        // Not read, its conditions are not known: none are written over.
+        if (!listed) throw new Error("该登录现在读不到，稍后再试");
+        return refreshed(options.setIdleCompaction(machine, agent, dir, { ...(listed.idle_compaction ?? IDLE_DEFAULT), on }));
+      },
+      idle: (login) => {
+        const { machine, agent, dir, one } = this.recordOf(login);
+        if (!one || (agent !== "claude" && agent !== "codex")) return;
+        this.idleSheet.open({
+          title: options.words.idleOf(login.who),
+          agent,
+          login: one,
+          set: async (setting) => {
+            const record = await options.setIdleCompaction(machine, agent, dir, setting);
             this.took(record);
             return record;
           },

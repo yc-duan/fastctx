@@ -5,6 +5,8 @@ import type { LoginMoveWords } from "./login-move-sheet";
 
 export interface LoginMoveSection {
   title: string;
+  /** The setting's row: what it does, a line of what it costs, its button. */
+  name: string;
   what: string;
   open: string;
 }
@@ -12,8 +14,9 @@ export interface LoginMoveSection {
 export const zhLoginMove: LoginMoveWords & { section: LoginMoveSection } = {
   section: {
     title: "登录目录",
-    what: "把这台机器上 Claude Code 或 Codex 的登录目录搬到另一块盘：整个目录复制过去、核对一致，原位置留一个链接，原目录留作备份。搬的时候这台机器上的会话会暂停几分钟。",
-    open: "经 SSH 搬迁…",
+    name: "搬到另一块盘",
+    what: "复制并核对后，原位置留一个链接、原目录留作备份；搬的时候这台的会话暂停几分钟。",
+    open: "搬迁…",
   },
   title: "搬迁登录目录",
   what: "经 SSH 登录这台机器，让它的 Fastctx 把登录目录搬到另一块盘（fastctx move-login）。在这台机器的 fastctx 之外执行，搬的时候它的节点会停下。",
@@ -60,8 +63,9 @@ export const zhLoginMove: LoginMoveWords & { section: LoginMoveSection } = {
 export const enLoginMove: LoginMoveWords & { section: LoginMoveSection } = {
   section: {
     title: "Login directories",
-    what: "Move a Claude Code or Codex login directory on this machine to another disk: copied whole and checked, a link left where it was, the original kept as a backup. Its conversations pause for a few minutes meanwhile.",
-    open: "Move over SSH…",
+    name: "Move to another disk",
+    what: "Copied and checked, a link left where it was and the original kept as a backup; its conversations pause for a few minutes.",
+    open: "Move…",
   },
   title: "Move a login directory",
   what: "Signs in to this machine over SSH and has its Fastctx move a login directory to another disk (fastctx move-login), from outside the World there, whose node stops while it moves.",

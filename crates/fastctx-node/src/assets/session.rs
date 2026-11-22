@@ -549,18 +549,21 @@ async fn pass(node: &Arc<Node>, hub: &HubId, link: &Arc<Link>, network: &Network
     // after from then on.
     let fresh: std::collections::BTreeSet<String> =
         if whole { owners.clone() } else { owners.difference(&stood).cloned().collect() };
-    let marks = if isolated.is_none() && !fresh.is_empty() {
+    let (marks, unasked) = if isolated.is_none() && !fresh.is_empty() {
         let _phase = phase(hub, "asking where the owner libraries stand");
-        tops(assets, link, &fresh).await.ok()
+        tops(assets, link, &fresh).await
     } else {
-        None
+        (Vec::new(), None)
     };
-    // Not told where they stand, nothing of this look counts as done: no
-    // scope is marked pulled whole and no whole look is taken as made, so
-    // the next pass asks again (HH02).
-    let untold = isolated.is_none() && !fresh.is_empty() && marks.is_none();
+    let told: std::collections::BTreeSet<&String> = marks.iter().map(|(owner, ..)| owner).collect();
+    // Not told where they all stand, the look is not taken as made, so the
+    // next pass asks again (HH02); a scope of a library not told where it
+    // stands is not marked pulled whole, nor one of a library unknown, while
+    // those of the libraries told are.
+    let untold = isolated.is_none() && fresh.iter().any(|owner| !told.contains(owner));
     if untold {
-        failed.get_or_insert("where the hub's owner libraries stand could not be asked".to_string());
+        let why = unasked.unwrap_or_else(|| "the hub did not say".to_string());
+        failed.get_or_insert(format!("where the hub's owner libraries stand could not all be asked: {why}"));
     }
     // The owner libraries some scope of which this pass did not go through
     // whole: where they stand is not taken as reached (II01).
@@ -574,6 +577,8 @@ async fn pass(node: &Arc<Node>, hub: &HubId, link: &Arc<Link>, network: &Network
     let alone = isolated.is_some();
     let mut turning = Vec::with_capacity(scopes.len());
     for (scope, holding, first) in scopes {
+        let untold = untold
+            && owner_of.get(&scope).is_none_or(|owner| fresh.contains(owner) && !told.contains(owner));
         let (node, hub, link, room) = (node.clone(), hub.clone(), link.clone(), room.clone());
         turning.push(fastctx_platform::task::spawn(async move {
             let _room = room.acquire_owned().await;
@@ -602,7 +607,7 @@ async fn pass(node: &Arc<Node>, hub: &HubId, link: &Arc<Link>, network: &Network
     }
     // Each library every scope of which was gone through whole stands
     // where it stood as the look began (II01).
-    for (owner, generation, top, at) in marks.unwrap_or_default() {
+    for (owner, generation, top, at) in marks {
         if short.contains(&owner) {
             continue;
         }
@@ -1110,21 +1115,30 @@ async fn uploads_of(assets: &Assets, hub: &HubId) -> Result<std::collections::BT
 }
 
 /// Where each of `owners`' libraries stands now: its generation, its latest
-/// change and when that was.
+/// change and when that was. Those told are kept when one is not: a library
+/// the hub answers of otherwise is passed over, and asking stops at the
+/// first the hub could not be asked of, its why said.
 async fn tops(
     assets: &Assets,
     link: &Arc<Link>,
     owners: &std::collections::BTreeSet<String>,
-) -> Result<Vec<(String, String, u64, i64)>, String> {
+) -> (Vec<(String, String, u64, i64)>, Option<String>) {
     let mut marks = Vec::new();
+    let mut why = None;
     for owner in owners {
         let request = Request::Changes { owner: owner.clone(), after: 0, before: None, class: None, limit: 1 };
-        let Reply::Changes { generation, top, top_at, .. } = ask(assets, link, request).await? else {
-            return Err("the hub did not say where its library stands".into());
-        };
-        marks.push((owner.clone(), generation, top, top_at));
+        match ask(assets, link, request).await {
+            Ok(Reply::Changes { generation, top, top_at, .. }) => marks.push((owner.clone(), generation, top, top_at)),
+            Ok(_) => {
+                why.get_or_insert_with(|| format!("the hub did not say where {owner}'s library stands"));
+            }
+            Err(error) => {
+                why = Some(error);
+                break;
+            }
+        }
     }
-    Ok(marks)
+    (marks, why)
 }
 
 /// Catches up what changed in `owner`'s library of `hub` since this

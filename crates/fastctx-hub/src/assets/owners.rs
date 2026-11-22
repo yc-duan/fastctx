@@ -1,13 +1,19 @@
 //! The hub's owner libraries (design §6.2): one per account, one per body
 //! that several accounts own together, and one for the hub itself, each a
-//! directory under `assets/`. At most 64 are open at once, the least
-//! recently used that nobody holds closed first; one left idle ten minutes
-//! is closed. A library is opened under its own slot, so a slow opening
-//! holds up no other library, and is checked against the hub's record of
-//! it as it opens.
+//! directory under `assets/`. As many are open at once as the machine's
+//! memory allows (`open_at_once`), the least recently used that nobody
+//! holds closed first; one left idle ten minutes is closed. A library is
+//! opened under its own slot, so a slow opening holds up no other library.
+//!
+//! The first time this process opens a library it settles what a stop left
+//! half done and checks it against the hub's record of it; opened again
+//! after it was closed, it settles only what a failed write may have left,
+//! for nothing else can change it while it is shut — every write goes
+//! through an open library. Shut, where it stood is kept, so a device
+//! asking what changed since is answered without opening it (`latest`).
 
-use fastctx_content::v2::Library;
-use std::collections::HashMap;
+use fastctx_content::v2::{Latest, Library};
+use std::collections::{HashMap, HashSet};
 use std::io;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -16,10 +22,20 @@ use std::time::{Duration, Instant};
 /// What a deleted library's directory is moved aside under, before it goes.
 const DISCARDED: &str = "discarded-";
 
-/// Libraries open at once.
-pub(crate) const OPEN_AT_ONCE: usize = 64;
 /// How long an idle library stays open.
 pub(crate) const IDLE: Duration = Duration::from_secs(600);
+
+/// How many libraries are kept open at once: one for each 8 MiB of the
+/// machine's memory, which an open library's caches stay well within, from
+/// 256 to 1024. Each machine shared whole has a library of its own, and the
+/// passes of devices touch every library they follow: kept too few, every
+/// pass opened one again (64 on a hub of 128 opened six to twelve a second).
+/// The files they hold are well within what the hub raises its own limit to
+/// as it starts (`fastctx_platform::limits::raise_open_files`).
+pub(crate) fn open_at_once() -> usize {
+    let physical = fastctx_platform::memory::physical().unwrap_or(2 << 30);
+    usize::try_from(physical / (8 << 20)).unwrap_or(usize::MAX).clamp(256, 1024)
+}
 
 /// Whose library.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -115,6 +131,12 @@ pub(crate) struct Owners {
     /// came whole — one made meanwhile would be older than the hub's record
     /// of it, and what came after it would have no place to go.
     coming: Mutex<std::collections::HashSet<Owner>>,
+    /// Owners whose library this process opened and settled whole: closed
+    /// since, it is opened again as `Library::reopen_hub` does.
+    settled: Mutex<HashSet<Owner>>,
+    /// Where each library closed while nobody held it stood as it closed.
+    stood: Mutex<HashMap<Owner, Latest>>,
+    open_at_once: usize,
 }
 
 /// What a library keeps its hub's incarnation under.
@@ -131,6 +153,36 @@ impl Owners {
             slots: Mutex::new(HashMap::new()),
             fenced: Mutex::new(std::collections::HashSet::new()),
             coming: Mutex::new(std::collections::HashSet::new()),
+            settled: Mutex::new(HashSet::new()),
+            stood: Mutex::new(HashMap::new()),
+            open_at_once: open_at_once(),
+        }
+    }
+
+    /// Where `owner`'s library stood as it was closed, while it is shut:
+    /// nothing has changed in it since.
+    pub(crate) fn latest(&self, owner: &Owner) -> Option<Latest> {
+        self.stood.lock().expect("stood libraries").get(owner).cloned()
+    }
+
+    /// `owner`'s library is to be opened or made anew: what this process
+    /// knew of it is forgotten.
+    fn forget(&self, owner: &Owner) {
+        self.settled.lock().expect("settled libraries").remove(owner);
+        self.stood.lock().expect("stood libraries").remove(owner);
+    }
+
+    /// Closes the library of the slot `owner` held, nobody holding it:
+    /// where it stood is kept first, under the lock every opening takes.
+    fn close(&self, owner: &Owner, slot: &Slot) {
+        let library = slot.library.lock().expect("owner library");
+        match library.as_ref().map(Library::latest) {
+            Some(Ok(Some(latest))) => {
+                self.stood.lock().expect("stood libraries").insert(owner.clone(), latest);
+            }
+            _ => {
+                self.stood.lock().expect("stood libraries").remove(owner);
+            }
         }
     }
 
@@ -148,8 +200,11 @@ impl Owners {
     /// The libraries at `paths` are still coming: none is opened until
     /// `came` says it came.
     pub(crate) fn hold_back<'a>(&self, paths: impl IntoIterator<Item = &'a String>) {
-        let mut coming = self.coming.lock().expect("coming owners");
-        coming.extend(paths.into_iter().filter_map(|path| Self::of_path(path)));
+        let owners: Vec<Owner> = paths.into_iter().filter_map(|path| Self::of_path(path)).collect();
+        for owner in &owners {
+            self.forget(owner);
+        }
+        self.coming.lock().expect("coming owners").extend(owners);
     }
 
     /// The library at `path` came whole: it is opened from now on.
@@ -218,7 +273,7 @@ impl Owners {
             if self.is_coming(owner) {
                 return Err(io::Error::other(format!("the library of {} {COMING}", owner.key())));
             }
-            if !slots.contains_key(owner) && slots.len() >= OPEN_AT_ONCE {
+            if !slots.contains_key(owner) && slots.len() >= self.open_at_once {
                 // The least recently used that nobody holds goes: one still
                 // held, or still opening, stays, lest the same directory be
                 // opened twice. Past the bound for a while when all are held.
@@ -227,8 +282,10 @@ impl Owners {
                     .filter(|(_, slot)| idle(slot))
                     .min_by_key(|(_, slot)| *slot.used.lock().expect("owner library use"))
                     .map(|(owner, _)| owner.clone());
-                if let Some(oldest) = oldest {
-                    slots.remove(&oldest);
+                if let Some(oldest) = oldest
+                    && let Some(slot) = slots.remove(&oldest)
+                {
+                    self.close(&oldest, &slot);
                 }
             }
             slots
@@ -241,9 +298,47 @@ impl Owners {
         if let Some(library) = library.as_ref() {
             return Ok(Ok(library.clone()));
         }
+        // From here it may change: where it stood as it closed holds no more.
+        self.stood.lock().expect("stood libraries").remove(owner);
         let directory = self.root.join(owner.directory());
         fastctx_platform::ensure_private_dir(&directory)?;
+        let kinds: Arc<dyn fastctx_content::v2::Authorizer> = super::serve::kinds();
+        let settled = self.settled.lock().expect("settled libraries").contains(owner);
+        if settled {
+            let (opened, salvaged) = match Library::reopen_hub(&directory) {
+                Ok(reopened) => reopened,
+                // A database salvaged before what failed may have lost rows:
+                // the next opening checks it whole, as a first one does.
+                Err(error) => {
+                    self.settled.lock().expect("settled libraries").remove(owner);
+                    return Err(io::Error::other(error.to_string()));
+                }
+            };
+            if salvaged.is_none() {
+                opened.know(kinds);
+                *library = Some(opened.clone());
+                return Ok(Ok(opened));
+            }
+            // A database salvaged as it opened may have lost rows: it is
+            // checked again, as at its first opening.
+            self.settled.lock().expect("settled libraries").remove(owner);
+            return self.settle(owner, opened, kinds, check, &mut library);
+        }
         let (opened, _) = Library::open_hub(&directory).map_err(|error| io::Error::other(error.to_string()))?;
+        self.settle(owner, opened, kinds, check, &mut library)
+    }
+
+    /// A library opened for the first time in this process, or salvaged as
+    /// it opened again: checked against the hub's incarnation and its record
+    /// of it, and what came of kinds it did not know judged now.
+    fn settle(
+        &self,
+        owner: &Owner,
+        opened: Library,
+        kinds: Arc<dyn fastctx_content::v2::Authorizer>,
+        check: impl FnOnce(&Library) -> io::Result<Option<String>>,
+        library: &mut Option<Library>,
+    ) -> io::Result<Result<Library, String>> {
         let stamped = opened.stamp(STAMP, self.incarnation.clone()).map_err(|error| io::Error::other(error.to_string()))?;
         if stamped != self.incarnation {
             return Ok(Err(format!("the library of {} is another hub's", owner.key())));
@@ -252,10 +347,11 @@ impl Owners {
             return Ok(Err(why));
         }
         // Records of a kind this hub did not know when they came are judged
-        // now that it may (§2.3), before anyone reads the library.
-        let kinds: Arc<dyn fastctx_content::v2::Authorizer> = super::serve::kinds();
+        // now that it may (§2.3), before anyone reads the library. The kinds
+        // a running hub knows do not change, so once is enough.
         opened.know(kinds.clone());
         opened.reconsider(kinds, true).map_err(|error| io::Error::other(error.to_string()))?;
+        self.settled.lock().expect("settled libraries").insert(owner.clone());
         *library = Some(opened.clone());
         Ok(Ok(opened))
     }
@@ -275,6 +371,7 @@ impl Owners {
                 return Err(io::Error::other(format!("the library of {} is in use", owner.key())));
             }
             slots.remove(owner);
+            self.forget(owner);
         }
         let directory = self.root.join(owner.directory());
         let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |since| since.as_nanos());
@@ -336,15 +433,26 @@ impl Owners {
     pub(crate) fn sweep(&self) {
         let now = Instant::now();
         let mut slots = self.slots.lock().expect("owner libraries");
-        slots.retain(|_, slot| !idle(slot) || now.duration_since(*slot.used.lock().expect("owner library use")) < IDLE);
-        while slots.len() > OPEN_AT_ONCE {
+        let stale: Vec<Owner> = slots
+            .iter()
+            .filter(|(_, slot)| idle(slot) && now.duration_since(*slot.used.lock().expect("owner library use")) >= IDLE)
+            .map(|(owner, _)| owner.clone())
+            .collect();
+        for owner in stale {
+            if let Some(slot) = slots.remove(&owner) {
+                self.close(&owner, &slot);
+            }
+        }
+        while slots.len() > self.open_at_once {
             let oldest = slots
                 .iter()
                 .filter(|(_, slot)| idle(slot))
                 .min_by_key(|(_, slot)| *slot.used.lock().expect("owner library use"))
                 .map(|(owner, _)| owner.clone());
             let Some(oldest) = oldest else { break };
-            slots.remove(&oldest);
+            if let Some(slot) = slots.remove(&oldest) {
+                self.close(&oldest, &slot);
+            }
         }
     }
 }

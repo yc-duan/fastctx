@@ -2228,6 +2228,7 @@ pub async fn open_here(
         side: false,
         forked_from: None,
         mcp_off: options.mcp_off.clone(),
+        idle_compaction: Default::default(),
         id: id.clone(),
         host: Host { agent, client: "claude-code".to_string(), version: String::new() },
         machine: node.machine(),
@@ -2580,6 +2581,9 @@ pub(crate) fn settings_json(id: &ResidentId) -> String {
             "CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION": "0",
         },
         "promptSuggestionEnabled": false,
+        // The World compacts an idle conversation itself, as the user set
+        // it (`crate::idle_compaction`): Claude Code's own does not as well.
+        "idleCompaction": false,
         "permissions": {
             // The World's own tools take these places: its shell and files,
             // the plan, the goal, and a sentinel or an alarm for any later

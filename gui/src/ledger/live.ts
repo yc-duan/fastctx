@@ -259,6 +259,7 @@ function loginOf(world: WorldNow | null, machine: Pickable, agent: string, side:
     ...(one.auto_title !== undefined ? { autoTitle: one.auto_title } : {}),
     ...(one.models ? { models: one.models.map((model) => model.display_name || model.model || model.id) } : {}),
     ...(one.model_edits && ((one.model_edits.added?.length ?? 0) + (one.model_edits.removed?.length ?? 0) > 0) ? { modelsChanged: true } : {}),
+    ...(one.idle_compaction ? { idle: one.idle_compaction } : {}),
     ...(one.limits.kind === "known" ? { readAt: agoSaid(new Date(one.limits.value.observed_at), now) } : {}),
   };
 }

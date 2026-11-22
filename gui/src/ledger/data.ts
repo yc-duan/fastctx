@@ -10,6 +10,8 @@
 // conversation that made it works for an assisted account; a conversation
 // is named only to the one it belongs to.
 
+import type { IdleCompaction } from "../world/logins";
+
 export type Family = string;
 const named: Record<string, string> = { claude: "Claude Code", codex: "Codex", antigravity: "Antigravity", cursor: "Cursor", opencode: "OpenCode" };
 export const familyName = (family: Family): string => named[family] ?? family;
@@ -98,6 +100,9 @@ export interface Login {
   /** The models a conversation in it starts on; whether they were changed. */
   models?: string[];
   modelsChanged?: boolean;
+  /** Compacting conversations idle a while, as the reader set it for this
+   *  login; absent where they never did. */
+  idle?: IdleCompaction;
   /** When its windows were last read, as the page says it. */
   readAt?: string;
   /** Whether its machine takes direct connections: the machines of those
@@ -293,6 +298,10 @@ export interface Deeds {
   reread(login: Login): void;
   models(login: Login): void;
   autoTitle(login: Login, on: boolean): Promise<void>;
+  /** Compacting the reader's idle conversations in it: turned on or off,
+   *  or its conditions changed in a sheet of their own. */
+  idleOn(login: Login, on: boolean): Promise<void>;
+  idle(login: Login): void;
   plan(login: Login, plan: PlanLabel | null): Promise<void>;
   /** What the owner expects the login's week to hold, and its reach. */
   expect(login: Login, expect: Expect): Promise<void>;

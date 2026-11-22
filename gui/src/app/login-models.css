@@ -145,3 +145,128 @@
     grid-row: 1;
   }
 }
+
+/* Compacting conversations idle a while in one login (`login-idle-sheet.ts`):
+   a list of settings, each its name with a quieter line of why, and its
+   switch or value at the end; the values stand back while it is off. */
+@media (min-width: 761px) {
+  .login-idle-sheet {
+    margin: auto;
+  }
+}
+
+.login-idle-sheet .sheet-body {
+  width: min(520px, 100vw - 32px);
+}
+
+.li-rows {
+  display: flex;
+  flex-direction: column;
+  margin-top: var(--space-2);
+}
+
+.li-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: 12px 0;
+}
+
+.li-row + .li-row {
+  border-top: 1px solid var(--hairline);
+}
+
+.li-what {
+  display: flex;
+  flex: 1 1 0;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.li-name {
+  font-size: var(--size-text);
+  color: var(--text);
+}
+
+.li-said {
+  font-size: var(--size-text);
+  line-height: var(--leading-ui);
+  color: var(--text-3);
+}
+
+.li-value {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--size-text);
+  color: var(--text-2);
+}
+
+.li-number {
+  width: 5em;
+  margin: 0;
+  padding: 6px var(--space-2);
+  border: 0;
+  border-radius: var(--radius-m);
+  outline: 0;
+  background: var(--field);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--size-text);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.li-number:focus-visible {
+  box-shadow: 0 0 0 2px var(--accent-wash);
+}
+
+.li-row.off :is(.li-name, .li-value) {
+  opacity: 0.5;
+}
+
+.li-switch {
+  display: inline-flex;
+  flex: none;
+  padding: 4px 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+}
+
+/* One conversation's idle compaction (`talk-idle-sheet.ts`): the same list,
+   a quiet line of what it is for over it, and following, on or off as
+   three words side by side; a number left empty follows the agent. */
+@media (min-width: 761px) {
+  .talk-idle-sheet {
+    margin: auto;
+  }
+}
+
+.talk-idle-sheet .sheet-body {
+  width: min(520px, 100vw - 32px);
+}
+
+.li-intro {
+  margin: 0;
+  font-size: var(--size-text);
+  line-height: var(--leading-ui);
+  color: var(--text-3);
+}
+
+.ti-choices {
+  display: inline-flex;
+  flex: none;
+  gap: var(--space-1);
+}
+
+.ti-choices .choice {
+  margin-inline: 0;
+}
+
+.li-number::placeholder {
+  color: var(--text-3);
+}

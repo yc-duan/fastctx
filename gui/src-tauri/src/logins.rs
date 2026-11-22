@@ -240,6 +240,23 @@ pub(crate) async fn change_agent_models(
         .map_err(|error| error.to_string())
 }
 
+/// Sets compacting conversations idle a while in a login, for the account
+/// asking alone.
+#[fastctx_gui_command::command]
+pub(crate) async fn set_idle_compaction(
+    shell: tauri::State<'_, Shell>,
+    machine_name: String,
+    agent_name: String,
+    dir: PathBuf,
+    setting: fastctx_types::logins::idle::IdleCompaction,
+) -> Result<MachineLogins, String> {
+    shell
+        .world()
+        .set_idle_compaction(machine(machine_name)?, agent(agent_name)?, dir, setting)
+        .await
+        .map_err(|error| error.to_string())
+}
+
 /// Turns naming new Codex conversations in a login on or off.
 #[fastctx_gui_command::command]
 pub(crate) async fn set_agent_title(

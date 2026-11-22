@@ -101,7 +101,7 @@ pub use reads::{Entry, PAGE};
 pub use receipts::{Mark, Receipt, Report, Said};
 pub use rejected::Resubmit;
 pub use window::Pruned;
-pub use changes::{Changed, Changes};
+pub use changes::{Changed, Changes, Latest};
 pub use backfill::{Backfill, Backfilled};
 pub use snapshot::{Covered, Installed, OLDER_BYTES, Older, OlderTaken, WINDOW_BYTES, WINDOW_ITEMS, Window};
 pub use view::{ViewChange, ViewChanges, ViewPage, view_sequence};
@@ -181,20 +181,50 @@ impl Library {
 
     /// Opens an owner library of a hub (§6.2): the same library with the
     /// hub's own tables besides, caching a few MiB of pages across its two
-    /// databases' writers and readers, as up to 64 are open at once (R27):
-    /// a writer the pages its trees are descended by, 64 of them, where
-    /// with 32 every lookup read its way down from the file again.
+    /// databases' writers and readers, as hundreds may be open at once
+    /// (R27): a writer the pages its trees are descended by, 64 of them,
+    /// where with 32 every lookup read its way down from the file again.
     pub fn open_hub(directory: &Path) -> Result<(Self, Started)> {
-        let shape = fastctx_storage::Shape {
+        Self::open_shaped(directory, Self::hub_schema(), Self::hub_shape(), true)
+    }
+
+    /// Opens again an owner library this process opened with `open_hub` and
+    /// closed while nobody held it. What only a stop leaves half done — a
+    /// rename the power took, files no row owns, a collector stopped between
+    /// its steps — cannot be in it, so only what a write that failed may
+    /// leave is settled (`resettle`). A database salvaged as it opened may
+    /// have lost rows: the library is then settled as a first opening is,
+    /// and what that found is returned. Call on a thread that may block.
+    pub fn reopen_hub(directory: &Path) -> Result<(Self, Option<Started>)> {
+        let library = Self::open_databases(directory, Self::hub_schema(), Self::hub_shape(), true)?;
+        if library.0.database.salvaged().is_some() || library.0.bytes.salvaged().is_some() {
+            let started = library.startup()?;
+            return Ok((library, Some(started)));
+        }
+        library.resettle()?;
+        Ok((library, None))
+    }
+
+    fn hub_schema() -> String {
+        format!("{}{}{}", schema::SCHEMA, schema::HUB_SCHEMA, ledger_entries::SCHEMA)
+    }
+
+    fn hub_shape() -> fastctx_storage::Shape {
+        fastctx_storage::Shape {
             cache_bytes: Some(1 << 20),
             reader_cache_bytes: Some(64 << 10),
             page_bytes: Some(PAGE_BYTES),
             ..Default::default()
-        };
-        Self::open_shaped(directory, format!("{}{}{}", schema::SCHEMA, schema::HUB_SCHEMA, ledger_entries::SCHEMA), shape, true)
+        }
     }
 
     fn open_shaped(directory: &Path, schema: String, shape: fastctx_storage::Shape, hub: bool) -> Result<(Self, Started)> {
+        let library = Self::open_databases(directory, schema, shape, hub)?;
+        let started = library.startup()?;
+        Ok((library, started))
+    }
+
+    fn open_databases(directory: &Path, schema: String, shape: fastctx_storage::Shape, hub: bool) -> Result<Self> {
         let file = directory.join(FILE);
         let database = Database::open_initialized_shaped(&file, schema::PRELUDE, shape, |db| layout::made(db, &file, &schema))?;
         let bytes = Database::open_shaped(&directory.join(BYTES_FILE), schema::BYTES_SCHEMA, shape)?;
@@ -208,8 +238,7 @@ impl Library {
             committed: std::sync::Mutex::new(std::collections::BTreeSet::new()),
             moved: tokio::sync::watch::channel(0).0,
         }));
-        let started = library.startup()?;
-        Ok((library, started))
+        Ok(library)
     }
 
     pub(crate) fn database(&self) -> &Database {

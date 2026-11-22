@@ -56,6 +56,7 @@ pub async fn apply(node: &Arc<Node>, id: &ResidentId, event: SessionEvent) -> st
 
 async fn apply_inner(node: &Arc<Node>, id: &ResidentId, mut event: SessionEvent) -> std::io::Result<()> {
     let Some((about, _)) = node.residents.about(id) else { return Err(deleted(id)) };
+    crate::idle_compaction::heard(id, &event.happened, event.at);
     if let Happened::Heard { message: Some(message), .. } = &event.happened
         && (about.host.agent.as_str() == "codex" && about.world_managed() && message.detail["type"] == "userMessage"
             || about.host.agent.as_str() == "claude" && message.detail["uuid"].is_string())

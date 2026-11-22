@@ -13,7 +13,7 @@ pub(crate) use sweep::{Asking, relieve};
 pub(crate) mod wake;
 mod words;
 
-pub(crate) use retention::start;
+pub(crate) use retention::{held, start};
 
 use crate::Node;
 use fastctx_types::{ipc::Failure, residents::About};
