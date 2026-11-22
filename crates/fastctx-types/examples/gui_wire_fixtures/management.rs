@@ -30,6 +30,8 @@ pub fn fixtures() -> Fixtures {
                 }],
             },
         },
+        Management::IdleCompaction { on: Some(false) },
+        Management::IdleCompaction { on: None },
     ];
     let mut calls: Vec<Call> = actions
         .iter()

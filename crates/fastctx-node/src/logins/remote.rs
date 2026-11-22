@@ -11,6 +11,7 @@ use std::sync::Arc;
 use fastctx_types::AgentName;
 use fastctx_types::access::{Acting, HubAccount, Purpose};
 use fastctx_types::ipc::Failure;
+use fastctx_types::logins::idle::IdleCompaction;
 use fastctx_types::logins::models::ModelChange;
 use fastctx_types::logins::{ChangePreview, FolderChange, LoginChange, MachineLogins, MachineLoginsHeard, WorldLogins};
 use fastctx_types::remote::{RemoteCall, RemoteReply};
@@ -393,6 +394,26 @@ pub(crate) async fn change_models(
     }
 }
 
+/// Sets compacting conversations idle a while in `agent`'s login `dir`, here
+/// for this computer's own accounts, or on another machine for the account
+/// it knows this one's user by (Issue #57).
+pub(crate) async fn set_idle_compaction(
+    node: &Arc<Node>,
+    machine: Written,
+    agent: AgentName,
+    dir: PathBuf,
+    setting: IdleCompaction,
+) -> Result<MachineLogins, Failure> {
+    if node.is_here(&machine) {
+        super::idle::set(node, &super::idle::own(node), &agent, &dir, setting)?;
+        return super::changed_here(node).await;
+    }
+    match ask(node, &machine, Purpose::Agents, RemoteCall::SetIdleCompaction { agent, dir, setting }).await? {
+        RemoteReply::AgentLogins(logins) => Ok(*logins),
+        _ => Err(other(&machine)),
+    }
+}
+
 /// What `agent`'s login `dir` on `machine` was used for, as this computer's
 /// user may see it.
 pub(crate) async fn usage(
@@ -515,7 +536,13 @@ pub(crate) async fn answer(
     asker: &Asker,
     call: RemoteCall,
 ) -> Result<RemoteReply, Failure> {
-    let logins = |logins: MachineLogins| RemoteReply::AgentLogins(Box::new(seen(view, asker, logins)));
+    // What the asking account set of compacting idle conversations is what
+    // it sees of each login, whatever the accounts here set.
+    let asking = [HubAccount { hub: asker.hub.clone(), account: asker.account.clone() }];
+    let logins = |mut logins: MachineLogins| {
+        super::idle::fill(node, &asking, &mut logins);
+        RemoteReply::AgentLogins(Box::new(seen(view, asker, logins)))
+    };
     match call {
         RemoteCall::AgentLogins => super::here(node).await.map(logins),
         RemoteCall::ScanAgents { stop } => super::submitted::scan(node, stop).await.map(logins),
@@ -543,6 +570,14 @@ pub(crate) async fn answer(
         }
         RemoteCall::ChangeAgentModels { agent, dir, change } => {
             super::models::change(node, &agent, &dir, &change)?;
+            super::changed_here(node).await.map(logins)
+        }
+        // Anyone who may use the login sets their own.
+        RemoteCall::SetIdleCompaction { agent, dir, setting } => {
+            if !crate::homes::may_use_login(node, view, &asker.account, &view.me, &agent, Some(&dir))? {
+                return Err(Failure::refused(format!("the account {} may not use that login here", asker.account)));
+            }
+            super::idle::set(node, &asking, &agent, &dir, setting)?;
             super::changed_here(node).await.map(logins)
         }
         RemoteCall::PreviewAgentChange { agent, dir, into, take_back, workbench } => {

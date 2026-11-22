@@ -89,6 +89,10 @@ export interface Login {
   /** Claude Code: what those who hold the machine changed in the models it
    *  offers; absent from a node that cannot change them. */
   model_edits?: ModelEdits;
+  /** Codex and Claude Code: compacting a conversation idle a while, as the
+   *  reader set it for this login; absent where they never set it, and
+   *  from a node that cannot. */
+  idle_compaction?: IdleCompaction;
   /** The change running in it now, or the last since the node started. */
   change?: LoginChange;
   /** What bringing the World's tools in it up to date waits for: none
@@ -113,6 +117,19 @@ export interface ModelEdits {
 
 /** One change of a login's models: offer one, no longer offer one, or the
  *  World's own table again. */
+/** Compacting a conversation once it has been idle `after_minutes`, when it
+ *  holds at least `min_tokens` of context (Issue #57). */
+export interface IdleCompaction {
+  on: boolean;
+  after_minutes: number;
+  min_tokens: number;
+}
+
+/** What a setting never changed holds, once turned on, and its bounds. */
+export const IDLE_DEFAULT: IdleCompaction = { on: false, after_minutes: 50, min_tokens: 100_000 };
+export const IDLE_MINUTES = { least: 5, most: 240 };
+export const IDLE_TOKENS_MOST = 2_000_000;
+
 export type ModelChange = { do: "add"; model: string } | { do: "remove"; model: string } | { do: "reset" };
 
 export type Found = "default" | "home" | "added" | "elsewhere";

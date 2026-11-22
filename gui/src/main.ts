@@ -106,7 +106,7 @@ import { ServerLists } from "./app/mcp-switches";
 import { enAgentChange, zhAgentChange } from "./app/agent-change";
 import "./app/agent-logins.css";
 import "./app/disclose.css";
-import { specimenChange as specimenLoginChange, specimenChangeModels, specimenFolder, specimenLogins, specimenPreview, specimenScan, specimenSetResetInPlace, specimenSetTitle, specimenTakeUp } from "./specimen/logins";
+import { specimenChange as specimenLoginChange, specimenChangeModels, specimenFolder, specimenLogins, specimenPreview, specimenScan, specimenSetIdleCompaction, specimenSetResetInPlace, specimenSetTitle, specimenTakeUp } from "./specimen/logins";
 import { TalksPage, enTalks, zhTalks } from "./app/talks";
 import { FeaturesPage } from "./app/features";
 import { workbenchShown } from "./app/workbench-shown";
@@ -299,6 +299,7 @@ import {
   setAgentWeek,
   resetAgentUsage,
   changeAgentModels,
+  setIdleCompaction,
   scanAgents,
   control,
   offers,
@@ -685,6 +686,7 @@ function agentsPage(next: Place): Page {
       setWeek: (machine, agent, dir, week, swing) => (live ? setAgentWeek(machine, agent, dir, week, swing) : notLive()),
       resetUsage: (machine, agent, dir, id, toTenths, weekEnd, holder) => (live ? resetAgentUsage(machine, agent, dir, id, toTenths, weekEnd, holder) : notLive()),
       changeModels: (machine, agent, dir, change) => (live ? changeAgentModels(machine, agent, dir, change) : specimenChangeModels(machine, agent, dir, change, specimen!.now)),
+      setIdleCompaction: (machine, agent, dir, setting) => (live ? setIdleCompaction(machine, agent, dir, setting) : specimenSetIdleCompaction(machine, agent, dir, setting, specimen!.now)),
       usage: (machine, agent, dir) => (live ? agentUsage(machine, agent, dir) : specimenUsage(machine, agent, dir, specimen!.now)),
       calls: (machine, agent, dir, query) => (live ? agentCalls(machine, agent, dir, query) : specimenCalls(machine, agent, dir, query, specimen!.now)),
       change_: change,
@@ -1281,6 +1283,10 @@ async function specimenManaged(address: Address, action: Management): Promise<Ma
     if (action.do === "remove") return { ...r, removed: new Date().toISOString() };
     if (action.do === "restore") return { ...r, removed: null };
     if (action.do === "move") return { ...r, town: action.town };
+    if (action.do === "idle_compaction") {
+      const { idle_compaction: _, ...about } = r.about;
+      return { ...r, about: action.on === null ? about : { ...about, idle_compaction: action.on } };
+    }
     return r;
   });
   const now = residentAt(specimen!.world, address);
@@ -3306,6 +3312,7 @@ function show(next: Place): void {
         setTitle: (machine, agent, dir, on) => (live ? setAgentTitle(machine, agent, dir, on) : specimenSetTitle(machine, agent, dir, on, specimen!.now)),
         setResetInPlace: (machine, agent, dir, on) => (live ? setAgentResetInPlace(machine, agent, dir, on) : specimenSetResetInPlace(machine, agent, dir, on, specimen!.now)),
         changeModels: (machine, agent, dir, change) => (live ? changeAgentModels(machine, agent, dir, change) : specimenChangeModels(machine, agent, dir, change, specimen!.now)),
+        setIdleCompaction: (machine, agent, dir, setting) => (live ? setIdleCompaction(machine, agent, dir, setting) : specimenSetIdleCompaction(machine, agent, dir, setting, specimen!.now)),
         usageOf: (machine, agent, dir) => (live ? agentUsage(machine, agent, dir) : specimenUsage(machine, agent, dir, specimen!.now)),
         change_: change,
         confirm: accountConfirm,

@@ -370,6 +370,7 @@ async fn fork(
         forked_from: Some(Address { machine: node.machine(), resident: parent.clone() }),
         side,
         mcp_off: source.mcp_off.clone(),
+        idle_compaction: None,
         id: id.clone(),
         host: source.host,
         machine: node.machine(),

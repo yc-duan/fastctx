@@ -1474,6 +1474,14 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
                 .await
                 .map(|logins| Reply::MachineAgentLogins(Box::new(logins)))
         }
+        Call::SetIdleCompaction { machine, agent, dir, setting } => {
+            users_voice(node, peer)?;
+            crate::managed::refuse(node)?;
+
+            crate::logins::remote::set_idle_compaction(node, machine, agent, dir, setting)
+                .await
+                .map(|logins| Reply::MachineAgentLogins(Box::new(logins)))
+        }
         Call::PreviewAgentChange { machine, agent, dir, into, take_back, workbench } => {
             users_voice(node, peer)?;
             crate::managed::refuse(node)?;

@@ -149,6 +149,7 @@ pub(super) async fn one(
         launcher,
         models,
         model_edits,
+        idle_compaction: None,
         change: None,
         drift: if integration == Integration::In || program_unreadable { drift } else { None },
         workbench: integration == Integration::In && workbench,

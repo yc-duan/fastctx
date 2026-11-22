@@ -409,6 +409,18 @@ impl World {
         machine_logins(self.ask(Call::ChangeAgentModels { machine, agent, dir, change }).await?)
     }
 
+    /// Sets compacting conversations idle a while in a login, for the
+    /// account asking alone.
+    pub async fn set_idle_compaction(
+        &self,
+        machine: Written,
+        agent: fastctx_types::AgentName,
+        dir: std::path::PathBuf,
+        setting: fastctx_types::logins::idle::IdleCompaction,
+    ) -> Result<fastctx_types::logins::MachineLogins, Error> {
+        machine_logins(self.ask(Call::SetIdleCompaction { machine, agent, dir, setting }).await?)
+    }
+
     /// What putting the World's tools into a login (`into`), or taking them
     /// out, would change; with `take_back`, rewriting what the user changed
     /// of them too.

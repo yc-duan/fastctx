@@ -22,7 +22,7 @@ import { glyph } from "../conversation/glyphs";
 import type { AccountChange, HubAccounts, Login as AccountLogin, PlanLabel } from "../world/accounts";
 import type { WorldNow } from "../world/bridge";
 import type { Folders } from "../world/focus";
-import type { AgentLogins, ChangePreview, FolderChange, Login, LoginChange, MachineLogins, ModelChange, WorldLogins } from "../world/logins";
+import type { AgentLogins, ChangePreview, FolderChange, IdleCompaction, Login, LoginChange, MachineLogins, ModelChange, WorldLogins } from "../world/logins";
 import type { UsageReport } from "../world/usage";
 import type { AccessWords } from "./account-words";
 import { ActsMenu, type MenuEntry } from "./acts-menu";
@@ -36,6 +36,7 @@ import { AssistSheet, assistChange, assistancesIn, fiveHourWindow, namesOn, type
 import type { Confirm } from "./confirm";
 import { FolderPicker } from "./folder-picker";
 import { redrawKeepingFocus } from "./focus";
+import { LoginIdleSheet } from "./login-idle-sheet";
 import { LoginModelsSheet } from "./login-models-sheet";
 import { detailOf } from "./problem";
 import { isVisitor } from "./reach";
@@ -91,6 +92,9 @@ export interface AgentLoginsOptions {
   setResetInPlace(machine: string, agent: Agent, dir: string, on: boolean): Promise<MachineLogins>;
   /** Claude Code only: changes the models a login offers. */
   changeModels(machine: string, agent: Agent, dir: string, change: ModelChange): Promise<MachineLogins>;
+  /** Codex and Claude Code: compacting conversations idle a while in a
+   *  login, for the reader alone. */
+  setIdleCompaction(machine: string, agent: Agent, dir: string, setting: IdleCompaction): Promise<MachineLogins>;
   usageOf(machine: string, agent: Agent, dir: string): Promise<UsageReport>;
   change_(login: AccountLogin, change: AccountChange): Promise<void>;
   confirm: Confirm;
@@ -158,8 +162,9 @@ export class AgentLoginsPage implements Page {
   private drawn = "";
 
   /** The calls that name a machine, as `options` makes them. */
-  private readonly calls: Pick<AgentLoginsOptions, "read" | "scan" | "add" | "folder" | "folders" | "preview" | "change" | "limits" | "setTitle" | "setResetInPlace" | "changeModels" | "usageOf">;
+  private readonly calls: Pick<AgentLoginsOptions, "read" | "scan" | "add" | "folder" | "folders" | "preview" | "change" | "limits" | "setTitle" | "setResetInPlace" | "changeModels" | "setIdleCompaction" | "usageOf">;
   private readonly modelsSheet: LoginModelsSheet;
+  private readonly idleSheet: LoginIdleSheet;
 
   constructor(private readonly options: AgentLoginsOptions) {
     // Every call names the machine shown as this computer writes it, its
@@ -180,9 +185,11 @@ export class AgentLoginsPage implements Page {
       setTitle: (machine, agent, dir, on) => options.setTitle(as(machine), agent, dir, on),
       setResetInPlace: (machine, agent, dir, on) => options.setResetInPlace(as(machine), agent, dir, on),
       changeModels: (machine, agent, dir, change) => options.changeModels(as(machine), agent, dir, change),
+      setIdleCompaction: (machine, agent, dir, setting) => options.setIdleCompaction(as(machine), agent, dir, setting),
       usageOf: (machine, agent, dir) => options.usageOf(as(machine), agent, dir),
     };
     this.modelsSheet = new LoginModelsSheet(options.words);
+    this.idleSheet = new LoginIdleSheet(options.words);
     const { words } = options;
     this.agent = options.agent;
     this.title = options.agent === "claude" ? words.claude : words.codex;
@@ -721,6 +728,11 @@ export class AgentLoginsPage implements Page {
     if (this.agent === "claude" && found.machine.mine && login.integration === "in" && login.model_edits) {
       entries.push({ act: "models", icon: "tune", label: words.models });
     }
+    // Everyone who may use a login the World's tools are in compacts their
+    // own idle conversations in it as they set it.
+    if (login.integration === "in") {
+      entries.push({ act: "idle", icon: "tune", label: words.idle });
+    }
     // Codex names its own conversations when the login's owner asks it to;
     // Claude Code does its own. Only a login the World's tools are in hosts
     // World conversations, so only such a login shows it.
@@ -775,6 +787,22 @@ export class AgentLoginsPage implements Page {
           change: async (change) => {
             const asked = readerNow();
             const record = await this.calls.changeModels(machineName, "claude", dir, change);
+            this.took(record, asked);
+            return record;
+          },
+        });
+        return;
+      }
+      case "idle": {
+        const agent = this.agent;
+        const identity = found.login.identity?.who.kind === "known" ? found.login.identity.who.value : null;
+        this.idleSheet.open({
+          title: options.words.idleOf(identity?.email ?? dirName(dir)),
+          agent,
+          login: found.login,
+          set: async (setting) => {
+            const asked = readerNow();
+            const record = await this.calls.setIdleCompaction(machineName, agent, dir, setting);
             this.took(record, asked);
             return record;
           },

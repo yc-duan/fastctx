@@ -295,6 +295,7 @@ impl RemoteCall {
             | Self::SetAgentWeek { .. }
             | Self::ResetAgentUsage { .. }
             | Self::ChangeAgentModels { .. }
+            | Self::SetIdleCompaction { .. }
             | Self::ChangeAgentLogin { .. }
             | Self::MemoryRoom { bytes: Some(_) }
             | Self::Open { .. }
@@ -562,6 +563,7 @@ impl Call {
             | Self::SetAgentWeek { .. }
             | Self::ResetAgentUsage { .. }
             | Self::ChangeAgentModels { .. }
+            | Self::SetIdleCompaction { .. }
             | Self::ChangeAgentLogin { .. }
             | Self::Talk { .. }
             | Self::Upload { .. }

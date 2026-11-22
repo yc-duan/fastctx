@@ -393,7 +393,7 @@ fn with(about: &About) -> Vec<HubAccount> {
 /// The login a conversation's usage counts under: the one it was started
 /// in, and for a Claude session the user opened, the one whose `projects`
 /// its transcript is in.
-fn login_of(node: &Node, id: &ResidentId, about: &About) -> Option<PathBuf> {
+pub(crate) fn login_of(node: &Node, id: &ResidentId, about: &About) -> Option<PathBuf> {
     match about.host.agent.as_str() {
         "codex" => Some(about.home.clone().unwrap_or_else(|| node.codex.default().config_home().to_path_buf())),
         "claude" => {

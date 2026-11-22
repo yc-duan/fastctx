@@ -35,6 +35,11 @@ pub enum Management {
     Mcp {
         off: std::collections::BTreeSet<String>,
     },
+    /// Whether it is compacted once idle a while (Issue #57): none follows
+    /// its login's setting for the account it works for.
+    IdleCompaction {
+        on: Option<bool>,
+    },
 }
 
 /// Each completed stage remains reported if a later stage fails. A host

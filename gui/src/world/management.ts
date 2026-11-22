@@ -19,7 +19,10 @@ export type Management =
   | { do: "move"; town: TownName | null }
   | { do: "focus"; focus: Focus }
   /** The account's MCP servers it goes without (`world-user-config.md`). */
-  | { do: "mcp"; off: string[] };
+  | { do: "mcp"; off: string[] }
+  /** Whether it is compacted once idle a while; null follows its login's
+   *  setting (Issue #57). */
+  | { do: "idle_compaction"; on: boolean | null };
 
 export type ManagementOutcome = "done" | "pending" | "unsupported" | "failed";
 

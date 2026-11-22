@@ -36,9 +36,16 @@ interface Shown {
   deleting?: boolean;
   town?: { town: string | null };
   name?: string;
+  idle?: { on: boolean | null };
 }
 
 const keyOf = (address: Address) => `${address.machine}\n${address.resident}`;
+
+/** `about` with its own idle compaction choice; none follows its login. */
+function withIdle(about: ResidentNow["about"], on: boolean | null): ResidentNow["about"] {
+  const { idle_compaction: _, ...rest } = about;
+  return on === null ? rest : { ...rest, idle_compaction: on };
+}
 
 export class TalkActs {
   /** Moves whenever what is shown of a conversation changed here. */
@@ -57,8 +64,10 @@ export class TalkActs {
     const shown = this.shown.get(keyOf(addressOf(r)));
     if (!shown) return r;
     const now = r.now && shown.name !== undefined ? { ...r.now, title: shown.name } : r.now;
+    const about = shown.idle ? withIdle(r.about, shown.idle.on) : r.about;
     const copy: ResidentNow = {
       ...r,
+      about,
       town: shown.town ? shown.town.town : r.town,
       removed: shown.archived === undefined ? (r.removed ?? null) : shown.archived ? (r.removed ?? new Date().toISOString()) : null,
       now,
@@ -90,6 +99,7 @@ export class TalkActs {
       if (shown.archived !== undefined && !!r.removed === shown.archived) delete shown.archived;
       if (shown.town && (r.town ?? null) === shown.town.town) delete shown.town;
       if (shown.name !== undefined && titleOf(r) === shown.name) delete shown.name;
+      if (shown.idle && (r.about.idle_compaction ?? null) === shown.idle.on) delete shown.idle;
       if (Object.keys(shown).length === 0) {
         this.shown.delete(key);
         changed = true;
@@ -115,6 +125,13 @@ export class TalkActs {
   move(r: ResidentNow, town: string | null): void {
     this.show(r, { town: { town } });
     this.manageAs(r, { do: "move", town }, "town", this.options.words.notMoved);
+  }
+
+  /** Compacts it once idle a while, or not, for it alone; none follows its
+   *  login's setting. */
+  idle(r: ResidentNow, on: boolean | null): void {
+    this.show(r, { idle: { on } });
+    this.manageAs(r, { do: "idle_compaction", on }, "idle", this.options.words.notIdle);
   }
 
   rename(r: ResidentNow, name: string): void {

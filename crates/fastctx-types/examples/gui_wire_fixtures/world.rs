@@ -90,6 +90,7 @@ fn residents() -> Vec<ResidentNow> {
                 side: false,
                 forked_from: None,
                 mcp_off: Default::default(),
+                idle_compaction: Some(true),
                 id: format!("codex-ab1{i}").parse().unwrap(),
                 host: host(),
                 machine: machine(),

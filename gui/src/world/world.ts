@@ -34,6 +34,9 @@ export interface About {
   /** The MCP servers of the account it works for that it starts without
    *  (`world-user-config.md`). */
   mcp_off?: string[];
+  /** Whether it is compacted once idle a while, as the user said of it
+   *  alone; absent follows its login's setting (Issue #57). */
+  idle_compaction?: boolean;
   /** The agent's home it works in, as its machine writes it, when not the
    *  default one there: which of that machine's logins it uses. */
   home?: string;

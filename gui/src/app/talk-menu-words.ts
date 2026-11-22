@@ -50,6 +50,14 @@ export interface TalkMenuWords {
   notArchived: string;
   notRestored: string;
   notMoved: string;
+  /** Whether it is compacted once idle a while: as its login's setting
+   *  says, or on or off for it alone. */
+  idle: string;
+  idleFollow: string;
+  idleFollowShort: string;
+  idleOn: string;
+  idleOff: string;
+  notIdle: string;
   notRenamed: string;
   notDeleted: string;
   /** The card asking before deleting. */
@@ -103,6 +111,12 @@ export const zhTalkMenu: TalkMenuWords = {
   notArchived: "归档失败",
   notRestored: "恢复失败",
   notMoved: "移动失败",
+  idle: "闲置自动压缩",
+  idleFollow: "跟随智能体设置",
+  idleFollowShort: "跟随",
+  idleOn: "开",
+  idleOff: "关",
+  notIdle: "设置失败",
   notRenamed: "改名失败",
   notDeleted: "删除失败",
   deleteTitle: (name) => `删除「${name}」？`,
@@ -150,6 +164,12 @@ export const enTalkMenu: TalkMenuWords = {
   notArchived: "Could not archive",
   notRestored: "Could not restore",
   notMoved: "Could not move",
+  idle: "Compact when idle",
+  idleFollow: "As the agent's setting",
+  idleFollowShort: "Follow",
+  idleOn: "On",
+  idleOff: "Off",
+  notIdle: "Could not set it",
   notRenamed: "Could not rename",
   notDeleted: "Could not delete",
   deleteTitle: (name) => `Delete “${name}”?`,

@@ -29,6 +29,8 @@ pub(super) struct Stored {
     #[serde(default)]
     mcp_off: std::collections::BTreeSet<String>,
     #[serde(default)]
+    idle_compaction: Option<bool>,
+    #[serde(default)]
     home: Option<std::path::PathBuf>,
     #[serde(default)]
     login: Option<crate::logins::LoginId>,
@@ -67,6 +69,7 @@ impl TryFrom<Stored> for About {
             acting,
             focus: stored.focus,
             mcp_off: stored.mcp_off,
+            idle_compaction: stored.idle_compaction,
             home: stored.home,
             login: stored.login,
             born_as: stored.born_as,
