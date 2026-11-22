@@ -59,7 +59,7 @@ export function homePage(): string {
         ${machine.owner || !machine.online ? "" : `<button type="button" class="lg-word${machine.scanning ? " busy" : ""}" data-act="scan">${glyph("scan", 16)}${machine.scanning ? "正在扫描" : "重新扫描"}</button>`}
       </span>`
       : "";
-  return `<div class="lg-page">
+  return `<div class="lg-page lg-headed">
     <header class="page-head lg-head"><div class="page-head-title"><h1 class="page-title">智能体</h1></div>
       <div class="page-head-actions">${end}<div class="segmented"><button type="button" class="segment${attach ? "" : " chosen"}" data-go="${linkOf({ kind: "quota" })}">额度</button><button type="button" class="segment${attach ? " chosen" : ""}" data-go="${linkOf({ kind: "attach", machine: machine?.id ?? state.machine })}">接入</button></div></div>
     </header>

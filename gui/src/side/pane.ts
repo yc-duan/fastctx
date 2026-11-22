@@ -76,7 +76,8 @@ export class SidePane {
   readonly element: HTMLElement;
   /** Its "⋯" and the menu of where it stands, held in the desk's corner. */
   readonly more: HTMLElement;
-  private readonly sheet: HTMLElement;
+  /** The sheet the side's pages stand on: what slides as it opens and shuts. */
+  readonly sheet: HTMLElement;
   private readonly whereSlot: HTMLElement;
   /** The line of tabs, and the tabs in it. */
   private readonly strip: HTMLElement;

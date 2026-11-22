@@ -135,7 +135,7 @@ pub(super) fn latest(node: &Node, thread: &str) -> io::Result<u64> {
 pub(super) fn first(node: &Node, thread: &str) -> io::Result<Option<(u64, HostEvent)>> {
     let (directory, family) = prepare(node, thread)?;
     records::read(&directory, |rows| {
-        let row=rows.connection().query_row("SELECT position,body FROM conversation_records WHERE conversation=?1 AND family=?2 ORDER BY position LIMIT 1",(rows.conversation(),family),|row|Ok((row.get::<_,i64>(0)?,row.get::<_,Vec<u8>>(1)?))).optional()?;
+        let row=rows.connection().query_row("SELECT position,body FROM conversation_records INDEXED BY conversation_records_order WHERE conversation=?1 AND family=?2 ORDER BY position LIMIT 1",(rows.conversation(),family),|row|Ok((row.get::<_,i64>(0)?,row.get::<_,Vec<u8>>(1)?))).optional()?;
         row.map(|(position, body)| records::decode(&body).map(|event| (position as u64, event))).transpose()
     })
 }

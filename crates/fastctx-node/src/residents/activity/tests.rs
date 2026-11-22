@@ -1,5 +1,5 @@
 use super::{LAST_ACTION, LAST_ACTION_WITHIN};
-use fastctx_storage::rusqlite::{Connection, OptionalExtension, params};
+use fastctx_storage::rusqlite::{Connection, OptionalExtension, StatementStatus, params};
 
 fn arrival(at: i128) -> [u8; 16] {
     (at ^ i128::MIN).to_be_bytes()
@@ -40,7 +40,26 @@ fn the_last_action_is_one_row_read_without_sorting() {
     }
     assert_eq!(within(0, 40).as_deref(), Some(br#"{"n":8}"#.as_slice()));
     assert_eq!(within(31, 40).as_deref(), Some(br#"{"n":7}"#.as_slice()));
-    for (sql, index) in [(LAST_ACTION, "conversation_records_order"), (LAST_ACTION_WITHIN, "conversation_records_order")] {
+    // What a conversation wrote after a span costs the asking nothing: five
+    // thousand actions later, the span's last is found in a few steps.
+    for position in 100..5100_i64 {
+        db.execute(
+            "INSERT INTO conversation_records(position,conversation,family,identity,body,modified,arrival) VALUES(?1,'c','actions',?2,'{}','',?3)",
+            params![position, format!("later-{position}"), arrival(1000 + i128::from(position)).as_slice()],
+        )
+        .expect("insert");
+    }
+    for (from, until, found) in [(0, 40, Some(br#"{"n":8}"#.as_slice())), (41, 900, None)] {
+        let mut asked = db.prepare(LAST_ACTION_WITHIN).expect("prepare");
+        let told: Option<Vec<u8>> = asked
+            .query_row(params!["c", arrival(from).as_slice(), arrival(until).as_slice()], |row| row.get(0))
+            .optional()
+            .expect("within");
+        assert_eq!(told.as_deref(), found);
+        let steps = asked.get_status(StatementStatus::VmStep);
+        assert!(steps < 200, "{steps} steps for the span {from}..{until}");
+    }
+    for (sql, index) in [(LAST_ACTION, "conversation_records_order"), (LAST_ACTION_WITHIN, "COVERING INDEX conversation_records_arrival")] {
         let mut explained = db.prepare(&format!("EXPLAIN QUERY PLAN {sql}")).expect("explain");
         let bound = vec!["c"; explained.parameter_count()];
         let plan: Vec<String> = explained
@@ -50,5 +69,32 @@ fn the_last_action_is_one_row_read_without_sorting() {
             .expect("steps");
         assert!(plan.iter().any(|step| step.contains(index)), "{plan:?}");
         assert!(plan.iter().all(|step| !step.contains("TEMP B-TREE")), "{plan:?}");
+    }
+}
+
+/// A family of few rows or none, in a conversation that wrote much else, is
+/// paged through at the cost of its own rows (`records::PAGE`).
+#[test]
+fn a_page_of_a_family_costs_that_family() {
+    let db = Connection::open_in_memory().expect("open");
+    db.execute_batch(crate::records::SCHEMA).expect("schema");
+    for position in 1..=5000_i64 {
+        db.execute(
+            "INSERT INTO conversation_records(position,conversation,family,identity,body,modified) VALUES(?1,'c','events',?2,'{}','')",
+            params![position, format!("event-{position}")],
+        )
+        .expect("insert");
+    }
+    db.execute(
+        "INSERT INTO conversation_records(position,conversation,family,identity,body,modified) VALUES(6000,'c','controls','one','{}','')",
+        [],
+    )
+    .expect("insert");
+    for (family, rows) in [("controls", 1), ("uncertain-inputs", 0)] {
+        let mut page = db.prepare(crate::records::PAGE).expect("prepare");
+        let found = page.query_map(params!["c", family, 0, 128], |row| row.get::<_, i64>(0)).expect("page").count();
+        assert_eq!(found, rows);
+        let steps = page.get_status(StatementStatus::VmStep);
+        assert!(steps < 100, "{steps} steps for a page of {family}");
     }
 }

@@ -12,8 +12,9 @@
 .sp-host {
   --side-width: 0px;
   --side-height: 0px;
-  /* How wide the side stands now, beside the conversations: its room
-     changes at once (`carry.ts`), so it is its width while it is open. */
+  /* How wide the side stands now, beside the conversations: its width
+     while it is open; as it opens and shuts, what follows it is told how
+     much room it has at every frame (`frame.ts`). */
   --side-now: 0px;
 }
 
@@ -66,16 +67,37 @@ html.framed .sp-host {
    Over the whole page, as on a phone, it keeps the page's ground over what
    it covers. The shade is the sheet's own, so that it slides with what it
    holds.
-   Opening or shutting, the desk has its new room at once, laid out once,
-   and the sheet and the conversations are carried from where they stood
-   (`carry.ts`): the room itself is bare, so what is carried shows through
-   it until the sheet has come, and as it goes. Shut, the sheet stands past
-   the desk's edge, where its room was, unseen. */
+   The sheet stands at the desk's edge as wide as the side is open,
+   whatever room it has yet, and slides from past that edge; its room
+   beside the conversations is given as it comes, a little at every frame,
+   and they are laid out for it (`app/room.ts`): the room itself is bare,
+   the sheet over it. Shut, the sheet stands past the desk's edge,
+   unseen. */
 .sp-split > .sp-panel:not(.sp-over) {
   flex: none;
+  justify-content: flex-end;
   width: 0;
   overflow: visible;
   background: none;
+}
+
+/* It slides whole, never thinned: where the conversations are a frame
+   late in giving way, it stands over what of them it has reached. */
+.sp-split > .sp-panel:not(.sp-over) > .sp-sheet {
+  translate: 100% 0;
+  opacity: 1;
+}
+
+.sp-split[data-dock="left"] > .sp-panel:not(.sp-over) > .sp-sheet {
+  translate: -100% 0;
+}
+
+.sp-split[data-dock="bottom"] > .sp-panel:not(.sp-over) > .sp-sheet {
+  translate: 0 100%;
+}
+
+.sp-host.sp-shown > .sp-split > .sp-panel:not(.sp-over) > .sp-sheet {
+  translate: none;
 }
 
 .sp-host.sp-shown > .sp-split > .sp-panel:not(.sp-over) {
@@ -243,6 +265,7 @@ html.framed .sp-host {
 }
 
 .sp-split[data-dock="right"] .sp-line {
+  --sp-corner: calc(var(--sp-switch-right) + var(--sp-corner-width, 32px) + var(--space-2));
   padding-right: var(--sp-corner);
 }
 
@@ -1076,12 +1099,12 @@ html.sh-carrying * {
 }
 
 .sp-split[data-dock="left"] > .sp-panel:not(.sp-over) {
-  justify-content: flex-end;
+  justify-content: flex-start;
 }
 
 .sp-split[data-dock="bottom"] > .sp-panel:not(.sp-over) {
   flex-direction: column;
-  justify-content: flex-start;
+  justify-content: flex-end;
   width: auto;
   height: 0;
 }

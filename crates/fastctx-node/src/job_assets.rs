@@ -19,7 +19,7 @@ use fastctx_types::ResidentId;
 use fastctx_types::run::{JobOwner, JobRecord};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::io::{Read as _, Seek as _, SeekFrom};
 use std::path::PathBuf;
 use std::sync::{Arc, Weak};
@@ -102,6 +102,22 @@ fn ran_for(node: &Node, account: &fastctx_types::access::HubAccount, job: &JobRe
     crate::assets::activity::of_this(node, &account.hub, &account.account, job.started_at.as_millisecond())
 }
 
+/// The jobs found written whole, each with the holding period it was
+/// written in, kept from one look to the next: such a job is done for as
+/// long as its scope is held so (`Standing`), and nothing of it is asked of
+/// the library again. Every job of the day was asked after at every look —
+/// where it goes, who orders its streams, how it stands — some thousands
+/// of readings every few seconds on a machine that runs many.
+type Whole = HashMap<String, i64>;
+
+/// Where the jobs of one look go: the scope of each conversation and
+/// account asked after, and its holding, found once for all its jobs.
+#[derive(Default)]
+struct Homes {
+    conversations: HashMap<ResidentId, Option<(String, i64)>>,
+    accounts: HashMap<fastctx_types::access::HubAccount, Option<(String, i64)>>,
+}
+
 /// Where a job's assets go.
 enum Home {
     /// The scope of its conversation, which lives here.
@@ -150,11 +166,18 @@ pub(crate) fn start(node: &Arc<Node>) {
         // scope is held anew (NN07, L04).
         let mut whole = true;
         let mut held = 0u64;
+        let mut written = Whole::new();
         loop {
             let Some(node) = weak.upgrade() else { return };
             if node.assets.is_some() {
                 let working = node.clone();
-                let looked = fastctx_platform::task::blocking(move || look(&working, whole, held)).await;
+                let mut known = std::mem::take(&mut written);
+                let (looked, known) = fastctx_platform::task::blocking(move || {
+                    let looked = look(&working, whole, held, &mut known);
+                    (looked, known)
+                })
+                .await;
+                written = known;
                 match looked {
                     Ok(now) => {
                         whole = false;
@@ -194,8 +217,9 @@ fn holdings(library: &Library) -> Result<u64, String> {
 /// One look at the jobs running or ended within the day, and those begun
 /// here and not finished since (MM21); `whole`, or a scope held anew since
 /// `held`, every job since the jobs here are written (NN07, L04). What the
-/// scopes are held as now.
-fn look(node: &Arc<Node>, whole: bool, held: u64) -> Result<u64, String> {
+/// scopes are held as now. `written` is what the looks before found written
+/// whole, and what this one finds.
+fn look(node: &Arc<Node>, whole: bool, held: u64, written: &mut Whole) -> Result<u64, String> {
     let Some(kept) = node.assets.as_ref() else { return Ok(held) };
     // Whose each job was and where it goes are judged by one account
     // (`assets::activity::Pinned`).
@@ -233,6 +257,8 @@ fn look(node: &Arc<Node>, whole: bool, held: u64) -> Result<u64, String> {
         }
     }
     let mut failed = None;
+    let mut homes = Homes::default();
+    written.retain(|key, _| jobs.contains_key(key));
     for (key, (job, path)) in jobs {
         let Some(home) = home_of(node, &job) else {
             if open.contains_key(&key) {
@@ -240,7 +266,7 @@ fn look(node: &Arc<Node>, whole: bool, held: u64) -> Result<u64, String> {
             }
             continue;
         };
-        match write_job(node, &home, &job) {
+        match write_job(node, &home, &job, &key, &mut homes, written) {
             Ok(true) => {}
             Ok(false) => {
                 still.insert(key, path);
@@ -261,15 +287,24 @@ fn look(node: &Arc<Node>, whole: bool, held: u64) -> Result<u64, String> {
 }
 
 /// The scope a job's assets go in at `home`, and its holding, when this
-/// machine orders their streams there.
+/// machine orders their streams there; `homes`, what this look found of
+/// the homes asked after before.
 fn writable(
     node: &Arc<Node>,
     library: &Library,
     home: &Home,
     job: &JobRecord,
+    homes: &mut Homes,
 ) -> Result<Option<(String, i64)>, String> {
     match home {
-        Home::Conversation(resident) => conversation_writable(node, library, resident),
+        Home::Conversation(resident) => {
+            if let Some(found) = homes.conversations.get(resident) {
+                return Ok(found.clone());
+            }
+            let found = conversation_writable(node, library, resident)?;
+            homes.conversations.insert(resident.clone(), found.clone());
+            Ok(found)
+        }
         Home::Account(account) => {
             // An account opened after the job began is another of that
             // name: what ran for the one before goes into no records of
@@ -277,23 +312,34 @@ fn writable(
             if opened_of(node, account).is_none() || !ran_for(node, account, job) {
                 return Ok(None);
             }
-            let (facts, output) = streams_of(node, home);
-            let Some((scope, holding)) =
-                crate::assets::activity::writable(node, library, &account.hub, &account.account, &facts)?
-            else {
-                return Ok(None);
-            };
-            let device = node.assets.as_ref().map(|assets| assets.device()).unwrap_or_default();
-            if library
-                .orderer(&scope, &output)
-                .map_err(|error| error.to_string())?
-                .is_some_and(|orderer| orderer != device)
-            {
-                return Ok(None);
+            if let Some(found) = homes.accounts.get(account) {
+                return Ok(found.clone());
             }
-            Ok(Some((scope, holding)))
+            let found = account_writable(node, library, home, account)?;
+            homes.accounts.insert(account.clone(), found.clone());
+            Ok(found)
         }
     }
+}
+
+/// The scope the jobs run for `account` go in, when this machine orders
+/// its job streams there.
+fn account_writable(
+    node: &Arc<Node>,
+    library: &Library,
+    home: &Home,
+    account: &fastctx_types::access::HubAccount,
+) -> Result<Option<(String, i64)>, String> {
+    let (facts, output) = streams_of(node, home);
+    let Some((scope, holding)) = crate::assets::activity::writable(node, library, &account.hub, &account.account, &facts)?
+    else {
+        return Ok(None);
+    };
+    let device = node.assets.as_ref().map(|assets| assets.device()).unwrap_or_default();
+    if library.orderer(&scope, &output).map_err(|error| error.to_string())?.is_some_and(|orderer| orderer != device) {
+        return Ok(None);
+    }
+    Ok(Some((scope, holding)))
 }
 
 /// The scope `resident`'s jobs go in, when this machine orders its job
@@ -339,15 +385,25 @@ fn length_of(path: &str) -> Result<Option<u64>, String> {
     }
 }
 
-/// Writes what is new of `job`, whose assets go at `home`: whether
-/// everything of it is written now.
-fn write_job(node: &Arc<Node>, home: &Home, job: &JobRecord) -> Result<bool, String> {
+/// Writes what is new of `job`, kept as `key`, whose assets go at `home`:
+/// whether everything of it is written now.
+fn write_job(
+    node: &Arc<Node>,
+    home: &Home,
+    job: &JobRecord,
+    key: &str,
+    homes: &mut Homes,
+    written: &mut Whole,
+) -> Result<bool, String> {
     let Some(kept) = node.assets.as_ref() else { return Ok(true) };
     let library = &kept.library;
     let error = |error: fastctx_content::Error| error.to_string();
+    let Some((scope, holding)) = writable(node, library, home, job, homes)? else { return Ok(false) };
+    if written.get(key) == Some(&holding) {
+        return Ok(true);
+    }
     let name = checkpoint(job);
     let named = item_of(home, job);
-    let Some((scope, holding)) = writable(node, library, home, job)? else { return Ok(false) };
     let (facts_stream, output_stream) = streams_of(node, home);
     let mut standing: Standing = library
         .checkpoint(&name)
@@ -358,6 +414,7 @@ fn write_job(node: &Arc<Node>, home: &Home, job: &JobRecord) -> Result<bool, Str
         standing = Standing { holding, ..Standing::default() };
     }
     if standing.done {
+        written.insert(key.to_string(), holding);
         return Ok(true);
     }
     let signer = kept.signer();
@@ -492,6 +549,9 @@ fn write_job(node: &Arc<Node>, home: &Home, job: &JobRecord) -> Result<bool, Str
         library
             .keep_checkpoint(&name, serde_json::to_vec(&standing).map_err(|error| error.to_string())?)
             .map_err(error)?;
+    }
+    if standing.done {
+        written.insert(key.to_string(), holding);
     }
     Ok(standing.done)
 }

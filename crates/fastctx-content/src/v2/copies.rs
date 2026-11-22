@@ -111,8 +111,11 @@ impl Library {
                          JOIN streams s ON s.id = f.stream WHERE s.scope = ?1 AND f.holding = ?2",
                     )?
                     .query_row(params![id, holding], |row| row.get::<_, i64>(0))?;
+                // Each object the copy's frames refer to, found by its hash
+                // (`+o.state`): found by their state, every object present
+                // here was gone through for each copy counted.
                 let mut statement = db.prepare_cached(
-                    "SELECT o.hash, o.size FROM objects o WHERE o.state = 1 AND o.hash IN
+                    "SELECT o.hash, o.size FROM objects o WHERE +o.state = 1 AND o.hash IN
                      (SELECT DISTINCT fo.hash FROM frame_objects fo JOIN streams s ON s.id = fo.stream
                       WHERE s.scope = ?1 AND fo.holding = ?2)",
                 )?;

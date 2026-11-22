@@ -188,6 +188,14 @@ impl<'a> Rows<'a> {
     }
 }
 
+/// A page of a family's rows in the order written, by the family's own order
+/// (`INDEXED BY`): left to choose, the rows of the conversation were gone
+/// through in the order written, every family's, for those of this one — a
+/// family with few rows or none, the controls that wait or the words not yet
+/// certain, cost the whole conversation at each asking.
+pub(crate) const PAGE: &str = "SELECT position,body FROM conversation_records INDEXED BY conversation_records_order \
+    WHERE conversation=?1 AND family=?2 AND position>?3 ORDER BY position LIMIT ?4";
+
 impl Rows<'_> {
     pub(crate) fn connection(&self) -> &Connection {
         self.connection
@@ -327,7 +335,7 @@ impl Rows<'_> {
 
     pub(crate) fn page<T: DeserializeOwned>(&self, family: &str, after: u64, limit: usize) -> Result<Vec<(u64, T)>> {
         let after = i64::try_from(after).map_err(|_| Error::new("record cursor exhausted"))?;
-        let mut query=self.connection.prepare_cached("SELECT position,body FROM conversation_records WHERE conversation=?1 AND family=?2 AND position>?3 ORDER BY position LIMIT ?4")?;
+        let mut query = self.connection.prepare_cached(PAGE)?;
         let rows = query.query_map((self.conversation, family, after, limit.clamp(1, 128) as i64), |row| {
             Ok((row.get::<_, i64>(0)?, row.get::<_, Vec<u8>>(1)?))
         })?;

@@ -1,11 +1,14 @@
-// The desk carried through a change of its room (the user, 2026-11-19: the
-// sidebar and the side should push the page aside softly, as they once did,
-// not have it leap before they slide). The desk is laid out once for where
-// the change leaves it; what stands on it is then drawn where it stood, and
-// moved to where it stands over one glide, as the sidebar or the side slides
-// in step. Laid out once, a long conversation is set once rather than every
-// moment of the glide, which made it halt (5a0df94fe), and nothing on it is
-// drawn anew as it goes: it is only moved.
+// The desk carried through a change of its room as the sidebar across it
+// folds and comes back (the user, 2026-11-19: the sidebar and the side
+// should push the page aside softly, as they once did, not have it leap
+// before they slide). The desk is laid out once for where the change leaves
+// it; what stands on it is then drawn where it stood, and moved to where it
+// stands over one glide, as the sidebar slides in step. Laid out once, a
+// long conversation is set once rather than every moment of the glide, which
+// made it halt (5a0df94fe), and nothing on it is drawn anew as it goes: it
+// is only moved. A conversation's side gives its room a little at every
+// frame instead, the conversations laid out for it as it comes
+// (`room.ts`).
 //
 // What is carried may stand, as it sets out, past the edges of the room it
 // is carried in: those edges cut nothing while it goes. A region that

@@ -11,7 +11,13 @@ use fastctx_types::{
     owned_records::{Request, Response},
     replicas::{Document, Head, Scope},
 };
-use std::{path::PathBuf, sync::Arc};
+use fastctx_types::ResidentId;
+use std::{
+    collections::HashMap,
+    path::PathBuf,
+    sync::{Arc, LazyLock, Mutex},
+    time::{Duration, Instant},
+};
 
 fn failure(error: impl std::fmt::Display) -> String {
     error.to_string()
@@ -51,6 +57,39 @@ pub(crate) fn permitted(node: &Node, copy: &Copy) -> Result<(), String> {
     super::publication::permitted(node, &state::Route::from(copy))
 }
 
+/// A registration the hub refused is asked again after this long, then
+/// twice as long each time it is refused again, an hour at most. A
+/// conversation of an account that is no more, or that this machine may no
+/// longer act for, was asked of the hub at every pass and said in the log
+/// each time — every conversation of that account, one hub exchange each.
+const REFUSED_AGAIN: Duration = Duration::from_secs(60);
+const REFUSED_AGAIN_MOST: Duration = Duration::from_secs(60 * 60);
+
+/// A registration refused: how many times in a row, when it is asked again,
+/// and what was said last.
+type Refusal = (u32, Instant, String);
+
+static REFUSED: LazyLock<Mutex<HashMap<ResidentId, Refusal>>> = LazyLock::new(Mutex::default);
+
+fn refused_lately(resident: &ResidentId) -> bool {
+    REFUSED.lock().expect("refused registrations").get(resident).is_some_and(|(_, again, _)| Instant::now() < *again)
+}
+
+/// Notes that `resident`'s registration was refused with `why`: whether
+/// that is news — the first time, or another reason than last.
+fn refused(resident: &ResidentId, why: &str) -> bool {
+    let mut refused = REFUSED.lock().expect("refused registrations");
+    let (tries, again, said) = refused.entry(resident.clone()).or_insert((0, Instant::now(), String::new()));
+    let after = REFUSED_AGAIN.saturating_mul(1 << (*tries).min(16)).min(REFUSED_AGAIN_MOST);
+    *tries = tries.saturating_add(1);
+    *again = Instant::now() + after;
+    let news = said != why;
+    if news {
+        *said = why.to_string();
+    }
+    news
+}
+
 pub(crate) async fn all(node: &Arc<Node>, link: &Arc<Link>) -> Result<(), String> {
     if !link.view().shared_records {
         return Ok(());
@@ -66,8 +105,18 @@ pub(crate) async fn all(node: &Arc<Node>, link: &Arc<Link>) -> Result<(), String
         return super::publication::prune(node).await;
     };
     for resident in node.residents.everyone().filter(|resident| resident.removed.is_none()) {
-        if let Err(error) = crate::record_ownership::register(node, &resident.id, &resident.about.acting).await {
-            node.log.line(format_args!("registering the records of {}: {error}", resident.id));
+        if refused_lately(&resident.id) {
+            continue;
+        }
+        match crate::record_ownership::register(node, &resident.id, &resident.about.acting).await {
+            Ok(()) => {
+                REFUSED.lock().expect("refused registrations").remove(&resident.id);
+            }
+            Err(error) => {
+                if refused(&resident.id, &error.message) {
+                    node.log.line(format_args!("registering the records of {}: {error}", resident.id));
+                }
+            }
         }
     }
     let known: Vec<_> = node
