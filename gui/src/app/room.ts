@@ -1,6 +1,8 @@
 // A sheet at the desk's edge comes and goes, and the page beside it gives
 // way as it does (the user, 2026-11-21: "正文文字，没有被侧栏温柔推开的动画，
-// 而是正文瞬间缩小宽度", "侧栏宽度逐帧增长、正文同步逐帧重排").
+// 而是正文瞬间缩小宽度", "侧栏宽度逐帧增长、正文同步逐帧重排"). This is the
+// way of a page whose lines must be set anew as it narrows; one that keeps
+// its column whole is only moved (`carry.ts`).
 //
 // The sheet stands at the edge, as large as it is open, and is only moved:
 // by the compositor, which waits for no layout. Its room beside the page is
@@ -26,9 +28,9 @@ export type Giving = {
   /** The room it takes open, in pixels. */
   size: number;
   open: boolean;
-  /** Gives the sheet `room` pixels beside the page, `share` of all it takes;
-   *  none once the glide is over and the room is the style sheet's again. */
-  room(room: number | null, share: number): void;
+  /** Gives the sheet `room` pixels beside the page; none once the glide is
+   *  over and the room is the style sheet's again. */
+  room(room: number | null): void;
 };
 
 /** Slides `sheet` open or shut over one glide, its room given in step. A
@@ -41,7 +43,7 @@ export function give(sheet: HTMLElement, { away, size, open, room }: Giving): vo
   const to = open ? 1 : 0;
   under?.stop();
   if (!whole || from === to || typeof sheet.animate !== "function") {
-    room(null, to);
+    room(null);
     return;
   }
   // As a transform, and its end heard as an event: a system browser years
@@ -64,7 +66,7 @@ export function give(sheet: HTMLElement, { away, size, open, room }: Giving): vo
     // A frame the sheet did not move a pixel in lays nothing out.
     if (pixels !== given) {
       given = pixels;
-      room(pixels, now);
+      room(pixels);
     }
     frame = requestAnimationFrame(step);
   };
@@ -75,20 +77,25 @@ export function give(sheet: HTMLElement, { away, size, open, room }: Giving): vo
       gliding.delete(sheet);
       animation.cancel();
     },
-    clear: () => room(null, to),
+    clear: () => room(null),
   };
   gliding.set(sheet, state);
   // Its room as the glide sets out, before anything is painted: the style
   // sheet has given it all, or none, already.
   given = Math.round(size * from);
-  room(given, from);
+  room(given);
   frame = requestAnimationFrame(step);
   animation.onfinish = () => {
     if (gliding.get(sheet) !== state) return;
     cancelAnimationFrame(frame);
     gliding.delete(sheet);
-    room(null, to);
+    room(null);
   };
+}
+
+/** Whether `sheet` glides now. */
+export function glides(sheet: HTMLElement): boolean {
+  return gliding.has(sheet);
 }
 
 /** Ends the glide of `sheet` where the style sheet has it, as the desk is

@@ -12,16 +12,7 @@
 .sp-host {
   --side-width: 0px;
   --side-height: 0px;
-  /* How wide the side stands now, beside the conversations: its width
-     while it is open; as it opens and shuts, what follows it is told how
-     much room it has at every frame (`frame.ts`). */
-  --side-now: 0px;
 }
-
-.sp-host.sp-shown {
-  --side-now: var(--side-width);
-}
-
 
 .sp-split {
   position: relative;
@@ -33,12 +24,11 @@
 /* The desk's top right corner: one line, where the conversation in focus
    works, the side's "⋯" and its switch, before the window's own buttons
    where they are drawn. A head in that line keeps clear of it
-   (`--sp-corner`), as wide as the line is now (`--sp-corner-width`,
-   `frame.ts`). */
+   (`--sp-corner`, `desk.css`), as wide as the line is now
+   (`--sp-corner-width`, `frame.ts`). */
 .sp-host {
   --sp-switch-top: calc(var(--safe-top) + 10px);
   --sp-switch-right: var(--space-3);
-  --sp-corner: calc(var(--sp-switch-right) + var(--sp-corner-width, 32px) + var(--space-2));
 }
 
 html.framed .sp-host {
@@ -413,7 +403,6 @@ html.framed .sp-panel.sp-over .sp-line {
   font-size: var(--size-fine);
 }
 
-
 /* A tab's cross keeps its room, so no name moves as it comes: it is there
    on the tab in view, and on one the pointer rests on. */
 .sp-tab-shut {
@@ -456,11 +445,6 @@ html.framed .sp-panel.sp-over .sp-line {
 
 .sp-panel.sp-over .sp-out {
   display: none;
-}
-
-/* With the side open beside them, the conversations keep a narrow margin. */
-.sp-host.sp-shown:not(.sp-over) > .sp-split:not([data-dock="bottom"]) > .desk-panes {
-  --gutter: var(--space-2);
 }
 
 .sp-page[hidden] {
@@ -1060,7 +1044,6 @@ html.sh-carrying * {
   display: none;
 }
 
-
 .sp-host.sp-over.sp-visible .sp-corner-bar {
   display: none;
 }
@@ -1154,7 +1137,6 @@ html.sh-carrying * {
   height: 10px;
   cursor: row-resize;
 }
-
 
 /* The side's "⋯": where the side stands, in a small menu under its
    button. */
@@ -1326,8 +1308,6 @@ html.sh-carrying * {
 .sp-panel.sp-over .sp-margin {
   display: none;
 }
-
-
 
 /* The goal's bar, among the words waiting above the input. */
 .gb-bar {
