@@ -69,7 +69,7 @@ const SCENARIOS: [&str; 19] = [
 
 /// The longest a scenario may take.
 const LONGEST: Duration = Duration::from_secs(8 * 60);
-pub const EXPECTED_EARLIER: &str = "1.0.1-beta.23";
+pub const EXPECTED_EARLIER: &str = "1.0.1-beta.24";
 static EARLIER_VERSION: std::sync::OnceLock<String> = std::sync::OnceLock::new();
 pub fn expected_earlier() -> &'static str {
     EARLIER_VERSION.get().map_or(EXPECTED_EARLIER, String::as_str)
