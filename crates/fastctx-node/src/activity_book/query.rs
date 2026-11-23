@@ -27,21 +27,27 @@ pub(crate) async fn answer(
     let Some(target) = machine.filter(|machine| !node.is_here(machine)) else {
         return answer_here(node, None, query).await;
     };
-    // While it is away, from the copies here (plan 3-5); reached, it is
-    // asked, its copies here written no more since beta.26.
-    let (asking, whose, written, asked) = (node.clone(), acting.clone(), target.clone(), query.clone());
-    if let Ok(Some(answer)) =
-        fastctx_platform::task::spawn_blocking(move || super::copied::answer(&asking, &whose, &written, &asked)).await
+    // The machine, which tells all of it; from the copies here (plan 3-5)
+    // where it is away or does not answer, as a login's use is
+    // (`logins::remote::usage`): no machine writes them since beta.26.
+    let copied = || {
+        let (asking, whose, written, asked) = (node.clone(), acting.clone(), target.clone(), query.clone());
+        fastctx_platform::task::spawn_blocking(move || super::copied::answer(&asking, &whose, &written, &asked))
+    };
+    if crate::timeline::copy::away(node, &target.name)
+        && let Ok(Some(answer)) = copied().await
     {
         return Ok(answer);
     }
-    match node
-        .call(acting, &target, Purpose::Hands, RemoteCall::Book { query })
-        .await
-        .map_err(crate::authorization::call_failure)??
-    {
-        RemoteReply::Book(answer) => Ok(*answer),
-        _ => Err(Failure::new(format!("{target} answered something other than its activity"))),
+    let asked = match node.call(acting, &target, Purpose::Hands, RemoteCall::Book { query: query.clone() }).await {
+        Ok(Ok(RemoteReply::Book(answer))) => return Ok(*answer),
+        Ok(Ok(_)) => return Err(Failure::new(format!("{target} answered something other than its activity"))),
+        Ok(Err(failure)) => failure,
+        Err(failure) => crate::authorization::call_failure(failure),
+    };
+    match copied().await {
+        Ok(Some(answer)) => Ok(answer),
+        _ => Err(asked),
     }
 }
 

@@ -44,7 +44,7 @@ fn only_the_pictures_a_record_holds_with_their_bytes_are_taken_as_held() {
         line(serde_json::json!([image(""), text(format!("[Image: source: {}]", at(EMPTY)))])),
         "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"no pictures\"}]}}".to_string(),
     ];
-    std::fs::write(&transcript, lines.join("\n")).unwrap();
+    fastctx_platform::disk::write(&transcript, lines.join("\n")).unwrap();
     let held = held_inline(&transcript).unwrap();
     assert!(held.contains(SHOWN));
     assert!(held.contains(RESIZED));

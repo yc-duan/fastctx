@@ -156,7 +156,19 @@ fn clear(directory: &Path, most: usize) -> std::io::Result<(usize, Option<String
     if old.is_empty() {
         return Ok((0, None));
     }
-    let held = held_inline(&transcript)?;
+    let mut held = held_inline(&transcript)?;
+    // The agents the session started hold the pictures they were answered
+    // with in records of their own, the files beside the session's.
+    if let Some(agents) = fastctx_hosts::claude::subagents::directory(&transcript)
+        && let Ok(entries) = fastctx_platform::disk::read_dir(&agents)
+    {
+        for entry in entries.flatten() {
+            let record = entry.path();
+            if record.extension().is_some_and(|extension| extension == "jsonl") {
+                held.extend(held_inline(&record)?);
+            }
+        }
+    }
     let (mut gone, mut failed) = (0, None);
     for (name, path) in old {
         if gone >= most {

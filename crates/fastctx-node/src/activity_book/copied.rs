@@ -4,8 +4,8 @@
 //! earlier version kept without their deeds; a body's `records` scope what a
 //! machine shared whole did for its members. Its book is answered from them
 //! as it would answer the accounts asking — what it did for them, and for
-//! its own user where one of them owns it — only while the machine is away:
-//! since beta.26 no machine writes there, so a machine reached is asked.
+//! its own user where one of them owns it — only while the machine is away
+//! or does not answer (`query`): since beta.26 no machine writes there.
 
 use crate::Node;
 use fastctx_content::v2::{AccountActivity, Entry, Kind as _, Library};
@@ -19,15 +19,11 @@ const MOST: usize = 2000;
 /// An hour, in milliseconds.
 const HOUR: i64 = 3_600_000;
 
-/// `written`'s book as the copies here have it for `acting`, while it is
-/// away; none when it is not, its name alone could be two machines of two
-/// networks, a deed's body is not all here, or no copy here has anything of
-/// it.
+/// `written`'s book as the copies here have it for `acting`; none when its
+/// name alone could be two machines of two networks, a deed's body is not
+/// all here, or no copy here has anything of it.
 pub(crate) fn answer(node: &Node, acting: &Acting, written: &Written, query: &BookQuery) -> Option<BookAnswer> {
     let machine = &written.name;
-    if !crate::timeline::copy::away(node, machine) {
-        return None;
-    }
     let library = &node.assets.as_ref()?.library;
     // Its stream on the network it is named on, or on each that lists it
     // as the same machine, and whose the accounts asking are.
