@@ -1,7 +1,7 @@
 //! An event as the timeline keeps it. The host's raw record of an item or a
 //! message, which the event carries for the machine it lives on, repeats the
-//! bytes of every picture in it; the timeline keeps that record without them,
-//! since the pictures are read from the host's own record when they are shown.
+//! bytes of every picture the event already holds once (a tool's output, a
+//! message's own blocks); the timeline keeps that raw record without them.
 //! An event so kept is always written with the likeness of the event as the
 //! host told it, so that a later writing of the same event is known to be
 //! the same, whichever form an earlier release kept it in: a kept event is
@@ -16,18 +16,14 @@ use sha2::{Digest, Sha256};
 /// it carries none.
 pub(super) fn form(event: &SessionEvent) -> Option<SessionEvent> {
     match &event.happened {
+        // The message's own blocks keep its pictures, as readers name them
+        // by their bytes there; the host's whole line repeats them.
         Happened::Heard { message: Some(message), .. } => {
-            let carries = message.content.iter().any(carries) || carries(&message.detail);
-            if !carries {
+            if !carries(&message.detail) {
                 return None;
             }
             let mut kept = event.clone();
             if let Happened::Heard { message: Some(message), .. } = &mut kept.happened {
-                // Named by their bytes first, while the bytes are here.
-                fastctx_net::history::fingerprints(message);
-                for block in &mut message.content {
-                    strip(block);
-                }
                 strip(&mut message.detail);
             }
             Some(kept)
@@ -63,12 +59,17 @@ fn carries(value: &Value) -> bool {
 fn strip(value: &mut Value) {
     match value {
         Value::Object(map) => {
-            if map.get("type").and_then(Value::as_str) == Some("image")
-                && let Some(Value::Object(source)) = map.get_mut("source")
-                && source.get("type").and_then(Value::as_str) == Some("base64")
-                && let Some(Value::String(data)) = source.get_mut("data")
-            {
-                data.clear();
+            if image_data(map).is_some() {
+                if let Some(Value::Object(source)) = map.get_mut("source")
+                    && let Some(Value::String(data)) = source.get_mut("data")
+                {
+                    data.clear();
+                }
+                for field in ["data", "result"] {
+                    if let Some(Value::String(data)) = map.get_mut(field) {
+                        data.clear();
+                    }
+                }
             }
             for value in map.values_mut() {
                 strip(value);
@@ -85,23 +86,43 @@ fn strip(value: &mut Value) {
     }
 }
 
-/// The base64 bytes of an image block, `{"type": "image", "source": {"type":
-/// "base64", "data": …}}`.
+/// The base64 bytes of a picture in a raw record: Claude's image block
+/// `{"type": "image", "source": {"type": "base64", "data": …}}`, an MCP image
+/// as Codex keeps it `{"type": "image", "mimeType": …, "data": …}`, or a
+/// Codex image generation's `{"type": "imageGeneration", "result": …}`.
 fn image_data(map: &serde_json::Map<String, Value>) -> Option<&str> {
-    if map.get("type").and_then(Value::as_str) != Some("image") {
-        return None;
+    match map.get("type").and_then(Value::as_str)? {
+        "image" => match map.get("source") {
+            Some(source) => {
+                let source = source.as_object()?;
+                if source.get("type").and_then(Value::as_str) != Some("base64") {
+                    return None;
+                }
+                source.get("data")?.as_str()
+            }
+            None => map.get("data")?.as_str(),
+        },
+        "imageGeneration" => map.get("result")?.as_str(),
+        _ => None,
     }
-    let source = map.get("source")?.as_object()?;
-    if source.get("type").and_then(Value::as_str) != Some("base64") {
-        return None;
-    }
-    source.get("data")?.as_str()
 }
 
 /// The payload of a picture written inline as `data:image/…;base64,…`.
 fn inline_payload(text: &str) -> Option<&str> {
     let rest = text.strip_prefix("data:image/")?;
     rest.split_once(";base64,").map(|(_, payload)| payload)
+}
+
+/// The bytes of the object the record of `event` would be kept with, as
+/// `assets::body` makes it: offered before the record is written.
+pub(crate) fn object_of(event: &SessionEvent) -> Result<Option<Vec<u8>>, serde_json::Error> {
+    match form(event) {
+        Some(stored) => serde_json::to_vec(&stored).map(Some),
+        None => {
+            let encoded = serde_json::to_vec(event)?;
+            Ok((encoded.len() >= fastctx_content::RECORD_BYTES).then_some(encoded))
+        }
+    }
 }
 
 /// The likeness the record `body` keeps or makes of its event: told by an

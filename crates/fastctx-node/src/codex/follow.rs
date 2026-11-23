@@ -60,13 +60,23 @@ pub(crate) async fn window(
     let accept = move |at: Timestamp| turns.accepts(at);
     let seam = from.unwrap_or_default();
     let keeping = reading.map(|reading| reading as &mut dyn Keeping);
-    let Some((tail, restarted)) = codex.follow(&thread, &owner, &seam, &accept, keeping).await? else { return Ok(None) };
+    let Some((tail, restarted)) = codex.follow(&thread, &owner, &seam, &accept, keeping).await? else {
+        return Ok(None);
+    };
     if let Some(why) = restarted {
         node.log.line(format_args!("{resident}'s thread is read from its start: {why}"));
     }
     let since = if tail.whole { Timestamp::MIN } else { tail.since.unwrap_or(Timestamp::MAX) };
     let settled = tail.settled.unwrap_or(since);
-    Ok(Some(Window { events: tail.events, kept: tail.kept, whole: tail.whole, since, seam: tail.seam, settled, through: tail.through }))
+    Ok(Some(Window {
+        events: tail.events,
+        kept: tail.kept,
+        whole: tail.whole,
+        since,
+        seam: tail.seam,
+        settled,
+        through: tail.through,
+    }))
 }
 
 /// A whole reading of a thread kept on disk as it is read (design §28.51),
@@ -120,10 +130,25 @@ impl Reading {
     /// one that `watch::recorded` would leave out is of a turn the host has
     /// none of, which no event of the host's asks after. Nothing is opened
     /// until it begins.
-    pub(crate) fn kept(node: &Node, resident: &ResidentId, sent: HashSet<String>, names: merging::Names, spill: Spill) -> Self {
+    pub(crate) fn kept(
+        node: &Node,
+        resident: &ResidentId,
+        sent: HashSet<String>,
+        names: merging::Names,
+        spill: Spill,
+    ) -> Self {
         let directory = node.world.conversation(resident);
         let library = node.assets.as_ref().map(|assets| (assets.library.clone(), resident.clone()));
-        Self { spill, directory: Some(directory.clone()), prepared: false, receipts: Some(directory), sent, library, names, kept: Kept::default() }
+        Self {
+            spill,
+            directory: Some(directory.clone()),
+            prepared: false,
+            receipts: Some(directory),
+            sent,
+            library,
+            names,
+            kept: Kept::default(),
+        }
     }
 
     /// A reading of a thread with no conversation's files, kept in `spill`:
@@ -132,7 +157,16 @@ impl Reading {
     #[cfg(feature = "bench")]
     pub(crate) fn bare(spill: Spill, library: Option<(fastctx_content::v2::Library, ResidentId)>) -> Self {
         let names = merging::Names::over(&[]);
-        Self { spill, directory: None, prepared: true, receipts: None, sent: HashSet::new(), library, kept: Kept::default(), names }
+        Self {
+            spill,
+            directory: None,
+            prepared: true,
+            receipts: None,
+            sent: HashSet::new(),
+            library,
+            kept: Kept::default(),
+            names,
+        }
     }
 
     /// What it kept: the store and what was taken of the host's events.
@@ -201,11 +235,19 @@ impl Keeping for Reading {
         let (directory, receipts, sent) = (self.directory.as_ref(), self.receipts.as_ref(), &self.sent);
         let show = move |mut event: SessionEvent| -> Result<Vec<SessionEvent>, String> {
             if let Some(directory) = directory {
-                crate::context::input::Projection::prepared(directory).restore(&mut event).map_err(|error| error.to_string())?;
+                crate::context::input::Projection::prepared(directory)
+                    .restore(&mut event)
+                    .map_err(|error| error.to_string())?;
             }
             Ok(match receipts {
-                Some(receipts) => crate::talk::shown(event, &crate::attachments::delivered::at(receipts.clone()), "codex", &|turn| sent.contains(turn)),
-                None => crate::talk::shown(event, &fastctx_types::session::attachments::NoReceipts, "codex", &|turn| sent.contains(turn)),
+                Some(receipts) => {
+                    crate::talk::shown(event, &crate::attachments::delivered::at(receipts.clone()), "codex", &|turn| {
+                        sent.contains(turn)
+                    })
+                }
+                None => crate::talk::shown(event, &fastctx_types::session::attachments::NoReceipts, "codex", &|turn| {
+                    sent.contains(turn)
+                }),
             })
         };
         // Only words reach the conversation's files, for their context and
@@ -225,9 +267,9 @@ impl Keeping for Reading {
             if let Some(early) = &self.kept.early
                 && packed.len() >= fastctx_content::RECORD_BYTES / 8
             {
-                let encoded = serde_json::to_vec(&shown).map_err(|error| error.to_string())?;
-                if encoded.len() >= fastctx_content::RECORD_BYTES {
-                    early.offer(&encoded);
+                // As its record will keep it (`timeline::stored`).
+                if let Some(object) = crate::timeline::stored::object_of(&shown).map_err(|error| error.to_string())? {
+                    early.offer(&object);
                 }
             }
             self.spill.push_hosted(packed)?;

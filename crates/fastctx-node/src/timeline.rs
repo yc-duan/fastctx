@@ -35,7 +35,7 @@ mod order;
 mod preview;
 pub(crate) mod reads;
 mod serial;
-mod stored;
+pub(crate) mod stored;
 pub(crate) mod spill;
 pub(crate) mod viewed;
 pub(crate) mod world;
