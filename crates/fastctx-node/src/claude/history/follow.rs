@@ -415,7 +415,9 @@ pub(crate) async fn window(
             Err(error) => return Err(format!("{}: {error}", path.display())),
         }
     };
-    // What a reading from the seam read, as much as it costs.
+    // How long the rows a reading from the seam takes up are: what it parses
+    // and places — not what the disk gave, which reading again, the seam's
+    // checks and earlier sessions add to.
     fastctx_platform::readings::counter("timeline.claude.from_the_seam_bytes").add(tail.end.saturating_sub(seam.offset));
     // Stopped before a line larger than World reads (§28.49): not followed
     // past a seam, read whole as ever, where a reading short of the record
@@ -641,6 +643,8 @@ pub(crate) async fn onward(
             Err(error) => return Err(format!("{}: {error}", path.display())),
         }
     };
+    // As above, of a reading on from inside a turn: a look written on, or
+    // a window seeded after a reading from the seam.
     fastctx_platform::readings::counter("timeline.claude.onward_bytes").add(tail.end.saturating_sub(read.offset));
     if tail.transcript.refused.is_some() {
         return Ok(Err("a line larger than World reads"));

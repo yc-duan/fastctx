@@ -152,8 +152,12 @@ pub(super) fn short_of_kept() {
 /// What an event of the World's record that is not `plain` tells, for its
 /// counter: what kind of event keeps a window from standing.
 fn placing(event: &SessionEvent, turn: Option<&str>) -> &'static str {
-    if crate::talk::turn_of(&event.happened).is_some_and(|of| Some(of) != turn) {
-        return "of another turn";
+    if let Some(of) = crate::talk::turn_of(&event.happened)
+        && Some(of) != turn
+    {
+        // An agent's turn beside the one under way, or a turn told of when
+        // none is under way (one just ended, say).
+        return if turn.is_some() { "of another turn" } else { "of a turn not under way" };
     }
     if !event.happened.in_history() {
         return "of no history";
@@ -310,14 +314,10 @@ fn derive(
             made.push(shown);
         }
     }
+    if let Err(why) = world_stands(world, turn, after) {
+        return Ok(Err(why));
+    }
     for event in world {
-        if after.is_some_and(|after| event.at <= after) {
-            return Ok(Err("an event of the World's record no later than the place"));
-        }
-        if !plain(event, turn) {
-            readings::counter_of("timeline.onward.placing", &kind_of(placing(event, turn))).add(1);
-            return Ok(Err("an event of the World's record that places others"));
-        }
         let mut event = event.clone();
         if let Some(directory) = directory {
             crate::run_facts::attach(directory, &mut event).map_err(crate::record_migration::failure)?;
@@ -326,6 +326,23 @@ fn derive(
         made.insert(at, event);
     }
     Ok(Ok(made))
+}
+
+/// Whether every event of the World's record past a place (`world`) is one a
+/// window puts among its items (`derive`): later than `after`, the latest
+/// time before the place, and `plain` in `turn`. Why not, the kind of event
+/// that is not counted (`placing`).
+fn world_stands(world: &[SessionEvent], turn: Option<&str>, after: Option<Timestamp>) -> Result<(), &'static str> {
+    for event in world {
+        if after.is_some_and(|after| event.at <= after) {
+            return Err("an event of the World's record no later than the place");
+        }
+        if !plain(event, turn) {
+            readings::counter_of("timeline.onward.placing", &kind_of(placing(event, turn))).add(1);
+            return Err("an event of the World's record that places others");
+        }
+    }
+    Ok(())
 }
 
 /// Where the record ids before `resident`'s seam are kept, for a reading on.
@@ -612,6 +629,12 @@ pub(super) async fn seed(
     if judged.left.len() > LEFT_MOST {
         return not("a window too long to hold");
     }
+    // What the World's record tells past the place that a window cannot put
+    // among its items keeps one from standing whatever the rows show: found
+    // before they are read again.
+    if let Err(why) = world_stands(&judged.world, judged.turn.as_deref(), judged.read.latest) {
+        return not(why);
+    }
     let held: Arc<HashSet<u64>> = Arc::new(judged.left.iter().copied().collect());
     let Ok(seen) = seen_of(library, resident).await else { return unseeded("the record ids before the seam not read") };
     let onward = match history::onward(node, resident, &session, &next.earlier, &judged.read, held, seen).await {
@@ -717,13 +740,19 @@ pub(super) async fn advance(
     };
     let history::Onward { events, next: moved, passed, title, kept, kept_here, end, path, .. } = onward;
     // The last record its mod saw kept: among the rows read now, or those
-    // between the seam and the place. Found in neither, Claude Code has not
-    // written it yet — it writes its file a moment after it keeps a record
-    // (2.1.322: a fifth of a second, now and then many), and a look comes as
-    // it keeps one — and what it writes goes past what is read now: what
-    // the file holds is written on all the same, and read again shortly
-    // (`unread`), as a reading from the seam reads it.
-    let kept_here = kept_here || kept.as_ref().is_some_and(|kept| window.left.contains(&history::left_key(&format!("{}{kept}", fastctx_hosts::claude::transcript::follow::KEY_ROW))));
+    // between the seam and the place — a row of its record id, or a queued
+    // attachment bringing it, as a reading from the seam counts it. Found in
+    // neither, Claude Code has not written it yet — it writes its file a
+    // moment after it keeps a record (2.1.322: a fifth of a second, now and
+    // then many), and a look comes as it keeps one — and what it writes goes
+    // past what is read now: what the file holds is written on all the same,
+    // and read again shortly (`unread`), as a reading from the seam reads it.
+    let left_holds = |prefix: &str, uuid: &str| window.left.contains(&history::left_key(&format!("{prefix}{uuid}")));
+    let kept_here = kept_here
+        || kept.as_ref().is_some_and(|kept| {
+            use fastctx_hosts::claude::transcript::follow::{KEY_QUEUED, KEY_ROW};
+            left_holds(KEY_ROW, kept) || left_holds(KEY_QUEUED, kept)
+        });
     let unread = kept.is_some() && !kept_here && kept != state.kept;
     let Some(placed) = assets::placed(node, about)? else { return leave("no scope") };
     let (hub, scope) = (placed.hub.clone(), placed.scope.clone());
@@ -770,12 +799,12 @@ pub(super) async fn advance(
     }
     readings::counter("timeline.onward.looks").add(1);
     if unread {
-        // Read again after a while that grows as it goes on unwritten (a
-        // record its mod saw may never reach the file under its UUID).
         short_of_kept();
-        super::unread_again(resident);
     }
-    let produced = Produced { written, gone, unread, long_changed, verified: state.verified, handing: false, read: false };
+    // Read again after a while that grows as it goes on unwritten (a record
+    // its mod saw may never reach the file under its UUID): as the job that
+    // brought it says (`brought`), not a viewer.
+    let produced = Produced { written, gone, unread, long_changed, verified: state.verified, handing: false, read: false, on: true };
     if !holds {
         left_to_the_seam("a window too long to hold");
         return Ok(Step::Done(produced));

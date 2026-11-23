@@ -410,3 +410,27 @@ fn a_compaction_past_one_whose_context_was_not_told_is_read_whole() {
     );
     let _ = fastctx_platform::disk::remove_dir_all(&dir);
 }
+
+/// A message queued while the turn ran reaches the record as an attachment
+/// bringing it (2.1.303): a reading counts it as in the record, so the
+/// rows a place read through moves past leave it as they leave their own
+/// record ids — a look on from the place finds what its mod saw kept there.
+#[test]
+fn a_queued_message_a_place_moves_past_is_left_for_the_rows_after_it() {
+    let dir = folder("queued-past-the-place");
+    let path = dir.join("record.jsonl");
+    let (mut record, seam, before, said) = begun(&path);
+    let accept = move |at: Timestamp| at <= said;
+    let at = record.at();
+    record.push(json!({"type": "attachment", "uuid": "q1", "timestamp": at,
+                       "attachment": {"type": "queued_command", "source_uuid": "said-meanwhile", "prompt": "and this"}}));
+    record.round();
+    record.round();
+    record.write(&path);
+    let (judged, _, keys) = read_kept(&path, &seam, &before, None, &accept);
+    let judged = judged.unwrap_or_else(|why| panic!("read whole: {why}"));
+    assert!(judged.read.is_some(), "a place read through past the attachment");
+    assert!(keys.contains(&format!("{KEY_QUEUED}said-meanwhile")), "{keys:?}");
+    assert!(keys.contains(&format!("{KEY_ROW}q1")), "{keys:?}");
+    let _ = fastctx_platform::disk::remove_dir_all(&dir);
+}

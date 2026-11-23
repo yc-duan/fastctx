@@ -387,6 +387,10 @@ pub const KEY_SOURCE: &str = "s:";
 /// summary, or what Claude Code writes between it and its compaction); and
 /// what a compaction says it kept.
 pub const KEY_PARENT: &str = "n:";
+/// And the message a queued attachment brings (`queued_command`'s
+/// `source_uuid`), which a reading counts as in the record as it counts the
+/// rows' own record ids (`Transcript::uuids`).
+pub const KEY_QUEUED: &str = "q:";
 
 /// The record ids `row` takes back (`project_rows`, `removed`).
 fn taken_back(row: &super::Row) -> impl Iterator<Item = &str> {
@@ -451,6 +455,12 @@ fn keys_left(row: &super::Row, before: &dyn Fn(&str) -> io::Result<bool>, each: 
     }
     if let Some(source) = row.value.get("sourceToolAssistantUUID").and_then(Value::as_str) {
         each(&format!("{KEY_SOURCE}{source}"))?;
+    }
+    if row.kind() == Some("attachment")
+        && row.value.pointer("/attachment/type").and_then(Value::as_str) == Some("queued_command")
+        && let Some(source) = row.value.pointer("/attachment/source_uuid").and_then(Value::as_str).filter(|source| !source.is_empty())
+    {
+        each(&format!("{KEY_QUEUED}{source}"))?;
     }
     Ok(())
 }

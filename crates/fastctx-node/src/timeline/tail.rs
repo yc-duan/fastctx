@@ -481,6 +481,9 @@ pub(super) struct Produced {
     /// Brought by a reading of its history — from the seam, or whole — not
     /// found unchanged nor written on from inside a turn (`onward`).
     pub(super) read: bool,
+    /// Written on from inside a turn (`onward`): read just now too, as far
+    /// as how long a history read short of a source waits (`brought`).
+    pub(super) on: bool,
 }
 
 fn failure(error: impl std::fmt::Display) -> Failure {
@@ -1453,7 +1456,7 @@ async fn produce_step(
         Some((through, recorded, told)) => codex_onward::seed(node, resident, &library, &written_to, &state, through, recorded, told, producing.clone()).await,
         None => codex_onward::forget_of(resident),
     }
-    Ok(Done(Produced { written: wrote.written, gone: wrote.gone, unread, long_changed, verified, handing: false, read: true }))
+    Ok(Done(Produced { written: wrote.written, gone: wrote.gone, unread, long_changed, verified, handing: false, read: true, on: false }))
 }
 
 /// The facts of the runs `resident`'s conversation tells of brought to the
@@ -1931,14 +1934,17 @@ fn brought(node: &Arc<Node>, resident: &ResidentId, begun: Instant, produced: Re
     match produced {
         Ok(produced) if produced.handing => Outcome::Again { after: HANDING_AGAIN },
         Ok(produced) => {
-            failures::brought(resident);
+            if produced.read || produced.on || produced.written + produced.gone > 0 {
+                failures::brought(resident);
+            }
             if produced.written + produced.gone > 0 || cfg!(feature = "timeline-drill") {
                 node.log.line(format_args!("{resident}'s asset timeline: {} written, {} gone", produced.written, produced.gone));
             }
             if produced.unread {
-                // Read just now, it waits longer than it did; found
-                // unchanged meanwhile, it waits what is left.
-                let after = if produced.read { unread_again(resident) } else { unread_waits(resident).unwrap_or(UNREAD_AGAIN) };
+                // Read just now — from the seam, whole, or on from inside a
+                // turn — it waits longer than it did; found unchanged
+                // meanwhile, it waits what is left.
+                let after = if produced.read || produced.on { unread_again(resident) } else { unread_waits(resident).unwrap_or(UNREAD_AGAIN) };
                 return Outcome::Again { after };
             }
             UNREAD.lock().expect("unread timelines").remove(resident);

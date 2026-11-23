@@ -13,6 +13,8 @@ static FAILED: LazyLock<Mutex<HashMap<ResidentId, String>>> = LazyLock::new(Mute
 /// The most conversations whose last failure is held: past them all are let
 /// go, those of conversations long quiet among them.
 const HELD_MOST: usize = 4096;
+/// The most of a failure's words held and told.
+const WORDS_MOST: usize = 1024;
 
 fn held() -> std::sync::MutexGuard<'static, HashMap<ResidentId, String>> {
     FAILED.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -21,6 +23,10 @@ fn held() -> std::sync::MutexGuard<'static, HashMap<ResidentId, String>> {
 /// `resident`'s timeline failed with `message`: told unless it is the last
 /// failure told of it.
 pub(super) fn failed(node: &crate::Node, resident: &ResidentId, message: &str) {
+    let message = match message.char_indices().nth(WORDS_MOST) {
+        Some((cut, _)) => &message[..cut],
+        None => message,
+    };
     let mut failed = held();
     if failed.get(resident).is_some_and(|told| told == message) {
         return;
@@ -33,7 +39,8 @@ pub(super) fn failed(node: &crate::Node, resident: &ResidentId, message: &str) {
     node.log.line(format_args!("{resident}'s asset timeline failed: {message}"));
 }
 
-/// `resident`'s timeline was brought: a failure after it is told again.
+/// `resident`'s timeline was brought by a reading, or written on: a failure
+/// after it is told again.
 pub(super) fn brought(resident: &ResidentId) {
     held().remove(resident);
 }
