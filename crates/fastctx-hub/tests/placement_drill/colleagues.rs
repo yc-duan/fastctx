@@ -34,9 +34,12 @@ pub(super) async fn exercise(
                     effort: None,
                     screen: false,
                     at_once: None,
+                    preset: None,
                 }],
                 prompt: None,
                 rules: String::new(),
+                shelved: None,
+                at_once: None,
             },
         )
         .await?;

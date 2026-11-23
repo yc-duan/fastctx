@@ -294,23 +294,28 @@ const RUN_COMMANDS_SENSE: &str = "
 - `fastctx sense` leaves a sentinel to wait for something and wake you when it happens.";
 
 fn ask_colleague_definition(collab: &fastctx_types::collab::Offered) -> Value {
+    // Which agent runs each callee is said only where both run one: the
+    // description of Codex's alone stays as it was.
+    let any_host = collab.callees.iter().any(|callee| callee.agent.as_deref() == Some("claude"));
     let lives = collab.callees.iter().map(|callee| {
         let lives = match &callee.lives_on {
             Some(lives_on) => format!("It lives on {lives_on}, the machine configured for this callee; it runs its scripts on the machines it may use, each one `on MACHINE`, as you do."),
             None => "It is another account's agent assisting the user: it runs its scripts on the user's machines, each one `on MACHINE`, as you do.".to_string(),
         };
         let account = callee.account.as_ref().map(|account| format!("It works for account {account}. ")).unwrap_or_default();
-        let most = callee.at_once.map(|most| format!(" It works on at most {most} at once.")).unwrap_or_default();
-        format!("{}: {}\n{account}{lives}{most}", callee.name, callee.use_when)
+        let most = callee.at_once.map(|most| format!(" It works on at most {most} of your requests at once.")).unwrap_or_default();
+        let runs = if any_host { fastctx_types::collab_prompt::runs_it(callee.agent.as_deref()) } else { "" };
+        format!("{}: {}\n{runs}{account}{lives}{most}", callee.name, callee.use_when)
     }).collect::<Vec<_>>().join("\n\n");
-    let limits = if collab.callees.iter().any(|callee| callee.at_once.is_some()) {
-        format!("\n{}", fastctx_types::collab_prompt::ASK_LIMITS)
+    let limits = if collab.at_once.is_some() || collab.callees.iter().any(|callee| callee.at_once.is_some()) {
+        let in_all = collab.at_once.map(fastctx_types::collab_prompt::ask_limit_in_all).unwrap_or_default();
+        format!("\n{}{in_all}", fastctx_types::collab_prompt::ASK_LIMITS)
     } else {
         String::new()
     };
     let mut tool = json!({
         "name": "ask_colleague",
-        "description": format!("{}{limits}\n\n{lives}\n\n{}", fastctx_types::collab_prompt::ASK_DESCRIPTION, collab.prompt),
+        "description": format!("{}{limits}\n\n{lives}\n\n{}", fastctx_types::collab_prompt::ask_description(any_host), collab.prompt).trim_end(),
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -452,4 +457,71 @@ pub fn result(content: &[Content], is_error: bool) -> Value {
         })
         .collect();
     json!({ "content": blocks, "isError": is_error })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use fastctx_types::collab::{Offer, Offered};
+    use fastctx_types::collab_presets::{Kind, REVIEW_DOES, SCOUT_DOES};
+    use fastctx_types::collab_prompt::DEFAULT_PROMPT;
+
+    fn offered(callees: Vec<Offer>, prompt: String) -> Offered {
+        Offered { callees, prompt, at_once: Some(8) }
+    }
+
+    fn offer(name: &str, use_when: &str) -> Offer {
+        Offer {
+            name: name.into(),
+            account: Some("me".into()),
+            use_when: use_when.into(),
+            agent: Some("codex".into()),
+            lives_on: Some("laptop".into()),
+            at_once: Some(4),
+        }
+    }
+
+    /// What asking is stays said once, whatever the callees are; what each
+    /// one does stands under its own name, and the reviewer alone reads as
+    /// it did before presets but for where that sentence stands.
+    #[test]
+    fn each_callee_says_what_it_does_under_its_name() {
+        let alone = offered(vec![offer("gpt", REVIEW_DOES)], DEFAULT_PROMPT.into());
+        let tool = ask_colleague_definition(&alone);
+        let said = tool["description"].as_str().unwrap();
+        assert!(said.starts_with("Ask a colleague to take a piece of work"));
+        assert!(said.contains(&format!("\n\ngpt: {REVIEW_DOES}\nIt works for account me. ")));
+        assert!(said.ends_with(DEFAULT_PROMPT));
+        assert_eq!(said.matches("It reviews code").count(), 1);
+        assert!(tool["inputSchema"]["properties"].get("callee").is_none());
+
+        let scout = Kind::Scout.prompt();
+        let both = offered(
+            vec![offer("gpt", REVIEW_DOES), offer("scout", SCOUT_DOES)],
+            format!("gpt:\n{DEFAULT_PROMPT}\n\nscout:\n{scout}"),
+        );
+        let tool = ask_colleague_definition(&both);
+        let said = tool["description"].as_str().unwrap();
+        assert!(said.contains(&format!("\n\nscout: {SCOUT_DOES}\n")));
+        assert!(said.ends_with(scout));
+        assert_eq!(tool["inputSchema"]["properties"]["callee"]["enum"], json!(["gpt", "scout"]));
+        if std::env::var_os("FASTCTX_SHOW_ASK").is_some() {
+            println!("{said}");
+        }
+
+        // Where one is Claude Code's, each says which agent runs it.
+        let mut mixed = vec![offer("gpt", REVIEW_DOES), offer("claude", REVIEW_DOES)];
+        mixed[1].agent = Some("claude".into());
+        let said = ask_colleague_definition(&offered(mixed, DEFAULT_PROMPT.into()))["description"].as_str().unwrap().to_string();
+        assert!(said.starts_with(fastctx_types::collab_prompt::ASK_OPENING_ANY_HOST));
+        assert!(said.contains(&format!("gpt: {REVIEW_DOES}\nIt is GPT, run by Codex. It works for account me.")));
+        assert!(said.contains(&format!("claude: {REVIEW_DOES}\nIt is Claude, run by Claude Code. It works for account me.")));
+        assert!(!ask_colleague_definition(&alone)["description"].as_str().unwrap().contains("run by Claude Code"));
+
+        // A preset of the account's own with no text of its own leaves nothing trailing.
+        let own = offered(vec![offer("mine", "when I say")], String::new());
+        let said = ask_colleague_definition(&own)["description"].as_str().unwrap().to_string();
+        assert!(said.ends_with("at most 4 of your requests at once."));
+        assert!(said.contains("and the call says so. All of them together work on at most 8 of your requests at once.\n\nmine: "));
+    }
 }

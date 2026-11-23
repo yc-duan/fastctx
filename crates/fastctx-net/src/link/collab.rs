@@ -2,7 +2,6 @@
 
 use fastctx_types::AccountName;
 use fastctx_types::collab::{Collab, CollabView};
-use fastctx_types::collab_prompt::DEFAULT_PROMPT;
 
 use super::Link;
 use crate::wire::{Change, Question, Told};
@@ -14,11 +13,18 @@ impl Link {
             return Err(format!("this device is not logged in to the account {account}"));
         }
         let found = view.account(account).ok_or_else(|| format!("there is no account {account}"))?;
-        Ok(CollabView { collab: found.collab.clone().unwrap_or_default(), default_prompt: DEFAULT_PROMPT.to_string() })
+        Ok(CollabView::new(found.collab.clone().unwrap_or_default(), view.collab_presets))
     }
 
     pub async fn collab_write(&self, account: &AccountName, collab: Collab) -> Result<u64, String> {
         collab.validate()?;
+        // A hub from before presets would keep a scout as a reviewer, offer
+        // a preset turned off and forget what a conversation's colleagues
+        // work within together: nothing of them is sent to it.
+        let presets = collab.shelved.is_some() || collab.at_once.is_some() || collab.callees.iter().any(|callee| callee.preset.is_some());
+        if presets && !self.view().collab_presets {
+            return Err(format!("upgrade hub {} to keep the presets of model collaboration", self.hub_name()));
+        }
         let mut confirmed = collab.clone();
         let told =
             self.inner.ask(Question::Manage { account: account.clone(), change: Change::Collab { collab } }).await?;

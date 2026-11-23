@@ -1,0 +1,397 @@
+/* Model collaboration's settings (`collab-feature.ts`): the presets, a solid
+   row each: which it is, the name the calling model chooses it by, when it
+   is asked, what it runs with, and its switch at the end; one turned off
+   stands in a fainter ink. 「添加」 ends the list's rule. Under them the
+   callers in one line of the same make, the rules on the prompt's writing
+   paper, and who works now. */
+
+.cp-section {
+  margin-top: var(--space-8);
+}
+
+.cp-title::after {
+  order: 1;
+}
+
+.cp-title .cp-act {
+  order: 2;
+  height: 28px;
+  margin-right: calc(-1 * var(--space-2));
+  padding: 0 var(--space-2);
+  letter-spacing: 0;
+}
+
+.cp-note {
+  margin: 0 0 var(--space-3);
+  font-size: var(--size-text);
+  color: var(--text-3);
+}
+
+.cp-rows {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.cp-row,
+.cp-line {
+  min-height: 52px;
+  border-radius: var(--radius-m);
+  background: var(--fill);
+  color: var(--text);
+  transition: background-color var(--hover) var(--ease);
+}
+
+.cp-row {
+  display: flex;
+  align-items: stretch;
+}
+
+.cp-row:hover,
+.cp-row:has(.cp-open:focus-visible),
+.cp-line:hover,
+.cp-line:focus-visible {
+  outline: 0;
+  background: var(--fill-strong);
+}
+
+.cp-open {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 5.5em minmax(4.5em, max-content) minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: var(--space-4);
+  padding: 6px 0 6px var(--space-4);
+  border-radius: inherit;
+  color: inherit;
+  text-align: left;
+}
+
+.cp-open:focus-visible {
+  outline: 0;
+}
+
+/* Where presets have no switch, the row ends as it begins. */
+.cp-open:last-child {
+  padding-right: var(--space-4);
+}
+
+.cp-kind {
+  font-family: var(--font-emphasis);
+  color: var(--text-strong);
+  white-space: nowrap;
+}
+
+.cp-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 11em;
+  min-width: 0;
+  color: var(--text-2);
+}
+
+.cp-name > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cp-name .glyph {
+  flex: none;
+  color: var(--text-3);
+}
+
+.cp-use {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-3);
+}
+
+.cp-runs {
+  display: inline-flex;
+  gap: 6px;
+}
+
+.cp-row.off .cp-kind,
+.cp-row.off .cp-name {
+  color: var(--text-3);
+}
+
+.cp-row.off .cp-runs {
+  opacity: 0.55;
+}
+
+.cp-switch {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 62px;
+  border-radius: inherit;
+}
+
+/* Under the presets, how many of them all work at once for a conversation:
+   a faint label and a row of words. */
+.cp-in-all {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px var(--space-6);
+  margin-top: var(--space-3);
+  padding: 0 var(--space-4);
+}
+
+.cp-in-all-label {
+  font-size: var(--size-text);
+  color: var(--text-3);
+}
+
+/* The callers: how many of each agent, where they are, and the way in. */
+.cp-line {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  width: 100%;
+  padding: 6px var(--space-4);
+  text-align: left;
+}
+
+.cp-line .cp-use {
+  flex: 1;
+}
+
+.cp-counts {
+  display: inline-flex;
+  gap: var(--space-4);
+}
+
+.cp-counts:empty {
+  display: none;
+}
+
+.cp-count {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-strong);
+  font-variant-numeric: tabular-nums;
+}
+
+.cp-count .glyph {
+  color: var(--text-2);
+}
+
+.cp-go {
+  display: inline-flex;
+  rotate: -90deg;
+  color: var(--text-3);
+}
+
+/* The rules: a few lines of the prompt's paper, scrolling in their place. */
+.cp-paper {
+  height: 132px;
+}
+
+.cp-foot {
+  margin-top: var(--space-3);
+}
+
+.cp-foot .sheet-go {
+  margin-left: auto;
+}
+
+/* The sheet a preset is written on: wide enough, and its texts set small
+   enough, for the World's own, written in lines of a hundred letters, to
+   stand line for line; they grow only so far, then scroll in place. */
+.ps-sheet .sheet-body {
+  width: min(820px, 100vw - 32px);
+}
+
+.ps-sheet .ps-text {
+  max-height: 30vh;
+  font-family: var(--font-reading);
+  font-size: var(--size-fine);
+  line-height: var(--leading-prose);
+}
+
+.ps-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.ps-label .ps-reset {
+  height: 24px;
+  margin: -4px calc(-1 * var(--space-2)) -4px 0;
+  padding: 0 var(--space-2);
+}
+
+/* An account with many Codex logins: they scroll in their own place, which
+   reaches as far left as the wash of the one chosen does. */
+.ps-logins {
+  position: relative;
+  max-height: 102px;
+  margin-inline: -10px;
+  padding-inline: 10px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
+
+/* The sheet the callers are chosen on: one row a login under its machine's
+   name; a chosen one stands in full ink with a mark at its end. Only the
+   list scrolls. */
+.cs-said {
+  margin: 0 0 var(--space-3);
+  font-size: var(--size-text);
+  color: var(--text-3);
+}
+
+.cs-seek {
+  width: 100%;
+  min-height: 36px;
+  margin-bottom: var(--space-3);
+  padding: 0 var(--space-3);
+  border: 0;
+  border-radius: var(--radius-s);
+  outline: 0;
+  background: var(--field);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--size-text);
+}
+
+.cs-seek::placeholder {
+  color: var(--text-3);
+}
+
+.cs-list {
+  height: min(46vh, 420px);
+  margin: 0 calc(-1 * var(--space-3));
+  padding: 0 var(--space-3);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
+
+.cs-machine + .cs-machine {
+  margin-top: var(--space-3);
+}
+
+.cs-machine-name {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  margin: 0;
+  padding: 4px 0;
+  background: var(--bg-elevated);
+  font-family: var(--font-reading);
+  font-weight: 400;
+  font-size: var(--size-fine);
+  letter-spacing: 0.04em;
+  color: var(--text-3);
+}
+
+.cs-login {
+  display: grid;
+  grid-template-columns: auto 4.5em minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: var(--space-3);
+  width: calc(100% + 2 * var(--space-3));
+  min-height: 38px;
+  margin: 0 calc(-1 * var(--space-3));
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-s);
+  color: var(--text-3);
+  text-align: left;
+  transition:
+    color var(--hover) var(--ease),
+    background-color var(--hover) var(--ease);
+}
+
+.cs-login:hover,
+.cs-login:focus-visible {
+  outline: 0;
+  background: var(--fill);
+}
+
+.cs-login.chosen {
+  color: var(--text-strong);
+}
+
+.cs-who {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cs-mark {
+  display: inline-flex;
+  color: var(--accent);
+  opacity: 0;
+  transition: opacity var(--hover) var(--ease);
+}
+
+.cs-login.chosen .cs-mark {
+  opacity: 1;
+}
+
+.cs-none {
+  margin: var(--space-4) 0;
+  font-size: var(--size-text);
+  color: var(--text-3);
+}
+
+.cs-foot .cs-all {
+  display: inline-flex;
+  gap: var(--space-1);
+  margin-left: calc(-1 * var(--space-3));
+}
+
+.cs-count {
+  margin-left: auto;
+  font-size: var(--size-text);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-3);
+}
+
+@media (pointer: coarse) {
+  .cs-login {
+    min-height: 44px;
+  }
+}
+
+/* A phone: which it is, its name and its switch, then when it is asked;
+   what it runs with is on its sheet. */
+@media (max-width: 600px) {
+  .cp-open {
+    grid-template-columns: auto minmax(0, 1fr);
+    row-gap: 2px;
+    padding: var(--space-3) 0 var(--space-3) var(--space-4);
+  }
+
+  .cp-open .cp-use {
+    grid-column: 1 / -1;
+    white-space: normal;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+  }
+
+  .cp-runs {
+    display: none;
+  }
+
+  .cp-switch {
+    align-items: flex-start;
+    padding-top: var(--space-4);
+  }
+}

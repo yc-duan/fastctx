@@ -2015,10 +2015,10 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
                     .map_err(Failure::new),
                 None => {
                     own_settings(hub.as_ref())?;
-                    Ok(Reply::CollabRead(fastctx_types::collab::CollabView {
-                        collab: crate::own_collab::read(&node.world)?,
-                        default_prompt: fastctx_types::collab_prompt::DEFAULT_PROMPT.to_string(),
-                    }))
+                    Ok(Reply::CollabRead(fastctx_types::collab::CollabView::new(
+                        crate::own_collab::read(&node.world)?,
+                        true,
+                    )))
                 }
             }
         }

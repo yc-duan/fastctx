@@ -683,6 +683,7 @@ pub fn facts(node: &Node) -> MachineFacts {
         turn_debts: true,
         goal_runtime: node.goals.available(),
         goal_colleagues: true,
+        colleague_presets: true,
         goal_waits: true,
         goal_questions: true,
         goal_question_words: true,

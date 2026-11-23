@@ -14899,6 +14899,7 @@
         "machine": "desktop",
         "facts": {
           "goal_colleagues": true,
+          "colleague_presets": true,
           "goal_waits": true,
           "goal_questions": true,
           "goal_question_words": true,
@@ -15070,6 +15071,7 @@
         "machine": "desktop",
         "facts": {
           "goal_colleagues": true,
+          "colleague_presets": true,
           "goal_waits": true,
           "goal_questions": true,
           "goal_question_words": true,
@@ -15243,6 +15245,7 @@
         "machine": "desktop",
         "facts": {
           "goal_colleagues": true,
+          "colleague_presets": true,
           "goal_waits": true,
           "goal_questions": true,
           "goal_question_words": true,
@@ -15416,6 +15419,7 @@
         "machine": "desktop",
         "facts": {
           "goal_colleagues": true,
+          "colleague_presets": true,
           "goal_waits": true,
           "goal_questions": true,
           "goal_question_words": true,
@@ -15588,6 +15592,7 @@
         "machine": "desktop",
         "facts": {
           "goal_colleagues": true,
+          "colleague_presets": true,
           "goal_waits": true,
           "goal_questions": true,
           "goal_question_words": true,
@@ -15761,6 +15766,7 @@
         "machine": "desktop",
         "facts": {
           "goal_colleagues": true,
+          "colleague_presets": true,
           "goal_waits": true,
           "goal_questions": true,
           "goal_question_words": true,
@@ -15937,6 +15943,7 @@
         "machine": "desktop",
         "facts": {
           "goal_colleagues": true,
+          "colleague_presets": true,
           "goal_waits": true,
           "goal_questions": true,
           "goal_question_words": true,
@@ -16114,6 +16121,7 @@
         "machine": "desktop",
         "facts": {
           "goal_colleagues": true,
+          "colleague_presets": true,
           "goal_waits": true,
           "goal_questions": true,
           "goal_question_words": true,
@@ -16291,6 +16299,7 @@
         "machine": "desktop",
         "facts": {
           "goal_colleagues": true,
+          "colleague_presets": true,
           "goal_waits": true,
           "goal_questions": true,
           "goal_question_words": true,
@@ -16467,6 +16476,7 @@
         "machine": "desktop",
         "facts": {
           "goal_colleagues": true,
+          "colleague_presets": true,
           "goal_waits": true,
           "goal_questions": true,
           "goal_question_words": true,

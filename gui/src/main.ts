@@ -51,6 +51,7 @@ import "./app/machine-page.css";
 import "./app/machine-manage.css";
 import "./app/agents.css";
 import "./app/features.css";
+import "./app/collab.css";
 import "./app/removal.css";
 import "./app/managed.css";
 import "./app/progress-steps.css";

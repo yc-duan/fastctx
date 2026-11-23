@@ -22,6 +22,7 @@ pub mod call_diagnostics;
 pub mod calls;
 pub mod closest;
 pub mod collab;
+pub mod collab_presets;
 pub mod collab_prompt;
 pub mod collaboration;
 pub mod composer;

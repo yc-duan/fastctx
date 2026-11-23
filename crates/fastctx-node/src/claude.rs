@@ -53,6 +53,7 @@ pub(crate) mod pairing;
 mod plugin_check;
 mod plugin_gone;
 mod process;
+pub(crate) mod colleague;
 mod queued;
 mod receipts;
 mod rewind;
@@ -2086,7 +2087,17 @@ fn reword(node: &Node, resident: &ResidentId) -> std::io::Result<()> {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
         Err(error) => return Err(error),
     };
-    let words = crate::colleagues::words(resident, town.as_ref(), &about.origin, false);
+    // A colleague is told its preset's rules, and what the account adds to
+    // them, as it was at its birth.
+    let started = match about.origin {
+        Origin::Colleague { .. } => crate::collab::started(node, resident).map_err(|failure| std::io::Error::other(failure.message))?,
+        Origin::User => None,
+    };
+    let kind = started.as_ref().map(|started| started.callee.kind()).unwrap_or_default();
+    let mut words = crate::colleagues::words(resident, town.as_ref(), &about.origin, false, kind);
+    if let Some(started) = &started {
+        words.push_str(&crate::colleagues::added_rules(started));
+    }
     if kept == words { Ok(()) } else { fastctx_platform::disk::write(&path, words) }
 }
 
@@ -2220,7 +2231,7 @@ pub async fn open_here(
     crate::profile::session::ready(node, &opened.acting).await?;
     crate::assists::host::starting(node, &id, &opened.acting)?;
     let (words, heard) =
-        crate::colleagues::instructions(node, &id, town.as_ref(), &Origin::User, &opened.acting, false).await?;
+        crate::colleagues::instructions(node, &id, town.as_ref(), &Origin::User, &opened.acting, false, Default::default()).await?;
     // What it is told of its machines and folders its plugin adds to the
     // first message's context, from the session's own directory.
     crate::focus::open(node, &node.world.conversation(&id), &opened.acting, &opened.focus).await?;
