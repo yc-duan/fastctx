@@ -293,33 +293,35 @@ async fn delete_inner(node: &Arc<Node>, name: &str, still: Option<Still>) -> Res
     if node.job_files.reading(&measured.places) {
         return Err(Stop::Refused("its command output is being read; close that reader first".into()));
     }
+    crate::attachments::lifetime::ensure_holders(node, id).await.map_err(|error| Stop::Failed(error.message))?;
+    // Asked last, so that nothing waited for comes between its answer and
+    // the intent.
     if let Some(still) = still {
         still(node.clone(), id.clone()).await.map_err(Stop::Refused)?;
     }
-    crate::attachments::lifetime::ensure_holders(node, id).await.map_err(|error| Stop::Failed(error.message))?;
+    let intent = node.world.conversation(id).path().join(INTENT);
+    // A deletion begun before, by this node or by one stopped since, is
+    // carried on: what it did is not known to be nothing, and is not undone.
+    let resumed = fastctx_platform::disk::exists(&intent).map_err(|error| Stop::Failed(error.to_string()))?;
     // The intent: a node stopped from here on finishes the deletion when it
     // starts again (`finish_interrupted`).
-    fastctx_platform::publish(
-        &node.world.conversation(id).path().join(INTENT),
-        b"",
-        fastctx_platform::Permissions::Private,
-    )
-    .map_err(|error| Stop::Failed(format!("recording that it is being deleted: {error}")))?;
+    fastctx_platform::publish(&intent, b"", fastctx_platform::Permissions::Private)
+        .map_err(|error| Stop::Failed(format!("recording that it is being deleted: {error}")))?;
     let host_kept = match host_record(node, id, &resident, &measured).await {
         Ok(kept) => kept,
-        Err(Stopped { stop, begun: false }) => {
+        Err(Stopped { stop, begun: false }) if !resumed => {
             // Nothing that cannot be undone was done: no deletion row fences
             // it and nothing of its records was let go, so it stays as it was,
             // and the node does not finish this deletion later.
-            if let Err(error) = fastctx_platform::disk::remove_file(directory.path().join(INTENT)) {
+            if let Err(error) = fastctx_platform::disk::remove_file(&intent) {
                 node.log.line(format_args!("cancelling the deletion of {id}: {error}"));
             }
             return Err(stop);
         }
-        Err(Stopped { stop, begun: true }) => {
-            // Part of its host's record went: it cannot stay as it was. The
-            // intent stays, it takes nothing new, and the node finishes the
-            // deletion (`finish_interrupted`).
+        Err(Stopped { stop, .. }) => {
+            // Part of its host's record went, or may have: it cannot stay as
+            // it was. The intent stays, it takes nothing new, and the node
+            // finishes the deletion (`finish_interrupted`).
             node.residents.condemn(id);
             node.watchers.ended(id);
             return Ok(Gone { bytes: 0, finishing: Some(stop.why()) });
@@ -466,6 +468,41 @@ async fn records(
     Ok(result)
 }
 
+/// What a deletion the node carries on asks once nothing new can begin in
+/// the conversation: that it is still being deleted, as its intent, its
+/// host record's deletion or its deletion row says. One cancelled since it
+/// was found is left as it is.
+fn still_deleting() -> Still {
+    Arc::new(|node: Arc<Node>, id: ResidentId| {
+        Box::pin(async move {
+            let directory = node.world.conversation(&id);
+            let marked = [INTENT, "host-deleted"]
+                .iter()
+                .any(|file| fastctx_platform::disk::exists(directory.path().join(file)).unwrap_or(true));
+            if marked || row_pending(&node, id.as_str()) {
+                Ok(())
+            } else {
+                Err("it is no longer being deleted".into())
+            }
+        })
+    })
+}
+
+/// Whether the deletion row of `name` is still to be finished; taken so
+/// where it cannot be read.
+fn row_pending(node: &Node, name: &str) -> bool {
+    let name = name.to_string();
+    node.database
+        .read_now(move |db| {
+            Ok(db.query_row(
+                "SELECT EXISTS(SELECT 1 FROM node_conversation_deletions WHERE name=?1 AND finished=0)",
+                [&name],
+                |row| row.get::<_, bool>(0),
+            )?)
+        })
+        .unwrap_or(true)
+}
+
 /// Finishes the deletions a node stopped halfway: what is left of a
 /// conversation whose tombstone is written goes, with the directories of
 /// its Claude sessions, which may no longer say whose they are. Says how
@@ -532,8 +569,16 @@ async fn finish_on_worker(node: &Arc<Node>) -> usize {
     begun.sort();
     begun.dedup();
     for name in begun {
-        match delete_one(node, &name).await {
-            Ok(_) => node.log.line(format_args!("finished deleting {name}, which a stopped node began")),
+        // Found while a deletion went on may be one that has since been
+        // cancelled: carried on only while it is still being deleted.
+        match delete_when(node, &name, Some(still_deleting())).await {
+            Ok(Gone { finishing: None, .. }) => {
+                node.log.line(format_args!("finished deleting {name}, which a stopped node began"))
+            }
+            Ok(Gone { finishing: Some(why), .. }) => {
+                unfinished += 1;
+                node.log.line(format_args!("went on deleting {name}, which a stopped node began; still to clear: {why}"))
+            }
             Err(Stop::Nothing(_)) => {
                 if let Err(error) = crate::record_migration::archive::delete_conversation(node.world.path(), &name)
                     .and_then(|()| crate::conversation_store::finished(&node.database, name.clone()))
@@ -681,16 +726,20 @@ async fn host(node: &Arc<Node>, about: &About, measured: &Measured) -> Result<()
             if about.session.is_none() {
                 return Ok(());
             }
-            // Codex deletes a thread whole or not at all.
+            // Codex deletes a thread whole or not at all; a failure that may
+            // have come after it did (`Failure::not_run`) is taken as begun.
             let deleted = crate::lifecycle::release_locked(node, about, crate::lifecycle::ReleaseReason::Delete, None)
                 .await
-                .map_err(|error| Stopped::before(Stop::Failed(format!("Codex did not delete its record: {error}"))))?;
+                .map_err(|failure| {
+                    let begun = !failure.not_run;
+                    Stopped { stop: Stop::Failed(format!("Codex did not delete its record: {failure}")), begun }
+                })?;
             // Codex no longer knows the thread, as when an earlier try
             // deleted it and stopped: what is left of its record goes too.
             if !deleted && !measured.host_files.is_empty() {
                 delete_files(&measured.host_files, "deleting what is left of Codex's record of it")
                     .await
-                    .map_err(|(stop, _)| Stopped::after(stop))?;
+                    .map_err(Stopped::after)?;
             }
         }
         "claude" => {
@@ -701,10 +750,12 @@ async fn host(node: &Arc<Node>, about: &About, measured: &Measured) -> Result<()
                         Stopped::before(Stop::Failed(format!("Claude Code's background session: {}", failure.message)))
                     })?;
             }
+            // Begun once its files begin to go: a directory may lose some of
+            // what it holds before its deletion fails.
+            let begun = !measured.host_files.is_empty();
             delete_files(&measured.host_files, "deleting Claude Code's record of it")
                 .await
-                .map_err(|(stop, begun)| Stopped { stop, begun })?;
-            let begun = !measured.host_files.is_empty();
+                .map_err(|stop| Stopped { stop, begun })?;
             claude_temp(node, measured).await.map_err(|stop| Stopped { stop, begun })?;
             // Its sessions stood in its own directory before they stood in
             // their project's, and the World trusted that directory for it.
@@ -725,23 +776,15 @@ async fn host(node: &Arc<Node>, about: &About, measured: &Measured) -> Result<()
     Ok(())
 }
 
-/// Deletes `files`, one after another; stopped, says whether any went
-/// before, `doing` saying what for.
-async fn delete_files(files: &[std::path::PathBuf], doing: &str) -> Result<(), (Stop, bool)> {
+/// Deletes `files`, one after another, `doing` saying what for.
+async fn delete_files(files: &[std::path::PathBuf], doing: &str) -> Result<(), Stop> {
     let files = files.to_vec();
-    let (done, gone) = fastctx_platform::task::spawn_blocking(move || {
-        let mut gone = 0usize;
-        for file in &files {
-            if let Err(error) = fastctx_platform::owned_directory::delete(file) {
-                return (Err(error), gone);
-            }
-            gone += 1;
-        }
-        (Ok(()), gone)
+    fastctx_platform::task::spawn_blocking(move || {
+        files.iter().try_for_each(|file| fastctx_platform::owned_directory::delete(file))
     })
     .await
-    .map_err(|error| (Stop::Failed(error.to_string()), false))?;
-    done.map_err(|error| (Stop::Failed(format!("{doing}: {error}")), gone > 0))
+    .map_err(|error| Stop::Failed(error.to_string()))?
+    .map_err(|error| Stop::Failed(format!("{doing}: {error}")))
 }
 
 /// Deletes what Claude Code wrote to temporary files for the conversation's
