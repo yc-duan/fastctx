@@ -921,9 +921,9 @@ fn advanced<L: Keep>(
 }
 
 /// What in a tail refers back past its seam in a way the tail cannot show
-/// alone: a compaction, whose summary names what it kept, a row that takes
-/// back rows not in the tail, and the answer to a call before the seam the
-/// user had spoken past.
+/// alone: a compaction naming rows before the seam (`names_before`), a row
+/// that takes back rows not in the tail, and the answer to a call before
+/// the seam the user had spoken past.
 fn unsupported<L: Rows>(rows: &L, seam: &Seam, seen: &dyn Fn(&str) -> bool) -> io::Result<Option<&'static str>> {
     // Looked up, not walked, for each answer.
     let abandoned: HashSet<&str> = seam.abandoned.iter().map(String::as_str).collect();
@@ -952,8 +952,8 @@ fn unsupported_row<L: Rows>(rows: &L, row: &super::Row, abandoned: &HashSet<&str
     {
         return Ok(Some("the answer to a call before the seam"));
     }
-    if row.compaction() || row.replacement() || row.value["isCompactSummary"] == true {
-        return Ok(Some("a compaction"));
+    if (row.compaction() || row.value["isCompactSummary"] == true) && names_before(rows, row)? {
+        return Ok(Some("a compaction naming rows before the seam"));
     }
     let references = match row.kind() {
         Some("assistant") => row.value.get("supersedesUuids"),
@@ -968,6 +968,41 @@ fn unsupported_row<L: Rows>(rows: &L, row: &super::Row, abandoned: &HashSet<&str
         }
     }
     Ok(None)
+}
+
+/// Whether the compaction `row` begins, or the summary it is, is shown of a
+/// row before the seam, `rows` being those past it. A compaction is shown
+/// of what it kept and the message it went on from, all written before it:
+/// one not among `rows` lies before the seam. Its anchor, the summary that
+/// follows it, may not be written yet, as a whole reading may not find it
+/// either. A summary is shown with the compaction found along its parents
+/// past what is no message (`summarized`): a parent not among `rows` lies
+/// before the seam. Past it all, the tail shows the compaction as a whole
+/// reading does — Claude Code keeps the last few messages before it, which
+/// a long turn holds (2.1.322).
+fn names_before<L: Rows>(rows: &L, row: &super::Row) -> io::Result<bool> {
+    if row.compaction() {
+        let metadata = &row.value["compactMetadata"];
+        let before = [&row.value["logicalParentUuid"], &metadata["preservedSegment"]["headUuid"], &metadata["preservedSegment"]["tailUuid"]];
+        let kept = metadata["preservedMessages"]["uuids"].as_array().into_iter().flatten();
+        for uuid in before.into_iter().chain(kept).filter_map(Value::as_str) {
+            if rows.index_of(uuid)?.is_none() {
+                return Ok(true);
+            }
+        }
+        return Ok(false);
+    }
+    let mut parent = row.value.get("parentUuid").and_then(Value::as_str).map(str::to_owned);
+    for _ in 0..32 {
+        let Some(above) = parent else { return Ok(false) };
+        let Some(index) = rows.index_of(&above)? else { return Ok(true) };
+        let above = rows.row(index)?;
+        if above.compaction() || matches!(above.kind(), Some("user" | "assistant")) {
+            return Ok(false);
+        }
+        parent = above.value.get("parentUuid").and_then(Value::as_str).map(str::to_owned);
+    }
+    Ok(false)
 }
 
 fn at(row: &Value) -> Option<Timestamp> {
@@ -1043,3 +1078,7 @@ fn prefix_holds(file: &mut File, seam: &Seam) -> io::Result<bool> {
     }
     Ok(true)
 }
+
+#[cfg(test)]
+#[path = "follow_tests.rs"]
+mod tests;
