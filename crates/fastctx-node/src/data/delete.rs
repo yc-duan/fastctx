@@ -355,6 +355,11 @@ async fn records(
     if !fastctx_platform::disk::is_file(directory.path().join(PURGING)) {
         crate::plan::delete(node, &resident.about).await.map_err(|failure| Stop::Failed(failure.message))?;
     }
+    // A plan copy an earlier release registered for it would make its
+    // directory again each time the node starts.
+    if let Err(failure) = crate::placement::copies::conversation_deleted(node, id) {
+        node.log.line(format_args!("letting go of the plan copies of {id}: {}", failure.message));
+    }
     crate::goals::lifecycle::delete(node, id).await.map_err(|error| Stop::Failed(error.message))?;
     // Whatever its sessions reported and is being applied is applied to its
     // end first, in the order applying takes these locks: a Claude session's

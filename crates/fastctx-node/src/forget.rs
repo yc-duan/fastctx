@@ -444,6 +444,11 @@ async fn elsewhere(node: &Arc<Node>, hub: &HubId, account: &AccountName, convers
     .await
     .map_err(|error| error.to_string())?
     .map_err(|error| format!("finding its rooms here: {error}"))?;
+    // A plan copy an earlier release registered for it would make its room
+    // here again each time the node starts.
+    if let Err(failure) = crate::placement::copies::guest_deleted(node, conversation, &machines) {
+        node.log.line(format_args!("letting go of the plan copies of {}: {}", conversation.resident, failure.message));
+    }
     // What its commands did here goes too, whether or not a room of it is left.
     let (sealing, resident, names) = (node.clone(), conversation.resident.clone(), machines.clone());
     fastctx_platform::task::spawn_blocking(move || crate::activity_book::seal_elsewhere(&sealing, &resident, &names))
