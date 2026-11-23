@@ -60,6 +60,7 @@ mod settle;
 mod startup;
 mod thoughts;
 mod titles;
+pub(crate) mod tool_results;
 pub(crate) mod turn_facts;
 mod wake_command;
 mod wake_once;

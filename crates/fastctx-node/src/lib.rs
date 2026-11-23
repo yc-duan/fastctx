@@ -1038,6 +1038,7 @@ pub async fn run_prepared(
         attachments::kept_here::clear_left(&node);
         job_assets::start(&node);
         assets::logs::start(&node);
+        claude::tool_results::start(&node);
         assets::activity::start(&node);
         sentinels::wakes::start(&node);
         management::register(&node);
