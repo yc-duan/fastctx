@@ -1634,9 +1634,9 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
             users_voice(node, peer)?;
             crate::assets::copies::machine(node, machine, ask).await.map(Reply::MachineCopies)
         }
-        Call::ConversationRetention { machine, ask } => {
+        Call::ConversationRetention { machine, ask, account } => {
             users_voice(node, peer)?;
-            crate::conversation_retention::machine(node, machine, ask).await.map(Reply::ConversationRetention)
+            crate::conversation_retention::machine(node, machine, account, ask).await.map(Reply::ConversationRetention)
         }
         Call::MachineUpdates { machine, update } => {
             users_voice(node, peer)?;

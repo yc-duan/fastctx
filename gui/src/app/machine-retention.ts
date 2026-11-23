@@ -1,12 +1,13 @@
 // How long the conversations a machine runs are kept idle before they are
-// deleted with all they keep, in its page's 「管理」, for its owner: one
-// setting for their own conversations and one, a ceiling, for those of the
-// accounts its agents assist. Off until set; turned on or shortened, nothing
-// goes for seven days, and the owner sees first how many conversations it
-// would take.
+// deleted with all they keep, in its page's 「管理」, for its owner on the
+// network shown: one setting for their own conversations and one, a ceiling,
+// for those of the accounts its agents assist. Off until set; turned on or
+// shortened, nothing goes for seven days, and the owner sees first how many
+// conversations it would take. Asked as the owner's login; a machine that
+// does not answer so is shown, never set.
 
 import { escape } from "../conversation/prose";
-import { RETENTION_DAYS, type RetentionAnswer, type RetentionAsk } from "../world/retention";
+import { RETENTION_DAYS, type RetentionAnswer, type RetentionAsk, type RetentionAsking } from "../world/retention";
 import type { Confirm } from "./confirm";
 import { setRow } from "./machine-set";
 import { detailOf } from "./problem";
@@ -29,11 +30,13 @@ export interface RetentionWords {
   confirmGo: string;
   asking: string;
   unread(why: string): string;
+  /** The machine answered as to another than its owner. */
+  notOwner: string;
 }
 
 export interface RetentionOptions {
   words: RetentionWords;
-  ask(machine: string, ask: RetentionAsk): Promise<RetentionAnswer>;
+  ask: RetentionAsking;
   confirm: Confirm;
   changed(): void;
 }
@@ -43,19 +46,23 @@ type Setting = "own" | "assisted";
 export class RetentionBlock {
   private shown: string | null = null;
   private machine: Machine | null = null;
+  private owner: { hub: string; account: string } | undefined;
   private answer: RetentionAnswer | null = null;
   private problem: string | null = null;
   private busy = false;
 
   constructor(private readonly options: RetentionOptions) {}
 
-  show(machine: Machine | null, shown: boolean): void {
-    if ((machine?.written ?? null) !== this.shown) {
-      this.shown = machine?.written ?? null;
+  /** Shows `machine`'s rule, asked as its owner's login `owner`. */
+  show(machine: Machine | null, shown: boolean, owner?: { hub: string; account: string }): void {
+    const key = machine ? `${machine.written}\n${owner?.hub ?? ""}\n${owner?.account ?? ""}` : null;
+    if (key !== this.shown) {
+      this.shown = key;
       this.answer = null;
       this.problem = null;
     }
     this.machine = machine;
+    this.owner = owner;
     if (shown && machine && machine.online !== false && this.answer === null && this.problem === null && !this.busy) {
       void this.run({ do: "read" });
     }
@@ -63,15 +70,16 @@ export class RetentionBlock {
 
   private async run(ask: RetentionAsk, machine: Machine | null = this.machine): Promise<void> {
     if (!machine || this.busy) return;
+    const shown = this.shown;
     this.busy = true;
     this.options.changed();
     try {
-      const answer = await this.options.ask(machine.written, ask);
-      if (machine.written !== this.shown) return;
+      const answer = await this.options.ask(machine.written, ask, this.owner);
+      if (shown !== this.shown) return;
       this.answer = answer;
       this.problem = null;
     } catch (error) {
-      if (machine.written === this.shown) this.problem = detailOf(error);
+      if (shown === this.shown) this.problem = detailOf(error);
     } finally {
       this.busy = false;
       this.options.changed();
@@ -87,7 +95,8 @@ export class RetentionBlock {
     if (!answer) return `${head}${setRow(escape(words.own), `<span class="fx-quiet">${escape(words.asking)}</span>`, "")}`;
     const rule = answer.rule;
     const choices = (setting: Setting, chosen: number | undefined) => {
-      const disabled = this.busy ? " disabled" : "";
+      // Set only as its owner: an answer to another is shown, never sent back.
+      const disabled = this.busy || !answer.owner ? " disabled" : "";
       const option = (n: number | null) => {
         const on = (n ?? undefined) === chosen;
         const label = n === null ? words.off : words.days(n);
@@ -100,6 +109,7 @@ export class RetentionBlock {
       setRow(escape(words.assisted), escape(words.assistedWhat), choices("assisted", rule.assisted_days)),
     ];
     const notes: string[] = [];
+    if (!answer.owner) notes.push(words.notOwner);
     if (rule.grace_until && Date.parse(rule.grace_until) > Date.now()) {
       notes.push(words.graceUntil(new Date(rule.grace_until).toLocaleString()));
     }
@@ -125,7 +135,7 @@ export class RetentionBlock {
     if (target.dataset.act !== "rt-set") return false;
     const machine = this.machine;
     const rule = this.answer?.rule;
-    if (!machine || !rule) return true;
+    if (!machine || !rule || !this.answer?.owner) return true;
     const setting = target.dataset.setting as Setting;
     const days = target.dataset.days ? Number(target.dataset.days) : null;
     const before = setting === "own" ? rule.own_days : rule.assisted_days;

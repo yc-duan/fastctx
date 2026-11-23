@@ -165,6 +165,7 @@ export const zhManage: ManageWords = {
     confirmGo: "确定",
     asking: "读取中…",
     unread: (why) => `读不到：${why}`,
+    notOwner: "这台机器没有把这次询问当作主人的，只能查看。",
   },
   copies: {
     title: "会话副本",
@@ -272,6 +273,7 @@ export const enManage: ManageWords = {
     confirmGo: "Turn on",
     asking: "Reading…",
     unread: (why) => `Could not read: ${why}`,
+    notOwner: "The machine did not take this asking as its owner's: shown only.",
   },
   copies: {
     title: "Conversation copies",

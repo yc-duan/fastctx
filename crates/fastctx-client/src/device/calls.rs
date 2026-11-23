@@ -428,7 +428,10 @@ impl Device {
             Call::UpdateMachine { machine } => (machine, RemoteCall::UpdateWorld, None),
             Call::MachineUpdates { machine, update } => (machine, RemoteCall::Updates { update }, None),
             Call::MachineCopies { machine, ask } => (machine, RemoteCall::Copies { ask }, None),
-            Call::ConversationRetention { machine, ask } => (machine, RemoteCall::ConversationRetention { ask }, None),
+            Call::ConversationRetention { machine, ask, account } => {
+                chosen = account;
+                (machine, RemoteCall::ConversationRetention { ask }, None)
+            }
             Call::Thumbnail { machine, request } => {
                 let machine = machine.ok_or_else(|| failed("choose the machine holding the image"))?;
                 (machine, RemoteCall::Thumbnail { request }, None)

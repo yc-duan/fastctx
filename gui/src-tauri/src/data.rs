@@ -17,15 +17,22 @@ pub(crate) async fn data(shell: tauri::State<'_, Shell>, call: DataCall) -> Resu
 
 /// The rule `machine_name`, this computer or another machine of the network,
 /// deletes its conversations idle long enough by: read, or set by its owner
-/// or by an account its agents assist.
+/// or by an account its agents assist; asked as `account` where it is known.
 #[fastctx_gui_command::command]
 pub(crate) async fn conversation_retention(
     shell: tauri::State<'_, Shell>,
     machine_name: String,
     ask: fastctx_types::conversation_retention::RetentionAsk,
+    account: Option<fastctx_types::access::HubAccount>,
 ) -> Result<fastctx_types::conversation_retention::RetentionAnswer, String> {
     let machine = fastctx_types::access::Written::try_from(machine_name).map_err(|error| error.to_string())?;
-    match shell.world().call(Call::ConversationRetention { machine, ask }).await.map_err(|error| error.to_string())?.0 {
+    match shell
+        .world()
+        .call(Call::ConversationRetention { machine, ask, account })
+        .await
+        .map_err(|error| error.to_string())?
+        .0
+    {
         Reply::ConversationRetention(answer) => Ok(answer),
         other => Err(format!("the World answered {other:?}")),
     }

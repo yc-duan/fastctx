@@ -1,9 +1,10 @@
 //! Deleting a conversation, with all it keeps, once it has been idle a
-//! number of days. The rule is kept on the machine the conversation's agent
-//! lives on: its owner sets the days for their own conversations and, as a
-//! ceiling, for those of the accounts its agents assist; each assisted account
-//! may set fewer days for its own. Off until set; turned on or shortened,
-//! nothing goes for `GRACE_DAYS`.
+//! number of days. The rules are kept on the machine the conversation's agent
+//! lives on, one for each network it is on: there its owner sets the days for
+//! their own conversations and, as a ceiling, for those of the accounts its
+//! agents assist; each assisted account may set fewer days for its own. Off
+//! until set; turned on or shortened, nothing it touches goes for
+//! `GRACE_DAYS`.
 
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
@@ -16,7 +17,7 @@ pub const DAYS: [u32; 6] = [3, 7, 14, 30, 60, 90];
 /// How long after a rule is turned on or shortened before anything goes.
 pub const GRACE_DAYS: i64 = 7;
 
-/// A machine's rule.
+/// A machine's rule on one network.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Rule {
     /// For the owner's own conversations.
@@ -29,7 +30,8 @@ pub struct Rule {
     /// What each assisted account set for its own conversations.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub accounts: Vec<AccountDays>,
-    /// Nothing goes before this, the rule having been turned on or shortened.
+    /// Nothing goes before this, the owner having turned the rule on or
+    /// shortened it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub grace_until: Option<Timestamp>,
 }
@@ -38,6 +40,10 @@ pub struct Rule {
 pub struct AccountDays {
     pub of: HubAccount,
     pub days: u32,
+    /// None of its conversations goes before this, the account having
+    /// shortened its own days.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grace_until: Option<Timestamp>,
 }
 
 impl Rule {
@@ -53,6 +59,13 @@ impl Rule {
             (Some(ceiling), Some(own)) => Some(ceiling.min(own)),
             (ceiling, own) => ceiling.or(own),
         }
+    }
+
+    /// Before when none of the conversations of an assisted account `of`
+    /// goes: the owner's grace, or the account's own, whichever is later.
+    pub fn assisted_grace(&self, of: &HubAccount) -> Option<Timestamp> {
+        let own = self.accounts.iter().find(|set| set.of == *of).and_then(|set| set.grace_until);
+        self.grace_until.max(own)
     }
 }
 
@@ -78,8 +91,8 @@ pub enum RetentionAsk {
     },
 }
 
-/// A machine's rule as the asker may know it, and when each of the
-/// conversations the asker may see goes.
+/// A machine's rule on the asker's network as the asker may know it, and
+/// when each of the conversations the asker may see goes.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RetentionAnswer {
     pub rule: Rule,

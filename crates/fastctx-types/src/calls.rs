@@ -874,10 +874,13 @@ pub enum Call {
     },
     /// The rule `machine`, this one or another of the network's, deletes its
     /// conversations idle long enough by: read, or set by its owner or by an
-    /// account its agents assist (`crate::conversation_retention`).
+    /// account its agents assist (`crate::conversation_retention`); asked as
+    /// `account`, where the one asking is known, and so on its network.
     ConversationRetention {
         machine: crate::access::Written,
         ask: crate::conversation_retention::RetentionAsk,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        account: Option<crate::access::HubAccount>,
     },
     /// New versions of Fastctx on `machine`, this one or another of the
     /// network's (`crate::update::UpdateCall`); answered with how updates

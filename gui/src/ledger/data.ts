@@ -87,7 +87,7 @@ export interface Login {
    *  it assists, my own among them, and may have no limit; otherwise I see
    *  only my part. `used` and `fable` are what I used, of a hundred of its
    *  week. */
-  lent?: { by: string; limit: number | null; used: number; fable: number; until: string | null; manages?: boolean };
+  lent?: { by: string; limit: number | null; used: number; fable: number; until: string | null; manages?: boolean; as?: { hub: string; account: string } };
   /** What keeps it from working: logged out, its program too old, its
    *  connection changed by hand, a change under way. */
   loggedOut?: boolean;

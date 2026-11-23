@@ -401,9 +401,9 @@ export function machineCopies(machine: string, ask: CopiesAsk): Promise<CopiesAn
 
 /** The rule a machine deletes its conversations idle long enough by: read,
  *  or set by its owner or by an account its agents assist
- *  (`Call::ConversationRetention`). */
-export function conversationRetention(machine: string, ask: RetentionAsk): Promise<RetentionAnswer> {
-  return invoke("conversation_retention", { machineName: machine, ask });
+ *  (`Call::ConversationRetention`), asked as `account` where it is known. */
+export function conversationRetention(machine: string, ask: RetentionAsk, account?: HubAccount): Promise<RetentionAnswer> {
+  return invoke("conversation_retention", { machineName: machine, ask, account: account ?? null });
 }
 
 /** Adds an agent's home on a machine, or hides one or shows it again. */

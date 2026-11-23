@@ -299,7 +299,7 @@ pub(crate) async fn told(node: &Arc<Node>, hub: &HubId, forgetting: Forgetting) 
         .collect();
     if !others.is_empty() {
         match keep(node, others).await {
-            Ok(()) => wake(node),
+            Ok(_) => wake(node),
             Err(error) => node.log.line(format_args!("keeping what to ask the other hubs of {id}: {error}")),
         }
     }
@@ -358,10 +358,17 @@ async fn home(node: &Arc<Node>, id: &ResidentId) -> Result<(), String> {
 
 /// Deletes `id`, which lives here and was idle longer than this machine's
 /// retention keeps it (`conversation_retention::expiry`): here first, refused
-/// rather than stopped where anything of it is under way, and only then are
-/// the hubs it worked for asked to have every other machine let go of what it
-/// keeps of it.
-pub(crate) async fn expired(node: &Arc<Node>, id: &ResidentId) -> Result<(), String> {
+/// rather than stopped where anything of it is under way or `still` says it
+/// is not to go, and only then are the hubs it worked for asked to have every
+/// other machine let go of what it keeps of it. What to ask them is kept
+/// before anything of it goes, held back until it is gone here
+/// (`Ask::ready`): a node stopped part way asks them once its deletion is
+/// finished; a deletion refused takes it back.
+pub(crate) async fn expired(
+    node: &Arc<Node>,
+    id: &ResidentId,
+    still: crate::data::delete::Still,
+) -> Result<(), String> {
     let _call = handing(node).map_err(|failure| failure.message)?;
     let address = Address { machine: node.machine(), resident: id.clone() };
     let asks: Vec<Ask> = match node.residents.about(id) {
@@ -378,17 +385,35 @@ pub(crate) async fn expired(node: &Arc<Node>, id: &ResidentId) -> Result<(), Str
             .collect(),
         None => Vec::new(),
     };
-    match crate::data::delete::delete_one(node, id.as_str()).await {
+    let asking = !asks.is_empty();
+    let added = if asking {
+        keep(node, asks).await.map_err(|error| format!("keeping what to ask the hubs: {error}"))?
+    } else {
+        Vec::new()
+    };
+    match crate::data::delete::delete_when(node, id.as_str(), Some(still)).await {
         Ok(_) | Err(Stop::Nothing(_)) => {}
-        Err(stop) => return Err(stop.why()),
+        Err(stop) => {
+            // Not deleted, nor being deleted: what this kept is taken back,
+            // and nothing kept before it.
+            let going = node.residents.ever_deleted(id)
+                || fastctx_platform::disk::exists(node.world.conversation(id).path().join(crate::data::delete::INTENT))
+                    .unwrap_or(true);
+            if !added.is_empty()
+                && !going
+                && let Err(error) = withdraw(node, added).await
+            {
+                node.log.line(format_args!("taking back what to ask the hubs of {id}: {error}"));
+            }
+            return Err(stop.why());
+        }
     }
     node.context_bodies.remove(id);
     let names = node.machine_names();
     let mut machines = vec![names.name];
     machines.extend(names.was);
     forget_copies(node, id, machines).await?;
-    if !asks.is_empty() {
-        keep(node, asks).await.map_err(|error| format!("keeping what to ask the hubs: {error}"))?;
+    if asking {
         wake(node);
     }
     Ok(())
@@ -566,17 +591,38 @@ fn kept_file(node: &Node) -> PathBuf {
     node.world.path().join("forget-asks.json")
 }
 
-/// Keeps `asks` to be asked of their hubs, beside those kept already.
-async fn keep(node: &Arc<Node>, asks: Vec<Ask>) -> std::io::Result<()> {
+/// Keeps `asks` to be asked of their hubs, beside those kept already; says
+/// which it added.
+async fn keep(node: &Arc<Node>, asks: Vec<Ask>) -> std::io::Result<Vec<Ask>> {
     let _file = node.forget_asks.file.lock().await;
     let path = kept_file(node);
     let now = jiff::Timestamp::now().as_millisecond();
     fastctx_platform::task::spawn_blocking(move || {
         let mut kept = read(&path)?;
+        let mut added = Vec::new();
         for ask in asks {
             if !kept.contains(&ask) {
-                kept.push(Ask { since: Some(now), ..ask });
+                kept.push(Ask { since: Some(now), ..ask.clone() });
+                added.push(ask);
             }
+        }
+        write(&path, &kept)?;
+        Ok(added)
+    })
+    .await
+    .map_err(std::io::Error::other)?
+}
+
+/// Takes `asks` back from what is kept to be asked, as kept by `keep`.
+async fn withdraw(node: &Arc<Node>, asks: Vec<Ask>) -> std::io::Result<()> {
+    let _file = node.forget_asks.file.lock().await;
+    let path = kept_file(node);
+    fastctx_platform::task::spawn_blocking(move || {
+        let mut kept = read(&path)?;
+        let before = kept.len();
+        kept.retain(|ask| !asks.contains(ask));
+        if kept.len() == before {
+            return Ok(());
         }
         write(&path, &kept)
     })

@@ -32,7 +32,7 @@ import { daysOf, heldOf, keptOf, LIMITS_MS, seenOf, SPAN_MS, take, tripsHeld, ty
 import type { MachinePageWords } from "./machine-page-words";
 import { CopiesBlock } from "./machine-copies";
 import { RetentionBlock } from "./machine-retention";
-import type { RetentionAnswer, RetentionAsk } from "../world/retention";
+import type { RetentionAsking } from "../world/retention";
 import { LoginMoveSheet, type LoginMoveOptions } from "./login-move-sheet";
 import type { LoginMoveSection } from "./login-move-words";
 import { FastctxBlock, type FastctxSubject } from "./machine-fastctx";
@@ -109,7 +109,7 @@ export interface MachinePageOptions {
   copies?: ((machine: string, ask: CopiesAsk) => Promise<CopiesAnswer>) | undefined;
   /** Asks a machine of the user's about how long it keeps its conversations
    *  idle; none where it cannot be asked. */
-  retention?: ((machine: string, ask: RetentionAsk) => Promise<RetentionAnswer>) | undefined;
+  retention?: RetentionAsking | undefined;
   /** Moving one of a Linux machine's login directories to another disk,
    *  over SSH from here, with the directories it has; none where it cannot
    *  be done from here. */
@@ -1198,7 +1198,7 @@ export class MachinePage implements Page {
     const owner = block ? ownerLoginOf(machine, world) : undefined;
     this.retentionBox.hidden = !block || !owner;
     if (!block || !owner) return;
-    block.show(machine, this.tab === "manage" && document.visibilityState === "visible");
+    block.show(machine, this.tab === "manage" && document.visibilityState === "visible", { hub: owner.hub, account: owner.account });
     this.put("retention", this.retentionBox, block.html());
   }
 
