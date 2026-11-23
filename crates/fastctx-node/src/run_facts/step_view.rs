@@ -98,16 +98,20 @@ pub(super) fn read(record: &Path) -> io::Result<(Vec<RunStep>, Vec<StepSummary>)
     })
 }
 
+/// One batch of a call's steps, then of its folded steps, given the
+/// conversation and the call. Positions are numbered per conversation, so
+/// a batch is kept to the call's own conversation.
+const DELETE_BATCH: [&str; 2] = [
+    "DELETE FROM run_steps WHERE conversation=?1 AND position IN (SELECT position FROM run_steps WHERE conversation=?1 AND call=?2 LIMIT 64)",
+    "DELETE FROM run_folded WHERE (conversation,call,machine,kind) IN (SELECT conversation,call,machine,kind FROM run_folded WHERE conversation=?1 AND call=?2 LIMIT 64)",
+];
+
+/// Deletes the job's steps, a few at a time.
 pub(crate) fn delete(job: &Job) -> io::Result<()> {
-    for table in ["run_steps", "run_folded"] {
+    for statement in DELETE_BATCH {
         loop {
             let count = job.change(VIEW, 4096, move |rows, family| {
-                let condition = if table == "run_steps" {
-                    "position IN (SELECT position FROM run_steps WHERE conversation=?1 AND call=?2 LIMIT 64)"
-                } else {
-                    "(conversation,call,machine,kind) IN (SELECT conversation,call,machine,kind FROM run_folded WHERE conversation=?1 AND call=?2 LIMIT 64)"
-                };
-                Ok(rows.connection().execute(&format!("DELETE FROM {table} WHERE {condition}"), (rows.conversation(), family))?)
+                Ok(rows.connection().execute(statement, (rows.conversation(), family))?)
             })?;
             if count == 0 {
                 break;
@@ -116,3 +120,7 @@ pub(crate) fn delete(job: &Job) -> io::Result<()> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "step_view_tests.rs"]
+mod tests;
