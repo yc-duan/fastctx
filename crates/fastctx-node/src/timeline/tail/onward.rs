@@ -324,10 +324,10 @@ pub(super) fn last_items(library: &Library, scope: &str, made: &[SessionEvent]) 
             remaining = index;
             let event = &made[index];
             let encoded = serde_json::to_vec(event).map_err(failure)?;
-            let (body, object) = assets::body(event, &encoded)?;
-            let objects: Vec<fastctx_content::ObjectRef> = object.into_iter().collect();
+            let (body, object) = assets::body(event, encoded)?;
+            let objects: Vec<fastctx_content::ObjectRef> = object.iter().map(|(object, _)| *object).collect();
             let Some(key) = key_of(&entry.order) else { return Ok(None) };
-            if entry.item != identities[index] || entry.body != body || entry.objects != objects {
+            if entry.item != identities[index] || !super::super::stored::unchanged(entry, &body, &objects) {
                 return Ok(None);
             }
             items.push((entry.item.clone(), event.at, key));

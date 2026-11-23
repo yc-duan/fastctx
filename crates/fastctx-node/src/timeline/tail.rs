@@ -736,8 +736,7 @@ fn finals(
             // Its record made now, of the event itself: nothing is read back
             // and made again of what was kept.
             let encoded = serde_json::to_vec(&event).map_err(failure)?;
-            let (record, object) = assets::body(&event, &encoded)?;
-            let object = object.map(|object| (object, encoded));
+            let (record, object) = assets::body(&event, encoded)?;
             // What a record stopped short knows it by, where one did.
             let known = frozen.then(|| (super::names::frozen(&event), super::names::key(&event).is_some()));
             spill.borrow_mut().push_final(base, event.at, record, object, known).map_err(Failure::new)
@@ -1508,8 +1507,8 @@ fn finals_recorded(
             crate::run_facts::attach(directory, &mut event).map_err(|error| crate::record_migration::failure(error).message)?;
             let base = super::names::base(&event);
             let encoded = serde_json::to_vec(&event).map_err(|error| error.to_string())?;
-            let (record, object) = assets::body(&event, &encoded).map_err(|failure| failure.message)?;
-            spill.push_final(base, event.at, record, object.map(|object| (object, encoded)), None)
+            let (record, object) = assets::body(&event, encoded).map_err(|failure| failure.message)?;
+            spill.push_final(base, event.at, record, object, None)
         })
         .map_err(Failure::new)?;
     assets::phase("merged and final", &mut since);
