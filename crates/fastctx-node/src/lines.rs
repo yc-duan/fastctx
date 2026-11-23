@@ -151,8 +151,9 @@ pub(crate) async fn open(
     }
     // A job run here whose files went as their retention says, its output
     // whole in its conversation's scope here (`job_assets::whole_here`), is
-    // read from there as a copy of another machine's job is.
-    if let Some((job, immutable)) = output_job(&decoding)
+    // read from there as a copy of another machine's job is. Its notes went
+    // with its files: history that read some of them is told they changed.
+    if let Some((job, immutable)) = kept_output_job(&decoding)
         && gone(&path)
     {
         let here = Written { name: node.machine(), hub: None };
@@ -179,6 +180,19 @@ fn output_job(decoding: &Decoding) -> Option<(&fastctx_types::JobId, bool)> {
                 _ => None,
             }
         }
+        _ => None,
+    }
+}
+
+/// The job whose output `decoding` reads, and whether history read it so
+/// (`Immutable`), which takes it only whole, whatever notes it read with it.
+fn kept_output_job(decoding: &Decoding) -> Option<(&fastctx_types::JobId, bool)> {
+    match decoding {
+        Decoding::Output { job } => Some((job, false)),
+        Decoding::Immutable { decoding: inner, .. } => match inner.as_ref() {
+            Decoding::Output { job } => Some((job, true)),
+            _ => None,
+        },
         _ => None,
     }
 }

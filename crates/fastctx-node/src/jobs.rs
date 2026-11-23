@@ -531,7 +531,6 @@ pub(crate) fn remove(path: &Path) -> std::io::Result<()> {
         path.with_extension("on"),
         path.with_extension("scratch"),
         path.with_extension("waited"),
-        path.with_extension("collected"),
     ];
     files.extend(record.stderr.as_deref().map(PathBuf::from));
     if let Some(on) = &record.on {
@@ -540,10 +539,12 @@ pub(crate) fn remove(path: &Path) -> std::io::Result<()> {
         files.extend(["on-taken", "on-piped", "on-stopped"].map(|extension| path.with_extension(extension)));
     }
     files.extend(
-        ["notice", "owed", "delivered", "posted", "answer-wait", "done", "retry", "run-request"]
+        ["notice", "owed", "posted", "answer-wait", "done", "retry", "run-request"]
             .map(|extension| path.with_extension(extension)),
     );
     files.extend(["copied", "wait-taken", "consumed", "exit-receipt"].map(|extension| path.with_extension(extension)));
+    // What found it as one whose files go, last of them.
+    files.extend(["delivered", "collected"].map(|extension| path.with_extension(extension)));
     // Its files go before what the records keep of it, its delivery among
     // them, and its record last: stopped part way, the job is still found as
     // one whose files go, and its removal is finished then.

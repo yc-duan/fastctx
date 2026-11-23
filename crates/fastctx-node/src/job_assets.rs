@@ -544,17 +544,20 @@ pub(crate) fn kept_for_good(node: &Node, job: &JobRecord) -> bool {
 
 /// Whether `job`, run here for a conversation that lives here, has its
 /// output whole in that conversation's scope in the library here, written
-/// in the scope's present holding: then its files may go as their retention
-/// says (`retention::expire`), and its output is read from the scope
-/// (`lines`). Whatever is not known so keeps them: no library, no scope or
-/// one released away, a scope held anew since (which writes the job again
-/// from its files), a job never written whole, or a reading that failed.
-/// What goes up to a hub goes from the library, so nothing waits on that.
-/// Call on a thread that may block.
+/// in the scope's present holding, and read back from there as its output
+/// is once its files went (`lines`, `timeline::copy::scope_of_conversation`):
+/// then its files may go as their retention says (`retention::expire`).
+/// Whatever is not known so keeps them: no library, no scope, one released
+/// away or not read here as one logged in reads it (offline, not described
+/// by its hub yet, not pulled whole), a scope held anew since (which writes
+/// the job again from its files), a job never written whole, or a reading
+/// that failed. What goes up to a hub goes from the library, so nothing
+/// waits on that. Call on a thread that may block.
 pub(crate) fn whole_here(node: &Node, job: &JobRecord) -> bool {
     let Some(kept) = node.assets.as_ref() else { return false };
     let Some(Home::Conversation(resident)) = home_of(node, job) else { return false };
-    let Ok(Some((_, scope))) = crate::timeline::scope_of(node, &resident) else { return false };
+    let here = fastctx_types::access::Written { name: node.machine(), hub: None };
+    let Some(scope) = crate::timeline::copy::scope_of_conversation(node, &resident, &here) else { return false };
     if crate::assets::release::released_away(node.world.conversation(&resident).path(), &scope, &kept.device()) {
         return false;
     }
