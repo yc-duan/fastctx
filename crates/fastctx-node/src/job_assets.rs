@@ -117,6 +117,12 @@ fn home_of(node: &Node, job: &JobRecord) -> Option<Home> {
     }
 }
 
+/// Whether `job` ran for a conversation that lives on this machine, its
+/// assets kept in that conversation's scope.
+pub(crate) fn lives_here(node: &Node, job: &JobRecord) -> bool {
+    home_of(node, job).is_some()
+}
+
 /// The streams of a job's facts and output: its conversation's own.
 fn streams_of(_node: &Node, _home: &Home) -> (String, String) {
     (JobFacts::STREAM.to_string(), JobOutput::STREAM.to_string())

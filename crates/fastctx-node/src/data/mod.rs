@@ -69,7 +69,8 @@ pub(crate) async fn answer(node: &Arc<Node>, call: DataCall) -> Result<DataReply
                 .await
                 .map_err(|error| Failure::new(error.to_string()))?
                 .map_err(|error| Failure::new(format!("measuring what is kept here: {error}")))?;
-            *node.data_space.last.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some((began, space.clone()));
+            *node.data_space.last.lock().unwrap_or_else(std::sync::PoisonError::into_inner) =
+                Some((began, space.clone()));
             let (file, keeping, log) = (kept_file(node), space.clone(), node.log.clone());
             // Written behind the answer: the page waits for nothing of it.
             drop(fastctx_platform::task::spawn_blocking(move || {
@@ -162,10 +163,19 @@ pub(crate) async fn answer(node: &Arc<Node>, call: DataCall) -> Result<DataReply
             Ok(DataReply::Copies { accounts: Vec::new() })
         }
         DataCall::OutputDays { days } => {
-            if days.is_some() {
-                return Err(Failure::not_run("Job output is an asset and has no retention deadline."));
-            }
-            Ok(DataReply::OutputDays { days: 30, output_retention: Some("unlimited".into()) })
+            let world = node.world.clone();
+            let days = fastctx_platform::task::spawn_blocking(move || match days {
+                Some(days) if !fastctx_types::data::OUTPUT_DAYS.contains(&days) => Err(std::io::Error::other(format!(
+                    "a job's files stay one of {:?} days",
+                    fastctx_types::data::OUTPUT_DAYS
+                ))),
+                Some(days) => crate::retention::set_days(&world, days).map(|()| days),
+                None => crate::retention::days(&world),
+            })
+            .await
+            .map_err(|error| Failure::new(error.to_string()))?
+            .map_err(|error| Failure::new(error.to_string()))?;
+            Ok(DataReply::OutputDays { days, output_retention: None })
         }
     }
 }

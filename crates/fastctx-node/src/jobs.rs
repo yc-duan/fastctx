@@ -486,6 +486,75 @@ pub(crate) fn retire(path: &Path) -> std::io::Result<()> {
     retain_scratch(path, delivered)
 }
 
+/// Removes the files of the ended job whose record is at `path`, as its
+/// retention says (`retention::expire`); those of a job an `on` sent here
+/// include the package it came in and what was kept of its end. Gone
+/// already, there is nothing to remove; still in use, it fails as
+/// `WouldBlock`.
+pub(crate) fn remove(path: &Path) -> std::io::Result<()> {
+    let record = match record::read(path) {
+        Ok(record) => record,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error),
+    };
+    if fastctx_hands::run::program::in_use(&record)? {
+        return Err(std::io::Error::new(std::io::ErrorKind::WouldBlock, "job processes still use its files"));
+    }
+    if let Some(supervisor) = &record.supervisor
+        && !fastctx_platform::host_process::exited_within(supervisor, SUPERVISOR_EXIT)?
+    {
+        return Err(std::io::Error::new(std::io::ErrorKind::WouldBlock, "its supervisor has not exited"));
+    }
+    let delivered = crate::job_metadata::get::<fastctx_types::run::JobDelivery>(&path.with_extension("delivered"))?
+        .map(|delivery| delivery.at)
+        .unwrap_or_else(Timestamp::now);
+    retain_scratch(path, delivered)?;
+    for extension in ["writes", "steps"] {
+        match fastctx_platform::disk::remove_dir_all(path.with_extension(extension)) {
+            Err(error) if error.kind() != std::io::ErrorKind::NotFound => return Err(error),
+            _ => {}
+        }
+    }
+    // The record goes last: a log without one would be found by nobody.
+    let mut files = vec![
+        PathBuf::from(&record.output),
+        path.with_extension("sh"),
+        path.with_extension("wait-taken"),
+        path.with_extension("facts-state"),
+        path.with_extension("facts-output"),
+        path.with_extension("facts-pending"),
+        path.with_extension("writes.jsonl"),
+        path.with_extension("writes-pending"),
+        path.with_extension("steps.jsonl"),
+        path.with_extension("steps-index"),
+        record::lock_path(path),
+        path.with_extension("on"),
+        path.with_extension("scratch"),
+        path.with_extension("waited"),
+        path.with_extension("collected"),
+    ];
+    files.extend(record.stderr.as_deref().map(PathBuf::from));
+    if let Some(on) = &record.on {
+        files.push(PathBuf::from(&on.state));
+        files.extend(record.stdin.as_deref().map(PathBuf::from));
+        files.extend(["on-taken", "on-piped", "on-stopped"].map(|extension| path.with_extension(extension)));
+    }
+    files.extend(
+        ["notice", "owed", "delivered", "posted", "answer-wait", "done", "retry", "run-request"]
+            .map(|extension| path.with_extension(extension)),
+    );
+    files.extend(["copied", "wait-taken", "consumed", "exit-receipt"].map(|extension| path.with_extension(extension)));
+    crate::job_metadata::Job::of(path, &record)?.delete_all()?;
+    files.push(path.to_path_buf());
+    for file in files {
+        match fastctx_platform::disk::remove_file(&file) {
+            Err(error) if error.kind() != std::io::ErrorKind::NotFound => return Err(error),
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
 /// Temporary artifacts keep their delivery clock independently of retained output.
 pub(crate) fn retain_scratch(path: &Path, delivered: Timestamp) -> std::io::Result<()> {
     let job = match record::read(path) {
