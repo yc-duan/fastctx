@@ -1390,6 +1390,16 @@ impl fastctx_net::link::Node for Handler {
                         .map_err(|error| Failure::new(error.to_string()))?
                         .map(|used| RemoteReply::AttachmentReferences { used })
                     }
+                    RemoteCall::ConversationRetention { ask } => {
+                        let (asking, through, account, view) =
+                            (node.clone(), hub.clone(), caller.account.clone(), link.view().directory.clone());
+                        fastctx_platform::task::spawn_blocking(move || {
+                            crate::conversation_retention::remote(&asking, &view, &through, &account, ask)
+                        })
+                        .await
+                        .map_err(|error| Failure::new(error.to_string()))?
+                        .map(RemoteReply::ConversationRetention)
+                    }
                     RemoteCall::Copies { ask } => {
                         // Answered for the network it came over alone, its
                         // owner asking, so still as it is done.

@@ -15,6 +15,7 @@ pub mod activity;
 mod activity_book;
 mod admission;
 mod admitted;
+mod conversation_retention;
 mod adoption;
 mod afoot;
 mod again;
@@ -1088,6 +1089,7 @@ pub async fn run_prepared(
             composer::keep(&node);
             lifecycle::start(&node);
             idle_compaction::start(&node);
+        conversation_retention::expiry::start(&node);
             recovery::start(&node, jobs_reconciled);
             goals::start(&node);
             sentinels::start(&node);

@@ -26,6 +26,7 @@ pub mod collab_prompt;
 pub mod collaboration;
 pub mod composer;
 pub mod contract;
+pub mod conversation_retention;
 pub mod copy;
 pub mod data;
 pub mod delivery_control;

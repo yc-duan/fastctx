@@ -32,6 +32,7 @@ impl RemoteCall {
             | Self::SetIdleCompaction { .. }
             | Self::ClaudeConsent { .. }
             | Self::Copies { .. }
+            | Self::ConversationRetention { .. }
             | Self::Collaboration { .. }
             | Self::CommitAttachment { .. }
             | Self::ConversationDebt { .. }
@@ -143,6 +144,7 @@ impl Call {
             | Self::SetIdleCompaction { .. }
             | Self::ClaudeConsent { .. }
             | Self::MachineCopies { .. }
+            | Self::ConversationRetention { .. }
             | Self::ClaudeContext { .. }
             | Self::ClaudeSessionDirectory { .. }
             | Self::CollabRead { .. }

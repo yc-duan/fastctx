@@ -428,6 +428,7 @@ impl Device {
             Call::UpdateMachine { machine } => (machine, RemoteCall::UpdateWorld, None),
             Call::MachineUpdates { machine, update } => (machine, RemoteCall::Updates { update }, None),
             Call::MachineCopies { machine, ask } => (machine, RemoteCall::Copies { ask }, None),
+            Call::ConversationRetention { machine, ask } => (machine, RemoteCall::ConversationRetention { ask }, None),
             Call::Thumbnail { machine, request } => {
                 let machine = machine.ok_or_else(|| failed("choose the machine holding the image"))?;
                 (machine, RemoteCall::Thumbnail { request }, None)
@@ -683,9 +684,11 @@ impl Device {
             }
             // The files a conversation changed: never asked of a hub or a
             // machine that does not know the question.
-            if matches!(&remote, RemoteCall::Timeline { request: fastctx_types::timeline_pages::TimelineAsk::Files { .. } })
-                && !(session.link.view().file_changes
-                    && matches!(&facts, RemoteReply::Facts(facts) if facts.file_changes))
+            if matches!(
+                &remote,
+                RemoteCall::Timeline { request: fastctx_types::timeline_pages::TimelineAsk::Files { .. } }
+            ) && !(session.link.view().file_changes
+                && matches!(&facts, RemoteReply::Facts(facts) if facts.file_changes))
             {
                 return Err(crate::CallError::Failed(fastctx_types::ipc::Failure::not_run(
                     "this machine or its hub does not keep the files conversations changed; update it",
@@ -796,6 +799,9 @@ impl Device {
             (RemoteCall::Book { .. }, RemoteReply::Book(answer)) => Reply::Book(answer),
             (RemoteCall::UpdateWorld | RemoteCall::Updates { .. }, RemoteReply::Update(state)) => Reply::Update(state),
             (RemoteCall::Copies { .. }, RemoteReply::Copies(answer)) => Reply::MachineCopies(answer),
+            (RemoteCall::ConversationRetention { .. }, RemoteReply::ConversationRetention(answer)) => {
+                Reply::ConversationRetention(answer)
+            }
             (RemoteCall::Thumbnail { .. }, RemoteReply::Thumbnail(reply)) => Reply::Thumbnail(reply),
             (RemoteCall::AttachmentThumbnail { .. }, RemoteReply::Thumbnail(reply)) => Reply::Thumbnail(reply),
             (RemoteCall::Lines { .. }, RemoteReply::Lines(reply)) => Reply::Lines(reply),

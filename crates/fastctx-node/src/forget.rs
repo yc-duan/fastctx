@@ -356,6 +356,44 @@ async fn home(node: &Arc<Node>, id: &ResidentId) -> Result<(), String> {
     forget_copies(node, id, machines).await
 }
 
+/// Deletes `id`, which lives here and was idle longer than this machine's
+/// retention keeps it (`conversation_retention::expiry`): here first, refused
+/// rather than stopped where anything of it is under way, and only then are
+/// the hubs it worked for asked to have every other machine let go of what it
+/// keeps of it.
+pub(crate) async fn expired(node: &Arc<Node>, id: &ResidentId) -> Result<(), String> {
+    let _call = handing(node).map_err(|failure| failure.message)?;
+    let address = Address { machine: node.machine(), resident: id.clone() };
+    let asks: Vec<Ask> = match node.residents.about(id) {
+        Some((about, _)) => pairs(node, &about.acting)
+            .into_iter()
+            .map(|(hub, account)| Ask {
+                hub,
+                account,
+                conversation: address.clone(),
+                after: Some(id.clone()),
+                round: None,
+                since: None,
+            })
+            .collect(),
+        None => Vec::new(),
+    };
+    match crate::data::delete::delete_one(node, id.as_str()).await {
+        Ok(_) | Err(Stop::Nothing(_)) => {}
+        Err(stop) => return Err(stop.why()),
+    }
+    node.context_bodies.remove(id);
+    let names = node.machine_names();
+    let mut machines = vec![names.name];
+    machines.extend(names.was);
+    forget_copies(node, id, machines).await?;
+    if !asks.is_empty() {
+        keep(node, asks).await.map_err(|error| format!("keeping what to ask the hubs: {error}"))?;
+        wake(node);
+    }
+    Ok(())
+}
+
 /// `home`, for a purge (`crate::purges`): nothing of it is asked of a hub as
 /// the account it worked for, which may no longer let this machine act for
 /// it (its hub lets go of what it keeps itself); what is still being let go

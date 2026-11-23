@@ -872,6 +872,13 @@ pub enum Call {
         machine: crate::access::Written,
         ask: crate::data::CopiesAsk,
     },
+    /// The rule `machine`, this one or another of the network's, deletes its
+    /// conversations idle long enough by: read, or set by its owner or by an
+    /// account its agents assist (`crate::conversation_retention`).
+    ConversationRetention {
+        machine: crate::access::Written,
+        ask: crate::conversation_retention::RetentionAsk,
+    },
     /// New versions of Fastctx on `machine`, this one or another of the
     /// network's (`crate::update::UpdateCall`); answered with how updates
     /// stand there.
@@ -1246,6 +1253,7 @@ pub enum Reply {
     Data(crate::data::DataReply),
     Update(Box<crate::update::State>),
     MachineCopies(crate::data::CopiesAnswer),
+    ConversationRetention(crate::conversation_retention::RetentionAnswer),
     NetworkUpdates(crate::update::ViewReply),
     ClaudeSessionDirectory {
         path: String,
@@ -1645,6 +1653,8 @@ impl Call {
             Self::AdoptConversation { .. } => Some(Purpose::AssetSync),
             // What a machine's owner asks of the copies its library holds.
             Self::MachineCopies { .. } => Some(Purpose::AssetSync),
+            // Sets when a machine deletes its conversations idle long enough.
+            Self::ConversationRetention { .. } => Some(Purpose::ExecutionControl),
             // Sets what a login's assistances and its Fable line are held to.
             Self::SetAgentWeek { .. } | Self::ResetAgentUsage { .. } | Self::SetIdleCompaction { .. } => {
                 Some(Purpose::ExecutionControl)
@@ -1752,6 +1762,7 @@ impl Reply {
             | Self::WorldNow { .. }
             | Self::Written { .. } => None,
             Self::Timeline(_) | Self::MachineCopies { .. } => Some(Purpose::AssetSync),
+            Self::ConversationRetention(_) => Some(Purpose::ExecutionControl),
             Self::Topics(_) | Self::RemoteTopics(_) | Self::SyncStatus { .. } => Some(Purpose::Observation),
         }
     }
