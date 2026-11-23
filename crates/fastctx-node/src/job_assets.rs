@@ -8,10 +8,10 @@
 //! stop is not written again. Made by the machine the job runs on: a job of
 //! a conversation that lives here goes into the conversation's scope, which
 //! is ordered here; one run here for a conversation elsewhere (an `on`), or
-//! for a page, into the records of the account it ran for, in streams this
-//! machine names after itself. The asset library is where a job is kept for
-//! good and read from elsewhere; its files here go, as their retention says,
-//! only once its output is written and the hub took it (`kept_for_good`).
+//! for a page, is kept here alone, as its files. The asset library is where
+//! a job of a conversation here is kept for good and read from elsewhere;
+//! its files go, as their retention says, only once its output is written
+//! whole in the conversation's scope (`whole_here`).
 
 use crate::Node;
 use fastctx_content::v2::{JobFacts, JobOutput, Kind as _, LEASE, Library, Write, Writer};
@@ -496,10 +496,11 @@ fn write_job(
     Ok(standing.done)
 }
 
-/// Whether `job`'s files may go as their retention says: its output is
-/// written into its conversation's scope whole and nothing of it waits to
-/// be sent — or it keeps no assets in the library at all, or ended before
-/// the jobs here were written at all. Call on a thread that may block.
+/// Whether what is left of `job`'s running may be retired (`jobs::retire`):
+/// its output is written into its conversation's scope whole and nothing of
+/// it waits to be sent — or it keeps no assets in the library at all, or
+/// ended before the jobs here were written at all. Its files themselves go
+/// only as `whole_here` says. Call on a thread that may block.
 pub(crate) fn kept_for_good(node: &Node, job: &JobRecord) -> bool {
     let Some(kept) = node.assets.as_ref() else { return true };
     let Some(home) = home_of(node, job) else { return true };
@@ -539,4 +540,30 @@ pub(crate) fn kept_for_good(node: &Node, job: &JobRecord) -> bool {
     library
         .uploads(&scope, &kept.device())
         .is_ok_and(|uploads| uploads.iter().all(|(stream, _)| *stream != output_stream && *stream != facts_stream))
+}
+
+/// Whether `job`, run here for a conversation that lives here, has its
+/// output whole in that conversation's scope in the library here, written
+/// in the scope's present holding: then its files may go as their retention
+/// says (`retention::expire`), and its output is read from the scope
+/// (`lines`). Whatever is not known so keeps them: no library, no scope or
+/// one released away, a scope held anew since (which writes the job again
+/// from its files), a job never written whole, or a reading that failed.
+/// What goes up to a hub goes from the library, so nothing waits on that.
+/// Call on a thread that may block.
+pub(crate) fn whole_here(node: &Node, job: &JobRecord) -> bool {
+    let Some(kept) = node.assets.as_ref() else { return false };
+    let Some(Home::Conversation(resident)) = home_of(node, job) else { return false };
+    let Ok(Some((_, scope))) = crate::timeline::scope_of(node, &resident) else { return false };
+    if crate::assets::release::released_away(node.world.conversation(&resident).path(), &scope, &kept.device()) {
+        return false;
+    }
+    let library = &kept.library;
+    let Ok(Some(holding)) = library.holding(&scope) else { return false };
+    library
+        .checkpoint(&checkpoint(job))
+        .ok()
+        .flatten()
+        .and_then(|bytes| serde_json::from_slice::<Standing>(&bytes).ok())
+        .is_some_and(|standing| standing.done && standing.holding == holding)
 }

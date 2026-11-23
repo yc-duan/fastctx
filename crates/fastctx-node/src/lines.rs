@@ -138,17 +138,7 @@ pub(crate) async fn open(
         // A job's output the copy here has whole, or what came of it while
         // its machine is away, is read here (plan 3-5); as history read it
         // (`Immutable`), only whole.
-        // History's notes on it are on its machine alone: read there
-        // (codex-847f57fd #6).
-        let job = match &decoding {
-            Decoding::Output { job } => Some((job, false)),
-            Decoding::Immutable { decoding: inner, annotation, .. } if annotation.as_deref().is_none_or(str::is_empty) => match inner.as_ref() {
-                Decoding::Output { job } => Some((job, true)),
-                _ => None,
-            },
-            _ => None,
-        };
-        if let Some((job, immutable)) = job
+        if let Some((job, immutable)) = output_job(&decoding)
             && let Some((copy, whole)) = copied::output(node, &machine, job, &path).await
             && (whole || !immutable)
         {
@@ -159,7 +149,45 @@ pub(crate) async fn open(
         let (reply, lease) = fastctx_net::lines::open(link, machine.name, account, path, decoding).await?;
         return Ok((reply, Lease::Remote(lease)));
     }
+    // A job run here whose files went as their retention says, its output
+    // whole in its conversation's scope here (`job_assets::whole_here`), is
+    // read from there as a copy of another machine's job is.
+    if let Some((job, immutable)) = output_job(&decoding)
+        && gone(&path)
+    {
+        let here = Written { name: node.machine(), hub: None };
+        if let Some((copy, whole)) = copied::output(node, &here, job, &path).await
+            && (whole || !immutable)
+        {
+            let local = copy.path().to_string_lossy().into_owned();
+            return opened_here(node, from, Some((here.name, path)), local, decoding, Some((copy, whole))).await;
+        }
+    }
     opened_here(node, from, None, path, decoding, None).await
+}
+
+/// The job whose output `decoding` reads, and whether history read it so
+/// (`Immutable`), which takes it only whole. History's notes on it are kept
+/// beside its files alone: one read with them is read there (codex-847f57fd
+/// #6).
+fn output_job(decoding: &Decoding) -> Option<(&fastctx_types::JobId, bool)> {
+    match decoding {
+        Decoding::Output { job } => Some((job, false)),
+        Decoding::Immutable { decoding: inner, annotation, .. } if annotation.as_deref().is_none_or(str::is_empty) => {
+            match inner.as_ref() {
+                Decoding::Output { job } => Some((job, true)),
+                _ => None,
+            }
+        }
+        _ => None,
+    }
+}
+
+/// Whether nothing is at `path` on this machine any more.
+fn gone(path: &str) -> bool {
+    fastctx_platform::local_path(path).is_ok_and(|path| {
+        matches!(fastctx_platform::disk::metadata(path), Err(error) if error.kind() == std::io::ErrorKind::NotFound)
+    })
 }
 
 /// Whether the line source `source` of `from` was opened on this machine: a

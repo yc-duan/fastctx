@@ -544,15 +544,20 @@ pub(crate) fn remove(path: &Path) -> std::io::Result<()> {
             .map(|extension| path.with_extension(extension)),
     );
     files.extend(["copied", "wait-taken", "consumed", "exit-receipt"].map(|extension| path.with_extension(extension)));
-    crate::job_metadata::Job::of(path, &record)?.delete_all()?;
-    files.push(path.to_path_buf());
+    // Its files go before what the records keep of it, its delivery among
+    // them, and its record last: stopped part way, the job is still found as
+    // one whose files go, and its removal is finished then.
     for file in files {
         match fastctx_platform::disk::remove_file(&file) {
             Err(error) if error.kind() != std::io::ErrorKind::NotFound => return Err(error),
             _ => {}
         }
     }
-    Ok(())
+    crate::job_metadata::Job::of(path, &record)?.delete_all()?;
+    match fastctx_platform::disk::remove_file(path) {
+        Err(error) if error.kind() != std::io::ErrorKind::NotFound => Err(error),
+        _ => Ok(()),
+    }
 }
 
 /// Temporary artifacts keep their delivery clock independently of retained output.

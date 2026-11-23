@@ -18,9 +18,6 @@ use crate::Node;
 /// How many days a job's files stay after its answer reached the model, as
 /// this machine is set (`days`), unless set otherwise.
 const DEFAULT_DAYS: u32 = 7;
-/// The most days a job run here for a conversation elsewhere waits for that
-/// conversation's machine to take its output whole.
-const UNCOLLECTED_DAYS: i64 = 30;
 const DAY_MS: i64 = 24 * 60 * 60 * 1000;
 /// The most jobs whose files go in one pass, so that a machine that kept
 /// thousands lets them go over a few hours.
@@ -396,40 +393,71 @@ pub(crate) fn entries(path: &Path) -> io::Result<Vec<PathBuf>> {
     }
 }
 
+/// The most failures one pass of `expire` tells of; the rest are counted.
+const FAILURES_TOLD: usize = 8;
+
 /// Lets go of the files of each ended job whose answer reached the model at
 /// least the set days ago (`days`) and whose output is kept for good where
-/// its conversation lives: in that conversation's scope here, whole; or, for
-/// a conversation elsewhere, taken whole by its machine (`.collected`), or
-/// waited for long enough. A job still read, still owed word of its end or
-/// still needed by the activity book stays for a later pass.
+/// its conversation lives: in that conversation's scope here, whole
+/// (`job_assets::whole_here`); for a conversation elsewhere, once its
+/// machine took it whole (`.collected`), and never before. A job still read,
+/// still owed word of its end or still needed by the activity book stays for
+/// a later pass. One job or folder that cannot be looked at holds back none
+/// after it: the failures are told together at the end.
 fn expire(node: &Arc<Node>) -> io::Result<()> {
     let kept_for = i64::from(days(&node.world)?) * DAY_MS;
     let now = Timestamp::now().as_millisecond();
     let mut gone = 0usize;
+    let mut failures = Vec::new();
     'parents: for parent in node.world.job_parents()? {
-        for directory in entries(&parent)? {
-            if fastctx_platform::owned_directory::is_link(&fs::symlink_metadata(&directory)?) {
+        let directories = match entries(&parent) {
+            Ok(directories) => directories,
+            Err(error) => {
+                failures.push(format!("{}: {error}", parent.display()));
                 continue;
             }
-            for path in entries(&directory.join("jobs"))? {
+        };
+        for directory in directories {
+            match fs::symlink_metadata(&directory) {
+                Ok(metadata) if fastctx_platform::owned_directory::is_link(&metadata) => continue,
+                Ok(_) => {}
+                Err(error) => {
+                    failures.push(format!("{}: {error}", directory.display()));
+                    continue;
+                }
+            }
+            let paths = match entries(&directory.join("jobs")) {
+                Ok(paths) => paths,
+                Err(error) => {
+                    failures.push(format!("{}: {error}", directory.display()));
+                    continue;
+                }
+            };
+            for path in paths {
                 if gone >= EXPIRED_AT_ONCE {
                     break 'parents;
                 }
                 if path.extension().is_none_or(|extension| extension != "json") {
                     continue;
                 }
-                if expire_one(node, &path, now, kept_for)? {
-                    gone += 1;
+                match expire_one(node, &path, now, kept_for) {
+                    Ok(true) => gone += 1,
+                    Ok(false) => {}
+                    Err(error) => failures.push(format!("{}: {error}", path.display())),
                 }
             }
         }
     }
     if gone > 0 {
-        node.log.line(format_args!(
-            "let go of the files of {gone} job(s) whose output is kept for good or waited long enough"
-        ));
+        node.log.line(format_args!("let go of the files of {gone} job(s) whose output is kept for good"));
     }
-    Ok(())
+    if failures.is_empty() {
+        return Ok(());
+    }
+    let more = failures.len().saturating_sub(FAILURES_TOLD);
+    failures.truncate(FAILURES_TOLD);
+    let more = if more > 0 { format!("; and {more} more") } else { String::new() };
+    Err(io::Error::other(format!("letting go of expired job files: {}{more}", failures.join("; "))))
 }
 
 /// `expire` for the job whose record is at `path`: whether its files went.
@@ -454,10 +482,12 @@ fn expire_one(node: &Arc<Node>, path: &Path, now: i64, kept_for: i64) -> io::Res
     {
         return Ok(false);
     }
+    // Run here for a conversation elsewhere, the files are its output's only
+    // copy until that conversation's machine took it whole.
     let kept = if crate::job_assets::lives_here(node, &job) {
-        crate::job_assets::kept_for_good(node, &job)
+        crate::job_assets::whole_here(node, &job)
     } else {
-        crate::job_metadata::exists(&path.with_extension("collected"))? || since >= UNCOLLECTED_DAYS * DAY_MS
+        crate::job_metadata::exists(&path.with_extension("collected"))?
     };
     if !kept {
         return Ok(false);
