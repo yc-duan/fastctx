@@ -59,7 +59,10 @@ pub(crate) fn start(node: &Arc<Node>) {
         loop {
             tokio::time::sleep(EVERY).await;
             let Some(node) = weak.upgrade() else { return };
-            if started.elapsed() < SETTLING || jumped() {
+            // The clock is looked at every pass, the settling hour too, so
+            // that a jump in it is seen from the first.
+            let jumped = jumped();
+            if started.elapsed() < SETTLING || jumped {
                 continue;
             }
             pass(&node).await;
@@ -160,24 +163,20 @@ async fn pass(node: &Arc<Node>) {
     }
 }
 
-/// What a conversation going is asked once nothing new can begin in it: its
-/// rule and idle time read anew, and nothing on its way here.
+/// What a conversation going is asked once nothing new can begin in it,
+/// right before its deletion is recorded: nothing on its way here, and its
+/// rule and idle time read anew, last.
 fn still() -> crate::data::delete::Still {
     Arc::new(|node: Arc<Node>, id: ResidentId| {
         Box::pin(async move {
-            let (reading, of) = (node.clone(), id.clone());
-            let due = fastctx_platform::task::spawn_blocking(move || -> std::io::Result<Option<Due>> {
-                let rules = super::read(&reading)?;
-                Ok(reading.residents.about(&of).and_then(|(about, _)| one(&reading, &rules, &of, &about)))
-            })
-            .await
-            .map_err(|error| error.to_string())?
-            .map_err(|error| format!("reading this machine's conversation retention: {error}"))?;
-            if !due.and_then(|due| due.at).is_some_and(|at| at <= Timestamp::now()) {
-                return Err("it is no longer due to go".into());
-            }
             if busy_here(&node, &id).await {
                 return Err("something of it is on its way".into());
+            }
+            let rules = super::read(&node)
+                .map_err(|error| format!("reading this machine's conversation retention: {error}"))?;
+            let due = node.residents.about(&id).and_then(|(about, _)| one(&node, &rules, &id, &about));
+            if due.and_then(|due| due.at).is_none_or(|at| at > Timestamp::now()) {
+                return Err("it is no longer due to go".into());
             }
             Ok(())
         })
@@ -208,7 +207,8 @@ fn one(node: &Node, rules: &Rules, id: &ResidentId, about: &About) -> Option<Due
         return None;
     }
     let kept = kept(node, rules, &about.acting);
-    let idle_since = idle_since(node, id);
+    // The commands it ran are looked at only where a rule may take it.
+    let idle_since = idle_since(node, id, kept.is_some());
     let at = kept.map(|(days, grace)| {
         let at = idle_since + jiff::SignedDuration::from_hours(i64::from(days) * 24);
         grace.map_or(at, |grace| at.max(grace))
@@ -269,18 +269,28 @@ pub(crate) fn owns(node: &Node, account: &HubAccount) -> bool {
     })
 }
 
-/// Since when `id` has been idle: its last words or turn, or the last change
-/// of the commands it ran here, whichever came later.
-fn idle_since(node: &Node, id: &ResidentId) -> Timestamp {
+/// Since when `id` has been idle: its last words or turn, or with `jobs` the
+/// last change of a command it ran here, as the command's own record says
+/// (its folder changes as their files go, which is no doing of its),
+/// whichever came later.
+fn idle_since(node: &Node, id: &ResidentId, jobs: bool) -> Timestamp {
     let since = node.residents.now(id).map(|now| now.since);
-    let jobs = fastctx_platform::disk::metadata(node.world.conversation(id).jobs())
-        .ok()
-        .and_then(|metadata| metadata.modified().ok())
-        .and_then(|time| Timestamp::try_from(time).ok());
+    let jobs = jobs.then(|| jobs_changed(node, id)).flatten();
     match (since, jobs) {
         (Some(since), Some(jobs)) => since.max(jobs),
         (since, jobs) => since.or(jobs).unwrap_or_else(Timestamp::now),
     }
+}
+
+/// When a record of the commands `id` ran here last changed.
+fn jobs_changed(node: &Node, id: &ResidentId) -> Option<Timestamp> {
+    fastctx_platform::disk::read_dir(node.world.conversation(id).jobs())
+        .ok()?
+        .flatten()
+        .filter(|entry| entry.path().extension().is_some_and(|extension| extension == "json"))
+        .filter_map(|entry| entry.metadata().ok()?.modified().ok())
+        .max()
+        .and_then(|time| Timestamp::try_from(time).ok())
 }
 
 /// Whether `id` has anything on its way, here or of others, or cannot be
@@ -315,7 +325,10 @@ async fn busy_here(node: &Arc<Node>, id: &ResidentId) -> bool {
     let (looking, owner) = (node.clone(), Address { machine: node.machine(), resident: id.clone() });
     fastctx_platform::task::spawn_blocking(move || -> std::io::Result<bool> {
         let directory = looking.world.conversation(&owner.resident);
-        Ok(crate::inbox::any(&directory, |_| true)? || crate::books::in_flight(&looking, &owner, &directory)?)
+        // Words of any kind count, those waiting for a way in too; context
+        // that only rides with a next turn starts none (`lifecycle::held`).
+        Ok(crate::inbox::any(&directory, |row| row.delivery.notice.along().is_none())?
+            || crate::books::in_flight(&looking, &owner, &directory)?)
     })
     .await
     .map_or(true, |busy| busy.unwrap_or(true))

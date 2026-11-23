@@ -653,14 +653,18 @@ async fn send_kept(node: &Arc<Node>) -> bool {
     }
     let now = jiff::Timestamp::now().as_millisecond();
     let mut left = Vec::new();
+    // Those held back until their conversation is gone here: their month
+    // counts from when they may be asked, not from when they were kept.
+    let mut held_back = Vec::new();
     for ask in &kept {
-        let ask = &Ask { since: Some(ask.since.unwrap_or(now)), ..ask.clone() };
-        let bytes = ask.asked();
-        let given_up = now.saturating_sub(ask.since.unwrap_or(now)) > ASKED_FOR_MS;
-        if !given_up && !ask.ready(&node.residents) {
+        if !ask.ready(&node.residents) {
+            held_back.push(ask.clone());
             left.push(ask.clone());
             continue;
         }
+        let ask = &Ask { since: Some(ask.since.unwrap_or(now)), ..ask.clone() };
+        let bytes = ask.asked();
+        let given_up = now.saturating_sub(ask.since.unwrap_or(now)) > ASKED_FOR_MS;
         let id = crate::speech::fixed_id("forget", &[&fastctx_hands::files::content_hash(&bytes)]);
         let terminal = node.world.path().join("forget-outcomes").join(format!("{id}.json"));
         if let Err(error) = fastctx_platform::ensure_private_dir(terminal.parent().expect("deletion outcomes")) {
@@ -732,7 +736,9 @@ async fn send_kept(node: &Arc<Node>) -> bool {
         current.retain(|ask| !kept.contains(ask) || left.contains(ask));
         // Those kept by an earlier release keep the time they were first sent.
         for ask in &mut current {
-            if let Some(stamped) = left.iter().find(|stamped| *stamped == ask) {
+            if held_back.contains(ask) {
+                ask.since = Some(now);
+            } else if let Some(stamped) = left.iter().find(|stamped| *stamped == ask) {
                 ask.since = ask.since.or(stamped.since);
             }
         }

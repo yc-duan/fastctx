@@ -47,7 +47,8 @@ pub(crate) fn ended(node: &Node, resident: &ResidentId, turn: &str) {
 
 /// Whether `resident` waits on anything now: a command here or elsewhere, a
 /// colleague's answer, a sentinel or a timer (`waiting::collect`), any of
-/// which may be asked of other machines.
+/// which may be asked of other machines. One already come (`Ended`) is
+/// waited on no more.
 pub(crate) async fn waits(
     node: &std::sync::Arc<Node>,
     resident: &ResidentId,
@@ -59,7 +60,10 @@ pub(crate) async fn waits(
         .await
         .map_err(|error| Failure::new(error.to_string()))?
         .map_err(|error| Failure::new(error.to_string()))?;
-    Ok(!waiting::collect(node, resident, &actions).await?.is_empty())
+    Ok(waiting::collect(node, resident, &actions)
+        .await?
+        .iter()
+        .any(|handle| handle.liveness != fastctx_types::turn_evidence::Liveness::Ended))
 }
 
 pub(crate) async fn snapshot(
