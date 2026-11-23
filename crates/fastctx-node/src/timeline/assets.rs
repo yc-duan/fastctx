@@ -1394,8 +1394,12 @@ fn window_keys(keyed: &super::spill::Keyed, floor: u64) -> Vec<u64> {
     keys
 }
 
+/// An event's record, with the object it stands for and that object's
+/// bytes when the record is not the event itself (`body`).
+type Body = (Vec<u8>, Option<(fastctx_content::ObjectRef, Vec<u8>)>);
+
 /// The record of an event small enough for one: itself (`body`).
-fn body_small(encoded: &[u8]) -> (Vec<u8>, Option<(fastctx_content::ObjectRef, Vec<u8>)>) {
+fn body_small(encoded: &[u8]) -> Body {
     let mut body = Vec::with_capacity(encoded.len() + 1);
     body.push(EVENT);
     body.extend_from_slice(encoded);
@@ -1406,7 +1410,7 @@ fn body_small(encoded: &[u8]) -> (Vec<u8>, Option<(fastctx_content::ObjectRef, V
 /// or when it is too large for a record or kept without its pictures' bytes
 /// (`stored`), what is shown in its place, with the object the whole of it is
 /// and that object's bytes (put only when the record is written).
-pub(super) fn body(event: &SessionEvent, encoded: Vec<u8>) -> Result<(Vec<u8>, Option<(fastctx_content::ObjectRef, Vec<u8>)>), Failure> {
+pub(super) fn body(event: &SessionEvent, encoded: Vec<u8>) -> Result<Body, Failure> {
     let stored = super::stored::form(event);
     if stored.is_none() && encoded.len() < RECORD_BYTES {
         return Ok(body_small(&encoded));
