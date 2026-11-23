@@ -4,9 +4,8 @@
 //! earlier version kept without their deeds; a body's `records` scope what a
 //! machine shared whole did for its members. Its book is answered from them
 //! as it would answer the accounts asking — what it did for them, and for
-//! its own user where one of them owns it — once every one of those
-//! accounts' records is pulled whole here, or while the machine is away.
-//! Otherwise the machine is asked.
+//! its own user where one of them owns it — only while the machine is away:
+//! since beta.26 no machine writes there, so a machine reached is asked.
 
 use crate::Node;
 use fastctx_content::v2::{AccountActivity, Entry, Kind as _, Library};
@@ -26,7 +25,9 @@ const HOUR: i64 = 3_600_000;
 /// it.
 pub(crate) fn answer(node: &Node, acting: &Acting, written: &Written, query: &BookQuery) -> Option<BookAnswer> {
     let machine = &written.name;
-    let away = crate::timeline::copy::away(node, machine);
+    if !crate::timeline::copy::away(node, machine) {
+        return None;
+    }
     let library = &node.assets.as_ref()?.library;
     // Its stream on the network it is named on, or on each that lists it
     // as the same machine, and whose the accounts asking are.
@@ -46,29 +47,6 @@ pub(crate) fn answer(node: &Node, acting: &Acting, written: &Written, query: &Bo
     }
     if keys.len() > 1 {
         return None;
-    }
-    // Reached, it is answered from here only when every account asking has
-    // its records pulled whole here: no deed of one is missing.
-    if !away {
-        let pulled: BTreeSet<String> = library
-            .held_scopes()
-            .ok()?
-            .into_iter()
-            .filter(|scope| crate::timeline::copy::records_here(node, scope))
-            .map(|scope| scope.key)
-            .collect();
-        let all = node.links().into_iter().all(|link| {
-            let hub = link.membership().id.to_string();
-            let view = link.view();
-            node.accounts_on(&link, acting).iter().all(|account| {
-                view.directory.account(account).is_some_and(|found| {
-                    pulled.contains(&fastctx_types::assets::records_key(&hub, account, found.opened.as_millisecond()))
-                })
-            })
-        });
-        if !all {
-            return None;
-        }
     }
     // The window asked: what lies outside it is passed over as it is read.
     let (from, to) = match query {

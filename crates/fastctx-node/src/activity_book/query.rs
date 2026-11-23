@@ -27,7 +27,8 @@ pub(crate) async fn answer(
     let Some(target) = machine.filter(|machine| !node.is_here(machine)) else {
         return answer_here(node, None, query).await;
     };
-    // While it is away, from the copies here (plan 3-5).
+    // While it is away, from the copies here (plan 3-5); reached, it is
+    // asked, its copies here written no more since beta.26.
     let (asking, whose, written, asked) = (node.clone(), acting.clone(), target.clone(), query.clone());
     if let Ok(Some(answer)) =
         fastctx_platform::task::spawn_blocking(move || super::copied::answer(&asking, &whose, &written, &asked)).await

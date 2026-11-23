@@ -48,6 +48,8 @@ pub(crate) struct Forgettings {
 pub(crate) struct Pending {
     forgetting: Forgetting,
     asked_by: MachineName,
+    /// When it was asked, and again when the machine it lives on deleted
+    /// it: the other members are waited for `WAITS_FOR` from then.
     at: Timestamp,
     /// The machine it lives on has not said yet that it deleted it.
     home: bool,
@@ -595,6 +597,8 @@ fn done_at_home(store: &mut Store, index: usize) {
     let directory = store.book.directory.clone();
     let pending = std::sync::Arc::make_mut(&mut store.book.forgetting.pending[index]);
     pending.home = false;
+    // However long its machine was away, the others have their month.
+    pending.at = Timestamp::now();
     wait_for(&directory, pending, waiting);
 }
 
