@@ -123,10 +123,51 @@ pub(super) fn digest(bytes: &[u8]) -> [u8; 32] {
     Sha256::digest(bytes).into()
 }
 
+/// The kind `why` is counted by: its words lowercased, each other
+/// character made `_`.
+fn kind_of(why: &str) -> String {
+    why.chars().map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_lowercase() } else { '_' }).collect()
+}
+
 /// Why a look was left to a reading from the seam, counted by its kind.
 pub(super) fn left_to_the_seam(why: &'static str) {
-    let kind: String = why.chars().map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_lowercase() } else { '_' }).collect();
-    readings::counter_of("timeline.onward.left", &kind).add(1);
+    readings::counter_of("timeline.onward.left", &kind_of(why)).add(1);
+}
+
+/// Why a reading from the seam left no window to write on, counted by its
+/// kind — the next look finds none held — beside the window seeded
+/// (`timeline.onward.seeded`). A seeding that fails is also counted among
+/// the looks left to the seam, as it always was.
+pub(super) fn unseeded(why: &'static str) {
+    readings::counter_of("timeline.onward.unseeded", &kind_of(why)).add(1);
+}
+
+/// A reading from the seam, or a look written on, found the file without
+/// the last record its session's mod saw kept, counted: how often Claude
+/// Code's file lags the records it keeps as a timeline is brought.
+pub(super) fn short_of_kept() {
+    readings::counter("timeline.onward.kept_not_yet_in_the_file").add(1);
+}
+
+/// What an event of the World's record that is not `plain` tells, for its
+/// counter: what kind of event keeps a window from standing.
+fn placing(event: &SessionEvent, turn: Option<&str>) -> &'static str {
+    if crate::talk::turn_of(&event.happened).is_some_and(|of| Some(of) != turn) {
+        return "of another turn";
+    }
+    if !event.happened.in_history() {
+        return "of no history";
+    }
+    match &event.happened {
+        Happened::TurnStarted { .. } => "a turn begun",
+        Happened::TurnEnded { .. } => "a turn ended",
+        Happened::Heard { .. } => "words heard",
+        Happened::Changed { change: SessionChange::Request { .. } | SessionChange::Resolved { .. }, .. } => "a request",
+        Happened::Changed { .. } => "the history changed",
+        Happened::Began { .. } | Happened::Grew { .. } => "an item begun",
+        Happened::Finished { .. } | Happened::Updated { .. } => "an item finished",
+        _ => "another kind",
+    }
 }
 
 /// What a look written on asks the reading from the seam that follows it at
@@ -274,6 +315,7 @@ fn derive(
             return Ok(Err("an event of the World's record no later than the place"));
         }
         if !plain(event, turn) {
+            readings::counter_of("timeline.onward.placing", &kind_of(placing(event, turn))).add(1);
             return Ok(Err("an event of the World's record that places others"));
         }
         let mut event = event.clone();
@@ -562,16 +604,20 @@ pub(super) async fn seed(
     producing: super::super::serial::Held,
 ) {
     forget_of(resident);
-    let Some(session) = next.session.clone() else { return };
+    let not = |why: &'static str| {
+        unseeded(why);
+        left_to_the_seam(why);
+    };
+    let Some(session) = next.session.clone() else { return unseeded("no session followed") };
     if judged.left.len() > LEFT_MOST {
-        return left_to_the_seam("a window too long to hold");
+        return not("a window too long to hold");
     }
     let held: Arc<HashSet<u64>> = Arc::new(judged.left.iter().copied().collect());
-    let Ok(seen) = seen_of(library, resident).await else { return };
+    let Ok(seen) = seen_of(library, resident).await else { return unseeded("the record ids before the seam not read") };
     let onward = match history::onward(node, resident, &session, &next.earlier, &judged.read, held, seen).await {
         Ok(Ok(onward)) => onward,
-        Ok(Err(why)) => return left_to_the_seam(why),
-        Err(_) => return left_to_the_seam("a record not read"),
+        Ok(Err(why)) => return not(why),
+        Err(_) => return not("a record not read"),
     };
     let history::Onward { events, next: moved, passed, title, .. } = onward;
     let (library, scope, directory, stood) = (library.clone(), scope.to_string(), node.world.conversation(resident), digest(kept));
@@ -585,8 +631,8 @@ pub(super) async fn seed(
             readings::counter("timeline.onward.seeded").add(1);
             keep(resident, window);
         }
-        Ok(Err(why)) => left_to_the_seam(why),
-        Err(_) => left_to_the_seam("a record not read"),
+        Ok(Err(why)) => not(why),
+        Err(_) => not("a record not read"),
     }
 }
 
@@ -671,12 +717,14 @@ pub(super) async fn advance(
     };
     let history::Onward { events, next: moved, passed, title, kept, kept_here, end, path, .. } = onward;
     // The last record its mod saw kept: among the rows read now, or those
-    // between the seam and the place; found in neither, a reading from the
-    // seam waits for it.
+    // between the seam and the place. Found in neither, Claude Code has not
+    // written it yet — it writes its file a moment after it keeps a record
+    // (2.1.322: a fifth of a second, now and then many), and a look comes as
+    // it keeps one — and what it writes goes past what is read now: what
+    // the file holds is written on all the same, and read again shortly
+    // (`unread`), as a reading from the seam reads it.
     let kept_here = kept_here || kept.as_ref().is_some_and(|kept| window.left.contains(&history::left_key(&format!("{}{kept}", fastctx_hosts::claude::transcript::follow::KEY_ROW))));
-    if kept.is_some() && !kept_here && kept != state.kept {
-        return leave("a record its mod saw kept not yet in the file");
-    }
+    let unread = kept.is_some() && !kept_here && kept != state.kept;
     let Some(placed) = assets::placed(node, about)? else { return leave("no scope") };
     let (hub, scope) = (placed.hub.clone(), placed.scope.clone());
     let signer = node.assets.as_ref().map(|kept| kept.signer()).ok_or_else(|| Failure::new("no asset library is kept here"))?;
@@ -704,6 +752,7 @@ pub(super) async fn advance(
         runs_brought(node, about, library, signer, resident, &directory, producing.clone(), state.runs_version, runs_now, window.floor, written.holding).await?;
     let next = Following {
         version: version.to_string(),
+        unread,
         holding: Some(written.holding),
         kept: if kept_here { kept } else { state.kept.clone() },
         runs_version,
@@ -720,7 +769,13 @@ pub(super) async fn advance(
         crate::assets::committed(node, &hub, &scope);
     }
     readings::counter("timeline.onward.looks").add(1);
-    let produced = Produced { written, gone, unread: false, long_changed, verified: state.verified, handing: false, read: false };
+    if unread {
+        // Read again after a while that grows as it goes on unwritten (a
+        // record its mod saw may never reach the file under its UUID).
+        short_of_kept();
+        super::unread_again(resident);
+    }
+    let produced = Produced { written, gone, unread, long_changed, verified: state.verified, handing: false, read: false };
     if !holds {
         left_to_the_seam("a window too long to hold");
         return Ok(Step::Done(produced));
