@@ -105,7 +105,6 @@ async fn collect(node: &Arc<Node>, maintenance: bool) {
 /// holds back the others.
 async fn maintain(node: &Arc<Node>) {
     collect(node, true).await;
-    expire_guest_rooms(node).await;
     let retiring = node.clone();
     match fastctx_platform::task::spawn_blocking(move || {
         let payloads = crate::record_payloads::maintain(&retiring.database, |scope, error| {
@@ -469,64 +468,4 @@ fn expire_one(node: &Arc<Node>, path: &Path, now: i64, kept_for: i64) -> io::Res
         Err(error) if error.kind() == io::ErrorKind::WouldBlock => Ok(false),
         Err(error) => Err(error),
     }
-}
-
-/// How long a guest room stays after its guest last ran anything in it: by
-/// then its jobs went (`expire`) and its scratch was emptied, and a deletion
-/// its conversation's machine could not tell this one about owes it nothing.
-const GUEST_ROOM_KEPT: jiff::SignedDuration = jiff::SignedDuration::from_hours(30 * 24);
-/// The most guest rooms deleted in one pass.
-const ROOMS_AT_ONCE: usize = 32;
-
-/// Deletes the guest rooms whose jobs all went and whose guest ran nothing in
-/// them for `GUEST_ROOM_KEPT`, as their deletion from every machine would;
-/// what they hold of attachments goes by the attachments' own rule.
-async fn expire_guest_rooms(node: &Arc<Node>) {
-    let listing = node.clone();
-    let rooms = match fastctx_platform::task::spawn_blocking(move || idle_guest_rooms(&listing)).await {
-        Ok(Ok(rooms)) => rooms,
-        Ok(Err(error)) => {
-            node.log.line(format_args!("finding guest rooms nobody used for a month: {error}"));
-            return;
-        }
-        Err(error) => {
-            node.log.line(format_args!("finding guest rooms nobody used for a month: {error}"));
-            return;
-        }
-    };
-    for name in rooms.into_iter().take(ROOMS_AT_ONCE) {
-        match crate::data::delete::delete_one(node, &name).await {
-            Ok(_) => node.log.line(format_args!(
-                "deleted guest room {name}: its guest ran nothing here for {} days",
-                GUEST_ROOM_KEPT.as_hours() / 24
-            )),
-            Err(crate::data::delete::Stop::Nothing(_)) => {}
-            Err(stop) => node.log.line(format_args!("deleting guest room {name}: {}", stop.why())),
-        }
-    }
-}
-
-fn idle_guest_rooms(node: &Arc<Node>) -> io::Result<Vec<String>> {
-    let now = jiff::Timestamp::now();
-    let running = crate::job_index::running(&node.world)?;
-    let mut idle = Vec::new();
-    for directory in entries(&node.world.conversations())? {
-        let Some(name) = directory.file_name().and_then(|name| name.to_str()) else { continue };
-        if !matches!(
-            fastctx_types::layout::Kind::of(name),
-            Some(fastctx_types::layout::Kind::Guest(_) | fastctx_types::layout::Kind::Visiting { .. })
-        ) {
-            continue;
-        }
-        if entries(&directory.join("jobs"))?
-            .iter()
-            .any(|path| path.extension().is_some_and(|extension| extension == "json"))
-            || running.iter().any(|(_, path)| path.starts_with(&directory))
-            || now.duration_since(last_guest_activity(&directory, now)?) < GUEST_ROOM_KEPT
-        {
-            continue;
-        }
-        idle.push(name.to_string());
-    }
-    Ok(idle)
 }
