@@ -26,9 +26,12 @@ pub(crate) async fn write(
     } else {
         town
     };
-    let memory = match crate::history::local_copy::intercept(node, &caller, &op, job.as_ref(), town.as_ref()).await? {
+    let memory = match crate::town::description::intercept(node, &caller, &op, job.as_ref(), town.as_ref()).await? {
         Some(outcome) => Some(outcome),
-        None => crate::replicas::writing::intercept(node, &caller, &op, job.as_ref(), town.as_ref()).await?,
+        None => match crate::history::local_copy::intercept(node, &caller, &op, job.as_ref(), town.as_ref()).await? {
+            Some(outcome) => Some(outcome),
+            None => crate::replicas::writing::intercept(node, &caller, &op, job.as_ref(), town.as_ref()).await?,
+        },
     };
     let owner = owner.clone();
     let world = node.world.clone();

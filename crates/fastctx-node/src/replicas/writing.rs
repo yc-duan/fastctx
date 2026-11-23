@@ -212,6 +212,28 @@ pub(crate) async fn intercept(
     }
     let Some(path) = paths.first() else { return Ok(None) };
     let Some(slot) = locate(node, path).await? else { return Ok(None) };
+    if crate::history::emptied::emptied(operation) {
+        let (document, version, previous) = {
+            let copy = slot.lock().await;
+            let previous = sync::text(node, &copy, copy.effective()).await.map_err(failure)?;
+            (copy.head.document.clone(), copy.head.version, previous)
+        };
+        if let Document::History { scope, name } = document {
+            let scope = match scope {
+                Scope::Project { name: project, .. } => history::Scope::Project { project },
+                Scope::Conversation { conversation } => history::Scope::Conversation {
+                    resident: conversation.address.resident,
+                    machine: conversation.address.machine,
+                },
+            };
+            let request = match crate::history::emptied::request(scope, name, version) {
+                Ok(request) => request,
+                Err(told) => return Ok(Some(told)),
+            };
+            crate::history::api::call(node, caller, request).await?;
+            return Ok(Some(crate::history::emptied::told(path, &previous)));
+        }
+    }
     let author = crate::history::api::author(node, caller).await?;
     let mut copy = slot.lock().await;
     if let Document::History { scope, .. } = &copy.head.document {

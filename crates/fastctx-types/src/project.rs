@@ -85,8 +85,14 @@ pub struct Record {
     pub version: u32,
     /// The project's name, in any words.
     pub name: String,
-    /// What it is for, in a sentence or two.
+    /// The user's instructions for all work in the project, which every agent
+    /// working in it is given: its CLAUDE.md and AGENTS.md. Only the user
+    /// writes them.
     pub what: String,
+    /// The project as it stands, in one coherent account the agents working
+    /// in it write and keep current; given whole to each of them.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub description: String,
     /// The machines the town spans.
     pub machines: Vec<MachineName>,
     /// Where things are: an address book, not a boundary.
@@ -149,6 +155,8 @@ pub struct Stamp {
 pub struct RecordFields {
     pub name: Option<String>,
     pub what: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
     pub machines: Option<Vec<MachineName>>,
     /// The whole address book, replacing the one before.
     pub places: Option<Vec<Listing>>,
@@ -315,6 +323,14 @@ pub struct JournalView {
     pub total: usize,
     pub writers: usize,
 }
+
+/// The most a project's description holds: every agent working in the
+/// project is given it whole.
+pub const MAX_DESCRIPTION_BYTES: usize = 32 * 1024;
+
+/// The file each computer keeping a project keeps its description in,
+/// beside its ledger.
+pub const DESCRIPTION_FILE: &str = "description.md";
 
 pub fn record_path(version: u32) -> String {
     format!("project/v{version:06}.json")

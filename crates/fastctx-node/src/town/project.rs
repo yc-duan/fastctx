@@ -19,7 +19,10 @@ pub async fn call(node: &Arc<Node>, caller: &Caller, call: ProjectCall) -> Resul
 }
 
 pub(crate) async fn selected(
-    node: &Arc<Node>, caller: &Caller, call: ProjectCall, owner: Option<Option<HubAccount>>,
+    node: &Arc<Node>,
+    caller: &Caller,
+    call: ProjectCall,
+    owner: Option<Option<HubAccount>>,
 ) -> Result<Reply, Failure> {
     if matches!(&call, ProjectCall::New { fields, .. } | ProjectCall::Edit { fields, .. } if fields.canon.is_some()) {
         return Err(Failure::not_run(fastctx_types::memory::LEGACY));
@@ -90,7 +93,9 @@ async fn new(
     let owner = match selected {
         Some(owner) => {
             if let Some(owner) = &owner {
-                let link = node.link_of(&owner.hub).ok_or_else(|| Failure::refused("the selected project's network is unavailable"))?;
+                let link = node
+                    .link_of(&owner.hub)
+                    .ok_or_else(|| Failure::refused("the selected project's network is unavailable"))?;
                 let acting = crate::around::acting_of(node, caller);
                 if !node.accounts_on(&link, &acting).contains(&owner.account) {
                     return Err(Failure::refused("the caller no longer serves the selected project's account"));
@@ -108,10 +113,13 @@ async fn new(
     }
     let name = fields.name.ok_or_else(|| Failure::new("a new project needs its name (--name)"))?;
     let what = fields.what.ok_or_else(|| Failure::new("a new project needs to say what it is (--what)"))?;
+    let description = fields.description.unwrap_or_default();
+    described(&description)?;
     let record = Record {
         version: 1,
         name,
         what,
+        description,
         machines: fields.machines.unwrap_or_else(|| vec![node.machine()]),
         places: fields.places.unwrap_or_default(),
         canon: fields.canon,
@@ -147,10 +155,23 @@ async fn edit(node: &Arc<Node>, caller: &Caller, town: TownName, fields: RecordF
     let Some((latest, opened)) = blocking(node, &town, read::current).await? else {
         return Err(map::no_ledger(node, &town));
     };
+    // The user's instructions are the user's: an agent writes the project's
+    // description instead (`town::description`).
+    if *caller != Caller::User && fields.what.as_ref().is_some_and(|what| *what != latest.what) {
+        return Err(Failure::refused(format!(
+            "the project's instructions (its CLAUDE.md and AGENTS.md) are the user's to change, in the app or their \
+             own terminal; what you know of the project goes in its description, {}",
+            crate::world::native(&super::description::path(&node.world, &town))
+        )));
+    }
+    if let Some(description) = &fields.description {
+        described(description)?;
+    }
     let record = Record {
         version: latest.version + 1,
         name: fields.name.unwrap_or_else(|| latest.name.clone()),
         what: fields.what.unwrap_or_else(|| latest.what.clone()),
+        description: fields.description.unwrap_or_else(|| latest.description.clone()),
         machines: fields.machines.unwrap_or_else(|| latest.machines.clone()),
         places: fields.places.unwrap_or_else(|| latest.places.clone()),
         canon: fields.canon.or_else(|| latest.canon.clone()),
@@ -327,7 +348,19 @@ pub(crate) fn absolute(path: &str) -> Result<String, String> {
     }
 }
 
-async fn write(node: &Arc<Node>, town: &TownName, record: &Record) -> Result<(), Failure> {
+/// Whether `description` fits in a record.
+fn described(description: &str) -> Result<(), Failure> {
+    let most = fastctx_types::project::MAX_DESCRIPTION_BYTES;
+    if description.len() > most {
+        return Err(Failure::new(format!(
+            "the description is {} bytes; it holds at most {most}, being given whole to every agent in the project",
+            description.len()
+        )));
+    }
+    Ok(())
+}
+
+pub(super) async fn write(node: &Arc<Node>, town: &TownName, record: &Record) -> Result<(), Failure> {
     let mut bytes = serde_json::to_vec_pretty(record).map_err(|error| Failure::new(error.to_string()))?;
     bytes.push(b'\n');
     crate::ledger::write(node, town, vec![(record_path(record.version), bytes)], Some(record.machines.clone())).await

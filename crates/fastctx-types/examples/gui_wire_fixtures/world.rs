@@ -60,6 +60,11 @@ fn towns() -> Vec<TownSummary> {
                 version: i as u32 + 1,
                 name: "Example project 世界".into(),
                 what: "Exercise the ledger contract".into(),
+                description: if i == 0 {
+                    String::new()
+                } else {
+                    "Where the project stands, as its agents keep it".into()
+                },
                 machines: vec![machine(), "laptop".parse().unwrap()],
                 places: vec![Listing { what: "checkout".into(), location: location() }],
                 canon: (i != 0).then(location),

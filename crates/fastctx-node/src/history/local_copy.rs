@@ -115,6 +115,17 @@ pub(crate) async fn intercept(
         None
     };
     let previous = document.as_ref().map_or("", |document| document.text.as_str()).to_owned();
+    if super::emptied::emptied(operation) {
+        let request =
+            match super::emptied::request(scope.clone(), name.clone(), revision.map(|revision| revision.version)) {
+                Ok(request) => request,
+                Err(told) => return Ok(Some(told)),
+            };
+        super::local::call(node, request, Some(author.clone())).await?;
+        crate::context::invalidations::history(node, &scope);
+        node.memory_changed();
+        return Ok(Some(super::emptied::told(path, &previous)));
+    }
     let mut before = previous.clone();
     if matches!(operation, WriteOp::Write(_))
         && let Caller::Resident(owner) = caller

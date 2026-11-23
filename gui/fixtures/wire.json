@@ -12095,6 +12095,7 @@
                 "version": 2,
                 "name": "Example project 世界",
                 "what": "Exercise the ledger contract",
+                "description": "Where the project stands, as its agents keep it",
                 "machines": [
                   "desktop",
                   "laptop"
@@ -12128,6 +12129,7 @@
                 "version": 3,
                 "name": "Example project 世界",
                 "what": "Exercise the ledger contract",
+                "description": "Where the project stands, as its agents keep it",
                 "machines": [
                   "desktop",
                   "laptop"
@@ -12158,6 +12160,7 @@
                 "version": 4,
                 "name": "Example project 世界",
                 "what": "Exercise the ledger contract",
+                "description": "Where the project stands, as its agents keep it",
                 "machines": [
                   "desktop",
                   "laptop"
@@ -12187,6 +12190,7 @@
                 "version": 5,
                 "name": "Example project 世界",
                 "what": "Exercise the ledger contract",
+                "description": "Where the project stands, as its agents keep it",
                 "machines": [
                   "desktop",
                   "laptop"
@@ -16690,6 +16694,7 @@
           "version": 2,
           "name": "Example project 世界",
           "what": "Exercise the ledger contract",
+          "description": "Where the project stands, as its agents keep it",
           "machines": [
             "desktop",
             "laptop"
@@ -16723,6 +16728,7 @@
           "version": 3,
           "name": "Example project 世界",
           "what": "Exercise the ledger contract",
+          "description": "Where the project stands, as its agents keep it",
           "machines": [
             "desktop",
             "laptop"
@@ -16753,6 +16759,7 @@
           "version": 4,
           "name": "Example project 世界",
           "what": "Exercise the ledger contract",
+          "description": "Where the project stands, as its agents keep it",
           "machines": [
             "desktop",
             "laptop"
@@ -16782,6 +16789,7 @@
           "version": 5,
           "name": "Example project 世界",
           "what": "Exercise the ledger contract",
+          "description": "Where the project stands, as its agents keep it",
           "machines": [
             "desktop",
             "laptop"

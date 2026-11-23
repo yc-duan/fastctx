@@ -385,6 +385,9 @@ export interface ProjectRecord {
   version: number;
   name: string;
   what: string;
+  /** The project as it stands, in one account the agents working in it keep
+   *  current; left out while none is written. */
+  description?: string;
   machines: MachineName[];
   places: Listing[];
   canon: Location | null;

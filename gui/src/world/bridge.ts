@@ -519,6 +519,7 @@ export function look(ids: string[]): Promise<LookedUp[]> {
 export interface RecordFields {
   name?: string | null;
   what?: string | null;
+  description?: string | null;
   machines?: MachineName[] | null;
   places?: { what: string; machine: MachineName; path: string }[] | null;
   canon?: { machine: MachineName; path: string } | null;

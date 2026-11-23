@@ -2395,9 +2395,12 @@ async fn write(
     let turn = node.residents.now(&resident).and_then(|now| now.turn);
     let owner = Address { machine: here.clone(), resident: resident.clone() };
     let caller = Caller::Resident(owner.clone());
-    let memory = match crate::replicas::writing::intercept(node, &caller, &op, None, town.as_ref()).await? {
+    let memory = match crate::town::description::intercept(node, &caller, &op, None, town.as_ref()).await? {
         Some(outcome) => Some(outcome),
-        None => crate::history::local_copy::intercept(node, &caller, &op, None, town.as_ref()).await?,
+        None => match crate::replicas::writing::intercept(node, &caller, &op, None, town.as_ref()).await? {
+            Some(outcome) => Some(outcome),
+            None => crate::history::local_copy::intercept(node, &caller, &op, None, town.as_ref()).await?,
+        },
     };
     let (world, machine, writing, written) = (node.world.clone(), node.names(), town.clone(), op.clone());
     let outcome = match memory {

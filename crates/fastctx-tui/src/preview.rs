@@ -134,6 +134,7 @@ fn record(now: Timestamp, name: &str, what: &str, machines: &[&str], version: u3
         version,
         name: name.to_string(),
         what: what.to_string(),
+        description: String::new(),
         machines: machines.iter().map(|name| machine(name)).collect(),
         places: vec![
             Listing {
