@@ -48,8 +48,12 @@ const ASKING: crate::passes::Pass =
 /// How long a hub's view is quiet before the asks are sent again.
 const VIEWS_SETTLE: std::time::Duration = std::time::Duration::from_millis(500);
 
+/// How long a deletion is asked of a hub before it is given up: by then the
+/// rooms other machines kept for the conversation have gone of themselves.
+const ASKED_FOR_MS: i64 = 30 * 24 * 60 * 60 * 1000;
+
 /// A deletion still to be asked of a hub.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 struct Ask {
     hub: HubId,
     account: AccountName,
@@ -60,9 +64,27 @@ struct Ask {
     /// asked again another day, it is another asking.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     round: Option<i64>,
+    /// When it was kept, in milliseconds; absent in asks kept by earlier
+    /// releases until first sent. Not part of what is asked.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    since: Option<i64>,
 }
 
+impl PartialEq for Ask {
+    fn eq(&self, other: &Self) -> bool {
+        (&self.hub, &self.account, &self.conversation, &self.after, &self.round)
+            == (&other.hub, &other.account, &other.conversation, &other.after, &other.round)
+    }
+}
+
+impl Eq for Ask {}
+
 impl Ask {
+    /// What is asked, as its outcome is known by: without when it was kept.
+    fn asked(&self) -> Vec<u8> {
+        serde_json::to_vec(&Ask { since: None, ..self.clone() }).expect("deletion request serializes")
+    }
+
     fn ready(&self, residents: &crate::residents::Residents) -> bool {
         self.after.as_ref().is_none_or(|id| residents.ever_deleted(id))
     }
@@ -122,6 +144,7 @@ async fn ask_here(node: &Arc<Node>, resident: ResidentId) -> Result<How, Failure
                 conversation: Address { machine: node.machine(), resident: resident.clone() },
                 after: Some(resident.clone()),
                 round: None,
+                since: None,
             })
             .collect(),
         None => Vec::new(),
@@ -156,7 +179,8 @@ async fn ask_elsewhere(
     match link.forget(&account, &conversation).await {
         Ok(true) => Ok(How::Asked),
         Ok(false) => {
-            let ask = Ask { hub: link.membership().id.clone(), account, conversation, after: None, round: None };
+            let ask =
+                Ask { hub: link.membership().id.clone(), account, conversation, after: None, round: None, since: None };
             keep(node, vec![ask])
                 .await
                 .map_err(|error| Failure::new(format!("keeping what to ask the hub: {error}")))?;
@@ -179,7 +203,14 @@ pub(crate) async fn release_attachments(node: &Arc<Node>, id: &ResidentId) -> Re
     let mut asks = Vec::new();
     for conversation in &owners {
         for (hub, account) in pairs(node, &about.acting) {
-            asks.push(Ask { hub, account, conversation: conversation.clone(), after: Some(id.clone()), round: None });
+            asks.push(Ask {
+                hub,
+                account,
+                conversation: conversation.clone(),
+                after: Some(id.clone()),
+                round: None,
+                since: None,
+            });
         }
     }
     if !asks.is_empty() {
@@ -214,6 +245,7 @@ pub(crate) async fn project(
                 conversation: Address { machine: node.machine(), resident: id.clone() },
                 after: Some(id.clone()),
                 round: None,
+                since: None,
             })
             .collect(),
     )
@@ -262,6 +294,7 @@ pub(crate) async fn told(node: &Arc<Node>, hub: &HubId, forgetting: Forgetting) 
             conversation: Address { machine: node.machine(), resident: id.clone() },
             after: None,
             round: None,
+            since: None,
         })
         .collect();
     if !others.is_empty() {
@@ -494,11 +527,12 @@ fn kept_file(node: &Node) -> PathBuf {
 async fn keep(node: &Arc<Node>, asks: Vec<Ask>) -> std::io::Result<()> {
     let _file = node.forget_asks.file.lock().await;
     let path = kept_file(node);
+    let now = jiff::Timestamp::now().as_millisecond();
     fastctx_platform::task::spawn_blocking(move || {
         let mut kept = read(&path)?;
         for ask in asks {
             if !kept.contains(&ask) {
-                kept.push(ask);
+                kept.push(Ask { since: Some(now), ..ask });
             }
         }
         write(&path, &kept)
@@ -528,13 +562,16 @@ async fn send_kept(node: &Arc<Node>) -> bool {
     if kept.is_empty() {
         return true;
     }
+    let now = jiff::Timestamp::now().as_millisecond();
     let mut left = Vec::new();
     for ask in &kept {
-        if !ask.ready(&node.residents) {
+        let ask = &Ask { since: Some(ask.since.unwrap_or(now)), ..ask.clone() };
+        let bytes = ask.asked();
+        let given_up = now.saturating_sub(ask.since.unwrap_or(now)) > ASKED_FOR_MS;
+        if !given_up && !ask.ready(&node.residents) {
             left.push(ask.clone());
             continue;
         }
-        let bytes = serde_json::to_vec(ask).expect("deletion request serializes");
         let id = crate::speech::fixed_id("forget", &[&fastctx_hands::files::content_hash(&bytes)]);
         let terminal = node.world.path().join("forget-outcomes").join(format!("{id}.json"));
         if let Err(error) = fastctx_platform::ensure_private_dir(terminal.parent().expect("deletion outcomes")) {
@@ -552,6 +589,13 @@ async fn send_kept(node: &Arc<Node>) -> bool {
             }
         }
         let outcome = match node.link_of(&ask.hub) {
+            _ if given_up => {
+                node.log.line(format_args!(
+                    "giving up asking {} to delete {} for {}: asked for a month",
+                    ask.hub, ask.conversation.resident, ask.account
+                ));
+                Ok(Some((crate::obligations::Outcome::Impossible, "asked for a month; given up".to_string())))
+            }
             None => match crate::obligations::hub_left(node, &ask.hub) {
                 Ok(true) => {
                     Ok(Some((crate::obligations::Outcome::Impossible, "the network was left or removed".to_string())))
@@ -564,6 +608,15 @@ async fn send_kept(node: &Arc<Node>) -> bool {
                     Ok(Some((crate::obligations::Outcome::Delivered, "the hub accepted the deletion".to_string())))
                 }
                 Ok(false) => Ok(None),
+                // The hub will not take it from this machine again: no such
+                // account, this machine may not act for it, or no longer
+                // signed in to it.
+                Err(reason)
+                    if crate::obligations::out_of_reach(&reason)
+                        || reason.contains(" is not logged in to the account ") =>
+                {
+                    Ok(Some((crate::obligations::Outcome::Impossible, reason)))
+                }
                 Err(reason) => Err(reason),
             },
         };
@@ -588,6 +641,12 @@ async fn send_kept(node: &Arc<Node>) -> bool {
     match fastctx_platform::task::spawn_blocking(move || -> std::io::Result<bool> {
         let mut current = read(&path)?;
         current.retain(|ask| !kept.contains(ask) || left.contains(ask));
+        // Those kept by an earlier release keep the time they were first sent.
+        for ask in &mut current {
+            if let Some(stamped) = left.iter().find(|stamped| *stamped == ask) {
+                ask.since = ask.since.or(stamped.since);
+            }
+        }
         write(&path, &current)?;
         Ok(current.is_empty())
     })

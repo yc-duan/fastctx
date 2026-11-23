@@ -22,7 +22,7 @@ mod keys;
 pub(crate) mod mirror;
 pub(crate) mod told;
 pub(crate) mod work;
-pub(crate) mod hub_log;
+
 pub(crate) mod ledger_views;
 pub(crate) mod line;
 pub(crate) mod restores;
@@ -1548,8 +1548,7 @@ pub(crate) async fn checkpoints(hub: Weak<crate::Hub>) {
     if let Some(running) = hub.upgrade() {
         fastctx_platform::task::spawn(mirror::everything(running));
     }
-    // And its own log, as it grows (design §14).
-    fastctx_platform::task::spawn(hub_log::follow(hub.clone()));
+
     // What failed to be written is tried again every minute (AR15).
     let again = hub.clone();
     fastctx_platform::task::spawn(async move {

@@ -78,7 +78,7 @@ pub(crate) async fn apply(node: &Arc<Node>, id: &ResidentId) -> Result<(), Failu
 /// account's records: there is no account of the name, or this machine may
 /// not act for it (`fastctx_net::authorization`).
 pub(crate) fn out_of_reach(failure: &Failure) -> bool {
-    failure.message.contains("there is no account ") || failure.message.contains(" may not act for the account ")
+    crate::obligations::out_of_reach(&failure.message)
 }
 
 /// Forgets at the hub the goals of `id` kept for `account`.

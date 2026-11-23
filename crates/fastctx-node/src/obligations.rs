@@ -223,6 +223,13 @@ pub(crate) fn permanent(failure: &Failure) -> bool {
             && !matches!(failure.denial, Some(DenialReason::ViewUnavailable | DenialReason::Unknown))
 }
 
+/// Whether a hub's refusal, known by its words, says this machine can do
+/// nothing more of an account's records: there is no account of the name, or
+/// this machine may not act for it (`fastctx_net::authorization`).
+pub(crate) fn out_of_reach(message: &str) -> bool {
+    message.contains("there is no account ") || message.contains(" may not act for the account ")
+}
+
 pub(crate) fn hub_left(node: &Node, hub: &HubId) -> io::Result<bool> {
     let net = crate::world::hub_dir(&node.world, hub);
     match fastctx_net::link::state::read::<fastctx_net::link::state::Ended>(&net.join("ended.json")) {

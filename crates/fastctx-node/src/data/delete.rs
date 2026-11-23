@@ -260,7 +260,6 @@ async fn delete_inner(node: &Arc<Node>, name: &str) -> Result<Gone, Stop> {
         return Err(Stop::Refused("its command output is being read; close that reader first".into()));
     }
     crate::attachments::lifetime::ensure_holders(node, id).await.map_err(|error| Stop::Failed(error.message))?;
-    crate::goals::lifecycle::prepare_delete(node, id).await.map_err(|error| Stop::Failed(error.message))?;
     // The intent: a node stopped from here on finishes the deletion when it
     // starts again (`finish_interrupted`).
     fastctx_platform::publish(
@@ -272,7 +271,8 @@ async fn delete_inner(node: &Arc<Node>, name: &str) -> Result<Gone, Stop> {
     let host_kept = match host_record(node, id, &resident, &measured).await {
         Ok(kept) => kept,
         Err(stop) => {
-            // Nothing that cannot be undone was done: it stays as it was,
+            // Nothing that cannot be undone was done: no deletion row fences
+            // it and nothing of its records was let go, so it stays as it was,
             // and the node does not finish this deletion later.
             if let Err(error) = fastctx_platform::disk::remove_file(directory.path().join(INTENT)) {
                 node.log.line(format_args!("cancelling the deletion of {id}: {error}"));
@@ -280,6 +280,11 @@ async fn delete_inner(node: &Arc<Node>, name: &str) -> Result<Gone, Stop> {
             return Err(stop);
         }
     };
+    // Only once its host's record is gone is the deletion row written: it
+    // fences every write of the conversation and lets the cleanup of its
+    // records begin, neither of which a failed deletion may leave behind.
+    // Failing here, the intent stays and the node finishes it later.
+    crate::goals::lifecycle::prepare_delete(node, id).await.map_err(|error| Stop::Failed(error.message))?;
     // From here it is deleted: what fails now is finished by the node.
     node.residents.condemn(id);
     // Whoever waits on it hears that it went, not nothing (a `talk` waiting
@@ -498,22 +503,18 @@ async fn finish_on_worker(node: &Arc<Node>) -> usize {
             .filter(|session| crate::claude::pairing::validate_session(session).is_ok())
             .map(|session| root.join(session))
             .collect();
-        let left = std::iter::once(node.world.conversation(&id).path().to_path_buf())
+        let paths: Vec<_> = std::iter::once(node.world.conversation(&id).path().to_path_buf())
             .chain(sessions.iter().cloned())
-            .try_fold(false, |left, path| match fastctx_platform::disk::symlink_metadata(&path) {
-                Ok(_) => Ok(true),
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(left),
-                Err(error) => Err(std::io::Error::new(error.kind(), format!("{}: {error}", path.display()))),
-            });
-        match left {
-            Ok(false) => continue,
-            Ok(true) => {}
+            .collect();
+        let found = match leftovers(&paths) {
+            Ok(None) => continue,
+            Ok(Some(found)) => found,
             Err(error) => {
                 unfinished += 1;
                 node.log.line(format_args!("checking what remains of {id}: {error}"));
                 continue;
             }
-        }
+        };
         match delete_one(node, id.as_str()).await {
             Ok(_) | Err(Stop::Nothing(_)) => {}
             Err(stop) => {
@@ -527,7 +528,9 @@ async fn finish_on_worker(node: &Arc<Node>) -> usize {
         })
         .await;
         match removed {
-            Ok(Ok(())) => node.log.line(format_args!("finished deleting {id}, which a stopped node left halfway")),
+            Ok(Ok(())) => {
+                node.log.line(format_args!("finished deleting {id}, which a stopped node left halfway: {found}"))
+            }
             Ok(Err(error)) => {
                 unfinished += 1;
                 node.log.line(format_args!("finishing the deletion of {id}: {error}"));
@@ -539,6 +542,58 @@ async fn finish_on_worker(node: &Arc<Node>) -> usize {
         }
     }
     unfinished
+}
+
+/// What is left at `paths` of a deleted conversation, in a few words: each
+/// path there with a few of the files under it, their sizes and when each was
+/// last written; `None` when nothing is.
+fn leftovers(paths: &[std::path::PathBuf]) -> std::io::Result<Option<String>> {
+    const NAMED: usize = 8;
+    // A deletion cut short may leave a whole conversation: only so many
+    // entries are looked at.
+    const LOOKED_AT: usize = 2000;
+    let mut said = Vec::new();
+    for path in paths {
+        let metadata = match fastctx_platform::disk::symlink_metadata(path) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(std::io::Error::new(error.kind(), format!("{}: {error}", path.display()))),
+        };
+        if !metadata.is_dir() {
+            said.push(format!("{} ({})", path.display(), if metadata.is_symlink() { "a link" } else { "a file" }));
+            continue;
+        }
+        let (mut files, mut count, mut looked) = (Vec::new(), 0usize, 0usize);
+        let mut folders = vec![path.clone()];
+        while let Some(folder) = folders.pop() {
+            let Ok(entries) = fastctx_platform::disk::read_dir(&folder) else { continue };
+            for entry in entries.flatten() {
+                looked += 1;
+                if looked > LOOKED_AT {
+                    break;
+                }
+                let Ok(metadata) = fastctx_platform::disk::symlink_metadata(entry.path()) else { continue };
+                if metadata.is_dir() {
+                    folders.push(entry.path());
+                    continue;
+                }
+                count += 1;
+                if files.len() < NAMED {
+                    let relative = entry.path().strip_prefix(path).unwrap_or(&entry.path()).display().to_string();
+                    let written = metadata
+                        .modified()
+                        .ok()
+                        .and_then(|time| jiff::Timestamp::try_from(time).ok())
+                        .map_or(String::new(), |time| format!(", written {time}"));
+                    files.push(format!("{relative} {} bytes{written}", metadata.len()));
+                }
+            }
+        }
+        let more = count.saturating_sub(files.len());
+        let more = if more > 0 { format!(" and {more} more") } else { String::new() };
+        said.push(format!("{} holding {count} file(s): {}{more}", path.display(), files.join("; ")));
+    }
+    Ok((!said.is_empty()).then(|| said.join(" | ")))
 }
 
 async fn measure(node: &Arc<Node>, name: &str) -> Result<Measured, Stop> {
