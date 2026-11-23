@@ -1,6 +1,6 @@
 //! Another machine's activity, from the copies here (plan 3-5, design
 //! §28.27, §28.58). Each account's records' scope holds what each machine
-//! did for it as `activity/<machine>` (`assets::activity`), with the hours an
+//! did for it as `activity/<machine>` (releases before beta.26), with the hours an
 //! earlier version kept without their deeds; a body's `records` scope what a
 //! machine shared whole did for its members. Its book is answered from them
 //! as it would answer the accounts asking — what it did for them, and for
@@ -155,7 +155,7 @@ pub(crate) fn answer(node: &Node, acting: &Acting, written: &Written, query: &Bo
     })
 }
 
-/// An hour an earlier version kept without its deeds, as `assets::activity`
+/// An hour an earlier version kept without its deeds, as releases before beta.26
 /// writes it.
 fn hour_of(value: &serde_json::Value) -> Option<Hour> {
     let text = |name: &str| value.get(name).and_then(serde_json::Value::as_str).filter(|text| !text.is_empty());
@@ -173,12 +173,12 @@ fn hour_of(value: &serde_json::Value) -> Option<Hour> {
 }
 
 /// A deed's body as written: its row, or the one object it is in when it
-/// was too large to be a body (`assets::activity`, M17).
+/// was too large to be a body (releases before beta.26, M17).
 fn read(library: &Library, entry: &Entry) -> Option<serde_json::Value> {
     serde_json::from_slice(&crate::timeline::copy::whole_body(library, entry)?).ok()
 }
 
-/// A deed as the book's row, written as `assets::activity` writes it, the
+/// A deed as the book's row, written as releases before beta.26 writes it, the
 /// way the book's own answer reads it (`query`).
 fn deed_of(value: &serde_json::Value) -> Option<Deed> {
     let text = |name: &str| value.get(name).and_then(serde_json::Value::as_str);

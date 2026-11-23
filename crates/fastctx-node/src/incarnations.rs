@@ -2,7 +2,7 @@
 //! and opened again under the same name is another: what this machine did for
 //! the one before goes into none of the new one's records. The hub's clock
 //! tells when an account was opened, and a margin covers how far it and this
-//! machine's may differ (`assets::activity::of_this`); within that margin an
+//! machine's may differ (what earlier releases checked before writing an account's records); within that margin an
 //! account made again soon after the one before it worked here would take
 //! what that one did (codex-357de52a, third round). What this machine did is
 //! timed by its own clock, and so is the moment it first saw the account made
@@ -23,7 +23,6 @@ use std::sync::Mutex;
 
 use fastctx_net::directory::Directory;
 use fastctx_net::ids::HubId;
-use fastctx_types::AccountName;
 
 use crate::Node;
 
@@ -78,33 +77,6 @@ impl Incarnations {
             }
             changed
         });
-    }
-
-    /// Since when, by this machine's clock, `account` of `hub` is the one
-    /// opened at `opened` (milliseconds): none where this machine saw no
-    /// other of its name before it. One not noted so yet is noted now.
-    pub(crate) fn since(&self, node: &Node, hub: &HubId, account: &AccountName, opened: i64) -> Option<i64> {
-        let now = jiff::Timestamp::now().as_millisecond();
-        let mut found = None;
-        self.with(node, |book| {
-            let accounts = book.entry(hub.to_string()).or_default();
-            match accounts.get(account.as_str()) {
-                Some(seen) if seen.opened == opened => {
-                    found = seen.since;
-                    false
-                }
-                Some(_) => {
-                    found = Some(now);
-                    accounts.insert(account.to_string(), Seen { opened, since: found });
-                    true
-                }
-                None => {
-                    accounts.insert(account.to_string(), Seen { opened, since: None });
-                    true
-                }
-            }
-        });
-        found
     }
 
     /// Runs `change` on the book, read first where it is not yet, and keeps

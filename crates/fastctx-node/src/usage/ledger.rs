@@ -125,7 +125,7 @@ pub(super) enum Entry {
     /// (7965 P08): by hub id, the body it is on there while shared whole, or
     /// none. Written before the first line of a day's file, and again before
     /// a line written while it is shared otherwise, so the copy of the ledger
-    /// (`assets::activity`) sends each line where it went as it was written.
+    /// (releases before beta.26) sends each line where it went as it was written.
     Shared {
         at: Timestamp,
         hubs: std::collections::BTreeMap<String, Option<String>>,

@@ -6,11 +6,8 @@
 //! of them goes a week after it was written, as before.
 
 use crate::Node;
-use crate::assets::Proposal;
 use fastctx_content::v2::{HubLog, KEPT_MS, Kind as _, MachineLog};
-use fastctx_net::ids::HubId;
 use fastctx_platform::log_tail;
-use fastctx_types::assets::Readers;
 use std::sync::{Arc, Weak};
 use std::time::Duration;
 
@@ -33,25 +30,6 @@ pub(crate) fn start(node: &Arc<Node>) {
             }
         }
     });
-}
-
-/// The scope `readers` and `name` make on `hub`: proposed here while it is
-/// not held, and the key with whether it is held.
-pub(super) fn proposed(node: &Node, hub: &HubId, readers: Readers, name: &str) -> Result<Option<String>, String> {
-    let Some(kept) = node.assets.as_ref() else { return Ok(None) };
-    let library = &kept.library;
-    let key = format!("{}{name}", readers.key_prefix(hub.as_str()));
-    let error = |error: fastctx_content::Error| error.to_string();
-    if library.holding(&key).map_err(error)?.is_some() {
-        return Ok(Some(key));
-    }
-    let Some(network) = crate::assets::membership::network(node, hub) else { return Ok(None) };
-    // Proposed with its kind's classes, as the hub describes it (AS09).
-    let classes = fastctx_types::assets::classes_for(&readers, &key);
-    let proposal = Proposal { hub: hub.to_string(), readers, classes, born: None };
-    let proposal = serde_json::to_vec(&proposal).map_err(|error| error.to_string())?;
-    library.propose_on(&network, &key, proposal).map_err(error)?;
-    Ok(None)
 }
 
 /// Lets the pieces of each log held here older than a week go: only what

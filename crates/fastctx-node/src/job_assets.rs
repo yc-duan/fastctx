@@ -77,29 +77,10 @@ fn checkpoint(job: &JobRecord) -> String {
     format!("job/{}", key_of(job))
 }
 
-/// What `job` is named by in the streams at `home`: its id in its
-/// conversation's own, where ids are unique; its key in an account's
-/// records, which hold the jobs of many.
-fn item_of(home: &Home, job: &JobRecord) -> String {
-    match home {
-        Home::Conversation(_) => job.id.to_string(),
-        Home::Account(_) => key_of(job),
-    }
-}
-
-/// When the account `account` was opened, as the hub this machine is on
-/// tells it; none when it is not known here now.
-fn opened_of(node: &Node, account: &fastctx_types::access::HubAccount) -> Option<jiff::Timestamp> {
-    crate::assets::activity::opened_ms(node, &account.hub, &account.account)
-        .and_then(|opened| jiff::Timestamp::from_millisecond(opened).ok())
-}
-
-/// Whether `job` ran for `account` as it is now: one begun before it was
-/// opened, or before this machine first saw it opened so, ran for an
-/// account of that name before it, not for this one
-/// (`assets::activity::of_this`).
-fn ran_for(node: &Node, account: &fastctx_types::access::HubAccount, job: &JobRecord) -> bool {
-    crate::assets::activity::of_this(node, &account.hub, &account.account, job.started_at.as_millisecond())
+/// What `job` is named by in its conversation's streams, where ids are
+/// unique: its id.
+fn item_of(_home: &Home, job: &JobRecord) -> String {
+    job.id.to_string()
 }
 
 /// The jobs found written whole, each with the holding period it was
@@ -110,43 +91,35 @@ fn ran_for(node: &Node, account: &fastctx_types::access::HubAccount, job: &JobRe
 /// of readings every few seconds on a machine that runs many.
 type Whole = HashMap<String, i64>;
 
-/// Where the jobs of one look go: the scope of each conversation and
-/// account asked after, and its holding, found once for all its jobs.
+/// Where the jobs of one look go: the scope of each conversation asked
+/// after, and its holding, found once for all its jobs.
 #[derive(Default)]
 struct Homes {
     conversations: HashMap<ResidentId, Option<(String, i64)>>,
-    accounts: HashMap<fastctx_types::access::HubAccount, Option<(String, i64)>>,
 }
 
-/// Where a job's assets go.
+/// Where a job's assets go: the scope of its conversation, which lives here.
+/// A job run here for a conversation elsewhere keeps its assets on this
+/// machine alone, as files, for as long as their retention says: nothing of
+/// it goes into an account's records any more.
 enum Home {
-    /// The scope of its conversation, which lives here.
     Conversation(ResidentId),
-    /// The records of the account it ran for: a job run here for a
-    /// conversation elsewhere, or for a page.
-    Account(fastctx_types::access::HubAccount),
 }
 
-/// Where `job`'s assets go; none for one that ran for no account here.
+/// Where `job`'s assets go; none for one run here for a conversation
+/// elsewhere, or for no conversation.
 fn home_of(node: &Node, job: &JobRecord) -> Option<Home> {
     match &job.owner {
         JobOwner::Resident(address) if node.is_me(&address.machine) => {
             Some(Home::Conversation(address.resident.clone()))
         }
-        _ => job.on.as_ref().and_then(|on| on.account.clone()).or_else(|| job.account.clone()).map(Home::Account),
+        _ => None,
     }
 }
 
-/// The streams of a job's facts and output at `home`: the conversation's
-/// own, or those this machine names after itself in an account's records.
-fn streams_of(node: &Node, home: &Home) -> (String, String) {
-    match home {
-        Home::Conversation(_) => (JobFacts::STREAM.to_string(), JobOutput::STREAM.to_string()),
-        Home::Account(_) => {
-            let named = node.assets.as_ref().map(|assets| crate::assets::named(&assets.device())).unwrap_or_default();
-            (format!("{}/{named}", JobFacts::STREAM), format!("{}/{named}", JobOutput::STREAM))
-        }
-    }
+/// The streams of a job's facts and output: its conversation's own.
+fn streams_of(_node: &Node, _home: &Home) -> (String, String) {
+    (JobFacts::STREAM.to_string(), JobOutput::STREAM.to_string())
 }
 
 /// Starts looking at the jobs here every few seconds.
@@ -221,9 +194,6 @@ fn holdings(library: &Library) -> Result<u64, String> {
 /// whole, and what this one finds.
 fn look(node: &Arc<Node>, whole: bool, held: u64, written: &mut Whole) -> Result<u64, String> {
     let Some(kept) = node.assets.as_ref() else { return Ok(held) };
-    // Whose each job was and where it goes are judged by one account
-    // (`assets::activity::Pinned`).
-    let _pinned = crate::assets::activity::Pinned::begin();
     let library = &kept.library;
     let error = |error: fastctx_content::Error| error.to_string();
     let written_since = library
@@ -296,50 +266,14 @@ fn writable(
     job: &JobRecord,
     homes: &mut Homes,
 ) -> Result<Option<(String, i64)>, String> {
-    match home {
-        Home::Conversation(resident) => {
-            if let Some(found) = homes.conversations.get(resident) {
-                return Ok(found.clone());
-            }
-            let found = conversation_writable(node, library, resident)?;
-            homes.conversations.insert(resident.clone(), found.clone());
-            Ok(found)
-        }
-        Home::Account(account) => {
-            // An account opened after the job began is another of that
-            // name: what ran for the one before goes into no records of
-            // this one's, and stays here as it is (`kept_for_good`).
-            if opened_of(node, account).is_none() || !ran_for(node, account, job) {
-                return Ok(None);
-            }
-            if let Some(found) = homes.accounts.get(account) {
-                return Ok(found.clone());
-            }
-            let found = account_writable(node, library, home, account)?;
-            homes.accounts.insert(account.clone(), found.clone());
-            Ok(found)
-        }
+    let _ = job;
+    let Home::Conversation(resident) = home;
+    if let Some(found) = homes.conversations.get(resident) {
+        return Ok(found.clone());
     }
-}
-
-/// The scope the jobs run for `account` go in, when this machine orders
-/// its job streams there.
-fn account_writable(
-    node: &Arc<Node>,
-    library: &Library,
-    home: &Home,
-    account: &fastctx_types::access::HubAccount,
-) -> Result<Option<(String, i64)>, String> {
-    let (facts, output) = streams_of(node, home);
-    let Some((scope, holding)) = crate::assets::activity::writable(node, library, &account.hub, &account.account, &facts)?
-    else {
-        return Ok(None);
-    };
-    let device = node.assets.as_ref().map(|assets| assets.device()).unwrap_or_default();
-    if library.orderer(&scope, &output).map_err(|error| error.to_string())?.is_some_and(|orderer| orderer != device) {
-        return Ok(None);
-    }
-    Ok(Some((scope, holding)))
+    let found = conversation_writable(node, library, resident)?;
+    homes.conversations.insert(resident.clone(), found.clone());
+    Ok(found)
 }
 
 /// The scope `resident`'s jobs go in, when this machine orders its job
@@ -557,25 +491,17 @@ fn write_job(
 }
 
 /// Whether `job`'s files may go as their retention says: its output is
-/// written into the asset library whole and the hub took it — or it keeps
-/// no assets here at all, or ended before the jobs here were written at
-/// all. Call on a thread that may block.
+/// written into its conversation's scope whole and nothing of it waits to
+/// be sent — or it keeps no assets in the library at all, or ended before
+/// the jobs here were written at all. Call on a thread that may block.
 pub(crate) fn kept_for_good(node: &Node, job: &JobRecord) -> bool {
     let Some(kept) = node.assets.as_ref() else { return true };
     let Some(home) = home_of(node, job) else { return true };
     let library = &kept.library;
-    let scope = match &home {
-        Home::Conversation(resident) => match crate::timeline::scope_of(node, resident) {
-            Ok(Some((_, scope))) => Some(scope),
-            _ => return true,
-        },
-        // An account not known here now may be one this machine no longer
-        // sees, not one gone, and one opened after the job began another of
-        // its name: what was written of the job cannot be told taken by the
-        // hub, so its files stay.
-        Home::Account(account) => opened_of(node, account).filter(|_| ran_for(node, account, job)).map(|opened| {
-            fastctx_types::assets::records_key(account.hub.as_str(), &account.account, opened.as_millisecond())
-        }),
+    let Home::Conversation(resident) = &home;
+    let scope = match crate::timeline::scope_of(node, resident) {
+        Ok(Some((_, scope))) => Some(scope),
+        _ => return true,
     };
     let (facts_stream, output_stream) = streams_of(node, &home);
     let standing = library

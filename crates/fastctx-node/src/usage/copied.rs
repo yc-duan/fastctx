@@ -2,7 +2,7 @@
 //! §28.58). Its usage lines go into each account's records scope by the
 //! accounts they are for — a line shared by several into each — the lines
 //! of no account into its owner's, and all of them, while it is shared
-//! whole, into its body's records scope (`assets::activity` `usage`): each
+//! whole, into its body's records scope (as earlier releases wrote its `usage` stream): each
 //! piece the lines of one day's file `<agent>-<login key>/<day>` from an
 //! offset. While the machine is away, or every account logged in here has
 //! its records pulled whole, a login's report and calls are made from the
