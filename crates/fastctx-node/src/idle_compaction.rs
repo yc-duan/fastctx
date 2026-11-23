@@ -17,7 +17,10 @@
 //! it was, is not made; one that fails is not tried again, nor holds up the
 //! user's words after it. Each idle stretch is compacted at most once: it is
 //! marked before the compaction begins, and a turn that says nothing, as a
-//! compaction's own does, begins none.
+//! compaction's own does, begins none. Nor is one compacted that was
+//! compacted since its host last answered, by the user or anyone else, as
+//! the host's own record shows (`compacted`): a Claude Code compaction is no
+//! turn, and leaves the stretch and the context heard of it as they were.
 //!
 //! What the hosts said of context and cache is kept in memory: after the
 //! node starts, a conversation is looked at once it has taken a turn again.
@@ -37,6 +40,8 @@ use fastctx_types::session::control::Controlled;
 use jiff::Timestamp;
 
 use crate::Node;
+
+mod compacted;
 
 /// How often the conversations are looked at: as often as those whose
 /// hosts idle are let go of (`lifecycle::retention`).
@@ -170,10 +175,16 @@ async fn sweep(node: &Arc<Node>) {
         let (node, id, after) = (node.clone(), found.id, found.after);
         fastctx_platform::task::spawn(async move {
             // Looked at again under the conversation's action gate: what was
-            // true a moment ago in the sweep may not be now.
+            // true a moment ago in the sweep may not be now. Its record is
+            // read there, once, and last: a compaction the user asked for
+            // just before is in it by then.
             let (looking, again, before) = (node.clone(), id.clone(), after.clone());
             let still = move || {
-                looking.residents.on_record(&again).and_then(|record| idle(&looking, record, Timestamp::now(), any)).is_some_and(|now| now.after == before)
+                let now = looking.residents.on_record(&again).and_then(|record| idle(&looking, record, Timestamp::now(), any));
+                if now.is_none_or(|now| now.after != before) {
+                    return Err("it is no longer idle as it was".to_string());
+                }
+                compacted::since_answer(&looking, &again)
             };
             node.log.line(format_args!("compacting {id}, idle since its turn {after}"));
             let begun = match crate::control::compact_idle(&node, &id, still).await {

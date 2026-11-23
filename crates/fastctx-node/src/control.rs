@@ -94,13 +94,14 @@ pub async fn control_here(node: &Arc<Node>, resident: &ResidentId, control: Cont
 /// Compacts a conversation idle a while, as the World does of itself
 /// (`crate::idle_compaction`): the user's `/compact` with every check it
 /// passes, begun only where nothing waits in the conversation and `still`
-/// holds under its action gate. It never waits in line: refused where
-/// anything is under way or waiting; and what it leaves undone holds no words
-/// after it and is not tried again (`PendingControl::automatic`).
+/// finds no reason against it under its action gate. It never waits in
+/// line: refused where anything is under way or waiting; and what it leaves
+/// undone holds no words after it and is not tried again
+/// (`PendingControl::automatic`).
 pub(crate) async fn compact_idle(
     node: &Arc<Node>,
     resident: &ResidentId,
-    still: impl FnOnce() -> bool + Send + 'static,
+    still: impl FnOnce() -> Result<(), String> + Send + 'static,
 ) -> Result<Controlled, Failure> {
     let (node, resident) = (node.clone(), resident.clone());
     crate::to_end::run(async move { compact_idle_now(&node, &resident, still).await }).await
@@ -109,7 +110,7 @@ pub(crate) async fn compact_idle(
 async fn compact_idle_now(
     node: &Arc<Node>,
     resident: &ResidentId,
-    still: impl FnOnce() -> bool + Send + 'static,
+    still: impl FnOnce() -> Result<(), String> + Send + 'static,
 ) -> Result<Controlled, Failure> {
     let control = Control::Compact;
     node.ready_for(resident).await;
@@ -134,8 +135,8 @@ async fn compact_idle_now(
     if crate::control_queue::words_ahead(node, resident, None).await? {
         return refused("words wait to go in");
     }
-    if !still() {
-        return refused("it is no longer idle as it was");
+    if let Err(said) = still() {
+        return refused(&said);
     }
     let row = crate::control_queue::begin_as(node, resident, &control, true).await?;
     if let Err(error) = crate::control_queue::prepare(node, resident, &row).await {
