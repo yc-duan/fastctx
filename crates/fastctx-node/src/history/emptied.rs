@@ -7,6 +7,10 @@ use std::path::Path;
 use fastctx_types::history::{HistoryCall, Scope};
 use fastctx_types::write::{ChangeKind, FileChange, WriteOp, WriteOutcome, WriteResult};
 
+/// What a writer is told who writes a document empty as it never read it.
+pub(crate) const UNSEEN: &str = "writing it empty deletes this whole history document as it stands now; view it \
+     with fastctx view first";
+
 /// Whether `operation` writes its file empty, whitespace aside.
 pub(crate) fn emptied(operation: &WriteOp) -> bool {
     matches!(operation, WriteOp::Write(_))

@@ -81,6 +81,9 @@ pub(crate) async fn intercept(
     }
     let Some(path) = paths.first() else { return Ok(None) };
     let Some(project) = locate(node, path)? else { return Ok(None) };
+    // Written as the caller, whose accounts must be of the project: this
+    // machine's own standing in it is not theirs.
+    super::access::check(node, &crate::around::acting_of(node, caller), &project)?;
     let Some((latest, _)) = read(node, &project).await? else {
         return Err(Failure::new(format!("no record of the project {project} is on this machine")));
     };

@@ -116,6 +116,22 @@ pub(crate) async fn intercept(
     };
     let previous = document.as_ref().map_or("", |document| document.text.as_str()).to_owned();
     if super::emptied::emptied(operation) {
+        // Taken out as it stands: a version the writer never read is read
+        // first, as before replacing it whole.
+        if let Caller::Resident(owner) = caller
+            && !previous.is_empty()
+        {
+            let seen = crate::write::load_seen(&node.world.owner(&node.names(), owner).seen()).map_err(failure)?;
+            let canonical = fastctx_hands::files::canonical_path(path).map_err(failure)?;
+            let read = matches!(
+                seen.get(&canonical).map(|seen| &seen.version),
+                Some(fastctx_types::files::SeenVersion::Full { sha256 })
+                    if fastctx_hands::files::content_hash(previous.as_bytes()) == *sha256
+            );
+            if !read {
+                return Ok(Some(Err(super::emptied::UNSEEN.to_string().into())));
+            }
+        }
         let request =
             match super::emptied::request(scope.clone(), name.clone(), revision.map(|revision| revision.version)) {
                 Ok(request) => request,
