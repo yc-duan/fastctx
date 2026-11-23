@@ -178,7 +178,7 @@ pub fn tail(
     scan(&mut BufReader::with_capacity(1 << 20, (&mut file).take(metadata.len() - seam.offset)), None, false, &mut scanned, Some(&mut first))?;
     let (_, end) = scanned.reached();
     if seam.offset > 0
-        && let Some(why) = unsupported(&scanned.rows, seam, seen)?
+        && let Some(why) = unsupported(&scanned.rows, seam, seen, &|uuid| Ok(seen(uuid)))?
     {
         return Ok(Err(Restart::Unsupported(why)));
     }
@@ -551,7 +551,10 @@ pub fn tail_kept(
             if batch.len() >= SEEN_AT_ONCE { ask(&mut batch) } else { Ok(()) }
         })?;
         ask(&mut batch)?;
-        if let Some(why) = unsupported(&scanned.rows, seam, &|uuid| before.contains(uuid))? {
+        // Of what a compaction names that the tail does not hold, asked one
+        // at a time: a few, of a compaction now and then.
+        let anywhere = |uuid: &str| -> io::Result<bool> { Ok(seen(&[uuid.to_owned()])?.contains(uuid)) };
+        if let Some(why) = unsupported(&scanned.rows, seam, &|uuid| before.contains(uuid), &anywhere)? {
             return Ok(Err(Restart::Unsupported(why)));
         }
         if let Some(held) = read_on
@@ -921,25 +924,55 @@ fn advanced<L: Keep>(
 }
 
 /// What in a tail refers back past its seam in a way the tail cannot show
-/// alone: a compaction naming rows before the seam (`names_before`), a row
-/// that takes back rows not in the tail, and the answer to a call before
-/// the seam the user had spoken past.
-fn unsupported<L: Rows>(rows: &L, seam: &Seam, seen: &dyn Fn(&str) -> bool) -> io::Result<Option<&'static str>> {
+/// alone: a compaction shown of a row before the seam (`names_before`), or
+/// past one before it whose context could not be told, a row that takes
+/// back rows not in the tail, and the answer to a call before the seam the
+/// user had spoken past. `seen` says whether a row's record id is of a row
+/// before the seam; `anywhere` says so of any record id, asked only of what
+/// a compaction names that the tail does not hold.
+fn unsupported<L: Rows>(rows: &L, seam: &Seam, seen: &dyn Fn(&str) -> bool, anywhere: &dyn Fn(&str) -> io::Result<bool>) -> io::Result<Option<&'static str>> {
     // Looked up, not walked, for each answer.
     let abandoned: HashSet<&str> = seam.abandoned.iter().map(String::as_str).collect();
+    // A reading tells what only its last compaction left of the context
+    // could not be told (`CONTEXT_UNTOLD`): of one before the seam, told
+    // there, no longer past a later one — or, its words omitted, perhaps.
+    let untold = seam.problems_omitted > 0 || seam.problems.iter().any(|problem| problem.starts_with(super::CONTEXT_UNTOLD));
+    // The anchors the compactions read so far name.
+    let mut anchors: HashSet<String> = HashSet::new();
     let mut why = None;
     rows.each(&mut |_, row| {
-        if why.is_none() {
-            why = unsupported_row(rows, row, &abandoned, seen)?;
+        if why.is_some() {
+            return Ok(());
+        }
+        if row.compaction() {
+            anchors.extend(anchors_of(row).map(str::to_owned));
+        }
+        why = unsupported_row(rows, row, &abandoned, seen, &Named { anchors: &anchors, anywhere })?;
+        if why.is_none() && untold && row.replacement() {
+            why = Some("a compaction past one before the seam whose context was not told");
         }
         Ok(())
     })?;
     Ok(why)
 }
 
+/// What `names_before` asks besides the rows: the anchors the compactions
+/// before a row name, and whether any record id is of a row before the
+/// seam.
+struct Named<'n> {
+    anchors: &'n HashSet<String>,
+    anywhere: &'n dyn Fn(&str) -> io::Result<bool>,
+}
+
+/// The anchors the compaction `row` names: the summary that follows it.
+fn anchors_of(row: &super::Row) -> impl Iterator<Item = &str> {
+    let metadata = &row.value["compactMetadata"];
+    [&metadata["preservedSegment"]["anchorUuid"], &metadata["preservedMessages"]["anchorUuid"]].into_iter().filter_map(Value::as_str)
+}
+
 /// What in `row` of `rows` refers back past the seam (`unsupported`), the
 /// calls before it the user spoke past `abandoned`.
-fn unsupported_row<L: Rows>(rows: &L, row: &super::Row, abandoned: &HashSet<&str>, seen: &dyn Fn(&str) -> bool) -> io::Result<Option<&'static str>> {
+fn unsupported_row<L: Rows>(rows: &L, row: &super::Row, abandoned: &HashSet<&str>, seen: &dyn Fn(&str) -> bool, named: &Named<'_>) -> io::Result<Option<&'static str>> {
     if row.value.get("uuid").and_then(Value::as_str).is_some_and(seen) {
         return Ok(Some("a row of a record before the seam again"));
     }
@@ -952,7 +985,7 @@ fn unsupported_row<L: Rows>(rows: &L, row: &super::Row, abandoned: &HashSet<&str
     {
         return Ok(Some("the answer to a call before the seam"));
     }
-    if (row.compaction() || row.value["isCompactSummary"] == true) && names_before(rows, row)? {
+    if (row.compaction() || row.value["isCompactSummary"] == true) && names_before(rows, row, named)? {
         return Ok(Some("a compaction naming rows before the seam"));
     }
     let references = match row.kind() {
@@ -971,36 +1004,52 @@ fn unsupported_row<L: Rows>(rows: &L, row: &super::Row, abandoned: &HashSet<&str
 }
 
 /// Whether the compaction `row` begins, or the summary it is, is shown of a
-/// row before the seam, `rows` being those past it. A compaction is shown
-/// of what it kept and the message it went on from, all written before it:
-/// one not among `rows` lies before the seam. Its anchor, the summary that
-/// follows it, may not be written yet, as a whole reading may not find it
-/// either. A summary is shown with the compaction found along its parents
-/// past what is no message (`summarized`): a parent not among `rows` lies
-/// before the seam. Past it all, the tail shows the compaction as a whole
-/// reading does — Claude Code keeps the last few messages before it, which
-/// a long turn holds (2.1.322).
-fn names_before<L: Rows>(rows: &L, row: &super::Row) -> io::Result<bool> {
-    if row.compaction() {
-        let metadata = &row.value["compactMetadata"];
-        let before = [&row.value["logicalParentUuid"], &metadata["preservedSegment"]["headUuid"], &metadata["preservedSegment"]["tailUuid"]];
-        let kept = metadata["preservedMessages"]["uuids"].as_array().into_iter().flatten();
-        for uuid in before.into_iter().chain(kept).filter_map(Value::as_str) {
-            if rows.index_of(uuid)?.is_none() {
-                return Ok(true);
+/// row before the seam, `rows` being those past it, as a whole reading
+/// shows it (`project`, `context::order`, `summarized`). Past it all, the
+/// tail shows the compaction as a whole reading does — Claude Code keeps
+/// the last few messages before it, which a long turn holds (2.1.322).
+/// - A compaction is shown of what it kept — its kept messages, or its kept
+///   segment walked from its tail to its head along parents — and of the
+///   message it went on from, all written before it: one not among `rows`
+///   lies before the seam.
+/// - And of its anchor, the summary that follows it, wherever that stands:
+///   one before the seam (`Named::anywhere`) is shown so only whole; one not
+///   written yet a whole reading does not find either.
+/// - A summary is shown with the last compaction of all the rows that names
+///   it its anchor, else one found along its parents: named by none of those
+///   read before it past the seam, one before the seam may name it.
+fn names_before<L: Rows>(rows: &L, row: &super::Row, named: &Named<'_>) -> io::Result<bool> {
+    if !row.compaction() {
+        return Ok(row.value.get("uuid").and_then(Value::as_str).is_none_or(|uuid| !named.anchors.contains(uuid)));
+    }
+    let absent = |uuid: &str| -> io::Result<bool> { Ok(rows.index_of(uuid)?.is_none()) };
+    let metadata = &row.value["compactMetadata"];
+    let kept = metadata["preservedMessages"]["uuids"].as_array().into_iter().flatten();
+    for uuid in [&row.value["logicalParentUuid"]].into_iter().chain(kept).filter_map(Value::as_str) {
+        if absent(uuid)? {
+            return Ok(true);
+        }
+    }
+    let segment = &metadata["preservedSegment"];
+    if let (Some(head), Some(tail)) = (segment["headUuid"].as_str(), segment["tailUuid"].as_str()) {
+        let mut at = tail.to_owned();
+        // No longer than the rows are many: past that, a cycle, which a
+        // whole reading meets as well.
+        for _ in 0..=rows.count() {
+            let Some(index) = rows.index_of(&at)? else { return Ok(true) };
+            if at == head {
+                break;
+            }
+            match rows.row(index)?.value.get("parentUuid").and_then(Value::as_str) {
+                Some(parent) => at = parent.to_owned(),
+                None => break,
             }
         }
-        return Ok(false);
     }
-    let mut parent = row.value.get("parentUuid").and_then(Value::as_str).map(str::to_owned);
-    for _ in 0..32 {
-        let Some(above) = parent else { return Ok(false) };
-        let Some(index) = rows.index_of(&above)? else { return Ok(true) };
-        let above = rows.row(index)?;
-        if above.compaction() || matches!(above.kind(), Some("user" | "assistant")) {
-            return Ok(false);
+    for anchor in anchors_of(row) {
+        if absent(anchor)? && (named.anywhere)(anchor)? {
+            return Ok(true);
         }
-        parent = above.value.get("parentUuid").and_then(Value::as_str).map(str::to_owned);
     }
     Ok(false)
 }

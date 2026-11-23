@@ -67,31 +67,46 @@ impl Record {
     }
 
     /// A compaction as Claude Code 2.1.322 writes one inside a turn: a row
-    /// of its own beside the messages, the boundary keeping `kept` and
-    /// going on from the last of them, an attachment, then — where
-    /// `summary` — the summary it names as its anchor, these two stamped a
-    /// moment before the boundary. When it was written.
-    fn compaction(&mut self, kept: &[String], summary: bool) -> u32 {
+    /// of its own beside the messages, the boundary `boundary` keeping
+    /// `kept` — the messages, or the segment of `metadata` where given — and
+    /// going on from the last of them, naming `anchor` the summary to come,
+    /// then an attachment, stamped a moment before the boundary. When it
+    /// was written.
+    fn compact(&mut self, boundary: &str, anchor: &str, kept: &[String], metadata: Option<Value>) -> u32 {
         self.lines.push(json!({"type": "last-prompt", "lastPrompt": "words"}).to_string());
         self.clock += 1;
         let last = kept.last().cloned();
-        let boundary = json!({"type": "system", "subtype": "compact_boundary", "uuid": "b1", "parentUuid": null, "logicalParentUuid": last,
-            "timestamp": stamp(self.clock, 500), "content": "Conversation compacted",
-            "compactMetadata": {"trigger": "auto", "preTokens": 880_000,
-                "preservedSegment": {"headUuid": kept.first(), "anchorUuid": "s1", "tailUuid": last},
-                "preservedMessages": {"anchorUuid": "s1", "uuids": kept, "allUuids": kept}}});
-        self.lines.push(boundary.to_string());
-        self.lines.push(json!({"type": "attachment", "uuid": "t1", "parentUuid": "b1", "timestamp": stamp(self.clock, 492), "attachment": {"type": "date", "date": "2026-11-23"}}).to_string());
-        self.parent = Some("t1".to_owned());
-        if summary {
-            self.summary(self.clock);
-        }
+        let metadata = metadata.unwrap_or_else(|| {
+            json!({"trigger": "auto", "preTokens": 880_000,
+                   "preservedSegment": {"headUuid": kept.first(), "anchorUuid": anchor, "tailUuid": last},
+                   "preservedMessages": {"anchorUuid": anchor, "uuids": kept, "allUuids": kept}})
+        });
+        let row = json!({"type": "system", "subtype": "compact_boundary", "uuid": boundary, "parentUuid": null, "logicalParentUuid": last,
+                         "timestamp": stamp(self.clock, 500), "content": "Conversation compacted", "compactMetadata": metadata});
+        self.lines.push(row.to_string());
+        let attachment = format!("t-{boundary}");
+        self.lines.push(json!({"type": "attachment", "uuid": attachment, "parentUuid": boundary, "timestamp": stamp(self.clock, 492), "attachment": {"type": "date", "date": "2026-11-23"}}).to_string());
+        self.parent = Some(attachment);
         self.clock
     }
 
-    /// The summary of the compaction written at `clock`.
+    /// `compact` as b1, naming s1; the summary written where `summary`.
+    fn compaction(&mut self, kept: &[String], summary: bool) -> u32 {
+        let clock = self.compact("b1", "s1", kept, None);
+        if summary {
+            self.summary(clock);
+        }
+        clock
+    }
+
+    /// The summary s1 of the compaction written at `clock`.
     fn summary(&mut self, clock: u32) {
-        self.push(json!({"type": "user", "uuid": "s1", "timestamp": stamp(clock, 300), "isCompactSummary": true, "isVisibleInTranscriptOnly": true,
+        self.summary_as("s1", clock);
+    }
+
+    /// The summary `uuid` of a compaction written at `clock`.
+    fn summary_as(&mut self, uuid: &str, clock: u32) {
+        self.push(json!({"type": "user", "uuid": uuid, "timestamp": stamp(clock, 300), "isCompactSummary": true, "isVisibleInTranscriptOnly": true,
                          "message": {"role": "user", "content": "This session is being continued from a previous conversation."}}));
     }
 
@@ -104,9 +119,15 @@ impl Record {
 /// the record, and its seam at the second turn's words as a reading from
 /// its start places it, with the record ids before it.
 fn begun(path: &Path) -> (Record, Seam, HashSet<String>, Timestamp) {
+    begun_with(path, |_| {})
+}
+
+/// As `begun`, with what `earlier` writes before the second turn.
+fn begun_with(path: &Path, earlier: impl FnOnce(&mut Record)) -> (Record, Seam, HashSet<String>, Timestamp) {
     let mut record = Record::default();
     record.words("u1");
     record.reply("a1");
+    earlier(&mut record);
     let words = record.end();
     record.words("u2");
     let said: Timestamp = stamp(record.clock, 0).parse().unwrap();
@@ -264,5 +285,128 @@ fn a_compaction_naming_a_row_before_where_it_is_read_from_is_read_whole() {
     record.write(&path);
     let on = read_kept(&path, &place, &before, Some(&keys), &|_| false).0;
     assert!(on.is_ok(), "{on:?}");
+    let _ = fastctx_platform::disk::remove_dir_all(&dir);
+}
+
+/// A summary no compaction past the seam names its anchor is read whole:
+/// one before the seam may name it, as a whole reading finds (here one
+/// that named it before its words were written), however the summary
+/// stands below a compaction of the turn's own. A microcompaction before
+/// the seam leaves the context as it was; a compaction there, its summary
+/// not written, leaves it untold, which reads the record whole too.
+#[test]
+fn a_summary_no_compaction_past_the_seam_names_is_read_whole() {
+    for subtype in ["microcompact_boundary", "compact_boundary"] {
+        let dir = folder(&format!("summary-named-before-{subtype}"));
+        let path = dir.join("record.jsonl");
+        let (mut record, seam, before, said) = begun_with(&path, |record| {
+            record.clock += 1;
+            record.lines.push(
+                json!({"type": "system", "subtype": subtype, "uuid": "b0", "parentUuid": null, "logicalParentUuid": "a1", "timestamp": stamp(record.clock, 500),
+                       "compactMetadata": {"preservedMessages": {"anchorUuid": "s0", "uuids": ["a1"]}}})
+                .to_string(),
+            );
+            record.parent = Some("b0".to_owned());
+        });
+        let accept = move |at: Timestamp| at <= said;
+        let kept = record.round().to_vec();
+        let compacted = record.compaction(&kept, false);
+        record.summary_as("s0", compacted);
+        record.write(&path);
+        let read = tail(&path, &seam, &HashSet::new(), &accept, false, &|id| before.contains(id)).unwrap();
+        if subtype == "microcompact_boundary" {
+            assert_eq!(read.err(), Some(Restart::Unsupported("a compaction naming rows before the seam")));
+        } else {
+            assert!(matches!(read, Err(Restart::Unsupported(_))), "{subtype}: read past the seam");
+        }
+        let _ = fastctx_platform::disk::remove_dir_all(&dir);
+    }
+}
+
+/// Past a place read through inside the turn, a compaction naming as its
+/// anchor a summary before the place — one a whole reading takes from
+/// where it stood and shows with this compaction — is read from the seam.
+#[test]
+fn a_compaction_naming_a_summary_before_the_place_is_read_from_the_seam() {
+    let dir = folder("anchor-before-the-place");
+    let path = dir.join("record.jsonl");
+    let (mut record, seam, before, said) = begun(&path);
+    let accept = move |at: Timestamp| at <= said;
+    let kept = record.round().to_vec();
+    let compacted = record.compact("b0", "s0", &kept, None);
+    record.summary_as("s0", compacted);
+    record.round();
+    record.round();
+    record.write(&path);
+    let (judged, _, keys) = read_kept(&path, &seam, &before, None, &accept);
+    let place = judged
+        .unwrap_or_else(|why| panic!("read whole: {why}"))
+        .read
+        .expect("a place read through past the compaction");
+    let keys: HashSet<String> = keys.into_iter().collect();
+    assert!(keys.contains(&format!("{KEY_ROW}s0")), "the summary lies before the place");
+    let kept = record.round().to_vec();
+    record.compact("b1", "s0", &kept, None);
+    record.write(&path);
+    let on = read_kept(&path, &place, &before, Some(&keys), &|_| false).0;
+    assert!(matches!(on, Err(Restart::Unsupported("a compaction naming rows before the seam"))), "{on:?}");
+    let _ = fastctx_platform::disk::remove_dir_all(&dir);
+}
+
+/// A compaction keeping a segment whose head and tail lie past the seam but
+/// a row between them, along their parents, before it is read whole.
+#[test]
+fn a_kept_segment_through_a_row_before_the_seam_is_read_whole() {
+    let dir = folder("segment-through-before");
+    let path = dir.join("record.jsonl");
+    // A row before the seam whose parent is written after it.
+    let (mut record, seam, before, said) = begun_with(&path, |record| {
+        let at = record.at();
+        record.lines.push(json!({"type": "assistant", "uuid": "between", "parentUuid": "head", "timestamp": at,
+                                 "message": {"id": "m-between", "role": "assistant", "model": "x", "content": [{"type": "text", "text": "between"}]}}).to_string());
+    });
+    let accept = move |at: Timestamp| at <= said;
+    let at = record.at();
+    record.push(json!({"type": "assistant", "uuid": "head", "timestamp": at, "message": {"id": "m-head", "role": "assistant", "model": "x", "content": [{"type": "text", "text": "head"}]}}));
+    let at = record.at();
+    record.lines.push(json!({"type": "user", "uuid": "tail", "parentUuid": "between", "timestamp": at, "message": {"role": "user", "content": "tail"}}).to_string());
+    record.parent = Some("tail".to_owned());
+    let kept = ["head".to_owned(), "tail".to_owned()];
+    let segment =
+        json!({"trigger": "auto", "preservedSegment": {"headUuid": "head", "anchorUuid": "s1", "tailUuid": "tail"}});
+    let compacted = record.compact("b1", "s1", &kept, Some(segment));
+    record.summary(compacted);
+    record.write(&path);
+    let read = tail(&path, &seam, &HashSet::new(), &accept, false, &|id| before.contains(id)).unwrap();
+    assert_eq!(read.err(), Some(Restart::Unsupported("a compaction naming rows before the seam")));
+    let _ = fastctx_platform::disk::remove_dir_all(&dir);
+}
+
+/// Before the seam a compaction whose context could not be told — told so
+/// by every reading while it is the last — then one inside the turn that is
+/// whole: a whole reading tells only the last, so the record is read whole.
+#[test]
+fn a_compaction_past_one_whose_context_was_not_told_is_read_whole() {
+    let dir = folder("context-untold");
+    let path = dir.join("record.jsonl");
+    let (mut record, seam, before, said) = begun_with(&path, |record| {
+        let compacted = record.compact("b0", "s0", &["gone".to_owned()], None);
+        record.summary_as("s0", compacted);
+    });
+    assert!(
+        seam.problems.iter().any(|problem| problem.starts_with(super::super::CONTEXT_UNTOLD)),
+        "{:?}",
+        seam.problems
+    );
+    let accept = move |at: Timestamp| at <= said;
+    let kept = record.round().to_vec();
+    record.compaction(&kept, true);
+    record.round();
+    record.write(&path);
+    let read = tail(&path, &seam, &HashSet::new(), &accept, false, &|id| before.contains(id)).unwrap();
+    assert_eq!(
+        read.err(),
+        Some(Restart::Unsupported("a compaction past one before the seam whose context was not told"))
+    );
     let _ = fastctx_platform::disk::remove_dir_all(&dir);
 }
