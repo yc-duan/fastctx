@@ -78,6 +78,16 @@ function idleSaid(r: ResidentNow, words: TalkMenuWords): string {
   return choice.after_minutes !== undefined || choice.min_tokens !== undefined ? words.idleCustom : words.idleFollowShort;
 }
 
+/** How long it has been idle, as its `now` says since its last words or
+ *  turn; nothing while it works. */
+function idleFor(r: ResidentNow, words: TalkMenuWords): string {
+  if (!r.now || r.now.activity === "busy" || r.now.turn) return "";
+  const minutes = Math.floor((Date.now() - Date.parse(r.now.since)) / 60_000);
+  if (!Number.isFinite(minutes) || minutes < 1) return "";
+  const how = minutes < 60 ? words.minutes(minutes) : minutes < 48 * 60 ? words.hours(Math.floor(minutes / 60)) : words.days(Math.floor(minutes / 1440));
+  return words.idleFor(how);
+}
+
 /** Whether the World compacts it once idle: a Claude Code or Codex session
  *  it runs (`About::world_managed`). */
 function compacts(r: ResidentNow): boolean {
@@ -241,7 +251,7 @@ export class TalkMenu {
           item("move", "move", words.move, away, `<span class="talk-menu-more">${glyph("chevron", 14)}</span>`),
           item("rename", "edit", words.rename, away),
           ...(compacts(r)
-            ? [item("idle", "clock", words.idle, away, `<span class="talk-menu-value">${escape(idleSaid(r, words))}</span>`)]
+            ? [item("idle", "clock", words.idle, away, `<span class="talk-menu-value">${escape([idleFor(r, words), idleSaid(r, words)].filter(Boolean).join(" · "))}</span>`)]
             : []),
           item("archive", "archive", words.archive, away),
           ...(this.opened.how.copy || this.opened.how.attach

@@ -3,6 +3,7 @@
 // core's client. Outside the shell there is no World to reach, and
 // `inShell` says so.
 
+import type { RetentionAnswer, RetentionAsk } from "./retention";
 import type { UsageCallsQuery, UsageCallsPage } from "./usage-calls";
 import { Channel, invoke } from "@tauri-apps/api/core";
 import { closeDelivery, observe, retryDeliveries } from "./delivery";
@@ -396,6 +397,13 @@ export function claudeConsent(
  *  conversations living on other machines (`Call::MachineCopies`). */
 export function machineCopies(machine: string, ask: CopiesAsk): Promise<CopiesAnswer> {
   return invoke("machine_copies", { machineName: machine, ask });
+}
+
+/** The rule a machine deletes its conversations idle long enough by: read,
+ *  or set by its owner or by an account its agents assist
+ *  (`Call::ConversationRetention`). */
+export function conversationRetention(machine: string, ask: RetentionAsk): Promise<RetentionAnswer> {
+  return invoke("conversation_retention", { machineName: machine, ask });
 }
 
 /** Adds an agent's home on a machine, or hides one or shows it again. */

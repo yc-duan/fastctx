@@ -58,6 +58,12 @@ export interface TalkMenuWords {
   idleOn: string;
   idleOff: string;
   idleCustom: string;
+  /** How long it has been idle, beside its idle compaction: since its last
+   *  words, turn or command. */
+  idleFor(how: string): string;
+  minutes(n: number): string;
+  hours(n: number): string;
+  days(n: number): string;
   idleWhat: string;
   idleAfter: string;
   idleMin: string;
@@ -132,6 +138,10 @@ export const zhTalkMenu: TalkMenuWords = {
   idleOn: "开",
   idleOff: "关",
   idleCustom: "自定义",
+  idleFor: (how) => `已闲置 ${how}`,
+  minutes: (n) => `${n} 分钟`,
+  hours: (n) => `${n} 小时`,
+  days: (n) => `${n} 天`,
   idleWhat: "只对这段对话生效；没单独设的项跟随智能体设置。",
   idleAfter: "闲置多久后",
   idleMin: "上下文至少",
@@ -198,6 +208,10 @@ export const enTalkMenu: TalkMenuWords = {
   idleOn: "On",
   idleOff: "Off",
   idleCustom: "Custom",
+  idleFor: (how) => `idle ${how}`,
+  minutes: (n) => `${n} min`,
+  hours: (n) => `${n} h`,
+  days: (n) => `${n} d`,
   idleWhat: "For this conversation alone; what is not set here follows the agent's setting.",
   idleAfter: "Idle for",
   idleMin: "At least",

@@ -357,6 +357,7 @@ import {
   machineStats,
   machineMemoryRoom,
   machineCopies,
+  conversationRetention,
   renameHere,
   agentActivity,
 } from "./world/bridge";
@@ -687,6 +688,7 @@ function agentsPage(next: Place): Page {
       resetUsage: (machine, agent, dir, id, toTenths, weekEnd, holder) => (live ? resetAgentUsage(machine, agent, dir, id, toTenths, weekEnd, holder) : notLive()),
       changeModels: (machine, agent, dir, change) => (live ? changeAgentModels(machine, agent, dir, change) : specimenChangeModels(machine, agent, dir, change, specimen!.now)),
       setIdleCompaction: (machine, agent, dir, setting) => (live ? setIdleCompaction(machine, agent, dir, setting) : specimenSetIdleCompaction(machine, agent, dir, setting, specimen!.now)),
+      conversationRetention: live ? conversationRetention : undefined,
       usage: (machine, agent, dir) => (live ? agentUsage(machine, agent, dir) : specimenUsage(machine, agent, dir, specimen!.now)),
       calls: (machine, agent, dir, query) => (live ? agentCalls(machine, agent, dir, query) : specimenCalls(machine, agent, dir, query, specimen!.now)),
       change_: change,
@@ -3116,6 +3118,7 @@ function show(next: Place): void {
         },
         manage: english ? enManage : zhManage,
         copies: live ? machineCopies : (specimenCopiesAsk ??= specimenCopies()),
+        retention: live ? conversationRetention : undefined,
         moveLogin: live
           ? {
               words: english ? enLoginMove : zhLoginMove,

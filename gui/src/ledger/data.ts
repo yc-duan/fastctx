@@ -11,6 +11,7 @@
 // is named only to the one it belongs to.
 
 import type { IdleCompaction } from "../world/logins";
+import type { RetentionAnswer } from "../world/retention";
 
 export type Family = string;
 const named: Record<string, string> = { claude: "Claude Code", codex: "Codex", antigravity: "Antigravity", cursor: "Cursor", opencode: "OpenCode" };
@@ -302,6 +303,10 @@ export interface Deeds {
    *  or its conditions changed in a sheet of their own. */
   idleOn(login: Login, on: boolean): Promise<void>;
   idle(login: Login): void;
+  /** How long the machine of a login lent to the reader keeps their idle
+   *  conversations: read, or set fewer days than its owner's for their own
+   *  (`null` follows the owner's). */
+  retention?(login: Login, days?: number | null): Promise<RetentionAnswer>;
   plan(login: Login, plan: PlanLabel | null): Promise<void>;
   /** What the owner expects the login's week to hold, and its reach. */
   expect(login: Login, expect: Expect): Promise<void>;

@@ -82,7 +82,7 @@ async fn pass(node: &Arc<Node>) {
             return Ok(Vec::new());
         }
         let mut due = due(&reading, &rule);
-        due.retain(|(due, _)| due.at <= Timestamp::now());
+        due.retain(|(due, _)| due.at.is_some_and(|at| at <= Timestamp::now()));
         due.sort_by_key(|(due, _)| due.idle_since);
         Ok(due)
     })
@@ -106,38 +106,37 @@ async fn pass(node: &Arc<Node>) {
         if busy(node, &due.resident).await {
             continue;
         }
+        let days = due.days.unwrap_or_default();
         match crate::forget::expired(node, &due.resident).await {
             Ok(()) => {
                 node.log.line(format_args!(
-                    "deleted {}, idle since {}, as this machine keeps conversations idle {} days",
-                    due.resident, due.idle_since, due.days
+                    "deleted {}, idle since {}, as this machine keeps conversations idle {days} days",
+                    due.resident, due.idle_since
                 ));
                 gone += 1;
                 tokio::time::sleep(APART).await;
             }
-            Err(why) => node.log.line(format_args!("deleting {}, idle {} days: {why}", due.resident, due.days)),
+            Err(why) => node.log.line(format_args!("deleting {}, idle {days} days: {why}", due.resident)),
         }
     }
 }
 
-/// When each conversation living here that the rule keeps idle a while
-/// goes, with whom it works for. Call on a thread that may block.
+/// Since when each conversation the World runs here has been idle and when
+/// the rule has it go, with whom it works for. Call on a thread that may
+/// block.
 pub(crate) fn due(node: &Node, rule: &Rule) -> Vec<(Due, Acting)> {
-    if !rule.on() {
-        return Vec::new();
-    }
     let mut due = Vec::new();
     for resident in node.residents.everyone() {
         let Some((about, _)) = node.residents.about(&resident.id) else { continue };
         if !about.world_managed() || node.residents.is_deleting(&resident.id) {
             continue;
         }
-        let Some(days) = days_of(node, rule, &about.acting) else { continue };
+        let days = days_of(node, rule, &about.acting);
         let idle_since = idle_since(node, &resident.id);
-        let mut at = idle_since + jiff::SignedDuration::from_hours(i64::from(days) * 24);
-        if let Some(grace) = rule.grace_until {
-            at = at.max(grace);
-        }
+        let at = days.map(|days| {
+            let at = idle_since + jiff::SignedDuration::from_hours(i64::from(days) * 24);
+            rule.grace_until.map_or(at, |grace| at.max(grace))
+        });
         due.push((Due { resident: resident.id.clone(), idle_since, days, at }, about.acting.clone()));
     }
     due

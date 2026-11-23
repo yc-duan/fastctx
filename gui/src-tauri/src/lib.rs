@@ -1319,6 +1319,7 @@ pub fn run() {
             #[cfg(desktop)]
             data::data,
             data::machine_copies,
+            data::conversation_retention,
             #[cfg(desktop)]
             doctor::doctor_readings,
             sync_status::sync_status,

@@ -88,14 +88,17 @@ pub struct RetentionAnswer {
     pub conversations: Vec<Due>,
 }
 
-/// When a conversation goes, as the rule stands.
+/// Since when a conversation has been idle, and when it goes as the rule
+/// stands: never, where the rule keeps it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Due {
     pub resident: ResidentId,
     /// Since when it has been idle: its last words, turn or command.
     pub idle_since: Timestamp,
-    pub days: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub days: Option<u32>,
     /// When it goes if nothing happens in it before: at least after the
     /// grace of a rule turned on or shortened.
-    pub at: Timestamp,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub at: Option<Timestamp>,
 }
