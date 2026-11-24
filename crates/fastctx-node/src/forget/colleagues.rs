@@ -295,8 +295,23 @@ pub(super) async fn sweep(node: &Arc<Node>, only: Option<&ResidentId>) -> Swept 
         };
         tried += 1;
         // At the end of a retention, deleted as one going for its own would
-        // be: refused while at work, which nothing kept at the hubs stops
-        // later; otherwise as the user deleting it.
+        // be: asked whether anything of it is on its way before, and once
+        // nothing new can begin in it whether anything is here (`idle`), as
+        // the conversation's own expiry asks; refused while at work, which
+        // nothing kept at the hubs stops later. Otherwise as the user
+        // deleting it.
+        if due.gentle && crate::conversation_retention::expiry::busy(node, &due.colleague).await {
+            if month {
+                node.log.line(format_args!(
+                    "giving up deleting {}, a colleague {asker} asked: at work for a month",
+                    due.colleague
+                ));
+                settled.push(due);
+            } else {
+                swept.left = true;
+            }
+            continue;
+        }
         let deleted = if due.gentle {
             expiring(node, due.colleague.clone()).await
         } else {
@@ -503,11 +518,13 @@ fn expiring(node: &Arc<Node>, id: ResidentId) -> Pin<Box<dyn Future<Output = Res
 }
 
 /// What a colleague going at the end of its conversation's retention is
-/// asked once nothing new can begin in it: that nothing of it is at work.
+/// asked once nothing new can begin in it: that nothing of it is on its way
+/// here. Being deleted is no work of its own, and what is asked before
+/// (`expiry::busy`) asks of others too.
 fn idle() -> crate::data::delete::Still {
     Arc::new(|node: Arc<Node>, id: ResidentId| {
         Box::pin(async move {
-            if crate::conversation_retention::expiry::busy(&node, &id).await {
+            if crate::conversation_retention::expiry::busy_here(&node, &id).await {
                 return Err("it is at work".into());
             }
             Ok(())

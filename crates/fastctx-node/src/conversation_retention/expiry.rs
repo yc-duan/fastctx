@@ -304,7 +304,7 @@ pub(crate) async fn busy(node: &Arc<Node>, id: &ResidentId) -> bool {
 /// Whether anything of `id` is on its way here, or cannot be told not to: a
 /// turn, controls waiting or running, words waiting for it of any kind, a
 /// goal going on or to go on, or an answer, an end or a command still owed.
-async fn busy_here(node: &Arc<Node>, id: &ResidentId) -> bool {
+pub(crate) async fn busy_here(node: &Arc<Node>, id: &ResidentId) -> bool {
     if node.residents.now(id).is_none_or(|now| now.activity == Activity::Busy || now.turn.is_some()) {
         return true;
     }
