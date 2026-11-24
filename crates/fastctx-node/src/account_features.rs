@@ -14,6 +14,12 @@ pub(crate) async fn read(node: &Node, account: &HubAccount) -> Result<Settings, 
     .await
 }
 
+/// How long a session's listing of its tools waits for what its account
+/// opted into, read from its hub, alongside the machines' scratch
+/// directories and as long (`scratch`): past it the listing goes on as if
+/// the account had opted into nothing.
+pub(crate) const LISTED_WITHIN: std::time::Duration = std::time::Duration::from_secs(5);
+
 pub(crate) async fn conversation(node: &Arc<Node>, resident: &ResidentId) -> Settings {
     let Some((about, _)) = node.residents.about(resident) else { return Settings::default() };
     let Ok(Some(account)) = crate::plan::load_account(node, resident, &about.acting).await else {

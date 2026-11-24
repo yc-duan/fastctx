@@ -2543,30 +2543,34 @@ async fn machines(
     let (here, others, groups) = crate::world::grouped_machines(node, &acting, here_too);
     let here = here_too.then(|| here.to_string());
     let collab = crate::collab::choices(node, resident, login).await?.map(|choices| choices.offered);
-    let scratch = match resident.filter(|_| describe_scratch) {
-        Some(id) => {
-            let paths = crate::scratch::descriptions(
-                node,
-                id,
-                &acting,
-                here.iter().cloned().chain(others.iter().cloned()).collect(),
-            )
-            .await;
-            let (writing, recipient, observed) = (node.clone(), id.clone(), paths.clone());
-            fastctx_platform::task::spawn_blocking(move || crate::scratch::described(&writing, &recipient, observed))
-                .await
-                .map_err(|error| Failure::new(error.to_string()))?
-                .map_err(crate::record_migration::failure)?;
-            paths
-        }
-        None => Default::default(),
+    // What is asked of other machines and of the hubs is asked at once, each
+    // within its bound: a session's listing of its tools waits for this.
+    let scratch = async {
+        let Some(id) = resident.filter(|_| describe_scratch) else { return Ok(Default::default()) };
+        let paths = crate::scratch::descriptions(
+            node,
+            id,
+            &acting,
+            here.iter().cloned().chain(others.iter().cloned()).collect(),
+        )
+        .await;
+        let (writing, recipient, observed) = (node.clone(), id.clone(), paths.clone());
+        fastctx_platform::task::spawn_blocking(move || crate::scratch::described(&writing, &recipient, observed))
+            .await
+            .map_err(|error| Failure::new(error.to_string()))?
+            .map_err(crate::record_migration::failure)?;
+        Ok::<_, Failure>(paths)
     };
+    let sentinels = async {
+        let Some(id) = resident else { return false };
+        tokio::time::timeout(crate::account_features::LISTED_WITHIN, crate::account_features::conversation(node, id))
+            .await
+            .is_ok_and(|settings| settings.sentinels)
+    };
+    let (scratch, sentinels) = tokio::join!(scratch, sentinels);
+    let scratch = scratch?;
     let speaks = resident.is_some_and(|id| crate::voice::speaks(node, id));
     let asker = resident.filter(|_| speaks).and_then(|id| crate::voice::asker_of(node, id)).map(|(asker, _)| asker);
-    let sentinels = match resident {
-        Some(id) => crate::account_features::conversation(node, id).await.sentinels,
-        None => false,
-    };
     Ok(Reply::Machines { here, others, groups, collab, scratch, speaks, asker, sentinels })
 }
 

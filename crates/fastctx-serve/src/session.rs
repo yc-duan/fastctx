@@ -26,9 +26,9 @@ use crate::protocol::{CLIENT_INFO, VERSION_KEY};
 /// the tools again.
 const LIST_AGAIN: std::time::Duration = std::time::Duration::from_secs(30);
 
-/// How long listing the tools waits for the node to say the machines, once
-/// it is reached: well within the time a host waits for a listing, past
-/// which Claude Code drops the server for the rest of its session (30
+/// How long listing the tools waits for the node, reaching it and its
+/// saying the machines: well within the time a host waits for a listing,
+/// past which Claude Code drops the server for the rest of its session (30
 /// seconds), even for a listing asked while another waits.
 pub(crate) const MACHINES_WITHIN: std::time::Duration = std::time::Duration::from_secs(10);
 
@@ -760,20 +760,36 @@ impl Session {
     /// when nothing keeps it, as on a computer in no network: a host that
     /// lists them once must see them as they will be. None while a service
     /// keeps the node and it is not running.
-    pub async fn machines(&self, meta: Option<&Value>) -> Result<Option<crate::tools::Machines>, String> {
+    pub async fn machines(self: &Arc<Self>, meta: Option<&Value>) -> Result<Option<crate::tools::Machines>, String> {
         self.machines_within(meta, None).await
     }
 
-    /// `machines`, the node's answer waited for at most `within` once it is
-    /// reached: reaching it, and starting it where nothing keeps it, are not
-    /// cut short, so a listing given up on starts no other node.
+    /// `machines`, reaching the node and its answer waited for at most
+    /// `within` in all. The node is reached in a task of its own: a listing
+    /// given up on leaves a start under way to finish, and the next waits for
+    /// it (`starting`) rather than starting another node.
     async fn machines_within(
-        &self,
+        self: &Arc<Self>,
         meta: Option<&Value>,
         within: Option<std::time::Duration>,
     ) -> Result<Option<crate::tools::Machines>, String> {
+        let late = |what: &str| match within {
+            Some(within) => format!("the node {what} within {} s", within.as_secs()),
+            None => format!("the node {what}"),
+        };
+        let deadline = within.map(|within| tokio::time::Instant::now() + within);
         let host = self.host(meta)?;
-        let mut client = match self.connecting(host.clone()).await {
+        let reaching = {
+            let (session, host) = (self.clone(), host.clone());
+            tokio::spawn(async move { session.connecting(host).await })
+        };
+        let reached = match deadline {
+            Some(deadline) => {
+                tokio::time::timeout_at(deadline, reaching).await.map_err(|_| late("could not be reached"))?
+            }
+            None => reaching.await,
+        };
+        let mut client = match reached.map_err(|error| error.to_string())? {
             Ok(client) => client,
             Err(fastctx_client::ConnectError::KeptByService { .. }) => return Ok(None),
             Err(error) => return Err(error.to_string()),
@@ -785,10 +801,10 @@ impl Session {
             thread,
             scratch: true,
         });
-        let answered = match within {
-            Some(within) => tokio::time::timeout(within, asked)
-                .await
-                .map_err(|_| format!("the node did not say the machines within {} s", within.as_secs()))?,
+        let answered = match deadline {
+            Some(deadline) => {
+                tokio::time::timeout_at(deadline, asked).await.map_err(|_| late("did not say the machines"))?
+            }
             None => asked.await,
         };
         match answered {
@@ -865,13 +881,13 @@ impl Session {
         }
     }
 
-    /// The machines to list the tools with, the node's answer waited for at
-    /// most `within`. The node may not answer for a while, as while it moves
-    /// the records of an earlier release in or works through what piled up:
-    /// past that, or when they cannot be read, the tools are listed without
-    /// them rather than refused or answered too late, either of which a host
-    /// takes as the tools failing for the whole session, and the host is told
-    /// to list them again in a while.
+    /// The machines to list the tools with, waited for at most `within`. The
+    /// node may not answer for a while, as while it starts, moves the records
+    /// of an earlier release in or works through what piled up: past that, or
+    /// when they cannot be read, the tools are listed without them rather than
+    /// refused or answered too late, either of which a host takes as the tools
+    /// failing for the whole session, and the host is told to list them again
+    /// in a while; so too while a service keeps a node it has not started yet.
     pub async fn machines_to_list(
         self: &Arc<Self>,
         meta: Option<&Value>,
@@ -879,8 +895,8 @@ impl Session {
         within: std::time::Duration,
     ) -> Option<crate::tools::Machines> {
         match self.machines_within(meta, Some(within)).await {
-            Ok(machines) => machines,
-            Err(_) => {
+            Ok(Some(machines)) => Some(machines),
+            Ok(None) | Err(_) => {
                 self.list_again_later(output);
                 None
             }
