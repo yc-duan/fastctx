@@ -236,6 +236,18 @@
   display: block;
 }
 
+/* What an item that opens choices stands at now, quiet, before its arrow. */
+.talk-menu-value {
+  margin-left: auto;
+  padding-right: var(--space-2);
+  color: var(--text-3);
+  white-space: nowrap;
+}
+
+.talk-menu-value + .talk-menu-more {
+  margin-left: 0;
+}
+
 .talk-menu-item:hover:not(:disabled),
 .talk-menu-item:focus-visible,
 .talk-menu-back:hover,

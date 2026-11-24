@@ -135,6 +135,7 @@ pub(super) fn side(
             launcher: None,
             models: Vec::new(),
             model_edits: None,
+            idle_compaction: None,
             change: change_of(changes, agent, &dir),
             drift: if connected { super::refresh::of(node, agent.name, &dir) } else { None },
             workbench: false,

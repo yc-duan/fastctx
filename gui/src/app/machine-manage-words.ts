@@ -2,6 +2,7 @@
 // the Fastctx on it, how an update of it goes, and taking it off the network
 // three ways.
 
+import type { RetentionWords } from "./machine-retention";
 import type { RenewalPhase } from "../world/renewal";
 import type { CopiesWords } from "./machine-copies";
 import { enProblems, failure, zhProblems } from "./problem";
@@ -9,6 +10,8 @@ import { enProblems, failure, zhProblems } from "./problem";
 export interface ManageWords {
   close: string;
   fastctx: string;
+  /** Its row: the release it runs, how it runs, and its update. */
+  version: string;
   /** The application that carries its World program: of the same version,
    *  or of its own. */
   withApp: string;
@@ -80,11 +83,13 @@ export interface ManageWords {
   hubGo: string;
   /** The copies it holds of conversations living elsewhere (`machine-copies.ts`). */
   copies: CopiesWords;
+  retention: RetentionWords;
 }
 
 export const zhManage: ManageWords = {
   close: "关闭",
   fastctx: "Fastctx",
+  version: "版本",
   withApp: "带应用",
   app: (version) => `应用 ${version}`,
   upToDate: "已是最新",
@@ -144,34 +149,55 @@ export const zhManage: ManageWords = {
   done: "完成",
   hubHere: "该机器运行着网络的中枢：卸载前请先在机器图上迁移中枢或解散网络",
   hubGo: "前往机器图",
+  retention: {
+    title: "对话保留",
+    own: "我的对话",
+    ownWhat: "闲置这么久后连同它的命令输出、附件与宿主记录一起删除",
+    assisted: "受协助账号的对话",
+    assistedWhat: "最多保留这么久；受协助的人可以给自己设得更短",
+    off: "不删除",
+    days: (n) => `${n} 天`,
+    graceUntil: (when) => `规则刚打开或改短：${when} 之前不删除任何对话。`,
+    dueSoon: (count) => `${count} 段对话将在 7 天内到期。`,
+    confirmTitle: "闲置的对话将被删除",
+    confirm: (days, count, machine) =>
+      `${machine} 上闲置超过 ${days} 天的对话会被逐段删除，连同命令输出、附件与宿主记录，无法恢复。7 天之后开始，届时约有 ${count} 段符合条件；这期间说一句话就会重新计时。`,
+    confirmGo: "确定",
+    asking: "读取中…",
+    unread: (why) => `读不到：${why}`,
+    notOwner: "这台机器没有把这次询问当作主人的，只能查看。",
+  },
   copies: {
     title: "会话副本",
-    what: "这台机器为别的机器上的会话存的副本。服务器一般用不到：停收之后，可以把已经存下的清掉。会话本身留在它所在的机器上。",
+    takeIn: "接收会话副本",
+    takeInOf: (account) => `接收 ${account} 的会话副本`,
+    what: "替别的机器上的会话存一份，方便在这台查看。服务器一般用不到。",
     takenIn: "接收中",
     paused: "已停收",
-    pausedHeld: (count, size) => `停收的副本 ${count} 段，约 ${size}`,
     pause: "停收",
-    takeIn: "恢复接收",
-    count: "看能清多少",
-    clearable: (count, size) => `可以清掉 ${count} 段，约 ${size}`,
-    none: "没有可以清的副本",
-    clear: (count) => `清掉 ${count} 段`,
-    confirmTitle: "清掉会话副本",
-    confirm: (account, count, size, machine) =>
-      `清掉 ${machine} 上 ${account} 的 ${count} 段会话副本（约 ${size}）？会话本身留在它们所在的机器上；以后在这台机器恢复接收，会整段重新取回。`,
-    cleared: (count, size) => `已清掉 ${count} 段，约 ${size}。`,
-    kept: (count) => `${count} 段保留（这台机器写过、正在用，或存着分叉前的旧记录）。`,
-    stopped: (why) => `之后中途停了，其余没动：${why}`,
-    compact: "要在那台机器上压缩之后才还出磁盘：fastctx data compact --yes（会中断那台机器上的会话几分钟）",
-    asking: "正在问…",
-    noAccount: "这台机器上没有登录的账号",
-    unread: (why) => `问不到：${why}`,
+    resume: "恢复接收",
+    held: "已存的副本",
+    heldSize: (count, size) => `${count} 段，约 ${size}`,
+    clear: "清理…",
+    none: "没有可清的",
+    confirmTitle: "清理会话副本",
+    confirm: (account, count, size, machine) => `清掉 ${machine} 上 ${account} 的 ${count} 段副本，约 ${size}。会话本身不受影响；以后恢复接收会重新取回。`,
+    clearGo: (count) => `清掉 ${count} 段`,
+    cleared: "已清理",
+    clearedSaid: (count, size) => `清掉 ${count} 段，约 ${size}。`,
+    kept: (count) => `${count} 段留着（这台写过或正在用）。`,
+    stopped: (why) => `中途停了：${why}`,
+    compact: "磁盘空间要等这台机器压缩库之后才腾出（fastctx data compact --yes，会暂停会话几分钟）。",
+    asking: "正在读取…",
+    noAccount: "这台机器没有登录账号",
+    unread: (why) => `读不到：${why}`,
   },
 };
 
 export const enManage: ManageWords = {
   close: "Close",
   fastctx: "Fastctx",
+  version: "Version",
   withApp: "With the app",
   app: (version) => `App ${version}`,
   upToDate: "Up to date",
@@ -231,27 +257,48 @@ export const enManage: ManageWords = {
   done: "Done",
   hubHere: "It runs the network's hub: to uninstall it, move the hub or dissolve the network on the machines map first",
   hubGo: "To the map",
+  retention: {
+    title: "Keeping conversations",
+    own: "My conversations",
+    ownWhat: "Idle this long, one is deleted with its commands' output, its attachments and its agent's record",
+    assisted: "Assisted accounts' conversations",
+    assistedWhat: "Kept this long at most; each assisted account may set less for its own",
+    off: "Keep",
+    days: (n) => `${n} days`,
+    graceUntil: (when) => `Just turned on or shortened: nothing is deleted before ${when}.`,
+    dueSoon: (count) => `${count} conversation(s) go within 7 days.`,
+    confirmTitle: "Idle conversations will be deleted",
+    confirm: (days, count, machine) =>
+      `Conversations idle more than ${days} days on ${machine} will be deleted one by one, with their commands' output, attachments and agent's record, for good. It starts in 7 days, when about ${count} will be idle that long; a word in one before then starts its count again.`,
+    confirmGo: "Turn on",
+    asking: "Reading…",
+    unread: (why) => `Could not read: ${why}`,
+    notOwner: "The machine did not take this asking as its owner's: shown only.",
+  },
   copies: {
     title: "Conversation copies",
-    what: "Copies this machine keeps of conversations living on other machines. A server seldom reads them: once paused, what it keeps can be let go. The conversations stay where they live.",
-    takenIn: "Taken in",
+    takeIn: "Keep copies of conversations",
+    takeInOf: (account) => `Keep copies of ${account}'s conversations`,
+    what: "A copy of conversations living on other machines, to read them here. A server seldom needs it.",
+    takenIn: "On",
     paused: "Paused",
-    pausedHeld: (count, size) => `${count} paused, about ${size}`,
     pause: "Pause",
-    takeIn: "Take in again",
-    count: "Count what may go",
-    clearable: (count, size) => `${count} may go, about ${size}`,
-    none: "Nothing may go",
-    clear: (count) => `Let ${count} go`,
-    confirmTitle: "Let copies go",
+    resume: "Resume",
+    held: "Copies kept",
+    heldSize: (count, size) => `${count}, about ${size}`,
+    clear: "Clear…",
+    none: "Nothing to clear",
+    confirmTitle: "Clear conversation copies",
     confirm: (account, count, size, machine) =>
-      `Let go ${count} copies of ${account}'s conversations on ${machine} (about ${size})? The conversations stay where they live; taken in again here, they come down whole.`,
-    cleared: (count, size) => `${count} let go, about ${size}.`,
-    kept: (count) => `${count} kept (written here, in use, or keeping an earlier branch aside).`,
-    stopped: (why) => `Then it stopped; the rest are as they were: ${why}`,
-    compact: "The disk gets the room back once that machine's library is compacted there: fastctx data compact --yes (stops its conversations for a few minutes)",
-    asking: "Asking…",
+      `Clear ${count} copies of ${account}'s conversations on ${machine}, about ${size}. The conversations are not touched; resumed, the copies come back.`,
+    clearGo: (count) => `Clear ${count}`,
+    cleared: "Cleared",
+    clearedSaid: (count, size) => `${count} cleared, about ${size}.`,
+    kept: (count) => `${count} kept (written or in use here).`,
+    stopped: (why) => `It stopped part way: ${why}`,
+    compact: "The disk gets the room back once this machine's library is compacted (fastctx data compact --yes, which pauses its conversations for a few minutes).",
+    asking: "Reading…",
     noAccount: "No account is logged in on this machine",
-    unread: (why) => `Could not ask: ${why}`,
+    unread: (why) => `Could not read: ${why}`,
   },
 };

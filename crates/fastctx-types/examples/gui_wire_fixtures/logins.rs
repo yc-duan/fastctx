@@ -67,6 +67,7 @@ pub fn fixtures() -> Fixtures {
             max_context_window: None,
         }],
         model_edits: None,
+        idle_compaction: Some(fastctx_types::logins::idle::IdleCompaction { on: true, after_minutes: 50, min_tokens: 100_000 }),
         change: Some(LoginChange {
             into: true,
             started_at: at,
@@ -114,6 +115,7 @@ pub fn fixtures() -> Fixtures {
             removed: vec!["claude-haiku-4-5-20251001".into()],
             added: vec!["deepseek-flash".into()],
         }),
+        idle_compaction: None,
         change: Some(LoginChange {
             into: true,
             started_at: at,
@@ -142,6 +144,7 @@ pub fn fixtures() -> Fixtures {
         launcher: None,
         models: vec![],
         model_edits: None,
+        idle_compaction: None,
         change: Some(LoginChange {
             into: true,
             started_at: at,
@@ -238,6 +241,7 @@ pub fn fixtures() -> Fixtures {
                     launcher: None,
                     models: vec![],
                     model_edits: None,
+                    idle_compaction: None,
                     change: None,
                     drift: None,
                     workbench: false,
@@ -455,6 +459,12 @@ pub fn fixtures() -> Fixtures {
                 dir: "/home/me/.claude-work".into(),
                 change: fastctx_types::logins::models::ModelChange::Reset,
             },
+            Call::SetIdleCompaction {
+                machine: machine.clone().into(),
+                agent: codex.clone(),
+                dir: "C:/Users/me/.codex".into(),
+                setting: fastctx_types::logins::idle::IdleCompaction { on: true, after_minutes: 45, min_tokens: 200_000 },
+            },
         ],
         replies: vec![
             Reply::AgentLogins(WorldLogins {
@@ -484,6 +494,11 @@ pub fn fixtures() -> Fixtures {
                 agent: claude.clone(),
                 dir: "/home/me/.claude-work".into(),
                 change: fastctx_types::logins::models::ModelChange::Remove { model: "claude-opus-4-6".into() },
+            },
+            RemoteCall::SetIdleCompaction {
+                agent: claude.clone(),
+                dir: "/home/me/.claude-work".into(),
+                setting: fastctx_types::logins::idle::IdleCompaction::default(),
             },
             RemoteCall::PreviewAgentChange {
                 agent: claude.clone(),

@@ -134,6 +134,7 @@ fn record(now: Timestamp, name: &str, what: &str, machines: &[&str], version: u3
         version,
         name: name.to_string(),
         what: what.to_string(),
+        description: String::new(),
         machines: machines.iter().map(|name| machine(name)).collect(),
         places: vec![
             Listing {
@@ -381,6 +382,7 @@ fn nodes(now: Timestamp) -> NodesReply {
         turn_debts: false,
         goal_runtime: false,
         goal_colleagues: false,
+        colleague_presets: false,
         goal_waits: false,
         goal_questions: false,
         goal_question_words: false,

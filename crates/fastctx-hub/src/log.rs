@@ -7,20 +7,15 @@
 //! lets its log go still reach the file.
 
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use fastctx_platform::log_writer::LogWriter;
 
-pub struct Log(LogWriter, PathBuf);
+pub struct Log(LogWriter);
 
 impl Log {
     pub fn open(path: &Path) -> io::Result<Self> {
-        Ok(Self(LogWriter::open(path, !journal(), "hub-log")?, path.to_path_buf()))
-    }
-
-    /// Where the log is written.
-    pub fn path(&self) -> &Path {
-        &self.1
+        Ok(Self(LogWriter::open(path, !journal(), "hub-log")?))
     }
 
     pub fn line(&self, text: impl std::fmt::Display) {

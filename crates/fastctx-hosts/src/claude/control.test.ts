@@ -65,7 +65,9 @@ test('uses the public controls and request return types through the official eng
   ] }))
   on('config.list', () => ({ value: [{ key: 'model', label: 'Model', kind: 'choice', value: 'opus', options: ['default', 'opus', 'sonnet'], provider: { plugin: 'engine', tier: 'core' }, isLocked: false }] }))
   on('config.set', (_, e) => { if (e.key === 'model') model = String(e.value); return { value: e.value } })
-  on('session.usage', () => ({ value: { startedAt: 1, context: { tokens: 123, window: 200000, breakdown: { mcpTools: [{ name: 'mcp__fixture_world__run', serverName: 'fixture_world', isLoaded: true, tokens: 1 }] } }, rateLimits: [{ kind: 'five_hour', percentUsed: 12.5, resetsAt: '2026-10-04T17:00:00Z' }], cost: { usd: 0.125 } } }))
+  // A connected MCP server may still be listing its tools. The native
+  // commands tested below must work even when that listing never finishes.
+  on('session.usage', () => ({ value: { startedAt: 1, context: { tokens: 123, window: 200000, breakdown: { mcpTools: [] } }, rateLimits: [{ kind: 'five_hour', percentUsed: 12.5, resetsAt: '2026-10-04T17:00:00Z' }], cost: { usd: 0.125 } } }))
   on('command.run', (_, e) => {
     expect(e.origin).toEqual(expect.objectContaining({ kind: 'plugin' }))
     if (e.command !== 'goal') commands.push({ command: e.command, args: e.args })

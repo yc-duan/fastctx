@@ -110,7 +110,7 @@ pub async fn fork(
     super::oldest::check(node, &launching).await?;
     let super::Command { program, env, .. } = launching;
     let (words, heard) =
-        crate::colleagues::instructions(node, &id, town.as_ref(), &Origin::User, &source.acting, false).await?;
+        crate::colleagues::instructions(node, &id, town.as_ref(), &Origin::User, &source.acting, false, Default::default()).await?;
     let directory = node.world.conversation(&id);
     crate::focus::open(node, &directory, &source.acting, &source.focus).await?;
     super::fork_ready::begin(node, &id)?;
@@ -125,6 +125,7 @@ pub async fn fork(
         forked_from: Some(Address { machine: node.machine(), resident: resident.clone() }),
         side,
         mcp_off: source.mcp_off.clone(),
+        idle_compaction: Default::default(),
         id: id.clone(),
         host: Host { agent: source.host.agent, client: "claude-code".into(), version: source.host.version },
         machine: node.machine(),

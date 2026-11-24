@@ -27,6 +27,7 @@ use std::sync::{Arc, LazyLock, Mutex};
 use std::time::{Duration, Instant};
 
 mod codex_onward;
+mod failures;
 mod onward;
 pub(crate) use onward::LEFT_MOST;
 
@@ -480,6 +481,9 @@ pub(super) struct Produced {
     /// Brought by a reading of its history — from the seam, or whole — not
     /// found unchanged nor written on from inside a turn (`onward`).
     pub(super) read: bool,
+    /// Written on from inside a turn (`onward`): read just now too, as far
+    /// as how long a history read short of a source waits (`brought`).
+    pub(super) on: bool,
 }
 
 fn failure(error: impl std::fmt::Display) -> Failure {
@@ -736,8 +740,7 @@ fn finals(
             // Its record made now, of the event itself: nothing is read back
             // and made again of what was kept.
             let encoded = serde_json::to_vec(&event).map_err(failure)?;
-            let (record, object) = assets::body(&event, &encoded)?;
-            let object = object.map(|object| (object, encoded));
+            let (record, object) = assets::body(&event, encoded)?;
             // What a record stopped short knows it by, where one did.
             let known = frozen.then(|| (super::names::frozen(&event), super::names::key(&event).is_some()));
             spill.borrow_mut().push_final(base, event.at, record, object, known).map_err(Failure::new)
@@ -1228,11 +1231,24 @@ async fn produce_step(
                 Next::Claude { session, seam, kept: seen, kept_here, earlier, prefix_ids: moved_past, read } => {
                     keep_prefix_ids(&library, resident, whole, &moved_past, before_seam, producing.clone()).await?;
                     let unread = seen.is_some() && !kept_here && seen != state.kept;
+                    if unread {
+                        onward::short_of_kept();
+                    }
                     // What a window written on from the place this reading
-                    // read the record through stands on (`onward::seed`).
+                    // read the record through stands on (`onward::seed`) —
+                    // the file short of the last record its mod saw kept or
+                    // not: what Claude Code writes of it goes past what is
+                    // read now, read on from there (`onward::advance`). Why
+                    // none, counted.
+                    let not = |why: &'static str| -> Option<onward::Judged> {
+                        onward::unseeded(why);
+                        None
+                    };
                     let judged = match (read.map(|read| *read), world_names, later) {
-                        (Some((read, left)), Some(names), Some(world)) if !unread => Some(onward::Judged { read, left, turn: running, names, whole, world }),
-                        _ => None,
+                        (Some((read, left)), Some(names), Some(world)) => Some(onward::Judged { read, left, turn: running, names, whole, world }),
+                        (None, ..) => not("no place read through inside the turn"),
+                        (_, None, _) => not("a reading not placed in a store"),
+                        (_, _, None) => not("more of the World's record past the place than a window holds"),
                     };
                     let next = Following {
                         form: FORM,
@@ -1394,6 +1410,11 @@ async fn produce_step(
                 runs_version: if unread { runs_known } else { Some(runs_now) },
                 ..Following::default()
             };
+            // Of a record its host keeps, not followed past a seam: why is
+            // counted where it was read (`claude::history::window`).
+            if follows && agent == "claude" {
+                onward::unseeded("a record not followed past a seam");
+            }
             (wrote, following, unread, None)
         }
     };
@@ -1435,7 +1456,7 @@ async fn produce_step(
         Some((through, recorded, told)) => codex_onward::seed(node, resident, &library, &written_to, &state, through, recorded, told, producing.clone()).await,
         None => codex_onward::forget_of(resident),
     }
-    Ok(Done(Produced { written: wrote.written, gone: wrote.gone, unread, long_changed, verified, handing: false, read: true }))
+    Ok(Done(Produced { written: wrote.written, gone: wrote.gone, unread, long_changed, verified, handing: false, read: true, on: false }))
 }
 
 /// The facts of the runs `resident`'s conversation tells of brought to the
@@ -1508,8 +1529,8 @@ fn finals_recorded(
             crate::run_facts::attach(directory, &mut event).map_err(|error| crate::record_migration::failure(error).message)?;
             let base = super::names::base(&event);
             let encoded = serde_json::to_vec(&event).map_err(|error| error.to_string())?;
-            let (record, object) = assets::body(&event, &encoded).map_err(|failure| failure.message)?;
-            spill.push_final(base, event.at, record, object.map(|object| (object, encoded)), None)
+            let (record, object) = assets::body(&event, encoded).map_err(|failure| failure.message)?;
+            spill.push_final(base, event.at, record, object, None)
         })
         .map_err(Failure::new)?;
     assets::phase("merged and final", &mut since);
@@ -1913,13 +1934,17 @@ fn brought(node: &Arc<Node>, resident: &ResidentId, begun: Instant, produced: Re
     match produced {
         Ok(produced) if produced.handing => Outcome::Again { after: HANDING_AGAIN },
         Ok(produced) => {
+            if produced.read || produced.on || produced.written + produced.gone > 0 {
+                failures::brought(resident);
+            }
             if produced.written + produced.gone > 0 || cfg!(feature = "timeline-drill") {
                 node.log.line(format_args!("{resident}'s asset timeline: {} written, {} gone", produced.written, produced.gone));
             }
             if produced.unread {
-                // Read just now, it waits longer than it did; found
-                // unchanged meanwhile, it waits what is left.
-                let after = if produced.read { unread_again(resident) } else { unread_waits(resident).unwrap_or(UNREAD_AGAIN) };
+                // Read just now — from the seam, whole, or on from inside a
+                // turn — it waits longer than it did; found unchanged
+                // meanwhile, it waits what is left.
+                let after = if produced.read || produced.on { unread_again(resident) } else { unread_waits(resident).unwrap_or(UNREAD_AGAIN) };
                 return Outcome::Again { after };
             }
             UNREAD.lock().expect("unread timelines").remove(resident);
@@ -1946,7 +1971,10 @@ fn brought(node: &Arc<Node>, resident: &ResidentId, begun: Instant, produced: Re
             }
             Outcome::Done
         }
-        Err(failure) => Outcome::Failed(failure.message),
+        Err(failure) => {
+            failures::failed(node, resident, &failure.message);
+            Outcome::Failed(failure.message)
+        }
     }
 }
 

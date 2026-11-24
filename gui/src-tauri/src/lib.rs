@@ -1319,6 +1319,7 @@ pub fn run() {
             #[cfg(desktop)]
             data::data,
             data::machine_copies,
+            data::conversation_retention,
             #[cfg(desktop)]
             doctor::doctor_readings,
             sync_status::sync_status,
@@ -1337,6 +1338,7 @@ pub fn run() {
             logins::read_agent_limits,
             logins::set_agent_title,
             logins::change_agent_models,
+            logins::set_idle_compaction,
             logins::set_agent_reset_in_place,
             logins::set_agent_week,
             logins::reset_agent_usage,

@@ -100,6 +100,18 @@ fn retire_one(
 /// do not have yet, a job of its that runs here or whose end it is still
 /// owed, or a job it left running on another machine.
 fn owes(node: &Node, owner: &Address, directory: &ConversationDir) -> io::Result<bool> {
+    // Goal bindings still identify records that deletion must collect.
+    if crate::goals::lifecycle::keeps_books(node, &owner.resident).map_err(|error| io::Error::other(error.message))? {
+        return Ok(true);
+    }
+    in_flight(node, owner, directory)
+}
+
+/// Whether anything of `owner` is still on its way, its goals' books aside:
+/// an answer its readers do not have yet, a goal's operation unfinished, a
+/// job of its that runs here or whose end it is still owed, or a job it
+/// left running on another machine.
+pub(crate) fn in_flight(node: &Node, owner: &Address, directory: &ConversationDir) -> io::Result<bool> {
     if crate::records::read(directory, |rows| {
         Ok(rows.connection().query_row(
             "SELECT EXISTS(SELECT 1 FROM terminal_work WHERE conversation=?1)",
@@ -109,11 +121,7 @@ fn owes(node: &Node, owner: &Address, directory: &ConversationDir) -> io::Result
     })? {
         return Ok(true);
     }
-    // Goal bindings still identify records that deletion must collect.
-    if crate::goals::lifecycle::unfinished(directory)?
-        || crate::goals::lifecycle::keeps_books(node, &owner.resident)
-            .map_err(|error| io::Error::other(error.message))?
-    {
+    if crate::goals::lifecycle::unfinished(directory)? {
         return Ok(true);
     }
     for queue in

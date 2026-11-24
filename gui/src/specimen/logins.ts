@@ -8,7 +8,7 @@
 // Times are told from `at`, the specimen's own morning.
 
 import type { AgentModel } from "../world/agents";
-import type { AgentLogins, ChangeCard, ChangePreview, Folder, FolderChange, FoundIn, Login, LoginChange, MachineLogins, ModelChange, ModelEdits, WorldLogins } from "../world/logins";
+import type { AgentLogins, ChangeCard, ChangePreview, Folder, FolderChange, FoundIn, IdleCompaction, Login, LoginChange, MachineLogins, ModelChange, ModelEdits, WorldLogins } from "../world/logins";
 import type { DiffLine } from "../world/run-facts";
 import { specimenLimits } from "./usage";
 
@@ -90,6 +90,8 @@ const modelEdits = new Map<string, ModelEdits>();
 if (import.meta.env.DEV && new URLSearchParams(location.search).has("modelsEdited")) {
   modelEdits.set("C:\\Users\\me\\.claude", { removed: ["claude-opus-5"], added: ["deepseek-flash", "claude-opus-5-6"] });
 }
+/** Compacting idle conversations, as the reader set it for each login. */
+const idleSettings = new Map<string, IdleCompaction>([["C:\\Users\\me\\.claude", { on: true, after_minutes: 50, min_tokens: 100_000 }]]);
 /** The logins the workbench is open in, as opening and closing it set. */
 const benches = new Set<string>(["C:\\Users\\me\\.codex", "C:\\Users\\me\\.codex-work", "C:\\Users\\me\\.claude"]);
 /** When the laptop was scanned, finding nothing; never, at first. */
@@ -127,7 +129,7 @@ const drifting = import.meta.env.DEV && new URLSearchParams(location.search).has
 function desktop(now: number): MachineLogins {
   const record = desktopAsIs(now);
   for (const side of [record.codex, record.claude]) {
-    side.listed = side.listed.map((login) => ({ ...login, ...(benches.has(login.dir) ? { workbench: true } : {}), ...(resetting.has(login.dir) ? { reset_in_place: true } : {}) }));
+    side.listed = side.listed.map((login) => ({ ...login, ...(benches.has(login.dir) ? { workbench: true } : {}), ...(resetting.has(login.dir) ? { reset_in_place: true } : {}), ...((idle) => (idle ? { idle_compaction: idle } : {}))(idleSettings.get(login.dir)) }));
   }
   record.claude.listed = record.claude.listed.map((login) => ({ ...login, ...claudeModels(login.dir) }));
   return { ...record, by_login: true, others: otherAgents() };
@@ -404,6 +406,18 @@ export function specimenChangeModels(machine: string, agent: string, dir: string
     } else edits.added = edits.added.filter((id) => id !== change.model);
     if (CLAUDE_TABLE.length - edits.removed.length + edits.added.length < 1) throw new Error("a login offers at least one model; add another before taking this one out");
     modelEdits.set(dir, edits);
+  });
+}
+
+/** Keeps compacting idle conversations in a login in the specimen, as its
+ *  node would: within its bounds. */
+export function specimenSetIdleCompaction(machine: string, agent: string, dir: string, setting: IdleCompaction, at: Date): Promise<MachineLogins> {
+  void machine;
+  void agent;
+  base = at.getTime();
+  return saveSetting(() => {
+    if (setting.after_minutes < 5 || setting.after_minutes > 240) throw new Error("the minutes idle are from 5 to 240");
+    idleSettings.set(dir, setting);
   });
 }
 

@@ -49,6 +49,31 @@ pub async fn manage(
     Ok((Address { machine: machine.name, resident }, managed))
 }
 
+/// How the conversation is compacted once idle a while, as the user set it
+/// for it alone; each part not set follows its login's setting
+/// (`crate::idle_compaction`).
+fn idle_compaction(
+    node: &Node,
+    id: &ResidentId,
+    choice: fastctx_types::logins::idle::IdleChoice,
+) -> Result<Managed, Failure> {
+    if let Some(why) = choice.problem() {
+        return Err(Failure::not_run(why));
+    }
+    node.residents.active(id)?;
+    node.residents.set_idle_compaction(&node.world, id, choice).map_err(|error| Failure::new(error.to_string()))?;
+    let (_, town) = node.residents.about(id).ok_or_else(|| Failure::new("unknown resident"))?;
+    let mut result = Managed {
+        removed: node.residents.removed(id),
+        town,
+        activity: node.residents.now(id).map(|now| now.activity),
+        steps: Vec::new(),
+        notification: None,
+    };
+    step(&mut result, "records", Outcome::Done, "Idle compaction choice saved.".into());
+    Ok(result)
+}
+
 /// Managing a conversation is submitted work (`crate::submitted`): it may
 /// stop a turn, and start or stop the host's session. A try that did not
 /// finish is not done again, since moving it tells the agent so each time.
@@ -75,6 +100,11 @@ pub(crate) fn register(node: &Arc<Node>) {
 }
 
 pub async fn here(node: &Arc<Node>, id: &ResidentId, action: Management) -> Result<Managed, Failure> {
+    // A choice kept in its record alone: taken at once, a turn under way or
+    // not.
+    if let Management::IdleCompaction { choice } = action {
+        return idle_compaction(node, id, choice);
+    }
     // Archiving and restoring go through the conversation's host, which is
     // not started where the workbench is closed in its login.
     if matches!(action, Management::Archive | Management::Restore)
@@ -440,6 +470,13 @@ async fn manage_here(node: &Arc<Node>, id: &ResidentId, action: Management) -> R
                 }
                 Err(error) => step(&mut result, "notification", Outcome::Failed, error.message),
             }
+        }
+        Management::IdleCompaction { choice } => {
+            if let Some(why) = choice.problem() {
+                return Err(Failure::not_run(why));
+            }
+            node.residents.set_idle_compaction(&node.world, id, choice).map_err(|error| Failure::new(error.to_string()))?;
+            step(&mut result, "records", Outcome::Done, "Idle compaction choice saved.".into());
         }
         Management::Mcp { off } => {
             for name in &off {

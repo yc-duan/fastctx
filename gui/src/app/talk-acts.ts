@@ -6,6 +6,7 @@
 // says the same; one refused gives way to what the World has, and why is said
 // once. Archiving can be undone for a moment.
 
+import type { IdleChoice } from "../world/logins";
 import { Unanswered, within } from "../world/again";
 import type { Controlled } from "../world/control";
 import type { Address } from "../world/events";
@@ -36,9 +37,21 @@ interface Shown {
   deleting?: boolean;
   town?: { town: string | null };
   name?: string;
+  idle?: { choice: IdleChoice };
 }
 
 const keyOf = (address: Address) => `${address.machine}\n${address.resident}`;
+
+/** `about` with its own idle compaction choice; an empty one follows its
+ *  login in every part. */
+function withIdle(about: ResidentNow["about"], choice: IdleChoice): ResidentNow["about"] {
+  const { idle_compaction: _, ...rest } = about;
+  return Object.keys(choice).length ? { ...rest, idle_compaction: choice } : rest;
+}
+
+function sameChoice(one: IdleChoice, other: IdleChoice): boolean {
+  return one.on === other.on && one.after_minutes === other.after_minutes && one.min_tokens === other.min_tokens;
+}
 
 export class TalkActs {
   /** Moves whenever what is shown of a conversation changed here. */
@@ -57,8 +70,10 @@ export class TalkActs {
     const shown = this.shown.get(keyOf(addressOf(r)));
     if (!shown) return r;
     const now = r.now && shown.name !== undefined ? { ...r.now, title: shown.name } : r.now;
+    const about = shown.idle ? withIdle(r.about, shown.idle.choice) : r.about;
     const copy: ResidentNow = {
       ...r,
+      about,
       town: shown.town ? shown.town.town : r.town,
       removed: shown.archived === undefined ? (r.removed ?? null) : shown.archived ? (r.removed ?? new Date().toISOString()) : null,
       now,
@@ -90,6 +105,7 @@ export class TalkActs {
       if (shown.archived !== undefined && !!r.removed === shown.archived) delete shown.archived;
       if (shown.town && (r.town ?? null) === shown.town.town) delete shown.town;
       if (shown.name !== undefined && titleOf(r) === shown.name) delete shown.name;
+      if (shown.idle && sameChoice(r.about.idle_compaction ?? {}, shown.idle.choice)) delete shown.idle;
       if (Object.keys(shown).length === 0) {
         this.shown.delete(key);
         changed = true;
@@ -115,6 +131,13 @@ export class TalkActs {
   move(r: ResidentNow, town: string | null): void {
     this.show(r, { town: { town } });
     this.manageAs(r, { do: "move", town }, "town", this.options.words.notMoved);
+  }
+
+  /** How it is compacted once idle a while, for it alone; each part not set
+   *  follows its login's setting. */
+  idle(r: ResidentNow, choice: IdleChoice): void {
+    this.show(r, { idle: { choice } });
+    this.manageAs(r, { do: "idle_compaction", choice }, "idle", this.options.words.notIdle);
   }
 
   rename(r: ResidentNow, name: string): void {

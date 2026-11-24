@@ -91,8 +91,66 @@ pub async fn control_here(node: &Arc<Node>, resident: &ResidentId, control: Cont
     crate::to_end::run(async move { control_here_now(&node, &resident, control).await }).await
 }
 
-async fn control_here_now(node: &Arc<Node>, resident: &ResidentId, control: Control) -> Result<Controlled, Failure> {
+/// Compacts a conversation idle a while, as the World does of itself
+/// (`crate::idle_compaction`): the user's `/compact` with every check it
+/// passes, begun only where nothing waits in the conversation and `still`
+/// finds no reason against it under its action gate. It never waits in
+/// line: refused where anything is under way or waiting; and what it leaves
+/// undone holds no words after it and is not tried again
+/// (`PendingControl::automatic`).
+pub(crate) async fn compact_idle(
+    node: &Arc<Node>,
+    resident: &ResidentId,
+    still: impl FnOnce() -> Result<(), String> + Send + 'static,
+) -> Result<Controlled, Failure> {
+    let (node, resident) = (node.clone(), resident.clone());
+    crate::to_end::run(async move { compact_idle_now(&node, &resident, still).await }).await
+}
+
+async fn compact_idle_now(
+    node: &Arc<Node>,
+    resident: &ResidentId,
+    still: impl FnOnce() -> Result<(), String> + Send + 'static,
+) -> Result<Controlled, Failure> {
+    let control = Control::Compact;
     node.ready_for(resident).await;
+    let host = host_of(node, resident)?;
+    let (about, _) = node.residents.about(resident).ok_or_else(|| Failure::new("unknown conversation"))?;
+    node.settled_for(&about.acting).await;
+    {
+        let (node, resident, about, control) = (node.clone(), resident.clone(), about.clone(), control.clone());
+        fastctx_platform::task::blocking(move || allowed(&node, &resident, &about, host, &control)).await?;
+    }
+    let gate = crate::control_queue::gate(node, resident);
+    let _action = crate::gate_waits::action(node, resident, &gate).await?;
+    node.residents.active(resident)?;
+    crate::control_queue::drain(node, resident).await?;
+    let refused = |said: &str| Ok(Controlled::Refused { said: said.into(), current_model: None });
+    if crate::control_queue::busy(node, resident).await?
+        || crate::composer::input_busy(node, resident).await?
+        || !crate::control_queue::pending(node, resident).await?.is_empty()
+    {
+        return refused("a turn or a control is under way or waiting");
+    }
+    if crate::control_queue::words_ahead(node, resident, None).await? {
+        return refused("words wait to go in");
+    }
+    if let Err(said) = still() {
+        return refused(&said);
+    }
+    let row = crate::control_queue::begin_as(node, resident, &control, true).await?;
+    if let Err(error) = crate::control_queue::prepare(node, resident, &row).await {
+        return crate::control_queue::end(node, resident, row, Err(error)).await;
+    }
+    if crate::control_long::long(node, resident, &control) {
+        return Ok(crate::control_long::start(node, resident, row));
+    }
+    let result = execute(node, resident, control).await;
+    crate::control_queue::end(node, resident, row, result).await
+}
+
+async fn control_here_now(node: &Arc<Node>, resident: &ResidentId, control: Control) -> Result<Controlled, Failure> {
+    node.startup.wait_for_input(resident).await;
     let host = host_of(node, resident)?;
     let (about, _) = node.residents.about(resident).ok_or_else(|| Failure::new("unknown conversation"))?;
     node.settled_for(&about.acting).await;

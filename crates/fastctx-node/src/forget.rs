@@ -17,6 +17,7 @@
 //! read no more (`assets::session`); what an earlier deletion left there is
 //! asked of the hub again (`leftover`).
 
+mod colleagues;
 mod leftover;
 mod submission;
 
@@ -48,8 +49,12 @@ const ASKING: crate::passes::Pass =
 /// How long a hub's view is quiet before the asks are sent again.
 const VIEWS_SETTLE: std::time::Duration = std::time::Duration::from_millis(500);
 
+/// How long a deletion is asked of a hub before it is given up: by then the
+/// rooms other machines kept for the conversation have gone of themselves.
+const ASKED_FOR_MS: i64 = 30 * 24 * 60 * 60 * 1000;
+
 /// A deletion still to be asked of a hub.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 struct Ask {
     hub: HubId,
     account: AccountName,
@@ -60,9 +65,27 @@ struct Ask {
     /// asked again another day, it is another asking.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     round: Option<i64>,
+    /// When it was kept, in milliseconds; absent in asks kept by earlier
+    /// releases until first sent. Not part of what is asked.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    since: Option<i64>,
 }
 
+impl PartialEq for Ask {
+    fn eq(&self, other: &Self) -> bool {
+        (&self.hub, &self.account, &self.conversation, &self.after, &self.round)
+            == (&other.hub, &other.account, &other.conversation, &other.after, &other.round)
+    }
+}
+
+impl Eq for Ask {}
+
 impl Ask {
+    /// What is asked, as its outcome is known by: without when it was kept.
+    fn asked(&self) -> Vec<u8> {
+        serde_json::to_vec(&Ask { since: None, ..self.clone() }).expect("deletion request serializes")
+    }
+
     fn ready(&self, residents: &crate::residents::Residents) -> bool {
         self.after.as_ref().is_none_or(|id| residents.ever_deleted(id))
     }
@@ -103,9 +126,25 @@ fn allowed_here(node: &Node, resident: &ResidentId) -> Result<(), Failure> {
 async fn ask_here(node: &Arc<Node>, resident: ResidentId) -> Result<How, Failure> {
     let _call = handing(node)?;
     allowed_here(node, &resident)?;
+    let asking = delete_here(node, &resident).await?;
+    node.log.line(format_args!("deleted {resident}, which lived here, as the user asked"));
+    if !asking {
+        // The asking before this one may have kept what to ask the hubs and
+        // not come as far as asking it.
+        wake(node);
+        return Ok(How::Deleted);
+    }
+    Ok(if send_kept(node).await { How::Asked } else { How::Queued })
+}
+
+/// Deletes `resident`, which lives here, from every machine and device
+/// keeping something of it: what to ask each hub it works for is kept, held
+/// back until it is gone here, and then it is deleted here. Says whether
+/// anything was kept to be asked.
+async fn delete_here(node: &Arc<Node>, resident: &ResidentId) -> Result<bool, Failure> {
     let address = Address { machine: node.machine(), resident: resident.clone() };
     for link in node.links().into_iter().filter(|link| link.view().shared_records) {
-        if node.residents.about(&resident).is_none() {
+        if node.residents.about(resident).is_none() {
             continue;
         }
         if let Ok((actor, current)) = link.record_actor(&address).await {
@@ -113,15 +152,16 @@ async fn ask_here(node: &Arc<Node>, resident: ResidentId) -> Result<How, Failure
         }
     }
     // Whom it works for is read before its records go.
-    let asks: Vec<Ask> = match node.residents.about(&resident) {
+    let asks: Vec<Ask> = match node.residents.about(resident) {
         Some((about, _)) => pairs(node, &about.acting)
             .into_iter()
             .map(|(hub, account)| Ask {
                 hub,
                 account,
-                conversation: Address { machine: node.machine(), resident: resident.clone() },
+                conversation: address.clone(),
                 after: Some(resident.clone()),
                 round: None,
+                since: None,
             })
             .collect(),
         None => Vec::new(),
@@ -135,15 +175,15 @@ async fn ask_here(node: &Arc<Node>, resident: ResidentId) -> Result<How, Failure
     // Asked again of a conversation deleted already, this finishes what a
     // deletion that failed or was interrupted part way left here: deleting
     // what is gone deletes nothing, and the rest is done as the first time.
-    home(node, &resident).await.map_err(Failure::new)?;
-    node.log.line(format_args!("deleted {resident}, which lived here, as the user asked"));
-    if asks.is_empty() {
-        // The asking before this one may have kept what to ask the hubs and
-        // not come as far as asking it.
-        wake(node);
-        return Ok(How::Deleted);
+    home(node, resident).await.map_err(Failure::new)?;
+    if !asks.is_empty()
+        && let Err(error) = keep(node, asks.clone()).await
+    {
+        // Kept again: a deletion of it refused meanwhile may have taken back
+        // what the two shared.
+        node.log.line(format_args!("keeping what to ask the hubs of {resident}: {error}"));
     }
-    Ok(if send_kept(node).await { How::Asked } else { How::Queued })
+    Ok(!asks.is_empty())
 }
 
 async fn ask_elsewhere(
@@ -156,7 +196,8 @@ async fn ask_elsewhere(
     match link.forget(&account, &conversation).await {
         Ok(true) => Ok(How::Asked),
         Ok(false) => {
-            let ask = Ask { hub: link.membership().id.clone(), account, conversation, after: None, round: None };
+            let ask =
+                Ask { hub: link.membership().id.clone(), account, conversation, after: None, round: None, since: None };
             keep(node, vec![ask])
                 .await
                 .map_err(|error| Failure::new(format!("keeping what to ask the hub: {error}")))?;
@@ -179,7 +220,14 @@ pub(crate) async fn release_attachments(node: &Arc<Node>, id: &ResidentId) -> Re
     let mut asks = Vec::new();
     for conversation in &owners {
         for (hub, account) in pairs(node, &about.acting) {
-            asks.push(Ask { hub, account, conversation: conversation.clone(), after: Some(id.clone()), round: None });
+            asks.push(Ask {
+                hub,
+                account,
+                conversation: conversation.clone(),
+                after: Some(id.clone()),
+                round: None,
+                since: None,
+            });
         }
     }
     if !asks.is_empty() {
@@ -214,6 +262,7 @@ pub(crate) async fn project(
                 conversation: Address { machine: node.machine(), resident: id.clone() },
                 after: Some(id.clone()),
                 round: None,
+                since: None,
             })
             .collect(),
     )
@@ -262,11 +311,12 @@ pub(crate) async fn told(node: &Arc<Node>, hub: &HubId, forgetting: Forgetting) 
             conversation: Address { machine: node.machine(), resident: id.clone() },
             after: None,
             round: None,
+            since: None,
         })
         .collect();
     if !others.is_empty() {
         match keep(node, others).await {
-            Ok(()) => wake(node),
+            Ok(_) => wake(node),
             Err(error) => node.log.line(format_args!("keeping what to ask the other hubs of {id}: {error}")),
         }
     }
@@ -279,9 +329,17 @@ pub(crate) async fn told(node: &Arc<Node>, hub: &HubId, forgetting: Forgetting) 
 pub(crate) fn start(node: &Arc<Node>) {
     use crate::passes::Left;
     submission::register(node);
+    colleagues::begin();
     crate::passes::register(node, ASKING, |node: Arc<Node>| async move {
         let more = leftover::look(&node).await;
-        if send_kept(&node).await && !more { Left::Nothing } else { Left::Work }
+        // The asks first: no colleague here keeps them waiting. Those a
+        // colleague deleted here adds go after it.
+        let mut sent = send_kept(&node).await;
+        let swept = colleagues::sweep(&node, None).await;
+        if swept.deleted {
+            sent = send_kept(&node).await;
+        }
+        if sent && !more && !swept.left { Left::Nothing } else { Left::Work }
     });
     crate::passes::follow(node, ASKING.name, node.views.subscribe(), VIEWS_SETTLE);
 }
@@ -312,15 +370,121 @@ async fn home(node: &Arc<Node>, id: &ResidentId) -> Result<(), String> {
     stop_turn(node, id).await?;
     let address = Address { machine: node.machine(), resident: id.clone() };
     stop_jobs(node, &address).await?;
+    // Which colleagues it asked is read while its records are here, and
+    // what each is left to is kept before it goes.
+    let plan = colleagues::plan(node, id, false).await?;
     match crate::data::delete::delete_one(node, id.as_str()).await {
         Ok(_) | Err(Stop::Nothing(_)) => {}
-        Err(stop) => return Err(stop.why()),
+        Err(stop) => {
+            plan.take_back(node, id).await;
+            return Err(stop.why());
+        }
     }
     node.context_bodies.remove(id);
     let names = node.machine_names();
     let mut machines = vec![names.name];
     machines.extend(names.was);
-    forget_copies(node, id, machines).await
+    // Gone here: its colleagues follow, whatever becomes of the copy kept
+    // here from showing it.
+    let copies = forget_copies(node, id, machines).await;
+    plan.follow(node, id).await;
+    copies
+}
+
+/// Whether `id` is gone or going here: deleted, or its deletion begun.
+fn going(node: &Node, id: &ResidentId) -> bool {
+    node.residents.ever_deleted(id)
+        || fastctx_platform::disk::exists(node.world.conversation(id).path().join(crate::data::delete::INTENT))
+            .unwrap_or(true)
+}
+
+/// Takes back `added`, kept to be asked once `id` is gone here, where `id`
+/// is neither gone nor going after all; nothing kept before it.
+async fn take_back(node: &Arc<Node>, id: &ResidentId, added: Vec<Ask>) {
+    if added.is_empty() || going(node, id) {
+        return;
+    }
+    if let Err(error) = withdraw(node, added).await {
+        node.log.line(format_args!("taking back what to ask the hubs of {id}: {error}"));
+    }
+}
+
+/// Deletes `id`, which lives here and was idle longer than this machine's
+/// retention keeps it (`conversation_retention::expiry`): here first, refused
+/// rather than stopped where anything of it is under way or `still` says it
+/// is not to go, and only then are the hubs it worked for asked to have every
+/// other machine let go of what it keeps of it. What to ask them is kept
+/// before anything of it goes, held back until it is gone here
+/// (`Ask::ready`): a node stopped part way asks them once its deletion is
+/// finished; a deletion refused takes it back.
+pub(crate) async fn expired(
+    node: &Arc<Node>,
+    id: &ResidentId,
+    still: crate::data::delete::Still,
+) -> Result<(), String> {
+    let _call = handing(node).map_err(|failure| failure.message)?;
+    let address = Address { machine: node.machine(), resident: id.clone() };
+    let asks: Vec<Ask> = match node.residents.about(id) {
+        Some((about, _)) => pairs(node, &about.acting)
+            .into_iter()
+            .map(|(hub, account)| Ask {
+                hub,
+                account,
+                conversation: address.clone(),
+                after: Some(id.clone()),
+                round: None,
+                since: None,
+            })
+            .collect(),
+        None => Vec::new(),
+    };
+    let asking = !asks.is_empty();
+    let asks_again = asks.clone();
+    let added = if asking {
+        keep(node, asks).await.map_err(|error| format!("keeping what to ask the hubs: {error}"))?
+    } else {
+        Vec::new()
+    };
+    // Its colleagues follow it once it is gone: which they are is read
+    // while its records are here. One of them here at work keeps it, as
+    // anything of its own on its way would.
+    let plan = match colleagues::plan(node, id, true).await {
+        Ok(plan) => plan,
+        Err(why) => {
+            take_back(node, id, added).await;
+            return Err(why);
+        }
+    };
+    if let Some(colleague) = plan.at_work(node).await {
+        take_back(node, id, added).await;
+        plan.take_back(node, id).await;
+        return Err(format!("its colleague {colleague} is at work"));
+    }
+    match crate::data::delete::delete_when(node, id.as_str(), Some(still)).await {
+        Ok(_) | Err(Stop::Nothing(_)) => {}
+        Err(stop) => {
+            // Not deleted, nor being deleted: what this kept is taken back,
+            // and nothing kept before it.
+            take_back(node, id, added).await;
+            plan.take_back(node, id).await;
+            return Err(stop.why());
+        }
+    }
+    node.context_bodies.remove(id);
+    let names = node.machine_names();
+    let mut machines = vec![names.name];
+    machines.extend(names.was);
+    let copies = forget_copies(node, id, machines).await;
+    if asking {
+        // Kept again: a deletion of it refused meanwhile may have taken back
+        // what the two shared.
+        if let Err(error) = keep(node, asks_again).await {
+            node.log.line(format_args!("keeping what to ask the hubs of {id}: {error}"));
+        }
+        wake(node);
+    }
+    plan.follow(node, id).await;
+    copies
 }
 
 /// `home`, for a purge (`crate::purges`): nothing of it is asked of a hub as
@@ -365,7 +529,7 @@ pub(crate) async fn purge_copies(node: &Arc<Node>, id: &ResidentId) -> Result<()
 /// session the World started whose turn does not end as asked, or whose
 /// plugin cannot be asked, is stopped as a whole, and its turn with it.
 async fn stop_turn(node: &Arc<Node>, id: &ResidentId) -> Result<(), String> {
-    let asked = match tokio::time::timeout(TURN_STOPS, crate::talk::stop_and_wait(node, id)).await {
+    let asked = match tokio::time::timeout(TURN_STOPS, settle(node, id)).await {
         Ok(Ok(())) => return Ok(()),
         Ok(Err(failure)) => format!("stopping its turn: {}", failure.message),
         Err(_) => format!("its turn did not stop within {} seconds of being asked", TURN_STOPS.as_secs()),
@@ -384,8 +548,41 @@ async fn stop_turn(node: &Arc<Node>, id: &ResidentId) -> Result<(), String> {
     Ok(())
 }
 
+/// Stops the turn `id` runs and waits for it to end; and one it is starting
+/// whose id is not known yet (busy, no turn), as an answer it was just given
+/// starts one, is given a moment to become a turn, stopped then, or to end,
+/// which its deletion would otherwise be refused for as working
+/// (`data::delete`). Nothing new starts for it meanwhile
+/// (`Residents::deleting`). One whose words wait in line for its login starts
+/// nothing until there is room, and one busy longer than that moment may
+/// start nothing at all: those are left for the deletion to refuse, as
+/// before.
+async fn settle(node: &Arc<Node>, id: &ResidentId) -> Result<(), Failure> {
+    let mut changes = node.residents.changes();
+    let starting = tokio::time::Instant::now() + TURN_STARTS;
+    loop {
+        let Some(now) = node.residents.now(id) else { return Ok(()) };
+        if now.turn.is_some() {
+            crate::talk::stop_and_wait(node, id).await?;
+        } else if now.activity == fastctx_types::residents::Activity::Busy
+            && crate::turn_slots::ahead(node, id).is_none()
+        {
+            match tokio::time::timeout_at(starting, changes.changed()).await {
+                Ok(Ok(())) => {}
+                Ok(Err(_)) => return Err(Failure::new("the node is stopping")),
+                Err(_) => return Ok(()),
+            }
+        } else {
+            return Ok(());
+        }
+    }
+}
+
 /// How long a turn is given to stop when its conversation is deleted.
 const TURN_STOPS: std::time::Duration = std::time::Duration::from_secs(20);
+/// How long a turn starting as its conversation is deleted is given to
+/// become one, within `TURN_STOPS`.
+const TURN_STARTS: std::time::Duration = std::time::Duration::from_secs(10);
 
 /// Deletes the guest rooms here of the conversation at `conversation`, its
 /// commands in them stopped first.
@@ -411,6 +608,11 @@ async fn elsewhere(node: &Arc<Node>, hub: &HubId, account: &AccountName, convers
     .await
     .map_err(|error| error.to_string())?
     .map_err(|error| format!("finding its rooms here: {error}"))?;
+    // A plan copy an earlier release registered for it would make its room
+    // here again each time the node starts.
+    if let Err(failure) = crate::placement::copies::guest_deleted(node, conversation, &machines) {
+        node.log.line(format_args!("letting go of the plan copies of {}: {}", conversation.resident, failure.message));
+    }
     // What its commands did here goes too, whether or not a room of it is left.
     let (sealing, resident, names) = (node.clone(), conversation.resident.clone(), machines.clone());
     fastctx_platform::task::spawn_blocking(move || crate::activity_book::seal_elsewhere(&sealing, &resident, &names))
@@ -490,16 +692,38 @@ fn kept_file(node: &Node) -> PathBuf {
     node.world.path().join("forget-asks.json")
 }
 
-/// Keeps `asks` to be asked of their hubs, beside those kept already.
-async fn keep(node: &Arc<Node>, asks: Vec<Ask>) -> std::io::Result<()> {
+/// Keeps `asks` to be asked of their hubs, beside those kept already; says
+/// which it added.
+async fn keep(node: &Arc<Node>, asks: Vec<Ask>) -> std::io::Result<Vec<Ask>> {
+    let _file = node.forget_asks.file.lock().await;
+    let path = kept_file(node);
+    let now = jiff::Timestamp::now().as_millisecond();
+    fastctx_platform::task::spawn_blocking(move || {
+        let mut kept = read(&path)?;
+        let mut added = Vec::new();
+        for ask in asks {
+            if !kept.contains(&ask) {
+                kept.push(Ask { since: Some(now), ..ask.clone() });
+                added.push(ask);
+            }
+        }
+        write(&path, &kept)?;
+        Ok(added)
+    })
+    .await
+    .map_err(std::io::Error::other)?
+}
+
+/// Takes `asks` back from what is kept to be asked, as kept by `keep`.
+async fn withdraw(node: &Arc<Node>, asks: Vec<Ask>) -> std::io::Result<()> {
     let _file = node.forget_asks.file.lock().await;
     let path = kept_file(node);
     fastctx_platform::task::spawn_blocking(move || {
         let mut kept = read(&path)?;
-        for ask in asks {
-            if !kept.contains(&ask) {
-                kept.push(ask);
-            }
+        let before = kept.len();
+        kept.retain(|ask| !asks.contains(ask));
+        if kept.len() == before {
+            return Ok(());
         }
         write(&path, &kept)
     })
@@ -528,13 +752,20 @@ async fn send_kept(node: &Arc<Node>) -> bool {
     if kept.is_empty() {
         return true;
     }
+    let now = jiff::Timestamp::now().as_millisecond();
     let mut left = Vec::new();
+    // Those held back until their conversation is gone here: their month
+    // counts from when they may be asked, not from when they were kept.
+    let mut held_back = Vec::new();
     for ask in &kept {
         if !ask.ready(&node.residents) {
+            held_back.push(ask.clone());
             left.push(ask.clone());
             continue;
         }
-        let bytes = serde_json::to_vec(ask).expect("deletion request serializes");
+        let ask = &Ask { since: Some(ask.since.unwrap_or(now)), ..ask.clone() };
+        let bytes = ask.asked();
+        let given_up = now.saturating_sub(ask.since.unwrap_or(now)) > ASKED_FOR_MS;
         let id = crate::speech::fixed_id("forget", &[&fastctx_hands::files::content_hash(&bytes)]);
         let terminal = node.world.path().join("forget-outcomes").join(format!("{id}.json"));
         if let Err(error) = fastctx_platform::ensure_private_dir(terminal.parent().expect("deletion outcomes")) {
@@ -552,6 +783,13 @@ async fn send_kept(node: &Arc<Node>) -> bool {
             }
         }
         let outcome = match node.link_of(&ask.hub) {
+            _ if given_up => {
+                node.log.line(format_args!(
+                    "giving up asking {} to delete {} for {}: asked for a month",
+                    ask.hub, ask.conversation.resident, ask.account
+                ));
+                Ok(Some((crate::obligations::Outcome::Impossible, "asked for a month; given up".to_string())))
+            }
             None => match crate::obligations::hub_left(node, &ask.hub) {
                 Ok(true) => {
                     Ok(Some((crate::obligations::Outcome::Impossible, "the network was left or removed".to_string())))
@@ -564,6 +802,15 @@ async fn send_kept(node: &Arc<Node>) -> bool {
                     Ok(Some((crate::obligations::Outcome::Delivered, "the hub accepted the deletion".to_string())))
                 }
                 Ok(false) => Ok(None),
+                // The hub will not take it from this machine again: no such
+                // account, this machine may not act for it, or no longer
+                // signed in to it.
+                Err(reason)
+                    if crate::obligations::out_of_reach(&reason)
+                        || reason.contains(" is not logged in to the account ") =>
+                {
+                    Ok(Some((crate::obligations::Outcome::Impossible, reason)))
+                }
                 Err(reason) => Err(reason),
             },
         };
@@ -588,6 +835,14 @@ async fn send_kept(node: &Arc<Node>) -> bool {
     match fastctx_platform::task::spawn_blocking(move || -> std::io::Result<bool> {
         let mut current = read(&path)?;
         current.retain(|ask| !kept.contains(ask) || left.contains(ask));
+        // Those kept by an earlier release keep the time they were first sent.
+        for ask in &mut current {
+            if held_back.contains(ask) {
+                ask.since = Some(now);
+            } else if let Some(stamped) = left.iter().find(|stamped| *stamped == ask) {
+                ask.since = ask.since.or(stamped.since);
+            }
+        }
         write(&path, &current)?;
         Ok(current.is_empty())
     })

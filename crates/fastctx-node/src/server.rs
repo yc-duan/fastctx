@@ -1474,6 +1474,14 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
                 .await
                 .map(|logins| Reply::MachineAgentLogins(Box::new(logins)))
         }
+        Call::SetIdleCompaction { machine, agent, dir, setting } => {
+            users_voice(node, peer)?;
+            crate::managed::refuse(node)?;
+
+            crate::logins::remote::set_idle_compaction(node, machine, agent, dir, setting)
+                .await
+                .map(|logins| Reply::MachineAgentLogins(Box::new(logins)))
+        }
         Call::PreviewAgentChange { machine, agent, dir, into, take_back, workbench } => {
             users_voice(node, peer)?;
             crate::managed::refuse(node)?;
@@ -1625,6 +1633,10 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
         Call::MachineCopies { machine, ask } => {
             users_voice(node, peer)?;
             crate::assets::copies::machine(node, machine, ask).await.map(Reply::MachineCopies)
+        }
+        Call::ConversationRetention { machine, ask, account } => {
+            users_voice(node, peer)?;
+            crate::conversation_retention::machine(node, machine, account, ask).await.map(Reply::ConversationRetention)
         }
         Call::MachineUpdates { machine, update } => {
             users_voice(node, peer)?;
@@ -2003,10 +2015,10 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
                     .map_err(Failure::new),
                 None => {
                     own_settings(hub.as_ref())?;
-                    Ok(Reply::CollabRead(fastctx_types::collab::CollabView {
-                        collab: crate::own_collab::read(&node.world)?,
-                        default_prompt: fastctx_types::collab_prompt::DEFAULT_PROMPT.to_string(),
-                    }))
+                    Ok(Reply::CollabRead(fastctx_types::collab::CollabView::new(
+                        crate::own_collab::read(&node.world)?,
+                        true,
+                    )))
                 }
             }
         }
@@ -2387,9 +2399,12 @@ async fn write(
     let turn = node.residents.now(&resident).and_then(|now| now.turn);
     let owner = Address { machine: here.clone(), resident: resident.clone() };
     let caller = Caller::Resident(owner.clone());
-    let memory = match crate::replicas::writing::intercept(node, &caller, &op, None, town.as_ref()).await? {
+    let memory = match crate::town::description::intercept(node, &caller, &op, None, town.as_ref()).await? {
         Some(outcome) => Some(outcome),
-        None => crate::history::local_copy::intercept(node, &caller, &op, None, town.as_ref()).await?,
+        None => match crate::replicas::writing::intercept(node, &caller, &op, None, town.as_ref()).await? {
+            Some(outcome) => Some(outcome),
+            None => crate::history::local_copy::intercept(node, &caller, &op, None, town.as_ref()).await?,
+        },
     };
     let (world, machine, writing, written) = (node.world.clone(), node.names(), town.clone(), op.clone());
     let outcome = match memory {
@@ -2528,30 +2543,34 @@ async fn machines(
     let (here, others, groups) = crate::world::grouped_machines(node, &acting, here_too);
     let here = here_too.then(|| here.to_string());
     let collab = crate::collab::choices(node, resident, login).await?.map(|choices| choices.offered);
-    let scratch = match resident.filter(|_| describe_scratch) {
-        Some(id) => {
-            let paths = crate::scratch::descriptions(
-                node,
-                id,
-                &acting,
-                here.iter().cloned().chain(others.iter().cloned()).collect(),
-            )
-            .await;
-            let (writing, recipient, observed) = (node.clone(), id.clone(), paths.clone());
-            fastctx_platform::task::spawn_blocking(move || crate::scratch::described(&writing, &recipient, observed))
-                .await
-                .map_err(|error| Failure::new(error.to_string()))?
-                .map_err(crate::record_migration::failure)?;
-            paths
-        }
-        None => Default::default(),
+    // What is asked of other machines and of the hubs is asked at once, each
+    // within its bound: a session's listing of its tools waits for this.
+    let scratch = async {
+        let Some(id) = resident.filter(|_| describe_scratch) else { return Ok(Default::default()) };
+        let paths = crate::scratch::descriptions(
+            node,
+            id,
+            &acting,
+            here.iter().cloned().chain(others.iter().cloned()).collect(),
+        )
+        .await;
+        let (writing, recipient, observed) = (node.clone(), id.clone(), paths.clone());
+        fastctx_platform::task::spawn_blocking(move || crate::scratch::described(&writing, &recipient, observed))
+            .await
+            .map_err(|error| Failure::new(error.to_string()))?
+            .map_err(crate::record_migration::failure)?;
+        Ok::<_, Failure>(paths)
     };
+    let sentinels = async {
+        let Some(id) = resident else { return false };
+        tokio::time::timeout(crate::account_features::LISTED_WITHIN, crate::account_features::conversation(node, id))
+            .await
+            .is_ok_and(|settings| settings.sentinels)
+    };
+    let (scratch, sentinels) = tokio::join!(scratch, sentinels);
+    let scratch = scratch?;
     let speaks = resident.is_some_and(|id| crate::voice::speaks(node, id));
     let asker = resident.filter(|_| speaks).and_then(|id| crate::voice::asker_of(node, id)).map(|(asker, _)| asker);
-    let sentinels = match resident {
-        Some(id) => crate::account_features::conversation(node, id).await.sentinels,
-        None => false,
-    };
     Ok(Reply::Machines { here, others, groups, collab, scratch, speaks, asker, sentinels })
 }
 

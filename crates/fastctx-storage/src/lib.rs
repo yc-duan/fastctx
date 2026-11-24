@@ -112,8 +112,9 @@ struct Inner {
     /// Whether a relaxed commit may not have reached the disk yet; set by
     /// the writer, cleared once a settle commits (`settle_now`).
     unsettled: Arc<AtomicBool>,
-    /// Shared with the writer thread, which lets it go after its connection.
-    _keeper: Option<Arc<keeper::Keeper>>,
+    /// Shared with the writer thread, which lets it go after its connection,
+    /// and with every other handle of this process to the same database.
+    keeper: Option<Arc<keeper::Keeper>>,
     upgrade: std::sync::OnceLock<format_upgrade::MigrationGate>,
 }
 impl Drop for Inner {
@@ -372,7 +373,7 @@ impl Database {
             fault: None,
             salvaged,
             unsettled,
-            _keeper: Some(kept.keeper.clone()),
+            keeper: Some(kept.keeper.clone()),
             upgrade: std::sync::OnceLock::new(),
         })))
     }
@@ -430,11 +431,24 @@ impl Database {
                     fault: Some(fault),
                     salvaged: None,
                     unsettled: Arc::new(AtomicBool::new(false)),
-                    _keeper: None,
+                    keeper: None,
                     upgrade: std::sync::OnceLock::new(),
                 }))
             }
         }
+    }
+
+    /// Whether a write may still come to the database after this handle is
+    /// gone: one let in that has not finished, written all the same once its
+    /// caller stopped waiting; or another handle of this process to it, open
+    /// or with its writer still finishing what it let in, which keeps the
+    /// database's keeping beside this handle and its writer.
+    pub fn writing(&self) -> bool {
+        let others = self.0.keeper.as_ref().is_some_and(|keeper| Arc::strong_count(keeper) > 2);
+        others
+            || [Priority::Control, Priority::Interactive, Priority::Normal, Priority::Background]
+                .into_iter()
+                .any(|priority| self.0.writes.used(priority) > 0)
     }
 
     /// What was salvaged when this open found the database damaged and set it

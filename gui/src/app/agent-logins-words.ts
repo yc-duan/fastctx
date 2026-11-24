@@ -104,6 +104,23 @@ export interface AgentLoginsWords extends MachinePickWords {
   modelsDone: string;
   modelsClose: string;
   modelsFailed(why: string): string;
+  /** Compacting a conversation idle a while, as the reader sets it for one
+   *  login, apart from everyone else who uses it. */
+  idle: string;
+  idleTitle: string;
+  idleOf(who: string): string;
+  idleOn: string;
+  idleOnSaid: string;
+  idleAfter: string;
+  idleAfterSaid: string;
+  idleMinutes: string;
+  idleMin: string;
+  idleMinSaid: string;
+  /** The unit the least context is written in, and how many tokens it is. */
+  idleTokens: string;
+  idleTokensEach: number;
+  idleRange(least: number, most: number): string;
+  idleFailed(why: string): string;
   plan: string;
   planNone: string;
   assisting: string;
@@ -233,6 +250,20 @@ export const zhAgentLogins: AgentLoginsWords = {
   modelsDone: "完成",
   modelsClose: "关闭",
   modelsFailed: (why) => `修改失败：${why}`,
+  idle: "闲置自动压缩…",
+  idleTitle: "闲置自动压缩",
+  idleOf: (who) => `${who} 的闲置自动压缩`,
+  idleOn: "闲置自动压缩",
+  idleOnSaid: "对话闲置够久后，自动执行一次 /compact。只对你自己的对话生效。",
+  idleAfter: "闲置多久后",
+  idleAfterSaid: "Claude Code 订阅登录缓存约 1 小时，宜在过期前压缩；API key 登录只缓存 5 分钟，闲置压缩省不下缓存。",
+  idleMinutes: "分钟",
+  idleMin: "上下文至少",
+  idleMinSaid: "上下文小于这个数的对话不压。",
+  idleTokens: "万 token",
+  idleTokensEach: 10_000,
+  idleRange: (least, most) => `填 ${least} 到 ${most} 之间的数`,
+  idleFailed: (why) => `保存失败：${why}`,
   plan: "套餐",
   planNone: "不标注",
   assisting: "协助",
@@ -351,6 +382,20 @@ export const enAgentLogins: AgentLoginsWords = {
   modelsDone: "Done",
   modelsClose: "Close",
   modelsFailed: (why) => `Could not change: ${why}`,
+  idle: "Compact when idle…",
+  idleTitle: "Compact when idle",
+  idleOf: (who) => `Compact when idle: ${who}`,
+  idleOn: "Compact when idle",
+  idleOnSaid: "Runs /compact once a conversation has been idle long enough. For your own conversations only.",
+  idleAfter: "Idle for",
+  idleAfterSaid: "A Claude Code subscription caches for about an hour, best compacted before it lapses; an API key caches for five minutes, too short for this to save it.",
+  idleMinutes: "minutes",
+  idleMin: "At least",
+  idleMinSaid: "A conversation with less context is not compacted.",
+  idleTokens: "K tokens",
+  idleTokensEach: 1_000,
+  idleRange: (least, most) => `A number from ${least} to ${most}`,
+  idleFailed: (why) => `Not saved: ${why}`,
   plan: "Plan",
   planNone: "None",
   assisting: "Assisting",

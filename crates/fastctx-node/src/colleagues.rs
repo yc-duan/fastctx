@@ -1,8 +1,9 @@
 //! Asking for a colleague and speaking to one (`world-colleagues.md`, 两个
 //! 工具).
 //!
-//! A colleague is a Codex resident the World starts, on the asker's machine
-//! or another, as a thread of that machine's app-server. The asker's words
+//! A colleague is a resident the World starts, on the asker's machine or
+//! another, in the login its callee names: a thread of that machine's Codex
+//! app-server, or a Claude Code session (`crate::claude::colleague`). The asker's words
 //! become its first turn, and its goal where goals are offered; what it
 //! tells with `message_colleague` and the end of each turn the asker's
 //! words went into return to the asker, and so does its goal's report; it
@@ -169,7 +170,16 @@ async fn ask_for_account(
     // A machine before the colleague goals answers Ask with a colleague of
     // one turn and no goal.
     match link.call(&lives_on.name, account, Purpose::Look, RemoteCall::Facts).await {
-        Ok(Ok(RemoteReply::Facts(facts))) if facts.goal_colleagues => {}
+        // A machine before presets gives every colleague the reviewer's
+        // rules, and would start a scout as one.
+        Ok(Ok(RemoteReply::Facts(facts))) if facts.goal_colleagues => {
+            if !facts.colleague_presets && !started.callee.plain() {
+                return Err(Failure::not_run(fastctx_types::collab_prompt::preset_host_old(
+                    &lives_on,
+                    &started.callee.name,
+                )));
+            }
+        }
         Ok(Ok(_)) => return Err(Failure::not_run(fastctx_types::collab_prompt::colleague_host_old(&lives_on))),
         Ok(Err(failure)) => return Err(Failure { message: format!("on {lives_on}: {}", failure.message), ..failure }),
         // Not reached: the ask below says how, offline included.
@@ -258,10 +268,14 @@ pub async fn ask_here(
     if let Some(town) = &town {
         crate::town::access::ready(node, &acting, town).await?;
     }
-    // The Codex home it is born in must be one this machine has, so the
-    // account the user chose is the one that answers.
+    // The login it is born in must be one this machine has, so the account
+    // the user chose is the one that answers.
     if !node.is_me(&started.callee.login.machine) {
         return Err(Failure::not_run("the configured callee lives on another machine"));
+    }
+    if started.callee.login.agent.as_str() == "claude" {
+        let asked = crate::claude::colleague::Asked { asker, requester_turn, acting, town, label, prompt };
+        return crate::claude::colleague::born(node, asked, started, admitted).await;
     }
     let home = crate::homes::listed(node, "codex", started.callee.login.home.as_deref()).map_err(|failure| {
         Failure::not_run(format!("{}; the user changes it on the Model collaboration page", failure.message))
@@ -334,6 +348,7 @@ pub async fn ask_here(
         side: false,
         forked_from: None,
         mcp_off: Default::default(),
+        idle_compaction: Default::default(),
         id: id.clone(),
         host: Host { agent, client: "codex app-server".to_string(), version: String::new() },
         machine: node.machine(),
@@ -550,11 +565,11 @@ pub async fn thread_spec(
     })
     .await
     .map_err(|error| Failure::new(error.to_string()))??;
-    let (mut developer_instructions, heard) = instructions(node, id, town, origin, acting, true).await?;
+    let kind = started.as_ref().map(|started| started.callee.kind()).unwrap_or_default();
+    let (mut developer_instructions, heard) = instructions(node, id, town, origin, acting, true, kind).await?;
 
-    if let Some(started) = started.filter(|started| !started.rules.is_empty()) {
-        developer_instructions.push_str("\n\n");
-        developer_instructions.push_str(&started.rules);
+    if let Some(started) = &started {
+        developer_instructions.push_str(&added_rules(started));
     }
     // What Code Mode needs before a long answer is seen whole, last, as in
     // the guidance file: a thread started here may have no such file.
@@ -573,6 +588,17 @@ pub async fn thread_spec(
         },
         heard,
     ))
+}
+
+/// What the account adds to the World's rules for a colleague born of
+/// `started`: for its preset, then for every callee; each after an empty
+/// line, nothing where it adds nothing.
+pub(crate) fn added_rules(started: &fastctx_types::collab::Started) -> String {
+    [started.callee.rules(), started.rules.as_str()]
+        .into_iter()
+        .filter(|added| !added.trim().is_empty())
+        .map(|added| format!("\n\n{added}"))
+        .collect()
 }
 
 /// How far into its town's ledger a resident is told of it, as of now.
@@ -602,7 +628,8 @@ pub(crate) fn standing(node: &Node, town: Option<&TownName>) -> Result<PathBuf, 
 ///
 /// A Claude session's plugin gives it its town's record, as it is each time
 /// Claude Code reads its context (`town::instructions`); for it, `record`
-/// is false and the instructions leave the record out.
+/// is false and the instructions leave the record out. `kind` is the preset
+/// a colleague was asked as, whose rules it is given.
 pub(crate) async fn instructions(
     node: &Arc<Node>,
     id: &ResidentId,
@@ -610,6 +637,7 @@ pub(crate) async fn instructions(
     origin: &Origin,
     acting: &Acting,
     record: bool,
+    kind: fastctx_types::collab_presets::Kind,
 ) -> Result<(String, Heard), Failure> {
     let mut heard = {
         let (reading, town) = (node.clone(), town.cloned());
@@ -617,14 +645,20 @@ pub(crate) async fn instructions(
             .await
             .map_err(|error| Failure::new(format!("reading the town's ledger: {error}")))?
     };
-    let words = words(id, town, origin, record);
+    let words = words(id, town, origin, record, kind);
     let (context, receipt) = crate::context::prepare(node, id, town, origin, acting).await?;
     heard.context = record.then_some(receipt);
     let text = if record && !context.is_empty() { format!("{words}\n\n{context}") } else { words };
     Ok((text, heard))
 }
 
-pub(crate) fn words(id: &ResidentId, town: Option<&TownName>, origin: &Origin, record: bool) -> String {
+pub(crate) fn words(
+    id: &ResidentId,
+    town: Option<&TownName>,
+    origin: &Origin,
+    record: bool,
+    kind: fastctx_types::collab_presets::Kind,
+) -> String {
     let given = if record { "Its record follows" } else { "Its record comes with your context" };
     let place = match (town, origin) {
         (Some(town), _) => format!(
@@ -634,11 +668,9 @@ pub(crate) fn words(id: &ResidentId, town: Option<&TownName>, origin: &Origin, r
         (None, Origin::Colleague { .. }) => String::new(),
     };
     let working = match origin {
-        Origin::Colleague { asked_by, .. } => format!(
-            "{} asked you to do this work.\n\n{}",
-            asked_by.resident,
-            fastctx_types::collab_prompt::COLLEAGUE_RULES
-        ),
+        Origin::Colleague { asked_by, .. } => {
+            format!("{} asked you to do this work.\n\n{}", asked_by.resident, kind.rules())
+        }
         // Who the session is to the user: an agent whose last words in a
         // turn are its answer, whoever began the turn (`world-voice.md`,
         // 交给模型的话).

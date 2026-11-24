@@ -7,32 +7,23 @@
 // again over the page, beside what it gave; the settings below; and, last
 // and light, the way to turn it off, asked once more before it is.
 //
-// Model collaboration:
-// for the whole account, which agents may hand a part of their work to a
-// GPT (callers), which GPTs they may hand it to (callees: a Codex login
-// each, its model and effort, the name and the line the calling model
-// chooses by, whether it may use the screen), the text the callers are given
-// and the rules every callee is given.
+// Model collaboration is drawn from its own file (`collab-feature.ts`), as
+// history is.
 
-import { EffortSlider, effortLabel } from "../conversation/effort-slider";
 import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
-import type { Login } from "../world/accounts";
 import { loginsOf } from "../world/accounts";
-import type { AgentFacts, AgentModel, WorldAgents } from "../world/agents";
-import { AT_ONCE_DEFAULT, readCollab, sameAgentLogin, writeCollab, type AgentLogin, type Collab, type CollabView } from "../world/collab";
-import { agentName, titleOf } from "../world/names";
-import { accountOf, homeChoice, homeLabel, homesOf, listed, usableHome, type HomeWords } from "./agent-homes";
+import type { WorldAgents } from "../world/agents";
+import type { HomeWords } from "./agent-homes";
 import type { FeaturesWords } from "./features-words";
 import { layerOpened } from "./back";
-import { ActsMenu } from "./acts-menu";
+import { CollabFeature } from "./collab-feature";
 import type { Confirm } from "./confirm";
-import { link, type Feature } from "./places";
-import { detailOf } from "./problem";
+import type { Feature } from "./places";
 import { inNoNetwork } from "./reach";
 import type { Page } from "./shell";
 import { effect } from "./signals";
-import { residentsOf, type Store } from "./store";
+import type { Store } from "./store";
 import { leave } from "./leave";
 import { collaboration } from "../film/collaboration";
 import { sentinelFeature } from "./sentinel-feature";
@@ -40,19 +31,11 @@ import type { SentinelSeam } from "../world/sentinels";
 import { Film } from "../film/film";
 import type { Built, Shape } from "../film/reel";
 import { HistoryFeature, type FeatureFrame } from "./history-feature";
+import { watchFilm } from "../film/theater";
 
 /** Whether model collaboration can be turned on; a node offers a colleague
  *  only as `collab.rs` lets it. */
 const COLLABORATION_READY = true;
-import { watchFilm } from "../film/theater";
-import { waiting } from "./waiting";
-
-/** The limits a callee's slider steps through, before no limit. */
-const AT_ONCE_STEPS = [1, 2, 3, 4, 6, 8, 12, 16];
-
-/** The menu a callee's choices open in, one for every page. */
-let shared: ActsMenu | null = null;
-const menuOf = (): ActsMenu => (shared ??= new ActsMenu());
 
 export interface FeaturesOptions {
   store: Store;
@@ -68,32 +51,12 @@ export interface FeaturesOptions {
   sentinels: { seam: SentinelSeam; machines(hub: string, account: string): { name: string; form: "desktop" | "laptop" | "server" }[] };
 }
 
-/** A login an agent can work in, as the settings name it, with what the
- *  page shows of it. */
-interface Known {
-  login: AgentLogin;
-  label: string;
-  models: AgentModel[];
-}
 
 export class FeaturesPage implements Page {
   readonly element: HTMLElement;
   readonly title: string;
   private readonly body: HTMLElement;
   private stop: () => void = () => {};
-  private account: Login | null = null;
-  /** Whether this computer is in no network: it asks no colleagues, and
-   *  its page offers the ways into one instead of settings. */
-  private alone = false;
-  /** Whether the World was seen once, so that where the settings are kept
-   *  is known. */
-  private placed = false;
-  private view: CollabView | null = null;
-  private draft: Collab | null = null;
-  private problem: { text: string; detail: string } | null = null;
-  private saved = false;
-  private known: Known[] = [];
-  private sliders: EffortSlider[] = [];
   /** The films on the page, stopped when it is drawn again or left. */
   private films: Film[] = [];
   /** Ends the film watched over the page, while one is. */
@@ -118,7 +81,6 @@ export class FeaturesPage implements Page {
 
   leave(): void {
     this.stop();
-    this.sliders = [];
     this.dropFilms();
     this.unwatch?.();
     this.undone?.();
@@ -266,269 +228,22 @@ export class FeaturesPage implements Page {
     };
   }
 
+  /** Model collaboration (`collab-feature.ts`): the account's presets and
+   *  callers, or in no network the ways into one. */
   private collaboration(): void {
-    const { store, words } = this.options;
-    const make = (shape: Shape) => collaboration(words.collaboration.film, shape);
-    this.replayFilm = () => this.watch(make, words.collaboration.name);
+    const { store, words, english, homeWords, agents, confirm } = this.options;
     if (!COLLABORATION_READY) {
+      const make = (shape: Shape) => collaboration(words.collaboration.film, shape);
+      this.replayFilm = () => this.watch(make, words.collaboration.name);
       // Its story and what it gives, and that it is still being made.
       this.body.classList.add("features-film");
       this.body.innerHTML = `<div class="feature-intro with-gives"><div class="feature-film"></div>${this.gives()}<p class="feature-coming">${glyph("info", 18)}<span>${escape(words.coming)}</span></p></div>`;
       this.film(this.body.querySelector(".feature-film"), make, words.collaboration.name);
       return;
     }
-    this.place();
-    this.draw();
-    void this.ask();
-    this.stop = effect(() => {
-      store.world.get();
-      if (this.place()) this.draw();
-      this.drawNow();
-    });
-    this.body.addEventListener("click", (event) => this.click(event));
-    this.body.addEventListener("input", (event) => this.input(event));
-    this.body.addEventListener("change", (event) => this.input(event));
-  }
-
-  /** Where the settings are kept, as the World now says: the first
-   *  account's, read again when that changes; none in no network. Whether
-   *  it changed. */
-  private place(): boolean {
-    const world = this.options.store.world.peek();
-    if (!world) return false;
-    const alone = inNoNetwork(world);
-    const account = alone ? null : (loginsOf(world.accounts)[0] ?? null);
-    if (this.placed && alone === this.alone && account?.hub === this.account?.hub && account?.account === this.account?.account) return false;
-    this.placed = true;
-    this.alone = alone;
-    this.account = account;
-    this.view = null;
-    this.draft = null;
-    this.problem = null;
-    this.saved = false;
-    if (!alone && account) void this.load();
-    return true;
-  }
-
-  /** The account's settings. */
-  private async load(): Promise<void> {
-    const account = this.account;
-    let view: CollabView | null = null;
-    let problem: { text: string; detail: string } | null = null;
-    try {
-      view = await readCollab(account?.hubName ?? null, account?.account ?? null);
-    } catch (error) {
-      problem = { text: this.options.words.unavailable, detail: detailOf(error) };
-    }
-    // Read for an account no longer the one shown: the newer read draws.
-    if (account !== this.account) return;
-    this.view = view;
-    this.draft = view ? structuredClone(view.collab) : null;
-    this.problem = problem;
-    this.draw();
-  }
-
-  /** The logins of every agent the account may use, from what their
-   *  machines say. */
-  private async ask(): Promise<void> {
-    try {
-      const answer = await this.options.agents();
-      const known: Known[] = [];
-      for (const machine of answer.machines) {
-        if (machine.kind !== "answered") continue;
-        for (const agent of ["claude", "codex"] as const) {
-          for (const home of homesOf(machine.reply.agents, agent).filter((home) => usableHome(home) && listed(home))) {
-            known.push({
-              login: { machine: machine.reply.machine, agent, home: homeChoice(home) },
-              label: this.loginLabel(agent, machine.reply.machine, home),
-              models: home.models.kind === "known" ? home.models.value : [],
-            });
-          }
-        }
-      }
-      this.known = known;
-    } catch {
-      this.known = [];
-    }
-    this.draw();
-  }
-
-  private loginLabel(agent: "codex" | "claude", machine: string, facts: AgentFacts): string {
-    const who = accountOf(facts).email ?? homeLabel(facts, this.options.homeWords);
-    return `${agentName(agent)} ${machine} ${who}`;
-  }
-
-  private dirty(): boolean {
-    return !!this.draft && !!this.view && JSON.stringify(this.draft) !== JSON.stringify(this.view.collab);
-  }
-
-  private click(event: Event): void {
-    const button = (event.target as HTMLElement).closest<HTMLElement>("[data-act]");
-    if (!button || (button as HTMLButtonElement).disabled) return;
-    const draft = this.draft;
-    switch (button.dataset.act) {
-      case "replay":
-        return;
-      case "retry":
-        void this.load();
-        return;
-      case "turn":
-        if (!draft) return;
-        draft.on = true;
-        void this.save().then(() => {
-          if (this.view?.collab.on && !this.problem) this.celebrate(this.options.words.collaboration.name, this.options.words.collaboration.after, (shape) => collaboration(this.options.words.collaboration.film, shape));
-        });
-        return;
-      case "turn-off":
-        this.askOff(this.options.words.collaboration.name, this.options.words.collaboration.offWhat, () => this.turnOff(), () => this.draw());
-        return;
-      case "caller": {
-        if (!draft) return;
-        const login = this.known[Number(button.dataset.index)]?.login;
-        if (!login) return;
-        draft.callers = draft.callers.some((one) => sameAgentLogin(one, login)) ? draft.callers.filter((one) => !sameAgentLogin(one, login)) : [...draft.callers, login];
-        this.draw();
-        return;
-      }
-      case "add-callee": {
-        if (!draft) return;
-        const codex = this.known.find((one) => one.login.agent === "codex");
-        if (!codex) return;
-        draft.callees.push({ name: this.freeName(), use_when: "", login: codex.login, model: null, effort: null, screen: true });
-        this.draw();
-        return;
-      }
-      case "pick":
-        this.pick(button);
-        return;
-      case "screen": {
-        const callee = draft?.callees[Number(button.dataset.index)];
-        if (!callee) return;
-        callee.screen = !callee.screen;
-        button.setAttribute("aria-checked", String(callee.screen));
-        this.saved = false;
-        this.drawSave();
-        return;
-      }
-      case "remove-callee":
-        if (!draft) return;
-        draft.callees.splice(Number(button.dataset.index), 1);
-        this.draw();
-        return;
-      case "reset-prompt":
-        if (!draft) return;
-        draft.prompt = null;
-        this.draw();
-        return;
-      case "save":
-        void this.save();
-        return;
-    }
-  }
-
-  private freeName(): string {
-    const taken = new Set(this.draft?.callees.map((callee) => callee.name));
-    for (let n = 1; ; n += 1) if (!taken.has(n === 1 ? "gpt" : `gpt-${n}`)) return n === 1 ? "gpt" : `gpt-${n}`;
-  }
-
-  /** The menu of a callee's logins or of its login's models, from its
-   *  button; what is picked changes the draft as typing does. */
-  private pick(button: HTMLElement): void {
-    const { words } = this.options;
-    const index = Number(button.dataset.index);
-    const callee = this.draft?.callees[index];
-    if (!callee) return;
-    const field = button.dataset.field;
-    if (field === "login") {
-      const entries = this.known
-        .map((known, at) => ({ known, at }))
-        .filter(({ known }) => known.login.agent === "codex")
-        .map(({ known, at }) => ({ act: String(at), label: known.label, checked: sameAgentLogin(known.login, callee.login) }));
-      menuOf().open(button, words.login, entries, (act) => {
-        const known = this.known[Number(act)];
-        if (!known || sameAgentLogin(known.login, callee.login)) return;
-        callee.login = known.login;
-        callee.model = null;
-        callee.effort = null;
-        this.saved = false;
-        this.draw();
-      });
-      return;
-    }
-    const models = this.known.find((one) => sameAgentLogin(one.login, callee.login))?.models ?? [];
-    const entries = [{ act: "", label: words.modelDefault, checked: !callee.model }, ...models.map((model) => ({ act: model.model, label: model.display_name, checked: callee.model === model.model }))];
-    menuOf().open(button, words.model, entries, (act) => {
-      if ((act || null) === callee.model) return;
-      callee.model = act || null;
-      this.saved = false;
-      this.draw();
-    });
-  }
-
-  /** Text typed and choices made change the draft only; the page is drawn
-   *  again for what depends on them (a login's models, the save button). */
-  private input(event: Event): void {
-    const field = event.target as HTMLInputElement | HTMLTextAreaElement;
-    const draft = this.draft;
-    if (!draft || !field.dataset.field) return;
-    const callee = field.dataset.index !== undefined ? draft.callees[Number(field.dataset.index)] : undefined;
-    switch (field.dataset.field) {
-      case "name":
-        if (callee) callee.name = field.value.toLowerCase().replace(/[^a-z0-9-]/g, "");
-        break;
-      case "use":
-        if (callee) callee.use_when = field.value;
-        break;
-      case "prompt":
-        draft.prompt = field.value === this.view?.default_prompt ? null : field.value;
-        break;
-      case "rules":
-        draft.rules = field.value;
-        break;
-    }
-    this.saved = false;
-    this.drawSave();
-  }
-
-  /** Saves for the account, or in no network as this computer's own. What
-   *  failed is said where the user acted, after the page reads the
-   *  settings again. */
-  private async save(): Promise<void> {
-    const account = this.account;
-    const draft = this.draft;
-    if (!draft || !this.view) return;
-    const button = this.body.querySelector<HTMLButtonElement>(".feature-save");
-    if (button) button.disabled = true;
-    try {
-      const version = await writeCollab(account?.hubName ?? null, account?.account ?? null, draft);
-      draft.version = version;
-      this.view = { ...this.view, collab: structuredClone(draft) };
-      this.problem = null;
-      this.saved = true;
-    } catch (error) {
-      const problem = { text: this.options.words.failed(detailOf(error)), detail: detailOf(error) };
-      await this.load();
-      if (this.view) {
-        this.problem = problem;
-        this.draw();
-      }
-      return;
-    }
-    this.draw();
-  }
-
-  /** Turns model collaboration off for the account, or in no network for
-   *  this computer, with what else the draft holds; fails as the World says,
-   *  for the question to show. */
-  private async turnOff(): Promise<void> {
-    const account = this.account;
-    if (!this.draft || !this.view) return;
-    const draft = { ...structuredClone(this.draft), on: false };
-    draft.version = await writeCollab(account?.hubName ?? null, account?.account ?? null, draft);
-    this.view = { ...this.view, collab: structuredClone(draft) };
-    this.draft = draft;
-    this.problem = null;
-    this.saved = false;
+    const feature = new CollabFeature(this.frame(), { store, english, homeWords, agents, confirm });
+    this.replayFilm = () => this.watch(feature.film, words.collaboration.name);
+    this.stop = feature.stop;
   }
 
   /** Watches the page's film again, over the page. */
@@ -538,13 +253,6 @@ export class FeaturesPage implements Page {
     this.replayFilm?.();
   }
 
-  /** In no network, where the switch would be: that it needs one, and the
-   *  ways into one, as the machines' page offers them. */
-  private ways(): string {
-    const { words } = this.options;
-    return `<div class="feature-ways"><p class="feature-note">${escape(words.alone)}</p><div class="feature-way-links"><a class="sheet-go" href="${link({ kind: "login", way: "new" })}">${escape(words.newNetwork)}</a><a class="text-button quiet-button" href="${link({ kind: "login", way: "join" })}">${escape(words.joinNetwork)}</a></div></div>`;
-  }
-
   /** What model collaboration gives the user: a ready text that teaches
    *  the calling model how to ask for what it wants, and nothing to
    *  operate by hand. */
@@ -552,152 +260,5 @@ export class FeaturesPage implements Page {
     return `<ul class="feature-gives">${list
       .map(([mark, line]) => `<li><span class="feature-give-mark">${glyph(mark, 16)}</span><span>${escape(line)}</span></li>`)
       .join("")}</ul>`;
-  }
-
-  private draw(): void {
-    const { words } = this.options;
-    const collab = this.draft;
-    const on = !!collab?.on;
-    const gives = this.gives();
-    const turn = this.alone
-      ? this.ways()
-      : this.placed && !this.account
-        ? `<p class="feature-note">${escape(words.noAccount)}</p>`
-        : !collab
-          ? this.problem
-            ? `<p class="feature-note feature-trouble" title="${escape(this.problem.detail)}">${escape(this.problem.text)}<button class="text-button quiet-button" type="button" data-act="retry">${glyph("regenerate", 14)}<span>${escape(words.retry)}</span></button></p>`
-            : waiting({ label: words.reading, shape: "lines", rows: 3 })
-          : on
-            ? ""
-            : `<button class="sheet-go feature-turn" type="button" data-act="turn" data-on="1">${escape(words.turnOn)}</button>${
-                this.problem ? `<p class="feature-note feature-trouble" title="${escape(this.problem.detail)}">${escape(this.problem.text)}</p>` : ""}`;
-    const top = on ? this.onTop(words.collaboration.after) : `<div class="feature-intro with-gives"><div class="feature-film"></div>${gives}${turn}</div>`;
-    // The film keeps playing while the page around it is drawn again.
-    const playing = !on ? this.body.querySelector(".feature-intro .film") : null;
-    if (!playing) this.dropFilms();
-    this.body.classList.toggle("features-film", !on);
-    this.body.classList.toggle("features-on", on);
-    this.body.innerHTML = top + (on && collab ? this.settings(collab) + this.offWay(words.collaboration.name) : "");
-    const make = (shape: Shape) => collaboration(words.collaboration.film, shape);
-    if (playing) this.body.querySelector(".feature-film")?.replaceChildren(playing);
-    else this.film(this.body.querySelector(on ? ".feature-still" : ".feature-film"), make, words.collaboration.name, on);
-    this.mountSliders();
-    this.drawNow();
-    this.drawSave();
-  }
-
-  private settings(collab: Collab): string {
-    const { words } = this.options;
-    const callers = this.known.length
-      ? this.known
-          .map((known, index) => {
-            const chosen = collab.callers.some((one) => sameAgentLogin(one, known.login));
-            return `<button class="feature-chip${chosen ? " chosen" : ""}" type="button" data-act="caller" data-index="${index}" aria-pressed="${chosen}">${glyph(known.login.agent, 14)}<span>${escape(known.label)}</span></button>`;
-          })
-          .join("")
-      : `<p class="feature-quiet">${escape(words.noLogins)}</p>`;
-    const codex = this.known.map((known, index) => ({ known, index })).filter(({ known }) => known.login.agent === "codex");
-    // A choice of several: what is chosen, pressed for the others in the
-    // interface's own menu.
-    const pick = (field: "login" | "model", index: number, value: string) =>
-      `<button class="callee-pick" type="button" data-act="pick" data-field="${field}" data-index="${index}" data-menu-key="callee-${field}-${index}" data-menu-align="start" aria-haspopup="menu" aria-expanded="false"><span class="callee-pick-value">${escape(value)}</span>${glyph("chevron", 12)}</button>`;
-    const callees = collab.callees
-      .map((callee, index) => {
-        const at = codex.find(({ known }) => sameAgentLogin(known.login, callee.login));
-        const models = at?.known.models ?? [];
-        return `<li class="callee-card">
-          <div class="callee-row"><label class="callee-field callee-name"><span>${escape(words.name)}</span><input type="text" value="${escape(callee.name)}" data-field="name" data-index="${index}" pattern="[a-z0-9-]+" title="${escape(words.namePattern)}" spellcheck="false" autocomplete="off" autocapitalize="off"></label>
-            <button class="icon-button callee-remove" type="button" data-act="remove-callee" data-index="${index}" title="${escape(words.removeCallee)}" aria-label="${escape(words.removeCallee)}">${glyph("close", 16)}</button></div>
-          <label class="callee-field"><span>${escape(words.useWhen)}</span><input type="text" value="${escape(callee.use_when)}" data-field="use" data-index="${index}"></label>
-          <div class="callee-field"><span>${escape(words.login)}</span>${pick("login", index, at ? at.known.label : `${callee.login.machine} ${callee.login.home ?? ""}`)}</div>
-          <div class="callee-field"><span>${escape(words.model)}</span>${pick("model", index, models.find((model) => model.model === callee.model)?.display_name ?? (callee.model || words.modelDefault))}</div>
-          <div class="callee-field"><span>${escape(words.effort)}</span><div class="callee-effort" data-index="${index}"></div></div>
-          <div class="callee-field"><span title="${escape(words.atOnceSaid)}">${escape(words.atOnce)}</span><div class="callee-at-once" data-index="${index}"></div></div>
-          <button class="callee-switch" type="button" role="switch" aria-checked="${callee.screen}" data-act="screen" data-index="${index}" title="${escape(words.screenSaid)}"><span>${escape(words.screen)}</span><span class="switch-track" aria-hidden="true"><span class="switch-knob"></span></span></button>
-        </li>`;
-      })
-      .join("");
-    const prompt = collab.prompt ?? this.view?.default_prompt ?? "";
-    return `<section class="feature-section"><h2 class="feature-heading" title="${escape(words.callersSaid)}">${escape(words.callers)}</h2><div class="feature-chips">${callers}</div></section>
-      <section class="feature-section"><h2 class="feature-heading" title="${escape(words.openCodex)}">${escape(words.callees)}</h2>
-        <ul class="callee-cards">${callees}<li><button class="callee-add" type="button" data-act="add-callee"${codex.length ? "" : ` disabled title="${escape(words.noCodex)}"`}>${glyph("plus", 16)}<span>${escape(words.addCallee)}</span></button></li></ul></section>
-      <section class="feature-section"><h2 class="feature-heading">${escape(words.prompt)}${collab.prompt !== null ? `<button class="text-button quiet-button" type="button" data-act="reset-prompt">${escape(words.promptReset)}</button>` : ""}</h2>
-        <textarea class="feature-text" data-field="prompt" rows="8" spellcheck="false">${escape(prompt)}</textarea></section>
-      <section class="feature-section"><h2 class="feature-heading">${escape(words.rules)}</h2>
-        <textarea class="feature-text" data-field="rules" rows="4" placeholder="${escape(words.rulesHint)}">${escape(collab.rules)}</textarea></section>
-      <section class="feature-section"><h2 class="feature-heading">${escape(words.now)}</h2><ul class="feature-now"></ul></section>
-      <div class="feature-save-bar"><span class="feature-problem"></span><button class="sheet-go feature-save" type="button" data-act="save">${escape(words.save)}</button></div>`;
-  }
-
-  /** Each callee's effort, as the model chosen for it offers. */
-  private mountSliders(): void {
-    const { words, english } = this.options;
-    this.sliders = [];
-    for (const holder of this.body.querySelectorAll<HTMLElement>(".callee-effort")) {
-      const index = Number(holder.dataset.index);
-      const callee = this.draft?.callees[index];
-      if (!callee) continue;
-      const models = this.known.find((one) => sameAgentLogin(one.login, callee.login))?.models ?? [];
-      const model = models.find((one) => one.model === callee.model) ?? models.find((one) => one.is_default) ?? models[0];
-      const slider = new EffortSlider(words.effort, (value) => {
-        callee.effort = value;
-        this.saved = false;
-        this.drawSave();
-      });
-      slider.set((model?.reasoning_efforts ?? []).map((one) => ({ value: one.effort, label: effortLabel(one.effort, english) })), callee.effort ?? model?.default_reasoning_effort ?? null);
-      holder.append(slider.element);
-      this.sliders.push(slider);
-    }
-    // How many at once, from one up, and none at the end: a number set
-    // elsewhere that is no step here stands among them in its place.
-    for (const holder of this.body.querySelectorAll<HTMLElement>(".callee-at-once")) {
-      const callee = this.draft?.callees[Number(holder.dataset.index)];
-      if (!callee) continue;
-      const slider = new EffortSlider(words.atOnce, (value) => {
-        callee.at_once = value === words.noLimit ? "any" : { most: Number(value) };
-        this.saved = false;
-        this.drawSave();
-      });
-      const most = callee.at_once === "any" ? null : (callee.at_once?.most ?? AT_ONCE_DEFAULT);
-      const counts = [...new Set([...AT_ONCE_STEPS, ...(most === null ? [] : [most])])].sort((a, b) => a - b);
-      const steps = [...counts.map((count) => ({ value: String(count), label: String(count) })), { value: words.noLimit, label: words.noLimit }];
-      slider.set(steps, most === null ? words.noLimit : String(most));
-      holder.append(slider.element);
-      this.sliders.push(slider);
-    }
-  }
-
-  /** Who works for whom now: the GPTs asked in that are at work. */
-  private drawNow(): void {
-    const list = this.body.querySelector<HTMLElement>(".feature-now");
-    if (!list) return;
-    const { words } = this.options;
-    const residents = residentsOf(this.options.store.world.peek());
-    const working = residents.filter((r) => r.about.origin.kind === "colleague" && r.now?.activity === "busy");
-    const html = working.length
-      ? working
-          .map((r) => {
-            const origin = r.about.origin.kind === "colleague" ? r.about.origin : null;
-            const asker = origin ? residents.find((one) => one.about.id === origin.asked_by.resident && one.about.machine === origin.asked_by.machine) : undefined;
-            const askerName = asker ? (titleOf(asker) ?? `${agentName(asker.about.host.agent)} ${asker.about.machine}`) : (origin?.asked_by.resident ?? "");
-            return `<li><a href="${link({ kind: "talk", address: { resident: r.about.id, machine: r.about.machine } })}">${glyph("codex", 14)}<span>${escape(titleOf(r) ?? r.about.id)}</span><span class="feature-now-for">${escape(words.workingFor(askerName))} ${escape(r.about.machine)}</span></a></li>`;
-          })
-          .join("")
-      : `<li class="feature-quiet">${escape(words.nobodyNow)}</li>`;
-    if (list.innerHTML !== html) list.innerHTML = html;
-  }
-
-  private drawSave(): void {
-    const bar = this.body.querySelector<HTMLElement>(".feature-save-bar");
-    if (!bar) return;
-    const { words } = this.options;
-    const dirty = this.dirty();
-    bar.classList.toggle("shown", dirty || this.saved || !!this.problem);
-    const button = bar.querySelector<HTMLButtonElement>(".feature-save")!;
-    button.disabled = !dirty;
-    button.innerHTML = !dirty && this.saved ? `${glyph("check", 14)}<span>${escape(words.saved)}</span>` : escape(words.save);
-    const problem = bar.querySelector<HTMLElement>(".feature-problem")!;
-    problem.textContent = this.problem?.text ?? "";
-    problem.title = this.problem?.detail ?? "";
   }
 }

@@ -286,6 +286,7 @@ impl RemoteCall {
             | Self::Write { .. }
             | Self::ClaudeConsent { .. }
             | Self::Copies { .. }
+            | Self::ConversationRetention { .. }
             | Self::Homes { .. }
             | Self::ScanAgents { .. }
             | Self::AddAgentLogin { .. }
@@ -295,6 +296,7 @@ impl RemoteCall {
             | Self::SetAgentWeek { .. }
             | Self::ResetAgentUsage { .. }
             | Self::ChangeAgentModels { .. }
+            | Self::SetIdleCompaction { .. }
             | Self::ChangeAgentLogin { .. }
             | Self::MemoryRoom { bytes: Some(_) }
             | Self::Open { .. }
@@ -553,6 +555,7 @@ impl Call {
             | Self::Stepped { .. }
             | Self::ClaudeConsent { .. }
             | Self::MachineCopies { .. }
+            | Self::ConversationRetention { .. }
             | Self::Homes { .. }
             | Self::ScanAgents { .. }
             | Self::AddAgentLogin { .. }
@@ -562,6 +565,7 @@ impl Call {
             | Self::SetAgentWeek { .. }
             | Self::ResetAgentUsage { .. }
             | Self::ChangeAgentModels { .. }
+            | Self::SetIdleCompaction { .. }
             | Self::ChangeAgentLogin { .. }
             | Self::Talk { .. }
             | Self::Upload { .. }

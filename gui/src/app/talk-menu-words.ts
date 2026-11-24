@@ -50,6 +50,35 @@ export interface TalkMenuWords {
   notArchived: string;
   notRestored: string;
   notMoved: string;
+  /** Whether it is compacted once idle a while: as its login's setting
+   *  says, or on or off for it alone. */
+  idle: string;
+  idleFollow: string;
+  idleFollowShort: string;
+  idleOn: string;
+  idleOff: string;
+  idleCustom: string;
+  /** How long it has been idle, beside its idle compaction: since its last
+   *  words, turn or command. */
+  idleFor(how: string): string;
+  minutes(n: number): string;
+  hours(n: number): string;
+  days(n: number): string;
+  idleWhat: string;
+  idleAfter: string;
+  idleMin: string;
+  idleMinutes: string;
+  /** The unit context is written in, and how many tokens it is. */
+  idleTokens: string;
+  idleTokensEach: number;
+  /** What its agent's setting holds, beside a part that follows it. */
+  idleFollows(value: string): string;
+  idleFollowUnknown: string;
+  idleReset: string;
+  idleDone: string;
+  idleClose: string;
+  idleRange(least: number, most: number): string;
+  notIdle: string;
   notRenamed: string;
   notDeleted: string;
   /** The card asking before deleting. */
@@ -58,6 +87,8 @@ export interface TalkMenuWords {
   /** What deleting takes away, one tag each; `host` is what its agent's
    *  own program keeps. */
   deleteParts(host: string): string[];
+  /** The colleagues it asked, which go with it: one tag more. */
+  deleteColleagues(count: number): string;
   /** What its agent's own program keeps of it. */
   hostRecord(agent: "codex" | "claude" | string): string;
   deleteWorking: string;
@@ -103,11 +134,35 @@ export const zhTalkMenu: TalkMenuWords = {
   notArchived: "归档失败",
   notRestored: "恢复失败",
   notMoved: "移动失败",
+  idle: "闲置自动压缩",
+  idleFollow: "跟随智能体设置",
+  idleFollowShort: "跟随",
+  idleOn: "开",
+  idleOff: "关",
+  idleCustom: "自定义",
+  idleFor: (how) => `已闲置 ${how}`,
+  minutes: (n) => `${n} 分钟`,
+  hours: (n) => `${n} 小时`,
+  days: (n) => `${n} 天`,
+  idleWhat: "只对这段对话生效；没单独设的项跟随智能体设置。",
+  idleAfter: "闲置多久后",
+  idleMin: "上下文至少",
+  idleMinutes: "分钟",
+  idleTokens: "万 token",
+  idleTokensEach: 10_000,
+  idleFollows: (value) => `智能体设置：${value}`,
+  idleFollowUnknown: "智能体设置未读到",
+  idleReset: "全部恢复跟随",
+  idleDone: "完成",
+  idleClose: "关闭",
+  idleRange: (least, most) => `填 ${least} 到 ${most} 之间的数，留空则跟随`,
+  notIdle: "设置失败",
   notRenamed: "改名失败",
   notDeleted: "删除失败",
   deleteTitle: (name) => `删除「${name}」？`,
   deleteWhat: "将从所有机器与设备中删除，无法恢复。",
   deleteParts: (host) => ["对话与附件", "各台机器上的命令与输出", host, "各设备上的副本"],
+  deleteColleagues: (count) => `它派出的 ${count} 段同事会话`,
   hostRecord: (agent) => (agent === "codex" ? "Codex 的线程记录" : agent === "claude" ? "Claude Code 的会话记录" : "智能体自己的记录"),
   deleteWorking: "对话正在运行，将先停止。",
   deleteAway: (machine) => `${machine} 离线，恢复连接后删除。`,
@@ -150,11 +205,35 @@ export const enTalkMenu: TalkMenuWords = {
   notArchived: "Could not archive",
   notRestored: "Could not restore",
   notMoved: "Could not move",
+  idle: "Compact when idle",
+  idleFollow: "As the agent's setting",
+  idleFollowShort: "Follow",
+  idleOn: "On",
+  idleOff: "Off",
+  idleCustom: "Custom",
+  idleFor: (how) => `idle ${how}`,
+  minutes: (n) => `${n} min`,
+  hours: (n) => `${n} h`,
+  days: (n) => `${n} d`,
+  idleWhat: "For this conversation alone; what is not set here follows the agent's setting.",
+  idleAfter: "Idle for",
+  idleMin: "At least",
+  idleMinutes: "minutes",
+  idleTokens: "K tokens",
+  idleTokensEach: 1_000,
+  idleFollows: (value) => `Agent's setting: ${value}`,
+  idleFollowUnknown: "The agent's setting could not be read",
+  idleReset: "Follow the agent in all",
+  idleDone: "Done",
+  idleClose: "Close",
+  idleRange: (least, most) => `A number from ${least} to ${most}, or empty to follow`,
+  notIdle: "Could not set it",
   notRenamed: "Could not rename",
   notDeleted: "Could not delete",
   deleteTitle: (name) => `Delete “${name}”?`,
   deleteWhat: "It goes from every machine and device, for good.",
   deleteParts: (host) => ["Messages and attachments", "Commands and output on every machine", host, "Copies on devices"],
+  deleteColleagues: (count) => (count === 1 ? "The conversation of the colleague it asked" : `The conversations of the ${count} colleagues it asked`),
   hostRecord: (agent) => (agent === "codex" ? "Codex's thread" : agent === "claude" ? "Claude Code's session" : "The agent's own record"),
   deleteWorking: "It's working; it will be stopped first.",
   deleteAway: (machine) => `${machine} is offline; it's deleted there when it's back.`,

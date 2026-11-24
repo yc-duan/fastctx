@@ -146,7 +146,7 @@ pub fn update_document_from<'a>(
         }
         let Input::Update { number, document, update } = input else { unreachable!() };
         let decoded = fastctx_draft::DecodedUpdate::decode(&update.0).map_err(failure)?;
-        node.ready_for(id).await;
+        node.startup.wait_for_input(id).await;
         let gate = node.residents.management(id)?;
         let _reading = crate::gate_waits::shared(node, id, &gate).await?;
         node.residents.active(id)?;

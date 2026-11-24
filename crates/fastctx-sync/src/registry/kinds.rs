@@ -1004,7 +1004,7 @@ pub(super) const KINDS: &[Registration] = &[
         SingleWriter,
         UntilDeleted,
         Recent,
-        "fastctx-hub::assets::hub_log",
+        "fastctx-node::assets::logs",
         Assets,
         Json,
         false,

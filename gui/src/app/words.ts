@@ -897,6 +897,10 @@ export interface ProjectFormWords {
   whatPlaceholder: string;
   /** What the instructions are and how agents are given them. */
   whatTip: string;
+  /** The project's description, which its agents keep. */
+  description: string;
+  descriptionPlaceholder: string;
+  descriptionTip: string;
   machines: string;
   places: string;
   /** Over the machines it spans and the places named on each. */
@@ -925,15 +929,18 @@ export const zhProjectForm: ProjectFormWords = {
   editTitle: (name) => `编辑「${name}」`,
   name: "名称",
   namePlaceholder: "例如 mark50 研发",
-  what: "须知",
+  what: "项目 CLAUDE.md/AGENTS.md",
   whatPlaceholder: "项目的用途、做法与注意事项；智能体每次都会读取",
-  whatTip: "给本项目智能体的规矩与须知。从 Fastctx 开始的对话自始带有，压缩后仍保留；修改后，进行中的对话在下次调用 Fastctx 工具时收到新的全文。",
+  whatTip: "本项目里的 Claude Code 与 Codex 都会读到，作用同项目级的 CLAUDE.md 与 AGENTS.md。从 Fastctx 开始的对话自始带有，压缩后仍保留；修改后，进行中的对话在下次调用 Fastctx 工具时收到新的全文。",
   machines: "机器",
   places: "位置",
   machinesPlaces: "机器与位置",
   noMachines: "未选择机器",
   needName: "写一个名称",
-  needWhat: "写几句须知",
+  needWhat: "写几句给智能体看的内容",
+  description: "项目说明",
+  descriptionPlaceholder: "由在项目里干活的智能体撰写并保持最新，也可以在这里改",
+  descriptionTip: "项目现在的完整介绍：是什么、怎样构成、各部分在哪、正在做什么、在什么环境里跑。由在项目里干活的智能体撰写并随时改成最新，每段对话都会读到全文；不放口令，只写口令存在哪里。",
   needMachine: "至少选一台机器",
   addPlace: "位置",
   removePlace: "删除",
@@ -954,15 +961,18 @@ export const enProjectForm: ProjectFormWords = {
   editTitle: (name) => `Edit “${name}”`,
   name: "Name",
   namePlaceholder: "e.g. Mark 50 research",
-  what: "Instructions",
+  what: "Project CLAUDE.md/AGENTS.md",
   whatPlaceholder: "What every agent here reads each time: what this project is for, how to work in it, what to watch out for",
-  whatTip: "Rules and background for every agent in this project. Conversations opened from Fastctx start with them and keep them after compacting; after a change, running conversations get the new text on their next Fastctx tool call.",
+  whatTip: "Read by every Claude Code and Codex in this project, as a project's own CLAUDE.md and AGENTS.md would be. Conversations opened from Fastctx start with it and keep it after compacting; after a change, running conversations get the new text on their next Fastctx tool call.",
   machines: "Machines",
   places: "Locations",
   machinesPlaces: "Machines and locations",
   noMachines: "No machine chosen",
   needName: "Give it a name",
-  needWhat: "Write a few instructions",
+  needWhat: "Write a few lines for the agents",
+  description: "Description",
+  descriptionPlaceholder: "Written and kept current by the agents working in the project; you can change it here too",
+  descriptionTip: "The whole project as it stands: what it is, how it is built and where its parts are, what is under way, the environment it runs in. The agents working in the project write it and keep it current, and every conversation reads all of it; it holds no secrets, only where they are kept.",
   needMachine: "Choose at least one machine",
   addPlace: "Location",
   removePlace: "Delete",
@@ -1325,10 +1335,8 @@ export const zhComposer: ComposerWords = {
       minutes < 1 ? "截至刚刚" : minutes < 60 ? `截至 ${minutes} 分钟前` : minutes < 1440 ? `截至 ${Math.round(minutes / 60)} 小时前` : `截至 ${Math.round(minutes / 1440)} 天前`,
     window: (name) => {
       const minutes = /(\d+)m$/.exec(name);
-      if (minutes) {
-        const m = Number(minutes[1]);
-        return m % 1440 === 0 ? `${m / 1440} 天` : m % 60 === 0 ? `${m / 60} 小时` : `${m} 分钟`;
-      }
+      const m = minutes ? Number(minutes[1]) : 0;
+      if (m > 0) return m % 1440 === 0 ? `${m / 1440} 天` : m % 60 === 0 ? `${m / 60} 小时` : `${m} 分钟`;
       return ({ five_hour: "5 小时", seven_day: "7 天" } as Record<string, string>)[name] ?? name;
     },
     used: (percent) => `已用 ${percent}%`,
@@ -1542,10 +1550,8 @@ export const enComposer: ComposerWords = {
       minutes < 1 ? "as of just now" : minutes < 60 ? `as of ${minutes} min ago` : minutes < 1440 ? `as of ${Math.round(minutes / 60)} h ago` : `as of ${Math.round(minutes / 1440)} d ago`,
     window: (name) => {
       const minutes = /(\d+)m$/.exec(name);
-      if (minutes) {
-        const m = Number(minutes[1]);
-        return m % 1440 === 0 ? `${m / 1440} d` : m % 60 === 0 ? `${m / 60} h` : `${m} min`;
-      }
+      const m = minutes ? Number(minutes[1]) : 0;
+      if (m > 0) return m % 1440 === 0 ? `${m / 1440} d` : m % 60 === 0 ? `${m / 60} h` : `${m} min`;
       return ({ five_hour: "5 h", seven_day: "7 d" } as Record<string, string>)[name] ?? name;
     },
     used: (percent) => `${percent}% used`,

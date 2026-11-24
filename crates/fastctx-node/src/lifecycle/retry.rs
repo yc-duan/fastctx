@@ -457,7 +457,13 @@ fn troubled(node: &Node, id: &ResidentId, error: String) {
 /// step, which `changed` may hurry.
 async fn step(node: &Arc<Node>, id: &ResidentId) -> Option<Duration> {
     node.ready_for(id).await;
-    node.residents.active(id).ok()?;
+    // A deletion under way may yet leave it as it was: what waits for it is
+    // looked at again then, not let go as if it were gone.
+    match node.residents.takes(id) {
+        crate::residents::Takes::Now => {}
+        crate::residents::Takes::Later => return Some(LOOKS_AGAIN),
+        crate::residents::Takes::Never => return None,
+    }
     let (about, _) = node.residents.about(id)?;
     let directory = node.world.conversation(id);
     // Marked as waiting before anything is read: a host that becomes ready

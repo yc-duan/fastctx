@@ -259,6 +259,7 @@ function loginOf(world: WorldNow | null, machine: Pickable, agent: string, side:
     ...(one.auto_title !== undefined ? { autoTitle: one.auto_title } : {}),
     ...(one.models ? { models: one.models.map((model) => model.display_name || model.model || model.id) } : {}),
     ...(one.model_edits && ((one.model_edits.added?.length ?? 0) + (one.model_edits.removed?.length ?? 0) > 0) ? { modelsChanged: true } : {}),
+    ...(one.idle_compaction ? { idle: one.idle_compaction } : {}),
     ...(one.limits.kind === "known" ? { readAt: agoSaid(new Date(one.limits.value.observed_at), now) } : {}),
   };
 }
@@ -277,7 +278,17 @@ function lentOf(world: WorldNow | null, machine: Pickable, agent: string, one: W
   const mine = loginsOf(world?.accounts);
   for (const hub of world?.accounts.hubs ?? []) {
     const assist = hub.assists.find((given) => given.machine === machine.name && given.agent === agent && sameHome(given.home, home) && mine.some((login) => login.hub === hub.hub && login.account === given.account));
-    if (assist) return { by: machine.owner ?? "", limit: limitOf(assist, plate), used: 0, fable: 0, until: assist.until ? momentSaid(new Date(assist.until)) : null, ...(managesOf(assist) ? { manages: true } : {}) };
+    if (assist)
+      return {
+        by: machine.owner ?? "",
+        limit: limitOf(assist, plate),
+        used: 0,
+        fable: 0,
+        until: assist.until ? momentSaid(new Date(assist.until)) : null,
+        ...(managesOf(assist) ? { manages: true } : {}),
+        // The account of mine the login assists, which asks of its machine as itself.
+        as: { hub: hub.hub, account: assist.account },
+      };
   }
   return { by: machine.owner ?? "", limit: null, used: 0, fable: 0, until: null };
 }

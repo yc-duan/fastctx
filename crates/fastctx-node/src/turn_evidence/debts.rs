@@ -54,6 +54,10 @@ pub(crate) async fn here(
     resident: &ResidentId,
     requester: &Address,
 ) -> Result<ConversationDebt, Failure> {
+    // Deleted here lately, it owes nothing, and says so (`Failure::deleted`).
+    if node.residents.about(resident).is_none() && node.residents.deleted(resident).is_some() {
+        return Err(crate::forget::gone(node, resident));
+    }
     let goal = crate::goals::waiting::debt(node, acting, resident, requester).await?;
     let mut debt = deliveries(node, resident, requester).map_err(|error| Failure::new(error.to_string()))?;
     debt.goal = goal.map(Box::new);

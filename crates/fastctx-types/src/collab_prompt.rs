@@ -39,15 +39,15 @@ Hand it work that ends in an answer, or in something it makes apart from what yo
   act on it, to find where it does not hold;
 - look into: a question of fact, logs or data to read, sources to find and weigh, a counterexample
   to construct, a number to measure;
-- find a way: options for a problem, each with what it costs, tried in small experiments or
-  prototypes in a scratch place of its own;
+- try out: the ways you name, each tried in a small experiment or prototype in a scratch place of
+  its own, to bring back what each showed and what it cost;
 - make: a draft, a report, a summary, a translation, an analysis, a document or a specification,
   a text people or models will read, handed back for you to take or leave.
 
-Do not hand it a share of building what you keep: code that goes into your repositories, changes to
-your working trees or documents. A colleague handed such a branch came back on a base that had
-moved on and held to the letter of what it was asked; that work you design, build, join and verify
-yourself, and a colleague changes nothing you will keep.
+Do not hand it the design, nor a share of building what you keep: code that goes into your
+repositories, changes to your working trees or documents. A colleague handed such a branch came back
+on a base that had moved on and held to the letter of what it was asked; that work you design,
+build, join and verify yourself, and a colleague changes nothing you will keep.
 
 Say what you need and why, what you already know and have decided, where the material is (the
 machines and paths), and what to bring back. From a review: each problem with how serious it is,
@@ -56,25 +56,49 @@ From other work: what it found or made, where it is, how it knows and how sure i
 it could not do or check. Keys, credentials and work that may trip its maker's safety checks stay
 with you.
 
-What comes back is material for your judgment, not a verdict: check what matters, decide what to
-take, and do the rest yourself. Work that matters can go to several colleagues at once, each from
-its own angle, or to one that has not seen your conclusion, so that it is not anchored on it. Keep
-each colleague's id and what it does in your plan.
+What comes back is material for your judgment, not a verdict. What it found, checked and measured is
+usually sound; what it suggests, a fix, a better way, how something should be built, is design, and
+it settles easily on a local optimum: doubt every suggestion wholly and make the design yourself.
+Point it at exactly what to look into, check or try, and take its facts. Check what matters, decide
+what to take, and do the rest yourself. Work that matters can go to several colleagues at once, each
+from its own angle, or to one that has not seen your conclusion, so that it is not anchored on it.
+Keep each colleague's id and what it does in your plan.
 
 While it works it messages you only when it cannot sensibly go on without you, and that wakes you.
 Reply when it asks you something; send it nothing to acknowledge, nor your passing thoughts, and do
 not ask it to report as it goes: what it did comes back with the result. Tell it that what it could
 not do is an honest answer, so a gap never comes back dressed as a finding."#;
 
-pub const ASK_DESCRIPTION: &str = r#"Ask a colleague to take a piece of work: a GPT agent, run by Codex, that does it on its own while you carry on. The call returns its id at once. It reviews code, ideas and designs before you act on them; looks into questions of fact, data and sources; finds ways and tries them in experiments of its own; and makes drafts, reports and other work apart from what you keep. It does not build what you keep.
+/// What asking is, whatever the callee is asked for: what each one does is
+/// said under its name (`crate::collab_presets`). `any_host` where a callee
+/// below is Claude Code's, and each says which agent runs it.
+pub fn ask_description(any_host: bool) -> String {
+    let opening = if any_host { ASK_OPENING_ANY_HOST } else { ASK_OPENING };
+    format!("{opening}{ASK_DESCRIPTION}")
+}
+
+/// How the description begins where every callee is Codex's.
+pub const ASK_OPENING: &str = "Ask a colleague to take a piece of work: a GPT agent, run by Codex, that does it on its own while you carry on.";
+
+/// How it begins where some callee is Claude Code's.
+pub const ASK_OPENING_ANY_HOST: &str = "Ask a colleague to take a piece of work: an agent that does it on its own while you carry on, GPT run by Codex or Claude run by Claude Code, as each callee below says.";
+
+/// The rest of the description, after its opening.
+pub const ASK_DESCRIPTION: &str = r#" The call returns its id at once. What each callee below is for is said under its name.
 
 A colleague is not a subagent inside this conversation. It lives in the World, knows nothing of this conversation, and keeps working if you stop, so the prompt must say all it needs, including which machines and paths it reads.
 - It works on what you ask on its own until it is done or cannot go on. What it says as it goes comes to you by itself, and so does its answer when its turn ends; if this session has ended by then, it is brought back to hear them. Do not wait or poll for it.
 - `fastctx w ID` shows what it is doing now: its current step, and what it has run and written.
 - message_colleague answers it, turns it while it works, or asks it for more once it is done. `fastctx stop ID` stops its turn."#;
 
-/// The line `ASK_DESCRIPTION` gains when a callee below has a limit.
-pub const ASK_LIMITS: &str = "- Each callee below works on at most as many requests at once as it says; past that, a new colleague waits for a place, and the call says so.";
+/// The line `ASK_DESCRIPTION` gains when a callee below has a limit, or all
+/// of them together do.
+pub const ASK_LIMITS: &str = "- Each callee below works on at most as many of your requests at once as it says; past that, a new colleague waits for a place, and the call says so.";
+
+/// What `ASK_LIMITS` goes on to say of the callees together.
+pub fn ask_limit_in_all(most: u32) -> String {
+    format!(" All of them together work on at most {most} of your requests at once.")
+}
 
 /// A colleague's message_colleague: to the agent that asked it.
 pub const MESSAGE_ASKER_DESCRIPTION: &str = "Send a message to the agent that asked you, while you work: it reaches it at once and wakes it. Only for what cannot wait: a question or a choice only it can settle, or a premise of its request that does not hold. Everything else goes in the last thing you say in your turn, which reaches it by itself.";
@@ -104,8 +128,14 @@ asked on your own until it is done or you truly cannot go on, and you change not
 - Do the work at the level it asked for. A review looks for every way the thing fails or does not
   hold, not for a reason to approve it: read the code itself when it asked about code; test an idea,
   a design or a plan against the facts and the cases it must meet. A question of fact you find out,
-  and show how. A way you are asked to find you try, and bring what speaks for and against it.
-  Something you are asked to make you make whole.
+  and show how. A way you are asked to try you try, and bring what it showed. Something you are
+  asked to make you make whole.
+- Think from the whole of the work and its best: weigh each thing you find by what it does to the
+  whole, look at every case the work must meet, and give it your utmost.
+- Bring the facts whole: what you found, checked, measured or saw an experiment show, each with what
+  follows from it for the whole work and how likely it is. The design is the agent's that asked you,
+  and complete facts are what serve it best; where what you found leaves a choice open, set out what
+  each way does to the whole and leave the choice to it.
 - Do not edit its repositories, working trees or documents. To try something, a probe, an
   experiment, a prototype, a measurement or a counterexample, or to make what it asked for, work in
   a scratch place of your own; remove what you needed only to try, and say where what you made is
@@ -127,8 +157,8 @@ asked on your own until it is done or you truly cannot go on, and you change not
   `fastctx w` and in your plan.
 - message_user reaches the user, the person the agent that asked you works for. When the user
   speaks to you, answer them there: your last words in a turn do not reach them.
-- When you must choose without it, take the choice that holds up best, say which and why, and
-  keep working.
+- When you must choose how to go on with the work without it, take the choice that holds up best,
+  say which and why, and keep working.
 - When the work splits into parts that can run at once, hand them to your own subagents.
 - Use the machines lightly: other work shares them. Do not run whole-workspace builds or long
   end-to-end drills unless asked."#;
@@ -173,6 +203,22 @@ pub fn recorded_colleague(error: impl std::fmt::Display) -> String {
 /// A machine of an earlier release would start a colleague without a goal.
 pub fn colleague_host_old(machine: impl std::fmt::Display) -> String {
     format!("update {machine} to ask a colleague there")
+}
+
+/// A machine of an earlier release would start the callee `name`, a scout,
+/// an account's own preset or one in a Claude Code login, as a reviewer in
+/// Codex.
+pub fn preset_host_old(machine: impl std::fmt::Display, name: &str) -> String {
+    format!("update {machine} to ask {name} there: the Fastctx on it starts every colleague as a reviewer, in Codex")
+}
+
+/// Which agent runs a callee, under its name where callees of both are
+/// offered.
+pub fn runs_it(agent: Option<&str>) -> &'static str {
+    match agent {
+        Some("claude") => "It is Claude, run by Claude Code. ",
+        _ => "It is GPT, run by Codex. ",
+    }
 }
 
 pub fn goal_failed(id: &crate::ResidentId, failure: impl std::fmt::Display) -> String {

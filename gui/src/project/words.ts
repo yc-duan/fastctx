@@ -17,6 +17,9 @@ export interface ProjectWords {
   /** What the user wrote for every agent working in the project. */
   instructions: string;
   noInstructions: string;
+  /** What the agents working in the project keep of it as it stands. */
+  standing: string;
+  noStanding: string;
   /** What the mark of a conversation waiting for the user means, where the
    *  pointer rests on it. */
   needAsked: string;
@@ -86,8 +89,10 @@ export const zhProject: ProjectWords = {
   decisionsUnreadable: failure(zhProblems, "无法读取定论"),
   places: "位置",
   noPlaces: "暂无位置",
-  instructions: "须知",
-  noInstructions: "暂无须知",
+  instructions: "项目 CLAUDE.md/AGENTS.md",
+  noInstructions: "暂无内容",
+  standing: "项目说明",
+  noStanding: "智能体还没写",
   nowTab: "此刻",
   referenceTab: "资料",
   needAsked: "等待回复",
@@ -139,8 +144,10 @@ export const enProject: ProjectWords = {
   decisionsUnreadable: failure(enProblems, "Could not read decisions"),
   places: "Locations",
   noPlaces: "No locations yet",
-  instructions: "Instructions",
-  noInstructions: "No instructions yet",
+  instructions: "Project CLAUDE.md/AGENTS.md",
+  noInstructions: "Nothing written yet",
+  standing: "Description",
+  noStanding: "Not written by the agents yet",
   nowTab: "Now",
   referenceTab: "Reference",
   needAsked: "Asks you",

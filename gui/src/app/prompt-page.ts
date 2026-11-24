@@ -61,13 +61,13 @@ export class PromptPage implements Page {
 
   constructor(private readonly options: PromptPageOptions) {
     const { words } = options;
-    this.title = words.prompt.title(options.name);
+    this.title = words.prompt.title(options.name, options.agent);
     this.account = new AccountChoice(words, (login) => void this.load(login));
     this.element = document.createElement("div");
     this.element.className = "prof-page prompt-page";
     // Its way back names the family, and where that keeps its arrow alone,
     // as on a phone, the head does (`profile.css`).
-    this.element.innerHTML = `${options.head(`<h1 class="page-title"><span class="pp-of">${escape(words.prompt.of(options.name))}</span>${escape(words.sections.prompt)}</h1><span class="prof-account-place"></span>`)}
+    this.element.innerHTML = `${options.head(`<h1 class="page-title"><span class="pp-of">${escape(words.prompt.of(options.name))}</span>${escape(words.prompt.named[options.agent])}</h1><span class="prof-account-place"></span>`)}
       <div class="prof-body"></div>`;
     this.element.querySelector(".prof-account-place")!.replaceWith(this.account.element);
     this.body = this.element.querySelector<HTMLElement>(".prof-body")!;

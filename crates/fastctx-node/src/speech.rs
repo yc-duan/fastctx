@@ -112,13 +112,18 @@ pub async fn tell_here(node: &Arc<Node>, to: &ResidentId, delivery: Delivery, ow
 }
 
 async fn tell_here_now(node: &Arc<Node>, to: &ResidentId, delivery: Delivery, owed: Owed) -> Result<Landed, Failure> {
+    // Give interactive input a recovery slot. Keep words in their arrival
+    // order during recovery; handing them to the host waits until it ends.
+    if crate::timeline::words::is_words(&delivery) {
+        node.startup.request_input(to);
+    }
     let actions = crate::control_queue::gate(node, to);
     let _action = if delivery.notice.along().is_none() {
         Some(crate::gate_waits::action(node, to, &actions).await?)
     } else {
         None
     };
-    if _action.is_some() && node.residents.active(to).is_ok() {
+    if _action.is_some() && node.startup.is_ready(to) && node.residents.active(to).is_ok() {
         crate::control_queue::drain(node, to).await?;
     }
     let gate = node.residents.management(to)?;
@@ -181,7 +186,7 @@ pub(crate) async fn tell_completion(node: &Arc<Node>, to: &ResidentId, delivery:
 async fn tell_completion_now(node: &Arc<Node>, to: &ResidentId, delivery: Delivery) -> Result<Landed, Failure> {
     let actions = crate::control_queue::gate(node, to);
     let _action = actions.lock().await;
-    if node.residents.active(to).is_ok() {
+    if node.startup.is_ready(to) && node.residents.active(to).is_ok() {
         crate::control_queue::drain(node, to).await?;
     }
     let gate = node.residents.management(to)?;
@@ -478,7 +483,12 @@ async fn hand_over_locked(
     let Some(_answering) = node.handoff.call() else {
         return Ok(Landed::Waiting { why: Some(crate::handoff::WAITING.into()), answered: answered(node, to, about) });
     };
-    node.ready_for(to).await;
+    if !node.startup.is_ready(to) {
+        // Some callers already held the conversation's gates to keep this
+        // input. Its retry waits for recovery with neither gate held.
+        crate::lifecycle::retry::kick(node, to);
+        return Ok(Landed::Waiting { why: None, answered: answered(node, to, about) });
+    }
     node.residents.active(to)?;
     // While a long control runs in the host, words wait in the inbox; they
     // go in as it ends (`control_long`).

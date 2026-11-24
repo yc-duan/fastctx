@@ -7,7 +7,8 @@
 //! into that account: whole when the account has none yet; otherwise the
 //! account keeps its switch, its text for callers and its rules, and this
 //! computer's callers and callees join its own, a callee whose name the
-//! account already uses taking the first free `name-N`. What it kept stays
+//! account already uses taking the first free `name-N`; a preset kept while
+//! off joins those the account keeps so. What it kept stays
 //! beside the World as `collab.carried.json`. When it leaves its last
 //! network, the settings of the account it was registered under, as far as
 //! they name its own logins, become its own again.
@@ -67,7 +68,7 @@ pub(crate) fn write(node: &Node, mut collab: Collab) -> Result<u64, Failure> {
     }
     collab.validate().map_err(Failure::not_run)?;
     let here = node.machine();
-    let logins = collab.callers.iter().chain(collab.callees.iter().map(|callee| &callee.login));
+    let logins = collab.callers.iter().chain(collab.kept().map(|callee| &callee.login));
     if let Some(other) = logins.map(|login| &login.machine).find(|machine| !node.is_me(machine)) {
         return Err(Failure::not_run(format!(
             "{other} is not this computer, {here}: a computer in no network calls and is called only by its own logins"
@@ -104,7 +105,7 @@ fn renamed(mut collab: Collab, here: &MachineName) -> Collab {
     for caller in &mut collab.callers {
         caller.machine = here.clone();
     }
-    for callee in &mut collab.callees {
+    for callee in collab.callees.iter_mut().chain(collab.shelved.iter_mut().flatten()) {
         callee.login.machine = here.clone();
     }
     collab
@@ -129,26 +130,33 @@ fn merge(node: &Node, account: Option<Collab>, own: Collab) -> Result<(Collab, S
             added.0 += 1;
         }
     }
-    for mut callee in own.callees {
+    let own_on = own.callees.into_iter().map(|callee| (callee, true));
+    let own_off = own.shelved.into_iter().flatten().map(|callee| (callee, false));
+    for (mut callee, on) in own_on.chain(own_off) {
         let mut present = false;
-        for existing in &merged.callees {
+        for existing in merged.kept() {
             present |= existing.name == callee.name
                 && existing.model == callee.model
                 && existing.effort == callee.effort
+                && existing.preset == callee.preset
                 && same_login(node, &existing.login, &callee.login)?;
         }
         if present {
             continue;
         }
-        if merged.callees.iter().any(|existing| existing.name == callee.name) {
+        if merged.kept().any(|existing| existing.name == callee.name) {
             let name = (2..)
                 .map(|n| format!("{}-{n}", callee.name))
-                .find(|name| merged.callees.iter().all(|existing| existing.name != *name))
+                .find(|name| merged.kept().all(|existing| existing.name != *name))
                 .expect("a free name");
             renamed.push(format!("{} as {name}", callee.name));
             callee.name = name;
         }
-        merged.callees.push(callee);
+        if on {
+            merged.callees.push(callee);
+        } else {
+            merged.shelved.get_or_insert_default().push(callee);
+        }
         added.1 += 1;
     }
     let mut line = format!(
@@ -238,6 +246,9 @@ pub(crate) fn take_back(node: &Node, link: &Link) {
     let own = Collab {
         callers: collab.callers.into_iter().filter(|caller| view.is_me(&caller.machine)).collect(),
         callees: collab.callees.into_iter().filter(|callee| view.is_me(&callee.login.machine)).collect(),
+        shelved: collab
+            .shelved
+            .map(|shelved| shelved.into_iter().filter(|callee| view.is_me(&callee.login.machine)).collect()),
         ..collab
     };
     match keep(&path, &own) {

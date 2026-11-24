@@ -229,6 +229,9 @@ pub(crate) async fn collect(
                     }
                     Ok::<_, Failure>(handles)
                 }
+                // A colleague deleted since owes nothing: nothing more will
+                // come of it.
+                Err(error) if error.is_deleted() => Ok(Vec::new()),
                 Err(error) => Ok(vec![unknown(
                     colleague.resident.to_string(),
                     WaitKind::Colleague,

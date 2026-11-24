@@ -12095,6 +12095,7 @@
                 "version": 2,
                 "name": "Example project 世界",
                 "what": "Exercise the ledger contract",
+                "description": "Where the project stands, as its agents keep it",
                 "machines": [
                   "desktop",
                   "laptop"
@@ -12128,6 +12129,7 @@
                 "version": 3,
                 "name": "Example project 世界",
                 "what": "Exercise the ledger contract",
+                "description": "Where the project stands, as its agents keep it",
                 "machines": [
                   "desktop",
                   "laptop"
@@ -12158,6 +12160,7 @@
                 "version": 4,
                 "name": "Example project 世界",
                 "what": "Exercise the ledger contract",
+                "description": "Where the project stands, as its agents keep it",
                 "machines": [
                   "desktop",
                   "laptop"
@@ -12187,6 +12190,7 @@
                 "version": 5,
                 "name": "Example project 世界",
                 "what": "Exercise the ledger contract",
+                "description": "Where the project stands, as its agents keep it",
                 "machines": [
                   "desktop",
                   "laptop"
@@ -12240,6 +12244,10 @@
                     "model": null,
                     "acting": {
                       "kind": "here"
+                    },
+                    "idle_compaction": {
+                      "on": true,
+                      "after_minutes": 30
                     }
                   },
                   "town": null,
@@ -12337,6 +12345,10 @@
                         }
                       ]
                     },
+                    "idle_compaction": {
+                      "on": true,
+                      "after_minutes": 30
+                    },
                     "home": "C:/Users/ada/.codex-work"
                   },
                   "town": "project-0",
@@ -12422,6 +12434,10 @@
                           "account": "ada"
                         }
                       ]
+                    },
+                    "idle_compaction": {
+                      "on": true,
+                      "after_minutes": 30
                     }
                   },
                   "town": "project-0",
@@ -12546,6 +12562,10 @@
                     "model": null,
                     "acting": {
                       "kind": "here"
+                    },
+                    "idle_compaction": {
+                      "on": true,
+                      "after_minutes": 30
                     }
                   },
                   "town": null,
@@ -12664,6 +12684,10 @@
                     "model": null,
                     "acting": {
                       "kind": "here"
+                    },
+                    "idle_compaction": {
+                      "on": true,
+                      "after_minutes": 30
                     }
                   },
                   "town": null,
@@ -13782,6 +13806,10 @@
                     "model": null,
                     "acting": {
                       "kind": "here"
+                    },
+                    "idle_compaction": {
+                      "on": true,
+                      "after_minutes": 30
                     }
                   },
                   "town": null,
@@ -13879,6 +13907,10 @@
                         }
                       ]
                     },
+                    "idle_compaction": {
+                      "on": true,
+                      "after_minutes": 30
+                    },
                     "home": "C:/Users/ada/.codex-work"
                   },
                   "town": "project-0",
@@ -13964,6 +13996,10 @@
                           "account": "ada"
                         }
                       ]
+                    },
+                    "idle_compaction": {
+                      "on": true,
+                      "after_minutes": 30
                     }
                   },
                   "town": "project-0",
@@ -14088,6 +14124,10 @@
                     "model": null,
                     "acting": {
                       "kind": "here"
+                    },
+                    "idle_compaction": {
+                      "on": true,
+                      "after_minutes": 30
                     }
                   },
                   "town": null,
@@ -14206,6 +14246,10 @@
                     "model": null,
                     "acting": {
                       "kind": "here"
+                    },
+                    "idle_compaction": {
+                      "on": true,
+                      "after_minutes": 30
                     }
                   },
                   "town": null,
@@ -14323,6 +14367,10 @@
                     "model": null,
                     "acting": {
                       "kind": "here"
+                    },
+                    "idle_compaction": {
+                      "on": true,
+                      "after_minutes": 30
                     }
                   },
                   "town": null,
@@ -14420,6 +14468,10 @@
                         }
                       ]
                     },
+                    "idle_compaction": {
+                      "on": true,
+                      "after_minutes": 30
+                    },
                     "home": "C:/Users/ada/.codex-work"
                   },
                   "town": "project-0",
@@ -14505,6 +14557,10 @@
                           "account": "ada"
                         }
                       ]
+                    },
+                    "idle_compaction": {
+                      "on": true,
+                      "after_minutes": 30
                     }
                   },
                   "town": "project-0",
@@ -14629,6 +14685,10 @@
                     "model": null,
                     "acting": {
                       "kind": "here"
+                    },
+                    "idle_compaction": {
+                      "on": true,
+                      "after_minutes": 30
                     }
                   },
                   "town": null,
@@ -14747,6 +14807,10 @@
                     "model": null,
                     "acting": {
                       "kind": "here"
+                    },
+                    "idle_compaction": {
+                      "on": true,
+                      "after_minutes": 30
                     }
                   },
                   "town": null,
@@ -14835,6 +14899,7 @@
         "machine": "desktop",
         "facts": {
           "goal_colleagues": true,
+          "colleague_presets": true,
           "goal_waits": true,
           "goal_questions": true,
           "goal_question_words": true,
@@ -15006,6 +15071,7 @@
         "machine": "desktop",
         "facts": {
           "goal_colleagues": true,
+          "colleague_presets": true,
           "goal_waits": true,
           "goal_questions": true,
           "goal_question_words": true,
@@ -15179,6 +15245,7 @@
         "machine": "desktop",
         "facts": {
           "goal_colleagues": true,
+          "colleague_presets": true,
           "goal_waits": true,
           "goal_questions": true,
           "goal_question_words": true,
@@ -15352,6 +15419,7 @@
         "machine": "desktop",
         "facts": {
           "goal_colleagues": true,
+          "colleague_presets": true,
           "goal_waits": true,
           "goal_questions": true,
           "goal_question_words": true,
@@ -15524,6 +15592,7 @@
         "machine": "desktop",
         "facts": {
           "goal_colleagues": true,
+          "colleague_presets": true,
           "goal_waits": true,
           "goal_questions": true,
           "goal_question_words": true,
@@ -15697,6 +15766,7 @@
         "machine": "desktop",
         "facts": {
           "goal_colleagues": true,
+          "colleague_presets": true,
           "goal_waits": true,
           "goal_questions": true,
           "goal_question_words": true,
@@ -15873,6 +15943,7 @@
         "machine": "desktop",
         "facts": {
           "goal_colleagues": true,
+          "colleague_presets": true,
           "goal_waits": true,
           "goal_questions": true,
           "goal_question_words": true,
@@ -16050,6 +16121,7 @@
         "machine": "desktop",
         "facts": {
           "goal_colleagues": true,
+          "colleague_presets": true,
           "goal_waits": true,
           "goal_questions": true,
           "goal_question_words": true,
@@ -16227,6 +16299,7 @@
         "machine": "desktop",
         "facts": {
           "goal_colleagues": true,
+          "colleague_presets": true,
           "goal_waits": true,
           "goal_questions": true,
           "goal_question_words": true,
@@ -16403,6 +16476,7 @@
         "machine": "desktop",
         "facts": {
           "goal_colleagues": true,
+          "colleague_presets": true,
           "goal_waits": true,
           "goal_questions": true,
           "goal_question_words": true,
@@ -16630,6 +16704,7 @@
           "version": 2,
           "name": "Example project 世界",
           "what": "Exercise the ledger contract",
+          "description": "Where the project stands, as its agents keep it",
           "machines": [
             "desktop",
             "laptop"
@@ -16663,6 +16738,7 @@
           "version": 3,
           "name": "Example project 世界",
           "what": "Exercise the ledger contract",
+          "description": "Where the project stands, as its agents keep it",
           "machines": [
             "desktop",
             "laptop"
@@ -16693,6 +16769,7 @@
           "version": 4,
           "name": "Example project 世界",
           "what": "Exercise the ledger contract",
+          "description": "Where the project stands, as its agents keep it",
           "machines": [
             "desktop",
             "laptop"
@@ -16722,6 +16799,7 @@
           "version": 5,
           "name": "Example project 世界",
           "what": "Exercise the ledger contract",
+          "description": "Where the project stands, as its agents keep it",
           "machines": [
             "desktop",
             "laptop"
@@ -20127,6 +20205,17 @@
         "change": {
           "do": "reset"
         }
+      },
+      {
+        "call": "set_idle_compaction",
+        "machine": "desktop",
+        "agent": "codex",
+        "dir": "C:/Users/me/.codex",
+        "setting": {
+          "on": true,
+          "after_minutes": 45,
+          "min_tokens": 200000
+        }
       }
     ],
     "replies": [
@@ -20230,6 +20319,11 @@
                         ]
                       }
                     ],
+                    "idle_compaction": {
+                      "on": true,
+                      "after_minutes": 50,
+                      "min_tokens": 100000
+                    },
                     "change": {
                       "into": true,
                       "started_at": "2026-10-11T12:00:00Z",
@@ -20611,6 +20705,11 @@
                   ]
                 }
               ],
+              "idle_compaction": {
+                "on": true,
+                "after_minutes": 50,
+                "min_tokens": 100000
+              },
               "change": {
                 "into": true,
                 "started_at": "2026-10-11T12:00:00Z",
@@ -21012,6 +21111,16 @@
         }
       },
       {
+        "call": "set_idle_compaction",
+        "agent": "claude",
+        "dir": "/home/me/.claude-work",
+        "setting": {
+          "on": false,
+          "after_minutes": 50,
+          "min_tokens": 100000
+        }
+      },
+      {
         "call": "preview_agent_change",
         "agent": "claude",
         "dir": "/home/me/.claude-work",
@@ -21126,6 +21235,11 @@
                   ]
                 }
               ],
+              "idle_compaction": {
+                "on": true,
+                "after_minutes": 50,
+                "min_tokens": 100000
+              },
               "change": {
                 "into": true,
                 "started_at": "2026-10-11T12:00:00Z",
@@ -21615,7 +21729,8 @@
               "do": "compact"
             },
             "at": "2026-10-21T00:00:00Z",
-            "state": "waiting"
+            "state": "waiting",
+            "automatic": true
           }
         ],
         "pending_newer": [
@@ -23781,6 +23896,27 @@
         }
       },
       {
+        "call": "manage",
+        "resident": "codex-ab12",
+        "machine": "desktop",
+        "action": {
+          "do": "idle_compaction",
+          "choice": {
+            "on": false,
+            "min_tokens": 200000
+          }
+        }
+      },
+      {
+        "call": "manage",
+        "resident": "codex-ab12",
+        "machine": "desktop",
+        "action": {
+          "do": "idle_compaction",
+          "choice": {}
+        }
+      },
+      {
         "call": "forget",
         "resident": "codex-ab12",
         "machine": "desktop"
@@ -23856,6 +23992,25 @@
               }
             ]
           }
+        }
+      },
+      {
+        "call": "manage",
+        "resident": "codex-ab12",
+        "action": {
+          "do": "idle_compaction",
+          "choice": {
+            "on": false,
+            "min_tokens": 200000
+          }
+        }
+      },
+      {
+        "call": "manage",
+        "resident": "codex-ab12",
+        "action": {
+          "do": "idle_compaction",
+          "choice": {}
         }
       }
     ],

@@ -283,15 +283,49 @@ pub(crate) fn actions_version(path: &Path) -> io::Result<u64> {
             .unwrap_or(0) as u64)
     })
 }
+/// The conversation's asks of colleagues, the newest first; with `target`, of
+/// that colleague alone.
+const ASKED: &str = "SELECT body FROM conversation_records INDEXED BY conversation_records_action WHERE conversation=?1 AND family='actions' AND json_extract(body,'$.hand')='ask_colleague' AND (?2 IS NULL OR json_extract(body,'$.result')=?2) ORDER BY position DESC";
+
 pub(crate) fn asked(path: &Path, target: Option<&str>) -> io::Result<Vec<Action>> {
     let directory = directory(path)?;
     prepare(&directory, "actions")?;
     records::read(&directory, |rows| {
-        let mut query=rows.connection().prepare_cached("SELECT body FROM conversation_records INDEXED BY conversation_records_action WHERE conversation=?1 AND family='actions' AND json_extract(body,'$.hand')='ask_colleague' AND (?2 IS NULL OR json_extract(body,'$.result')=?2) ORDER BY position DESC")?;
+        let mut query = rows.connection().prepare_cached(ASKED)?;
         query
             .query_map((rows.conversation(), target), |row| row.get::<_, Vec<u8>>(0))?
             .map(|row| records::decode(&row?))
             .collect()
+    })
+}
+
+/// Where a colleague was asked and who it is, as an ask's action records it.
+#[derive(serde::Deserialize)]
+struct Asked {
+    machine: fastctx_types::MachineName,
+    result: String,
+}
+
+/// Every colleague the conversation asked, its machine and its id as `asked`
+/// reads them, of a record missing what else an action holds too; one
+/// without those two is passed over and counted.
+pub(crate) fn asked_readable(path: &Path) -> io::Result<(Vec<(fastctx_types::MachineName, String)>, usize)> {
+    let directory = directory(path)?;
+    prepare(&directory, "actions")?;
+    records::read(&directory, |rows| {
+        let mut query = rows.connection().prepare_cached(ASKED)?;
+        let bodies = query
+            .query_map((rows.conversation(), None::<&str>), |row| row.get::<_, Vec<u8>>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut asked = Vec::with_capacity(bodies.len());
+        let mut unread = 0;
+        for body in bodies {
+            match records::decode::<Asked>(&body) {
+                Ok(Asked { machine, result }) => asked.push((machine, result)),
+                Err(_) => unread += 1,
+            }
+        }
+        Ok((asked, unread))
     })
 }
 

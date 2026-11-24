@@ -10,6 +10,9 @@
 // conversation that made it works for an assisted account; a conversation
 // is named only to the one it belongs to.
 
+import type { IdleCompaction } from "../world/logins";
+import type { RetentionAnswer } from "../world/retention";
+
 export type Family = string;
 const named: Record<string, string> = { claude: "Claude Code", codex: "Codex", antigravity: "Antigravity", cursor: "Cursor", opencode: "OpenCode" };
 export const familyName = (family: Family): string => named[family] ?? family;
@@ -84,7 +87,7 @@ export interface Login {
    *  it assists, my own among them, and may have no limit; otherwise I see
    *  only my part. `used` and `fable` are what I used, of a hundred of its
    *  week. */
-  lent?: { by: string; limit: number | null; used: number; fable: number; until: string | null; manages?: boolean };
+  lent?: { by: string; limit: number | null; used: number; fable: number; until: string | null; manages?: boolean; as?: { hub: string; account: string } };
   /** What keeps it from working: logged out, its program too old, its
    *  connection changed by hand, a change under way. */
   loggedOut?: boolean;
@@ -98,6 +101,9 @@ export interface Login {
   /** The models a conversation in it starts on; whether they were changed. */
   models?: string[];
   modelsChanged?: boolean;
+  /** Compacting conversations idle a while, as the reader set it for this
+   *  login; absent where they never did. */
+  idle?: IdleCompaction;
   /** When its windows were last read, as the page says it. */
   readAt?: string;
   /** Whether its machine takes direct connections: the machines of those
@@ -293,6 +299,14 @@ export interface Deeds {
   reread(login: Login): void;
   models(login: Login): void;
   autoTitle(login: Login, on: boolean): Promise<void>;
+  /** Compacting the reader's idle conversations in it: turned on or off,
+   *  or its conditions changed in a sheet of their own. */
+  idleOn(login: Login, on: boolean): Promise<void>;
+  idle(login: Login): void;
+  /** How long the machine of a login lent to the reader keeps their idle
+   *  conversations: read, or set fewer days than its owner's for their own
+   *  (`null` follows the owner's). */
+  retention?(login: Login, days?: number | null): Promise<RetentionAnswer>;
   plan(login: Login, plan: PlanLabel | null): Promise<void>;
   /** What the owner expects the login's week to hold, and its reach. */
   expect(login: Login, expect: Expect): Promise<void>;

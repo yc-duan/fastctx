@@ -28,8 +28,10 @@ export interface ProfileWords {
   /** When what is saved reaches the sessions, said on hover. */
   takesEffect: string;
   prompt: {
+    /** What the prompt is to a family: the file it stands for. */
+    named: Record<"claude" | "codex", string>;
     /** The page of one family's prompt. */
-    title(agent: string): string;
+    title(agent: string, family: "claude" | "codex"): string;
     /** Before its name, where its way back names no family. */
     of(agent: string): string;
     placeholder(agent: string): string;
@@ -255,8 +257,12 @@ export interface ProfileWords {
   };
 }
 
+/** The file a family's prompt stands for, in the words of each language. */
+const zhPromptNamed = { claude: "全局 CLAUDE.md", codex: "全局 AGENTS.md" };
+const enPromptNamed = { claude: "Global CLAUDE.md", codex: "Global AGENTS.md" };
+
 export const zhProfile: ProfileWords = {
-  sections: { claude: "Claude Code", codex: "Codex", prompt: "提示词", skills: "技能", mcp: "MCP" },
+  sections: { claude: "Claude Code", codex: "Codex", prompt: "全局 CLAUDE.md / AGENTS.md", skills: "技能", mcp: "MCP" },
   tabs: { logins: "登录", prefs: "偏好" },
   account: "账号",
   olderHub: "本网络的中枢服务器需先升级",
@@ -268,13 +274,14 @@ export const zhProfile: ProfileWords = {
   changedElsewhere: "已在别处修改",
   takesEffect: "新对话立即生效；已打开的对话在下次唤醒时生效",
   prompt: {
-    title: (agent) => `${agent} 的提示词`,
+    named: zhPromptNamed,
+    title: (agent, family) => `${agent} 的${zhPromptNamed[family]}`,
     of: (agent) => `${agent} 的`,
-    placeholder: (agent) => `写给 ${agent} 的提示词`,
+    placeholder: (agent) => `写给为你工作的 ${agent}`,
     save: "保存",
     reaches: (agent) => `为你工作的 ${agent} 均会读取；运行中的对话在下次调用 Fastctx 工具时生效`,
     none: "无",
-    olderHub: "本网络的中枢服务器需先升级，才能分别设置两者的提示词",
+    olderHub: "本网络的中枢服务器需先升级，才能分别设置 CLAUDE.md 与 AGENTS.md",
     size: (used, most) => `${used} / ${most}`,
     tooLong: "太长了",
   },
@@ -456,7 +463,7 @@ export const zhProfile: ProfileWords = {
 };
 
 export const enProfile: ProfileWords = {
-  sections: { claude: "Claude Code", codex: "Codex", prompt: "Prompt", skills: "Skills", mcp: "MCP" },
+  sections: { claude: "Claude Code", codex: "Codex", prompt: "Global CLAUDE.md / AGENTS.md", skills: "Skills", mcp: "MCP" },
   tabs: { logins: "Logins", prefs: "Preferences" },
   account: "Account",
   olderHub: "This network's server needs updating first",
@@ -468,13 +475,14 @@ export const enProfile: ProfileWords = {
   changedElsewhere: "Changed elsewhere",
   takesEffect: "New conversations take it at once; open ones at their next wake",
   prompt: {
-    title: (agent) => `${agent} prompt`,
+    named: enPromptNamed,
+    title: (agent, family) => `${agent} ${enPromptNamed[family]}`,
     of: (agent) => `${agent} `,
     placeholder: (agent) => `To ${agent} working for you`,
     save: "Save",
     reaches: (agent) => `${agent} reads it wherever it works for you; one at work takes it at its next call to the World's tools`,
     none: "None",
-    olderHub: "This network's hub server needs an update before each agent can have its own prompt",
+    olderHub: "This network's hub server needs an update before CLAUDE.md and AGENTS.md can be set apart",
     size: (used, most) => `${used} / ${most}`,
     tooLong: "Too long",
   },

@@ -982,6 +982,10 @@ pub struct View {
     /// earlier one writes it away.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub family_prompts: bool,
+    /// The hub keeps the presets of model collaboration (`Callee::preset`,
+    /// `Collab::shelved`); an earlier one writes them away.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub collab_presets: bool,
     /// Whether this hub keeps the network's versions: it takes
     /// `Up::Versions`, answers `Question::Package`, takes `Change::Updates`
     /// and the data connections of packages. Earlier hubs omit it, and would
@@ -1097,6 +1101,7 @@ impl View {
             goal_commands: false,
             subagents: false,
             family_prompts: false,
+            collab_presets: false,
             versions: false,
             package_progress: false,
             due: false,

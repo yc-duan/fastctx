@@ -13,7 +13,6 @@ mod apart;
 pub(crate) mod direct;
 mod hand_back;
 mod lines;
-pub(crate) mod activity;
 pub(crate) mod copies;
 pub(crate) mod logs;
 pub(crate) mod membership;
@@ -25,7 +24,6 @@ pub(crate) mod standing;
 pub(crate) mod takeover;
 pub(crate) mod undescribed;
 pub(crate) mod upkeep;
-mod usage_marks;
 mod vouch;
 
 pub(crate) use session::{Proposal, committed, pushed, shared_elsewhere, wake};
@@ -42,13 +40,6 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use tokio::sync::Notify;
-
-/// How a machine names the streams it writes alone in an account's records
-/// (`activity/<named>`, `jobs/<named>`): the first eight bytes of its key,
-/// in hexadecimal, as the hub checks them.
-pub(crate) fn named(device: &[u8; 32]) -> String {
-    device[..8].iter().map(|byte| format!("{byte:02x}")).collect()
-}
 
 /// What this machine keeps of one hub's asset sync.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]

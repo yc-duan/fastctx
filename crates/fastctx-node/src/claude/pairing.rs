@@ -315,6 +315,7 @@ pub(super) fn resident(
                 side: false,
                 forked_from: None,
                 mcp_off: Default::default(),
+                idle_compaction: Default::default(),
                 id: id.clone(),
                 host: Host {
                     agent,

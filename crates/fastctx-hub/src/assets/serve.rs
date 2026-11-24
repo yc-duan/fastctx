@@ -868,6 +868,21 @@ pub(crate) fn ask_in(
             if !assets.has_library(&owned) {
                 return Ok(Reply::Changes { generation: String::new(), streams: Vec::new(), top: 0, top_at: 0, through: after, more: false });
             }
+            // A library shut since it stood no further than where the device
+            // asks from holds nothing after it: the page an opening would read
+            // is answered without one, as the devices that follow every
+            // library ask each of them every pass (`Owners::latest`).
+            if let Some(latest) = assets.shut_at(&owned).map_err(|error| error.to_string())?.filter(|latest| after >= latest.change) {
+                assets.follows(&owned, machine);
+                return Ok(Reply::Changes {
+                    generation: latest.generation,
+                    streams: Vec::new(),
+                    top: latest.change,
+                    top_at: latest.at,
+                    through: after,
+                    more: false,
+                });
+            }
             let library = assets.library(&owned).map_err(|error| error.to_string())?;
             let page = library.changes(class, after, before, (limit as usize).clamp(1, CHANGES_AT_ONCE)).map_err(|error| error.to_string())?;
             assets.follows(&owned, machine);

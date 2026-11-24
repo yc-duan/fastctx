@@ -155,6 +155,11 @@ pub struct PendingControl {
     pub result: Option<Box<Controlled>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// Begun by the World of itself, as a conversation idle a while is
+    /// compacted (Issue #57): it never waits in line, is never tried again,
+    /// and what it leaves undone holds no words after it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub automatic: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

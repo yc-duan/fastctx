@@ -212,6 +212,46 @@ pub(crate) async fn intercept(
     }
     let Some(path) = paths.first() else { return Ok(None) };
     let Some(slot) = locate(node, path).await? else { return Ok(None) };
+    if crate::history::emptied::emptied(operation) {
+        let (document, version, previous, observed, copy_path) = {
+            let copy = slot.lock().await;
+            let previous = sync::text(node, &copy, copy.effective()).await.map_err(failure)?;
+            // Whether the writer's last view was of it as it stands.
+            let observed = match caller {
+                Caller::Resident(owner) => copy
+                    .observed
+                    .get(&owner.key())
+                    .and_then(|observed| observed.hash.as_ref())
+                    .is_some_and(|hash| *hash == copy.effective().hash),
+                _ => false,
+            };
+            (copy.head.document.clone(), copy.head.version, previous, observed, copy.path.clone())
+        };
+        if let Document::History { scope, name } = document {
+            // Written empty, it is taken out as it stands: a version the
+            // writer never read is read first, as before replacing it whole.
+            if let Caller::Resident(owner) = caller
+                && !previous.is_empty()
+                && !observed
+                && !viewed(node, owner, &[path.as_path(), copy_path.as_path()], &previous).await?
+            {
+                return Ok(Some(Err(crate::history::emptied::UNSEEN.to_string().into())));
+            }
+            let scope = match scope {
+                Scope::Project { name: project, .. } => history::Scope::Project { project },
+                Scope::Conversation { conversation } => history::Scope::Conversation {
+                    resident: conversation.address.resident,
+                    machine: conversation.address.machine,
+                },
+            };
+            let request = match crate::history::emptied::request(scope, name, version) {
+                Ok(request) => request,
+                Err(told) => return Ok(Some(told)),
+            };
+            crate::history::api::call(node, caller, request).await?;
+            return Ok(Some(crate::history::emptied::told(path, &previous)));
+        }
+    }
     let author = crate::history::api::author(node, caller).await?;
     let mut copy = slot.lock().await;
     if let Document::History { scope, .. } = &copy.head.document {

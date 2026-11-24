@@ -13,7 +13,7 @@ pub(crate) use sweep::{Asking, relieve};
 pub(crate) mod wake;
 mod words;
 
-pub(crate) use retention::start;
+pub(crate) use retention::{held, start};
 
 use crate::Node;
 use fastctx_types::{ipc::Failure, residents::About};
@@ -50,7 +50,7 @@ pub(crate) async fn release_locked(
     candidate: Option<&adapters::Candidate>,
 ) -> Result<bool, Failure> {
     let adapter = adapters::Adapter::for_conversation(about)
-        .ok_or_else(|| Failure::new("this host has no supported lifecycle entrance"))?;
+        .ok_or_else(|| Failure::not_run("this host has no supported lifecycle entrance"))?;
     node.log.line(format_args!("lifecycle {}: releasing host ({reason:?})", about.id));
     let absent = adapter.release(node, about, reason, candidate).await?;
     if absent || matches!(reason, ReleaseReason::Delete) {

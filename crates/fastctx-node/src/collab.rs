@@ -7,7 +7,6 @@ use std::sync::Arc;
 use fastctx_net::link::Link;
 use fastctx_types::access::{Acting, HubAccount};
 use fastctx_types::collab::{Caller, Collab, Offer, Offered, Started};
-use fastctx_types::collab_prompt::DEFAULT_PROMPT;
 use fastctx_types::ipc::Failure;
 use fastctx_types::residents::Origin;
 use fastctx_types::{AccountName, AgentName, ResidentId};
@@ -15,6 +14,7 @@ use fastctx_types::{AccountName, AgentName, ResidentId};
 use crate::Node;
 pub(crate) mod asked;
 pub(crate) mod birth;
+mod told;
 
 /// Accounts still opt in and select each calling login.
 const OFFERED: bool = true;
@@ -148,23 +148,7 @@ fn choices_now(
             applies[i].label = format!("{}.{}", applies[i].account, applies[i].link.hub_name());
         }
     }
-    let mut texts: Vec<(String, Vec<String>)> = Vec::new();
-    for item in &applies {
-        let text = item.collab.prompt.as_deref().unwrap_or(DEFAULT_PROMPT).to_string();
-        match texts.iter_mut().find(|(existing, _)| *existing == text) {
-            Some((_, accounts)) => accounts.push(item.label.clone()),
-            None => texts.push((text, vec![item.label.clone()])),
-        }
-    }
-    let prompt = if texts.len() == 1 {
-        texts.remove(0).0
-    } else {
-        texts
-            .into_iter()
-            .map(|(text, accounts)| format!("{}:\n{text}", accounts.join(", ")))
-            .collect::<Vec<_>>()
-            .join("\n\n")
-    };
+    let mut texts = told::Texts::default();
     let mut candidates = Vec::new();
     let mut callees = Vec::new();
     let mut counts = std::collections::HashMap::new();
@@ -180,10 +164,12 @@ fn choices_now(
             callees.push(Offer {
                 name: shown.clone(),
                 account: Some(item.label.clone()),
-                use_when: callee.use_when.clone(),
+                use_when: told::line(callee),
+                agent: Some(callee.login.agent.to_string()),
                 lives_on: hands.then(|| node.written(&item.link, &callee.login.machine).to_string()),
                 at_once: fastctx_types::collab::AtOnce::most(callee.at_once),
             });
+            texts.add(&shown, &item.collab.text_for(callee));
             candidates.push(Candidate {
                 shown,
                 whose: Whose::Account { link: item.link.clone(), account: item.account.clone() },
@@ -195,7 +181,13 @@ fn choices_now(
         .iter()
         .map(|item| HubAccount { hub: item.link.membership().id.clone(), account: item.account.clone() })
         .collect();
-    Ok(Some(Choices { offered: Offered { callees, prompt }, candidates, acting: Acting::Accounts { accounts } }))
+    // Where the accounts it serves say differently, the most any of them lets it.
+    let at_once = applies
+        .iter()
+        .map(|item| fastctx_types::collab::AtOnce::most_in_all(item.collab.at_once))
+        .max_by_key(|most| most.map_or(u32::MAX, |most| most));
+    let offered = Offered { callees, prompt: texts.told(), at_once: at_once.flatten() };
+    Ok(Some(Choices { offered, candidates, acting: Acting::Accounts { accounts } }))
 }
 
 /// What this computer's own settings offer `login`, while it is in no
@@ -215,7 +207,7 @@ fn own(node: &Node, login: &Caller) -> Result<Option<Choices>, Failure> {
         return Ok(None);
     }
     let here = node.machine();
-    let prompt = collab.prompt.clone().unwrap_or_else(|| DEFAULT_PROMPT.to_string());
+    let mut texts = told::Texts::default();
     let mut callees = Vec::new();
     let mut candidates = Vec::new();
     for callee in &collab.callees {
@@ -224,17 +216,20 @@ fn own(node: &Node, login: &Caller) -> Result<Option<Choices>, Failure> {
         callees.push(Offer {
             name: callee.name.clone(),
             account: None,
-            use_when: callee.use_when.clone(),
+            use_when: told::line(&callee),
+            agent: Some(callee.login.agent.to_string()),
             lives_on: Some(here.to_string()),
             at_once: fastctx_types::collab::AtOnce::most(callee.at_once),
         });
+        texts.add(&callee.name, &collab.text_for(&callee));
         candidates.push(Candidate {
             shown: callee.name.clone(),
             whose: Whose::Computer,
             started: Started { callee, rules: collab.rules.clone() },
         });
     }
-    Ok(Some(Choices { offered: Offered { callees, prompt }, candidates, acting: Acting::Here }))
+    let at_once = fastctx_types::collab::AtOnce::most_in_all(collab.at_once);
+    Ok(Some(Choices { offered: Offered { callees, prompt: texts.told(), at_once }, candidates, acting: Acting::Here }))
 }
 
 pub(crate) async fn require(

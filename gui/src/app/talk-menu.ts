@@ -15,6 +15,8 @@ import { layerOpened, type Layer } from "./back";
 import type { TalkActs } from "./talk-acts";
 import type { TalkMenuWords } from "./talk-menu-words";
 import { stepped } from "./menu-keys";
+import type { IdleCompaction } from "../world/logins";
+import { TalkIdleSheet } from "./talk-idle-sheet";
 
 export interface TalkMenuOptions {
   words: TalkMenuWords;
@@ -34,6 +36,9 @@ export interface TalkMenuOptions {
   askDelete(r: ResidentNow, then?: () => void): void;
   /** Opens it side by side with the conversations shown. */
   beside?(r: ResidentNow): void;
+  /** Its agent's setting of idle compaction for the account it works for;
+   *  none where it cannot be read. */
+  idleOf?(r: ResidentNow): Promise<IdleCompaction | null>;
 }
 
 export interface MenuOpening {
@@ -65,11 +70,36 @@ export interface MenuOpening {
 
 const narrow = matchMedia("(max-width: 760px)");
 
+/** What its idle compaction stands at, in the menu's row: following its
+ *  agent, on or off for it alone, or its conditions changed. */
+function idleSaid(r: ResidentNow, words: TalkMenuWords): string {
+  const choice = r.about.idle_compaction ?? {};
+  if (choice.on !== undefined) return choice.on ? words.idleOn : words.idleOff;
+  return choice.after_minutes !== undefined || choice.min_tokens !== undefined ? words.idleCustom : words.idleFollowShort;
+}
+
+/** How long it has been idle, as its `now` says since its last words or
+ *  turn; nothing while it works. */
+function idleFor(r: ResidentNow, words: TalkMenuWords): string {
+  if (!r.now || r.now.activity === "busy" || r.now.turn) return "";
+  const minutes = Math.floor((Date.now() - Date.parse(r.now.since)) / 60_000);
+  if (!Number.isFinite(minutes) || minutes < 1) return "";
+  const how = minutes < 60 ? words.minutes(minutes) : minutes < 48 * 60 ? words.hours(Math.floor(minutes / 60)) : words.days(Math.floor(minutes / 1440));
+  return words.idleFor(how);
+}
+
+/** Whether the World compacts it once idle: a Claude Code or Codex session
+ *  it runs (`About::world_managed`). */
+function compacts(r: ResidentNow): boolean {
+  return (r.about.world_started || !!r.about.native_resumed) && (r.about.host.agent === "claude" || r.about.host.agent === "codex");
+}
+
 export class TalkMenu {
   private readonly element: HTMLElement;
   private readonly shade: HTMLElement;
   private opened: { r: ResidentNow; how: MenuOpening } | null = null;
   private towns = false;
+  private idleSheet: TalkIdleSheet | null = null;
   private readonly layer: Layer = {
     isOpen: () => !this.element.hidden,
     close: () => this.close(),
@@ -220,6 +250,9 @@ export class TalkMenu {
             : []),
           item("move", "move", words.move, away, `<span class="talk-menu-more">${glyph("chevron", 14)}</span>`),
           item("rename", "edit", words.rename, away),
+          ...(compacts(r)
+            ? [item("idle", "clock", words.idle, away, `<span class="talk-menu-value">${escape([idleFor(r, words), idleSaid(r, words)].filter(Boolean).join(" · "))}</span>`)]
+            : []),
           item("archive", "archive", words.archive, away),
           ...(this.opened.how.copy || this.opened.how.attach
             ? [
@@ -272,6 +305,17 @@ export class TalkMenu {
         if (!narrow.matches) this.place();
         this.items()[1]?.focus({ preventScroll: true });
         return;
+      case "idle": {
+        this.close();
+        const shown = this.options.acts.view(r);
+        this.idleSheet ??= new TalkIdleSheet(this.options.words);
+        this.idleSheet.open({
+          r: shown,
+          login: this.options.idleOf?.(shown) ?? Promise.resolve(null),
+          keep: (choice) => this.options.acts.idle(r, choice),
+        });
+        return;
+      }
       case "back":
         this.towns = false;
         this.draw();

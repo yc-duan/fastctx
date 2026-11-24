@@ -74,8 +74,15 @@ pub(crate) struct Placed {
 pub(crate) enum Placing<'a> {
     /// Held: as the tests and the bench weigh the store against.
     #[cfg_attr(not(any(test, feature = "bench")), allow(dead_code))]
-    Held { recorded: &'a [SessionEvent], merged: &'a [SessionEvent] },
-    Kept { turns: Turns<'a>, sent: HashSet<String>, names: merging::Names },
+    Held {
+        recorded: &'a [SessionEvent],
+        merged: &'a [SessionEvent],
+    },
+    Kept {
+        turns: Turns<'a>,
+        sent: HashSet<String>,
+        names: merging::Names,
+    },
 }
 
 /// The receipts of the conversation in `.0`, read afresh for each delivery
@@ -140,11 +147,18 @@ impl Reading {
     /// are made, each first through `images`; what an attempt before took
     /// is let go. A row a session read before holds (`accept`) gives no
     /// events (`transcript::read_continuing`).
-    pub(crate) fn read(&mut self, path: &Path, cuts: &[HistoryCut], images: &mut dyn FnMut(&mut SessionEvent)) -> std::io::Result<Transcript> {
+    pub(crate) fn read(
+        &mut self,
+        path: &Path,
+        cuts: &[HistoryCut],
+        images: &mut dyn FnMut(&mut SessionEvent),
+    ) -> std::io::Result<Transcript> {
         self.begin_attempt()?;
         let (spill, spots, refs, trying) = (&self.spill, &mut self.spots, &mut self.refs, &mut self.trying);
         let earlier = |uuid: &str| spill.borrow().is_earlier(uuid).map_err(std::io::Error::other);
-        transcript::read_history_kept(path, cuts, &earlier, &mut Lines(spill), &mut |event| keep(spill, spots, refs, trying, images, event))
+        transcript::read_history_kept(path, cuts, &earlier, &mut Lines(spill), &mut |event| {
+            keep(spill, spots, refs, trying, images, event)
+        })
     }
 
     /// Reads the record at `path` past `seam` once, as a follower does
@@ -177,7 +191,22 @@ impl Reading {
         let mut lines = Lines(spill);
         let mut events = |event| keep(spill, spots, refs, trying, images, event);
         let mut moved_past = |uuid: &str| spill.borrow_mut().push_moved(digest(uuid)).map_err(std::io::Error::other);
-        follow::tail_kept(path, seam, &earlier, accept, ended, seen, TailStore { rows: &mut lines, events: &mut events, moved_past: &mut moved_past, asked, read_on: None, read_past: Some(read_past) })
+        follow::tail_kept(
+            path,
+            seam,
+            &earlier,
+            accept,
+            ended,
+            seen,
+            TailStore {
+                rows: &mut lines,
+                events: &mut events,
+                moved_past: &mut moved_past,
+                asked,
+                read_on: None,
+                read_past: Some(read_past),
+            },
+        )
     }
 
     /// Lets go what an attempt before took, and holds the place of the
@@ -355,7 +384,9 @@ impl Reading {
                         Ok(spill.raws_from(from as u32, end)?.into_iter().map(|(_, event)| event).collect())
                     })?
                 };
-                let Some(mut event) = placement::finish(event, turn.map(|turn| turns.name(turn)), &turns) else { continue };
+                let Some(mut event) = placement::finish(event, turn.map(|turn| turns.name(turn)), &turns) else {
+                    continue;
+                };
                 if told(&event) {
                     told_events.push(event.clone());
                 }
@@ -368,9 +399,11 @@ impl Reading {
                     if let Some(early) = early
                         && packed.len() >= fastctx_content::RECORD_BYTES / 8
                     {
-                        let encoded = serde_json::to_vec(&shown).map_err(|error| error.to_string())?;
-                        if encoded.len() >= fastctx_content::RECORD_BYTES {
-                            early.offer(&encoded);
+                        // As its record will keep it (`timeline::stored`).
+                        if let Some(object) =
+                            crate::timeline::stored::object_of(&shown).map_err(|error| error.to_string())?
+                        {
+                            early.offer(&object);
                         }
                     }
                     spill.push_hosted(packed)?;

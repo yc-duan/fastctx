@@ -113,6 +113,7 @@ async function controlOpen($, sessions, sessionId) {
       instance: String(Math.max(Date.now(), Number(prior?.instance ?? 0) + 1)),
     }
     const state = { directory, host, closed: false, ready: false, busy: false, turn: null, looking: false,
+      mcpConnected: false, connectingMcp: false,
       selection: files.includes('selection.json') ? JSON.parse(await $.fs.read(directory + '/selection.json')) : {},
       routing: files.includes('routing.json') ? JSON.parse(await $.fs.read(directory + '/routing.json')) : null,
       checkpoints: files.includes('checkpoints.json') ? await readReport($, directory + '/checkpoints') : { messages: [], turns: {}, full: false, uuids: [] },
@@ -206,42 +207,46 @@ function controlRetry($, state) {
   })
 }
 
+async function controlConnectMcp($, state) {
+  // Assisted sessions use their startup MCP configuration alone.
+  if (state.host.assisted || state.closed || state.mcpConnected || state.connectingMcp) return
+  state.connectingMcp = true
+  try {
+    state.mcpConnected = (await $.mcp.connect('fastctx')).isConnected
+  } catch (error) {
+    $.ui.log('World MCP connection: ' + String(error), { to: 'debug' })
+  } finally {
+    state.connectingMcp = false
+    if (!state.mcpConnected) controlRetry($, state)
+  }
+}
+
 async function controlPoll($, state) {
   if (state.closed) return
   if (state.looking) {
     state.again = true
     return
   }
-  if (await removed($)) {
-    state.closed = true
-    state.timer?.cancel()
-    await state.guard.return()
-    return
-  }
   state.looking = true
   try {
+    if (await removed($)) {
+      state.closed = true
+      state.timer?.cancel()
+      await state.guard.return()
+      return
+    }
     do {
       state.again = false
       if (await $.session.id() !== state.host.session) return
+      const present = (await controlNames($, state.directory + '/inbox')).sort()
       if (!state.ready) {
-        const usage = await $.session.usage({ breakdown: 'summary' })
-        const tools = usage.context.breakdown?.mcpTools ?? []
-        let server = 'fastctx'
-        if (!state.host.assisted) {
-          const connected = await $.mcp.connect('fastctx')
-          if (!connected.isConnected) { controlRetry($, state); return }
-          server = connected.server
-        }
-        const owned = server.replace(/[^A-Za-z0-9_-]/g, '_')
-        if (!tools.some((tool) => tool.isLoaded && tool.serverName.replace(/[^A-Za-z0-9_-]/g, '_') === owned)) {
-          controlRetry($, state)
-          return
-        }
-        await controlWrite($, state.directory + '/ready-' + state.host.instance + '.json', { instance: state.host.instance, mcp: true })
+        // This receipt belongs to the native control scanner. A slow MCP
+        // tools listing must not stop it from taking the user's commands.
+        await controlWrite($, state.directory + '/ready-' + state.host.instance + '.json', { instance: state.host.instance })
         await $.fs.write(state.directory + '/ready-' + state.host.instance + '.done', '')
         state.ready = true
       }
-      const present = (await controlNames($, state.directory + '/inbox')).sort()
+      void controlConnectMcp($, state)
       state.handled = new Set([...state.handled].filter((file) => present.includes(file)))
       for (const file of present) {
         if (!file.endsWith('.json') || state.handled.has(file)) continue

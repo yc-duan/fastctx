@@ -133,6 +133,7 @@ impl Device {
                     version: 1,
                     name: fields.name.clone().ok_or_else(|| failed("a project needs a name"))?,
                     what: fields.what.clone().ok_or_else(|| failed("a project needs its instructions"))?,
+                    description: String::new(),
                     machines,
                     places: Vec::new(),
                     canon: None,
@@ -194,6 +195,9 @@ fn change(record: &mut Record, fields: RecordFields) {
     }
     if let Some(what) = fields.what {
         record.what = what;
+    }
+    if let Some(description) = fields.description {
+        record.description = description;
     }
     if let Some(machines) = fields.machines {
         record.machines = machines;

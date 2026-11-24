@@ -87,12 +87,21 @@ pub async fn check(root: &Path, identity: Arc<Identity>, address: SocketAddr, pi
         }
     })
     .await;
+    // The fault is taken away and the count from before it is not put back:
+    // the hub writes the whole count, and the end of the refused session may
+    // write it the moment the fault is gone, which a copy put back after it
+    // would undo (CI run 45306090826). The count read below is the hub's.
     std::fs::remove_dir(&path)?;
-    std::fs::rename(&backup, &path)?;
+    std::fs::remove_file(&backup)?;
     failed??;
     let (mut recovered, welcome) = connect(&identity, address, pin, 900_003).await?;
     let Down::Welcome { taken, .. } = welcome else { anyhow::bail!("counter recovery did not reconnect") };
-    let count: serde_json::Value = serde_json::from_slice(&std::fs::read(&path)?)?;
+    let count: serde_json::Value = match std::fs::read(&path) {
+        Ok(bytes) => serde_json::from_slice(&bytes)?,
+        // None written: the failed count was not made durable.
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => serde_json::Value::Null,
+        Err(error) => return Err(error.into()),
+    };
     anyhow::ensure!(
         taken == 0 && count["taken"].as_u64() == Some(1) && count["refused"].get("1").is_some(),
         "welcome counted a failed write without making it durable: {welcome:?} / {count}"

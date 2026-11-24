@@ -6,9 +6,10 @@
 // stands over one glide, as the sidebar slides in step. Laid out once, a
 // long conversation is set once rather than every moment of the glide, which
 // made it halt (5a0df94fe), and nothing on it is drawn anew as it goes: it
-// is only moved. A conversation's side gives its room a little at every
-// frame instead, the conversations laid out for it as it comes
-// (`room.ts`).
+// is only moved. A conversation's side carries the desk the same way where
+// every conversation keeps its column whole beside it; where one must
+// narrow, it gives its room a little at every frame instead, the
+// conversations laid out for it as it comes (`room.ts`, `side/frame.ts`).
 //
 // What is carried may stand, as it sets out, past the edges of the room it
 // is carried in: those edges cut nothing while it goes. A region that
@@ -22,8 +23,8 @@ import { msOf, reducedMotion } from "../motion";
  *  room around them puts them, and the side's sheet. A column the page
  *  scrolls is carried across only: what its lines set again moves it up or
  *  down, which the scroll keeps where the reader was. It is carried by
- *  where its words begin, inside its margin: the margin is narrower beside
- *  the side (`side.css`), and carried by its own edge the words leapt by
+ *  where its words begin, inside its margin: the margin follows the room
+ *  its page has (`app.css`), and carried by its own edge the words leapt by
  *  what the margin lost before they went (the user, 2026-11-21: "正文内容，
  *  会轻微左下瞬移一小段，然后再进入滑动动画"). */
 const CARRIED = ".page-head-title, .page-head-actions, .composer-dock > *, .sp-sheet";
@@ -170,6 +171,11 @@ function land(
     window.clearTimeout(carrying.timer);
     carrying.timer = window.setTimeout(stopCarrying, glide + 50);
   }
+}
+
+/** Whether anything is being carried now. */
+export function carries(): boolean {
+  return carrying !== null;
 }
 
 /** What is carried back where the page has it, carried no further: as a

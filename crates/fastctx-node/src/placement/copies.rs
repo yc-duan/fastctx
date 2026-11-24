@@ -4,7 +4,7 @@
 
 use crate::{Node, admission::Asker};
 use fastctx_types::{
-    Address,
+    Address, MachineName,
     access::{Acting, HubAccount},
     account_records::Changed,
     ipc::Failure,
@@ -108,7 +108,61 @@ fn keep(node: &Node, key: &str, state: &State) -> Result<(), Failure> {
     .map_err(failure)
 }
 
+/// Whether `owner` is a conversation of this machine that was deleted: its
+/// plan copy is nobody's, and its directory is not made again for it.
+fn deleted_here(node: &Node, owner: &Address) -> bool {
+    node.is_me(&owner.machine) && node.residents.ever_deleted(&owner.resident)
+}
+
+/// Lets go of the plan copies registered here for `id`, a conversation of
+/// this machine being deleted: none is restored for it when the node starts
+/// again.
+pub(crate) fn conversation_deleted(node: &Node, id: &fastctx_types::ResidentId) -> Result<(), Failure> {
+    let_go(node, |owner| owner.resident == *id && node.is_me(&owner.machine))
+}
+
+/// Lets go of the plan copies registered here for the conversation at
+/// `conversation`, which lived on another machine, known there by any of
+/// `machines`, and was deleted: its room here is not made again for them.
+pub(crate) fn guest_deleted(node: &Node, conversation: &Address, machines: &[MachineName]) -> Result<(), Failure> {
+    let_go(node, |owner| owner.resident == conversation.resident && machines.contains(&owner.machine))
+}
+
+/// Lets go of every plan copy registered here whose owner `gone` names, in
+/// use or only kept on the disk.
+fn let_go(node: &Node, gone: impl Fn(&Address) -> bool) -> Result<(), Failure> {
+    let slots: Vec<Arc<Slot>> =
+        node.copies.slots.lock().expect("never poisoned").values().filter(|slot| gone(&slot.owner)).cloned().collect();
+    for slot in slots {
+        discard(node, &slot)?;
+    }
+    let entries = match fastctx_platform::disk::read_dir(directory(node)) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(failure(error)),
+    };
+    for entry in entries {
+        let path = entry.map_err(failure)?.path();
+        let Ok(state) = fastctx_platform::disk::read(&path)
+            .map_err(failure)
+            .and_then(|bytes| serde_json::from_slice::<State>(&bytes).map_err(failure))
+        else {
+            continue;
+        };
+        if gone(&state.owner) {
+            match fastctx_platform::disk::remove_file(&path) {
+                Err(error) if error.kind() != std::io::ErrorKind::NotFound => return Err(failure(error)),
+                _ => {}
+            }
+        }
+    }
+    Ok(())
+}
+
 fn register(node: &Arc<Node>, state: State) -> Result<Arc<Slot>, Failure> {
+    if deleted_here(node, &state.owner) {
+        return Err(Failure::new(format!("{} was deleted from this machine", state.owner.resident)));
+    }
     let key = identity(&state.account, &state.owner)?;
     let path = file(node, &state.owner);
     let slot = {
@@ -460,10 +514,26 @@ pub(crate) fn start(node: &Arc<Node>) {
                 continue;
             }
             // One copy that cannot be restored leaves the others theirs.
-            let restored = fastctx_platform::disk::read(&path)
+            let state = fastctx_platform::disk::read(&path)
                 .map_err(failure)
-                .and_then(|bytes| serde_json::from_slice::<State>(&bytes).map_err(failure))
-                .and_then(|state| register(node, state));
+                .and_then(|bytes| serde_json::from_slice::<State>(&bytes).map_err(failure));
+            // Kept for a conversation deleted here, which an earlier release
+            // left behind: it goes, and the deleted conversation's directory
+            // is not made again at every start.
+            if let Ok(state) = &state
+                && deleted_here(node, &state.owner)
+            {
+                match fastctx_platform::disk::remove_file(&path) {
+                    Ok(()) => node.log.line(format_args!(
+                        "let go of the plan copy kept for {}, deleted from this machine",
+                        state.owner.resident
+                    )),
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(error) => node.log.line(format_args!("letting go of plan copy {}: {error}", path.display())),
+                }
+                continue;
+            }
+            let restored = state.and_then(|state| register(node, state));
             match restored {
                 Ok(slot) => request(node, slot),
                 Err(error) => node.log.line(format_args!("restoring plan copy {}: {}", path.display(), error.message)),

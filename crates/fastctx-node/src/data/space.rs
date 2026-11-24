@@ -216,8 +216,8 @@ pub(super) fn measure(node: &Node) -> io::Result<Space> {
         root_bytes,
         kinds,
         conversations: listed,
-        output_days: 30,
-        output_retention: Some("unlimited".into()),
+        output_days: crate::retention::days(&node.world).unwrap_or(7),
+        output_retention: None,
         claude_logins: claude_logins(&measured)?,
         unread: (unread.entries > 0)
             .then_some(fastctx_types::data::Unread { entries: unread.entries, first: unread.first }),

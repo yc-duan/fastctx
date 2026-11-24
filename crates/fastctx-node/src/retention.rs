@@ -1,4 +1,6 @@
-//! Runtime maintenance keeps delivered job assets until explicit deletion.
+//! Runtime maintenance: what completed jobs leave is retired as they end,
+//! and the files of a job go some days after its answer reached the model
+//! (`expire`), once its output is kept for good where its conversation lives.
 
 use fastctx_platform::disk as fs;
 use std::io;
@@ -7,8 +9,41 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use fastctx_hands::run::{program, record};
+use fastctx_types::run::JobDelivery;
+use jiff::Timestamp;
+use serde::{Deserialize, Serialize};
 
 use crate::Node;
+
+/// How many days a job's files stay after its answer reached the model, as
+/// this machine is set (`days`), unless set otherwise.
+const DEFAULT_DAYS: u32 = 7;
+const DAY_MS: i64 = 24 * 60 * 60 * 1000;
+/// The most jobs whose files go in one pass, so that a machine that kept
+/// thousands lets them go over a few hours.
+const EXPIRED_AT_ONCE: usize = 2000;
+
+#[derive(Serialize, Deserialize)]
+struct Settings {
+    command_artifact_days: u32,
+}
+
+/// How many days a job's files stay after its answer reached the model.
+pub(crate) fn days(world: &fastctx_types::layout::WorldDir) -> io::Result<u32> {
+    match fs::read(world.retention()) {
+        Ok(bytes) => serde_json::from_slice::<Settings>(&bytes)
+            .map(|settings| settings.command_artifact_days)
+            .map_err(io::Error::other),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(DEFAULT_DAYS),
+        Err(error) => Err(error),
+    }
+}
+
+/// Keeps a job's files `days` days after its answer reached the model.
+pub(crate) fn set_days(world: &fastctx_types::layout::WorldDir, days: u32) -> io::Result<()> {
+    let bytes = serde_json::to_vec(&Settings { command_artifact_days: days }).map_err(io::Error::other)?;
+    fastctx_platform::publish(&world.retention(), &bytes, fastctx_platform::Permissions::Private)
+}
 
 pub(crate) use crate::job_receipts::{confirmed, received, received_from, wait_taken};
 
@@ -48,7 +83,8 @@ async fn collect(node: &Arc<Node>, maintenance: bool) {
             let obligations = crate::obligations::collect(&collecting);
             let retained = collect_scratch(&collecting);
             let guests = collect_guest_scratch(&collecting);
-            obligations.and(retained).and(guests)
+            let expired = expire(&collecting);
+            obligations.and(retained).and(guests).and(expired)
         } else {
             Ok(())
         };
@@ -353,6 +389,113 @@ pub(crate) fn entries(path: &Path) -> io::Result<Vec<PathBuf>> {
     match fs::read_dir(path) {
         Ok(entries) => entries.map(|entry| entry.map(|entry| entry.path())).collect(),
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(Vec::new()),
+        Err(error) => Err(error),
+    }
+}
+
+/// The most failures one pass of `expire` tells of; the rest are counted.
+const FAILURES_TOLD: usize = 8;
+
+/// Lets go of the files of each ended job whose answer reached the model at
+/// least the set days ago (`days`) and whose output is kept for good where
+/// its conversation lives: in that conversation's scope here, whole
+/// (`job_assets::whole_here`); for a conversation elsewhere, once its
+/// machine took it whole (`.collected`), and never before. A job still read,
+/// still owed word of its end or still needed by the activity book stays for
+/// a later pass. One job or folder that cannot be looked at holds back none
+/// after it: the failures are told together at the end.
+fn expire(node: &Arc<Node>) -> io::Result<()> {
+    let kept_for = i64::from(days(&node.world)?) * DAY_MS;
+    let now = Timestamp::now().as_millisecond();
+    let mut gone = 0usize;
+    let mut failures = Vec::new();
+    'parents: for parent in node.world.job_parents()? {
+        let directories = match entries(&parent) {
+            Ok(directories) => directories,
+            Err(error) => {
+                failures.push(format!("{}: {error}", parent.display()));
+                continue;
+            }
+        };
+        for directory in directories {
+            match fs::symlink_metadata(&directory) {
+                Ok(metadata) if fastctx_platform::owned_directory::is_link(&metadata) => continue,
+                Ok(_) => {}
+                Err(error) => {
+                    failures.push(format!("{}: {error}", directory.display()));
+                    continue;
+                }
+            }
+            let paths = match entries(&directory.join("jobs")) {
+                Ok(paths) => paths,
+                Err(error) => {
+                    failures.push(format!("{}: {error}", directory.display()));
+                    continue;
+                }
+            };
+            for path in paths {
+                if gone >= EXPIRED_AT_ONCE {
+                    break 'parents;
+                }
+                if path.extension().is_none_or(|extension| extension != "json") {
+                    continue;
+                }
+                match expire_one(node, &path, now, kept_for) {
+                    Ok(true) => gone += 1,
+                    Ok(false) => {}
+                    Err(error) => failures.push(format!("{}: {error}", path.display())),
+                }
+            }
+        }
+    }
+    if gone > 0 {
+        node.log.line(format_args!("let go of the files of {gone} job(s) whose output is kept for good"));
+    }
+    if failures.is_empty() {
+        return Ok(());
+    }
+    let more = failures.len().saturating_sub(FAILURES_TOLD);
+    failures.truncate(FAILURES_TOLD);
+    let more = if more > 0 { format!("; and {more} more") } else { String::new() };
+    Err(io::Error::other(format!("letting go of expired job files: {}{more}", failures.join("; "))))
+}
+
+/// `expire` for the job whose record is at `path`: whether its files went.
+fn expire_one(node: &Arc<Node>, path: &Path, now: i64, kept_for: i64) -> io::Result<bool> {
+    let Some(held) = node.job_files.hold(path) else { return Ok(false) };
+    let gate = node.job_files.gate(path);
+    let _job = gate.lock();
+    let job = match record::read(path) {
+        Ok(job) => job,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(error),
+    };
+    let Some(delivery) = crate::job_metadata::get::<JobDelivery>(&path.with_extension("delivered"))? else {
+        return Ok(false);
+    };
+    let since = now.saturating_sub(delivery.at.as_millisecond());
+    if since < kept_for
+        || job.end.is_none()
+        || program::in_use(&job)?
+        || !crate::on::unfollowed(node, path)
+        || crate::job_metadata::exists(&path.with_extension("owed"))?
+    {
+        return Ok(false);
+    }
+    // Run here for a conversation elsewhere, the files are its output's only
+    // copy until that conversation's machine took it whole.
+    let kept = if crate::job_assets::lives_here(node, &job) {
+        crate::job_assets::whole_here(node, &job)
+    } else {
+        crate::job_metadata::exists(&path.with_extension("collected"))?
+    };
+    if !kept {
+        return Ok(false);
+    }
+    let Ok(_marked) = held.collect() else { return Ok(false) };
+    match crate::job_watch::expire(node, path) {
+        Ok(()) => Ok(true),
+        Err(error) if error.kind() == io::ErrorKind::WouldBlock => Ok(false),
         Err(error) => Err(error),
     }
 }

@@ -127,14 +127,17 @@ struct Standing {
     path: std::path::PathBuf,
 }
 
-/// `resident`'s session followed as it stands now; none where it is not
+/// `resident`'s session followed as it stands now; why not, where it is not
 /// followed: none read, an earlier one's file not told, turns cut back.
-async fn standing(node: &Arc<Node>, resident: &ResidentId) -> Result<Option<Standing>, String> {
+async fn standing(node: &Arc<Node>, resident: &ResidentId) -> Result<Result<Standing, &'static str>, String> {
     let (mut sessions, problems) = {
         let (reading, whose) = (node.clone(), resident.clone());
         fastctx_platform::task::blocking(move || sessions(&reading, &whose)).await
     };
-    let Some(Session { id, began, kept, process }) = sessions.pop().filter(|_| problems.is_empty()) else { return Ok(None) };
+    if !problems.is_empty() {
+        return Ok(Err("a session not read"));
+    }
+    let Some(Session { id, began, kept, process }) = sessions.pop() else { return Ok(Err("no session read")) };
     // Its process gone, a last row without its line's end will never get one.
     let ended = process.as_ref().is_some_and(|process| fastctx_platform::has_ended(process).unwrap_or(false));
     // The sessions before the last as their files stand: unchanged since the
@@ -145,7 +148,7 @@ async fn standing(node: &Arc<Node>, resident: &ResidentId) -> Result<Option<Stan
         sessions = before;
         match stamped {
             Some(stamped) => stamped,
-            None => return Ok(None),
+            None => return Ok(Err("an earlier session's file not told")),
         }
     };
     let directory = exchange::sessions(node.world.path()).join(&id);
@@ -158,9 +161,21 @@ async fn standing(node: &Arc<Node>, resident: &ResidentId) -> Result<Option<Stan
     })
     .await?;
     if !cuts.is_empty() {
-        return Ok(None);
+        return Ok(Err("turns cut back"));
     }
-    Ok(Some(Standing { id, began, kept, ended, earlier, before: sessions, path }))
+    Ok(Ok(Standing { id, began, kept, ended, earlier, before: sessions, path }))
+}
+
+/// The kind `why` is counted by: its words lowercased, each other
+/// character made `_`.
+fn kind(why: &str) -> String {
+    why.chars().map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_lowercase() } else { '_' }).collect()
+}
+
+/// Why a record followed is read whole as ever, not past a seam (`window`),
+/// counted by its kind.
+fn whole(why: &'static str) {
+    fastctx_platform::readings::counter_of("timeline.claude.whole", &kind(why)).add(1);
 }
 
 /// The stamps of `sessions`' record files, none where one cannot be told.
@@ -250,7 +265,13 @@ pub(crate) async fn window(
     prefix: Arc<PrefixIds>,
     keep: Option<Keep>,
 ) -> Result<Option<Window>, String> {
-    let Some(Standing { id, began, kept, ended, earlier, before: mut sessions, path }) = standing(node, resident).await? else { return Ok(None) };
+    let Standing { id, began, kept, ended, earlier, before: mut sessions, path } = match standing(node, resident).await? {
+        Ok(standing) => standing,
+        Err(why) => {
+            whole(why);
+            return Ok(None);
+        }
+    };
     let from = from.filter(|(_, _, stood)| *stood == earlier).map(|(session, seam, _)| (session, seam));
     let mut seam = from.filter(|(session, _)| *session == id).map(|(_, seam)| seam).unwrap_or_default();
     // Read from its start, the last session shows what it copied from the
@@ -272,6 +293,7 @@ pub(crate) async fn window(
             // `earlier` reads them: all of each, or all is read as ever.
             Some(held) if several => {
                 if !earlier_kept(node, resident, std::mem::take(&mut sessions), held).await? {
+                    whole("an earlier session not read whole");
                     return Ok(None);
                 }
                 // As below (DD05).
@@ -279,7 +301,10 @@ pub(crate) async fn window(
             }
             Some(_) => {}
             None if several => {
-                let Some(read) = super::earlier(node, resident, sessions).await else { return Ok(None) };
+                let Some(read) = super::earlier(node, resident, sessions).await else {
+                    whole("an earlier session not read whole");
+                    return Ok(None);
+                };
                 (before, copied) = read;
                 // The last session's seam goes only past every earlier
                 // session's events too: one at a moment of theirs would be
@@ -367,25 +392,38 @@ pub(crate) async fn window(
             // Read from its start, the earlier sessions are read with it.
             Ok(Err(why)) if seam.identity.is_some() => {
                 node.log.line(format_args!("{resident}'s record is read from its start: {why}"));
+                fastctx_platform::readings::counter_of("timeline.claude.from_the_start", &kind(why_not(&why))).add(1);
                 if several {
+                    whole("several sessions read again from the start");
                     return Ok(None);
                 }
                 seam = Seam::default();
             }
             // Not to be read past a seam from its start either — a last row
             // only a whole reading takes, say: read whole as ever (DD02).
-            Ok(Err(Restart::Unsupported(_))) => return Ok(None),
+            Ok(Err(Restart::Unsupported(why))) => {
+                whole(why);
+                return Ok(None);
+            }
             Ok(Err(why)) => return Err(format!("{}: {why}", path.display())),
             // Gone — Claude Code removes old sessions itself — it is read
             // whole as ever: what the World saw of it, and that it is gone.
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                whole("the record gone");
+                return Ok(None);
+            }
             Err(error) => return Err(format!("{}: {error}", path.display())),
         }
     };
+    // How long the rows a reading from the seam takes up are: what it parses
+    // and places — not what the disk gave, which reading again, the seam's
+    // checks and earlier sessions add to.
+    fastctx_platform::readings::counter("timeline.claude.from_the_seam_bytes").add(tail.end.saturating_sub(seam.offset));
     // Stopped before a line larger than World reads (§28.49): not followed
     // past a seam, read whole as ever, where a reading short of the record
     // takes nothing away and is tried again (`hosted`).
     if tail.transcript.refused.is_some() {
+        whole("a line larger than World reads");
         return Ok(None);
     }
     let whole = seam.identity.is_none();
@@ -579,7 +617,10 @@ pub(crate) async fn onward(
     held: Arc<HashSet<u64>>,
     seen: Option<(fastctx_content::v2::Library, String, u64)>,
 ) -> Result<Result<Onward, &'static str>, String> {
-    let Some(Standing { id, kept, ended, earlier, path, .. }) = standing(node, resident).await? else { return Ok(Err("a record not followed")) };
+    let Standing { id, kept, ended, earlier, path, .. } = match standing(node, resident).await? {
+        Ok(standing) => standing,
+        Err(why) => return Ok(Err(why)),
+    };
     if id != session || earlier != stood {
         return Ok(Err("sessions not as they stood"));
     }
@@ -602,6 +643,9 @@ pub(crate) async fn onward(
             Err(error) => return Err(format!("{}: {error}", path.display())),
         }
     };
+    // As above, of a reading on from inside a turn: a look written on, or
+    // a window seeded after a reading from the seam.
+    fastctx_platform::readings::counter("timeline.claude.onward_bytes").add(tail.end.saturating_sub(read.offset));
     if tail.transcript.refused.is_some() {
         return Ok(Err("a line larger than World reads"));
     }

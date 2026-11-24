@@ -29,8 +29,10 @@ impl RemoteCall {
             | Self::Book { .. }
             | Self::Canon { .. }
             | Self::ChangeAgentModels { .. }
+            | Self::SetIdleCompaction { .. }
             | Self::ClaudeConsent { .. }
             | Self::Copies { .. }
+            | Self::ConversationRetention { .. }
             | Self::Collaboration { .. }
             | Self::CommitAttachment { .. }
             | Self::ConversationDebt { .. }
@@ -139,8 +141,10 @@ impl Call {
             | Self::Book { .. }
             | Self::BringIn { .. }
             | Self::ChangeAgentModels { .. }
+            | Self::SetIdleCompaction { .. }
             | Self::ClaudeConsent { .. }
             | Self::MachineCopies { .. }
+            | Self::ConversationRetention { .. }
             | Self::ClaudeContext { .. }
             | Self::ClaudeSessionDirectory { .. }
             | Self::CollabRead { .. }

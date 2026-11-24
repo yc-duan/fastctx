@@ -1565,7 +1565,7 @@ async function route($, registry, name, e) {
 }
 
 export function register(on) {
-  const registry = { registeredAccountAgents: new Set(), sessions: new Map(), turns: new Map(), toolOwners: new Map(), cleared: null, worldTools: new Set(), provedCalls: new Set() }
+  const registry = { registeredAccountAgents: new Set(), sessions: new Map(), turns: new Map(), toolOwners: new Map(), cleared: null, worldServer: null, worldTools: new Set(), provedCalls: new Set() }
   // Every handler first steps aside once fastctx is being removed. Each keeps
   // its literal on('…') call, the shape the official loader reads.
   on('telemetry.log', { to: 'collector' }, async ($, e, next) => {
@@ -1583,7 +1583,6 @@ export function register(on) {
   on('session.start', async ($, e, next) => {
     if (await aside($)) return next(e)
     await usageOrigin($, await $.session.id())
-    await worldTools($, registry)
     // The session's directory is reserved before its controls make or
     // watch anything in it (`reservations`).
     const context = await session($, registry, await $.session.id(), true)
@@ -1593,6 +1592,7 @@ export function register(on) {
     await agentsHeardBefore($, context)
     nativeGoalContexts.set(context.sessionId, context)
     await startControls($)
+    await worldTools($, registry)
     scheduleNativeGoalClear($, context)
     return next(e)
   }).catch(($, e, next) => continueWithoutWorld($, 'session.start', e, next))
@@ -1657,10 +1657,14 @@ export function register(on) {
     }
     if (await aside($)) return next(e)
     registry.provedCalls.delete(e.tool_use_id)
-    // Strict MCP tools can arrive after session.start; confirm ownership
-    // before issuing their first proof (2.1.303, 2026-10-21).
-    if (!registry.worldTools.has(e.tool) && e.tool.startsWith('mcp__fastctx__') && await assistedSession($)) {
-      await worldTools($, registry)
+    // Tools can be listed after session.start. A name only selects which
+    // calls to check: the host's ownership map must confirm the tool.
+    if (!registry.worldTools.has(e.tool)) {
+      const server = registry.worldServer
+      const prefix = 'mcp__' + worldServerSpelling(server ?? 'plugin:fastctx-world:fastctx') + '__'
+      if (e.tool.startsWith(prefix) || (server === null && e.tool.startsWith('mcp__fastctx__'))) {
+        await worldTools($, registry, server)
+      }
     }
     const context = await route($, registry, 'tool.call', e)
     if (registry.worldTools.has(e.tool)) {
@@ -1845,7 +1849,6 @@ export function register(on) {
   }).catch(($, e, next) => continueWithoutWorld($, 'session.end', e, next))
   on('classic.SessionStart', async ($, e, next) => {
     if (await aside($)) return next(e)
-    await worldTools($, registry)
     const context = await session($, registry, await $.session.id(), e.source === 'clear' || e.source === 'resume')
     await transcript($, context, e.transcript_path)
     // A start and a /clear begin a first message read afresh, and so does a
@@ -1856,6 +1859,7 @@ export function register(on) {
     context.contextFresh = e.source !== 'resume' && (e.source !== 'compact' || ownCompaction)
     if (e.source === 'compact') await contextCompacted($, context)
     await startControls($)
+    await worldTools($, registry)
     await observeTitle($, context, e)
     return next(e)
   }).catch(($, e, next) => continueWithoutWorld($, 'classic.SessionStart', e, next))
@@ -1873,22 +1877,30 @@ async function proveCall($, context, id, agent) {
   await $.fs.write(context.dir + '/calls/' + name + '.json', JSON.stringify(proof))
 }
 
-async function worldTools($, registry) {
-  registry.worldTools = new Set()
-  // In strict mode this is an explicit global server. A mod's connect()
-  // resolves its plugin's server instead, which strict mode excludes.
-  let server = 'fastctx'
-  if (!await assistedSession($)) {
-    const connected = await $.mcp.connect('fastctx')
-    if (!connected.isConnected) return
-    server = connected.server
+function worldServerSpelling(server) {
+  return server.replace(/[^A-Za-z0-9_-]/g, '_')
+}
+
+async function worldTools($, registry, server = null) {
+  if (server === null) {
+    registry.worldTools = new Set()
+    registry.worldServer = null
+    // In strict mode this is an explicit global server. A mod's connect()
+    // resolves its plugin's server instead, which strict mode excludes.
+    server = 'fastctx'
+    if (!await assistedSession($)) {
+      const connected = await $.mcp.connect('fastctx')
+      if (!connected.isConnected) return
+      server = connected.server
+    }
+    registry.worldServer = server
   }
   // connect answers the server's name as /mcp lists it, which for a
   // deduplicated server is the name it runs under; a tool carries the
   // name's tool-name spelling, every character outside [A-Za-z0-9_-] made
   // `_` (`claude.ai Gmail`, `claude_ai_Gmail` in the mod reference; 2.1.289
   // lists `plugin:fastctx-world:fastctx` and `plugin_fastctx-world_fastctx`).
-  const spelled = server.replace(/[^A-Za-z0-9_-]/g, '_')
+  const spelled = worldServerSpelling(server)
   const usage = await $.session.usage({ breakdown: 'summary' })
   if (usage.context.breakdown === undefined) throw new Error('the host did not provide its MCP tool ownership map')
   const owners = new Map()
@@ -1896,5 +1908,7 @@ async function worldTools($, registry) {
     if (owners.has(tool.name) && owners.get(tool.name) !== tool.serverName) owners.set(tool.name, null)
     else if (!owners.has(tool.name)) owners.set(tool.name, tool.serverName)
   }
-  registry.worldTools = new Set([...owners].filter(([, owner]) => owner === server || owner === spelled).map(([name]) => name))
+  if (registry.worldServer === server) {
+    registry.worldTools = new Set([...owners].filter(([, owner]) => owner === server || owner === spelled).map(([name]) => name))
+  }
 }

@@ -16,6 +16,8 @@ use serde_json::Value;
 
 #[cfg(test)]
 mod lifetime;
+#[cfg(test)]
+mod listing;
 
 use crate::answer::{self, Answer};
 use crate::protocol::{CLIENT_INFO, VERSION_KEY};
@@ -23,6 +25,12 @@ use crate::protocol::{CLIENT_INFO, VERSION_KEY};
 /// How long after a listing without the machines the host is told to list
 /// the tools again.
 const LIST_AGAIN: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// How long listing the tools waits for the node, reaching it and its
+/// saying the machines: well within the time a host waits for a listing,
+/// past which Claude Code drops the server for the rest of its session (30
+/// seconds), even for a listing asked while another waits.
+pub(crate) const MACHINES_WITHIN: std::time::Duration = std::time::Duration::from_secs(10);
 
 pub struct Session {
     world: WorldDir,
@@ -41,7 +49,7 @@ pub struct Session {
     /// node breaks, so the session arrives again as the same resident.
     were: Mutex<HashMap<Option<String>, ResidentId>>,
     /// Starting the node is done by one call at a time.
-    starting: tokio::sync::Mutex<()>,
+    starting: Arc<tokio::sync::Mutex<()>>,
     /// Emit stderr diagnostics once per connected node incarnation.
     lifetime_reported: Mutex<Option<fastctx_types::ProcessIdentity>>,
     /// The World's write commands refuse in this session's shell.
@@ -83,7 +91,7 @@ impl Session {
             conversation,
             residents: tokio::sync::Mutex::new(HashMap::new()),
             were: Mutex::new(HashMap::new()),
-            starting: tokio::sync::Mutex::new(()),
+            starting: Arc::new(tokio::sync::Mutex::new(())),
             lifetime_reported: Mutex::new(None),
             writes_off,
             watching: Mutex::new(None),
@@ -133,7 +141,7 @@ impl Session {
             conversation: self.conversation.clone(),
             residents: tokio::sync::Mutex::new(HashMap::new()),
             were: Mutex::new(HashMap::new()),
-            starting: tokio::sync::Mutex::new(()),
+            starting: Arc::new(tokio::sync::Mutex::new(())),
             lifetime_reported: Mutex::new(None),
             writes_off: self.writes_off,
             watching: Mutex::new(None),
@@ -752,23 +760,63 @@ impl Session {
     /// when nothing keeps it, as on a computer in no network: a host that
     /// lists them once must see them as they will be. None while a service
     /// keeps the node and it is not running.
-    pub async fn machines(&self, meta: Option<&Value>) -> Result<Option<crate::tools::Machines>, String> {
+    pub async fn machines(self: &Arc<Self>, meta: Option<&Value>) -> Result<Option<crate::tools::Machines>, String> {
+        self.machines_within(meta, None).await
+    }
+
+    /// `machines`, reaching the node and its answer waited for at most
+    /// `within` in all. Its turn to reach the node (`starting`) is waited for
+    /// within that; it is then reached in a task of its own that keeps the
+    /// turn, so a listing given up on leaves a start under way to finish, and
+    /// the next waits for it rather than starting another node or another
+    /// such task.
+    async fn machines_within(
+        self: &Arc<Self>,
+        meta: Option<&Value>,
+        within: Option<std::time::Duration>,
+    ) -> Result<Option<crate::tools::Machines>, String> {
+        let late = |what: &str| match within {
+            Some(within) => format!("the node {what} within {} s", within.as_secs()),
+            None => format!("the node {what}"),
+        };
+        let deadline = within.map(|within| tokio::time::Instant::now() + within);
         let host = self.host(meta)?;
-        let mut client = match self.connecting(host.clone()).await {
+        let reached = match deadline {
+            None => self.connecting(host.clone()).await,
+            Some(deadline) => {
+                let turn = tokio::time::timeout_at(deadline, self.starting.clone().lock_owned())
+                    .await
+                    .map_err(|_| late("could not be reached"))?;
+                let (session, host) = (self.clone(), host.clone());
+                let reaching = tokio::spawn(async move {
+                    let _turn = turn;
+                    session.connect_holding(host).await
+                });
+                tokio::time::timeout_at(deadline, reaching)
+                    .await
+                    .map_err(|_| late("could not be reached"))?
+                    .map_err(|error| error.to_string())?
+            }
+        };
+        let mut client = match reached {
             Ok(client) => client,
             Err(fastctx_client::ConnectError::KeptByService { .. }) => return Ok(None),
             Err(error) => return Err(error.to_string()),
         };
         let thread = meta.and_then(|meta| meta.get("threadId")).and_then(Value::as_str).map(str::to_string);
-        match client
-            .call(Call::Machines {
-                resident: self.known_resident(meta),
-                login: self.login(&host),
-                thread,
-                scratch: true,
-            })
-            .await
-        {
+        let asked = client.call(Call::Machines {
+            resident: self.known_resident(meta),
+            login: self.login(&host),
+            thread,
+            scratch: true,
+        });
+        let answered = match deadline {
+            Some(deadline) => {
+                tokio::time::timeout_at(deadline, asked).await.map_err(|_| late("did not say the machines"))?
+            }
+            None => asked.await,
+        };
+        match answered {
             Ok(Reply::Machines { here, others, groups, collab, mut scratch, speaks, asker, sentinels }) => {
                 if !client.scratch_locations {
                     scratch = here
@@ -842,6 +890,28 @@ impl Session {
         }
     }
 
+    /// The machines to list the tools with, waited for at most `within`. The
+    /// node may not answer for a while, as while it starts, moves the records
+    /// of an earlier release in or works through what piled up: past that, or
+    /// when they cannot be read, the tools are listed without them rather than
+    /// refused or answered too late, either of which a host takes as the tools
+    /// failing for the whole session, and the host is told to list them again
+    /// in a while; so too while a service keeps a node it has not started yet.
+    pub async fn machines_to_list(
+        self: &Arc<Self>,
+        meta: Option<&Value>,
+        output: &crate::stdio::Output,
+        within: std::time::Duration,
+    ) -> Option<crate::tools::Machines> {
+        match self.machines_within(meta, Some(within)).await {
+            Ok(Some(machines)) => Some(machines),
+            Ok(None) | Err(_) => {
+                self.list_again_later(output);
+                None
+            }
+        }
+    }
+
     /// Tells the host to list the tools again in a while, once however often
     /// asked meanwhile: the machines could not be read when it last did.
     pub fn list_again_later(self: &Arc<Self>, output: &crate::stdio::Output) {
@@ -874,6 +944,11 @@ impl Session {
     /// containment is told on standard error once for each node process.
     async fn connecting(&self, host: Host) -> Result<Client, fastctx_client::ConnectError> {
         let _starting = self.starting.lock().await;
+        self.connect_holding(host).await
+    }
+
+    /// `connecting`, its turn (`starting`) held already.
+    async fn connect_holding(&self, host: Host) -> Result<Client, fastctx_client::ConnectError> {
         let client = Client::connect_or_start(&self.world, Peer::Session { host }).await?;
         if let Some(lifetime) = &client.node_lifetime {
             let mut reported = self.lifetime_reported.lock().expect("never poisoned");

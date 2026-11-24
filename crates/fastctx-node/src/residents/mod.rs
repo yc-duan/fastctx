@@ -24,6 +24,7 @@ mod removal;
 pub(crate) mod speaking;
 mod tombstones;
 pub use removal::removal;
+pub(crate) use removal::Takes;
 pub use tombstones::Tombstone;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -625,6 +626,7 @@ impl Residents {
             side: false,
             forked_from: None,
             mcp_off: Default::default(),
+            idle_compaction: Default::default(),
             id: resident.clone(),
             host,
             machine: machine.clone(),
@@ -846,6 +848,19 @@ impl Residents {
     ) -> io::Result<()> {
         self.change_about(world, id, |changing| {
             changing.about.mcp_off = off;
+            true
+        })
+        .map(|_| ())
+    }
+
+    pub fn set_idle_compaction(
+        &self,
+        world: &WorldDir,
+        id: &ResidentId,
+        choice: fastctx_types::logins::idle::IdleChoice,
+    ) -> io::Result<()> {
+        self.change_about(world, id, |changing| {
+            changing.about.idle_compaction = choice;
             true
         })
         .map(|_| ())

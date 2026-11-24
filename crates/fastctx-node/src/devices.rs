@@ -54,7 +54,8 @@ pub fn admit(view: &View, from: &MachineName, call: &RemoteCall) -> Result<(), F
                     | Management::Wake
                     | Management::Move { .. }
                     | Management::Focus { .. }
-                    | Management::Mcp { .. },
+                    | Management::Mcp { .. }
+                    | Management::IdleCompaction { .. },
                 ..
             }
             | RemoteCall::Offers { .. }
@@ -90,6 +91,7 @@ pub fn admit(view: &View, from: &MachineName, call: &RemoteCall) -> Result<(), F
             | RemoteCall::ClaudeConsent { .. }
             // The copies a machine of the user's holds, managed from its page.
             | RemoteCall::Copies { .. }
+            | RemoteCall::ConversationRetention { .. }
             | RemoteCall::Relay { .. }
             // The agents' logins of the user's own machines: scanned, taken
             // up, changed and read only for the user, on the machine itself.
@@ -102,6 +104,7 @@ pub fn admit(view: &View, from: &MachineName, call: &RemoteCall) -> Result<(), F
             | RemoteCall::SetAgentWeek { .. }
             | RemoteCall::ResetAgentUsage { .. }
             | RemoteCall::ChangeAgentModels { .. }
+            | RemoteCall::SetIdleCompaction { .. }
             | RemoteCall::PreviewAgentChange { .. }
             | RemoteCall::ChangeAgentLogin { .. }
             | RemoteCall::ReadAgentLimits { .. }

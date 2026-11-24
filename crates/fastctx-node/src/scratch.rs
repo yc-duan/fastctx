@@ -23,9 +23,13 @@ pub(crate) fn here(node: &Node, owner: &Address) -> String {
 /// other fan-outs ask (`fastctx_net::around`).
 const ASKING_AT_ONCE: usize = 32;
 
-/// How long one machine is given to say, waiting for its hub included: it
-/// is then told as one that gave no answer.
-const ANSWERING: std::time::Duration = std::time::Duration::from_secs(60);
+/// How long one machine is given to say, waiting for its turn to be asked
+/// and for its hub included: it is then told as one that gave no answer, and
+/// its path comes with its first reply (`observed`). They are asked for a
+/// session's listing of its tools, which a host waits for 30 seconds at most
+/// and the listing waits for the node 10 (`fastctx-serve`): one machine slow
+/// to say must not hold up the rest of it.
+const ANSWERING: std::time::Duration = std::time::Duration::from_secs(5);
 
 pub(crate) async fn descriptions(
     node: &Arc<Node>,
@@ -40,9 +44,9 @@ pub(crate) async fn descriptions(
         let (node, id, acting, asking) = (node.clone(), id.clone(), acting.clone(), asking.clone());
         let name = machine.clone();
         let task = pending.spawn(async move {
-            let _turn = asking.acquire_owned().await.map_err(|error| error.to_string())?;
             let what = format!("{machine}'s scratch directory");
             fastctx_platform::doing::outside(what, ANSWERING, async {
+                let _turn = asking.acquire_owned().await.map_err(|error| error.to_string())?;
                 let written = Written::parse(&machine).map_err(|error| error.to_string())?;
                 let owner = Address { machine: node.machine(), resident: id };
                 if node.is_here(&written) {

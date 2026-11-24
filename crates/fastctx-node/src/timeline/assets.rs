@@ -796,18 +796,17 @@ pub(super) fn write(
             }
             let encoded = serde_json::to_vec(event).map_err(failure)?;
             let order = keys[index].to_be_bytes().to_vec();
-            let (body, object) = body(event, &encoded)?;
+            let (body, object) = body(event, encoded)?;
             // Compared before anything is put: an unchanged large event
             // writes nothing again (AA11).
-            let objects: Vec<fastctx_content::ObjectRef> = object.into_iter().collect();
+            let objects: Vec<fastctx_content::ObjectRef> = object.iter().map(|(object, _)| *object).collect();
             if let Some(entry) = had.get(&identities[index])
                 && entry.order == order
-                && entry.body == body
-                && entry.objects == objects
+                && super::stored::unchanged(entry, &body, &objects)
             {
                 continue;
             }
-            let put = objects.first().map(|object| (encoded, *object));
+            let put = object.map(|(object, bytes)| (bytes, object));
             let bytes = body.len();
             phase("bodies", &mut since_phase);
             lining.push(Queued { write: Write { item: identities[index].clone(), order, value: Some(body), objects }, put, leased: None, bytes })?;
@@ -995,14 +994,20 @@ fn refreshed(
 /// The write that gives `event`, the item `entry` holds, its run's facts as
 /// `attach` gives them, where they change its record.
 fn given(entry: &Entry, mut event: SessionEvent, attach: &dyn Fn(&mut SessionEvent) -> Result<(), Failure>) -> Result<Option<Queued>, Failure> {
+    // As kept, which may be without its pictures' bytes: unchanged by its
+    // run's facts, it is not written again in another form.
+    let before = event.clone();
     attach(&mut event)?;
+    if event == before {
+        return Ok(None);
+    }
     let encoded = serde_json::to_vec(&event).map_err(failure)?;
-    let (body, object) = body(&event, &encoded)?;
-    let objects: Vec<fastctx_content::ObjectRef> = object.into_iter().collect();
+    let (body, object) = body(&event, encoded)?;
+    let objects: Vec<fastctx_content::ObjectRef> = object.iter().map(|(object, _)| *object).collect();
     if entry.body == body && entry.objects == objects {
         return Ok(None);
     }
-    let put = objects.first().map(|object| (encoded, *object));
+    let put = object.map(|(object, bytes)| (bytes, object));
     let bytes = body.len();
     Ok(Some(Queued { write: Write { item: entry.item.clone(), order: entry.order.clone(), value: Some(body), objects }, put, leased: None, bytes }))
 }
@@ -1337,8 +1342,7 @@ pub(super) fn write_kept(
                 let objects: Vec<fastctx_content::ObjectRef> = kept.object.iter().map(|(object, _)| *object).collect();
                 if let Some(entry) = had.get(&kept.identity)
                     && entry.order == order
-                    && entry.body == body
-                    && entry.objects == objects
+                    && super::stored::unchanged(entry, &body, &objects)
                 {
                     continue;
                 }
@@ -1390,33 +1394,46 @@ fn window_keys(keyed: &super::spill::Keyed, floor: u64) -> Vec<u64> {
     keys
 }
 
+/// An event's record, with the object it stands for and that object's
+/// bytes when the record is not the event itself (`body`).
+type Body = (Vec<u8>, Option<(fastctx_content::ObjectRef, Vec<u8>)>);
+
 /// The record of an event small enough for one: itself (`body`).
-fn body_small(encoded: &[u8]) -> (Vec<u8>, Option<fastctx_content::ObjectRef>) {
+fn body_small(encoded: &[u8]) -> Body {
     let mut body = Vec::with_capacity(encoded.len() + 1);
     body.push(EVENT);
     body.extend_from_slice(encoded);
     (body, None)
 }
 
-/// An event as its record holds it: itself, or when it is too large for a
-/// record, what is shown in its place, with the object the whole of it is
-/// (put only when the record is written).
-pub(super) fn body(event: &SessionEvent, encoded: &[u8]) -> Result<(Vec<u8>, Option<fastctx_content::ObjectRef>), Failure> {
-    if encoded.len() < RECORD_BYTES {
-        return Ok(body_small(encoded));
+/// An event as its record holds it, `encoded` as the host told it: itself,
+/// or when it is too large for a record or kept without its pictures' bytes
+/// (`stored`), what is shown in its place, with the object the whole of it is
+/// and that object's bytes (put only when the record is written).
+pub(super) fn body(event: &SessionEvent, encoded: Vec<u8>) -> Result<Body, Failure> {
+    let stored = super::stored::form(event);
+    if stored.is_none() && encoded.len() < RECORD_BYTES {
+        return Ok(body_small(&encoded));
     }
-    let hash: [u8; 32] = Sha256::digest(encoded).into();
-    let object = fastctx_content::ObjectRef { hash, size: encoded.len() as u64 };
+    // The likeness is of the event as the host told it, whichever form is
+    // kept (`stored::unchanged`).
+    let told: [u8; 32] = Sha256::digest(&encoded).into();
+    let (shown, kept) = match &stored {
+        Some(stored) => (stored, serde_json::to_vec(stored).map_err(failure)?),
+        None => (event, encoded),
+    };
+    let hash: [u8; 32] = if stored.is_some() { Sha256::digest(&kept).into() } else { told };
+    let object = fastctx_content::ObjectRef { hash, size: kept.len() as u64 };
     let mut body = vec![OVERSIZED];
     body.extend_from_slice(
         &serde_json::to_vec(&serde_json::json!({
-            "bytes": encoded.len(),
-            "slim": preview::preview(event),
-            "likeness": super::identity::likeness_of(event, &hash),
+            "bytes": kept.len(),
+            "slim": preview::preview(shown),
+            "likeness": super::identity::likeness_of(event, &told),
         }))
         .map_err(failure)?,
     );
-    Ok((body, Some(object)))
+    Ok((body, Some((object, kept))))
 }
 
 /// Writes on their way to the timeline, a bounded commit at a time. The
@@ -1778,9 +1795,9 @@ pub(super) mod tests {
             let identities = super::super::names::identities(&now);
             for (event, identity) in now.iter().zip(&identities) {
                 let encoded = serde_json::to_vec(event).unwrap();
-                let (record, object) = body(event, &encoded).unwrap();
+                let (record, object) = body(event, encoded).unwrap();
                 let frozen_key = (super::super::names::frozen(event), super::super::names::key(event).is_some());
-                spill.push_final(identity.as_slice().try_into().unwrap(), event.at, record, object.map(|object| (object, encoded)), Some(frozen_key)).unwrap();
+                spill.push_final(identity.as_slice().try_into().unwrap(), event.at, record, object, Some(frozen_key)).unwrap();
             }
             for (record, set) in frozen.iter().enumerate() {
                 for key in set {
@@ -1859,8 +1876,8 @@ pub(super) mod tests {
             spill.begin().unwrap();
             for (event, identity) in now.iter().zip(&identities) {
                 let encoded = serde_json::to_vec(event).unwrap();
-                let (record, object) = body(event, &encoded).unwrap();
-                spill.push_final(identity.as_slice().try_into().unwrap(), event.at, record, object.map(|object| (object, encoded)), None).unwrap();
+                let (record, object) = body(event, encoded).unwrap();
+                spill.push_final(identity.as_slice().try_into().unwrap(), event.at, record, object, None).unwrap();
             }
             for identity in &before {
                 spill.push_before(identity.clone()).unwrap();

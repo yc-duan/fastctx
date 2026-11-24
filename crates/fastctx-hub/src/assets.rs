@@ -22,7 +22,7 @@ mod keys;
 pub(crate) mod mirror;
 pub(crate) mod told;
 pub(crate) mod work;
-pub(crate) mod hub_log;
+
 pub(crate) mod ledger_views;
 pub(crate) mod line;
 pub(crate) mod restores;
@@ -734,6 +734,18 @@ impl Assets {
                 Err(io::Error::other(why))
             }
         }
+    }
+
+    /// Where `owner`'s library stood as it was closed, while it stays shut
+    /// and is not being deleted: nothing has changed in it since, as every
+    /// write goes through an open library.
+    pub(crate) fn shut_at(&self, owner: &Owner) -> io::Result<Option<fastctx_content::v2::Latest>> {
+        let Some(latest) = self.owners.latest(owner) else { return Ok(None) };
+        // One being deleted is refused as an opening would refuse it.
+        if self.deleting(owner)? {
+            return Ok(None);
+        }
+        Ok(Some(latest))
     }
 
     /// The latest head each of `scopes` of `owner` was checkpointed at.
@@ -1536,8 +1548,7 @@ pub(crate) async fn checkpoints(hub: Weak<crate::Hub>) {
     if let Some(running) = hub.upgrade() {
         fastctx_platform::task::spawn(mirror::everything(running));
     }
-    // And its own log, as it grows (design §14).
-    fastctx_platform::task::spawn(hub_log::follow(hub.clone()));
+
     // What failed to be written is tried again every minute (AR15).
     let again = hub.clone();
     fastctx_platform::task::spawn(async move {

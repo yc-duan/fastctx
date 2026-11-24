@@ -52,7 +52,7 @@ export interface ProjectOptions {
   phase(phase: SentinelPhase): string;
 }
 
-type Tab = "instructions" | "history" | "places";
+type Tab = "instructions" | "description" | "history" | "places";
 /** The page's two views: the work now, drawn; and what the project keeps. */
 type View = "now" | "reference";
 
@@ -189,6 +189,13 @@ export class ProjectPage {
           ? `<p class="project-instructions">${escape(record.what.trim())}</p>`
           : `<p class="quiet">${escape(words.noInstructions)}</p>`,
       ],
+      [
+        "description",
+        words.standing,
+        record.description?.trim()
+          ? `<p class="project-instructions">${escape(record.description.trim())}</p>`
+          : `<p class="quiet">${escape(words.noStanding)}</p>`,
+      ],
       ...this.historySection(map.town, now),
       ["places", words.places, record.places.length ? this.places(map) : `<p class="quiet">${escape(words.noPlaces)}</p>`],
     ];
@@ -196,7 +203,7 @@ export class ProjectPage {
       `<section class="home-section" data-tab="${tab}"><h2 class="section-title">${escape(title)}</h2>${body}</section>`;
     // What the project keeps: its history on one side; what it asks of
     // everyone working in it and where its things are on the other.
-    const first: Tab[] = sections.some(([tab]) => tab === "history") ? ["history"] : ["instructions"];
+    const first: Tab[] = sections.some(([tab]) => tab === "history") ? ["history"] : ["instructions", "description"];
     const reference = `<div class="ph-reference">${facts}<div class="board-column">${sections
       .filter(([tab]) => first.includes(tab))
       .map(section)
