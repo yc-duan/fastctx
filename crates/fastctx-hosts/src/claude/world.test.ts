@@ -325,6 +325,7 @@ test('proves only World calls, before they run, and distinguishes clear from res
   fixtureUi(on)
   const files = new Map<string, string>()
   let sessionId = 'one'
+  let listed = false
   let failProof = false
   let failReports = false
   let executed = 0
@@ -336,7 +337,14 @@ test('proves only World calls, before they run, and distinguishes clear from res
     return path === undefined ? undefined : JSON.parse(files.get(path)!)
   }
   on('mcp.connect', () => ({ value: { isConnected: true, server: serverName } }))
-  on('session.usage', () => ({ value: usage() }))
+  on('session.usage', () => {
+    const current = usage(listed)
+    if (!listed) {
+      const breakdown = current.context.breakdown!
+      breakdown.mcpTools = breakdown.mcpTools.filter((tool) => tool.name !== worldTool)
+    }
+    return { value: current }
+  })
   on('session.id', () => ({ value: sessionId }))
   on('session.cwd', () => ({ value: '/fixture' }))
   on('settings.read', heldByWorld)
@@ -391,6 +399,7 @@ test('proves only World calls, before they run, and distinguishes clear from res
   }
   expect(proofs().length).toBe(0)
   failProof = false
+  listed = true
   await $.tool.call({ tool: worldTool, command: 'first' })
   await $.tool.call({ tool: worldTool, command: 'child', agentId: 'child' })
   await $.session.end({ sessionId: 'one', reason: 'clear', resume: { id: 'one' } })

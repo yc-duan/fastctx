@@ -3,12 +3,12 @@
 
 use crate::{Node, residents::Residents};
 use fastctx_types::ResidentId;
-use std::collections::{BTreeSet, HashSet};
+use std::collections::{BTreeSet, HashMap};
 use std::sync::{Arc, Mutex};
-use tokio::sync::Notify;
+use tokio::sync::{Notify, OwnedSemaphorePermit, Semaphore};
 
 pub(crate) struct Recovery {
-    pending: Mutex<HashSet<ResidentId>>,
+    pending: Mutex<HashMap<ResidentId, Arc<Notify>>>,
     initial: Mutex<Option<Vec<Conversation>>>,
     changed: Notify,
 }
@@ -16,6 +16,7 @@ pub(crate) struct Recovery {
 struct Conversation {
     record: crate::residents::OnRecord,
     turns: Vec<String>,
+    requested: Arc<Notify>,
 }
 
 impl Recovery {
@@ -28,18 +29,33 @@ impl Recovery {
             .everyone()
             .map(|record| {
                 let turns = unfinished.remove(&record.id).unwrap_or_default();
-                Conversation { record, turns }
+                Conversation { record, turns, requested: Arc::new(Notify::new()) }
             })
             .collect();
         Self {
-            pending: Mutex::new(initial.iter().map(|entry| entry.record.id.clone()).collect()),
+            pending: Mutex::new(
+                initial.iter().map(|entry| (entry.record.id.clone(), entry.requested.clone())).collect(),
+            ),
             initial: Mutex::new(Some(initial)),
             changed: Notify::new(),
         }
     }
 
     pub(crate) fn is_ready(&self, id: &ResidentId) -> bool {
-        !self.pending.lock().expect("startup recovery").contains(id)
+        !self.pending.lock().expect("startup recovery").contains_key(id)
+    }
+
+    /// Let a conversation someone is opening or speaking to use the
+    /// recovery slot reserved for interactive requests.
+    pub(crate) fn request_input(&self, id: &ResidentId) {
+        if let Some(requested) = self.pending.lock().expect("startup recovery").get(id) {
+            requested.notify_one();
+        }
+    }
+
+    pub(crate) async fn wait_for_input(&self, id: &ResidentId) {
+        self.request_input(id);
+        self.wait(id).await;
     }
 
     pub(crate) async fn wait(&self, id: &ResidentId) {
@@ -65,6 +81,21 @@ impl Recovery {
 /// together.
 const AT_ONCE: usize = 8;
 
+async fn recovery_slot(
+    slots: Arc<Semaphore>,
+    requested_slot: Arc<Semaphore>,
+    requested: &Notify,
+) -> OwnedSemaphorePermit {
+    tokio::select! {
+        slot = slots.acquire_owned() => slot,
+        slot = async {
+            requested.notified().await;
+            requested_slot.acquire_owned().await
+        } => slot,
+    }
+    .expect("never closed")
+}
+
 /// Lets a conversation's calls through once its recovery ends, however it
 /// ends: one that failed part way is not held shut for good.
 struct Finished<'a> {
@@ -80,11 +111,13 @@ impl Drop for Finished<'_> {
 
 pub(crate) async fn recover(node: &Arc<Node>) {
     let mut workers = tokio::task::JoinSet::new();
-    let slots = Arc::new(tokio::sync::Semaphore::new(AT_ONCE));
+    let slots = Arc::new(Semaphore::new(AT_ONCE));
+    let requested_slot = Arc::new(Semaphore::new(1));
     let initial = node.startup.initial.lock().expect("startup recovery").take().unwrap_or_default();
-    for Conversation { record: mut resident, turns } in initial {
+    for Conversation { record: mut resident, turns, requested } in initial {
         let node = node.clone();
         let slots = slots.clone();
+        let requested_slot = requested_slot.clone();
         workers.spawn(async move {
             let id = resident.id.clone();
             let finished = Finished { node: &node, id: id.clone() };
@@ -98,7 +131,7 @@ pub(crate) async fn recover(node: &Arc<Node>) {
                 }
                 tokio::time::sleep(again.next()).await;
             }
-            let _slot = slots.acquire_owned().await.expect("never closed");
+            let _slot = recovery_slot(slots, requested_slot, &requested).await;
             let began = std::time::Instant::now();
             if let Some(reason) = crate::conversation_store::transfer::rejection(node.world.path(), id.as_str()) {
                 node.log
@@ -137,5 +170,41 @@ pub(crate) async fn recover(node: &Arc<Node>) {
         if let Err(error) = result {
             node.log.line(format_args!("conversation startup recovery did not finish: {error}"));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::future::{Future, poll_fn};
+    use std::pin::pin;
+    use std::task::Poll;
+    use std::time::Duration;
+
+    #[tokio::test]
+    async fn input_can_start_its_recovery_while_background_slots_are_full() {
+        let id: ResidentId = "claude-input".parse().unwrap();
+        let wanted = Arc::new(Notify::new());
+        let recovery = Recovery {
+            pending: Mutex::new(HashMap::from([(id.clone(), wanted.clone())])),
+            initial: Mutex::new(None),
+            changed: Notify::new(),
+        };
+        let background = Arc::new(Semaphore::new(0));
+        let priority = Arc::new(Semaphore::new(1));
+        let mut slot = pin!(recovery_slot(background, priority.clone(), &wanted));
+        assert!(poll_fn(|cx| Poll::Ready(slot.as_mut().poll(cx).is_pending())).await);
+        assert_eq!(priority.available_permits(), 1);
+
+        let mut input = pin!(recovery.wait_for_input(&id));
+        assert!(poll_fn(|cx| Poll::Ready(input.as_mut().poll(cx).is_pending())).await);
+        let permit = tokio::time::timeout(Duration::from_secs(1), slot).await.unwrap();
+        assert_eq!(priority.available_permits(), 0);
+        assert!(!recovery.is_ready(&id));
+
+        recovery.finished(&id);
+        input.await;
+        drop(permit);
+        assert_eq!(priority.available_permits(), 1);
     }
 }

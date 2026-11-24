@@ -94,11 +94,15 @@ impl Residents {
     /// refused or given up on, so what waits to go to it waits on rather than
     /// ending.
     pub(crate) fn takes(&self, id: &ResidentId) -> Takes {
-        let state = self.lock();
+        let mut state = self.lock_for(id);
+        if state.condemned.contains(id) {
+            return Takes::Never;
+        }
+        let deleting = state.deleting.contains_key(id);
         match state.live.get(id) {
             None => Takes::Never,
-            Some(live) if live.removed.is_some() || state.condemned.contains(id) => Takes::Never,
-            Some(_) if state.deleting.contains_key(id) => Takes::Later,
+            Some(live) if live.removed.is_some() => Takes::Never,
+            Some(_) if deleting => Takes::Later,
             Some(_) => Takes::Now,
         }
     }

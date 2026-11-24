@@ -178,7 +178,7 @@ fn accepting<'a>(
             update_document_from(node, from, id, *input).await?;
             return here(node, from, id, Request::Read).await.map(|updated| (answer::Answer::legacy(updated), false));
         }
-        node.ready_for(id).await;
+        node.startup.wait_for_input(id).await;
         if matches!(request, Request::Read) {
             node.residents.active(id)?;
             let snapshot = node

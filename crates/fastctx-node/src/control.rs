@@ -150,7 +150,7 @@ async fn compact_idle_now(
 }
 
 async fn control_here_now(node: &Arc<Node>, resident: &ResidentId, control: Control) -> Result<Controlled, Failure> {
-    node.ready_for(resident).await;
+    node.startup.wait_for_input(resident).await;
     let host = host_of(node, resident)?;
     let (about, _) = node.residents.about(resident).ok_or_else(|| Failure::new("unknown conversation"))?;
     node.settled_for(&about.acting).await;
