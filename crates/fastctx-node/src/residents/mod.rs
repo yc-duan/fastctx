@@ -24,6 +24,7 @@ mod removal;
 pub(crate) mod speaking;
 mod tombstones;
 pub use removal::removal;
+pub(crate) use removal::Takes;
 pub use tombstones::Tombstone;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};

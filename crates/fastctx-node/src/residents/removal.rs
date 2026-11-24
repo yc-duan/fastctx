@@ -26,6 +26,16 @@ pub(super) fn refused(id: &ResidentId) -> Failure {
     ))
 }
 
+/// What a resident takes now (`Residents::takes`).
+pub(crate) enum Takes {
+    /// Something new, as `Residents::active` allows.
+    Now,
+    /// Nothing while a deletion under way may yet leave it as it was.
+    Later,
+    /// Nothing ever again: it is gone, removed or deleted for good.
+    Never,
+}
+
 /// Held while a deletion of a resident is under way.
 pub struct Deleting<'a> {
     residents: &'a Residents,
@@ -79,12 +89,18 @@ impl Residents {
         state.deleting.contains_key(id) || state.condemned.contains(id)
     }
 
-    /// Whether a deletion of `id` is under way and has not gone past what
-    /// can be undone: refused or given up on, it leaves the conversation as
-    /// it was, so what waits to go to it waits on rather than ending.
-    pub(crate) fn deletion_pending(&self, id: &ResidentId) -> bool {
+    /// What `id` takes now, in one look. A deletion under way that has not
+    /// gone past what can be undone leaves the conversation as it was when
+    /// refused or given up on, so what waits to go to it waits on rather than
+    /// ending.
+    pub(crate) fn takes(&self, id: &ResidentId) -> Takes {
         let state = self.lock();
-        state.deleting.contains_key(id) && !state.condemned.contains(id)
+        match state.live.get(id) {
+            None => Takes::Never,
+            Some(live) if live.removed.is_some() || state.condemned.contains(id) => Takes::Never,
+            Some(_) if state.deleting.contains_key(id) => Takes::Later,
+            Some(_) => Takes::Now,
+        }
     }
 
     /// Marks `id` as deleted for good: its deletion went past what can be

@@ -53,13 +53,14 @@ pub(super) fn wait(node: &Arc<Node>, id: ResidentId) {
         let directory = node.world.conversation(&id);
         let mut again = ASK_AGAIN;
         loop {
-            // A deletion under way may yet leave it as it was: it waits on.
-            if node.residents.deletion_pending(&id) {
-                tokio::time::sleep(ASK_AGAIN).await;
-                continue;
-            }
-            if node.residents.active(&id).is_err() {
-                return;
+            match node.residents.takes(&id) {
+                crate::residents::Takes::Now => {}
+                // A deletion under way may yet leave it as it was: it waits on.
+                crate::residents::Takes::Later => {
+                    tokio::time::sleep(ASK_AGAIN).await;
+                    continue;
+                }
+                crate::residents::Takes::Never => return,
             }
             let Some((about, _)) = node.residents.about(&id) else { return };
             // Busy in line, where making it idle failed before, holds no turn

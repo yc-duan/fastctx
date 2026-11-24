@@ -49,7 +49,7 @@ pub struct Session {
     /// node breaks, so the session arrives again as the same resident.
     were: Mutex<HashMap<Option<String>, ResidentId>>,
     /// Starting the node is done by one call at a time.
-    starting: tokio::sync::Mutex<()>,
+    starting: Arc<tokio::sync::Mutex<()>>,
     /// Emit stderr diagnostics once per connected node incarnation.
     lifetime_reported: Mutex<Option<fastctx_types::ProcessIdentity>>,
     /// The World's write commands refuse in this session's shell.
@@ -91,7 +91,7 @@ impl Session {
             conversation,
             residents: tokio::sync::Mutex::new(HashMap::new()),
             were: Mutex::new(HashMap::new()),
-            starting: tokio::sync::Mutex::new(()),
+            starting: Arc::new(tokio::sync::Mutex::new(())),
             lifetime_reported: Mutex::new(None),
             writes_off,
             watching: Mutex::new(None),
@@ -141,7 +141,7 @@ impl Session {
             conversation: self.conversation.clone(),
             residents: tokio::sync::Mutex::new(HashMap::new()),
             were: Mutex::new(HashMap::new()),
-            starting: tokio::sync::Mutex::new(()),
+            starting: Arc::new(tokio::sync::Mutex::new(())),
             lifetime_reported: Mutex::new(None),
             writes_off: self.writes_off,
             watching: Mutex::new(None),
@@ -765,9 +765,11 @@ impl Session {
     }
 
     /// `machines`, reaching the node and its answer waited for at most
-    /// `within` in all. The node is reached in a task of its own: a listing
-    /// given up on leaves a start under way to finish, and the next waits for
-    /// it (`starting`) rather than starting another node.
+    /// `within` in all. Its turn to reach the node (`starting`) is waited for
+    /// within that; it is then reached in a task of its own that keeps the
+    /// turn, so a listing given up on leaves a start under way to finish, and
+    /// the next waits for it rather than starting another node or another
+    /// such task.
     async fn machines_within(
         self: &Arc<Self>,
         meta: Option<&Value>,
@@ -779,17 +781,24 @@ impl Session {
         };
         let deadline = within.map(|within| tokio::time::Instant::now() + within);
         let host = self.host(meta)?;
-        let reaching = {
-            let (session, host) = (self.clone(), host.clone());
-            tokio::spawn(async move { session.connecting(host).await })
-        };
         let reached = match deadline {
+            None => self.connecting(host.clone()).await,
             Some(deadline) => {
-                tokio::time::timeout_at(deadline, reaching).await.map_err(|_| late("could not be reached"))?
+                let turn = tokio::time::timeout_at(deadline, self.starting.clone().lock_owned())
+                    .await
+                    .map_err(|_| late("could not be reached"))?;
+                let (session, host) = (self.clone(), host.clone());
+                let reaching = tokio::spawn(async move {
+                    let _turn = turn;
+                    session.connect_holding(host).await
+                });
+                tokio::time::timeout_at(deadline, reaching)
+                    .await
+                    .map_err(|_| late("could not be reached"))?
+                    .map_err(|error| error.to_string())?
             }
-            None => reaching.await,
         };
-        let mut client = match reached.map_err(|error| error.to_string())? {
+        let mut client = match reached {
             Ok(client) => client,
             Err(fastctx_client::ConnectError::KeptByService { .. }) => return Ok(None),
             Err(error) => return Err(error.to_string()),
@@ -935,6 +944,11 @@ impl Session {
     /// containment is told on standard error once for each node process.
     async fn connecting(&self, host: Host) -> Result<Client, fastctx_client::ConnectError> {
         let _starting = self.starting.lock().await;
+        self.connect_holding(host).await
+    }
+
+    /// `connecting`, its turn (`starting`) held already.
+    async fn connect_holding(&self, host: Host) -> Result<Client, fastctx_client::ConnectError> {
         let client = Client::connect_or_start(&self.world, Peer::Session { host }).await?;
         if let Some(lifetime) = &client.node_lifetime {
             let mut reported = self.lifetime_reported.lock().expect("never poisoned");
