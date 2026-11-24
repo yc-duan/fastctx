@@ -175,10 +175,14 @@ export class CollabFeature {
     this.draw();
   }
 
-  /** The logins a preset may run in: Codex's first, then Claude Code's. */
+  /** The logins a preset may run in: Codex's first, then Claude Code's;
+   *  Codex's alone where presets are not kept, as a hub from before them
+   *  keeps a callee in a Codex login alone. */
   private logins(): CalleeLogin[] {
     const order = (agent: string) => (agent === "codex" ? 0 : 1);
+    const legacy = this.legacy();
     return [...this.known]
+      .filter((one) => !legacy || one.login.agent === "codex")
       .sort((a, b) => order(a.login.agent) - order(b.login.agent))
       .map((one) => ({ login: one.login, label: `${agentName(one.login.agent)} ${one.login.machine} ${one.who}`, models: one.models }));
   }
