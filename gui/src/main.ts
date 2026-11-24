@@ -179,6 +179,7 @@ import { addressOf, assistedBy, bareName, createStore, forgetAnswered, isDeparte
 import { TalkActs } from "./app/talk-acts";
 import { TalkMenu } from "./app/talk-menu";
 import { enTalkMenu, zhTalkMenu } from "./app/talk-menu-words";
+import { colleaguesAsked } from "./app/forget-colleagues";
 import { TalkToast } from "./app/talk-toast";
 import type { Controlled, PendingControl } from "./world/control";
 import type { JsonValue } from "./world/wire";
@@ -1201,12 +1202,17 @@ function askForget(r: ResidentNow, then?: () => void): void {
     });
     return;
   }
-  const working = !isUnreached(store.world.peek(), r) && (r.now?.activity === "busy" || !!r.now?.turn);
-  const also = [working ? words.deleteWorking : "", isUnreached(store.world.peek(), r) ? words.deleteAway(placeSaid(r)) : ""].filter(Boolean);
+  const world = store.world.peek();
+  const working = !isUnreached(world, r) && (r.now?.activity === "busy" || !!r.now?.turn);
+  const also = [working ? words.deleteWorking : "", isUnreached(world, r) ? words.deleteAway(placeSaid(r)) : ""].filter(Boolean);
+  // The colleagues it asked go with it.
+  const parts = words.deleteParts(words.hostRecord(r.about.host.agent));
+  const colleagues = colleaguesAsked([...residentsOf(world, true), ...unreachedOf(world, true)], addressOf(r));
+  if (colleagues > 0) parts.push(words.deleteColleagues(colleagues));
   forgetConfirm.ask({
     title: words.deleteTitle(name),
     what: words.deleteWhat,
-    fields: `<ul class="forget-parts">${words.deleteParts(words.hostRecord(r.about.host.agent)).map((part) => `<li>${escapeText(part)}</li>`).join("")}</ul>${also.length ? `<p class="forget-also">${escapeText(also.join(" "))}</p>` : ""}`,
+    fields: `<ul class="forget-parts">${parts.map((part) => `<li>${escapeText(part)}</li>`).join("")}</ul>${also.length ? `<p class="forget-also">${escapeText(also.join(" "))}</p>` : ""}`,
     go: words.deleteGo,
     act: async () => talkActs.delete(r, isUnreached(store.world.peek(), r)),
     done: () => then?.(),

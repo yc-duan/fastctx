@@ -87,6 +87,8 @@ export interface TalkMenuWords {
   /** What deleting takes away, one tag each; `host` is what its agent's
    *  own program keeps. */
   deleteParts(host: string): string[];
+  /** The colleagues it asked, which go with it: one tag more. */
+  deleteColleagues(count: number): string;
   /** What its agent's own program keeps of it. */
   hostRecord(agent: "codex" | "claude" | string): string;
   deleteWorking: string;
@@ -160,6 +162,7 @@ export const zhTalkMenu: TalkMenuWords = {
   deleteTitle: (name) => `删除「${name}」？`,
   deleteWhat: "将从所有机器与设备中删除，无法恢复。",
   deleteParts: (host) => ["对话与附件", "各台机器上的命令与输出", host, "各设备上的副本"],
+  deleteColleagues: (count) => `它派出的 ${count} 段同事会话`,
   hostRecord: (agent) => (agent === "codex" ? "Codex 的线程记录" : agent === "claude" ? "Claude Code 的会话记录" : "智能体自己的记录"),
   deleteWorking: "对话正在运行，将先停止。",
   deleteAway: (machine) => `${machine} 离线，恢复连接后删除。`,
@@ -230,6 +233,7 @@ export const enTalkMenu: TalkMenuWords = {
   deleteTitle: (name) => `Delete “${name}”?`,
   deleteWhat: "It goes from every machine and device, for good.",
   deleteParts: (host) => ["Messages and attachments", "Commands and output on every machine", host, "Copies on devices"],
+  deleteColleagues: (count) => (count === 1 ? "The conversation of the colleague it asked" : `The conversations of the ${count} colleagues it asked`),
   hostRecord: (agent) => (agent === "codex" ? "Codex's thread" : agent === "claude" ? "Claude Code's session" : "The agent's own record"),
   deleteWorking: "It's working; it will be stopped first.",
   deleteAway: (machine) => `${machine} is offline; it's deleted there when it's back.`,

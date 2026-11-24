@@ -12,6 +12,7 @@ mod controls;
 #[allow(dead_code)]
 mod conversation_piece;
 mod earlier;
+mod forget_colleagues;
 mod goals;
 #[path = "../../../../gui/src-tauri/src/held_events.rs"]
 #[allow(unused_imports)]
