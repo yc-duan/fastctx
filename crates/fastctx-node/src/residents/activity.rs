@@ -299,9 +299,17 @@ pub(crate) fn asked(path: &Path, target: Option<&str>) -> io::Result<Vec<Action>
     })
 }
 
-/// Every colleague the conversation asked, as `asked` reads them, one whose
-/// record cannot be read passed over and counted.
-pub(crate) fn asked_readable(path: &Path) -> io::Result<(Vec<Action>, usize)> {
+/// Where a colleague was asked and who it is, as an ask's action records it.
+#[derive(serde::Deserialize)]
+struct Asked {
+    machine: fastctx_types::MachineName,
+    result: String,
+}
+
+/// Every colleague the conversation asked, its machine and its id as `asked`
+/// reads them, of a record missing what else an action holds too; one
+/// without those two is passed over and counted.
+pub(crate) fn asked_readable(path: &Path) -> io::Result<(Vec<(fastctx_types::MachineName, String)>, usize)> {
     let directory = directory(path)?;
     prepare(&directory, "actions")?;
     records::read(&directory, |rows| {
@@ -309,15 +317,15 @@ pub(crate) fn asked_readable(path: &Path) -> io::Result<(Vec<Action>, usize)> {
         let bodies = query
             .query_map((rows.conversation(), None::<&str>), |row| row.get::<_, Vec<u8>>(0))?
             .collect::<Result<Vec<_>, _>>()?;
-        let mut actions = Vec::with_capacity(bodies.len());
+        let mut asked = Vec::with_capacity(bodies.len());
         let mut unread = 0;
         for body in bodies {
-            match records::decode::<Action>(&body) {
-                Ok(action) => actions.push(action),
+            match records::decode::<Asked>(&body) {
+                Ok(Asked { machine, result }) => asked.push((machine, result)),
                 Err(_) => unread += 1,
             }
         }
-        Ok((actions, unread))
+        Ok((asked, unread))
     })
 }
 

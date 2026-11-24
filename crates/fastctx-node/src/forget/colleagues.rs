@@ -6,23 +6,24 @@
 //! deleted here once the conversation is gone, as the user deleting it would
 //! have it deleted, with the colleagues it asked in turn; one that lives
 //! elsewhere is asked of the hub it was asked through once the conversation
-//! is gone here (`Ask::ready`), and the hub has its machine delete it. What is
-//! kept is taken back where the conversation does not go after all, and
-//! nothing of a colleague goes before the conversation has: a deletion
+//! is gone here (`Ask::ready`), and the hub has its machine delete it. What a
+//! deletion kept is taken back where the conversation does not go after all,
+//! and nothing of a colleague goes before the conversation has: a deletion
 //! refused takes none of them with it. One here that cannot be deleted at
-//! once is tried again with the hubs' asks (`sweep`), for a month. One that
-//! lives here is asked of no hub, whatever name its machine was asked by:
-//! from the machine it lives on, a hub takes a deletion as done there.
+//! once is tried again with the hubs' asks (`sweep`), for a month. A colleague
+//! is taken for one living here only by the address it was asked at, and one
+//! living here is asked of no hub: from the machine a conversation lives on,
+//! a hub takes a deletion as done there.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock, Mutex};
 
 use fastctx_types::access::{Acting, HubAccount};
 use fastctx_types::ipc::Failure;
-use fastctx_types::residents::{Action, Origin};
+use fastctx_types::residents::Origin;
 use fastctx_types::{Address, MachineName, ResidentId};
 use serde::{Deserialize, Serialize};
 
@@ -32,25 +33,56 @@ use crate::Node;
 /// How long a colleague here is tried, from when its deletion was planned.
 const TRIED_FOR_MS: i64 = 30 * 24 * 60 * 60 * 1000;
 
-/// How long a plan waits for its conversation to go: one whose deletion was
-/// refused, or never came that far, is let go, and planned anew when it is
-/// deleted again.
-const WAITS_FOR_MS: i64 = 24 * 60 * 60 * 1000;
+/// How long a plan waits for its conversation's deletion to begin: one
+/// refused, or never come that far, is let go, and planned anew when the
+/// conversation is deleted again. A plan of a node before this one is let go
+/// at once.
+const WAITS_FOR_MS: i64 = 10 * 60 * 1000;
+
+/// The colleagues here one pass of the hubs' asks tries at most: what it
+/// stops may take its time, and the asks wait for no colleague.
+const AT_ONCE: usize = 4;
+
+/// When this node began, in milliseconds: a plan made before was made by a
+/// node that stopped before it came to an end.
+static STARTED: LazyLock<i64> = LazyLock::new(|| jiff::Timestamp::now().as_millisecond());
+
+/// Held while the colleagues to delete here are read and written, on the
+/// thread that does it, so that a pass given up meanwhile writes nothing
+/// over what another kept.
+static FILE: Mutex<()> = Mutex::new(());
+
+/// The colleagues being deleted here now, by a pass or by the deletion that
+/// planned them, so that one is not deleted twice at once.
+static TAKEN: LazyLock<Mutex<HashSet<ResidentId>>> = LazyLock::new(Default::default);
 
 /// A colleague living here, to be deleted once the conversation that asked
 /// it is gone.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct Due {
-    asker: ResidentId,
+    /// The conversation that asked it, as its origin names it.
+    asker: Address,
     colleague: ResidentId,
-    /// When its deletion was planned, in milliseconds.
+    /// Planned at the end of a retention: not stopped while at work.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    gentle: bool,
+    /// When its deletion was planned, in milliseconds: the plan it is of.
     since: i64,
 }
 
-impl PartialEq for Due {
-    fn eq(&self, other: &Self) -> bool {
-        (&self.asker, &self.colleague) == (&other.asker, &other.colleague)
+impl Due {
+    fn pair(&self, other: &Due) -> bool {
+        self.asker == other.asker && self.colleague == other.colleague
     }
+
+    fn same(&self, other: &Due) -> bool {
+        self.pair(other) && self.since == other.since
+    }
+}
+
+/// Names the time this node began (`STARTED`).
+pub(super) fn begin() {
+    LazyLock::force(&STARTED);
 }
 
 /// What a conversation's deletion leaves its colleagues to, kept before it
@@ -61,28 +93,22 @@ pub(super) struct Plan {
     asks: Vec<Ask>,
     /// Those of `asks` kept now.
     asks_added: Vec<Ask>,
-    /// Those here.
+    /// Those here, of this plan.
     here: Vec<Due>,
-    /// Those of `here` kept now.
-    here_added: Vec<Due>,
 }
 
 /// Reads which colleagues `id`, which lives here, asked, and keeps what each
-/// is left to.
-pub(super) async fn plan(node: &Arc<Node>, id: &ResidentId) -> Result<Plan, String> {
+/// is left to; `gentle` at the end of a retention.
+pub(super) async fn plan(node: &Arc<Node>, id: &ResidentId, gentle: bool) -> Result<Plan, String> {
+    begin();
     let acting = node.residents.about(id).map(|(about, _)| about.acting);
     let now = jiff::Timestamp::now().as_millisecond();
     let mut plan = Plan::default();
     for (colleague, account) in asked(node, id).await? {
-        match node.residents.about(&colleague.resident) {
-            // It lives here, whatever name its machine was asked by then.
-            Some((about, _)) if named_by(&about.origin, id) => here(&mut plan, id, colleague.resident, now),
-            Some(_) => node.log.line(format_args!(
-                "{}, which the actions of {id} name, was not asked by it: kept",
-                colleague.resident
-            )),
-            None if node.residents.ever_deleted(&colleague.resident)
-                || names_here(node, &colleague.machine, account.as_ref()) => {}
+        match living_here(node, id, &colleague) {
+            Some(asker) => here(&mut plan, asker, colleague.resident, gentle, now),
+            // Asked here and no longer here: gone.
+            None if names_here(node, &colleague.machine, account.as_ref()) => {}
             None => {
                 let asks = elsewhere(node, id, &colleague, account, acting.as_ref());
                 if asks.is_empty() {
@@ -101,7 +127,7 @@ pub(super) async fn plan(node: &Arc<Node>, id: &ResidentId) -> Result<Plan, Stri
             && asked_by.resident == *id
             && here_named(node, &asked_by.machine)
         {
-            here(&mut plan, id, resident.id, now);
+            here(&mut plan, asked_by.clone(), resident.id, gentle, now);
         }
     }
     if !plan.asks.is_empty() {
@@ -109,24 +135,32 @@ pub(super) async fn plan(node: &Arc<Node>, id: &ResidentId) -> Result<Plan, Stri
             .await
             .map_err(|error| format!("keeping what to ask the hubs of its colleagues: {error}"))?;
     }
-    if !plan.here.is_empty() {
-        match keep(node, plan.here.clone()).await {
-            Ok(added) => plan.here_added = added,
-            Err(error) => {
-                let failed = format!("keeping which of its colleagues to delete here: {error}");
-                if let Err(error) = super::withdraw(node, std::mem::take(&mut plan.asks_added)).await {
-                    node.log.line(format_args!("taking back what to ask the hubs of {id}'s colleagues: {error}"));
-                }
-                return Err(failed);
-            }
+    if !plan.here.is_empty()
+        && let Err(error) = keep(node, plan.here.clone()).await
+    {
+        let failed = format!("keeping which of its colleagues to delete here: {error}");
+        if let Err(error) = super::withdraw(node, std::mem::take(&mut plan.asks_added)).await {
+            node.log.line(format_args!("taking back what to ask the hubs of {id}'s colleagues: {error}"));
         }
+        return Err(failed);
     }
     Ok(plan)
 }
 
 impl Plan {
+    /// Whether a colleague of it here is at work, which a retention does not
+    /// stop: the colleague it is.
+    pub(super) async fn at_work(&self, node: &Arc<Node>) -> Option<ResidentId> {
+        for due in &self.here {
+            if crate::conversation_retention::expiry::busy(node, &due.colleague).await {
+                return Some(due.colleague.clone());
+            }
+        }
+        None
+    }
+
     /// Takes back what this kept, where `id` does not go after all; nothing
-    /// kept before it.
+    /// kept before it, nor what another deletion of it planned since.
     pub(super) async fn take_back(self, node: &Arc<Node>, id: &ResidentId) {
         if super::going(node, id) {
             return;
@@ -136,8 +170,8 @@ impl Plan {
         {
             node.log.line(format_args!("taking back what to ask the hubs of {id}'s colleagues: {error}"));
         }
-        if !self.here_added.is_empty()
-            && let Err(error) = settle(node, self.here_added).await
+        if !self.here.is_empty()
+            && let Err(error) = settle(node, self.here).await
         {
             node.log.line(format_args!("taking back which colleagues of {id} to delete here: {error}"));
         }
@@ -165,38 +199,58 @@ impl Plan {
     }
 }
 
+/// What a sweep left.
+pub(super) struct Swept {
+    /// Some colleague here is still to go.
+    pub(super) left: bool,
+    /// It deleted one, whose hubs are to be asked.
+    pub(super) deleted: bool,
+}
+
 /// Deletes the colleagues here whose conversation is gone, as planned: those
-/// of `only`, or of any. Says whether any is still to go.
-pub(super) async fn sweep(node: &Arc<Node>, only: Option<&ResidentId>) -> bool {
-    let Ok(_call) = super::handing(node) else { return true };
-    let kept = {
-        let _file = node.forget_asks.file.lock().await;
-        let path = file(node);
-        match fastctx_platform::task::spawn_blocking(move || read(&path)).await {
-            Ok(Ok(kept)) => kept,
-            Ok(Err(error)) => {
-                node.log.line(format_args!("reading which colleagues to delete here: {error}"));
-                return true;
-            }
-            Err(error) => {
-                node.log.line(format_args!("reading which colleagues to delete here: {error}"));
-                return true;
-            }
+/// of `only`, all of them, or of any, a few at a time.
+pub(super) async fn sweep(node: &Arc<Node>, only: Option<&ResidentId>) -> Swept {
+    let mut swept = Swept { left: false, deleted: false };
+    let Ok(_call) = super::handing(node) else {
+        swept.left = true;
+        return swept;
+    };
+    let path = file(node);
+    let kept = match fastctx_platform::task::spawn_blocking(move || {
+        let _file = FILE.lock().expect("never poisoned");
+        read(&path)
+    })
+    .await
+    {
+        Ok(Ok(kept)) => kept,
+        Ok(Err(error)) => {
+            node.log.line(format_args!("reading which colleagues to delete here: {error}"));
+            swept.left = true;
+            return swept;
+        }
+        Err(error) => {
+            node.log.line(format_args!("reading which colleagues to delete here: {error}"));
+            swept.left = true;
+            return swept;
         }
     };
     let now = jiff::Timestamp::now().as_millisecond();
-    let (mut settled, mut left) = (Vec::new(), false);
-    for due in kept.into_iter().filter(|due| only.is_none_or(|id| due.asker == *id)) {
-        if !node.residents.ever_deleted(&due.asker) {
-            if super::going(node, &due.asker) || now.saturating_sub(due.since) < WAITS_FOR_MS {
-                left = true;
-            } else {
+    let (mut settled, mut tried) = (Vec::new(), 0);
+    for due in kept.into_iter().filter(|due| only.is_none_or(|id| due.asker.resident == *id)) {
+        let asker = &due.asker.resident;
+        let month = now.saturating_sub(due.since) > TRIED_FOR_MS;
+        if !node.residents.ever_deleted(asker) {
+            if super::going(node, asker) {
+                swept.left = true;
+            } else if due.since < *STARTED || now.saturating_sub(due.since) > WAITS_FOR_MS {
                 settled.push(due);
+            } else {
+                swept.left = true;
             }
             continue;
         }
         match node.residents.about(&due.colleague) {
-            Some((about, _)) if named_by(&about.origin, &due.asker) => {}
+            Some((about, _)) if names(&about.origin, &due.asker) => {}
             // Another's now, or gone already.
             Some(_) => {
                 settled.push(due);
@@ -209,33 +263,55 @@ pub(super) async fn sweep(node: &Arc<Node>, only: Option<&ResidentId>) -> bool {
             // Not known here and not known deleted: kept for its month, as
             // nothing here says it went.
             None => {
-                if now.saturating_sub(due.since) > TRIED_FOR_MS {
+                if month {
                     settled.push(due);
                 }
                 continue;
             }
         }
+        if due.gentle && crate::conversation_retention::expiry::busy(node, &due.colleague).await {
+            if month {
+                node.log.line(format_args!(
+                    "giving up deleting {}, a colleague {asker} asked: at work for a month",
+                    due.colleague
+                ));
+                settled.push(due);
+            } else {
+                swept.left = true;
+            }
+            continue;
+        }
+        if only.is_none() && tried >= AT_ONCE {
+            swept.left = true;
+            continue;
+        }
+        let Some(_taken) = Taken::take(&due.colleague) else {
+            swept.left = true;
+            continue;
+        };
+        tried += 1;
         match deleting(node, due.colleague.clone()).await {
             Ok(_) => {
                 node.log.line(format_args!(
-                    "deleted {}, which lived here, after {}, the conversation that asked it",
-                    due.colleague, due.asker
+                    "deleted {}, which lived here, after {asker}, the conversation that asked it",
+                    due.colleague
                 ));
+                swept.deleted = true;
                 settled.push(due);
             }
-            Err(failure) if now.saturating_sub(due.since) > TRIED_FOR_MS => {
+            Err(failure) if month => {
                 node.log.line(format_args!(
-                    "giving up deleting {}, a colleague {} asked: tried for a month; {}",
-                    due.colleague, due.asker, failure.message
+                    "giving up deleting {}, a colleague {asker} asked: tried for a month; {}",
+                    due.colleague, failure.message
                 ));
                 settled.push(due);
             }
             Err(failure) => {
                 node.log.line(format_args!(
-                    "deleting {}, a colleague {} asked, which is gone: {}; tried again later",
-                    due.colleague, due.asker, failure.message
+                    "deleting {}, a colleague {asker} asked, which is gone: {}; tried again later",
+                    due.colleague, failure.message
                 ));
-                left = true;
+                swept.left = true;
             }
         }
     }
@@ -244,19 +320,50 @@ pub(super) async fn sweep(node: &Arc<Node>, only: Option<&ResidentId>) -> bool {
     {
         node.log.line(format_args!("keeping which colleagues are still to delete here: {error}"));
     }
-    left
+    swept
 }
 
-/// Adds the colleague `colleague` of `asker` to those to delete here.
-fn here(plan: &mut Plan, asker: &ResidentId, colleague: ResidentId, now: i64) {
-    if !plan.here.iter().any(|due| due.colleague == colleague) {
-        plan.here.push(Due { asker: asker.clone(), colleague, since: now });
+/// A colleague being deleted here, let go when dropped.
+struct Taken(ResidentId);
+
+impl Taken {
+    fn take(id: &ResidentId) -> Option<Taken> {
+        TAKEN.lock().expect("never poisoned").insert(id.clone()).then(|| Taken(id.clone()))
     }
 }
 
-/// Whether `origin` says the conversation `asker` asked it.
-fn named_by(origin: &Origin, asker: &ResidentId) -> bool {
-    matches!(origin, Origin::Colleague { asked_by, .. } if asked_by.resident == *asker)
+impl Drop for Taken {
+    fn drop(&mut self) {
+        TAKEN.lock().expect("never poisoned").remove(&self.0);
+    }
+}
+
+/// Whether `origin` names `asker` as the conversation that asked it.
+fn names(origin: &Origin, asker: &Address) -> bool {
+    matches!(origin, Origin::Colleague { asked_by, .. } if asked_by == asker)
+}
+
+/// Adds `colleague`, which `asker` asked, to those to delete here.
+fn here(plan: &mut Plan, asker: Address, colleague: ResidentId, gentle: bool, now: i64) {
+    if !plan.here.iter().any(|due| due.colleague == colleague) {
+        plan.here.push(Due { asker, colleague, gentle, since: now });
+    }
+}
+
+/// The colleague recorded at `colleague`, when it lives here: one of that id
+/// named by `id` as its asker, as asked here, or as asked where both lived
+/// before they came here together. What it names its asker by.
+fn living_here(node: &Node, id: &ResidentId, colleague: &Address) -> Option<Address> {
+    let (about, _) = node.residents.about(&colleague.resident)?;
+    match about.origin {
+        Origin::Colleague { asked_by, .. }
+            if asked_by.resident == *id
+                && (here_named(node, &asked_by.machine) || asked_by.machine == colleague.machine) =>
+        {
+            Some(asked_by)
+        }
+        _ => None,
+    }
 }
 
 /// Whether `machine`, as a colleague was asked on it, names this computer:
@@ -279,20 +386,20 @@ fn here_named(node: &Node, machine: &MachineName) -> bool {
 }
 
 /// The colleagues `id` asked, as its actions recorded them, each with the
-/// account it was asked for where one is recorded. A record that cannot be
-/// read is passed over and told in the log; actions that cannot be read at
-/// all keep it from going this time. Of one whose folder is gone, its
-/// actions are not read: reading them would record them anew.
+/// account it was asked for where one is recorded. A record without where
+/// and whom it asked is passed over and told in the log; actions that cannot
+/// be read at all keep it from going this time. Of one whose folder is gone,
+/// its actions are not read: reading them would record them anew.
 async fn asked(node: &Arc<Node>, id: &ResidentId) -> Result<BTreeMap<Address, Option<HubAccount>>, String> {
     let folder = node.world.conversation(id).path().to_path_buf();
     let path = node.world.conversation(id).actions();
-    let reading = move || -> std::io::Result<(Vec<Action>, usize)> {
+    let reading = move || -> std::io::Result<(Vec<(MachineName, String)>, usize)> {
         if !fastctx_platform::disk::exists(&folder)? {
             return Ok((Vec::new(), 0));
         }
         crate::residents::activity::asked_readable(&path)
     };
-    let (actions, unread) = fastctx_platform::task::spawn_blocking(reading)
+    let (asked, unread) = fastctx_platform::task::spawn_blocking(reading)
         .await
         .map_err(|error| format!("reading the colleagues {id} asked: {error}"))?
         .map_err(|error| format!("reading the colleagues {id} asked: {error}"))?;
@@ -300,9 +407,9 @@ async fn asked(node: &Arc<Node>, id: &ResidentId) -> Result<BTreeMap<Address, Op
         node.log.line(format_args!("{unread} of the colleagues {id} asked could not be read from its actions"));
     }
     let mut found = BTreeMap::new();
-    for action in actions {
-        let Ok(resident) = action.result.parse::<ResidentId>() else { continue };
-        let colleague = Address { machine: action.machine, resident };
+    for (machine, result) in asked {
+        let Ok(resident) = result.parse::<ResidentId>() else { continue };
+        let colleague = Address { machine, resident };
         let account = match crate::collab::asked_account(node, id, &colleague).await {
             Ok(account) => account,
             Err(failure) => {
@@ -363,36 +470,41 @@ fn file(node: &Node) -> PathBuf {
     node.world.path().join("forget-colleagues.json")
 }
 
-/// Keeps `due` beside what is kept already; says which it added.
-async fn keep(node: &Arc<Node>, due: Vec<Due>) -> std::io::Result<Vec<Due>> {
-    let _file = node.forget_asks.file.lock().await;
+/// Keeps `due`, each in place of one kept for the same colleague of the same
+/// asker: the newest plan of a colleague is the one it goes by.
+async fn keep(node: &Node, due: Vec<Due>) -> std::io::Result<()> {
     let path = file(node);
     fastctx_platform::task::spawn_blocking(move || {
+        let _file = FILE.lock().expect("never poisoned");
         let mut kept = read(&path)?;
-        let mut added = Vec::new();
+        let mut changed = false;
         for one in due {
-            if !kept.contains(&one) {
-                kept.push(one.clone());
-                added.push(one);
+            match kept.iter().position(|kept| kept.pair(&one)) {
+                Some(at) if kept[at].same(&one) => {}
+                Some(at) => {
+                    kept[at] = one;
+                    changed = true;
+                }
+                None => {
+                    kept.push(one);
+                    changed = true;
+                }
             }
         }
-        if !added.is_empty() {
-            write(&path, &kept)?;
-        }
-        Ok(added)
+        if changed { write(&path, &kept) } else { Ok(()) }
     })
     .await
     .map_err(std::io::Error::other)?
 }
 
-/// Lets go of `settled`.
-async fn settle(node: &Arc<Node>, settled: Vec<Due>) -> std::io::Result<()> {
-    let _file = node.forget_asks.file.lock().await;
+/// Lets go of `settled`, each only as that plan kept it.
+async fn settle(node: &Node, settled: Vec<Due>) -> std::io::Result<()> {
     let path = file(node);
     fastctx_platform::task::spawn_blocking(move || {
+        let _file = FILE.lock().expect("never poisoned");
         let mut kept = read(&path)?;
         let before = kept.len();
-        kept.retain(|one| !settled.contains(one));
+        kept.retain(|one| !settled.iter().any(|settled| settled.same(one)));
         if kept.len() == before {
             return Ok(());
         }

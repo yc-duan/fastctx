@@ -329,11 +329,17 @@ pub(crate) async fn told(node: &Arc<Node>, hub: &HubId, forgetting: Forgetting) 
 pub(crate) fn start(node: &Arc<Node>) {
     use crate::passes::Left;
     submission::register(node);
+    colleagues::begin();
     crate::passes::register(node, ASKING, |node: Arc<Node>| async move {
         let more = leftover::look(&node).await;
-        // Colleagues here go first: their deletions add asks of their own.
-        let waiting = colleagues::sweep(&node, None).await;
-        if send_kept(&node).await && !more && !waiting { Left::Nothing } else { Left::Work }
+        // The asks first: no colleague here keeps them waiting. Those a
+        // colleague deleted here adds go after it.
+        let mut sent = send_kept(&node).await;
+        let swept = colleagues::sweep(&node, None).await;
+        if swept.deleted {
+            sent = send_kept(&node).await;
+        }
+        if sent && !more && !swept.left { Left::Nothing } else { Left::Work }
     });
     crate::passes::follow(node, ASKING.name, node.views.subscribe(), VIEWS_SETTLE);
 }
@@ -366,7 +372,7 @@ async fn home(node: &Arc<Node>, id: &ResidentId) -> Result<(), String> {
     stop_jobs(node, &address).await?;
     // Which colleagues it asked is read while its records are here, and
     // what each is left to is kept before it goes.
-    let plan = colleagues::plan(node, id).await?;
+    let plan = colleagues::plan(node, id, false).await?;
     match crate::data::delete::delete_one(node, id.as_str()).await {
         Ok(_) | Err(Stop::Nothing(_)) => {}
         Err(stop) => {
@@ -378,9 +384,11 @@ async fn home(node: &Arc<Node>, id: &ResidentId) -> Result<(), String> {
     let names = node.machine_names();
     let mut machines = vec![names.name];
     machines.extend(names.was);
-    forget_copies(node, id, machines).await?;
+    // Gone here: its colleagues follow, whatever becomes of the copy kept
+    // here from showing it.
+    let copies = forget_copies(node, id, machines).await;
     plan.follow(node, id).await;
-    Ok(())
+    copies
 }
 
 /// Whether `id` is gone or going here: deleted, or its deletion begun.
@@ -438,14 +446,20 @@ pub(crate) async fn expired(
         Vec::new()
     };
     // Its colleagues follow it once it is gone: which they are is read
-    // while its records are here.
-    let plan = match colleagues::plan(node, id).await {
+    // while its records are here. One of them here at work keeps it, as
+    // anything of its own on its way would.
+    let plan = match colleagues::plan(node, id, true).await {
         Ok(plan) => plan,
         Err(why) => {
             take_back(node, id, added).await;
             return Err(why);
         }
     };
+    if let Some(colleague) = plan.at_work(node).await {
+        take_back(node, id, added).await;
+        plan.take_back(node, id).await;
+        return Err(format!("its colleague {colleague} is at work"));
+    }
     match crate::data::delete::delete_when(node, id.as_str(), Some(still)).await {
         Ok(_) | Err(Stop::Nothing(_)) => {}
         Err(stop) => {
@@ -460,7 +474,7 @@ pub(crate) async fn expired(
     let names = node.machine_names();
     let mut machines = vec![names.name];
     machines.extend(names.was);
-    forget_copies(node, id, machines).await?;
+    let copies = forget_copies(node, id, machines).await;
     if asking {
         // Kept again: a deletion of it refused meanwhile may have taken back
         // what the two shared.
@@ -470,7 +484,7 @@ pub(crate) async fn expired(
         wake(node);
     }
     plan.follow(node, id).await;
-    Ok(())
+    copies
 }
 
 /// `home`, for a purge (`crate::purges`): nothing of it is asked of a hub as
