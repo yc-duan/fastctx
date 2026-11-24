@@ -59,13 +59,10 @@ with you.
 What comes back is material for your judgment, not a verdict. What it found, checked and measured is
 usually sound; what it suggests, a fix, a better way, how something should be built, is design, and
 it settles easily on a local optimum: doubt every suggestion wholly and make the design yourself.
-Point it at exactly what to look into, check or try, and take its facts. Take from it only what
-holds as fact, has a clear consequence, and leads the whole work toward its best: a true finding
-whose remedy would add machinery for a rare corner, or better one part at the cost of the whole, may
-be left as it is, and said so. Check what matters, decide what to take, and do the rest yourself.
-Work that matters can go to several colleagues at once, each from its own angle, or to one that has
-not seen your conclusion, so that it is not anchored on it. Keep each colleague's id and what it
-does in your plan.
+Point it at exactly what to look into, check or try, and take its facts. Check what matters, decide
+what to take, and do the rest yourself. Work that matters can go to several colleagues at once, each
+from its own angle, or to one that has not seen your conclusion, so that it is not anchored on it.
+Keep each colleague's id and what it does in your plan.
 
 While it works it messages you only when it cannot sensibly go on without you, and that wakes you.
 Reply when it asks you something; send it nothing to acknowledge, nor your passing thoughts, and do
