@@ -59,7 +59,10 @@ async fn a_node_slow_to_say_the_machines_lists_the_tools_without_them_in_time() 
     let began = std::time::Instant::now();
     let machines = session.machines_to_list(None, &output, within).await;
     let took = began.elapsed();
-    asking.await.expect("the node must have been asked for the machines");
+    tokio::time::timeout(std::time::Duration::from_secs(10), asking)
+        .await
+        .expect("the node must have been asked for the machines by now")
+        .expect("the node must have been asked for the machines");
     assert!(machines.is_none(), "the tools are listed without the machines");
     assert!(took >= within, "the listing waited for the node until the bound, {took:?}");
     assert!(took < std::time::Duration::from_secs(10), "the listing did not wait on the node past the bound, {took:?}");

@@ -26,9 +26,10 @@ use crate::protocol::{CLIENT_INFO, VERSION_KEY};
 /// the tools again.
 const LIST_AGAIN: std::time::Duration = std::time::Duration::from_secs(30);
 
-/// How long listing the tools waits for the machines: well within the time
-/// a host waits for a listing, past which Claude Code drops the server for
-/// the rest of its session (30 seconds).
+/// How long listing the tools waits for the node to say the machines, once
+/// it is reached: well within the time a host waits for a listing, past
+/// which Claude Code drops the server for the rest of its session (30
+/// seconds), even for a listing asked while another waits.
 pub(crate) const MACHINES_WITHIN: std::time::Duration = std::time::Duration::from_secs(10);
 
 pub struct Session {
@@ -760,6 +761,17 @@ impl Session {
     /// lists them once must see them as they will be. None while a service
     /// keeps the node and it is not running.
     pub async fn machines(&self, meta: Option<&Value>) -> Result<Option<crate::tools::Machines>, String> {
+        self.machines_within(meta, None).await
+    }
+
+    /// `machines`, the node's answer waited for at most `within` once it is
+    /// reached: reaching it, and starting it where nothing keeps it, are not
+    /// cut short, so a listing given up on starts no other node.
+    async fn machines_within(
+        &self,
+        meta: Option<&Value>,
+        within: Option<std::time::Duration>,
+    ) -> Result<Option<crate::tools::Machines>, String> {
         let host = self.host(meta)?;
         let mut client = match self.connecting(host.clone()).await {
             Ok(client) => client,
@@ -767,15 +779,19 @@ impl Session {
             Err(error) => return Err(error.to_string()),
         };
         let thread = meta.and_then(|meta| meta.get("threadId")).and_then(Value::as_str).map(str::to_string);
-        match client
-            .call(Call::Machines {
-                resident: self.known_resident(meta),
-                login: self.login(&host),
-                thread,
-                scratch: true,
-            })
-            .await
-        {
+        let asked = client.call(Call::Machines {
+            resident: self.known_resident(meta),
+            login: self.login(&host),
+            thread,
+            scratch: true,
+        });
+        let answered = match within {
+            Some(within) => tokio::time::timeout(within, asked)
+                .await
+                .map_err(|_| format!("the node did not say the machines within {} s", within.as_secs()))?,
+            None => asked.await,
+        };
+        match answered {
             Ok(Reply::Machines { here, others, groups, collab, mut scratch, speaks, asker, sentinels }) => {
                 if !client.scratch_locations {
                     scratch = here
@@ -849,22 +865,22 @@ impl Session {
         }
     }
 
-    /// The machines to list the tools with, waited for at most `within`. The
-    /// node may not answer for a while, as while it moves the records of an
-    /// earlier release in or works through what piled up: past that, or when
-    /// they cannot be read, the tools are listed without them rather than
-    /// refused or answered too late, either of which a host takes as the
-    /// tools failing for the whole session, and the host is told to list
-    /// them again in a while.
+    /// The machines to list the tools with, the node's answer waited for at
+    /// most `within`. The node may not answer for a while, as while it moves
+    /// the records of an earlier release in or works through what piled up:
+    /// past that, or when they cannot be read, the tools are listed without
+    /// them rather than refused or answered too late, either of which a host
+    /// takes as the tools failing for the whole session, and the host is told
+    /// to list them again in a while.
     pub async fn machines_to_list(
         self: &Arc<Self>,
         meta: Option<&Value>,
         output: &crate::stdio::Output,
         within: std::time::Duration,
     ) -> Option<crate::tools::Machines> {
-        match tokio::time::timeout(within, self.machines(meta)).await {
-            Ok(Ok(machines)) => machines,
-            Ok(Err(_)) | Err(_) => {
+        match self.machines_within(meta, Some(within)).await {
+            Ok(machines) => machines,
+            Err(_) => {
                 self.list_again_later(output);
                 None
             }
