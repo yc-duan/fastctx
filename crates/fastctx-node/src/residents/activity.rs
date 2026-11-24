@@ -283,15 +283,41 @@ pub(crate) fn actions_version(path: &Path) -> io::Result<u64> {
             .unwrap_or(0) as u64)
     })
 }
+/// The conversation's asks of colleagues, the newest first; with `target`, of
+/// that colleague alone.
+const ASKED: &str = "SELECT body FROM conversation_records INDEXED BY conversation_records_action WHERE conversation=?1 AND family='actions' AND json_extract(body,'$.hand')='ask_colleague' AND (?2 IS NULL OR json_extract(body,'$.result')=?2) ORDER BY position DESC";
+
 pub(crate) fn asked(path: &Path, target: Option<&str>) -> io::Result<Vec<Action>> {
     let directory = directory(path)?;
     prepare(&directory, "actions")?;
     records::read(&directory, |rows| {
-        let mut query=rows.connection().prepare_cached("SELECT body FROM conversation_records INDEXED BY conversation_records_action WHERE conversation=?1 AND family='actions' AND json_extract(body,'$.hand')='ask_colleague' AND (?2 IS NULL OR json_extract(body,'$.result')=?2) ORDER BY position DESC")?;
+        let mut query = rows.connection().prepare_cached(ASKED)?;
         query
             .query_map((rows.conversation(), target), |row| row.get::<_, Vec<u8>>(0))?
             .map(|row| records::decode(&row?))
             .collect()
+    })
+}
+
+/// Every colleague the conversation asked, as `asked` reads them, one whose
+/// record cannot be read passed over and counted.
+pub(crate) fn asked_readable(path: &Path) -> io::Result<(Vec<Action>, usize)> {
+    let directory = directory(path)?;
+    prepare(&directory, "actions")?;
+    records::read(&directory, |rows| {
+        let mut query = rows.connection().prepare_cached(ASKED)?;
+        let bodies = query
+            .query_map((rows.conversation(), None::<&str>), |row| row.get::<_, Vec<u8>>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut actions = Vec::with_capacity(bodies.len());
+        let mut unread = 0;
+        for body in bodies {
+            match records::decode::<Action>(&body) {
+                Ok(action) => actions.push(action),
+                Err(_) => unread += 1,
+            }
+        }
+        Ok((actions, unread))
     })
 }
 

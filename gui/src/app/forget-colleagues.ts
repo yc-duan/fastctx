@@ -4,11 +4,15 @@
 
 import type { Address } from "../world/events";
 import type { ResidentNow } from "../world/world";
+import { bareName } from "./store";
 
 /** How many colleague conversations go with the conversation at `address`:
- *  each that names it, or one of those, as its asker. */
+ *  each that names it, or one of those, as its asker. A machine is matched
+ *  by its bare name, as an asker names it while the list may write it
+ *  `name.hub`. A count short of what goes is possible, a machine renamed
+ *  since being one way; what is deleted is decided on the machines. */
 export function colleaguesAsked(residents: readonly ResidentNow[], address: Address): number {
-  const key = (machine: string, resident: string): string => `${machine}\n${resident}`;
+  const key = (machine: string, resident: string): string => `${bareName(machine)}\n${resident}`;
   const going = new Set<string>();
   let askers = new Set([key(address.machine, address.resident)]);
   while (askers.size > 0) {

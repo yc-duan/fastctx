@@ -295,7 +295,7 @@ fn jobs_changed(node: &Node, id: &ResidentId) -> Option<Timestamp> {
 
 /// Whether `id` has anything on its way, here or of others, or cannot be
 /// told not to.
-pub(crate) async fn busy(node: &Arc<Node>, id: &ResidentId) -> bool {
+async fn busy(node: &Arc<Node>, id: &ResidentId) -> bool {
     crate::lifecycle::held(node, id).await.unwrap_or(true)
         || busy_here(node, id).await
         || crate::turn_evidence::waits(node, id).await.unwrap_or(true)

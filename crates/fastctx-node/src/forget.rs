@@ -176,6 +176,13 @@ async fn delete_here(node: &Arc<Node>, resident: &ResidentId) -> Result<bool, Fa
     // deletion that failed or was interrupted part way left here: deleting
     // what is gone deletes nothing, and the rest is done as the first time.
     home(node, resident).await.map_err(Failure::new)?;
+    if !asks.is_empty()
+        && let Err(error) = keep(node, asks.clone()).await
+    {
+        // Kept again: a deletion of it refused meanwhile may have taken back
+        // what the two shared.
+        node.log.line(format_args!("keeping what to ask the hubs of {resident}: {error}"));
+    }
     Ok(!asks.is_empty())
 }
 
@@ -324,7 +331,9 @@ pub(crate) fn start(node: &Arc<Node>) {
     submission::register(node);
     crate::passes::register(node, ASKING, |node: Arc<Node>| async move {
         let more = leftover::look(&node).await;
-        if send_kept(&node).await && !more { Left::Nothing } else { Left::Work }
+        // Colleagues here go first: their deletions add asks of their own.
+        let waiting = colleagues::sweep(&node, None).await;
+        if send_kept(&node).await && !more && !waiting { Left::Nothing } else { Left::Work }
     });
     crate::passes::follow(node, ASKING.name, node.views.subscribe(), VIEWS_SETTLE);
 }
@@ -355,13 +364,13 @@ async fn home(node: &Arc<Node>, id: &ResidentId) -> Result<(), String> {
     stop_turn(node, id).await?;
     let address = Address { machine: node.machine(), resident: id.clone() };
     stop_jobs(node, &address).await?;
-    // Its colleagues go first: once it is gone, nothing here says which
-    // they were.
-    let went = colleagues::go(node, id, colleagues::Going::Asked).await?;
+    // Which colleagues it asked is read while its records are here, and
+    // what each is left to is kept before it goes.
+    let plan = colleagues::plan(node, id).await?;
     match crate::data::delete::delete_one(node, id.as_str()).await {
         Ok(_) | Err(Stop::Nothing(_)) => {}
         Err(stop) => {
-            take_back(node, id, went.added).await;
+            plan.take_back(node, id).await;
             return Err(stop.why());
         }
     }
@@ -370,9 +379,7 @@ async fn home(node: &Arc<Node>, id: &ResidentId) -> Result<(), String> {
     let mut machines = vec![names.name];
     machines.extend(names.was);
     forget_copies(node, id, machines).await?;
-    if went.asking {
-        wake(node);
-    }
+    plan.follow(node, id).await;
     Ok(())
 }
 
@@ -424,20 +431,16 @@ pub(crate) async fn expired(
         None => Vec::new(),
     };
     let asking = !asks.is_empty();
+    let asks_again = asks.clone();
     let added = if asking {
         keep(node, asks).await.map_err(|error| format!("keeping what to ask the hubs: {error}"))?
     } else {
         Vec::new()
     };
-    // Nothing new begins in it while its colleagues go, and it is asked
-    // first whether it is to go at all: once they are gone, they are gone.
-    let _deleting = node.residents.deleting(id);
-    if let Err(why) = still(node.clone(), id.clone()).await {
-        take_back(node, id, added).await;
-        return Err(why);
-    }
-    let went = match colleagues::go(node, id, colleagues::Going::Expired).await {
-        Ok(went) => went,
+    // Its colleagues follow it once it is gone: which they are is read
+    // while its records are here.
+    let plan = match colleagues::plan(node, id).await {
+        Ok(plan) => plan,
         Err(why) => {
             take_back(node, id, added).await;
             return Err(why);
@@ -448,7 +451,8 @@ pub(crate) async fn expired(
         Err(stop) => {
             // Not deleted, nor being deleted: what this kept is taken back,
             // and nothing kept before it.
-            take_back(node, id, [added, went.added].concat()).await;
+            take_back(node, id, added).await;
+            plan.take_back(node, id).await;
             return Err(stop.why());
         }
     }
@@ -457,9 +461,15 @@ pub(crate) async fn expired(
     let mut machines = vec![names.name];
     machines.extend(names.was);
     forget_copies(node, id, machines).await?;
-    if asking || went.asking {
+    if asking {
+        // Kept again: a deletion of it refused meanwhile may have taken back
+        // what the two shared.
+        if let Err(error) = keep(node, asks_again).await {
+            node.log.line(format_args!("keeping what to ask the hubs of {id}: {error}"));
+        }
         wake(node);
     }
+    plan.follow(node, id).await;
     Ok(())
 }
 
