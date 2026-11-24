@@ -16,6 +16,8 @@ use serde_json::Value;
 
 #[cfg(test)]
 mod lifetime;
+#[cfg(test)]
+mod listing;
 
 use crate::answer::{self, Answer};
 use crate::protocol::{CLIENT_INFO, VERSION_KEY};
@@ -23,6 +25,11 @@ use crate::protocol::{CLIENT_INFO, VERSION_KEY};
 /// How long after a listing without the machines the host is told to list
 /// the tools again.
 const LIST_AGAIN: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// How long listing the tools waits for the machines: well within the time
+/// a host waits for a listing, past which Claude Code drops the server for
+/// the rest of its session (30 seconds).
+pub(crate) const MACHINES_WITHIN: std::time::Duration = std::time::Duration::from_secs(10);
 
 pub struct Session {
     world: WorldDir,
@@ -839,6 +846,28 @@ impl Session {
                 }
             });
             *watching = Some((resident, task));
+        }
+    }
+
+    /// The machines to list the tools with, waited for at most `within`. The
+    /// node may not answer for a while, as while it moves the records of an
+    /// earlier release in or works through what piled up: past that, or when
+    /// they cannot be read, the tools are listed without them rather than
+    /// refused or answered too late, either of which a host takes as the
+    /// tools failing for the whole session, and the host is told to list
+    /// them again in a while.
+    pub async fn machines_to_list(
+        self: &Arc<Self>,
+        meta: Option<&Value>,
+        output: &crate::stdio::Output,
+        within: std::time::Duration,
+    ) -> Option<crate::tools::Machines> {
+        match tokio::time::timeout(within, self.machines(meta)).await {
+            Ok(Ok(machines)) => machines,
+            Ok(Err(_)) | Err(_) => {
+                self.list_again_later(output);
+                None
+            }
         }
     }
 
