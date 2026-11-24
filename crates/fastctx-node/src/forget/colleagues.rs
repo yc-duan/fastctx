@@ -105,20 +105,28 @@ pub(super) async fn plan(node: &Arc<Node>, id: &ResidentId, gentle: bool) -> Res
     let now = jiff::Timestamp::now().as_millisecond();
     let mut plan = Plan::default();
     for (colleague, account) in asked(node, id).await? {
+        if names_here(node, &colleague.machine, account.as_ref()) {
+            // Asked here: an id born here names no other conversation here.
+            match node.residents.about(&colleague.resident) {
+                Some((about, _)) => match about.origin {
+                    Origin::Colleague { asked_by, .. } if asked_by.resident == *id => {
+                        here(&mut plan, asked_by, colleague.resident, gentle, now);
+                    }
+                    _ => node.log.line(format_args!(
+                        "{}, which the actions of {id} name, was not asked by it: kept",
+                        colleague.resident
+                    )),
+                },
+                None if node.residents.ever_deleted(&colleague.resident) => {}
+                // Gone from here but not deleted, as moved to another machine:
+                // asked of the hubs, which know where it lives now.
+                None => plan.asks.extend(asks_of(node, id, &colleague, account, acting.as_ref())),
+            }
+            continue;
+        }
         match living_here(node, id, &colleague) {
             Some(asker) => here(&mut plan, asker, colleague.resident, gentle, now),
-            // Asked here and no longer here: gone.
-            None if names_here(node, &colleague.machine, account.as_ref()) => {}
-            None => {
-                let asks = elsewhere(node, id, &colleague, account, acting.as_ref());
-                if asks.is_empty() {
-                    node.log.line(format_args!(
-                        "{} on {}, a colleague {id} asked, is asked of no hub to be deleted: none this computer is on has its machine",
-                        colleague.resident, colleague.machine
-                    ));
-                }
-                plan.asks.extend(asks);
-            }
+            None => plan.asks.extend(asks_of(node, id, &colleague, account, acting.as_ref())),
         }
     }
     // Those here that name it as their asker, though its actions do not.
@@ -236,7 +244,15 @@ pub(super) async fn sweep(node: &Arc<Node>, only: Option<&ResidentId>) -> Swept 
     };
     let now = jiff::Timestamp::now().as_millisecond();
     let (mut settled, mut tried) = (Vec::new(), 0);
-    for due in kept.into_iter().filter(|due| only.is_none_or(|id| due.asker.resident == *id)) {
+    // Begun at another place each time, so that those refused again and
+    // again do not keep the rest from their turn.
+    let mut candidates: Vec<Due> =
+        kept.into_iter().filter(|due| only.is_none_or(|id| due.asker.resident == *id)).collect();
+    if !candidates.is_empty() {
+        let start = (now / 1000).unsigned_abs() as usize % candidates.len();
+        candidates.rotate_left(start);
+    }
+    for due in candidates {
         let asker = &due.asker.resident;
         let month = now.saturating_sub(due.since) > TRIED_FOR_MS;
         if !node.residents.ever_deleted(asker) {
@@ -269,18 +285,6 @@ pub(super) async fn sweep(node: &Arc<Node>, only: Option<&ResidentId>) -> Swept 
                 continue;
             }
         }
-        if due.gentle && crate::conversation_retention::expiry::busy(node, &due.colleague).await {
-            if month {
-                node.log.line(format_args!(
-                    "giving up deleting {}, a colleague {asker} asked: at work for a month",
-                    due.colleague
-                ));
-                settled.push(due);
-            } else {
-                swept.left = true;
-            }
-            continue;
-        }
         if only.is_none() && tried >= AT_ONCE {
             swept.left = true;
             continue;
@@ -290,8 +294,16 @@ pub(super) async fn sweep(node: &Arc<Node>, only: Option<&ResidentId>) -> Swept 
             continue;
         };
         tried += 1;
-        match deleting(node, due.colleague.clone()).await {
-            Ok(_) => {
+        // At the end of a retention, deleted as one going for its own would
+        // be: refused while at work, which nothing kept at the hubs stops
+        // later; otherwise as the user deleting it.
+        let deleted = if due.gentle {
+            expiring(node, due.colleague.clone()).await
+        } else {
+            deleting(node, due.colleague.clone()).await.map(|_| ()).map_err(|failure| failure.message)
+        };
+        match deleted {
+            Ok(()) => {
                 node.log.line(format_args!(
                     "deleted {}, which lived here, after {asker}, the conversation that asked it",
                     due.colleague
@@ -299,17 +311,17 @@ pub(super) async fn sweep(node: &Arc<Node>, only: Option<&ResidentId>) -> Swept 
                 swept.deleted = true;
                 settled.push(due);
             }
-            Err(failure) if month => {
+            Err(why) if month => {
                 node.log.line(format_args!(
-                    "giving up deleting {}, a colleague {asker} asked: tried for a month; {}",
-                    due.colleague, failure.message
+                    "giving up deleting {}, a colleague {asker} asked: tried for a month; {why}",
+                    due.colleague
                 ));
                 settled.push(due);
             }
-            Err(failure) => {
+            Err(why) => {
                 node.log.line(format_args!(
-                    "deleting {}, a colleague {asker} asked, which is gone: {}; tried again later",
-                    due.colleague, failure.message
+                    "deleting {}, a colleague {asker} asked, which is gone: {why}; tried again later",
+                    due.colleague
                 ));
                 swept.left = true;
             }
@@ -425,6 +437,24 @@ async fn asked(node: &Arc<Node>, id: &ResidentId) -> Result<BTreeMap<Address, Op
     Ok(found)
 }
 
+/// `elsewhere`, told in the log where no hub is to be asked.
+fn asks_of(
+    node: &Node,
+    asker: &ResidentId,
+    colleague: &Address,
+    account: Option<HubAccount>,
+    acting: Option<&Acting>,
+) -> Vec<Ask> {
+    let asks = elsewhere(node, asker, colleague, account, acting);
+    if asks.is_empty() {
+        node.log.line(format_args!(
+            "{} on {}, a colleague {asker} asked, is asked of no hub to be deleted: none this computer is on has its machine",
+            colleague.resident, colleague.machine
+        ));
+    }
+    asks
+}
+
 /// What to ask of the hubs for `colleague`, which lives elsewhere: of the hub
 /// it was asked through, as the account it was asked for; for one asked
 /// before that was recorded, of each hub its machine is on, as each account
@@ -464,6 +494,25 @@ fn elsewhere(
 /// colleagues it asked in turn.
 fn deleting(node: &Arc<Node>, id: ResidentId) -> Pin<Box<dyn Future<Output = Result<bool, Failure>> + Send + '_>> {
     Box::pin(async move { super::delete_here(node, &id).await })
+}
+
+/// `super::expired` of a colleague, its future boxed: refused while it is at
+/// work, asked once nothing new can begin in it (`idle`).
+fn expiring(node: &Arc<Node>, id: ResidentId) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send + '_>> {
+    Box::pin(async move { super::expired(node, &id, idle()).await })
+}
+
+/// What a colleague going at the end of its conversation's retention is
+/// asked once nothing new can begin in it: that nothing of it is at work.
+fn idle() -> crate::data::delete::Still {
+    Arc::new(|node: Arc<Node>, id: ResidentId| {
+        Box::pin(async move {
+            if crate::conversation_retention::expiry::busy(&node, &id).await {
+                return Err("it is at work".into());
+            }
+            Ok(())
+        })
+    })
 }
 
 fn file(node: &Node) -> PathBuf {
