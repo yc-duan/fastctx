@@ -53,6 +53,11 @@ pub(super) fn wait(node: &Arc<Node>, id: ResidentId) {
         let directory = node.world.conversation(&id);
         let mut again = ASK_AGAIN;
         loop {
+            // A deletion under way may yet leave it as it was: it waits on.
+            if node.residents.deletion_pending(&id) {
+                tokio::time::sleep(ASK_AGAIN).await;
+                continue;
+            }
             if node.residents.active(&id).is_err() {
                 return;
             }

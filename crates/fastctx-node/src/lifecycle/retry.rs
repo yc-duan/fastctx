@@ -457,6 +457,11 @@ fn troubled(node: &Node, id: &ResidentId, error: String) {
 /// step, which `changed` may hurry.
 async fn step(node: &Arc<Node>, id: &ResidentId) -> Option<Duration> {
     node.ready_for(id).await;
+    // A deletion under way may yet leave it as it was: what waits for it is
+    // looked at again then, not let go as if it were gone.
+    if node.residents.deletion_pending(id) {
+        return Some(LOOKS_AGAIN);
+    }
     node.residents.active(id).ok()?;
     let (about, _) = node.residents.about(id)?;
     let directory = node.world.conversation(id);

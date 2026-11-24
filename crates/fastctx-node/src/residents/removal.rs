@@ -79,6 +79,14 @@ impl Residents {
         state.deleting.contains_key(id) || state.condemned.contains(id)
     }
 
+    /// Whether a deletion of `id` is under way and has not gone past what
+    /// can be undone: refused or given up on, it leaves the conversation as
+    /// it was, so what waits to go to it waits on rather than ending.
+    pub(crate) fn deletion_pending(&self, id: &ResidentId) -> bool {
+        let state = self.lock();
+        state.deleting.contains_key(id) && !state.condemned.contains(id)
+    }
+
     /// Marks `id` as deleted for good: its deletion went past what can be
     /// undone, and it takes nothing new until the node has finished it.
     pub(crate) fn condemn(&self, id: &ResidentId) {

@@ -366,17 +366,6 @@ fn pairs(node: &Node, acting: &Acting) -> Vec<(HubId, AccountName)> {
 /// here: from now on it takes nothing new, and its turn and its commands
 /// are stopped first.
 async fn home(node: &Arc<Node>, id: &ResidentId) -> Result<(), String> {
-    let deleted = home_marked(node, id).await;
-    // What came for it was put off while its deletion's mark refused it
-    // (`lifecycle::retry`): staying after all, it is handed over again.
-    if deleted.is_err() && !going(node, id) {
-        crate::lifecycle::retry::kick(node, id);
-    }
-    deleted
-}
-
-/// `home`, under the mark that it is being deleted.
-async fn home_marked(node: &Arc<Node>, id: &ResidentId) -> Result<(), String> {
     let _deleting = node.residents.deleting(id);
     stop_turn(node, id).await?;
     let address = Address { machine: node.machine(), resident: id.clone() };
