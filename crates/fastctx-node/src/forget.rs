@@ -366,6 +366,17 @@ fn pairs(node: &Node, acting: &Acting) -> Vec<(HubId, AccountName)> {
 /// here: from now on it takes nothing new, and its turn and its commands
 /// are stopped first.
 async fn home(node: &Arc<Node>, id: &ResidentId) -> Result<(), String> {
+    let deleted = home_marked(node, id).await;
+    // What came for it was put off while its deletion's mark refused it
+    // (`lifecycle::retry`): staying after all, it is handed over again.
+    if deleted.is_err() && !going(node, id) {
+        crate::lifecycle::retry::kick(node, id);
+    }
+    deleted
+}
+
+/// `home`, under the mark that it is being deleted.
+async fn home_marked(node: &Arc<Node>, id: &ResidentId) -> Result<(), String> {
     let _deleting = node.residents.deleting(id);
     stop_turn(node, id).await?;
     let address = Address { machine: node.machine(), resident: id.clone() };
@@ -548,20 +559,30 @@ async fn stop_turn(node: &Arc<Node>, id: &ResidentId) -> Result<(), String> {
     Ok(())
 }
 
-/// Stops what `id` works at, and waits until it works no more: the turn it
-/// runs, and one it is starting whose id is not known yet (busy, no turn),
-/// which would have its deletion refused as working (`data::delete`), as an
-/// answer it was just given starts one. Nothing new starts for it meanwhile
-/// (`Residents::deleting`): one starting becomes a turn, stopped then, or
-/// ends.
+/// Stops the turn `id` runs and waits for it to end; and one it is starting
+/// whose id is not known yet (busy, no turn), as an answer it was just given
+/// starts one, is given a moment to become a turn, stopped then, or to end,
+/// which its deletion would otherwise be refused for as working
+/// (`data::delete`). Nothing new starts for it meanwhile
+/// (`Residents::deleting`). One whose words wait in line for its login starts
+/// nothing until there is room, and one busy longer than that moment may
+/// start nothing at all: those are left for the deletion to refuse, as
+/// before.
 async fn settle(node: &Arc<Node>, id: &ResidentId) -> Result<(), Failure> {
     let mut changes = node.residents.changes();
+    let starting = tokio::time::Instant::now() + TURN_STARTS;
     loop {
         let Some(now) = node.residents.now(id) else { return Ok(()) };
         if now.turn.is_some() {
             crate::talk::stop_and_wait(node, id).await?;
-        } else if now.activity == fastctx_types::residents::Activity::Busy {
-            changes.changed().await.map_err(|_| Failure::new("the node is stopping"))?;
+        } else if now.activity == fastctx_types::residents::Activity::Busy
+            && crate::turn_slots::ahead(node, id).is_none()
+        {
+            match tokio::time::timeout_at(starting, changes.changed()).await {
+                Ok(Ok(())) => {}
+                Ok(Err(_)) => return Err(Failure::new("the node is stopping")),
+                Err(_) => return Ok(()),
+            }
         } else {
             return Ok(());
         }
@@ -570,6 +591,9 @@ async fn settle(node: &Arc<Node>, id: &ResidentId) -> Result<(), Failure> {
 
 /// How long a turn is given to stop when its conversation is deleted.
 const TURN_STOPS: std::time::Duration = std::time::Duration::from_secs(20);
+/// How long a turn starting as its conversation is deleted is given to
+/// become one, within `TURN_STOPS`.
+const TURN_STARTS: std::time::Duration = std::time::Duration::from_secs(10);
 
 /// Deletes the guest rooms here of the conversation at `conversation`, its
 /// commands in them stopped first.
