@@ -114,6 +114,19 @@ pub fn texts() -> Vec<Texts> {
         .collect()
 }
 
+/// The World's text for callers as it reads for a callee in `agent`'s host.
+/// The World's texts are written of GPT, run by Codex; a callee in Claude
+/// Code is Claude, in the same words otherwise. An account's own text is
+/// its own and is never put through this.
+pub fn in_host<'a>(text: &'a str, agent: &str) -> std::borrow::Cow<'a, str> {
+    if agent != "claude" {
+        return std::borrow::Cow::Borrowed(text);
+    }
+    std::borrow::Cow::Owned(
+        text.replace("GPT, run by Codex", "Claude, run by Claude Code").replace("unless you are GPT too", "unless you are Claude too"),
+    )
+}
+
 pub const REVIEW_DOES: &str = "It reviews code, ideas and designs before you act on them; looks into questions of fact, data and sources; tries the ways you name in experiments of its own; and makes drafts, reports and other work apart from what you keep. It neither designs nor builds what you keep.";
 
 pub const SCOUT_DOES: &str = "It scouts: finds where things are, reads many places and checks facts across files, logs and machines, reading only, and hands back what it saw, pressed small, with its sources. It changes nothing and decides nothing.";
@@ -190,6 +203,19 @@ const LIGHTLY: &str = r#"- Use the machines lightly: other work shares them. Do 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Every word of the World's texts that names its host names Claude
+    /// Code's for a callee there, and nothing else of them changes.
+    #[test]
+    fn the_worlds_texts_read_for_a_callee_in_claude_code() {
+        for kind in Kind::WORLDS {
+            let claude = in_host(kind.prompt(), "claude");
+            assert!(!claude.contains("GPT") && !claude.contains("Codex"), "{kind:?}");
+            assert!(claude.contains("Claude, run by Claude Code"), "{kind:?}");
+            assert_eq!(in_host(kind.prompt(), "codex"), kind.prompt());
+        }
+        assert!(in_host(DEFAULT_PROMPT, "claude").contains("unless you are Claude too"));
+    }
 
     /// The reviewer's rules stay one text, as they were before presets; what
     /// the other presets share with it is cut from it and must stay in it.

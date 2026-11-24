@@ -1,7 +1,8 @@
 // One preset of model collaboration, written or rewritten
 // (`world-colleagues.md`): its name and when to ask it, which the calling
-// model chooses by; the Codex login it runs in, with its model and effort;
-// the text its callers are given and what the account adds to its rules;
+// model chooses by; the login it runs in, Codex's or Claude Code's, with its
+// model and effort; the text its callers are given, the World's as it reads
+// for that login's host until rewritten, and what the account adds to its rules;
 // under 「更多」, how many work at once and whether it may use the screen. A
 // new one starts from one of the World's presets or from nothing. Where
 // presets are not kept, it is a callee as before them, without its texts.
@@ -11,7 +12,7 @@
 import { effortLabel } from "../conversation/effort-slider";
 import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
-import { kindOf, sameAgentLogin, type Callee, type PresetKind, type PresetTexts } from "../world/collab";
+import { inHost, kindOf, sameAgentLogin, type Callee, type PresetKind, type PresetTexts } from "../world/collab";
 import { atOnceChoices, atOnceOf, atOnceSaid, type CalleeLogin, type Shown } from "./collab-presets";
 import { Sheet } from "./confirm";
 import type { FeaturesWords } from "./features-words";
@@ -90,11 +91,12 @@ export class PresetSheet {
     this.sheet.body.querySelector<HTMLElement>(opening.shown ? "textarea[name=use]" : "input[name=name]")?.focus();
   }
 
-  /** The World's text for the callers of the kind drawn; none for one of
-   *  the account's own. */
+  /** The World's text for the callers of the kind drawn, as it reads for
+   *  the host of the login chosen; none for one of the account's own. */
   private worldText(): string | undefined {
     const kind = this.draft ? kindOf(this.draft) : "own";
-    return this.opening?.texts.find((one) => one.kind === kind)?.prompt;
+    const text = this.opening?.texts.find((one) => one.kind === kind)?.prompt;
+    return text === undefined ? undefined : inHost(text, this.draft?.login.agent ?? "codex");
   }
 
   private draw(): void {
@@ -221,9 +223,14 @@ export class PresetSheet {
       case "login": {
         const login = opening.logins[Number(value)]?.login;
         if (!login || sameAgentLogin(login, callee.login)) return;
+        // The World's text as it read for the login before reads for this one.
+        const text = this.sheet.body.querySelector<HTMLTextAreaElement>("[name=prompt]");
+        const world = text !== null && text.value === this.worldText();
         callee.login = login;
         callee.model = null;
         callee.effort = null;
+        if (world && text) text.value = this.worldText() ?? "";
+        this.drawReset();
         break;
       }
       case "model":

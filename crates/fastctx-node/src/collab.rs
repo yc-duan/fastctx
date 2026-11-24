@@ -169,7 +169,7 @@ fn choices_now(
                 lives_on: hands.then(|| node.written(&item.link, &callee.login.machine).to_string()),
                 at_once: fastctx_types::collab::AtOnce::most(callee.at_once),
             });
-            texts.add(&shown, item.collab.text_for(callee));
+            texts.add(&shown, &item.collab.text_for(callee));
             candidates.push(Candidate {
                 shown,
                 whose: Whose::Account { link: item.link.clone(), account: item.account.clone() },
@@ -221,7 +221,7 @@ fn own(node: &Node, login: &Caller) -> Result<Option<Choices>, Failure> {
             lives_on: Some(here.to_string()),
             at_once: fastctx_types::collab::AtOnce::most(callee.at_once),
         });
-        texts.add(&callee.name, collab.text_for(&callee));
+        texts.add(&callee.name, &collab.text_for(&callee));
         candidates.push(Candidate {
             shown: callee.name.clone(),
             whose: Whose::Computer,

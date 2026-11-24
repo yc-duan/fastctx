@@ -103,9 +103,28 @@ fn target(named: &str, machine: Option<&str>) -> anyhow::Result<(Target, Option<
         None => (named, None),
     };
     let machine = named.or(machine).map(Written::parse).transpose()?;
-    let target =
-        if job.starts_with("codex-") { Target::Colleague(job.try_into()?) } else { Target::Job(job.try_into()?) };
+    // A colleague is a conversation in either host, Codex or Claude Code;
+    // anything else is a job.
+    let target = if job.starts_with("codex-") || job.starts_with("claude-") {
+        Target::Colleague(job.try_into()?)
+    } else {
+        Target::Job(job.try_into()?)
+    };
     Ok((target, machine))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_colleague_of_either_host_is_stopped_as_one() {
+        for id in ["codex-7f3a", "claude-69073db9"] {
+            assert!(matches!(target(id, None), Ok((Target::Colleague(_), None))), "{id}");
+        }
+        assert!(matches!(target("claude-69073db9@laptop", None), Ok((Target::Colleague(_), Some(_)))));
+        assert!(matches!(target("j-k3x9a2", None), Ok((Target::Job(_), None))));
+    }
 }
 
 /// The step of a stop, where a run gave it.

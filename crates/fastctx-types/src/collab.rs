@@ -128,11 +128,18 @@ impl Collab {
         self.callees.iter().chain(self.shelved.iter().flatten())
     }
 
-    /// The text given to the callers of `callee`, one of these settings'.
-    pub fn text_for<'a>(&'a self, callee: &'a Callee) -> &'a str {
+    /// The text given to the callers of `callee`, one of these settings':
+    /// the account's as it wrote it, or the World's as it reads for the
+    /// callee's host.
+    pub fn text_for<'a>(&'a self, callee: &'a Callee) -> std::borrow::Cow<'a, str> {
+        let agent = callee.login.agent.as_str();
         match &callee.preset {
-            Some(preset) => preset.prompt(),
-            None => self.prompt.as_deref().unwrap_or(crate::collab_prompt::DEFAULT_PROMPT),
+            Some(Preset { prompt: Some(own), .. }) => std::borrow::Cow::Borrowed(own),
+            Some(preset) => crate::collab_presets::in_host(preset.kind.prompt(), agent),
+            None => match &self.prompt {
+                Some(own) => std::borrow::Cow::Borrowed(own),
+                None => crate::collab_presets::in_host(crate::collab_prompt::DEFAULT_PROMPT, agent),
+            },
         }
     }
 
@@ -366,6 +373,17 @@ mod tests {
         let mut claude = callee("gpt", None);
         claude.login.agent = "claude".parse().unwrap();
         assert!(!claude.plain());
+        // The account's text is its own whatever the host; the World's names
+        // the callee's.
+        assert_eq!(collab.text_for(&claude), "the account's");
+        assert!(none.text_for(&claude).starts_with("A colleague is Claude, run by Claude Code."));
+        let mut scout_claude = callee("scout", scout());
+        scout_claude.login.agent = "claude".parse().unwrap();
+        assert!(collab.text_for(&scout_claude).starts_with("A scout is Claude, run by Claude Code, sent to look"));
+        let own = Preset { kind: Kind::Review, prompt: Some("my words of GPT, run by Codex".into()), rules: String::new() };
+        let mut written = callee("gpt", Some(own));
+        written.login.agent = "claude".parse().unwrap();
+        assert_eq!(collab.text_for(&written), "my words of GPT, run by Codex");
         assert!(Collab { callees: vec![claude], ..Default::default() }.validate().is_ok());
         let wire = serde_json::to_value(callee("gpt", None)).unwrap();
         assert!(wire.get("preset").is_none() && serde_json::to_value(&none).unwrap().get("shelved").is_none());

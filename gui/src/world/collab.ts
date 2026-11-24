@@ -59,6 +59,15 @@ export interface PresetTexts {
   prompt: string;
 }
 
+/** The World's text for callers as it reads for a callee in `agent`'s host,
+ *  as the node words it (`collab_presets::in_host`): written of GPT, run by
+ *  Codex, it names Claude, run by Claude Code, for a login of Claude Code's.
+ *  An account's own text is never put through this. */
+export const inHost = (text: string, agent: string): string =>
+  agent === "claude"
+    ? text.replaceAll("GPT, run by Codex", "Claude, run by Claude Code").replaceAll("unless you are GPT too", "unless you are Claude too")
+    : text;
+
 /** The preset `callee` is. */
 export const kindOf = (callee: Callee): PresetKind => {
   const kind = callee.preset?.kind;
