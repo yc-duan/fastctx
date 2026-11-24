@@ -183,7 +183,7 @@ mod tests {
 
     #[tokio::test]
     async fn input_can_start_its_recovery_while_background_slots_are_full() {
-        let id: ResidentId = "claude-input".parse().unwrap();
+        let id: ResidentId = "claude-f1234567".parse().unwrap();
         let wanted = Arc::new(Notify::new());
         let recovery = Recovery {
             pending: Mutex::new(HashMap::from([(id.clone(), wanted.clone())])),
