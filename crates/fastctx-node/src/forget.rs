@@ -529,7 +529,7 @@ pub(crate) async fn purge_copies(node: &Arc<Node>, id: &ResidentId) -> Result<()
 /// session the World started whose turn does not end as asked, or whose
 /// plugin cannot be asked, is stopped as a whole, and its turn with it.
 async fn stop_turn(node: &Arc<Node>, id: &ResidentId) -> Result<(), String> {
-    let asked = match tokio::time::timeout(TURN_STOPS, crate::talk::stop_and_wait(node, id)).await {
+    let asked = match tokio::time::timeout(TURN_STOPS, settle(node, id)).await {
         Ok(Ok(())) => return Ok(()),
         Ok(Err(failure)) => format!("stopping its turn: {}", failure.message),
         Err(_) => format!("its turn did not stop within {} seconds of being asked", TURN_STOPS.as_secs()),
@@ -546,6 +546,26 @@ async fn stop_turn(node: &Arc<Node>, id: &ResidentId) -> Result<(), String> {
         return Err(format!("{asked}; its turn did not end with its Claude Code session"));
     }
     Ok(())
+}
+
+/// Stops what `id` works at, and waits until it works no more: the turn it
+/// runs, and one it is starting whose id is not known yet (busy, no turn),
+/// which would have its deletion refused as working (`data::delete`), as an
+/// answer it was just given starts one. Nothing new starts for it meanwhile
+/// (`Residents::deleting`): one starting becomes a turn, stopped then, or
+/// ends.
+async fn settle(node: &Arc<Node>, id: &ResidentId) -> Result<(), Failure> {
+    let mut changes = node.residents.changes();
+    loop {
+        let Some(now) = node.residents.now(id) else { return Ok(()) };
+        if now.turn.is_some() {
+            crate::talk::stop_and_wait(node, id).await?;
+        } else if now.activity == fastctx_types::residents::Activity::Busy {
+            changes.changed().await.map_err(|_| Failure::new("the node is stopping"))?;
+        } else {
+            return Ok(());
+        }
+    }
 }
 
 /// How long a turn is given to stop when its conversation is deleted.
