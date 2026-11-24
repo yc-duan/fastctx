@@ -92,7 +92,7 @@ pub(super) async fn look(node: &Arc<Node>) -> bool {
             asked.insert(scope.key.clone(), today);
         }
         let conversation = Address { machine: machine.clone(), resident: id };
-        asks.push(Ask { hub, account, conversation, after: None, round: Some(today) });
+        asks.push(Ask { hub, account, conversation, after: None, round: Some(today), since: None });
     }
     if asks.is_empty() {
         return false;
@@ -102,7 +102,9 @@ pub(super) async fn look(node: &Arc<Node>) -> bool {
         Ok(()) => node.log.line(format_args!(
             "{found} scope(s) of conversations deleted here are still held; their hubs are asked to delete them"
         )),
-        Err(error) => node.log.line(format_args!("keeping what to ask the hubs of deleted conversations' scopes: {error}")),
+        Err(error) => {
+            node.log.line(format_args!("keeping what to ask the hubs of deleted conversations' scopes: {error}"))
+        }
     }
     more
 }

@@ -129,8 +129,9 @@ pub fn fingerprint(base64: &str) -> Option<Fingerprint> {
 }
 
 /// Names each picture of `message` by its bytes, where its host's blocks
-/// carry them and say unambiguously which block it is.
-fn fingerprints(message: &mut UserMessage) {
+/// carry them and say unambiguously which block it is. A block whose bytes
+/// were left out of what is kept leaves the name it was given then.
+pub fn fingerprints(message: &mut UserMessage) {
     let blocks: Vec<&Value> =
         message.content.iter().filter(|block| matches!(block["type"].as_str(), Some("image" | "localImage"))).collect();
     // Codex numbers its pictures one way in its current history and another
@@ -151,7 +152,7 @@ fn fingerprints(message: &mut UserMessage) {
                 .map(|(_, data)| data),
             HostImage::Codex { .. } => None,
         };
-        if let Some(content) = data.and_then(fingerprint) {
+        if let Some(content) = data.filter(|data| !data.is_empty()).and_then(fingerprint) {
             image.content = Some(content);
         }
     }

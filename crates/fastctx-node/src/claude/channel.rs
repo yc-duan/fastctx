@@ -209,17 +209,16 @@ pub(super) fn start(node: &Arc<Node>) -> io::Result<()> {
     let port = listener.local_addr()?.port();
     let mut key = [0u8; 32];
     getrandom::fill(&mut key).map_err(io::Error::other)?;
-    let channel =
-        Arc::new(Channel {
-            port,
-            key,
-            wakes: Mutex::default(),
-            ticks: AtomicU64::new(0),
-            receipts: AtomicU64::new(0),
-            queues_made: AtomicU64::new(0),
-            told: Mutex::default(),
-            queues: Mutex::default(),
-        });
+    let channel = Arc::new(Channel {
+        port,
+        key,
+        wakes: Mutex::default(),
+        ticks: AtomicU64::new(0),
+        receipts: AtomicU64::new(0),
+        queues_made: AtomicU64::new(0),
+        told: Mutex::default(),
+        queues: Mutex::default(),
+    });
     if node.claude.channel.set(channel).is_err() {
         return Ok(());
     }
@@ -261,7 +260,8 @@ pub(crate) fn tell(node: &Node, directory: &Path, session: &str, again: bool) {
     let same = fastctx_platform::disk::read(&path).is_ok_and(|current| current == bytes);
     // Where the channel is changes with the node: a lost power takes nothing
     // that the node's next start does not write again.
-    let written = same || fastctx_platform::publish_unsynced(&path, &bytes, fastctx_platform::Permissions::Private).is_ok();
+    let written =
+        same || fastctx_platform::publish_unsynced(&path, &bytes, fastctx_platform::Permissions::Private).is_ok();
     if written {
         channel.told.lock().expect("never poisoned").insert(session.to_string());
     }
@@ -377,7 +377,10 @@ async fn route(node: &Arc<Node>, request: Request<Incoming>) -> Result<Value, Re
                     return Err((StatusCode::SERVICE_UNAVAILABLE, "the session's reports go to its files".to_string()));
                 }
                 if state.queued + names.len() > QUEUED_MOST || state.bytes + body.len() > QUEUED_BYTES {
-                    return Err((StatusCode::SERVICE_UNAVAILABLE, "too many of the session's reports wait".to_string()));
+                    return Err((
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        "too many of the session's reports wait".to_string(),
+                    ));
                 }
                 // Numbered in the order taken, which is the order they are
                 // dealt with: a mod lets go of exactly those dealt with, not
@@ -492,6 +495,10 @@ async fn apply_in_order(
             .collect();
         let written = if rest.is_empty() {
             0
+        } else if node.residents.deleted_session(&session).is_some() {
+            // Its conversation is deleted: what its session still hands over
+            // is kept nowhere, and no files of it are made again.
+            rest.len()
         } else {
             let (writing, wanted) = (directory.clone(), rest.len());
             match fastctx_platform::task::spawn_blocking(move || to_files(&writing, &rest)).await {
@@ -612,7 +619,10 @@ struct HandedReport {
 /// widths it writes them.
 fn watermark(name: &str) -> bool {
     let bytes = name.as_bytes();
-    bytes.len() == 22 && bytes[..15].iter().all(u8::is_ascii_digit) && bytes[15] == b'-' && bytes[16..].iter().all(u8::is_ascii_digit)
+    bytes.len() == 22
+        && bytes[..15].iter().all(u8::is_ascii_digit)
+        && bytes[15] == b'-'
+        && bytes[16..].iter().all(u8::is_ascii_digit)
 }
 
 /// Whether two byte strings are equal, taking as long whichever byte differs.

@@ -1126,7 +1126,7 @@ pub(crate) fn project_rows(
     let context_order = match super::context::order(rows, contextual, last_replacement)? {
         Ok(order) => order,
         Err(why) => {
-            transcript.note(format!("the context its last compaction left: {why}"));
+            transcript.note(format!("{CONTEXT_UNTOLD}: {why}"));
             Vec::new()
         }
     };
@@ -1761,6 +1761,11 @@ fn valid_result(block: &Value) -> bool {
     block.get("is_error").is_none_or(Value::is_boolean)
         && matches!(block.get("content"), Some(Value::String(_) | Value::Array(_) | Value::Null) | None)
 }
+
+/// How a reading tells that the context its last compaction left could not
+/// be told: only of the last, so a later compaction takes it away
+/// (`follow::unsupported`).
+pub(super) const CONTEXT_UNTOLD: &str = "the context its last compaction left";
 
 fn bookkeeping(kind: &str) -> bool {
     matches!(

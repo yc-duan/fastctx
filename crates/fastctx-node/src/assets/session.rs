@@ -1012,10 +1012,6 @@ async fn cleared(
     if elsewhere(assets, hub).await?.is_some() || waiting_revision(link) != Some(revision) {
         return Ok(());
     }
-    // What this machine did and spent so far stays its accounts' own, never
-    // the body's it is to be (§29, 2.5).
-    let (marking, marked) = (node.clone(), hub.clone());
-    fastctx_platform::task::blocking(move || super::activity::mark_private(&marking, &marked)).await?;
     let proof = assets.sign_cleared(me.as_str(), revision);
     let Reply::Cleared { activated } = link.assets(Request::Cleared { revision, proof: proof.into() }).await? else {
         return Err("the hub did not take this machine's word that it cleared".into());

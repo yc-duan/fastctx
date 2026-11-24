@@ -7,11 +7,13 @@
   min-height: 0;
 }
 
+/* The body scrolls across the whole page, wherever the pointer is over it;
+   what it holds keeps to a column in its middle. */
 .features-body {
+  --features-column: 920px;
+  --features-side: max(var(--gutter), calc((100% - var(--features-column)) / 2 + var(--gutter)));
   flex: 1;
-  width: min(100%, 920px);
-  margin: 0 auto;
-  padding: var(--space-3) var(--gutter) var(--space-12);
+  padding: var(--space-3) var(--features-side) var(--space-12);
 }
 
 .feature-cards {
@@ -383,35 +385,6 @@
   color: var(--text-3);
 }
 
-.callee-cards {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr));
-  gap: var(--space-3);
-}
-
-.callee-card {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-  padding: var(--space-4);
-  border-radius: var(--radius-m);
-  background: var(--bg-sunken);
-}
-
-.callee-row {
-  display: flex;
-  align-items: flex-end;
-  gap: var(--space-2);
-}
-
-.callee-row .callee-field {
-  flex: 1;
-}
-
-.callee-field,
 .feature-field {
   display: flex;
   flex-direction: column;
@@ -420,10 +393,7 @@
   color: var(--text-3);
 }
 
-.callee-field input,
-.callee-pick,
-.feature-field input,
-.feature-text {
+.feature-field input {
   width: 100%;
   min-height: 34px;
   padding: 6px 10px;
@@ -434,86 +404,6 @@
   color: var(--text);
   font: inherit;
   font-size: var(--size-text);
-}
-
-.callee-name input {
-  font-family: var(--font-code);
-  font-variation-settings: var(--code-axes);
-}
-
-.feature-text {
-  min-height: 0;
-  padding: var(--space-3);
-  resize: vertical;
-  line-height: var(--leading-prose);
-  font-size: var(--size-text);
-}
-
-/* A choice of several, shown as a field holding what is chosen; pressed,
-   the others in the interface's menu. */
-.callee-pick {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  text-align: left;
-  cursor: pointer;
-}
-
-.callee-pick-value {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.callee-pick .glyph {
-  flex: none;
-  color: var(--text-3);
-  transition: color var(--hover) var(--ease);
-}
-
-.callee-pick:hover .glyph,
-.callee-pick[aria-expanded="true"] .glyph {
-  color: var(--text);
-}
-
-.callee-switch {
-  display: inline-flex;
-  align-items: center;
-  align-self: flex-start;
-  gap: var(--space-3);
-  min-height: 32px;
-  font-size: var(--size-text);
-  color: var(--text-2);
-}
-
-@media (pointer: coarse) {
-  .callee-pick,
-  .callee-switch {
-    min-height: 44px;
-  }
-}
-
-.callee-add {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 4px;
-  width: 100%;
-  height: 100%;
-  min-height: 160px;
-  border-radius: var(--radius-m);
-  background: color-mix(in srgb, var(--bg-sunken) 55%, transparent);
-  color: var(--text-3);
-  font-size: var(--size-text);
-  transition: color var(--hover) var(--ease), background-color var(--hover) var(--ease);
-}
-
-.callee-add:hover:not(:disabled) {
-  color: var(--text);
-  background: var(--bg-sunken);
 }
 
 .feature-now {
@@ -742,7 +632,7 @@
 /* A feature's film: as large as the page allows, with room under it for
    its words and the button that turns the feature on, all on one screen. */
 .features-body.features-film {
-  width: min(100%, 1280px);
+  --features-column: 1280px;
 }
 
 .feature-intro .feature-film {

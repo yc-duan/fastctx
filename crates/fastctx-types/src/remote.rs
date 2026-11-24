@@ -284,6 +284,12 @@ pub enum RemoteCall {
     Copies {
         ask: crate::data::CopiesAsk,
     },
+    /// The rule this machine deletes its conversations idle long enough by:
+    /// read, or set by its owner or by an account its agents assist, each
+    /// for its own (`crate::conversation_retention`).
+    ConversationRetention {
+        ask: crate::conversation_retention::RetentionAsk,
+    },
     /// The user's word on Claude Code's bypass-permissions consent there.
     ClaudeConsent {
         accept: bool,
@@ -790,6 +796,7 @@ impl RemoteCall {
             | RemoteCall::ItemDetail { .. }
             | RemoteCall::AgentActivity { .. }
             | RemoteCall::SetIdleCompaction { .. }
+            | RemoteCall::ConversationRetention { .. }
             | RemoteCall::Upload { .. } => Purpose::Agents,
             RemoteCall::Agents
             | RemoteCall::AgentLogins
@@ -860,6 +867,7 @@ pub enum RemoteReply {
         changed: bool,
     },
     Copies(crate::data::CopiesAnswer),
+    ConversationRetention(crate::conversation_retention::RetentionAnswer),
     AttachmentPlaces(crate::attachments::AttachmentPlaces),
     Uploaded(crate::attachments::Attachment),
     Run(Box<RunReply>),
@@ -969,6 +977,7 @@ impl RemoteCall {
             // The asset lines, and what a machine's owner asks of the copies its
             // library holds.
             Self::Assets | Self::Copies { .. } => Some(Purpose::AssetSync),
+            Self::ConversationRetention { .. } => Some(Purpose::ExecutionControl),
             Self::SetAgentWeek { .. } | Self::ResetAgentUsage { .. } | Self::SetIdleCompaction { .. } => {
                 Some(Purpose::ExecutionControl)
             }
@@ -1071,6 +1080,7 @@ impl RemoteReply {
         match self {
             Self::Timeline { .. } | Self::Topics { .. } => Some(Purpose::Observation),
             Self::Copies { .. } => Some(Purpose::AssetSync),
+            Self::ConversationRetention(_) => Some(Purpose::ExecutionControl),
             Self::AgentActivity { .. }
             | Self::AgentCalls { .. }
             | Self::AgentChangePreview { .. }

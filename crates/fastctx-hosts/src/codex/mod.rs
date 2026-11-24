@@ -54,6 +54,7 @@ mod transport;
 mod user_config;
 mod user_images;
 mod user_picture;
+pub use management::Unconfirmed;
 pub use user_picture::UserPicture;
 
 use std::collections::{HashMap, HashSet};

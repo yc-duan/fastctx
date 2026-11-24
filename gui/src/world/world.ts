@@ -245,6 +245,8 @@ export interface MachineFacts {
   goal_question_words?: boolean;
   /** It opens a colleague's goal before its first input. */
   goal_colleagues?: boolean;
+  /** It starts a colleague as the preset it was asked as. */
+  colleague_presets?: boolean;
   /** It says which colleague goals a conversation still waits on. */
   goal_waits?: boolean;
   /** It takes goal commands from runs elsewhere, and a requester's pause
@@ -385,6 +387,9 @@ export interface ProjectRecord {
   version: number;
   name: string;
   what: string;
+  /** The project as it stands, in one account the agents working in it keep
+   *  current; left out while none is written. */
+  description?: string;
   machines: MachineName[];
   places: Listing[];
   canon: Location | null;

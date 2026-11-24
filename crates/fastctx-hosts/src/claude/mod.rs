@@ -17,6 +17,7 @@ pub mod assisted;
 pub mod background;
 pub mod calls;
 pub mod catalog;
+pub mod compacted;
 mod content;
 mod context;
 pub mod control;

@@ -1,12 +1,11 @@
 //! Another machine's activity, from the copies here (plan 3-5, design
 //! §28.27, §28.58). Each account's records' scope holds what each machine
-//! did for it as `activity/<machine>` (`assets::activity`), with the hours an
+//! did for it as `activity/<machine>` (releases before beta.26), with the hours an
 //! earlier version kept without their deeds; a body's `records` scope what a
 //! machine shared whole did for its members. Its book is answered from them
 //! as it would answer the accounts asking — what it did for them, and for
-//! its own user where one of them owns it — once every one of those
-//! accounts' records is pulled whole here, or while the machine is away.
-//! Otherwise the machine is asked.
+//! its own user where one of them owns it — only while the machine is away
+//! or does not answer (`query`): since beta.26 no machine writes there.
 
 use crate::Node;
 use fastctx_content::v2::{AccountActivity, Entry, Kind as _, Library};
@@ -20,13 +19,11 @@ const MOST: usize = 2000;
 /// An hour, in milliseconds.
 const HOUR: i64 = 3_600_000;
 
-/// `written`'s book as the copies here have it for `acting`, while it is
-/// away; none when it is not, its name alone could be two machines of two
-/// networks, a deed's body is not all here, or no copy here has anything of
-/// it.
+/// `written`'s book as the copies here have it for `acting`; none when its
+/// name alone could be two machines of two networks, a deed's body is not
+/// all here, or no copy here has anything of it.
 pub(crate) fn answer(node: &Node, acting: &Acting, written: &Written, query: &BookQuery) -> Option<BookAnswer> {
     let machine = &written.name;
-    let away = crate::timeline::copy::away(node, machine);
     let library = &node.assets.as_ref()?.library;
     // Its stream on the network it is named on, or on each that lists it
     // as the same machine, and whose the accounts asking are.
@@ -46,29 +43,6 @@ pub(crate) fn answer(node: &Node, acting: &Acting, written: &Written, query: &Bo
     }
     if keys.len() > 1 {
         return None;
-    }
-    // Reached, it is answered from here only when every account asking has
-    // its records pulled whole here: no deed of one is missing.
-    if !away {
-        let pulled: BTreeSet<String> = library
-            .held_scopes()
-            .ok()?
-            .into_iter()
-            .filter(|scope| crate::timeline::copy::records_here(node, scope))
-            .map(|scope| scope.key)
-            .collect();
-        let all = node.links().into_iter().all(|link| {
-            let hub = link.membership().id.to_string();
-            let view = link.view();
-            node.accounts_on(&link, acting).iter().all(|account| {
-                view.directory.account(account).is_some_and(|found| {
-                    pulled.contains(&fastctx_types::assets::records_key(&hub, account, found.opened.as_millisecond()))
-                })
-            })
-        });
-        if !all {
-            return None;
-        }
     }
     // The window asked: what lies outside it is passed over as it is read.
     let (from, to) = match query {
@@ -155,7 +129,7 @@ pub(crate) fn answer(node: &Node, acting: &Acting, written: &Written, query: &Bo
     })
 }
 
-/// An hour an earlier version kept without its deeds, as `assets::activity`
+/// An hour an earlier version kept without its deeds, as releases before beta.26
 /// writes it.
 fn hour_of(value: &serde_json::Value) -> Option<Hour> {
     let text = |name: &str| value.get(name).and_then(serde_json::Value::as_str).filter(|text| !text.is_empty());
@@ -173,12 +147,12 @@ fn hour_of(value: &serde_json::Value) -> Option<Hour> {
 }
 
 /// A deed's body as written: its row, or the one object it is in when it
-/// was too large to be a body (`assets::activity`, M17).
+/// was too large to be a body (releases before beta.26, M17).
 fn read(library: &Library, entry: &Entry) -> Option<serde_json::Value> {
     serde_json::from_slice(&crate::timeline::copy::whole_body(library, entry)?).ok()
 }
 
-/// A deed as the book's row, written as `assets::activity` writes it, the
+/// A deed as the book's row, written as releases before beta.26 writes it, the
 /// way the book's own answer reads it (`query`).
 fn deed_of(value: &serde_json::Value) -> Option<Deed> {
     let text = |name: &str| value.get(name).and_then(serde_json::Value::as_str);

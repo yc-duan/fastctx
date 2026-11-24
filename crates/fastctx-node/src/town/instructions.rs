@@ -30,8 +30,13 @@ pub(crate) fn current(
     let result = if !super::access::permits_at(node, acting, town, place.as_ref()).map_err(io::Error::other)? {
         None
     } else if let Some((record, opened)) = super::read::current(&node.world, town)? {
+        if let Err(error) = super::description::keep_copy(&node.world, town, &record) {
+            node.log.line(format_args!("keeping the description of {town}: {error}"));
+        }
+        let at =
+            format!("{} on {}", crate::world::native(&super::description::path(&node.world, town)), node.machine());
         let usable = crate::ledger::query::usable_at(node, acting, place.as_ref().map(|place| &place.hub));
-        let (rendered, names) = render(town, record, opened, usable);
+        let (rendered, names) = render(town, record, opened, usable, &at);
         machines = names;
         Some(rendered)
     } else {
@@ -46,6 +51,7 @@ fn render(
     mut record: fastctx_types::project::Record,
     mut opened: fastctx_types::project::Stamp,
     usable: Option<crate::ledger::query::Usable>,
+    description_at: &str,
 ) -> ((String, fastctx_types::project::Record), Vec<fastctx_types::MachineName>) {
     let machines = std::cell::RefCell::new(std::collections::BTreeSet::new());
     let visible = |machine: &fastctx_types::MachineName| {
@@ -54,7 +60,10 @@ fn render(
     };
     record.for_reader(&visible);
     opened.for_reader(&visible);
-    ((fastctx_hands::town::record_of(town, &record, &opened), record), machines.into_inner().into_iter().collect())
+    (
+        (fastctx_hands::town::record_with(town, &record, &opened, Some(description_at)), record),
+        machines.into_inner().into_iter().collect(),
+    )
 }
 
 /// Refreshes named project context and gives the plugin its canonical location.

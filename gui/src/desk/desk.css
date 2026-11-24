@@ -28,6 +28,36 @@
   initial-value: 0;
 }
 
+/* What a head keeps clear of the corner by is the head's own to reckon:
+   how wide the corner's line is, how wide the side stands beside it, and
+   the room that leaves. None of it is handed down: handed down, every mark
+   in the head was set again at each frame the line widens or the side
+   comes. The side's own line reckons the same way (`side.css`). A system
+   browser that registers nothing hands them down as before. */
+@property --sp-corner-width {
+  syntax: "<length>";
+  inherits: false;
+  initial-value: 32px;
+}
+
+@property --side-now {
+  syntax: "<length>";
+  inherits: false;
+  initial-value: 0px;
+}
+
+@property --sp-corner {
+  syntax: "<length>";
+  inherits: false;
+  initial-value: 0px;
+}
+
+@property --dk-room {
+  syntax: "<length>";
+  inherits: false;
+  initial-value: 0px;
+}
+
 .desk {
   position: relative;
   display: flex;
@@ -156,6 +186,12 @@
   --dk-room: max(var(--space-4), calc(var(--sp-corner) - var(--side-now, 0px)));
 }
 
+/* How wide the side stands is said to the heads alone: said to the desk,
+   everything on it would be set again as the side opens and shuts. */
+.sp-host.sp-shown:not(.sp-over) > .sp-split[data-dock="right"] .desk-pane > :is(.conversation-page, .dk-fork-page) > .page-head {
+  --side-now: var(--side-width);
+}
+
 .desk-pane.dk-corner > :is(.conversation-page, .dk-fork-page) > .page-head {
   --dk-corner: 1;
 }
@@ -217,6 +253,7 @@
   display: flex;
   flex-direction: column;
   min-width: 0;
+  container-type: inline-size;
 }
 
 .dk-fork-body {

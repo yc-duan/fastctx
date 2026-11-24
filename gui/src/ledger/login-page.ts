@@ -9,6 +9,7 @@
 // where I was given one I see my own part alone. Everyone sees what the
 // week is expected to hold and the share they were given of it.
 
+import { RETENTION_DAYS, type RetentionAnswer } from "../world/retention";
 import { glyph } from "../conversation/glyphs";
 import { bars, calendar, INKS, punch, readout, rise, type Column } from "./charts";
 import {
@@ -828,7 +829,7 @@ function settings(login: Login): string {
   const compacts = login.standing === "in" && (login.family === "claude" || login.family === "codex");
   const idle = `${compacts ? set("闲置自动压缩", "对话闲置够久后自动执行一次 /compact，只对你自己的对话生效", toggle("idle-on", !!login.idle?.on, "", `data-id="${id}"`)) : ""}
     ${compacts && login.idle?.on ? set("压缩条件", `闲置 ${login.idle.after_minutes} 分钟后，上下文至少 ${tenThousands(login.idle.min_tokens)}`, word("idle-edit", "编辑")) : ""}`;
-  if (login.lent) return `<div class="lg-body lg-sheet"><div class="lg-sets">${idle}</div></div>`;
+  if (login.lent) return `<div class="lg-body lg-sheet"><div class="lg-sets">${idle}${retentionRow(login, set)}</div></div>`;
   return `<div class="lg-body lg-sheet"><div class="lg-sets">
     ${set("工作台", "在 Fastctx 中对话，记录用量与额度", toggle("bench", login.workbench, "", `data-id="${id}"`))}
     ${set("接入", login.drift ? `已接入　<span class="lg-caution">${escape(login.drift)}</span>` : "已接入 Fastctx", `${login.drift ? word("attach", "更新接入") : ""}${word("detach", "移除", true)}`)}
@@ -882,6 +883,47 @@ on("idle-edit", () => {
   const login = current();
   if (login && deeds) deeds.idle(login);
   else say("压缩条件（样品未实现）");
+});
+
+// ---- 对话保留（受协助的人看主人定的上限，给自己设得更短）
+
+/** What each lent login's machine answered of how long it keeps the reader's
+ *  idle conversations, or that it is being asked, or why it could not be. */
+const retained = new Map<string, RetentionAnswer | "asking" | { failed: string }>();
+
+function retentionRow(login: Login, set: (name: string, said: string, control: string) => string): string {
+  if (!deeds?.retention) return "";
+  const kept = retained.get(login.id);
+  if (kept === undefined) {
+    retained.set(login.id, "asking");
+    void deeds.retention(login).then(
+      (answer) => (retained.set(login.id, answer), draw()),
+      (error: unknown) => (retained.set(login.id, { failed: error instanceof Error ? error.message : String(error) }), draw()),
+    );
+  }
+  if (kept === undefined || kept === "asking") return set("对话保留", "读取中…", "");
+  if ("failed" in kept) return set("对话保留", `读不到：${escape(kept.failed)}`, "");
+  const ceiling = kept.rule.assisted_days;
+  const mine = kept.rule.accounts?.[0]?.days;
+  const soon = kept.conversations.filter((one) => one.at && Date.parse(one.at) <= Date.now() + 7 * 86_400_000).length;
+  const said = [
+    ceiling ? `主人设定：闲置超过 ${ceiling} 天的对话会被删除` : "主人没有设定保留期",
+    mine ? `你设定 ${mine} 天` : "",
+    soon ? `${soon} 段将在 7 天内到期` : "",
+  ].filter(Boolean).join("　");
+  const days = RETENTION_DAYS.filter((n) => ceiling === undefined || n <= ceiling);
+  const control = choices("rt-mine", [["none", ceiling ? "跟随主人" : "不删除"], ...days.map((n): [string, string] => [String(n), `${n} 天`])], mine ? String(mine) : "none", `data-id="${escape(login.id)}"`);
+  return set("对话保留", said, control);
+}
+
+on("rt-mine", (button) => {
+  const login = current();
+  if (!login || !deeds?.retention) return;
+  const days = button.dataset.value === "none" || !button.dataset.value ? null : Number(button.dataset.value);
+  void deeds.retention(login, days).then(
+    (answer) => (retained.set(login.id, answer), draw()),
+    (error: unknown) => say(error instanceof Error ? error.message : "更改失败"),
+  );
 });
 
 /** Tokens in tens of thousands, as the page writes context. */

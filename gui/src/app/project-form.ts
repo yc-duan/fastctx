@@ -260,6 +260,8 @@ export class ProjectForm {
     const kept = {
       name: this.body.querySelector<HTMLInputElement>("[name=name]")?.value ?? record?.name ?? "",
       what: this.body.querySelector<HTMLTextAreaElement>("[name=what]")?.value ?? record?.what ?? "",
+      description:
+        this.body.querySelector<HTMLTextAreaElement>("[name=description]")?.value ?? record?.description ?? "",
     };
     this.body.innerHTML = `
       <header class="sheet-head">
@@ -286,6 +288,8 @@ export class ProjectForm {
         <div class="field"><span class="field-label">${escape(words.what)}<span class="field-tip" tabindex="0" aria-label="${escape(words.whatTip)}">?<span class="field-tip-card" role="tooltip">${escape(words.whatTip)}</span></span></span>
           <textarea name="what" rows="5" required aria-label="${escape(words.what)}" placeholder="${escape(words.whatPlaceholder)}">${escape(kept.what)}</textarea>
           <span class="field-hint pf-need" data-need="what" hidden>${escape(words.needWhat)}</span></div>
+        <div class="field"><span class="field-label">${escape(words.description)}<span class="field-tip" tabindex="0" aria-label="${escape(words.descriptionTip)}">?<span class="field-tip-card" role="tooltip">${escape(words.descriptionTip)}</span></span></span>
+          <textarea name="description" rows="5" aria-label="${escape(words.description)}" placeholder="${escape(words.descriptionPlaceholder)}">${escape(kept.description)}</textarea></div>
         <div class="field pf-machines"><span class="field-label">${escape(words.machinesPlaces)}</span>
           <span class="field-hint pf-need" data-need="machines" hidden>${escape(words.needMachine)}</span>
           <div class="pf-chosen"></div>
@@ -389,9 +393,13 @@ export class ProjectForm {
       this.body.querySelector<HTMLElement>(first === "machines" ? ".pf-filter" : `[name="${first}"]`)?.focus();
       return;
     }
+    // The description the agents keep is sent only where it was changed here,
+    // so that what they wrote while the form was open is not written over.
+    const description = value("description");
     const fields: RecordFields = {
       name: value("name"),
       what: value("what"),
+      ...(description !== (this.editing?.record.description ?? "").trim() ? { description } : {}),
       machines: [...this.machines],
       // A place keeps its folder's name where its word was cleared.
       places: this.places.map((place) => ({ what: place.what.trim() || folderName(place.path), machine: place.machine, path: place.path })),

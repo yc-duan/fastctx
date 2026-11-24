@@ -3,6 +3,7 @@
 // core's client. Outside the shell there is no World to reach, and
 // `inShell` says so.
 
+import type { RetentionAnswer, RetentionAsk } from "./retention";
 import type { UsageCallsQuery, UsageCallsPage } from "./usage-calls";
 import { Channel, invoke } from "@tauri-apps/api/core";
 import { closeDelivery, observe, retryDeliveries } from "./delivery";
@@ -398,6 +399,13 @@ export function machineCopies(machine: string, ask: CopiesAsk): Promise<CopiesAn
   return invoke("machine_copies", { machineName: machine, ask });
 }
 
+/** The rule a machine deletes its conversations idle long enough by: read,
+ *  or set by its owner or by an account its agents assist
+ *  (`Call::ConversationRetention`), asked as `account` where it is known. */
+export function conversationRetention(machine: string, ask: RetentionAsk, account?: HubAccount): Promise<RetentionAnswer> {
+  return invoke("conversation_retention", { machineName: machine, ask, account: account ?? null });
+}
+
 /** Adds an agent's home on a machine, or hides one or shows it again. */
 export function agentHomes(machine: MachineName, change: HomeChange): Promise<void> {
   return invoke("agent_homes", { machineName: machine, change });
@@ -519,6 +527,7 @@ export function look(ids: string[]): Promise<LookedUp[]> {
 export interface RecordFields {
   name?: string | null;
   what?: string | null;
+  description?: string | null;
   machines?: MachineName[] | null;
   places?: { what: string; machine: MachineName; path: string }[] | null;
   canon?: { machine: MachineName; path: string } | null;

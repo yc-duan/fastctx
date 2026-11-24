@@ -278,7 +278,17 @@ function lentOf(world: WorldNow | null, machine: Pickable, agent: string, one: W
   const mine = loginsOf(world?.accounts);
   for (const hub of world?.accounts.hubs ?? []) {
     const assist = hub.assists.find((given) => given.machine === machine.name && given.agent === agent && sameHome(given.home, home) && mine.some((login) => login.hub === hub.hub && login.account === given.account));
-    if (assist) return { by: machine.owner ?? "", limit: limitOf(assist, plate), used: 0, fable: 0, until: assist.until ? momentSaid(new Date(assist.until)) : null, ...(managesOf(assist) ? { manages: true } : {}) };
+    if (assist)
+      return {
+        by: machine.owner ?? "",
+        limit: limitOf(assist, plate),
+        used: 0,
+        fable: 0,
+        until: assist.until ? momentSaid(new Date(assist.until)) : null,
+        ...(managesOf(assist) ? { manages: true } : {}),
+        // The account of mine the login assists, which asks of its machine as itself.
+        as: { hub: hub.hub, account: assist.account },
+      };
   }
   return { by: machine.owner ?? "", limit: null, used: 0, fable: 0, until: null };
 }

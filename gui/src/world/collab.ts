@@ -1,6 +1,7 @@
 // Model collaboration, as an account's setting (`world-gui.md`, 功能): which agents
-// may call others, which they may call and how each is started, the text
-// given to callers and the rules given to callees.
+// may call others, and the presets they may call: what each is asked for,
+// how it is started, the text its callers are given and the rules it is
+// given.
 
 import { invoke } from "@tauri-apps/api/core";
 import { inShell } from "./bridge";
@@ -27,7 +28,51 @@ export interface Callee {
   /** How many of its colleagues may be at work at once; absent, the
    *  default of four. */
   at_once?: AtOnce;
+  /** What it is asked for; absent as a client from before presets wrote
+   *  it, which is the World's reviewer with the account's text for
+   *  callers. */
+  preset?: Preset;
 }
+
+/** Which of the World's presets a callee is, or the account's own. */
+export type PresetKind = "review" | "scout" | "own";
+
+/** The World's presets, in the order they are shown. */
+export const WORLD_KINDS: PresetKind[] = ["review", "scout"];
+
+export interface Preset {
+  /** A kind a later release names is read as the account's own. */
+  kind: PresetKind | (string & {});
+  /** Its text for callers; absent, the World's for its kind. */
+  prompt?: string | null;
+  /** What the account adds to its rules; for one of the account's own,
+   *  what it does. */
+  rules?: string;
+}
+
+/** The World's texts for one of its presets. */
+export interface PresetTexts {
+  kind: PresetKind | (string & {});
+  /** What it does, as callers read under its name. */
+  does: string;
+  /** Its text for callers, to start rewriting from and to put back. */
+  prompt: string;
+}
+
+/** The World's text for callers as it reads for a callee in `agent`'s host,
+ *  as the node words it (`collab_presets::in_host`): written of GPT, run by
+ *  Codex, it names Claude, run by Claude Code, for a login of Claude Code's.
+ *  An account's own text is never put through this. */
+export const inHost = (text: string, agent: string): string =>
+  agent === "claude"
+    ? text.replaceAll("GPT, run by Codex", "Claude, run by Claude Code").replaceAll("unless you are GPT too", "unless you are Claude too")
+    : text;
+
+/** The preset `callee` is. */
+export const kindOf = (callee: Callee): PresetKind => {
+  const kind = callee.preset?.kind;
+  return kind === undefined || kind === "review" ? "review" : kind === "scout" ? "scout" : "own";
+};
 
 /** A callee's limit: at most so many at once, or none. */
 export type AtOnce = { most: number } | "any";
@@ -35,21 +80,39 @@ export type AtOnce = { most: number } | "any";
 /** What a callee whose settings say nothing works with. */
 export const AT_ONCE_DEFAULT = 4;
 
+/** What a conversation's colleagues of every preset together work within,
+ *  where the settings say nothing. */
+export const AT_ONCE_IN_ALL_DEFAULT = 8;
+
 export interface Collab {
   version: number;
   on: boolean;
   callers: AgentLogin[];
+  /** The presets turned on: what callers are offered. */
   callees: Callee[];
-  /** The text given to callers; the World's default when null. */
+  /** The account's text for callers of a callee written before presets;
+   *  the World's when null. */
   prompt: string | null;
-  /** Given to every callee with its instructions. */
+  /** Given to every callee after its own rules. */
   rules: string;
+  /** The presets kept while turned off; absent as a client from before
+   *  presets writes the settings. */
+  shelved?: Callee[];
+  /** How many colleagues one conversation may have at work at once, of
+   *  every preset together; absent, the default of eight. */
+  at_once?: AtOnce;
 }
 
 export interface CollabView {
   collab: Collab;
-  /** The World's default text for callers, to start editing from. */
+  /** The World's text for the callers of its reviewer. */
   default_prompt: string;
+  /** The World's presets; absent from a release before them. */
+  presets?: PresetTexts[];
+  /** Whether where the settings are kept keeps presets: a hub from before
+   *  them would write a preset's kind and texts, and those kept while off,
+   *  away. */
+  keeps_presets?: boolean;
 }
 
 /** An account's settings at a hub, or, with no account, this computer's

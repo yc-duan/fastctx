@@ -91,6 +91,7 @@ pub fn admit(view: &View, from: &MachineName, call: &RemoteCall) -> Result<(), F
             | RemoteCall::ClaudeConsent { .. }
             // The copies a machine of the user's holds, managed from its page.
             | RemoteCall::Copies { .. }
+            | RemoteCall::ConversationRetention { .. }
             | RemoteCall::Relay { .. }
             // The agents' logins of the user's own machines: scanned, taken
             // up, changed and read only for the user, on the machine itself.

@@ -141,6 +141,7 @@ fn holds_copy(node: &Node, town: &TownName) -> bool {
     let directory = node.world.town(town);
     fastctx_platform::disk::is_there(directory.signed())
         || fastctx_platform::disk::is_there(directory.path().join("refused.json"))
+        || fastctx_platform::disk::is_there(directory.path().join(fastctx_types::project::DESCRIPTION_FILE))
         || COPY.iter().any(|folder| fastctx_platform::disk::is_there(directory.path().join(folder)))
 }
 
@@ -158,7 +159,9 @@ pub(super) async fn remove_copy(node: &Arc<Node>, town: &TownName) -> io::Result
         for folder in COPY {
             super::remove(&directory.path().join(folder))?;
         }
-        for file in ["refused.json", super::projected::FROM, super::projected::FOR] {
+        for file in
+            ["refused.json", fastctx_types::project::DESCRIPTION_FILE, super::projected::FROM, super::projected::FOR]
+        {
             match fastctx_platform::disk::remove_file(directory.path().join(file)) {
                 Err(error) if error.kind() != io::ErrorKind::NotFound => return Err(error),
                 _ => {}
@@ -194,6 +197,7 @@ pub(super) async fn remove(node: &Arc<Node>, town: &TownName) -> io::Result<()> 
             "index.json",
             "projection-through.json",
             "ledger-import.json",
+            fastctx_types::project::DESCRIPTION_FILE,
             super::projected::FROM,
             super::projected::FOR,
         ] {

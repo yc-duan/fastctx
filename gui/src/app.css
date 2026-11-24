@@ -10,6 +10,28 @@
   container: talk / inline-size;
 }
 
+/* The margin a conversation keeps at its sides is its page's own: what the
+   page has beyond its column, between the least and the widest. A page with
+   room for both keeps its column and its margin whole however the desk is
+   shared out around it, so its lines are set the same with the side open
+   beside it as shut; a narrower one gives up its margin first, and its
+   column's width only after. It is reckoned as the page is laid out, from
+   the page's own width: nothing is told to the page as the room around it
+   changes, which set the style of everything on it again each time. */
+.conversation-page,
+.dk-fork-page {
+  --gutter-least: var(--space-2);
+  --gutter: clamp(var(--gutter-least), calc((100cqi - var(--column)) / 2), var(--gutter-wide));
+}
+
+/* A phone keeps the margin its screen gives it. */
+@media (max-width: 600px) {
+  .conversation-page,
+  .dk-fork-page {
+    --gutter-least: var(--gutter-wide);
+  }
+}
+
 .conversation-page > .page-head {
   position: relative;
   z-index: 2;

@@ -4,6 +4,7 @@
 
 pub(crate) mod access;
 pub mod caller;
+pub(crate) mod description;
 pub(crate) mod enter;
 pub mod guard;
 pub(crate) mod instructions;

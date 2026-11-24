@@ -89,14 +89,14 @@ const SCRIPT: usize = 2000;
 
 /// What this machine was shared as when a deed was first kept (7965 P08):
 /// by hub id, the body it was on there while shared whole, or none; read by
-/// the copy of the book (`assets::activity`), so a deed goes where it went
+/// the copy of the book (releases before beta.26), so a deed goes where it went
 /// as it was done however late it is read. A deed kept before has none and
 /// goes as the sharing stands when it is read.
 const SHARING: &str = "ALTER TABLE book_deeds ADD COLUMN sharing TEXT;";
 
 /// The deeds of conversations deleted here, as their rows go
 /// (`sealing::purge`), by number: what the copy of the book lets go of in
-/// the records scopes it wrote them into (`assets::activity`).
+/// the records scopes it wrote them into (releases before beta.26).
 const FORGOTTEN: &str = "CREATE TABLE IF NOT EXISTS book_forgotten (id INTEGER PRIMARY KEY AUTOINCREMENT, deed TEXT NOT NULL);";
 
 /// One deed as a job's record stands now.
@@ -361,11 +361,6 @@ fn kept(db: &rusqlite::Connection, deed: &str) -> fastctx_storage::Result<bool> 
 /// deleted while it could not be told (`sealing::reconcile`).
 /// Opens the book, or a handle that says why it did not open
 /// (`fastctx_storage::Database::open_or_unavailable`).
-/// Whether everything earlier releases kept of the book is in it now.
-pub(crate) fn imported(node: &Node) -> bool {
-    migrate::ready(&node.book_database).unwrap_or(false)
-}
-
 pub(crate) fn open(world: &fastctx_types::layout::WorldDir) -> fastctx_storage::Database {
     fastctx_storage::Database::open_or_unavailable(&world.path().join("book.sqlite3"), "", |db| {
         fastctx_storage::versions::apply(

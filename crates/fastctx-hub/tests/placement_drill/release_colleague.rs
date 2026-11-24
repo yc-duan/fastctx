@@ -2,9 +2,10 @@
 //! no goal; what it tells with message_colleague reaches the conversation
 //! that asked it and wakes it; the end of its turn comes back too; and that
 //! conversation no longer waits for it once the turn ended
-//! (`world-colleagues.md`, 两个工具). Then its callee works on one at a
-//! time: colleagues asked together wait their turns, and a restart while
-//! they wait loses none (同事从哪里来、能去哪里).
+//! (`world-colleagues.md`, 两个工具). Then the conversation may have one at
+//! work in all: the second it asks waits for the first. Then its callee
+//! works on one at a time: colleagues asked together wait their turns, and
+//! a restart while they wait loses none (同事从哪里来、能去哪里).
 use super::*;
 use fastctx_types::collab::{AgentLogin, AtOnce, Callee, Collab};
 
@@ -48,9 +49,12 @@ pub(super) async fn exercise(
                     effort: None,
                     screen: false,
                     at_once: None,
+                    preset: None,
                 }],
                 prompt: None,
                 rules: String::new(),
+                shelved: None,
+                at_once: None,
             },
         )
         .await?;
@@ -115,21 +119,79 @@ pub(super) async fn exercise(
         waited && settled,
         json!({"waited": waited, "after": waiting}),
     );
-    one_at_a_time(owner, &root, &mut child, &parent).await?;
+    let mut asked = vec![id.clone()];
+    asked.extend(one_in_all(owner, &root, &parent).await?);
+    asked.extend(one_at_a_time(owner, &root, &mut child, &parent).await?);
+    super::forget_colleagues::exercise(base, owner, listen, mock_configuration, agent, &root, &pc, &parent, &asked)
+        .await?;
     let _ = child.kill();
     let _ = child.wait();
     Ok(Some(json!({"colleague": id, "parent": parent})))
 }
 
+/// Two colleagues one conversation asks together, while it may have one at
+/// work in all and its callee lets four: the second waits for the first, and
+/// has its turn after. Says which it asked.
+async fn one_in_all(owner: &World, root: &Path, parent: &fastctx_types::ResidentId) -> Result<Vec<String>> {
+    let in_all = |at_once| async move {
+        let mut collab = owner.collab_read(None, Some(name("owner"))).await?.collab;
+        collab.at_once = Some(at_once);
+        owner.collab_write(None, Some(name("owner")), collab).await?;
+        let limited = matches!(at_once, AtOnce::Most(_));
+        for _ in 0..240 {
+            let machines =
+                ask(root, json!({"call":"machines","resident":parent,"login":null,"thread":null,"scratch":false}))
+                    .await?;
+            if machines.to_string().contains("\"at_once\":1") == limited {
+                return Ok(());
+            }
+            pause().await;
+        }
+        anyhow::bail!("what a conversation's colleagues work within in all did not reach its machine")
+    };
+    in_all(AtOnce::Most(std::num::NonZeroU32::MIN)).await?;
+    let mut asked = Vec::new();
+    for index in 0..2 {
+        let reply = ask(
+            root,
+            json!({"call":"ask","resident":parent,"label":format!("in all {index}"),
+                   "prompt":"RELEASE_IN_ALL [[slow: 2]]","callee":"release-helper","login":null}),
+        )
+        .await?;
+        let address: fastctx_types::Address =
+            serde_json::from_value(reply["colleague"].clone()).context("a colleague's address")?;
+        asked.push((address.resident.to_string(), reply["waiting"].as_u64()));
+    }
+    let mut most = 0;
+    let mut done = false;
+    for _ in 0..960 {
+        let nows: Vec<Value> = asked.iter().map(|(id, _)| now(root, id)).collect();
+        most = most.max(nows.iter().filter(|now| !now["turn"].is_null()).count());
+        if nows.iter().all(|now| now["activity"] == "idle" && now["last_turn"].is_string()) {
+            done = true;
+            break;
+        }
+        pause().await;
+    }
+    record(
+        "with one at once in all for a conversation, the second colleague it asks waits for the first and has its turn after",
+        asked[0].1.is_none() && asked[1].1 == Some(0) && done && most <= 1,
+        json!({"asked": asked, "done": done, "most at once": most}),
+    );
+    in_all(AtOnce::Any).await?;
+    Ok(asked.into_iter().map(|(id, _)| id).collect())
+}
+
 /// Three colleagues of a callee that works on one at a time, asked together:
 /// the first starts and the others wait in turn; the node restarted while
-/// they wait, each still has its turn, and never two at once.
+/// they wait, each still has its turn, and never two at once. Says which it
+/// asked.
 async fn one_at_a_time(
     owner: &World,
     root: &Path,
     child: &mut Child,
     parent: &fastctx_types::ResidentId,
-) -> Result<()> {
+) -> Result<Vec<String>> {
     let mut collab = owner.collab_read(None, Some(name("owner"))).await?.collab;
     collab.callees[0].at_once = Some(AtOnce::Most(std::num::NonZeroU32::MIN));
     owner.collab_write(None, Some(name("owner")), collab).await?;
@@ -188,5 +250,5 @@ async fn one_at_a_time(
         restarted && done && most <= 1,
         json!({"restarted": restarted, "done": done, "most at once": most}),
     );
-    Ok(())
+    Ok(asked.into_iter().map(|(id, _)| id).collect())
 }

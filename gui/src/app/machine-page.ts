@@ -31,6 +31,8 @@ import { diskBar, levelOf, Ring, Spark, Strip, type LineMark, type LineSpan } fr
 import { daysOf, heldOf, keptOf, LIMITS_MS, seenOf, SPAN_MS, take, tripsHeld, type Sample } from "./machine-history";
 import type { MachinePageWords } from "./machine-page-words";
 import { CopiesBlock } from "./machine-copies";
+import { RetentionBlock } from "./machine-retention";
+import type { RetentionAsking } from "../world/retention";
 import { LoginMoveSheet, type LoginMoveOptions } from "./login-move-sheet";
 import type { LoginMoveSection } from "./login-move-words";
 import { FastctxBlock, type FastctxSubject } from "./machine-fastctx";
@@ -105,6 +107,9 @@ export interface MachinePageOptions {
   /** Asks a machine of the user's about the copies it holds of the
    *  conversations living elsewhere; none where it cannot be asked. */
   copies?: ((machine: string, ask: CopiesAsk) => Promise<CopiesAnswer>) | undefined;
+  /** Asks a machine of the user's about how long it keeps its conversations
+   *  idle; none where it cannot be asked. */
+  retention?: RetentionAsking | undefined;
   /** Moving one of a Linux machine's login directories to another disk,
    *  over SSH from here, with the directories it has; none where it cannot
    *  be done from here. */
@@ -216,6 +221,8 @@ export class MachinePage implements Page {
   private readonly fastctxBox: HTMLElement;
   private readonly copiesBox: HTMLElement;
   private readonly copies: CopiesBlock | null;
+  private readonly retentionBox: HTMLElement;
+  private readonly retention: RetentionBlock | null;
   private readonly movesBox: HTMLElement;
   private moveSheet: LoginMoveSheet | null = null;
   private readonly namingBox: HTMLElement;
@@ -282,6 +289,10 @@ export class MachinePage implements Page {
     this.copies = asking
       ? new CopiesBlock({ words: options.manage.copies, ask: asking, confirm: options.confirm, changed: () => this.render() })
       : null;
+    const keeping = options.retention;
+    this.retention = keeping
+      ? new RetentionBlock({ words: options.manage.retention, ask: keeping, confirm: options.confirm, changed: () => this.render() })
+      : null;
     this.element = document.createElement("div");
     this.element.className = "machine-page";
     const { words } = options;
@@ -309,6 +320,7 @@ export class MachinePage implements Page {
           </div>
           <div class="mp-pane" id="mp-pane-manage" role="tabpanel" aria-labelledby="mp-tab-manage" data-pane="manage" hidden>
             <section class="mp-sec mp-fastctx" hidden></section>
+            <section class="mp-sec mp-retention" hidden></section>
             <section class="mp-sec mp-copies" hidden></section>
             <section class="mp-sec mp-moves" hidden></section>
             <section class="mp-sec mp-naming" hidden></section>
@@ -347,6 +359,7 @@ export class MachinePage implements Page {
     this.directBox = part(".mp-direct");
     this.fastctxBox = part(".mp-fastctx");
     this.copiesBox = part(".mp-copies");
+    this.retentionBox = part(".mp-retention");
     this.movesBox = part(".mp-moves");
     this.namingBox = part(".mp-naming");
     this.roomBox = part(".mp-room");
@@ -521,6 +534,7 @@ export class MachinePage implements Page {
     this.drawWhere(machine, world);
     this.drawDirect(machine, world);
     this.drawFastctx(machine, stats, world);
+    this.drawRetention(machine, world);
     this.drawCopies(machine, world);
     this.drawMoves(machine, world);
     this.drawNaming(machine, world);
@@ -1178,6 +1192,16 @@ export class MachinePage implements Page {
     this.put("fastctx", this.fastctxBox, block.html(subject));
   }
 
+  /** How long it keeps its conversations idle, for its owner. */
+  private drawRetention(machine: Machine, world: WorldNow): void {
+    const block = this.retention;
+    const owner = block ? ownerLoginOf(machine, world) : undefined;
+    this.retentionBox.hidden = !block || !owner;
+    if (!block || !owner) return;
+    block.show(machine, this.tab === "manage" && document.visibilityState === "visible", { hub: owner.hub, account: owner.account });
+    this.put("retention", this.retentionBox, block.html());
+  }
+
   /** The copies it holds of conversations living elsewhere, for its owner. */
   private drawCopies(machine: Machine, world: WorldNow): void {
     const block = this.copies;
@@ -1445,6 +1469,7 @@ export class MachinePage implements Page {
     }
     if (this.fastctx?.click(target)) return;
     if (this.copies?.click(target)) return;
+    if (this.retention?.click(target)) return;
     if (target.dataset.range) {
       this.range = target.dataset.range as Range;
       keepRange(this.range);

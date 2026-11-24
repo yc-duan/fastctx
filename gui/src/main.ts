@@ -51,6 +51,7 @@ import "./app/machine-page.css";
 import "./app/machine-manage.css";
 import "./app/agents.css";
 import "./app/features.css";
+import "./app/collab.css";
 import "./app/removal.css";
 import "./app/managed.css";
 import "./app/progress-steps.css";
@@ -178,6 +179,7 @@ import { addressOf, assistedBy, bareName, createStore, forgetAnswered, isDeparte
 import { TalkActs } from "./app/talk-acts";
 import { TalkMenu } from "./app/talk-menu";
 import { enTalkMenu, zhTalkMenu } from "./app/talk-menu-words";
+import { colleaguesAsked } from "./app/forget-colleagues";
 import { TalkToast } from "./app/talk-toast";
 import type { Controlled, PendingControl } from "./world/control";
 import type { JsonValue } from "./world/wire";
@@ -357,6 +359,7 @@ import {
   machineStats,
   machineMemoryRoom,
   machineCopies,
+  conversationRetention,
   renameHere,
   agentActivity,
 } from "./world/bridge";
@@ -687,6 +690,7 @@ function agentsPage(next: Place): Page {
       resetUsage: (machine, agent, dir, id, toTenths, weekEnd, holder) => (live ? resetAgentUsage(machine, agent, dir, id, toTenths, weekEnd, holder) : notLive()),
       changeModels: (machine, agent, dir, change) => (live ? changeAgentModels(machine, agent, dir, change) : specimenChangeModels(machine, agent, dir, change, specimen!.now)),
       setIdleCompaction: (machine, agent, dir, setting) => (live ? setIdleCompaction(machine, agent, dir, setting) : specimenSetIdleCompaction(machine, agent, dir, setting, specimen!.now)),
+      conversationRetention: live ? conversationRetention : undefined,
       usage: (machine, agent, dir) => (live ? agentUsage(machine, agent, dir) : specimenUsage(machine, agent, dir, specimen!.now)),
       calls: (machine, agent, dir, query) => (live ? agentCalls(machine, agent, dir, query) : specimenCalls(machine, agent, dir, query, specimen!.now)),
       change_: change,
@@ -1198,12 +1202,17 @@ function askForget(r: ResidentNow, then?: () => void): void {
     });
     return;
   }
-  const working = !isUnreached(store.world.peek(), r) && (r.now?.activity === "busy" || !!r.now?.turn);
-  const also = [working ? words.deleteWorking : "", isUnreached(store.world.peek(), r) ? words.deleteAway(placeSaid(r)) : ""].filter(Boolean);
+  const world = store.world.peek();
+  const working = !isUnreached(world, r) && (r.now?.activity === "busy" || !!r.now?.turn);
+  const also = [working ? words.deleteWorking : "", isUnreached(world, r) ? words.deleteAway(placeSaid(r)) : ""].filter(Boolean);
+  // The colleagues it asked go with it.
+  const parts = words.deleteParts(words.hostRecord(r.about.host.agent));
+  const colleagues = colleaguesAsked([...residentsOf(world, true), ...unreachedOf(world, true)], addressOf(r));
+  if (colleagues > 0) parts.push(words.deleteColleagues(colleagues));
   forgetConfirm.ask({
     title: words.deleteTitle(name),
     what: words.deleteWhat,
-    fields: `<ul class="forget-parts">${words.deleteParts(words.hostRecord(r.about.host.agent)).map((part) => `<li>${escapeText(part)}</li>`).join("")}</ul>${also.length ? `<p class="forget-also">${escapeText(also.join(" "))}</p>` : ""}`,
+    fields: `<ul class="forget-parts">${parts.map((part) => `<li>${escapeText(part)}</li>`).join("")}</ul>${also.length ? `<p class="forget-also">${escapeText(also.join(" "))}</p>` : ""}`,
     go: words.deleteGo,
     act: async () => talkActs.delete(r, isUnreached(store.world.peek(), r)),
     done: () => then?.(),
@@ -3116,6 +3125,7 @@ function show(next: Place): void {
         },
         manage: english ? enManage : zhManage,
         copies: live ? machineCopies : (specimenCopiesAsk ??= specimenCopies()),
+        retention: live ? conversationRetention : undefined,
         moveLogin: live
           ? {
               words: english ? enLoginMove : zhLoginMove,

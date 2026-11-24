@@ -103,10 +103,19 @@ impl Adapter {
                 Ok(true)
             }
             Self::Codex => {
-                let host = node.codex.of(node, about)?;
+                // Not reached, nothing of the thread was touched.
+                let host = node.codex.of(node, about).map_err(|failure| Failure { not_run: true, ..failure })?;
                 match reason {
                     ReleaseReason::Archive => host.archive(session).await.map(|()| true).map_err(Failure::new),
-                    ReleaseReason::Delete => host.delete(session).await.map_err(Failure::new),
+                    // Said not to have run only where Codex surely did not
+                    // delete it (`Failure::not_run`).
+                    ReleaseReason::Delete => host.delete(session).await.map_err(|unconfirmed| {
+                        if unconfirmed.perhaps {
+                            Failure::new(unconfirmed.message)
+                        } else {
+                            Failure::not_run(unconfirmed.message)
+                        }
+                    }),
                     _ => host.sleep(session).await.map_err(Failure::new),
                 }
             }

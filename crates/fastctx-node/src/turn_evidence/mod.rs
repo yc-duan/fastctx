@@ -45,6 +45,27 @@ pub(crate) fn ended(node: &Node, resident: &ResidentId, turn: &str) {
     node.turn_activity.forget(resident, turn);
 }
 
+/// Whether `resident` waits on anything now: a command here or elsewhere, a
+/// colleague's answer, a sentinel or a timer (`waiting::collect`), any of
+/// which may be asked of other machines. One already come (`Ended`) is
+/// waited on no more.
+pub(crate) async fn waits(
+    node: &std::sync::Arc<Node>,
+    resident: &ResidentId,
+) -> Result<bool, fastctx_types::ipc::Failure> {
+    use fastctx_types::ipc::Failure;
+    let _place = node.places.using(resident.as_str()).await;
+    let (reading, subject) = (node.clone(), resident.clone());
+    let actions = fastctx_platform::task::spawn_blocking(move || records::actions(&reading, &subject))
+        .await
+        .map_err(|error| Failure::new(error.to_string()))?
+        .map_err(|error| Failure::new(error.to_string()))?;
+    Ok(waiting::collect(node, resident, &actions)
+        .await?
+        .iter()
+        .any(|handle| handle.liveness != fastctx_types::turn_evidence::Liveness::Ended))
+}
+
 pub(crate) async fn snapshot(
     node: &std::sync::Arc<Node>,
     resident: &ResidentId,

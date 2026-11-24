@@ -15,6 +15,7 @@ pub mod activity;
 mod activity_book;
 mod admission;
 mod admitted;
+mod conversation_retention;
 mod adoption;
 mod afoot;
 mod again;
@@ -1038,7 +1039,8 @@ pub async fn run_prepared(
         attachments::kept_here::clear_left(&node);
         job_assets::start(&node);
         assets::logs::start(&node);
-        assets::activity::start(&node);
+        claude::tool_results::start(&node);
+
         sentinels::wakes::start(&node);
         management::register(&node);
         record_changes::register(&node);
@@ -1087,6 +1089,7 @@ pub async fn run_prepared(
             composer::keep(&node);
             lifecycle::start(&node);
             idle_compaction::start(&node);
+        conversation_retention::expiry::start(&node);
             recovery::start(&node, jobs_reconciled);
             goals::start(&node);
             sentinels::start(&node);

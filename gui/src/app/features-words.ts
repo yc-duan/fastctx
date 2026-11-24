@@ -6,6 +6,7 @@ import type { CollaborationWords } from "../film/collaboration";
 import type { HistoryFilmWords } from "../film/history";
 import type { SentinelFilmWords } from "../film/sentinel";
 import type { WorkbenchWords } from "../film/workbench";
+import type { PresetKind } from "../world/collab";
 
 export interface FeaturesWords {
   title: string;
@@ -38,8 +39,10 @@ export interface FeaturesWords {
   sentinels: SentinelWords;
   callers: string;
   callersSaid: string;
-  callees: string;
-  addCallee: string;
+  /** The presets of model collaboration (`collab-feature.ts`). */
+  presets: PresetWords;
+  /** The sheet the callers are chosen on (`callers-sheet.ts`). */
+  callersSheet: { close: string; seek: string; all: string; none: string; noMatch: string; away: string; count(chosen: number): string };
   name: string;
   namePattern: string;
   useWhen: string;
@@ -54,9 +57,7 @@ export interface FeaturesWords {
   atOnceSaid: string;
   noLimit: string;
   removeCallee: string;
-  prompt: string;
   promptReset: string;
-  rules: string;
   rulesHint: string;
   now: string;
   nobodyNow: string;
@@ -74,7 +75,56 @@ export interface FeaturesWords {
   unavailable: string;
   failed(why: string): string;
   noLogins: string;
-  noCodex: string;
+}
+
+/** The presets: their list, and the sheet one is written on
+ *  (`preset-sheet.ts`). */
+export interface PresetWords {
+  title: string;
+  add: string;
+  /** Opens the sheet the callers are chosen on. */
+  choose: string;
+  kinds: Record<PresetKind, string>;
+  /** What each of the World's presets does, where its account wrote no
+   *  line of its own. */
+  lines: Record<PresetKind, string>;
+  none: string;
+  /** Where the callers would be, while none is chosen. */
+  nobody: string;
+  /** Where the hub keeps no presets yet. */
+  hubOld: string;
+  /** The rules every preset is given. */
+  rulesAll: string;
+  /** How many of every preset's colleagues together one conversation has
+   *  at work at once; `inAllSaid` under the pointer. */
+  inAll: string;
+  inAllSaid: string;
+  newTitle: string;
+  /** "研究与审查预设". */
+  editTitle(kind: string): string;
+  /** Which preset a new one starts from. */
+  startFrom: string;
+  taken: string;
+  useHint: string;
+  useNeeded: string;
+  loginNeeded: string;
+  /** The text a preset's callers are given: `promptSaid` under the
+   *  pointer, `promptHint` while it is empty. */
+  prompt: string;
+  promptSaid: string;
+  promptHint: string;
+  /** What the account adds to the rules of one of the World's presets. */
+  addedRules: string;
+  addedRulesHint: string;
+  /** The rules of one of the account's own. */
+  ownRules: string;
+  ownRulesHint: string;
+  more: string;
+  allowed: string;
+  refused: string;
+  close: string;
+  removeTitle(name: string): string;
+  removeWhat: string;
 }
 
 /** The sentinels' page: its film and its settings (`sentinel-form.ts`). */
@@ -210,9 +260,45 @@ export const zhFeatures: FeaturesWords = {
     tryFailed: "测试失败",
   },
   callers: "调用方",
-  callersSaid: "这些智能体的对话中将提供请 GPT 的工具",
-  callees: "被调用方",
-  addCallee: "添加被调用方",
+  callersSaid: "这些智能体的对话中将提供请同事的工具",
+  presets: {
+    title: "预设",
+    add: "添加",
+    choose: "选择",
+    kinds: { review: "研究与审查", scout: "探子", own: "自定义" },
+    lines: {
+      review: "审代码与设计、查事实、试做法、写报告；独立完成，交回事实",
+      scout: "快而广的只读探查、定位与检索；交回带出处的结论",
+      own: "",
+    },
+    none: "暂无预设",
+    nobody: "尚未选择",
+    hubOld: "中枢更新后，方可开关预设、使用探子与自定义预设",
+    rulesAll: "给所有预设的规则",
+    inAll: "每个会话合计同时最多",
+    inAllSaid: "同一会话请来的所有预设合计；超过此数时，新的请求等待其中一项完成后开始",
+    newTitle: "新预设",
+    editTitle: (kind) => `${kind}预设`,
+    startFrom: "起步于",
+    taken: "该名称已被使用",
+    useHint: "一句话，供调用它的模型选择",
+    useNeeded: "请填写使用时机",
+    loginNeeded: "请选择登录",
+    prompt: "给调用方的说明",
+    promptSaid: "随请 GPT 的工具交给调用它的模型：何时用、怎样用",
+    promptHint: "何时请它、怎样交代、交回的内容如何使用",
+    addedRules: "附加规则",
+    addedRulesHint: "附在此预设自带的规则之后",
+    ownRules: "给它的规则",
+    ownRulesHint: "它做什么、怎样做、交回什么",
+    more: "更多",
+    allowed: "允许",
+    refused: "不允许",
+    close: "关闭",
+    removeTitle: (name) => `移除预设 ${name}？`,
+    removeWhat: "其设置与文字一并删除；进行中的协作不受影响。",
+  },
+  callersSheet: { close: "关闭", seek: "搜索机器或账号", all: "全选", none: "全不选", noMatch: "无匹配项", away: "未连接", count: (chosen) => `已选 ${chosen}` },
   name: "名称",
   namePattern: "小写字母、数字或连字符",
   useWhen: "使用时机",
@@ -223,12 +309,10 @@ export const zhFeatures: FeaturesWords = {
   screen: "操作屏幕",
   screenSaid: "可操作该电脑的屏幕与浏览器",
   atOnce: "同时最多",
-  atOnceSaid: "超过此数时，新的请求等待其中一项完成后开始",
+  atOnceSaid: "同一会话超过此数时，新的请求等待其中一项完成后开始",
   noLimit: "不限",
   removeCallee: "移除",
-  prompt: "协作说明",
   promptReset: "恢复默认",
-  rules: "给 GPT 的规则",
   rulesHint: "每次请求时附带，例如禁止事项、服务器的承载上限",
   now: "此刻",
   nobodyNow: "暂无进行中的协作",
@@ -243,7 +327,6 @@ export const zhFeatures: FeaturesWords = {
   unavailable: "无法读取模型协作设置",
   failed: () => "保存失败",
   noLogins: "暂无可用的智能体",
-  noCodex: "暂无 Codex 登录",
 };
 
 export const enFeatures: FeaturesWords = {
@@ -346,9 +429,45 @@ export const enFeatures: FeaturesWords = {
     tryFailed: "Could not try",
   },
   callers: "Callers",
-  callersSaid: "Conversations with these agents get the tools to ask a GPT",
-  callees: "Callees",
-  addCallee: "Add callee",
+  callersSaid: "Conversations with these agents get the tools to ask a colleague",
+  presets: {
+    title: "Presets",
+    add: "Add",
+    choose: "Choose",
+    kinds: { review: "Research & review", scout: "Scout", own: "Custom" },
+    lines: {
+      review: "Reviews code and designs, checks facts, tries approaches, writes reports; works apart and hands back facts",
+      scout: "Quick, wide, read-only finding and searching; hands back findings with their sources",
+      own: "",
+    },
+    none: "No presets",
+    nobody: "None chosen",
+    hubOld: "Update the hub to switch presets, and to use the scout and presets of your own",
+    rulesAll: "Rules for every preset",
+    inAll: "At once per conversation, in all",
+    inAllSaid: "Every preset one conversation asks, together; past this, a new colleague waits until one at work is done",
+    newTitle: "New preset",
+    editTitle: (kind) => `${kind} preset`,
+    startFrom: "Start from",
+    taken: "This name is in use",
+    useHint: "One line the calling model chooses it by",
+    useNeeded: "Say when to use it",
+    loginNeeded: "Choose a login",
+    prompt: "Text for callers",
+    promptSaid: "Given to the calling model with the tools to ask a GPT: when to use it and how",
+    promptHint: "When to ask it, what to tell it, how to use what comes back",
+    addedRules: "Added rules",
+    addedRulesHint: "Follow the rules this preset comes with",
+    ownRules: "Its rules",
+    ownRulesHint: "What it does, how it works, what it hands back",
+    more: "More",
+    allowed: "Allowed",
+    refused: "Not allowed",
+    close: "Close",
+    removeTitle: (name) => `Remove the preset ${name}?`,
+    removeWhat: "Its settings and texts are deleted; colleagues at work carry on.",
+  },
+  callersSheet: { close: "Close", seek: "Search machines or accounts", all: "All", none: "None", noMatch: "No matches", away: "Not connected", count: (chosen) => `${chosen} chosen` },
   name: "Name",
   namePattern: "Lowercase letters, digits or hyphens",
   useWhen: "When to use it",
@@ -359,12 +478,10 @@ export const enFeatures: FeaturesWords = {
   screen: "Use the screen",
   screenSaid: "May operate that computer's screen and browser",
   atOnce: "At once",
-  atOnceSaid: "Past this, a new colleague waits until one at work is done",
+  atOnceSaid: "Past this in one conversation, a new colleague waits until one at work is done",
   noLimit: "No limit",
   removeCallee: "Remove",
-  prompt: "Collaboration text",
   promptReset: "Restore default",
-  rules: "Rules for GPT",
   rulesHint: "Given every time one is asked in: red lines, what a server can take",
   now: "Now",
   nobodyNow: "Nobody at work",
@@ -379,5 +496,4 @@ export const enFeatures: FeaturesWords = {
   unavailable: "Could not read the collaboration settings",
   failed: () => "Could not save",
   noLogins: "No agents available",
-  noCodex: "No Codex logins",
 };

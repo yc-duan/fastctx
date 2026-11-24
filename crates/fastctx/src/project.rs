@@ -61,9 +61,10 @@ pub struct Fields {
     /// The project's name, in any words.
     #[arg(long)]
     name: Option<String>,
-    /// The user's instructions for all work in the project, which every
-    /// agent working in it is given: what it is for, how to work in it,
-    /// what to keep in mind. Written as the user words them.
+    /// The user's instructions for all work in the project, its CLAUDE.md and
+    /// AGENTS.md, which every agent working in it is given: what it is for,
+    /// how to work in it, what to keep in mind. Written as the user words
+    /// them; once the project is open, only the user changes them.
     #[arg(long, value_name = "TEXT")]
     what: Option<String>,
     /// The machines the project spans, separated by commas. Opening a
@@ -148,7 +149,7 @@ impl Fields {
                 .collect();
             Some(places?)
         };
-        Ok(RecordFields { name: self.name, what: self.what, machines, places, canon: None })
+        Ok(RecordFields { name: self.name, what: self.what, description: None, machines, places, canon: None })
     }
 }
 
@@ -174,7 +175,13 @@ fn show(title: &str, record: &Record, opened: &Stamp) -> String {
     text.push_str(&format!("Name: {}\n", record.name));
     let instructions = record.what.trim();
     if !instructions.is_empty() {
-        text.push_str(&format!("The user's instructions for all work in this project; follow them:\n{instructions}\n"));
+        text.push_str(&format!(
+            "The user's instructions for all work in this project, its CLAUDE.md and AGENTS.md; follow them:\n{instructions}\n"
+        ));
+    }
+    let description = record.description.trim();
+    if !description.is_empty() {
+        text.push_str(&format!("The project's description, as the agents working in it keep it:\n{description}\n"));
     }
     let machines: Vec<&str> = record.machines.iter().map(|machine| machine.as_str()).collect();
     text.push_str(&format!("Machines: {}\n", machines.join(", ")));

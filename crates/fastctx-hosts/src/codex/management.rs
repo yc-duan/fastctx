@@ -2,8 +2,23 @@
 //! are different facts: other clients and Codex's idle delay still apply.
 
 use super::CodexHost;
+use super::server::Unanswered;
 use serde_json::json;
 use std::sync::Arc;
+
+/// A thread Codex did not say it deleted: why, and whether it may have
+/// deleted it all the same (`Unanswered::Stopped`).
+#[derive(Debug)]
+pub struct Unconfirmed {
+    pub message: String,
+    pub perhaps: bool,
+}
+
+impl std::fmt::Display for Unconfirmed {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.message)
+    }
+}
 
 impl CodexHost {
     /// Subscription can be released only after the node has acknowledged
@@ -64,17 +79,24 @@ impl CodexHost {
 
     /// Deletes a thread with everything Codex keeps of it: its records, its
     /// history and the threads of the subagents it spawned
-    /// (`thread/delete`). A thread running a turn is not deleted.
-    pub async fn delete(self: &Arc<Self>, thread: &str) -> Result<bool, String> {
-        let server = self.server().await?;
+    /// (`thread/delete`). A thread running a turn is not deleted. Says
+    /// whether Codex still knew the thread.
+    pub async fn delete(self: &Arc<Self>, thread: &str) -> Result<bool, Unconfirmed> {
+        let not_done = |message: String| Unconfirmed { message, perhaps: false };
+        let server = self.server().await.map_err(not_done)?;
         let _loading = self.loading.lock().await;
         if self.lock().threads.get(thread).is_some_and(|entry| entry.turn.is_some() || entry.submitted) {
-            return Err("this Codex thread is running a turn".into());
+            return Err(not_done("this Codex thread is running a turn".into()));
         }
         let deleted = match server.ask("thread/delete", json!({"threadId":thread})).await {
             Ok(_) => true,
             Err(unanswered) if unknown(&unanswered, thread) => false,
-            Err(error) => return Err(error.to_string()),
+            // Codex stopped, or did not answer in time, once it had the
+            // request: it may have deleted the thread all the same.
+            Err(error @ Unanswered::Stopped(_)) => {
+                return Err(Unconfirmed { message: error.to_string(), perhaps: true });
+            }
+            Err(error) => return Err(not_done(error.to_string())),
         };
         self.lock().threads.remove(thread);
         Ok(deleted)
@@ -112,10 +134,10 @@ impl CodexHost {
 
 /// Whether Codex answered that it does not know `thread`: 0.160 names the
 /// thread or the rollout it lacks, later versions the rollout.
-fn unknown(unanswered: &super::server::Unanswered, thread: &str) -> bool {
+fn unknown(unanswered: &Unanswered, thread: &str) -> bool {
     matches!(
         unanswered,
-        super::server::Unanswered::Rpc { code: -32600, message, .. }
+        Unanswered::Rpc { code: -32600, message, .. }
             if *message == format!("thread not found: {thread}")
                 || *message == format!("no rollout found for thread id {thread}")
     )

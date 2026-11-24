@@ -2,6 +2,7 @@
 // the Fastctx on it, how an update of it goes, and taking it off the network
 // three ways.
 
+import type { RetentionWords } from "./machine-retention";
 import type { RenewalPhase } from "../world/renewal";
 import type { CopiesWords } from "./machine-copies";
 import { enProblems, failure, zhProblems } from "./problem";
@@ -82,6 +83,7 @@ export interface ManageWords {
   hubGo: string;
   /** The copies it holds of conversations living elsewhere (`machine-copies.ts`). */
   copies: CopiesWords;
+  retention: RetentionWords;
 }
 
 export const zhManage: ManageWords = {
@@ -147,6 +149,24 @@ export const zhManage: ManageWords = {
   done: "完成",
   hubHere: "该机器运行着网络的中枢：卸载前请先在机器图上迁移中枢或解散网络",
   hubGo: "前往机器图",
+  retention: {
+    title: "对话保留",
+    own: "我的对话",
+    ownWhat: "闲置这么久后连同它的命令输出、附件与宿主记录一起删除",
+    assisted: "受协助账号的对话",
+    assistedWhat: "最多保留这么久；受协助的人可以给自己设得更短",
+    off: "不删除",
+    days: (n) => `${n} 天`,
+    graceUntil: (when) => `规则刚打开或改短：${when} 之前不删除任何对话。`,
+    dueSoon: (count) => `${count} 段对话将在 7 天内到期。`,
+    confirmTitle: "闲置的对话将被删除",
+    confirm: (days, count, machine) =>
+      `${machine} 上闲置超过 ${days} 天的对话会被逐段删除，连同命令输出、附件与宿主记录，无法恢复。7 天之后开始，届时约有 ${count} 段符合条件；这期间说一句话就会重新计时。`,
+    confirmGo: "确定",
+    asking: "读取中…",
+    unread: (why) => `读不到：${why}`,
+    notOwner: "这台机器没有把这次询问当作主人的，只能查看。",
+  },
   copies: {
     title: "会话副本",
     takeIn: "接收会话副本",
@@ -237,6 +257,24 @@ export const enManage: ManageWords = {
   done: "Done",
   hubHere: "It runs the network's hub: to uninstall it, move the hub or dissolve the network on the machines map first",
   hubGo: "To the map",
+  retention: {
+    title: "Keeping conversations",
+    own: "My conversations",
+    ownWhat: "Idle this long, one is deleted with its commands' output, its attachments and its agent's record",
+    assisted: "Assisted accounts' conversations",
+    assistedWhat: "Kept this long at most; each assisted account may set less for its own",
+    off: "Keep",
+    days: (n) => `${n} days`,
+    graceUntil: (when) => `Just turned on or shortened: nothing is deleted before ${when}.`,
+    dueSoon: (count) => `${count} conversation(s) go within 7 days.`,
+    confirmTitle: "Idle conversations will be deleted",
+    confirm: (days, count, machine) =>
+      `Conversations idle more than ${days} days on ${machine} will be deleted one by one, with their commands' output, attachments and agent's record, for good. It starts in 7 days, when about ${count} will be idle that long; a word in one before then starts its count again.`,
+    confirmGo: "Turn on",
+    asking: "Reading…",
+    unread: (why) => `Could not read: ${why}`,
+    notOwner: "The machine did not take this asking as its owner's: shown only.",
+  },
   copies: {
     title: "Conversation copies",
     takeIn: "Keep copies of conversations",

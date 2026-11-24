@@ -24,6 +24,7 @@ import { IDLE_DEFAULT, type ChangePreview, type FolderChange, type IdleCompactio
 import { followState, LOGINS, type Following } from "../world/topics";
 import type { Folders } from "../world/focus";
 import type { UsageReport } from "../world/usage";
+import type { RetentionAsking } from "../world/retention";
 import type { UsageCallsPage, UsageCallsQuery } from "../world/usage-calls";
 import { forget, grantsOf, lines, logins as shownLogins, ME, plateOf, setHost, setNet, SWING, type Deeds, type Feed, type Login, type Looked } from "./data";
 import { homePage } from "./home";
@@ -57,6 +58,9 @@ export interface AgentsPageOptions {
   changeModels(machine: string, agent: string, dir: string, change: ModelChange): Promise<MachineLogins>;
   /** Compacting the reader's idle conversations in a login, for them alone. */
   setIdleCompaction(machine: string, agent: string, dir: string, setting: IdleCompaction): Promise<MachineLogins>;
+  /** How long a machine keeps the reader's idle conversations; none where it
+   *  cannot be asked. */
+  conversationRetention?: RetentionAsking | undefined;
   usage(machine: string, agent: string, dir: string): Promise<UsageReport>;
   calls(machine: string, agent: string, dir: string, query: UsageCallsQuery): Promise<UsageCallsPage>;
   change_(login: AccountLogin, change: AccountChange): Promise<void>;
@@ -534,6 +538,12 @@ export class AgentsPage implements Page {
         // Not read, its conditions are not known: none are written over.
         if (!listed) throw new Error("该登录现在读不到，稍后再试");
         return refreshed(options.setIdleCompaction(machine, agent, dir, { ...(listed.idle_compaction ?? IDLE_DEFAULT), on }));
+      },
+      retention: (login, days) => {
+        const { machine } = this.recordOf(login);
+        const asking = options.conversationRetention;
+        if (!asking) return Promise.reject(new Error("这台机器现在问不到"));
+        return asking(machine, days === undefined ? { do: "read" } : { do: "mine", days }, login.lent?.as);
       },
       idle: (login) => {
         const { machine, agent, dir, one } = this.recordOf(login);

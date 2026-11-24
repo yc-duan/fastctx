@@ -897,6 +897,10 @@ export interface ProjectFormWords {
   whatPlaceholder: string;
   /** What the instructions are and how agents are given them. */
   whatTip: string;
+  /** The project's description, which its agents keep. */
+  description: string;
+  descriptionPlaceholder: string;
+  descriptionTip: string;
   machines: string;
   places: string;
   /** Over the machines it spans and the places named on each. */
@@ -934,6 +938,9 @@ export const zhProjectForm: ProjectFormWords = {
   noMachines: "未选择机器",
   needName: "写一个名称",
   needWhat: "写几句给智能体看的内容",
+  description: "项目说明",
+  descriptionPlaceholder: "由在项目里干活的智能体撰写并保持最新，也可以在这里改",
+  descriptionTip: "项目现在的完整介绍：是什么、怎样构成、各部分在哪、正在做什么、在什么环境里跑。由在项目里干活的智能体撰写并随时改成最新，每段对话都会读到全文；不放口令，只写口令存在哪里。",
   needMachine: "至少选一台机器",
   addPlace: "位置",
   removePlace: "删除",
@@ -963,6 +970,9 @@ export const enProjectForm: ProjectFormWords = {
   noMachines: "No machine chosen",
   needName: "Give it a name",
   needWhat: "Write a few lines for the agents",
+  description: "Description",
+  descriptionPlaceholder: "Written and kept current by the agents working in the project; you can change it here too",
+  descriptionTip: "The whole project as it stands: what it is, how it is built and where its parts are, what is under way, the environment it runs in. The agents working in the project write it and keep it current, and every conversation reads all of it; it holds no secrets, only where they are kept.",
   needMachine: "Choose at least one machine",
   addPlace: "Location",
   removePlace: "Delete",

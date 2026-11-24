@@ -32,6 +32,11 @@ pub struct MachineFacts {
     /// Opens a colleague's goal before its first input, without an ordinary initial-turn reply.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub goal_colleagues: bool,
+    /// Starts a colleague as the preset it was asked as: with that kind's
+    /// rules and what the account adds to them. A machine before presets
+    /// gives every colleague the reviewer's.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub colleague_presets: bool,
     /// Reports autonomous colleague goals and their outstanding completion promises.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub goal_waits: bool,

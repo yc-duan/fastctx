@@ -13,13 +13,42 @@ pub fn record(view: &MapView) -> String {
 /// The record of `town` as a resident reads it, `opened` saying who opened
 /// the town (`record`).
 pub fn record_of(town: &TownName, record: &Record, opened: &Stamp) -> String {
+    record_with(town, record, opened, None)
+}
+
+/// `record_of`, for a session working in the project: `description_at` says
+/// where the project's description is kept for it to change, as `<path> on
+/// <machine>`.
+pub fn record_with(town: &TownName, record: &Record, opened: &Stamp, description_at: Option<&str>) -> String {
     let mut text = format!("=== project {town} ({}), version {} of its record ===\n", record.name, record.version);
     // What the user wrote for whoever works here, as they wrote it (须知).
     let instructions = record.what.trim();
     if !instructions.is_empty() {
-        text.push_str("The user's instructions for all work in this project; follow them:\n");
+        text.push_str(
+            "The user's instructions for all work in this project, its CLAUDE.md and AGENTS.md; follow them, and \
+             leave them to the user to change:\n",
+        );
         text.push_str(instructions);
         text.push('\n');
+    }
+    // What the agents working here keep of the project as it stands.
+    let description = record.description.trim();
+    if !description.is_empty() {
+        text.push_str("The project's description, as the agents working in it keep it:\n");
+        text.push_str(description);
+        text.push('\n');
+    } else if description_at.is_some() {
+        text.push_str("The project has no description yet.\n");
+    }
+    if let Some(at) = description_at {
+        text.push_str(&format!(
+            "You keep the description with the others working here: one coherent account of the whole project as it \
+             stands now, what it is, how it is built and where its parts are, what is under way and the environment \
+             it runs in. It is {at}; change it with edit or write whenever what it says no longer holds or something \
+             the next one needs is missing, and take out what is no longer true. Every conversation here is given it \
+             whole, so keep it to what matters, at most 32 KB, and say where secrets are kept rather than writing \
+             them in it.\n"
+        ));
     }
     text.push_str(&format!("Machines: {}\n", names(&record.machines)));
     if record.places.is_empty() {

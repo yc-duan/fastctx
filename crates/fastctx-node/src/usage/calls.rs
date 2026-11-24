@@ -23,7 +23,7 @@ pub(super) const DETAIL_DAYS: i64 = 30;
 pub(super) struct Detail {
     /// None in a body's copy of a call made for a conversation an account
     /// was assisted in: that conversation is the account's alone
-    /// (`assets::activity::for_body`).
+    /// (the body's records scope, as earlier releases wrote it).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub conversation: Option<ResidentId>,
     pub acting: Acting,

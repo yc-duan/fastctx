@@ -13,7 +13,8 @@
 // away, and is all that is left of the side while it is folded.
 
 import { layerOpened, type Layer } from "../app/back";
-import { give, settle } from "../app/room";
+import { carries, carry, stopCarrying } from "../app/carry";
+import { give, glides, settle } from "../app/room";
 import { makeGrip } from "../app/grip";
 import { glyph } from "../conversation/glyphs";
 import type { Address } from "../world/wire";
@@ -37,8 +38,31 @@ const FIRST = { share: 0.3, least: 360, most: 440, down: 0.5 };
 const LEAST = { across: 320, down: 180 };
 const ROOM = { across: 360, down: 220 };
 
-/** The pixels the conversations' margin goes by as the side glides. */
-const MARGIN_STEP = 4;
+/** The heads a pane's page stands under. */
+const HEADS = ".desk-pane > :is(.conversation-page, .dk-fork-page) > .page-head";
+/** What a pane's page sets in a column of its own width, in the room its
+ *  parent gives it. */
+const COLUMNS = ".desk-pane .transcript, .desk-pane .starting-scroller > *, .desk-pane .dk-fork-body";
+
+/** How wide the corner's line is, said in a rule of its own to what keeps
+ *  clear of it, the heads under it and the side's own line: only they are
+ *  set again as it changes. Said to the desk, everything on it was set again
+ *  each time, at every frame the line widens as the side comes. None where
+ *  the system's browser makes no such sheet: the desk is told there. */
+let cornerRule: CSSStyleDeclaration | null | undefined;
+
+function cornerSaid(): CSSStyleDeclaration | null {
+  if (cornerRule !== undefined) return cornerRule;
+  try {
+    const sheet = new CSSStyleSheet();
+    sheet.replaceSync(`${HEADS}, .sp-line {}`);
+    document.adoptedStyleSheets = [...document.adoptedStyleSheets, sheet];
+    cornerRule = (sheet.cssRules[0] as CSSStyleRule).style;
+  } catch {
+    cornerRule = null;
+  }
+  return cornerRule;
+}
 
 /** Where the side stands and whether it is open, kept on this device. */
 const DOCK_KEPT = "side-dock";
@@ -293,33 +317,11 @@ export class SideFrame implements PartsFrame {
 
   private readonly replace = () => this.place();
 
-  /** What keeps clear of the corner's line while the side glides: the
-   *  heads under it and the side's own. */
-  private clearing: HTMLElement[] | null = null;
-
-  /** Says how wide the corner's line is now to what keeps clear of it. The
-   *  desk is told, and everything on it hears: as the side glides the line
-   *  widens a little at every frame, and telling the desk each time set
-   *  the style of everything on it again each time, so then only the few
-   *  that keep clear are told, and the desk once the glide is over. */
+  /** Says how wide the corner's line is now to what keeps clear of it. */
   private cornerWide(): void {
     const width = `${Math.ceil(this.corner.getBoundingClientRect().width)}px`;
-    if (this.clearing) {
-      for (const part of this.clearing) part.style.setProperty("--sp-corner-width", width);
-    } else if (this.host.style.getPropertyValue("--sp-corner-width") !== width) {
-      this.host.style.setProperty("--sp-corner-width", width);
-    }
-  }
-
-  /** The margin the conversations keep at their sides as the style sheet
-   *  has it now, in pixels. */
-  private margin(): number {
-    const probe = document.createElement("div");
-    probe.style.cssText = "display:none;padding-left:var(--gutter)";
-    this.main.append(probe);
-    const margin = parseFloat(getComputedStyle(probe).paddingLeft) || 0;
-    probe.remove();
-    return margin;
+    const said = cornerSaid() ?? this.host.style;
+    if (said.getPropertyValue("--sp-corner-width") !== width) said.setProperty("--sp-corner-width", width);
   }
 
   /** The side laid out where it stands for the room the desk has now:
@@ -327,8 +329,12 @@ export class SideFrame implements PartsFrame {
   private place(first = false, size: DeskSize = { width: this.split.clientWidth, height: this.split.clientHeight }): void {
     const placed = this.placement(this.dock, size);
     if (first || placed !== this.placed) {
-      // Laid out otherwise, the side goes on gliding no further.
-      if (!first) settle(this.pane.sheet);
+      // Laid out otherwise, the side goes on gliding no further, and
+      // nothing goes on being carried the way it was.
+      if (!first) {
+        settle(this.pane.sheet);
+        stopCarrying();
+      }
       this.placed = placed;
       this.pane.over(placed === "over");
       this.host.classList.toggle("sp-over", placed === "over");
@@ -424,7 +430,9 @@ export class SideFrame implements PartsFrame {
 
   /** The switch, and the desk opening or shutting by the side. Beside the
    *  conversations its sheet comes from the desk's edge and they give way
-   *  as it does (`slide`). Over the page, laid out shut first, it slides in
+   *  as it does: only moved where each keeps its column whole either way
+   *  (`carry.ts`), their lines set again as they are pushed where one must
+   *  narrow (`slide`). Over the page, laid out shut first, it slides in
    *  over it. Seen open, what was new about the conversation in focus is
    *  no longer new. */
   private drawSwitch(): void {
@@ -437,8 +445,12 @@ export class SideFrame implements PartsFrame {
       this.host.classList.toggle("sp-shown", open);
       this.host.classList.toggle("sp-visible", !this.pane.element.hidden);
     };
-    if (open !== was && !over && !ALONE) this.slide(open, change);
-    else change();
+    if (open !== was && !over && !ALONE) {
+      // A glide under way is taken over the way it goes.
+      const sheet = this.pane.sheet;
+      if (!glides(sheet) && (carries() || this.steady(open))) carry(this.host, change);
+      else this.slide(open, change);
+    } else change();
     if (open && this.parts) this.parts.fresh = false;
     this.opener.setAttribute("aria-pressed", String(open));
     this.historyMark.setAttribute("aria-pressed", String(!!this.parts?.history && this.pane.visible === this.parts.history.part));
@@ -446,57 +458,51 @@ export class SideFrame implements PartsFrame {
     if (this.placed !== "over") keep(OPEN_KEPT, open ? "1" : null);
   }
 
+  /** Whether every conversation shown keeps its column and its margins as
+   *  they are with the side open and with it shut: each stands narrower than
+   *  the room it has, at its widest, and opening leaves it that room even
+   *  where its pane alone gives the side all it takes. Then nothing on them
+   *  is set anew as the side comes or goes; they are moved, no more. Along
+   *  the foot the side takes their height, which is given as it comes. */
+  private steady(open: boolean): boolean {
+    if (this.down) return false;
+    const size = this.width();
+    return [...this.main.querySelectorAll<HTMLElement>(COLUMNS)].every((column) => {
+      const room = column.parentElement?.clientWidth ?? 0;
+      const wide = column.offsetWidth;
+      return !wide || (wide < room && (!open || room - size >= wide));
+    });
+  }
+
   /** The side opening or shutting beside the conversations, over one glide
    *  (`room.ts`): `change` says at once what the desk is to be, and what
    *  follows the side's room follows it as it is given, a little at every
-   *  frame — the room itself, the margin the conversations keep beside the
-   *  side, and the room a head keeps clear of the corner. Only what follows
-   *  is told: nothing is said to the desk as a whole while it glides, which
-   *  would set the style of everything on it again at every frame. */
+   *  frame — the room itself, and the room a head keeps clear of the corner.
+   *  The margin each conversation keeps is its page's own to reckon from the
+   *  room it is laid out in (`app.css`). Only what follows is told: nothing
+   *  is said to the desk as a whole while it glides, which would set the
+   *  style of everything on it again at every frame. */
   private slide(open: boolean, change: () => void): void {
     const panel = this.pane.element;
-    const main = this.main;
     const size = this.width();
     const dock = this.placed;
     const length = this.down ? "height" : "width";
-    const heads = [...main.querySelectorAll<HTMLElement>(".desk-pane > :is(.conversation-page, .dk-fork-page) > .page-head")];
-    // The margin the conversations keep, with the side shut and open: as
-    // the style sheet has each, not as a glide under way left it. The room
-    // is held as it stands meanwhile, so the page is not laid out for the
+    const heads = [...this.main.querySelectorAll<HTMLElement>(HEADS)];
+    // The room is held as it stands, so the page is not laid out for the
     // change before the side has moved.
-    main.style.removeProperty("--gutter");
-    const before = this.margin();
     panel.style.setProperty(length, `${panel.getBoundingClientRect()[length]}px`);
-    this.clearing = [...heads, ...panel.querySelectorAll<HTMLElement>(".sp-line")];
     change();
-    const after = this.margin();
-    const [shut, shown] = open ? [before, after] : [after, before];
-    let margin = -1;
     give(this.pane.sheet, {
       away: dock === "bottom" ? [0, size] : [dock === "left" ? -size : size, 0],
       size,
       open,
-      room: (room, share) => {
+      room: (room) => {
         if (room === null) {
           panel.style.removeProperty(length);
-          main.style.removeProperty("--gutter");
-          for (const part of this.clearing ?? []) part.style.removeProperty("--sp-corner-width");
           for (const head of heads) head.style.removeProperty("--side-now");
-          this.clearing = null;
-          this.cornerWide();
           return;
         }
         panel.style.setProperty(length, `${room}px`);
-        // The margin goes by a few pixels at a time, but at the glide's two
-        // ends, where it is what the style sheet has: it is what every block
-        // of the conversations is set by, each step setting them all again,
-        // where the room alone only lays them out.
-        const exact = shut + (shown - shut) * share;
-        const now = shut === shown ? -1 : share <= 0 || share >= 1 ? exact : Math.round(exact / MARGIN_STEP) * MARGIN_STEP;
-        if (now !== margin) {
-          margin = now;
-          main.style.setProperty("--gutter", `${now}px`);
-        }
         if (dock === "right") for (const head of heads) head.style.setProperty("--side-now", `${room}px`);
       },
     });

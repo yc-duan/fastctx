@@ -650,7 +650,7 @@ impl FormPage {
                 Some(Location { machine, path: path.trim().to_string() })
             }
         };
-        Ok(RecordFields { name: Some(name), what: Some(what), machines: Some(machines), places: Some(places), canon })
+        Ok(RecordFields { name: Some(name), what: Some(what), description: None, machines: Some(machines), places: Some(places), canon })
     }
 
     pub fn draw(&mut self, ctx: &Ctx, frame: &mut Frame, area: Rect, pasting: Option<usize>) {

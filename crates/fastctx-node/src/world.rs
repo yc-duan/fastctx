@@ -683,6 +683,7 @@ pub fn facts(node: &Node) -> MachineFacts {
         turn_debts: true,
         goal_runtime: node.goals.available(),
         goal_colleagues: true,
+        colleague_presets: true,
         goal_waits: true,
         goal_questions: true,
         goal_question_words: true,
@@ -1389,6 +1390,16 @@ impl fastctx_net::link::Node for Handler {
                         .await
                         .map_err(|error| Failure::new(error.to_string()))?
                         .map(|used| RemoteReply::AttachmentReferences { used })
+                    }
+                    RemoteCall::ConversationRetention { ask } => {
+                        let (asking, through, account, view) =
+                            (node.clone(), hub.clone(), caller.account.clone(), link.view().directory.clone());
+                        fastctx_platform::task::spawn_blocking(move || {
+                            crate::conversation_retention::remote(&asking, &view, &through, &account, ask)
+                        })
+                        .await
+                        .map_err(|error| Failure::new(error.to_string()))?
+                        .map(RemoteReply::ConversationRetention)
                     }
                     RemoteCall::Copies { ask } => {
                         // Answered for the network it came over alone, its

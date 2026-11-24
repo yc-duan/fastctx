@@ -1634,6 +1634,10 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
             users_voice(node, peer)?;
             crate::assets::copies::machine(node, machine, ask).await.map(Reply::MachineCopies)
         }
+        Call::ConversationRetention { machine, ask, account } => {
+            users_voice(node, peer)?;
+            crate::conversation_retention::machine(node, machine, account, ask).await.map(Reply::ConversationRetention)
+        }
         Call::MachineUpdates { machine, update } => {
             users_voice(node, peer)?;
             let acting = crate::around::acting_of(node, &caller::of(node, peer)?);
@@ -2011,10 +2015,10 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
                     .map_err(Failure::new),
                 None => {
                     own_settings(hub.as_ref())?;
-                    Ok(Reply::CollabRead(fastctx_types::collab::CollabView {
-                        collab: crate::own_collab::read(&node.world)?,
-                        default_prompt: fastctx_types::collab_prompt::DEFAULT_PROMPT.to_string(),
-                    }))
+                    Ok(Reply::CollabRead(fastctx_types::collab::CollabView::new(
+                        crate::own_collab::read(&node.world)?,
+                        true,
+                    )))
                 }
             }
         }
@@ -2395,9 +2399,12 @@ async fn write(
     let turn = node.residents.now(&resident).and_then(|now| now.turn);
     let owner = Address { machine: here.clone(), resident: resident.clone() };
     let caller = Caller::Resident(owner.clone());
-    let memory = match crate::replicas::writing::intercept(node, &caller, &op, None, town.as_ref()).await? {
+    let memory = match crate::town::description::intercept(node, &caller, &op, None, town.as_ref()).await? {
         Some(outcome) => Some(outcome),
-        None => crate::history::local_copy::intercept(node, &caller, &op, None, town.as_ref()).await?,
+        None => match crate::replicas::writing::intercept(node, &caller, &op, None, town.as_ref()).await? {
+            Some(outcome) => Some(outcome),
+            None => crate::history::local_copy::intercept(node, &caller, &op, None, town.as_ref()).await?,
+        },
     };
     let (world, machine, writing, written) = (node.world.clone(), node.names(), town.clone(), op.clone());
     let outcome = match memory {

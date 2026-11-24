@@ -29,6 +29,11 @@ use serde::{Deserialize, Serialize};
 use crate::store::Store;
 use crate::{Hub, Out};
 
+/// How long a deletion waits for the other members keeping something of the
+/// conversation: by then the rooms they kept for it have gone of themselves,
+/// so a member away that long owes it nothing.
+const WAITS_FOR: jiff::SignedDuration = jiff::SignedDuration::from_hours(30 * 24);
+
 /// The deletions the hub keeps, with the directory (`crate::store`).
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub(crate) struct Forgettings {
@@ -43,6 +48,8 @@ pub(crate) struct Forgettings {
 pub(crate) struct Pending {
     forgetting: Forgetting,
     asked_by: MachineName,
+    /// When it was asked, and again when the machine it lives on deleted
+    /// it: the other members are waited for `WAITS_FOR` from then.
     at: Timestamp,
     /// The machine it lives on has not said yet that it deleted it.
     home: bool,
@@ -443,8 +450,9 @@ pub(crate) fn opened(hub: &Hub, name: &MachineName) {
     send(hub, tell);
 }
 
-/// Lets go of the members that left the hub: a deletion waits no longer
-/// for them, and one whose conversation's machine left ends.
+/// Lets go of the members that left the hub, and of those a deletion has
+/// waited for a month: it waits no longer for them, and one whose
+/// conversation's machine left ends.
 pub(crate) fn prune(hub: &Hub) {
     if hub.store().book.forgetting.pending.is_empty() && hub.store().book.account_forgetting.pending.is_empty() {
         return;
@@ -456,7 +464,17 @@ pub(crate) fn prune(hub: &Hub) {
         let directory = &book.directory;
         let before = book.forgetting.pending.len();
         let mut changed = false;
+        let now = Timestamp::now();
+        let mut lapsed = 0usize;
         book.forgetting.pending.retain_mut(|pending| {
+            let view: &Pending = pending;
+            if !view.home && !view.waiting.is_empty() && now.duration_since(view.at) > WAITS_FOR {
+                let pending = std::sync::Arc::make_mut(pending);
+                lapsed += pending.waiting.len();
+                pending.waiting.clear();
+                pending.keys.clear();
+                changed = true;
+            }
             let view: &Pending = pending;
             if view.waiting.iter().any(|member| !still_there(directory, view, member)) {
                 let pending = std::sync::Arc::make_mut(pending);
@@ -479,6 +497,9 @@ pub(crate) fn prune(hub: &Hub) {
             !gone && (pending.home || !pending.waiting.is_empty() || !pending.scopes_gone)
         });
         let ended = before != book.forgetting.pending.len();
+        if lapsed > 0 {
+            hub.log.line(format_args!("deletions waited a month for {lapsed} member(s) away; they wait no longer"));
+        }
         // Deleted where it lived, its scopes not yet: tried again
         // (`assets::deleted` spaces the tries).
         let again: Vec<Address> = book
@@ -576,6 +597,8 @@ fn done_at_home(store: &mut Store, index: usize) {
     let directory = store.book.directory.clone();
     let pending = std::sync::Arc::make_mut(&mut store.book.forgetting.pending[index]);
     pending.home = false;
+    // However long its machine was away, the others have their month.
+    pending.at = Timestamp::now();
     wait_for(&directory, pending, waiting);
 }
 

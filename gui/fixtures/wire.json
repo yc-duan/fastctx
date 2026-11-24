@@ -12095,6 +12095,7 @@
                 "version": 2,
                 "name": "Example project 世界",
                 "what": "Exercise the ledger contract",
+                "description": "Where the project stands, as its agents keep it",
                 "machines": [
                   "desktop",
                   "laptop"
@@ -12128,6 +12129,7 @@
                 "version": 3,
                 "name": "Example project 世界",
                 "what": "Exercise the ledger contract",
+                "description": "Where the project stands, as its agents keep it",
                 "machines": [
                   "desktop",
                   "laptop"
@@ -12158,6 +12160,7 @@
                 "version": 4,
                 "name": "Example project 世界",
                 "what": "Exercise the ledger contract",
+                "description": "Where the project stands, as its agents keep it",
                 "machines": [
                   "desktop",
                   "laptop"
@@ -12187,6 +12190,7 @@
                 "version": 5,
                 "name": "Example project 世界",
                 "what": "Exercise the ledger contract",
+                "description": "Where the project stands, as its agents keep it",
                 "machines": [
                   "desktop",
                   "laptop"
@@ -14895,6 +14899,7 @@
         "machine": "desktop",
         "facts": {
           "goal_colleagues": true,
+          "colleague_presets": true,
           "goal_waits": true,
           "goal_questions": true,
           "goal_question_words": true,
@@ -15066,6 +15071,7 @@
         "machine": "desktop",
         "facts": {
           "goal_colleagues": true,
+          "colleague_presets": true,
           "goal_waits": true,
           "goal_questions": true,
           "goal_question_words": true,
@@ -15239,6 +15245,7 @@
         "machine": "desktop",
         "facts": {
           "goal_colleagues": true,
+          "colleague_presets": true,
           "goal_waits": true,
           "goal_questions": true,
           "goal_question_words": true,
@@ -15412,6 +15419,7 @@
         "machine": "desktop",
         "facts": {
           "goal_colleagues": true,
+          "colleague_presets": true,
           "goal_waits": true,
           "goal_questions": true,
           "goal_question_words": true,
@@ -15584,6 +15592,7 @@
         "machine": "desktop",
         "facts": {
           "goal_colleagues": true,
+          "colleague_presets": true,
           "goal_waits": true,
           "goal_questions": true,
           "goal_question_words": true,
@@ -15757,6 +15766,7 @@
         "machine": "desktop",
         "facts": {
           "goal_colleagues": true,
+          "colleague_presets": true,
           "goal_waits": true,
           "goal_questions": true,
           "goal_question_words": true,
@@ -15933,6 +15943,7 @@
         "machine": "desktop",
         "facts": {
           "goal_colleagues": true,
+          "colleague_presets": true,
           "goal_waits": true,
           "goal_questions": true,
           "goal_question_words": true,
@@ -16110,6 +16121,7 @@
         "machine": "desktop",
         "facts": {
           "goal_colleagues": true,
+          "colleague_presets": true,
           "goal_waits": true,
           "goal_questions": true,
           "goal_question_words": true,
@@ -16287,6 +16299,7 @@
         "machine": "desktop",
         "facts": {
           "goal_colleagues": true,
+          "colleague_presets": true,
           "goal_waits": true,
           "goal_questions": true,
           "goal_question_words": true,
@@ -16463,6 +16476,7 @@
         "machine": "desktop",
         "facts": {
           "goal_colleagues": true,
+          "colleague_presets": true,
           "goal_waits": true,
           "goal_questions": true,
           "goal_question_words": true,
@@ -16690,6 +16704,7 @@
           "version": 2,
           "name": "Example project 世界",
           "what": "Exercise the ledger contract",
+          "description": "Where the project stands, as its agents keep it",
           "machines": [
             "desktop",
             "laptop"
@@ -16723,6 +16738,7 @@
           "version": 3,
           "name": "Example project 世界",
           "what": "Exercise the ledger contract",
+          "description": "Where the project stands, as its agents keep it",
           "machines": [
             "desktop",
             "laptop"
@@ -16753,6 +16769,7 @@
           "version": 4,
           "name": "Example project 世界",
           "what": "Exercise the ledger contract",
+          "description": "Where the project stands, as its agents keep it",
           "machines": [
             "desktop",
             "laptop"
@@ -16782,6 +16799,7 @@
           "version": 5,
           "name": "Example project 世界",
           "what": "Exercise the ledger contract",
+          "description": "Where the project stands, as its agents keep it",
           "machines": [
             "desktop",
             "laptop"

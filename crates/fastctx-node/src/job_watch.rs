@@ -56,6 +56,28 @@ pub(crate) fn copied(node: &Arc<Node>, path: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
+/// A maintenance pass lets go of the files of a job whose retention ended
+/// (`retention::expire`), once no watch reads it and the activity book has
+/// taken what it needs of it.
+pub(crate) fn expire(node: &Node, path: &Path) -> std::io::Result<()> {
+    if node.job_watches.0.lock().expect("never poisoned").watching.contains(path) {
+        return Err(std::io::Error::new(std::io::ErrorKind::WouldBlock, "a watch still reads the job"));
+    }
+    match fastctx_hands::run::record::read(path) {
+        Ok(record) => {
+            if !crate::activity_book::consumed(node, &record)? {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::WouldBlock,
+                    "the activity book still needs this job",
+                ));
+            }
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error),
+    }
+    crate::jobs::remove(path)
+}
+
 /// A maintenance pass retires settled execution state without deleting assets.
 pub(crate) fn collect(node: &Node, path: &Path) -> std::io::Result<()> {
     let mut watched = node.job_watches.0.lock().expect("never poisoned");

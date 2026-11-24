@@ -286,6 +286,7 @@ impl RemoteCall {
             | Self::Write { .. }
             | Self::ClaudeConsent { .. }
             | Self::Copies { .. }
+            | Self::ConversationRetention { .. }
             | Self::Homes { .. }
             | Self::ScanAgents { .. }
             | Self::AddAgentLogin { .. }
@@ -554,6 +555,7 @@ impl Call {
             | Self::Stepped { .. }
             | Self::ClaudeConsent { .. }
             | Self::MachineCopies { .. }
+            | Self::ConversationRetention { .. }
             | Self::Homes { .. }
             | Self::ScanAgents { .. }
             | Self::AddAgentLogin { .. }

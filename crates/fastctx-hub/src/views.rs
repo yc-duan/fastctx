@@ -264,6 +264,7 @@ pub(crate) fn view_for_in(
         goal_commands: true,
         subagents: true,
         family_prompts: true,
+        collab_presets: true,
         versions: true,
         package_progress: true,
         due: true,

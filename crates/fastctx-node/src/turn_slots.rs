@@ -14,10 +14,13 @@
 //! starts wait; those someone starts in a host's own window count as
 //! running all the same.
 //!
-//! A colleague's turn waits in a second line too, its callee's: as many of
-//! one callee's colleagues work at once as the account's settings say
-//! (`world-colleagues.md`, 同事从哪里来、能去哪里), and one past that waits
-//! for one of them to end, as its words wait.
+//! A colleague's turn waits in two lines before its login's, both of the
+//! conversation that asked for it (`world-colleagues.md`, 同事从哪里来、能去
+//! 哪里): its callee's, where as many of that callee's colleagues work at once
+//! for one conversation as the account's settings say, and its asker's, where
+//! as many of all the colleagues that conversation asked for work at once as
+//! they say for them all. One past either waits for one of them to end, as
+//! its words wait. Each machine counts the colleagues that live on it.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -90,15 +93,39 @@ pub(crate) struct Queued {
 /// The line a turn waits in.
 pub(crate) enum Line {
     Login,
-    /// Its callee's, which lets this many at work at once.
+    /// Its callee's, which lets this many at work at once for the
+    /// conversation that asked.
     Callee(u32),
+    /// Its asker's, which has this many colleagues at work at once.
+    Asker(u32),
+}
+
+/// Which of a colleague's own lines one is.
+#[derive(Clone, Copy)]
+enum Which {
+    Callee,
+    Asker,
+}
+
+impl Which {
+    fn line(self, most: u32) -> Line {
+        match self {
+            Which::Callee => Line::Callee(most),
+            Which::Asker => Line::Asker(most),
+        }
+    }
 }
 
 impl Queued {
     pub(crate) fn landed(&self) -> Landed {
         let ahead = self.ahead;
         let why = match self.line {
-            Line::Callee(most) => format!("its callee works on at most {most} at once; {ahead} wait ahead of it"),
+            Line::Callee(most) => {
+                format!("its callee works on at most {most} at once for the conversation that asked; {ahead} wait ahead of it")
+            }
+            Line::Asker(most) => format!(
+                "the conversation that asked has at most {most} colleagues at work at once; {ahead} wait ahead of it"
+            ),
             Line::Login => format!("its agent login runs as many turns at once as it may; {ahead} wait ahead of it"),
         };
         Landed::Waiting { why: Some(why), answered: true }
@@ -137,16 +164,15 @@ pub(crate) fn admit(node: &Arc<Node>, id: &ResidentId, about: &About) -> Result<
     let Some((key, dir)) = defaults.login(about) else { return Ok(()) };
     let hard = hard(node, about, &dir, &defaults);
     let assisted = assisted(node, about);
-    let callee = callee_line(about).map(|line| (most(node, about), line));
+    let lines = colleague_lines(node, about);
     let now = Instant::now();
     let mut slots = node.turn_slots.0.lock().expect("never poisoned");
-    // Its callee's line first, where only colleagues of one account's
-    // callee wait.
+    // Its own lines first, where only the colleagues one conversation asked
+    // for wait: its callee's, then its asker's.
     let mut others = Vec::new();
-    if let Some((most, line_key)) = &callee {
-        let mut running = running_where(node, Some(id), |about| callee_line(about).as_ref() == Some(line_key));
+    for (most, line_key, which) in &lines {
+        let running = working(node, &slots, Some(id), line_key);
         let line = slots.entry(line_key.clone()).or_default();
-        line.unqueued(&mut running);
         line.prune(now, &running);
         match most {
             Some(most) if !line.starting.iter().any(|(starting, _)| starting == id) => {
@@ -158,14 +184,15 @@ pub(crate) fn admit(node: &Arc<Node>, id: &ResidentId, about: &About) -> Result<
                 let place = order.iter().position(|waiting| waiting == id).expect("it waits in line");
                 let free = (*most as usize).saturating_sub(running.len() + line.starting.len());
                 if place >= free {
-                    return Err(Queued { ahead: place as u32, line: Line::Callee(*most) });
+                    return Err(Queued { ahead: place as u32, line: which.line(*most) });
                 }
-                others = order.into_iter().take(free).filter(|waiting| waiting != id).collect();
+                others.extend(order.into_iter().take(free).filter(|waiting| waiting != id));
             }
             Some(_) => {}
             None => line.leave(id),
         }
     }
+    let own: Vec<&String> = lines.iter().map(|(_, key, _)| key).collect();
     // Who runs is read under this lock: a turn let through counts as
     // starting until its host says it began, and as running from then, so
     // read before it, a turn could pass from one to the other unseen by both.
@@ -174,14 +201,14 @@ pub(crate) fn admit(node: &Arc<Node>, id: &ResidentId, about: &About) -> Result<
     login.unqueued(&mut running);
     login.prune(now, &running);
     if login.starting.iter().any(|(starting, _)| starting == id) {
-        went(&mut slots, callee.as_ref().map(|(_, line)| line), id, now);
+        went(&mut slots, &own, id, now);
         drop(slots);
         wake(node, others);
         return Ok(());
     }
     let Some(limit) = login.limit(hard) else {
         login.leave(id);
-        went(&mut slots, callee.as_ref().map(|(_, line)| line), id, now);
+        went(&mut slots, &own, id, now);
         drop(slots);
         wake(node, others);
         return Ok(());
@@ -203,69 +230,121 @@ pub(crate) fn admit(node: &Arc<Node>, id: &ResidentId, about: &About) -> Result<
     // once they ask again.
     others.extend(order.into_iter().take(free).filter(|waiting| waiting != id));
     login.go(id, now);
-    went(&mut slots, callee.as_ref().map(|(_, line)| line), id, now);
+    went(&mut slots, &own, id, now);
     drop(slots);
     wake(node, others);
     Ok(())
 }
 
-/// `id` went: out of its callee's line, counted there until its host says
-/// its turn began.
-fn went(slots: &mut HashMap<String, Login>, callee: Option<&String>, id: &ResidentId, now: Instant) {
-    if let Some(line) = callee.and_then(|key| slots.get_mut(key)) {
-        line.go(id, now);
+/// `id` went: out of its own lines, counted in each until its host says its
+/// turn began.
+fn went(slots: &mut HashMap<String, Login>, own: &[&String], id: &ResidentId, now: Instant) {
+    for key in own {
+        if let Some(line) = slots.get_mut(*key) {
+            line.go(id, now);
+        }
     }
 }
 
-/// The line of a colleague's callee, by the account it works for and the
-/// callee's name: none for a conversation no one asked for.
-fn callee_line(about: &About) -> Option<String> {
-    if !matches!(about.origin, Origin::Colleague { .. }) {
-        return None;
-    }
-    let name = about.callee.as_deref()?;
+/// A colleague's own lines, by the account it works for and the conversation
+/// that asked for it: its callee's, by the callee's name, then its asker's.
+/// None for a conversation no one asked for.
+fn own_lines(about: &About) -> Vec<(String, Which)> {
+    let Origin::Colleague { asked_by, .. } = &about.origin else { return Vec::new() };
     let whose = match &about.acting {
         Acting::Accounts { accounts } => {
-            accounts.first().map(|account| format!("{}/{}", account.hub, account.account))?
+            match accounts.first().map(|account| format!("{}/{}", account.hub, account.account)) {
+                Some(whose) => whose,
+                None => return Vec::new(),
+            }
         }
         Acting::Here => "here".to_string(),
     };
-    Some(format!("{CALLEE}{whose} {name}"))
+    let asker = format!("{}@{}", asked_by.resident, asked_by.machine);
+    let callee = about.callee.as_deref().map(|name| (format!("{CALLEE}{whose} {name} for {asker}"), Which::Callee));
+    callee.into_iter().chain([(format!("{ASKER}{whose} {asker}"), Which::Asker)]).collect()
 }
 
-/// What a callee's line is named by, before whose and which callee it is.
+/// A colleague's own lines, each with the most it lets work at once as its
+/// account's settings say now.
+fn colleague_lines(node: &Node, about: &About) -> Vec<(Option<u32>, String, Which)> {
+    own_lines(about)
+        .into_iter()
+        .map(|(key, which)| {
+            let most = match which {
+                Which::Callee => most(node, about),
+                Which::Asker => in_all(node, about),
+            };
+            (most, key, which)
+        })
+        .collect()
+}
+
+/// The colleagues of the line `key` at work now, but `except`: those running
+/// a turn that wait in no line. A colleague is busy from its birth, before
+/// its first turn is let go, so one that waits, in this line or in another
+/// of its own, is not at work yet.
+fn working(node: &Node, slots: &HashMap<String, Login>, except: Option<&ResidentId>, key: &str) -> Vec<ResidentId> {
+    let mut running = running_where(node, except, |about| own_lines(about).iter().any(|(own, _)| own == key));
+    running.retain(|other| {
+        !slots.iter().any(|(line, held)| own_line(line) && held.waiting.iter().any(|waiting| waiting.id == *other))
+    });
+    running
+}
+
+/// What a callee's line is named by, before whose and which callee it is,
+/// and an asker's, before whose and which conversation.
 const CALLEE: &str = "callee ";
+const ASKER: &str = "asker ";
+
+/// Whether a line is one of a colleague's own, not a login's.
+fn own_line(key: &str) -> bool {
+    key.starts_with(CALLEE) || key.starts_with(ASKER)
+}
+
+/// The settings of model collaboration of the account `about` works for.
+fn settings(node: &Node, about: &About) -> Option<fastctx_types::collab::Collab> {
+    let Acting::Accounts { accounts } = &about.acting else { return None };
+    let account = accounts.first()?;
+    node.links()
+        .iter()
+        .filter(|link| link.membership().id == account.hub)
+        .find_map(|link| link.view().account(&account.account).and_then(|found| found.collab.clone()))
+}
+
+/// How many of all the colleagues one conversation asked for may be at work
+/// at once, as the account's settings say now; the default where they say
+/// nothing.
+fn in_all(node: &Node, about: &About) -> Option<u32> {
+    AtOnce::most_in_all(settings(node, about).and_then(|collab| collab.at_once))
+}
 
 /// How many of the colleagues of `about`'s callee may be at work at once,
 /// as its account's settings say now; the default where they say nothing,
 /// as when the callee is no longer set.
 fn most(node: &Node, about: &About) -> Option<u32> {
-    let said = match (&about.acting, about.callee.as_deref()) {
-        (Acting::Accounts { accounts }, Some(name)) => accounts.first().and_then(|account| {
-            node.links()
-                .iter()
-                .filter(|link| link.membership().id == account.hub)
-                .find_map(|link| link.view().account(&account.account).and_then(|found| found.collab.clone()))
-                .and_then(|collab| collab.callees.into_iter().find(|callee| callee.name == name))
-                .and_then(|callee| callee.at_once)
-        }),
-        _ => None,
-    };
+    let said = about.callee.as_deref().and_then(|name| {
+        settings(node, about)
+            .and_then(|collab| collab.callees.into_iter().find(|callee| callee.name == name))
+            .and_then(|callee| callee.at_once)
+    });
     AtOnce::most(said)
 }
 
 /// How many turns wait ahead of `id`'s, while it waits for one, and whether
-/// it waits in its callee's line rather than its login's.
+/// it waits in a line of its own, its callee's or its asker's, rather than
+/// its login's.
 pub(crate) fn ahead(node: &Node, id: &ResidentId) -> Option<(u32, bool)> {
     let slots = node.turn_slots.0.lock().expect("never poisoned");
-    // A turn its callee holds back waits in that line, though its login's
-    // may hold a place of its from before.
+    // A turn its own lines hold back waits there, though its login's may
+    // hold a place of its from before; one past its callee's line waits in
+    // its asker's, while its place in its callee's is within the room there.
     let mut lines: Vec<_> = slots.iter().collect();
-    lines.sort_by_key(|(key, _)| !key.starts_with(CALLEE));
+    lines.sort_by_key(|(key, _)| if key.starts_with(ASKER) { 0 } else if key.starts_with(CALLEE) { 1 } else { 2 });
     lines.into_iter().find_map(|(key, line)| {
         line.waiting.iter().any(|waiting| waiting.id == *id).then(|| {
             let place = line.order().iter().position(|waiting| waiting == id).expect("it waits in line");
-            (place as u32, key.starts_with(CALLEE))
+            (place as u32, own_line(key))
         })
     })
 }
@@ -292,20 +371,21 @@ pub(crate) fn ended(node: &Arc<Node>, id: &ResidentId, about: &About, end: &Turn
     let Some((key, dir)) = defaults.login(about) else { return };
     let refused = refused_for_rate(node, about, &dir, end);
     let hard = hard(node, about, &dir, &defaults);
-    let callee = callee_line(about).map(|line| (most(node, about), line));
+    let lines = colleague_lines(node, about);
     let now = Instant::now();
     let mut slots = node.turn_slots.0.lock().expect("never poisoned");
-    // Its callee's line lets the next go.
+    // Its own lines let the next go.
     let mut next = Vec::new();
-    if let Some((most, line_key)) = &callee
-        && let Some(line) = slots.get_mut(line_key)
-    {
-        let mut running = running_where(node, None, |about| callee_line(about).as_ref() == Some(line_key));
-        line.unqueued(&mut running);
+    for (most, line_key, _) in &lines {
+        if !slots.contains_key(line_key) {
+            continue;
+        }
+        let running = working(node, &slots, None, line_key);
+        let line = slots.get_mut(line_key).expect("it is there");
         line.starting.retain(|(starting, _)| starting != id);
         line.prune(now, &running);
         let room = most.map_or(usize::MAX, |most| (most as usize).saturating_sub(running.len() + line.starting.len()));
-        next = line.order().into_iter().take(room).collect();
+        next.extend(line.order().into_iter().take(room));
         if line.waiting.is_empty() && line.starting.is_empty() {
             slots.remove(line_key);
         }
