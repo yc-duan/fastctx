@@ -38,6 +38,17 @@ pub type ResultFuture<'a, T> = Pin<Box<dyn Future<Output = Result<T, Error>> + S
 /// account isolation and delivers changes only after the write is durable.
 pub trait Records: Send + Sync {
     fn get<'a>(&'a self, scope: &'a HubAccount, kind: &'a str, key: &'a str) -> ResultFuture<'a, Option<Record>>;
+    /// The record `head`, as a listing just named it: a provider that keeps
+    /// what it read answers from that while its version is the one named,
+    /// and asks again otherwise.
+    fn get_listed<'a>(
+        &'a self,
+        scope: &'a HubAccount,
+        kind: &'a str,
+        head: &'a Head,
+    ) -> ResultFuture<'a, Option<Record>> {
+        self.get(scope, kind, &head.key)
+    }
     fn list<'a>(&'a self, scope: &'a HubAccount, kind: &'a str) -> ResultFuture<'a, Vec<Head>>;
     fn compare_exchange<'a>(
         &'a self,

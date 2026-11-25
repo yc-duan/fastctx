@@ -15,8 +15,9 @@
 //
 // Every machine keeps its own book of what `run` did there; the page asks
 // each it can reach and puts their answers together, saying which did not
-// answer. This computer's is read again whenever it changes, the others'
-// now and then.
+// answer. This computer's is read again whenever it changes; another's
+// once the number its hub tells of its book moved (`app/numbers.ts`), and
+// one that tells none now and then.
 
 import { BOOK, followState } from "../world/topics";
 import { agentGlyph, glyph } from "../conversation/glyphs";
@@ -41,9 +42,12 @@ const KEPT_SPAN = "activity.span";
 const KEPT_GROUPING = "activity.grouping";
 const DAY_MS = 24 * 3_600_000;
 /** How often this computer's book is read again at most, as it changes; and
- *  how often the other machines are asked. */
+ *  how often the other machines are asked whose books' numbers are not told,
+ *  or that did not answer. */
 const HERE_MS = 4000;
 const THERE_MS = 30_000;
+/** How long the other machines go unread all the same. */
+const QUIET_MS = 10 * 60_000;
 /** How long the answer from an offline machine's copy stands. */
 const COPY_AGAIN_MS = 60_000;
 const LIMIT = 2000;
@@ -75,6 +79,10 @@ export interface ActivityOptions {
   rows?: RowsOf;
   /** Where a file is opened among its machine's folders. */
   link(machine: string, path: string | null, tab: ViewTab | null): string;
+  /** The other machines whose books' numbers their hubs tell, and a way to
+   *  hear which of them moved (`app/numbers.ts`): each is read again as its
+   *  number moves; the rest now and then. None for the specimen. */
+  books?: { told(): Set<string>; follow(moved: (machines: string[]) => void): () => void };
   /** The page's own clock, for the specimen. */
   now?(): number;
   /** Makes a Codex session the user opened on their own on this computer a
@@ -122,9 +130,13 @@ export class ActivityPage implements Page {
   private readonly subscriptions: (() => void)[] = [];
   private readonly answers = new Map<string, Map<string, BookAnswer | null>>();
   private localFailed = false;
-  /** Local and remote books advance independently; each group has one read. */
+  /** Local and remote books advance independently; each group has one read.
+   *  A reading wanted meanwhile follows it, of the machines it names, or of
+   *  all of them (`null`). */
   private readonly reading = new Set<string>();
-  private readonly again = new Set<string>();
+  private readonly again = new Map<string, Set<string> | null>();
+  /** When every other machine was last read. */
+  private allAt = 0;
   /** When each offline machine's copy was last asked, by window. */
   private readonly copiedAt = new Map<string, number>();
   private left = false;
@@ -149,8 +161,28 @@ export class ActivityPage implements Page {
     });
     this.subscriptions.push(
       followState(BOOK, async () => { await this.read("local"); if (this.localFailed) throw new Error("the local book did not answer"); }, HERE_MS),
-      followState(null, () => this.read("remote"), THERE_MS),
+      followState(null, () => this.readTimed(), THERE_MS),
     );
+    if (options.books) this.subscriptions.push(options.books.follow((machines) => void this.read("remote", new Set(machines))));
+  }
+
+  /** The other machines read on the clock: every one of them once in
+   *  `QUIET_MS`, else those whose books' numbers are not told, and those
+   *  that did not answer when last asked; none when there are none. */
+  private readTimed(): Promise<void> | undefined {
+    const books = this.options.books;
+    const now = Date.now();
+    if (!books || now - this.allAt >= QUIET_MS) {
+      this.allAt = now;
+      return this.read("remote");
+    }
+    const told = books.told();
+    const kept = this.answers.get(new Date(this.from()).toISOString());
+    const timed = this.options
+      .machines()
+      .filter((machine) => machine.written !== null && (!told.has(machine.name) || !kept?.get(machine.name)))
+      .map((machine) => machine.name);
+    return timed.length ? this.read("remote", new Set(timed)) : undefined;
   }
 
   leave(): void {
@@ -167,8 +199,9 @@ export class ActivityPage implements Page {
     return dayOf(this.now()) - (SPAN_DAYS[this.span] - 1) * DAY_MS;
   }
 
-  /** Every machine's answer to `query`, the ones that did not answer named. */
-  private async askAll(query: BookQuery, only: "local" | "remote"): Promise<{ answers: BookAnswer[]; away: string[] }> {
+  /** Every machine's answer to `query`, the ones that did not answer named.
+   *  With `which`, the others answer as they last did, where they did. */
+  private async askAll(query: BookQuery, only: "local" | "remote", which: Set<string> | null = null): Promise<{ answers: BookAnswer[]; away: string[] }> {
     const all = this.options.machines();
     const machines = all.filter((machine) => (machine.written === null) === (only === "local"));
     // Keep the other machines' answers when only the local book changed.
@@ -186,7 +219,8 @@ export class ActivityPage implements Page {
     // again for a window no oftener than `COPY_AGAIN_MS`.
     const now = Date.now();
     const asked = await Promise.allSettled(
-      machines.map((machine) => {
+      machines.map((machine): Promise<BookAnswer | null> => {
+        if (which && !which.has(machine.name) && known.get(machine.name)) return Promise.resolve(known.get(machine.name)!);
         const away = machine.written !== null && !machine.online;
         const copied = away && now - (this.copiedAt.get(`${key}\n${machine.name}`) ?? 0) < COPY_AGAIN_MS ? known.get(machine.name) : undefined;
         if (copied) return Promise.resolve(copied);
@@ -203,22 +237,23 @@ export class ActivityPage implements Page {
     return { answers, away };
   }
 
-  /** Reads what ran over the span. One reading at a time for this computer
-   *  and one for the others: a machine slower than the next reading still
-   *  has its answer drawn. One wanted meanwhile follows when it ends; only
-   *  a reading of a span no longer chosen is let go. */
-  private async read(group: "local" | "remote"): Promise<void> {
+  /** Reads what ran over the span: of every machine of the group, or of
+   *  those `which` names. One reading at a time for this computer and one
+   *  for the others: a machine slower than the next reading still has its
+   *  answer drawn. One wanted meanwhile follows when it ends; only a
+   *  reading of a span no longer chosen is let go. */
+  private async read(group: "local" | "remote", which: Set<string> | null = null): Promise<void> {
     if (this.reading.has(group)) {
-      this.again.add(group);
+      this.wantAgain(group, which);
       return;
     }
     this.reading.add(group);
     const span = this.span;
     try {
-      const { answers } = await this.askAll({ ask: "deeds", from: new Date(this.from()).toISOString(), to: new Date(this.now() + 60_000).toISOString(), limit: LIMIT }, group);
+      const { answers } = await this.askAll({ ask: "deeds", from: new Date(this.from()).toISOString(), to: new Date(this.now() + 60_000).toISOString(), limit: LIMIT }, group, which);
       if (this.left) return;
       if (span !== this.span) {
-        this.again.add(group);
+        this.wantAgain(group, null);
         return;
       }
       const changes: FileChange[] = [];
@@ -236,8 +271,19 @@ export class ActivityPage implements Page {
       this.draw();
     } finally {
       this.reading.delete(group);
-      if (this.again.delete(group) && !this.left) void this.read(group);
+      const next = this.again.get(group);
+      if (next !== undefined) {
+        this.again.delete(group);
+        if (!this.left) void this.read(group, next);
+      }
     }
+  }
+
+  /** A reading of `which` of the group, or of all of it, to follow the one
+   *  under way: with one wanted already, of what either names. */
+  private wantAgain(group: "local" | "remote", which: Set<string> | null): void {
+    const was = this.again.get(group);
+    this.again.set(group, which === null || was === null ? null : new Set([...(was ?? []), ...which]));
   }
 
   private drawSwitches(): void {

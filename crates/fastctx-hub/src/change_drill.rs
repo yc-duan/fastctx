@@ -106,7 +106,7 @@ fn fixture(machines: usize) -> Book {
             paths: None,
             strain: None,
             workbench: None,
-            logins_number: None,
+            numbers: None,
             settled: None,
         }));
     }

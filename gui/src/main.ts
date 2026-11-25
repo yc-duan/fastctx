@@ -7,7 +7,8 @@
 import { projectWho, mergeFormer } from "./project/who";
 import { followFormer } from "./project/former";
 import { localHome } from "./sentinel/local";
-import { configureTopics, followState, mapTopic } from "./world/topics";
+import { BOOK, configureTopics, followState, mapTopic, SENTINELS } from "./world/topics";
+import { followAll, followMachine, followNumbers, numbersOf } from "./app/numbers";
 import { followSwitches, grabSwitches } from "./app/segment-slide";
 import { followTabs } from "./app/arrive";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
@@ -1768,6 +1769,7 @@ function sentinelsPage(): Page {
       talkWords: words,
       english,
       head,
+      ...(live ? { follow: (read: () => Promise<void>) => followAll(store.world, "sentinels", SENTINELS, read, 60_000) } : {}),
       read: () =>
         live
           ? sentinelOverview().then((overview) => {
@@ -2474,9 +2476,10 @@ function liveTalk(address: Address): DeskTalk {
     });
     page.running([...jobs, ...sentinelRows.get()], now);
   });
-  // The sentinels' homes are asked, not followed: as the page opens, every
-  // half minute while it is open, and after one is withdrawn.
-  const stopSentinels = features.sentinels ? followState(null, async () => { if (!await readSentinels()) throw new Error("the sentinel list did not answer"); }, 30_000) : () => {};
+  // The sentinels are read as the page opens, after one is withdrawn, and
+  // as they change: their records here, or what a home's number tells of
+  // them there (`app/numbers.ts`); a home that tells none, every half minute.
+  const stopSentinels = features.sentinels ? followAll(store.world, "sentinels", SENTINELS, async () => { if (!await readSentinels()) throw new Error("the sentinel list did not answer"); }, 30_000) : () => {};
   // The conversation as the World's watch reads it (`conversation/source.ts`):
   // the page holds its latest part and reads the rest as the reader comes to
   // it; what is new is shown at once. When the host replaced or removed
@@ -2825,7 +2828,7 @@ function projectPage(town: string): Page {
     }
 
   };
-  const stopSenses = followState(null, readSenses, 30_000);
+  const stopSenses = followAll(store.world, "sentinels", SENTINELS, readSenses, 30_000);
   let map: import("./world/world").MapView | null = null;
   let former: WorldWho | null = null;
   const showProject = () => {
@@ -2969,6 +2972,20 @@ const specimenRowsOf: RowsOf = (_machine, deed, touched) => () => specimenRows(t
 const FILES_DAYS = 30;
 
 /** A machine's changes of late, as its activity book tells them. */
+/** How often a machine's changes are read on the files page where nothing
+ *  tells when they move. */
+const FILES_AGAIN_MS = 8000;
+
+/** Calls `read` whenever `machine`'s book may have changed: this
+ *  computer's as it changes; another's once the number its hub tells of it
+ *  moved, or every `every` where it tells none (`app/numbers.ts`). Returns
+ *  what stops it. */
+function followBook(machine: string, read: () => void, every: number): () => void {
+  const asked = bookMachines(store.world.peek()).find((one) => one.name === machine);
+  if (asked && asked.written === null) return followState(BOOK, read, every);
+  return followMachine(store.world, "book", asked?.written ?? machine, read, every);
+}
+
 function machineChanges(machine: string): Promise<FileChange[]> {
   const now = live ? Date.now() : specimen!.now.getTime();
   const from = now - FILES_DAYS * 86_400_000;
@@ -3405,6 +3422,7 @@ function show(next: Place): void {
         read: (machine, query) => (live ? readBook(machine, query) : specimenBook(machine, query, specimen!.now.getTime())),
         named: sessionNamed,
         link: (machine, path, tab) => link({ kind: "files", machine, path, tab }),
+        ...(live ? { books: { told: () => new Set(numbersOf(store.world.peek(), "book").keys()), follow: (moved: (machines: string[]) => void) => followNumbers(store.world, "book", moved) } } : {}),
         ...(live && workbenchShown.on.peek() ? { bringIn: (resident: string) => bringIn(resident).then(() => store.refresh()) } : {}),
         ...(live ? {} : { now: () => specimen!.now.getTime(), rows: specimenRowsOf }),
       });
@@ -3432,6 +3450,7 @@ function show(next: Place): void {
           // changed, which the changes themselves tell.
           list: live ? null : specimenList,
           changes: machineChanges,
+          ...(live ? { follow: (machine: string, read: () => void) => followBook(machine, read, FILES_AGAIN_MS) } : {}),
           seams: fileSeams(),
           link: (machine, path, tab) => link({ kind: "files", machine, path, tab }),
           moved: (to) => {

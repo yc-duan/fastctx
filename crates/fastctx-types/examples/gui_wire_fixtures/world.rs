@@ -418,6 +418,7 @@ fn nodes() -> Vec<NodesReply> {
                         owner: Some("grace".parse().unwrap()),
                         group: None,
                         rights: vec![(me.clone(), agents)],
+                        numbers: None,
                     },
                     Node {
                         name: "laptop".parse().unwrap(),
@@ -432,6 +433,7 @@ fn nodes() -> Vec<NodesReply> {
                         owner: Some(me.clone()),
                         group: Some("lab A".into()),
                         rights: vec![(me.clone(), all)],
+                        numbers: None,
                     },
                     Node {
                         name: "server".parse().unwrap(),
@@ -452,6 +454,12 @@ fn nodes() -> Vec<NodesReply> {
                         owner: Some(me.clone()),
                         group: None,
                         rights: vec![(me.clone(), all)],
+                        numbers: Some(fastctx_types::numbers::Numbers {
+                            logins: Some(3),
+                            book: Some(17),
+                            updates: Some(2),
+                            sentinels: Some(5),
+                        }),
                     },
                 ],
             }],

@@ -315,7 +315,9 @@ pub(crate) struct Hub {
     presence: AtomicU64,
     /// Held while a change in who is online is counted, looked at and
     /// queued, so that of two at once the later counted is queued later.
-    pending_presence: Mutex<HashMap<MachineName, u64>>,
+    /// The machines whose presence changed and is to be told, at the latest
+    /// count, and whether what changed is any but their numbers (`present`).
+    pending_presence: Mutex<HashMap<MachineName, (u64, bool)>>,
     presence_pending: Arc<tokio::sync::Notify>,
     /// What the hub counts for its health (`health`).
     health: health::Health,
@@ -329,8 +331,8 @@ pub(crate) struct Hub {
     /// last told (`workbench`).
     workbench: Mutex<HashMap<MachineName, bool>>,
     /// The number each machine's agents and logins stand at, as its session
-    /// (by generation) last told (`workbench::logins_heard`).
-    logins: Mutex<HashMap<MachineName, (u64, u64)>>,
+    /// (by generation) last told (`workbench::numbers_heard`).
+    logins: Mutex<HashMap<MachineName, (u64, fastctx_types::numbers::Numbers)>>,
 }
 
 /// Full views built at once when many sessions are told of a change.
@@ -591,18 +593,32 @@ impl Hub {
     /// no call or transfer is cut; a session just come is told what is
     /// afoot.
     fn present(&self, name: &MachineName) {
+        self.present_as(name, true);
+    }
+
+    /// The numbers `name`'s answers stand at moved, nothing else of how it
+    /// is connected (`workbench::numbers_heard`): told to the members whose
+    /// sessions read presence, who alone read numbers. A member that reads
+    /// neither is not told to look at its whole directory again for them,
+    /// as it is for a machine coming or going: on a busy machine they move
+    /// every heartbeat or so.
+    pub(crate) fn present_numbers(&self, name: &MachineName) {
+        self.present_as(name, false);
+    }
+
+    fn present_as(&self, name: &MachineName, more_than_numbers: bool) {
         let _timing = self.health.presence_queue.time();
         let rev = self.presence.fetch_add(1, Ordering::SeqCst) + 1;
         self.pending_presence
             .lock()
             .expect("presence changes")
             .entry(name.clone())
-            .and_modify(|pending| *pending = (*pending).max(rev))
-            .or_insert(rev);
+            .and_modify(|pending| *pending = (pending.0.max(rev), pending.1 || more_than_numbers))
+            .or_insert((rev, more_than_numbers));
         self.presence_pending.notify_one();
     }
 
-    fn publish_presence(&self, name: &MachineName, rev: u64) {
+    fn publish_presence(&self, name: &MachineName, rev: u64, more_than_numbers: bool) {
         let _timing = self.health.presence.time();
         let store = self.store();
         let indexed = store.indexed();
@@ -618,7 +634,9 @@ impl Hub {
                 .map(|session| (session.out.clone(), session.presence));
             let Some((out, reads)) = session else { continue };
             if !reads {
-                self.presence_changed.notify_one();
+                if more_than_numbers {
+                    self.presence_changed.notify_one();
+                }
                 continue;
             }
             if let Some(presence) = views::presence_for(&store, &indexed, self, &reader, name) {

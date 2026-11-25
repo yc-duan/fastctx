@@ -56,13 +56,19 @@ pub(crate) async fn run(hub: Weak<crate::Hub>, changed: Arc<tokio::sync::Notify>
         let Some(hub) = hub.upgrade() else { return };
         let _ = fastctx_platform::task::spawn_blocking(move || {
             let names = std::mem::take(&mut *hub.pending_presence.lock().expect("presence changes"));
-            for (name, rev) in names {
-                hub.publish_presence(&name, rev);
+            let mut came_or_went = false;
+            for (name, (rev, more_than_numbers)) in names {
+                hub.publish_presence(&name, rev, more_than_numbers);
+                came_or_went |= more_than_numbers;
             }
-            hub.machine_log_changed.notify_one();
-            hub.assists_changed.notify_one();
-            crate::moving::follow::settle(&hub);
-            crate::forget::prune(&hub);
+            // What follows machines coming and going is not worked through
+            // for numbers that moved alone.
+            if came_or_went {
+                hub.machine_log_changed.notify_one();
+                hub.assists_changed.notify_one();
+                crate::moving::follow::settle(&hub);
+                crate::forget::prune(&hub);
+            }
         })
         .await;
     }

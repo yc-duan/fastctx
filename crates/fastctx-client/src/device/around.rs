@@ -304,6 +304,7 @@ impl Device {
                         owner: seen.and_then(|seen| seen.home.clone()),
                         group: seen.and_then(|seen| seen.group.clone()),
                         rights: logins.iter().map(|account| (account.clone(), view.rights(account, &name))).collect(),
+                        numbers: seen.and_then(|seen| seen.numbers).filter(|_| online_known),
                         name,
                     }
                 })

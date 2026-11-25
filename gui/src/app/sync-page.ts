@@ -30,6 +30,7 @@ import { loginsOf, type HubId, type Login } from "../world/accounts";
 import type { DeviceSync, LagPoint, Part, SyncStatus, SyncStatusReply } from "../world/sync";
 import { redrawKeepingFocus } from "./focus";
 import { detailOf } from "./problem";
+import { followState, type Following } from "../world/topics";
 import type { Page } from "./shell";
 import type { Store } from "./store";
 import { CAUGHT_UP, lagLines, strip, wayLine } from "./sync-draw";
@@ -117,7 +118,9 @@ export class SyncPage implements Page {
   /** A device the address asks to be opened, in a development build: for
    *  looking at an opened row without a hand to press it. */
   private wanted = import.meta.env.DEV ? new URLSearchParams(location.search).get("open") : null;
-  private timer: number | null = null;
+  /** Reads how the devices stand while the page is open and in view; none
+   *  once it is left. */
+  private following: Following | null = null;
   private readonly resize: ResizeObserver;
   private width = 0;
 
@@ -151,13 +154,13 @@ export class SyncPage implements Page {
     });
     this.resize.observe(this.body);
     this.draw();
-    void this.ask();
-    this.timer = window.setInterval(() => void this.ask(), AGAIN_MS);
+    // At once, then every minute while the window is in view.
+    this.following = followState(null, () => this.ask(), AGAIN_MS);
   }
 
   leave(): void {
-    if (this.timer !== null) window.clearInterval(this.timer);
-    this.timer = null;
+    this.following?.();
+    this.following = null;
     this.resize.disconnect();
   }
 
@@ -197,7 +200,7 @@ export class SyncPage implements Page {
     } finally {
       this.asking.delete(key);
     }
-    if (this.timer === null) return;
+    if (this.following === null) return;
     if (span === this.span) {
       this.read.set(key, read);
       if (this.wanted) {
@@ -506,7 +509,7 @@ export class SyncPage implements Page {
     } catch {
       return;
     }
-    if (!status || this.timer === null || this.opened !== name || this.span !== span) return;
+    if (!status || this.following === null || this.opened !== name || this.span !== span) return;
     this.line = { name, span, status };
     const read = this.read.get(key);
     const listed = read && "reply" in read ? read.reply.hub : undefined;

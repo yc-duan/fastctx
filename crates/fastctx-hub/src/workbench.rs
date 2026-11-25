@@ -22,12 +22,17 @@ pub(crate) fn of(hub: &Hub, name: &MachineName) -> Option<bool> {
     hub.workbench.lock().expect("never poisoned").get(name).copied()
 }
 
-/// `name`'s session `generation` told with a heartbeat the number its agents
-/// and logins stand at (`fastctx_net::wire::Up::Ping::logins_number`): told
-/// beside its presence to whoever sees it online, as it moves, so one
-/// keeping what it answered of them asks again then and not before. None
-/// from a release that does not tell it.
-pub(crate) fn logins_heard(hub: &Hub, name: &MachineName, generation: u64, told: Option<u64>) {
+/// `name`'s session `generation` told with a heartbeat the numbers its
+/// answers to others stand at (`fastctx_types::numbers`): told beside its
+/// presence to whoever may ask it for each kind, as they move, so one keeping
+/// what it answered asks again then and not before. None from a release that
+/// does not tell them.
+pub(crate) fn numbers_heard(
+    hub: &Hub,
+    name: &MachineName,
+    generation: u64,
+    told: Option<fastctx_types::numbers::Numbers>,
+) {
     let Some(told) = told else { return };
     // A session replaced since does not tell for the one after it.
     if hub.sessions().get(name).is_none_or(|session| session.generation != generation) {
@@ -35,7 +40,7 @@ pub(crate) fn logins_heard(hub: &Hub, name: &MachineName, generation: u64, told:
     }
     let before = hub.logins.lock().expect("never poisoned").insert(name.clone(), (generation, told));
     if before != Some((generation, told)) {
-        hub.present(name);
+        hub.present_numbers(name);
     }
 }
 
@@ -48,7 +53,7 @@ pub(crate) fn logins_gone(hub: &Hub, name: &MachineName, generation: u64) {
     }
 }
 
-/// The number `name` last told its agents and logins stand at.
-pub(crate) fn logins_of(hub: &Hub, name: &MachineName) -> Option<u64> {
+/// The numbers `name` last told its answers stand at.
+pub(crate) fn numbers_of(hub: &Hub, name: &MachineName) -> Option<fastctx_types::numbers::Numbers> {
     hub.logins.lock().expect("never poisoned").get(name).map(|(_, told)| *told)
 }

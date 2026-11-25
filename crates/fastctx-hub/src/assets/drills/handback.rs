@@ -193,7 +193,7 @@ fn first(base: &Path, dir: &Path) {
         strain: None,
         workbench: None,
         settled: None,
-        logins_number: None,
+        numbers: None,
     });
     store.book.directory.members.push(member);
     store.book_edit = crate::store::BookEdit::Full;

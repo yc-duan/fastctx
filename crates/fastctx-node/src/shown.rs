@@ -389,6 +389,7 @@ fn nodes(node: &Arc<Node>) -> NodesReply {
                 owner: machine.home.clone(),
                 group: machine.group.clone(),
                 rights,
+                numbers: machine.numbers.filter(|_| current),
             });
         }
         // This computer is decided as any machine is: a locked account

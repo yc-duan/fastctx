@@ -70,7 +70,7 @@ fn hub_streams_go_on_after_a_key_rotation() {
         strain: None,
         workbench: None,
         settled: None,
-        logins_number: None,
+        numbers: None,
     });
     let mut store = store;
     store.book.directory.members.push(member);

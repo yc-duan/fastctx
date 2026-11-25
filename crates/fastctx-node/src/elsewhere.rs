@@ -6,7 +6,7 @@
 //! directory read again first, made the page wait on the slowest of them.
 //! Now each machine tells its hubs, with its heartbeat, a number that moves
 //! whenever what it answers of its agents and logins does
-//! (`fastctx_net::directory::Member::logins_number`), and a page is answered
+//! (`fastctx_net::directory::Member::numbers`), and a page is answered
 //! with what this node last heard from each machine while that number
 //! stands. A machine whose number moved, or one never heard from, is asked;
 //! the page waits a moment for it (`SOON`), and is told to read again once
@@ -115,6 +115,9 @@ pub(crate) struct Answers {
     rights: Mutex<HashMap<HubId, (u64, u64)>>,
     turns: Arc<tokio::sync::Semaphore>,
     here: AtomicU64,
+    /// The number this machine's book was last told at, and when
+    /// (`told_numbers`).
+    book_told: Mutex<Option<(std::time::Instant, u64)>>,
 }
 
 impl Default for Answers {
@@ -131,6 +134,7 @@ impl Default for Answers {
             rights: Mutex::default(),
             turns: Arc::new(tokio::sync::Semaphore::new(ASKING_AT_ONCE)),
             here: AtomicU64::new(started),
+            book_told: Mutex::new(None),
         }
     }
 }
@@ -205,18 +209,16 @@ pub(crate) async fn ask(
         };
         let key = (kind, asked.source.hub.clone(), asked.source.key.clone(), asked.account.clone(), opened);
         let since = epoch(node, &asked.source.hub);
-        let kept = node
-            .elsewhere
-            .held
-            .lock()
-            .expect("never poisoned")
-            .kept
-            .get(&key)
-            .map(|kept| (kept.heard.clone(), reading != Reading::Fresh && standing(kept, seen.logins_number, now)));
+        let kept = node.elsewhere.held.lock().expect("never poisoned").kept.get(&key).map(|kept| {
+            (
+                kept.heard.clone(),
+                reading != Reading::Fresh && standing(kept, seen.numbers.and_then(|numbers| numbers.logins), now),
+            )
+        });
         match kept {
             Some((answer, true)) => heard.push((asked, answer)),
             kept => {
-                let underway = asking(node, kind, key, target, seen.logins_number);
+                let underway = asking(node, kind, key, target, seen.numbers.and_then(|numbers| numbers.logins));
                 waiting.push((asked, kept.map(|(answer, _)| answer), underway, since));
             }
         }
@@ -439,8 +441,10 @@ fn rights(link: &Link) -> u64 {
 pub(crate) fn view_changed(node: &Node, link: &Link) {
     let hub = link.membership().id;
     let view = link.view();
-    let standing: HashMap<String, (bool, Option<u64>)> =
-        view.machines().map(|machine| (machine.key.to_string(), (machine.online, machine.logins_number))).collect();
+    let standing: HashMap<String, (bool, Option<u64>)> = view
+        .machines()
+        .map(|machine| (machine.key.to_string(), (machine.online, machine.numbers.and_then(|numbers| numbers.logins))))
+        .collect();
     drop(view);
     let online: HashSet<String> =
         standing.iter().filter(|(_, (online, _))| *online).map(|(key, _)| key.clone()).collect();
@@ -504,4 +508,34 @@ pub(crate) fn changed_here(node: &Node) {
 /// each heartbeat.
 pub(crate) fn here(node: &Node) -> u64 {
     node.elsewhere.here.load(Ordering::Acquire)
+}
+
+/// How long a moved number of this machine's book waits before it is told:
+/// a machine at work writes its book many times a minute, and a reader of it
+/// reads it again at most this often (it read it every half minute before).
+const BOOK_TOLD_EVERY: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// The numbers this machine's answers to others stand at, as its heartbeat
+/// tells them (`fastctx_types::numbers`): its logins at once, its updates
+/// and its sentinels at once (they move seldom), its book at most every
+/// `BOOK_TOLD_EVERY`.
+pub(crate) fn told_numbers(node: &Node) -> fastctx_types::numbers::Numbers {
+    let book = node.topics.number(fastctx_types::topics::BOOK);
+    let book = {
+        let mut told = node.elsewhere.book_told.lock().expect("never poisoned");
+        match *told {
+            Some((at, was)) if was != book && at.elapsed() < BOOK_TOLD_EVERY => was,
+            Some((_, was)) if was == book => was,
+            _ => {
+                *told = Some((std::time::Instant::now(), book));
+                book
+            }
+        }
+    };
+    fastctx_types::numbers::Numbers {
+        logins: Some(here(node)),
+        book: Some(book),
+        updates: Some(node.topics.number(fastctx_types::topics::UPDATE)),
+        sentinels: Some(node.topics.number(fastctx_types::topics::SENTINELS)),
+    }
 }

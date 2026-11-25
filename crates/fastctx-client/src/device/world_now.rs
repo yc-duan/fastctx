@@ -251,6 +251,7 @@ impl Device {
                         .iter()
                         .map(|account| (account.clone(), view.call_rights(&view.me, account, &member.name)))
                         .collect(),
+                    numbers: member.numbers.filter(|_| current),
                 });
             }
             hubs.push(HubNodes {

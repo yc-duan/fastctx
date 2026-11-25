@@ -801,8 +801,8 @@ impl fastctx_net::link::Node for Handler {
     fn workbench(&self) -> Option<bool> {
         self.node.upgrade().and_then(|node| crate::logins::workbench::told(&node))
     }
-    fn logins_number(&self) -> Option<u64> {
-        self.node.upgrade().map(|node| crate::elsewhere::here(&node))
+    fn numbers(&self) -> Option<fastctx_types::numbers::Numbers> {
+        self.node.upgrade().map(|node| crate::elsewhere::told_numbers(&node))
     }
     fn acquire(
         &self,
@@ -1810,6 +1810,17 @@ impl fastctx_net::link::Node for Handler {
             if let Some(link) = node.link_of(&self.hub) {
                 crate::elsewhere::view_changed(&node, &link);
             }
+        }
+    }
+
+    /// A machine's numbers alone moved: the answers kept of it hear it, and
+    /// so does an interface showing it; no way, tool or right moved.
+    fn numbers_changed(&self) {
+        if let Some(node) = self.node.upgrade() {
+            if let Some(link) = node.link_of(&self.hub) {
+                crate::elsewhere::view_changed(&node, &link);
+            }
+            node.shown_changed();
         }
     }
 

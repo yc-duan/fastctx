@@ -41,7 +41,7 @@ fn member(name: &str, key: &SecretKey, account: &AccountName) -> Arc<Member> {
         paths: None,
         strain: None,
         workbench: None,
-        logins_number: None,
+        numbers: None,
         settled: None,
     })
 }

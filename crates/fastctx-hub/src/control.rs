@@ -345,10 +345,10 @@ pub(crate) async fn session(
             changed = transport.heartbeat.changed() => {
                 if changed.is_err() { break (None, false); }
                 let Some(frame) = transport.heartbeat.borrow_and_update().clone() else { continue };
-                if let Up::Ping { health, workbench, logins_number, .. } = &frame {
+                if let Up::Ping { health, workbench, numbers, .. } = &frame {
                     heard.heartbeat(&hub, &name, key, generation, health.as_ref());
                     crate::workbench::heard(&hub, &name, *workbench);
-                    crate::workbench::logins_heard(&hub, &name, generation, *logins_number);
+                    crate::workbench::numbers_heard(&hub, &name, generation, *numbers);
                 }
                 Some(Err(frame))
             },

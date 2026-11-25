@@ -105,13 +105,13 @@ pub struct Member {
     /// views, and none from a machine that never told.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workbench: Option<bool>,
-    /// The number its agents and logins stand at, as it last told the hub,
-    /// while online: it moves whenever what the machine answers of them
-    /// does, so a member keeping an answer knows when to ask again
-    /// (`crate::wire::Up::Ping::logins_number`); none from a release that does not
-    /// tell it.
+    /// The numbers its answers to others stand at, as it last told the hub,
+    /// while online, each only where this view's reader may ask it for that
+    /// kind (`fastctx_types::numbers`): a member keeping an answer knows when
+    /// to ask again (`crate::wire::Up::Ping::numbers`); none from a release
+    /// that does not tell them.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub logins_number: Option<u64>,
+    pub numbers: Option<fastctx_types::numbers::Numbers>,
     /// When the hub last set aside what waited for it, it having been away
     /// more than 30 days: a letter to it from before then that was not
     /// answered never will be, nor one from it to a machine away as long.
@@ -142,7 +142,7 @@ pub struct Presence {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workbench: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub logins_number: Option<u64>,
+    pub numbers: Option<fastctx_types::numbers::Numbers>,
 }
 
 impl Presence {
@@ -156,7 +156,7 @@ impl Presence {
             paths: member.paths.clone(),
             strain: member.strain,
             workbench: member.workbench,
-            logins_number: member.logins_number,
+            numbers: member.numbers,
         }
     }
 
@@ -169,7 +169,7 @@ impl Presence {
         member.paths = self.paths.clone();
         member.strain = self.strain;
         member.workbench = self.workbench;
-        member.logins_number = self.logins_number;
+        member.numbers = self.numbers;
     }
 }
 

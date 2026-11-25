@@ -1689,6 +1689,7 @@ dependencies = [
  "fastctx-net",
  "fastctx-platform",
  "fastctx-types",
+ "futures-util",
  "jiff",
  "serde",
  "serde_json",

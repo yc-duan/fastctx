@@ -2,7 +2,8 @@
 // specimen. Its colleagues are the residents the World lists as asked by
 // it; its plan and goal come from the conversation's own records.
 
-import { followState } from "../world/topics";
+import { SENTINELS } from "../world/topics";
+import { followAll } from "../app/numbers";
 import { effect } from "../app/signals";
 import { bareName, jobsOf, residentsOf } from "../app/store";
 import { agentName, titleOf } from "../world/names";
@@ -294,7 +295,9 @@ export function liveSide(options: LiveSide): SideSeams {
               reading = false;
             });
         };
-        const stopAsking = followState(null, () => naming() ? ask() : undefined, () => naming() ? 30_000 : false);
+        // Their homes are asked as the plan names them, and again as they
+        // change (`app/numbers.ts`); a home that tells nothing, every half minute.
+        const stopAsking = followAll(options.store.world, "sentinels", SENTINELS, () => naming() ? ask() : undefined, () => naming() ? 30_000 : false);
         refresh();
         watchPlan(
           owner,

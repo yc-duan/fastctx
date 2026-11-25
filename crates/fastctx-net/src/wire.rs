@@ -91,12 +91,11 @@ pub enum Up {
         /// its node knows (`world-layers.md`); an earlier release says none.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         workbench: Option<bool>,
-        /// The number this machine's agents and logins stand at: it moves
-        /// whenever what this machine answers of them does
-        /// (`crate::directory::Member::logins_number`); an earlier release
-        /// says none.
+        /// The numbers this machine's answers to others stand at, kind by
+        /// kind (`fastctx_types::numbers`, `crate::directory::Member::numbers`);
+        /// an earlier release says none.
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        logins_number: Option<u64>,
+        numbers: Option<fastctx_types::numbers::Numbers>,
     },
     /// The second half of a password login (`Intent::Login`): the last
     /// OPAQUE message, and the computer or phone that logs in.

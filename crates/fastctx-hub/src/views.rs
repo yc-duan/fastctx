@@ -49,9 +49,9 @@ pub(crate) trait Online {
         let _ = name;
         None
     }
-    /// The number its agents and logins stand at, as it last told
-    /// (`crate::workbench::logins_heard`).
-    fn logins_number(&self, name: &MachineName) -> Option<u64> {
+    /// The numbers its answers to others stand at, as it last told
+    /// (`crate::workbench::numbers_heard`).
+    fn numbers(&self, name: &MachineName) -> Option<fastctx_types::numbers::Numbers> {
         let _ = name;
         None
     }
@@ -68,8 +68,8 @@ impl Online for crate::Hub {
     fn workbench(&self, name: &MachineName) -> Option<bool> {
         crate::workbench::of(self, name)
     }
-    fn logins_number(&self, name: &MachineName) -> Option<u64> {
-        crate::workbench::logins_of(self, name)
+    fn numbers(&self, name: &MachineName) -> Option<fastctx_types::numbers::Numbers> {
+        crate::workbench::numbers_of(self, name)
     }
 }
 
@@ -132,8 +132,9 @@ pub(crate) fn view_for_in(
         // choose from, and the machine's own to know; a visitor's is its own.
         let reach = (whole && !others) || member.name == *me;
         let own = member.home.as_ref().is_some_and(|owner| mine.contains(owner));
+        let rights = rights_of(x, &mine, &member.name);
         let member = std::sync::Arc::make_mut(member);
-        present(store, online, member, reach, own);
+        present(store, online, member, reach, own, rights);
         if others {
             member.direct.clear();
             member.relay.clear();
@@ -305,8 +306,9 @@ pub(crate) fn presence_for(
     let others = member.name != *reader && visitors_alone(x, &mine, member);
     let reach = (whole && !others) || member.name == *reader;
     let own = member.home.as_ref().is_some_and(|owner| mine.contains(owner));
+    let rights = rights_of(x, &mine, &member.name);
     let mut member = Member::clone(member);
-    present(store, online, &mut member, reach, own);
+    present(store, online, &mut member, reach, own, rights);
     if others {
         member.through = None;
         member.paths = None;
@@ -604,9 +606,31 @@ fn projects_in(
         .collect()
 }
 
+/// What the accounts a machine acts for may do with `machine`, together:
+/// which of its numbers that machine's views are told (`present`).
+fn rights_of(x: &Indexed<'_>, mine: &BTreeSet<AccountName>, machine: &MachineName) -> fastctx_types::access::Rights {
+    let mut rights = fastctx_types::access::Rights::default();
+    for account in mine {
+        let of = x.rights(account, machine);
+        rights.hands |= of.hands;
+        rights.agents |= of.agents;
+    }
+    rights
+}
+
 /// `member` as it is connected now; `own`, whether the view is its owner's,
-/// who alone is told how its logins stand.
-fn present(store: &crate::store::Snapshot, online: &impl Online, member: &mut Member, reach: bool, own: bool) {
+/// who alone is told how its logins stand; `rights`, what the view's reader
+/// may do with it, which of its numbers it is told by (codex-8cc17361): how
+/// its logins stand to one that may use them, how its book, its updates and
+/// the sentinels it is home to stand to one that may work there.
+fn present(
+    store: &crate::store::Snapshot,
+    online: &impl Online,
+    member: &mut Member,
+    reach: bool,
+    own: bool,
+    rights: fastctx_types::access::Rights,
+) {
     member.settled = store.letters.get(&member.name).and_then(|letters| letters.settled);
     member.workbench = if own { online.workbench(&member.name) } else { None };
     match online.get(&member.name, &member.key) {
@@ -617,7 +641,15 @@ fn present(store: &crate::store::Snapshot, online: &impl Online, member: &mut Me
             member.reach = (reach && member.kind.is_computer()).then(|| presence.reach.clone());
             member.paths = presence.paths.clone();
             member.strain = presence.strain;
-            member.logins_number = online.logins_number(&member.name);
+            member.numbers = online
+                .numbers(&member.name)
+                .map(|told| fastctx_types::numbers::Numbers {
+                    logins: told.logins.filter(|_| own || rights.agents),
+                    book: told.book.filter(|_| own || rights.hands),
+                    updates: told.updates.filter(|_| own || rights.hands),
+                    sentinels: told.sentinels.filter(|_| own || rights.hands),
+                })
+                .filter(|numbers| !numbers.is_empty());
         }
         None => {
             member.online = false;
@@ -626,7 +658,7 @@ fn present(store: &crate::store::Snapshot, online: &impl Online, member: &mut Me
             member.reach = None;
             member.paths = None;
             member.strain = None;
-            member.logins_number = None;
+            member.numbers = None;
         }
     }
 }

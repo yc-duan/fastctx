@@ -295,6 +295,11 @@ pub struct Node {
     pub group: Option<String>,
     /// What each of this computer's accounts may do on it.
     pub rights: Vec<(crate::AccountName, crate::access::Rights)>,
+    /// What its answers stand at, kind by kind, as its hub told them to the
+    /// accounts here (`crate::numbers`): a reader holding one of its answers
+    /// asks again once its number moved. None from an older hub or node.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub numbers: Option<crate::numbers::Numbers>,
 }
 
 /// Machines a session may work on that their owner put in one group, as the

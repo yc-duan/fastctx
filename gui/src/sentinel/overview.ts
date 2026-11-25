@@ -23,6 +23,10 @@ export interface OverviewOptions {
   english: boolean;
   head(title: string, actions?: string): string;
   read(): Promise<SentinelOverview>;
+  /** Calls `read` as the watchers may have changed, first at once
+   *  (`app/numbers.ts`); none for the specimen, read every `EVERY_MS`.
+   *  Returns what stops it. */
+  follow?(read: () => Promise<void>): () => void;
   /** A watcher's own page. */
   link(watched: SentinelWatched): string;
   /** The mark of a machine's form. */
@@ -36,7 +40,8 @@ type Span = "week" | "month";
 const SPANS: Record<Span, number> = { week: 7 * 86_400_000, month: 30 * 86_400_000 };
 /** Where this device remembers the span the page was last drawn over. */
 const SPAN_KEY = "watchers.span";
-/** How often the page reads them again while it is open: they wake seldom. */
+/** How often the page reads them again while it is open, where nothing
+ *  tells when they change: they wake seldom. */
 const EVERY_MS = 60_000;
 const LANE = 22;
 const PAD = 8;
@@ -89,7 +94,7 @@ export class SentinelOverviewPage implements Page {
       keepSpan(this.span);
       this.draw();
     });
-    this.stopReading = followState(null, () => this.read(), EVERY_MS);
+    this.stopReading = options.follow ? options.follow(() => this.read()) : followState(null, () => this.read(), EVERY_MS);
   }
 
   leave(): void {

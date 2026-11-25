@@ -15060,7 +15060,13 @@
                       "agents": true
                     }
                   ]
-                ]
+                ],
+                "numbers": {
+                  "logins": 3,
+                  "book": 17,
+                  "updates": 2,
+                  "sentinels": 5
+                }
               }
             ]
           }
@@ -15234,7 +15240,13 @@
                       "agents": true
                     }
                   ]
-                ]
+                ],
+                "numbers": {
+                  "logins": 3,
+                  "book": 17,
+                  "updates": 2,
+                  "sentinels": 5
+                }
               }
             ]
           }
@@ -15408,7 +15420,13 @@
                       "agents": true
                     }
                   ]
-                ]
+                ],
+                "numbers": {
+                  "logins": 3,
+                  "book": 17,
+                  "updates": 2,
+                  "sentinels": 5
+                }
               }
             ]
           }
@@ -15581,7 +15599,13 @@
                       "agents": true
                     }
                   ]
-                ]
+                ],
+                "numbers": {
+                  "logins": 3,
+                  "book": 17,
+                  "updates": 2,
+                  "sentinels": 5
+                }
               }
             ]
           }
@@ -15755,7 +15779,13 @@
                       "agents": true
                     }
                   ]
-                ]
+                ],
+                "numbers": {
+                  "logins": 3,
+                  "book": 17,
+                  "updates": 2,
+                  "sentinels": 5
+                }
               }
             ]
           }
@@ -15932,7 +15962,13 @@
                       "agents": true
                     }
                   ]
-                ]
+                ],
+                "numbers": {
+                  "logins": 3,
+                  "book": 17,
+                  "updates": 2,
+                  "sentinels": 5
+                }
               }
             ]
           }
@@ -16110,7 +16146,13 @@
                       "agents": true
                     }
                   ]
-                ]
+                ],
+                "numbers": {
+                  "logins": 3,
+                  "book": 17,
+                  "updates": 2,
+                  "sentinels": 5
+                }
               }
             ]
           }
@@ -16288,7 +16330,13 @@
                       "agents": true
                     }
                   ]
-                ]
+                ],
+                "numbers": {
+                  "logins": 3,
+                  "book": 17,
+                  "updates": 2,
+                  "sentinels": 5
+                }
               }
             ]
           }
@@ -16465,7 +16513,13 @@
                       "agents": true
                     }
                   ]
-                ]
+                ],
+                "numbers": {
+                  "logins": 3,
+                  "book": 17,
+                  "updates": 2,
+                  "sentinels": 5
+                }
               }
             ]
           }
@@ -16644,7 +16698,13 @@
                       "agents": true
                     }
                   ]
-                ]
+                ],
+                "numbers": {
+                  "logins": 3,
+                  "book": 17,
+                  "updates": 2,
+                  "sentinels": 5
+                }
               }
             ]
           }

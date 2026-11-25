@@ -2649,6 +2649,19 @@ async fn nodes(
                         owner: seen.home.clone(),
                         group: seen.group.clone(),
                         rights: logins.iter().map(|account| (account.clone(), view.rights(account, &name))).collect(),
+                        // The hub told them for every account here: the asker
+                        // hears of the logins there only where it may use the
+                        // agents there, as the hub would have told it.
+                        numbers: seen
+                            .numbers
+                            .map(|numbers| fastctx_types::numbers::Numbers {
+                                logins: numbers.logins.filter(|_| {
+                                    view.account_for(&logins, &view.me, &name, fastctx_types::access::Purpose::Agents)
+                                        .is_some()
+                                }),
+                                ..numbers
+                            })
+                            .filter(|numbers| online_known && !numbers.is_empty()),
                         name,
                     })
                 })

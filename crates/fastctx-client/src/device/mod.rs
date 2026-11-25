@@ -535,6 +535,12 @@ impl fastctx_net::link::Node for Handler {
         }
     }
 
+    /// A machine's numbers alone moved: what the device shows is told
+    /// again, and nothing of its accounts or projects is looked at.
+    fn numbers_changed(&self) {
+        changed(&self.shown);
+    }
+
     fn directory_changed(&self) {
         let Some(link) = self.link.get().and_then(std::sync::Weak::upgrade) else { return };
         let view = link.view();

@@ -8,7 +8,7 @@
 
 import { loginsOf, type AccountName, type HubAccounts, type HubId, type HubName, type Login, type ProjectSeen, type Rights } from "../world/accounts";
 import type { WorldNow } from "../world/bridge";
-import type { MachineFacts, ResidentNow, Strain } from "../world/world";
+import type { MachineFacts, Numbers, ResidentNow, Strain } from "../world/world";
 import type { MachineName, Result, Timestamp } from "../world/wire";
 import { indexOf, pair } from "./world-index";
 
@@ -30,6 +30,9 @@ export interface Machine {
   facts: Result<MachineFacts, string>;
   /** Hub by hub: whose it is there, and what each login may do on it. */
   on: MachineOn[];
+  /** What its answers stand at, as a hub it is on tells them
+   *  (`app/numbers.ts`); none for this computer, which its own topics tell. */
+  numbers?: Numbers;
 }
 
 export interface MachineOn {
@@ -182,6 +185,8 @@ function machinesFrom(world: WorldNow): Machine[] {
         } else if (machine.online === null) machine.online = node.online;
         if (node.online === true) machine.strain = worse(machine.strain, node.strain ?? null);
         if (!("Ok" in machine.facts) && "Ok" in node.facts) machine.facts = node.facts;
+        // The same machine tells each of its hubs the same numbers.
+        if (!machine.numbers && node.numbers) machine.numbers = node.numbers;
       } else {
         machine = {
           name: node.name,
@@ -193,6 +198,7 @@ function machinesFrom(world: WorldNow): Machine[] {
           strain: node.online === true ? (node.strain ?? null) : null,
           facts: node.facts,
           on: [on],
+          ...(node.numbers ? { numbers: node.numbers } : {}),
         };
         machines.push(machine);
         byWritten.set(machine.written, machine);

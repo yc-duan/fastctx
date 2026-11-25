@@ -429,6 +429,7 @@ fn nodes(now: Timestamp) -> NodesReply {
         owner: Some("me".parse().expect("an account")),
         rights: vec![("me".parse().expect("an account"), fastctx_types::access::Rights { hands: true, agents: true })],
         group: None,
+        numbers: None,
     };
     NodesReply {
         machine: machine("desktop"),

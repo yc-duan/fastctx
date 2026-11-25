@@ -139,10 +139,10 @@ pub trait Node: Send + Sync + 'static {
     fn workbench(&self) -> Option<bool> {
         None
     }
-    /// The number this machine's agents and logins stand at
-    /// (`crate::wire::Up::Ping::logins_number`): told the hub with each
-    /// heartbeat, so it must answer at once.
-    fn logins_number(&self) -> Option<u64> {
+    /// The numbers this machine's answers to others stand at
+    /// (`crate::wire::Up::Ping::numbers`): told the hub with each heartbeat,
+    /// so it must answer at once.
+    fn numbers(&self) -> Option<fastctx_types::numbers::Numbers> {
         None
     }
     /// Takes the place a call from `from` takes here while it is answered,
@@ -195,6 +195,13 @@ pub trait Node: Send + Sync + 'static {
     /// project contents are unchanged. Implementations may retain a full refresh.
     fn presence_changed(&self) {
         self.directory_changed();
+    }
+    /// Only what a member's answers stand at changed (`Presence::numbers`):
+    /// nothing of how it is reached, nor of what anyone may do. A machine at
+    /// work moves them every few seconds; what reads them follows, and no
+    /// more than that is done.
+    fn numbers_changed(&self) {
+        self.presence_changed();
     }
     /// An account record changed; consumers fetch the authoritative body as needed.
     fn account_record_changed(&self, _change: &fastctx_types::account_records::Changed) {}
