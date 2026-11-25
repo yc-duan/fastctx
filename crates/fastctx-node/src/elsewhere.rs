@@ -45,8 +45,13 @@ const FAILED: Duration = Duration::from_secs(10);
 /// How long a reader that takes what is known at once waits for the
 /// machines being asked.
 const SOON: Duration = Duration::from_millis(1500);
-/// How long each asking, and any other reader, waits for its machine.
-const WAITED: Duration = Duration::from_secs(30);
+/// How long a reader that does not take what is known at once waits for
+/// the machines being asked: one not answered by then is told as not
+/// answering, though its asking goes on (`ASKED_WITHIN`) and keeps what it
+/// brings.
+const WAITED: Duration = Duration::from_secs(15);
+/// How long each asking waits for its machine.
+const ASKED_WITHIN: Duration = Duration::from_secs(30);
 /// The most machines asked at once, as other fan-outs ask
 /// (`fastctx_net::around`).
 const ASKING_AT_ONCE: usize = 32;
@@ -99,6 +104,9 @@ pub(crate) struct Answers {
     moves: Mutex<HashMap<Place, u64>>,
     /// The machines each hub said were online when last looked at.
     online: Mutex<HashMap<HubId, HashSet<String>>>,
+    /// What of each hub's directory decides what an account may see of a
+    /// machine, as last looked at (`rights`).
+    rights: Mutex<HashMap<HubId, u64>>,
     turns: Arc<tokio::sync::Semaphore>,
     here: AtomicU64,
 }
@@ -115,6 +123,7 @@ impl Default for Answers {
             asking: Mutex::default(),
             moves: Mutex::default(),
             online: Mutex::default(),
+            rights: Mutex::default(),
             turns: Arc::new(tokio::sync::Semaphore::new(ASKING_AT_ONCE)),
             here: AtomicU64::new(started),
         }
@@ -273,8 +282,8 @@ fn asking(node: &Arc<Node>, kind: Kind, key: Target, target: Reachable, number: 
     let moves = node.elsewhere.moves.lock().expect("never poisoned").get(&place).copied().unwrap_or(0);
     let (weak, turns) = (Arc::downgrade(node), node.elsewhere.turns.clone());
     fastctx_platform::task::spawn(async move {
-        let heard = match tokio::time::timeout(WAITED, turns.acquire_owned()).await {
-            Ok(Ok(_turn)) => fastctx_net::around::ask_known(vec![target], |_| kind.call(), WAITED)
+        let heard = match tokio::time::timeout(ASKED_WITHIN, turns.acquire_owned()).await {
+            Ok(Ok(_turn)) => fastctx_net::around::ask_known(vec![target], |_| kind.call(), ASKED_WITHIN)
                 .await
                 .pop()
                 .map_or_else(|| Heard::NoAnswer("it was not asked".to_string()), |(_, heard)| heard),
@@ -344,13 +353,33 @@ fn told(heard: &Heard) -> Vec<u8> {
     }
 }
 
-/// `link`'s directory changed, not only who is online: what each account
-/// may see of each machine may have changed with it, so nothing kept from
-/// its hub is told again before it is asked anew.
+/// `link`'s directory changed, not only who is online: when what decides
+/// what each account may see of each machine changed with it, nothing kept
+/// from its hub is told again before it is asked anew.
 pub(crate) fn directory_changed(node: &Node, link: &Link) {
     let hub = link.membership().id;
-    node.elsewhere.kept.lock().expect("never poisoned").retain(|(_, at, _, _, _), _| *at != hub);
+    let now = rights(link);
+    let before = node.elsewhere.rights.lock().expect("never poisoned").insert(hub.clone(), now);
+    if before.is_some_and(|before| before != now) {
+        node.elsewhere.kept.lock().expect("never poisoned").retain(|(_, at, _, _, _), _| *at != hub);
+    }
     view_changed(node, link);
+}
+
+/// What of `link`'s view decides what each account may see of each
+/// machine: its directory, but for how each member is connected now, which
+/// changes every few seconds and decides nothing of it.
+fn rights(link: &Link) -> u64 {
+    use std::hash::{Hash as _, Hasher as _};
+    let mut directory = link.view().directory.clone();
+    for member in &mut directory.members {
+        let member = Arc::make_mut(member);
+        fastctx_net::directory::Presence::default().apply(member);
+        member.settled = None;
+    }
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    serde_json::to_vec(&directory).unwrap_or_default().hash(&mut hasher);
+    hasher.finish()
 }
 
 /// `link`'s view changed: whoever reads is told to read again when a machine
