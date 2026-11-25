@@ -39,6 +39,9 @@ CREATE TABLE IF NOT EXISTS scopes (
     readers TEXT
 );
 CREATE INDEX IF NOT EXISTS scopes_of_hub ON scopes (hub) WHERE holding IS NOT NULL;
+-- A scope by the last part of its key, a conversation's id: the copy of a
+-- conversation is found without reading every scope (`Library::scopes_ending`).
+CREATE INDEX IF NOT EXISTS scopes_by_last ON scopes (substr(key, length(rtrim(key, replace(key, '/', ''))) + 1));
 CREATE TABLE IF NOT EXISTS holdings (
     scope INTEGER NOT NULL,
     holding INTEGER NOT NULL,

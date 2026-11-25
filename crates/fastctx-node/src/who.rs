@@ -1,8 +1,10 @@
 //! `fastctx w` on this machine: each resident living here, here now or not,
 //! its latest action; and every job still running here, whoever started it.
 
+use std::collections::HashMap;
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::{LazyLock, Mutex};
 
 use fastctx_types::access::{Acting, HubAccount};
 use fastctx_types::layout::WorldDir;
@@ -13,6 +15,34 @@ use fastctx_types::{MachineName, TownName};
 use crate::jobs::first_line;
 use crate::residents::{Former, OnRecord, last_action};
 
+/// Each conversation's last action as last read, with how many times its
+/// actions had been written then (`activity::actions_versions`): read again
+/// only once that moved. The World an interface shows reads every
+/// conversation's each time anything changes (`crate::shown`); a machine of
+/// hundreds of them read as many rows a second while it worked.
+static LAST: LazyLock<Mutex<HashMap<(PathBuf, String), (u64, Option<fastctx_types::residents::Action>)>>> =
+    LazyLock::new(Default::default);
+
+/// `resident`'s last action, from `LAST` while its actions were written as
+/// many times as `versions` says, else read and kept.
+fn last_action_known(
+    world: &WorldDir,
+    resident: &fastctx_types::ResidentId,
+    versions: Option<&HashMap<String, u64>>,
+) -> io::Result<Option<fastctx_types::residents::Action>> {
+    let Some(versions) = versions else { return last_action(world, resident) };
+    let version = versions.get(resident.as_str()).copied().unwrap_or(0);
+    let key = (world.path().to_path_buf(), resident.as_str().to_string());
+    if let Some((kept, action)) = LAST.lock().expect("never poisoned").get(&key)
+        && *kept == version
+    {
+        return Ok(action.clone());
+    }
+    let action = last_action(world, resident)?;
+    LAST.lock().expect("never poisoned").insert(key, (version, action.clone()));
+    Ok(action)
+}
+
 pub fn who(
     world: &WorldDir,
     machine: &MachineName,
@@ -22,7 +52,11 @@ pub fn who(
     town: Option<&TownName>,
 ) -> io::Result<WhoReply> {
     let mut residents = Vec::new();
+    // How often each conversation's actions were written, read once for all.
+    let versions = crate::residents::activity::actions_versions(world).unwrap_or(None);
+    let mut seen = std::collections::HashSet::new();
     for resident in everyone {
+        seen.insert(resident.id.as_str().to_string());
         if town.is_some_and(|town| resident.town.as_ref() != Some(town)) {
             continue;
         }
@@ -31,7 +65,7 @@ pub fn who(
         if !all && (!resident.here || resident.now.as_ref().is_some_and(|now| now.activity != Activity::Busy)) {
             continue;
         }
-        let last_action = last_action(world, &resident.id)?;
+        let last_action = last_action_known(world, &resident.id, versions.as_ref())?;
         // A conversation the World started is listed from its first words on;
         // a session the user opened elsewhere once it has done something here.
         // A first World run is already work before it has an action result.
@@ -58,6 +92,10 @@ pub fn who(
             removed: resident.removed,
             benched: false,
         });
+    }
+    // What is kept of conversations gone from here goes with them.
+    if all && town.is_none() {
+        LAST.lock().expect("never poisoned").retain(|(at, id), _| at != world.path() || seen.contains(id));
     }
     // Those who moved away are listed in the town they left, with all: once,
     // as they last left it, with what they last did there.

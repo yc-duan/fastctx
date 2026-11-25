@@ -21,58 +21,107 @@ use crate::residents::OnRecord;
 const ACTIONS: usize = 20;
 
 /// Each of `ids`, on this machine and on each machine whoever asks
-/// (`acting`) may look at.
+/// (`acting`) may look at: all of them at once, each answered in its place.
 pub async fn look(node: &Arc<Node>, acting: &Acting, works_here: bool, ids: Vec<String>) -> Vec<LookedUp> {
-    let mut looked = Vec::new();
-    for id in ids {
-        let mut found = Vec::new();
-        let mut unasked = Vec::new();
-        let mut jobs = Vec::new();
-        // This machine answers for itself only to whoever works on it
-        // (`around::works_here`), and to no one at all when it is a managed
-        // machine (`world-network.md`, 一个居民替谁干活).
-        if works_here && !crate::managed::is_managed(node) {
-            match look_here(node, &id).await {
-                Ok((here, work)) => {
-                    found.extend(crate::admission::seen::looked_here(node, acting, here));
-                    jobs.extend(work);
+    futures_util::future::join_all(ids.into_iter().map(|id| look_one(node, acting, works_here, id))).await
+}
+
+/// The machines that may hold `id` of those `acting` may look at: where the
+/// hubs tell what is afoot, those it is afoot on (a conversation, a job of
+/// its, a job running), and every machine a hub tells nothing of; all of
+/// them where no telling names it, as a job that ended or a conversation
+/// archived is told by none.
+fn holders(node: &Node, acting: &Acting, id: &str) -> Vec<crate::around::Reachable> {
+    let machines = crate::around::reachable_each(node, acting, Purpose::Look);
+    let mut afoots = std::collections::HashMap::new();
+    let mut named = false;
+    let mut chosen = Vec::new();
+    let mut untold = Vec::new();
+    for machine in machines {
+        let link = &machine.link;
+        let view = link.view();
+        let told =
+            matches!(link.status(), fastctx_net::link::Status::Online { .. }) && link.afoot_ready() && view.afoot;
+        let member = view.machines().find(|member| member.key == machine.key).map(|member| member.name.clone());
+        let afoot = match (told, member) {
+            (true, Some(member)) => {
+                afoots.entry(link.membership().id.clone()).or_insert_with(|| link.afoot()).get(&member).cloned()
+            }
+            _ => None,
+        };
+        drop(view);
+        match afoot {
+            Some(afoot) => {
+                let holds = afoot.seen.residents.keys().any(|resident| resident.as_str() == id)
+                    || afoot.seen.jobs.keys().any(|job| job.as_str() == id)
+                    || afoot
+                        .seen
+                        .jobs
+                        .values()
+                        .any(|job| job.owner.resident().is_some_and(|owner| owner.resident.as_str() == id));
+                if holds {
+                    named = true;
+                    chosen.push(machine);
                 }
-                Err(error) => unasked.push(format!("{} ({error})", node.machine())),
             }
+            None => untold.push(machine),
         }
-        // A command is on one machine alone: found here, no other is asked.
-        // A conversation's commands may have run on others, which are.
-        let here_alone = found.iter().any(|looked| matches!(looked, Looked::Job { .. }));
-        let mut one = LookedUp { id: id.clone(), found, unasked, jobs };
-        if !here_alone {
-            // Asked as each account whoever asks works for, which a machine
-            // shows its own conversations apart.
-            let machines = crate::around::reachable_each(node, acting, Purpose::Look);
-            let heard =
-                crate::around::ask_known(machines, |_| RemoteCall::Look { id: id.clone() }, crate::around::SEARCHED)
-                    .await;
-            for answers in fastctx_net::around::answers::collect(heard) {
-                answers.look(&mut one);
-            }
-        }
-        // A command of a conversation whose machine is away: as the copy
-        // here holds its record (§28.33).
-        // Asked by this machine's own user only: a caller acting for some
-        // accounts reads no copy kept for another's (QQ02).
-        if matches!(acting, Acting::Here)
-            && works_here
-            && !one.found.iter().any(|looked| matches!(looked, Looked::Job { .. }))
-            && let Ok(job) = JobId::try_from(id.as_str())
-            && let Some(record) = fastctx_platform::roles::in_place("looking a job up in the copies here", || {
-                crate::timeline::copy::job(node, &job)
-            })
-        {
-            one.found.push(Looked::Job { record: Box::new(record), source: None });
-        }
-        one.attach_jobs();
-        looked.push(one);
     }
-    looked
+    if !named {
+        return crate::around::reachable_each(node, acting, Purpose::Look);
+    }
+    chosen.extend(untold);
+    chosen
+}
+
+/// `id`, as `look` finds it.
+async fn look_one(node: &Arc<Node>, acting: &Acting, works_here: bool, id: String) -> LookedUp {
+    let mut found = Vec::new();
+    let mut unasked = Vec::new();
+    let mut jobs = Vec::new();
+    // This machine answers for itself only to whoever works on it
+    // (`around::works_here`), and to no one at all when it is a managed
+    // machine (`world-network.md`, 一个居民替谁干活).
+    if works_here && !crate::managed::is_managed(node) {
+        match look_here(node, &id).await {
+            Ok((here, work)) => {
+                found.extend(crate::admission::seen::looked_here(node, acting, here));
+                jobs.extend(work);
+            }
+            Err(error) => unasked.push(format!("{} ({error})", node.machine())),
+        }
+    }
+    // A command is on one machine alone: found here, no other is asked.
+    // A conversation's commands may have run on others, which are.
+    let here_alone = found.iter().any(|looked| matches!(looked, Looked::Job { .. }));
+    let mut one = LookedUp { id: id.clone(), found, unasked, jobs };
+    if !here_alone {
+        // Asked as each account whoever asks works for, which a machine
+        // shows its own conversations apart; of the machines that may hold
+        // it, where the hubs tell what is afoot (`holders`).
+        let machines = holders(node, acting, &id);
+        let heard =
+            crate::around::ask_known(machines, |_| RemoteCall::Look { id: id.clone() }, crate::around::SEARCHED).await;
+        for answers in fastctx_net::around::answers::collect(heard) {
+            answers.look(&mut one);
+        }
+    }
+    // A command of a conversation whose machine is away: as the copy
+    // here holds its record (§28.33).
+    // Asked by this machine's own user only: a caller acting for some
+    // accounts reads no copy kept for another's (QQ02).
+    if matches!(acting, Acting::Here)
+        && works_here
+        && !one.found.iter().any(|looked| matches!(looked, Looked::Job { .. }))
+        && let Ok(job) = JobId::try_from(id.as_str())
+        && let Some(record) = fastctx_platform::roles::in_place("looking a job up in the copies here", || {
+            crate::timeline::copy::job(node, &job)
+        })
+    {
+        one.found.push(Looked::Job { record: Box::new(record), source: None });
+    }
+    one.attach_jobs();
+    one
 }
 
 pub async fn look_here(

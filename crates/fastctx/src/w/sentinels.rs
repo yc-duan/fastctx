@@ -13,14 +13,15 @@ pub(super) fn list(
     runtime: &tokio::runtime::Runtime,
     client: &mut Client,
 ) -> anyhow::Result<(Vec<Summary>, Vec<String>)> {
+    runtime.block_on(listed(client))
+}
+/// The sentinels of every account the caller acts for, and why any could
+/// not be listed.
+pub(super) async fn listed(client: &mut Client) -> anyhow::Result<(Vec<Summary>, Vec<String>)> {
     if !client.sentinels {
         return Ok((Vec::new(), Vec::new()));
     }
-    match runtime.block_on(client.call(Call::Sentinel {
-        hub: None,
-        account: None,
-        request: Request::List { owner: None },
-    })) {
+    match client.call(Call::Sentinel { hub: None, account: None, request: Request::List { owner: None } }).await {
         Ok(Reply::Sentinel(reply)) => match *reply {
             SentinelReply::Listed { sentinels, unavailable } => Ok((sentinels, unavailable)),
             _ => anyhow::bail!("the node did not list sentinels"),

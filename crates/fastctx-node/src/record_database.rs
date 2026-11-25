@@ -71,6 +71,12 @@ pub(crate) fn registered(directory: &ConversationDir) -> io::Result<(Database, S
     Ok((database, key))
 }
 
+/// The database `world`'s conversations keep their records in, where it is
+/// open.
+pub(crate) fn opened(world: &WorldDir) -> Option<Database> {
+    OPEN.lock().expect("record database registry").get(world.path()).and_then(|entry| entry.database.upgrade())
+}
+
 /// Resolve a node-owned metadata item's logical path, never an arbitrary file.
 /// World-level queues use a separate scope from every conversation and guest.
 pub(crate) fn item(path: &std::path::Path) -> io::Result<(ConversationDir, String, String, std::path::PathBuf)> {

@@ -1,8 +1,8 @@
 //! Project copies follow the accounts this machine acts for. Work locations
 //! in a record do not determine which ledgers are kept or refreshed.
 
-use std::collections::BTreeMap;
-use std::sync::Arc;
+use std::collections::{BTreeMap, HashMap};
+use std::sync::{Arc, LazyLock, Mutex};
 
 use fastctx_types::access::{Acting, HubId};
 use fastctx_types::ipc::Failure;
@@ -12,13 +12,52 @@ use fastctx_types::{MachineName, TownName};
 use crate::Node;
 use crate::town::read;
 
+/// The projects whose copies here a pass over their hub's catalog found
+/// whole, by hub and name: on the connection that came up then, after as
+/// many changes of its ledgers as the hub had told by then
+/// (`syncing::told`). While both stand and nothing waits to be taken, the
+/// copy is as the hub has it: the ledgers' sync takes every change the hub
+/// tells (`super::syncing`).
+static WHOLE: LazyLock<Mutex<HashMap<(HubId, TownName), (jiff::Timestamp, u64)>>> = LazyLock::new(Default::default);
+
+/// Whether `town`'s copy here is known whole for `link`'s hub (`WHOLE`).
+fn whole(node: &Node, link: &fastctx_net::link::Link, town: &TownName) -> bool {
+    let fastctx_net::link::Status::Online { since, .. } = link.status() else { return false };
+    let hub = link.membership().id.clone();
+    let view = link.view();
+    // Only a project this computer keeps whole: an index-only copy is
+    // refreshed by asking.
+    let kept = view
+        .projects
+        .iter()
+        .find(|project| project.name == *town)
+        .is_some_and(|project| view.member_keeps_project(&view.me, &project.town));
+    kept && super::syncing::idle(node, &hub)
+        && WHOLE.lock().expect("never poisoned").get(&(hub.clone(), town.clone()))
+            == Some(&(since, super::syncing::told(node, &hub)))
+}
+
 /// Asks each hub for the projects this computer's accounts may use and
 /// takes entries after the local cursor. Without a connection it returns copies
 /// already here; `fastctx nodes` reports the disconnected state. Explicit
-/// refusals and corrupt data still fail.
+/// refusals and corrupt data still fail. One project whose copy here is
+/// known whole (`whole`) is not asked of its hub again.
 pub async fn query(node: &Arc<Node>, town: Option<&TownName>) -> Result<Vec<TownName>, String> {
+    if let Some(town) = town
+        && node.links().iter().any(|link| whole(node, link, town))
+    {
+        return Ok(available(node, Some(town)).await?.into_keys().collect());
+    }
     for link in node.links() {
+        let hub = link.membership().id.clone();
+        // What it is whole as of: the connection, and the changes told,
+        // before the catalog is asked.
+        let as_of = match link.status() {
+            fastctx_net::link::Status::Online { since, .. } => Some((since, super::syncing::told(node, &hub))),
+            _ => None,
+        };
         let Some(catalog) = link.try_ledger_catalog().await? else { continue };
+        let mut caught_up = Vec::new();
         for (id, latest) in catalog {
             if !link.view().member_keeps_project(&link.view().me, &id) {
                 continue;
@@ -27,6 +66,7 @@ pub async fn query(node: &Arc<Node>, town: Option<&TownName>) -> Result<Vec<Town
             if town.is_some_and(|town| *town != name) {
                 continue;
             }
+            caught_up.push(name.clone());
             let name = {
                 let _syncing = node.syncing.lock().await;
                 let have = crate::ledger::replica_seq(&node.world, &name)
@@ -43,6 +83,12 @@ pub async fn query(node: &Arc<Node>, town: Option<&TownName>) -> Result<Vec<Town
             link.view().projects.iter().find(|project| project.name == *town).map(|project| project.town.clone())
         });
         super::metadata::refresh(node, &link, wanted.as_ref()).await?;
+        if let Some(as_of) = as_of {
+            let mut whole = WHOLE.lock().expect("never poisoned");
+            for name in caught_up {
+                whole.insert((hub.clone(), name), as_of);
+            }
+        }
     }
     Ok(available(node, town).await?.into_keys().collect())
 }

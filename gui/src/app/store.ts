@@ -122,6 +122,18 @@ export function createStore(specimen?: () => { world: WorldNow; now: Date }): St
   // not on a reading `refresh` made meanwhile.
   let watched: WorldNow | null = null;
   const say = () => trouble.set(broken ?? failed);
+  // What came in one batch, or while the page was behind, is shown once:
+  // every change is put in the World as it comes, and the World as it
+  // stands after the last of them is what every part reads, once.
+  let showing = false;
+  const showSoon = () => {
+    if (showing) return;
+    showing = true;
+    queueMicrotask(() => {
+      showing = false;
+      if (watched) came(watched);
+    });
+  };
   void watchWorld((piece) => {
     pieces += 1;
     if (piece.kind === "world" || piece.kind === "changed") {
@@ -130,7 +142,7 @@ export function createStore(specimen?: () => { world: WorldNow; now: Date }): St
       broken = null;
       failed = null;
       say();
-      came(watched);
+      showSoon();
       return;
     }
     broken = piece.error;

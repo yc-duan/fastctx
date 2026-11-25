@@ -386,13 +386,16 @@ pub(super) fn of_conversation(
     directory: &fastctx_net::directory_index::Indexed<'_>,
     conversation: &Address,
 ) -> Result<Vec<String>, String> {
-    let ending = format!("/{}", conversation.resident);
+    let resident = conversation.resident.to_string();
     let keys: Vec<String> = assets
         .control
         .read_now(move |c| {
-            let mut statement =
-                c.prepare_cached("SELECT key FROM asset_scopes WHERE substr(key, -?2) = ?1 ORDER BY key")?;
-            let rows = statement.query_map(params![ending, ending.len() as i64], |row| row.get(0))?;
+            // By the last part of the key, which the index has.
+            let mut statement = c.prepare_cached(
+                "SELECT key FROM asset_scopes WHERE substr(key, length(rtrim(key, replace(key, '/', ''))) + 1) = ?1
+                 AND key != ?1 ORDER BY key",
+            )?;
+            let rows = statement.query_map(params![resident], |row| row.get(0))?;
             Ok(rows.collect::<std::result::Result<_, _>>()?)
         })
         .map_err(|error| error.to_string())?;

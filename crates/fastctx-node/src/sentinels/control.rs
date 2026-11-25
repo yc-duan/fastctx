@@ -54,8 +54,16 @@ pub(crate) async fn list_all(
     tokio::time::timeout(std::time::Duration::from_secs(75), async {
         let mut sentinels = Vec::new();
         let mut unavailable = Vec::new();
-        for (link, account) in scopes(node, caller, None, None) {
-            match control(node, caller, &link, &account, Request::List { owner: owner.clone() }).await {
+        // Every account at once: one slow to answer holds up only its own.
+        let scopes = scopes(node, caller, None, None);
+        let listed = futures_util::future::join_all(
+            scopes
+                .iter()
+                .map(|(link, account)| control(node, caller, link, account, Request::List { owner: owner.clone() })),
+        )
+        .await;
+        for ((link, account), listed) in scopes.iter().zip(listed) {
+            match listed {
                 Ok(Reply::Listed { sentinels: found, unavailable: errors }) => {
                     sentinels.extend(found);
                     unavailable.extend(errors);
@@ -79,8 +87,14 @@ pub(crate) async fn overview_all(node: &Arc<Node>, caller: &Caller) -> Result<Re
     tokio::time::timeout(std::time::Duration::from_secs(120), async {
         let mut watched = Vec::new();
         let mut unavailable = Vec::new();
-        for (link, account) in scopes(node, caller, None, None) {
-            match control(node, caller, &link, &account, Request::Overview).await {
+        // Every account at once: one slow to answer holds up only its own.
+        let scopes = scopes(node, caller, None, None);
+        let read = futures_util::future::join_all(
+            scopes.iter().map(|(link, account)| control(node, caller, link, account, Request::Overview)),
+        )
+        .await;
+        for ((link, account), read) in scopes.iter().zip(read) {
+            match read {
                 Ok(Reply::Overview { watched: found, unavailable: errors }) => {
                     watched.extend(found);
                     unavailable.extend(errors);

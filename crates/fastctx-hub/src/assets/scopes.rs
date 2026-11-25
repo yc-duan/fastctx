@@ -28,6 +28,9 @@ CREATE TABLE IF NOT EXISTS asset_scopes (
     source TEXT
 ) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS asset_scopes_by_owner ON asset_scopes (owner);
+-- A scope by the last part of its key, a conversation's id: its scopes are
+-- found without reading every one (mirror, deletion).
+CREATE INDEX IF NOT EXISTS asset_scopes_by_last ON asset_scopes (substr(key, length(rtrim(key, replace(key, '/', ''))) + 1));
 ";
 
 /// Brings a control database from before scopes were numbered up to them

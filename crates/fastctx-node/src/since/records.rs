@@ -8,10 +8,16 @@
 //! folders nothing was added to since, and a reading touches what changed
 //! rather than all there ever was. A few minutes' grace covers a clock that
 //! stamped a record a little ahead of the file.
+//!
+//! A conversation's records in the database are read again only once they
+//! changed, or for a `since` before the latest of what they told when last
+//! read (`READ`): one quiet since then tells nothing after `since`, however
+//! long its history.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::{LazyLock, Mutex};
 use std::time::{Duration, SystemTime};
 
 use fastctx_net::ledger::Entry;
@@ -43,6 +49,53 @@ fn matches_town(place: &SinceTown, filter: Option<&TownName>) -> bool {
 /// How long before `since` a file must have been written to be passed over.
 const GRACE: Duration = Duration::from_secs(10 * 60);
 
+/// What tells whether a conversation's records in the database changed: how
+/// many times all its families were written, its session events' latest
+/// number, its handovers' latest change. The same mark, the same records.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct Mark {
+    written: u64,
+    events: Option<Vec<u8>>,
+    handovers: Option<i64>,
+}
+
+/// Each conversation's mark when its records were last read, and when the
+/// latest of what they told happened, by its world and its id.
+static READ: LazyLock<Mutex<HashMap<(PathBuf, ResidentId), (Mark, Option<Timestamp>)>>> =
+    LazyLock::new(Default::default);
+
+/// Every conversation's mark in `world`, by its id, in three reads for all
+/// of them; none where its database is not open or cannot be read, and then
+/// every conversation's records are read.
+fn marks(world: &WorldDir) -> Option<HashMap<String, Mark>> {
+    let database = crate::record_database::opened(world)?;
+    database
+        .read_background_now(|connection| {
+            let mut marks: HashMap<String, Mark> = HashMap::new();
+            let mut query = connection.prepare_cached(
+                "SELECT conversation, sum(version) FROM conversation_record_versions GROUP BY conversation",
+            )?;
+            for row in query.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)))? {
+                let (conversation, written) = row?;
+                marks.entry(conversation).or_default().written = written as u64;
+            }
+            let mut query = connection.prepare_cached("SELECT conversation, latest FROM session_heads")?;
+            for row in query.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, Vec<u8>>(1)?)))? {
+                let (conversation, latest) = row?;
+                marks.entry(conversation).or_default().events = Some(latest);
+            }
+            let mut query = connection.prepare_cached(
+                "SELECT conversation, max(modified_millis) FROM handover_heads GROUP BY conversation",
+            )?;
+            for row in query.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)))? {
+                let (conversation, modified) = row?;
+                marks.entry(conversation).or_default().handovers = Some(modified);
+            }
+            Ok(marks)
+        })
+        .ok()
+}
+
 /// What the records read so far establish, before it is cut to `since`.
 pub(super) struct Partial {
     started: Timestamp,
@@ -70,6 +123,7 @@ pub(super) fn conversations(world: &WorldDir, machine: &MachineName, since: Time
     let cutoff = SystemTime::from(since).checked_sub(GRACE);
     let mut scan = Scan { machine, events: Vec::new(), undated: Vec::new(), issues: Vec::new(), cutoff };
     let mut residents = BTreeMap::<ResidentId, ResidentFiles>::new();
+    let marks = marks(world);
     for parent in world.job_parents()? {
         for directory in scan.dirs(&parent) {
             scan.jobs(&directory.join("jobs"));
@@ -130,11 +184,41 @@ pub(super) fn conversations(world: &WorldDir, machine: &MachineName, since: Time
         files.birth_sources.push(scan.location(&directory.about()));
         files.about = Some(about.clone());
         files.places = Some(places);
+        // Its records quiet since they last told nothing after `since`
+        // are not read again.
+        let mark = marks.as_ref().map(|marks| marks.get(about.id.as_str()).cloned().unwrap_or_default());
+        let quiet = mark.as_ref().is_some_and(|mark| {
+            READ.lock()
+                .expect("never poisoned")
+                .get(&(world.path().to_path_buf(), about.id.clone()))
+                .is_some_and(|(read, latest)| read == mark && latest.is_none_or(|latest| latest <= since))
+        });
+        if quiet {
+            continue;
+        }
+        let first = scan.events.len();
         scan.resident(&about, directory, files);
+        files.read = Some((mark, first..scan.events.len()));
     }
     for (id, files) in &residents {
         scan.finish_resident(id, files);
+        // When the latest of what its records told happened, kept with
+        // their mark.
+        if let Some((Some(mark), told)) = &files.read {
+            let latest = files
+                .turns
+                .values()
+                .map(|turn| turn.at)
+                .chain(files.uncertain.values().filter_map(|uncertain| uncertain.at))
+                .chain(scan.events[told.clone()].iter().map(|event| event.at))
+                .max();
+            READ.lock()
+                .expect("never poisoned")
+                .insert((world.path().to_path_buf(), id.clone()), (mark.clone(), latest));
+        }
     }
+    // What is kept of conversations gone from here goes with them.
+    READ.lock().expect("never poisoned").retain(|(at, id), _| at != world.path() || residents.contains_key(id));
     scan.claude(world, &residents);
     Ok(Partial { started, events: scan.events, undated: scan.undated, issues: scan.issues })
 }
@@ -211,6 +295,9 @@ struct ResidentFiles {
     /// Some of its session events were passed over as written before the
     /// cutoff: what they would have dated is older than `since`.
     events_passed: bool,
+    /// Its records were read: with their mark where it is known, and the
+    /// events they told among those read (`READ`).
+    read: Option<(Option<Mark>, std::ops::Range<usize>)>,
 }
 
 impl ResidentFiles {

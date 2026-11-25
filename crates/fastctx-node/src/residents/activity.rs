@@ -270,6 +270,27 @@ pub(crate) fn recent_actions(directory: &ConversationDir, limit: usize) -> io::R
         Ok((actions, count as usize))
     })
 }
+/// How many times each conversation of `world` had its actions written, by
+/// its key, in one read for them all (`actions_version`, of one); none where
+/// its records are not open. A conversation never written is not in it.
+pub(crate) fn actions_versions(
+    world: &fastctx_types::layout::WorldDir,
+) -> io::Result<Option<std::collections::HashMap<String, u64>>> {
+    let Some(database) = crate::record_database::opened(world) else { return Ok(None) };
+    database
+        .read_now(|connection| {
+            let mut query = connection.prepare_cached(
+                "SELECT conversation, version FROM conversation_record_versions WHERE family='actions'",
+            )?;
+            let versions = query
+                .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)? as u64)))?
+                .collect::<Result<std::collections::HashMap<_, _>, _>>()?;
+            Ok(versions)
+        })
+        .map(Some)
+        .map_err(io::Error::other)
+}
+
 /// How many times the actions at `path` were written: the same number, the
 /// same actions.
 pub(crate) fn actions_version(path: &Path) -> io::Result<u64> {
