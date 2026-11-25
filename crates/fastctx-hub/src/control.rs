@@ -701,16 +701,12 @@ async fn open(
 }
 
 pub(crate) fn close(hub: &Hub, name: &MachineName, generation: u64) {
-    let removed = {
+    // What the session was given of its view ends with its queue.
+    {
         let mut sessions = hub.sessions();
         if sessions.get(name).is_some_and(|session| session.generation == generation) {
-            sessions.remove(name).map(|session| session.key)
-        } else {
-            None
+            sessions.remove(name);
         }
-    };
-    if removed.is_some() {
-        hub.forget_view(name, generation);
     }
     if let Some(member) = hub.store().letters.member(name) {
         member.later(crate::post::Command::Close { generation });

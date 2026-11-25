@@ -137,7 +137,7 @@ fn now(hub: &Hub) -> serde_json::Value {
         "view": hub.health.view.snapshot(), "presence": hub.health.presence.snapshot(), "presence_queue": hub.health.presence_queue.snapshot(),
         "sessions": queues.len(),
         "egress": hub.health.egress.snapshot(),
-        "locks": [hub.sessions.measurements(), hub.given.measurements(), hub.calls.measurements(), hub.data.measurements(), hub.ledgers.measurements(), hub.afoots.measurements(), hub.updates.measurements(), hub.pending_presence.measurements(), hub.troubles.measurements()],
+        "locks": [hub.sessions.measurements(), hub.calls.measurements(), hub.data.measurements(), hub.ledgers.measurements(), hub.afoots.measurements(), hub.updates.measurements(), hub.pending_presence.measurements(), hub.troubles.measurements()],
         "lock_order_violations": fastctx_platform::doing::violations(),
         // The threads' rules broken, by kind and place (`fastctx_platform::conduct`).
         "violations": fastctx_platform::conduct::total(),

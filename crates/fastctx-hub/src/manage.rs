@@ -51,6 +51,7 @@ pub(super) fn change_checked(
 ) -> (Result<Told, String>, Vec<(MachineName, Refusal)>) {
     let mut ended = Vec::new();
     let configuration = crate::manage_edit::configuration(&change);
+    let touches = crate::manage_edit::touches(account, &change);
     let relation = crate::manage_edit::relation(&change);
     let renaming = matches!(change, Change::Rename { .. });
     let dissolving = matches!(change, Change::Dissolve { .. });
@@ -84,7 +85,10 @@ pub(super) fn change_checked(
         crate::forget::accounts::tell(hub, None);
     }
     if configuration && !reconcile {
-        hub.configuration_changed();
+        match touches {
+            Some((accounts, machines)) => hub.configuration_changed_for(accounts, machines),
+            None => hub.configuration_changed(),
+        }
     } else if relation && !reconcile {
         hub.relations_changed();
     } else {

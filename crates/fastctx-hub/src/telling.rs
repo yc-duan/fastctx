@@ -37,6 +37,18 @@ const OLD_PRESENCE_SPACING: Duration = Duration::from_secs(30);
 /// A member's session: its name and generation.
 type Session = (MachineName, u64);
 
+/// What the directory changes since the members were last told touched: a
+/// change that alters what anyone may see or do touches all of them; one to
+/// an account's or a machine's own settings (`Hub::configuration_changed_for`)
+/// touches the views that show that account or machine, and no others, so
+/// only theirs are made again (codex-12f4ed09).
+#[derive(Default)]
+pub(crate) struct Scope {
+    pub(crate) all: bool,
+    pub(crate) accounts: std::collections::BTreeSet<fastctx_types::AccountName>,
+    pub(crate) machines: std::collections::BTreeSet<MachineName>,
+}
+
 /// When each session that reads its whole view was told, and when one owed
 /// a change is to be told it.
 #[derive(Default)]
@@ -82,13 +94,20 @@ fn tell(hub: &Hub, woke: Option<bool>, urgent: bool, mut spacing: Spacing) -> Sp
     let now = Instant::now();
     let mut outs: Vec<outq::Outq> = Vec::new();
     let mut changes = Vec::new();
+    // What the changes told now touched; none recorded counts as all.
+    let scope = match woke {
+        Some(true) => hub.take_directory_scope().filter(|scope| !scope.all),
+        _ => None,
+    };
     {
         let sessions = hub.sessions();
         for (name, session) in sessions.iter() {
             let id = (name.clone(), session.generation);
             if let Some(every) = woke {
                 if every && session.view_deltas {
-                    changes.push((name.clone(), session.key, session.generation, session.out.clone()));
+                    if scope.as_ref().is_none_or(|scope| session.out.view_shows(&scope.accounts, &scope.machines)) {
+                        changes.push((name.clone(), session.key, session.generation, session.out.clone()));
+                    }
                     continue;
                 }
                 if every || !session.presence {

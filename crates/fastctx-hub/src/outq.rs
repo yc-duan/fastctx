@@ -32,6 +32,7 @@ pub(crate) use versions::Snapshot as VersionSnapshot;
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
 
+use fastctx_net::directory::View;
 use fastctx_net::wire::{Down, Refusal};
 use fastctx_types::MachineName;
 use fastctx_types::access::TownId;
@@ -174,6 +175,19 @@ struct State {
     /// What each answer queued in parts is (`crate::egress::told`), until
     /// its last part is written.
     part_kinds: HashMap<u64, &'static str>,
+    /// The view the member was last given, whole or as changes, and when it
+    /// was read (`Hub::view_for`'s `read`): what the next change to it is
+    /// made against. Kept here, by the one queue every change to the view
+    /// passes through, so that none of those who push one numbers a change
+    /// past another or is lost to it (codex-8cc17361).
+    view_given: Option<(Arc<View>, (u64, u64))>,
+    /// The latest view the member is to be told the change to, with when it
+    /// was read: one read later replaces it while it waits, so a member that
+    /// reads slowly is told one change to the newest, never a row of stale
+    /// ones (the push pool of `interaction-design`).
+    view_target: Option<(View, (u64, u64))>,
+    /// Whether `Notice::View` waits among the notices.
+    view_queued: bool,
 }
 
 /// What a notice is of: a newer one of the same replaces it, or merges with
@@ -193,12 +207,16 @@ enum Notice {
     PackageProgress(u64),
     /// A stream moved, or a checkpoint covers a scope: the latest stands.
     Assets(String),
+    /// What changed in the member's view: made as it is taken, from
+    /// `State::view_given` to `State::view_target`.
+    View,
 }
 
 enum Pending {
     Frame(Down),
     Afoot(afoot::Pending),
     Versions(versions::Pending),
+    View,
 }
 
 impl Outq {
@@ -331,6 +349,77 @@ impl Outq {
         }
         self.0.ready.notify_one();
         result
+    }
+
+    /// The member was given `view`, read at `read`, whole: what the changes
+    /// after it are made against, numbered next. One given since and read
+    /// after it is put in its place instead: a view made earlier is never
+    /// numbered past a later one.
+    pub(crate) fn view_given(&self, view: &mut View, read: (u64, u64)) {
+        let mut state = self.0.state.lock().expect("never poisoned");
+        if let Some((later, at)) = &state.view_given
+            && *at > read
+        {
+            *view = View::clone(later);
+            return;
+        }
+        view.revision = state.view_given.as_ref().map_or(1, |(given, _)| given.revision + 1);
+        state.view_given = Some((Arc::new(view.clone()), read));
+        // A change to a view read before this one is said by it.
+        if state.view_target.as_ref().is_some_and(|(_, at)| *at <= read) {
+            state.view_target = None;
+        }
+    }
+
+    /// The member's view, read at `read`, is `view` now: what changed in it
+    /// is told as the writer comes to it, from what the member was last
+    /// given, a view read later replacing this one meanwhile. False when the
+    /// member was never given a view whole to change from: it is to be told
+    /// to ask for one.
+    pub(crate) fn view_changed(&self, view: View, read: (u64, u64)) -> Result<bool, ()> {
+        let (changed, overflowed) = {
+            let mut state = self.0.state.lock().expect("never poisoned");
+            if state.shut || state.overflowed.is_some() {
+                return Err(());
+            }
+            let Some((_, given_at)) = &state.view_given else { return Ok(false) };
+            // Given since, read after this: it holds this already.
+            if *given_at >= read || state.view_target.as_ref().is_some_and(|(_, at)| *at >= read) {
+                return Ok(true);
+            }
+            state.view_target = Some((view, read));
+            let changed = if state.view_queued {
+                Ok(true)
+            } else if state.notices.len() >= NOTICES {
+                state.overflow(format!("{NOTICES} notices wait for it untaken; letting it go")).map(|()| true)
+            } else {
+                state.notices.push_back((Notice::View, Pending::View));
+                state.view_queued = true;
+                Ok(true)
+            };
+            (changed, state.overflowed.clone())
+        };
+        if let Some(why) = overflowed {
+            self.0.over.send_replace(Some(why));
+        }
+        self.0.ready.notify_one();
+        changed
+    }
+
+    /// Whether the view the member was last given shows any of `accounts`
+    /// or `machines`: one that changed in a way that alters what no one may
+    /// see changes the views of those that showed it, and of no others
+    /// (`Hub::configuration_changed_for`). None given yet shows nothing: the
+    /// member asks for its view whole as it begins.
+    pub(crate) fn view_shows(
+        &self,
+        accounts: &std::collections::BTreeSet<fastctx_types::AccountName>,
+        machines: &std::collections::BTreeSet<MachineName>,
+    ) -> bool {
+        let state = self.0.state.lock().expect("never poisoned");
+        let Some((given, _)) = &state.view_given else { return false };
+        given.directory.accounts.iter().any(|account| accounts.contains(&account.name))
+            || given.directory.members.iter().any(|member| machines.contains(&member.name))
     }
 
     /// Initial producers are finished; the writer acknowledges after draining their frames.
@@ -518,9 +607,16 @@ impl State {
         self.in_a_row = 0;
         let letter = |state: &mut Self| state.letters.pop_front();
         let notice = |state: &mut Self| {
-            if state.spilled.is_none() {
+            while state.spilled.is_none() {
                 match state.notices.pop_front()?.1 {
                     Pending::Frame(frame) => return Some(frame),
+                    // A view that did not change after all goes on to the next.
+                    Pending::View => {
+                        state.view_queued = false;
+                        if let Some(frame) = state.view_frame() {
+                            return Some(frame);
+                        }
+                    }
                     Pending::Versions(mut pending) => match pending.take() {
                         Ok((frame, done)) => {
                             if !done {
@@ -557,6 +653,45 @@ impl State {
             return Some(Next::Overflowed(why.clone()));
         }
         frame.map(|frame| Next::Frames(vec![frame]))
+    }
+
+    /// What changed from the view the member was given to the latest one it
+    /// is to be told of, as one frame: none when nothing it reads changed.
+    /// One too large for a frame, or that cannot be made, tells it to ask for
+    /// the view whole instead, and nothing is made against what it held
+    /// until it did (`Outq::view_given`).
+    fn view_frame(&mut self) -> Option<Down> {
+        let (mut next, read) = self.view_target.take()?;
+        let Some((given, given_at)) = self.view_given.clone() else { return Some(Down::DirectoryChanged) };
+        if read <= given_at {
+            return None;
+        }
+        // A change counts no change of who is online (`view_delta`'s
+        // `PRESENCE`): those are told apart, and one told before it may
+        // reach the member after it, so it holds them only as far as the
+        // view it starts from did.
+        next.presence = given.presence;
+        let base = given.revision;
+        next.revision = base + 1;
+        match fastctx_net::view_delta::between(&given, &next, base, base + 1) {
+            Ok(None) => {
+                self.view_given = Some((given, read));
+                None
+            }
+            Ok(Some(delta)) => {
+                let frame = Down::View { delta: Box::new(delta) };
+                if serde_json::to_vec(&frame).map_or(true, |bytes| bytes.len() > crate::VIEW_CHANGE_AT_MOST) {
+                    self.view_given = None;
+                    return Some(Down::DirectoryChanged);
+                }
+                self.view_given = Some((Arc::new(next), read));
+                Some(frame)
+            }
+            Err(_) => {
+                self.view_given = None;
+                Some(Down::DirectoryChanged)
+            }
+        }
     }
 }
 
