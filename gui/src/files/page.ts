@@ -86,6 +86,8 @@ export class FilesPage implements Page {
   private readonly main: HTMLElement;
   /** Stops following the machine's changes. */
   private following: (() => void) | null = null;
+  /** A reading of the changes to try again, the last having failed. */
+  private retrying = 0;
   private left = false;
   /** Which machine's answers are still wanted. */
   private asked = 0;
@@ -146,6 +148,7 @@ export class FilesPage implements Page {
 
   leave(): void {
     this.left = true;
+    clearTimeout(this.retrying);
     this.following?.();
     this.following = null;
     document.removeEventListener("pointerdown", this.outside);
@@ -203,7 +206,7 @@ export class FilesPage implements Page {
     this.tree.changed([]);
     this.tree.show(null, this.mode);
     this.drawMain();
-    const [places] = await Promise.all([this.options.places(this.machine).catch(() => ({ home: null, places: [] }) as Places), this.readChanges()]);
+    const [places] = await Promise.all([this.options.places(this.machine).catch(() => ({ home: null, places: [] }) as Places), this.readChanges(true).catch(() => this.readAgainSoon())]);
     if (this.left || asked !== this.asked) return;
     this.places = places;
     this.root = this.rootFor(this.path);
@@ -221,6 +224,16 @@ export class FilesPage implements Page {
     if (home && within(home, path)) return home;
     const holding = places.filter((place) => within(place.path, path)).sort((a, b) => b.path.length - a.path.length)[0];
     return holding?.path ?? (split(path).folder || home);
+  }
+
+  /** The changes could not be read as the page opened: what follows the
+   *  machine reads again only once its number moves, so they are read again
+   *  every `AGAIN_MS` until they are. */
+  private readAgainSoon(): void {
+    clearTimeout(this.retrying);
+    this.retrying = window.setTimeout(() => {
+      if (!this.left) void this.readChanges(true).catch(() => this.readAgainSoon());
+    }, AGAIN_MS);
   }
 
   /** Reads the machine's changes; one that cannot be read leaves what is

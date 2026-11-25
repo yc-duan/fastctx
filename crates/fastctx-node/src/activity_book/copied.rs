@@ -28,6 +28,8 @@ pub(crate) fn answer(node: &Node, acting: &Acting, written: &Written, query: &Bo
     // Its stream on the network it is named on, or on each that lists it
     // as the same machine, and whose the accounts asking are.
     let (mut streams, mut logins, mut keys) = (BTreeSet::new(), BTreeSet::new(), BTreeSet::new());
+    // The scopes of the asking accounts' own records, by key.
+    let mut own = BTreeSet::new();
     for link in node.links() {
         if written.hub.as_ref().is_some_and(|hub| link.hub_name() != *hub) {
             continue;
@@ -35,6 +37,15 @@ pub(crate) fn answer(node: &Node, acting: &Acting, written: &Written, query: &Bo
         let view = link.view();
         let Some(member) = view.member(machine) else { continue };
         let accounts = node.accounts_on(&link, acting);
+        for account in &accounts {
+            if let Some(found) = view.directory.account(account) {
+                own.insert(fastctx_types::assets::records_key(
+                    link.membership().id.as_str(),
+                    account,
+                    found.opened.as_millisecond(),
+                ));
+            }
+        }
         let hub = link.membership().id.to_string();
         logins.extend(accounts.iter().map(|account| format!("{hub}/{account}")));
         let named: String = member.key.as_bytes()[..8].iter().map(|byte| format!("{byte:02x}")).collect();
@@ -53,12 +64,10 @@ pub(crate) fn answer(node: &Node, acting: &Acting, written: &Written, query: &Bo
     let mut found = false;
     let mut waiting = false;
     for scope in library.held_scopes().ok()? {
-        // Records of the machine's network not pulled whole yet: what the
+        // An asking account's own records not pulled whole yet: what the
         // others hold is not all of it.
-        if crate::timeline::copy::records_coming(node, &scope)
-            && streams.iter().any(|(hub, _)| scope.hub.as_deref() == Some(hub.as_str()))
-        {
-            waiting = true;
+        if crate::timeline::copy::records_coming(node, &scope) {
+            waiting |= own.contains(&scope.key);
             continue;
         }
         if !crate::timeline::copy::records_here(node, &scope) {

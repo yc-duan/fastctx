@@ -108,10 +108,10 @@ fn pieces(node: &Node, written: &Written, agent: &str, dir: &Path) -> Option<Pie
         if scope.hub.as_deref() != Some(hub.as_str()) {
             continue;
         }
-        // Records of the machine's network not pulled whole yet: what the
+        // An asking account's own records not pulled whole yet: what the
         // others hold is not all of it.
         if crate::timeline::copy::records_coming(node, &scope) {
-            waiting = true;
+            waiting |= of_account.contains_key(&scope.key);
             continue;
         }
         if !crate::timeline::copy::records_here(node, &scope) {

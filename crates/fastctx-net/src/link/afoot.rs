@@ -160,12 +160,14 @@ impl Inner {
         busy: Option<u32>,
         change: AfootChange<ResidentNow, RunningJob>,
     ) {
-        self.afoots.told.lock().expect("never poisoned").insert(machine.clone(), generation);
         {
+            // The connection that told it is taken with what it told, under
+            // the same lock: none reads the one without the other.
             let mut elsewhere = self.afoots.elsewhere.lock().expect("never poisoned");
-            let afoot = elsewhere.entry(machine).or_default();
+            let afoot = elsewhere.entry(machine.clone()).or_default();
             afoot.seen.apply(change);
             afoot.busy = busy;
+            self.afoots.told.lock().expect("never poisoned").insert(machine, generation);
         }
         self.node.afoot_changed();
     }
@@ -197,9 +199,12 @@ impl Inner {
     /// now; none while none is.
     pub(crate) fn afoot_told_now(&self) -> BTreeMap<MachineName, Elsewhere> {
         let Some(connection) = self.connection() else { return BTreeMap::new() };
-        let mut elsewhere = self.afoot_elsewhere();
+        let elsewhere = self.afoots.elsewhere.lock().expect("never poisoned");
         let told = self.afoots.told.lock().expect("never poisoned");
-        elsewhere.retain(|machine, _| told.get(machine) == Some(&connection.generation));
         elsewhere
+            .iter()
+            .filter(|(machine, _)| told.get(*machine) == Some(&connection.generation))
+            .map(|(machine, afoot)| (machine.clone(), afoot.clone()))
+            .collect()
     }
 }

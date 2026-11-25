@@ -198,7 +198,7 @@ async fn ask<F: Future<Output = Result<(), String>>>(
                         let work = link.call(name, &account, purpose, call);
                         let answer = match within {
                             Some(within) => {
-                                match fastctx_platform::doing::outside(format!("{name}'s answer"), within, work).await {
+                                match fastctx_platform::doing::outside(name.to_string(), within, work).await {
                                     Ok(answer) => answer,
                                     Err(late) => return Heard::Late(late.to_string()),
                                 }

@@ -2630,6 +2630,19 @@ fn afoot_of(
     if !member.online {
         return None;
     }
+    // The accounts `acting` works for here that may look at the machine now,
+    // as it is asked for each (`around::reachable_each`): the account asked
+    // as among them, still.
+    let lookers: Vec<&fastctx_types::AccountName> = serves
+        .iter()
+        .filter(|whom| {
+            logins.contains(*whom)
+                && view.admits(&view.me, whom, &member.name, fastctx_types::access::Purpose::Look).is_ok()
+        })
+        .collect();
+    if !lookers.contains(&account) {
+        return None;
+    }
     let hub = link.membership().id.clone();
     let told = afoots.entry(hub.clone()).or_insert_with(|| link.afoot_now()).get(&member.name)?;
     let works_for = |worked: &fastctx_types::access::HubAccount| worked.hub == hub && worked.account == *account;
@@ -2661,14 +2674,11 @@ fn afoot_of(
                 && view.rights(account, &focused.machine.name).hands
         });
     }
-    // One no account `acting` works for here works for: whether the account
-    // sees it, the machine alone says.
-    let unjudged = told
-        .seen
-        .residents
-        .values()
-        .filter(listed)
-        .any(|resident| !serves.iter().filter(|whom| logins.contains(*whom)).any(|whom| works(resident, whom)));
+    // One that no account `acting` works for here, and may look at the
+    // machine with, works for: whether the account sees it, the machine
+    // alone says.
+    let unjudged =
+        told.seen.residents.values().filter(listed).any(|resident| !lookers.iter().any(|whom| works(resident, whom)));
     // One that may work there sees every job running there (`admission::seen`).
     let hands = view.rights(account, &member.name).hands;
     let jobs: Vec<_> = told

@@ -36,6 +36,10 @@ impl Transport {
             return None;
         }
         let link = self.0.link_of(&registration.scope.hub)?;
+        // Judged on a view the connection up now gave, as `send_to` judges.
+        if !link.view_current() {
+            return None;
+        }
         let view = link.view();
         let home = &registration.definition.home;
         if view.is_me(home) || !view.call_rights(&view.me, &registration.scope.account, home).hands {

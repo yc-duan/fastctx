@@ -415,6 +415,11 @@ pub(crate) fn directory_changed(node: &Node, link: &Link) {
         node.elsewhere.held.lock().expect("never poisoned").kept.retain(|(_, at, _, _, _), _| *at != hub);
         node.elsewhere.asking.lock().expect("never poisoned").retain(|(_, at, _, _, _), _| *at != hub);
         node.topics.changed(TOPIC);
+        // What this machine answers others of its agents and logins may
+        // change with it too (`logins::remote::seen`): its number moves, so
+        // what one asked of it under an earlier view, and kept, is asked
+        // again, the asker's view having changed before this one's or not.
+        changed_here(node);
     }
     view_changed(node, link);
 }
